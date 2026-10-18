@@ -1,0 +1,208 @@
+package com.github.auties00.smalt.image.avif;
+
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.AnimationReader;
+import com.github.auties00.smalt.image.DecodedImage;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.ImageInfo;
+import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.image.avif.internal.AvifFiles;
+
+import java.util.Objects;
+
+/**
+ * Decodes AVIF images (AV1 Image File Format): still images, grids, alpha, layered images and
+ * image sequences.
+ *
+ * <p>The primary image decodes to its native planar representation: a {@link YuvPicture} in the
+ * chroma layout of its AV1 payload (4:2:0, 4:2:2, 4:4:4 or monochrome), with an alpha plane when
+ * the file has an alpha auxiliary image. Sources of 10 and 12 bits are reduced to 8 bits by
+ * rounding to nearest, exactly as the AV1 decoder of this module reduces them; with
+ * {@link ImageDecoderOptions#highBitDepth()} set they decode to a {@link Yuv16Picture} of their
+ * own depth instead, which
+ * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Yuv16Picture)} reduces to
+ * exactly the default 8-bit picture. An image whose color is premultiplied by its alpha
+ * ({@code prem} reference) decodes to a straight-alpha {@link RgbaPicture} instead.
+ *
+ * <p>The file structure follows ISO/IEC 23008-12 (HEIF), MIAF and the AVIF specification:
+ * <ul>
+ *   <li>a primary item coded as AV1 ({@code av01}), or an image grid ({@code grid}) of AV1
+ *       tiles, which decode in parallel on the module's shared helper threads (a single item
+ *       uses the AV1 decoder's frame-level threads);</li>
+ *   <li>the alpha plane of an auxiliary item ({@code auxl} reference, alpha {@code auxC}
+ *       URN), as one item, a grid, or one item per color tile; limited-range alpha is expanded
+ *       to full range;</li>
+ *   <li>layered images: the operating point of {@code a1op} and the layer of {@code lsel};
+ *       without {@code lsel} the highest layer of the operating point is shown;</li>
+ *   <li>the clean aperture ({@code clap}) is applied to the pixels; the rotation ({@code irot})
+ *       and mirroring ({@code imir}) are reported as {@link DecodedImage#orientation()}, which
+ *       the caller applies (for example with
+ *       {@link com.github.auties00.smalt.image.ops.ImageOps#orient}), as for the EXIF
+ *       orientation of other formats. The transformative properties are composed in their
+ *       association order. A crop that starts inside a subsampled chroma block yields a 4:4:4
+ *       picture, so that no pixel changes color;</li>
+ *   <li>the color description comes from the {@code nclx} color box, or from the AV1 sequence
+ *       header without one, together with the {@code clli} and {@code mdcv} high-dynamic-range
+ *       properties (or the AV1 metadata OBUs); an ICC profile ({@code colr} of type {@code rICC}
+ *       or {@code prof}) and the EXIF item of the primary image are returned with the
+ *       picture. The ICC profile is the {@link DecodedImage#colorProfile()}, which otherwise
+ *       describes the color of the {@code nclx} box or the sequence header when it is not
+ *       sRGB.</li>
+ * </ul>
+ * The EXIF orientation is not used: AVIF orients images with {@code irot} and {@code imir}.
+ *
+ * <p>An image sequence ({@code avis}) plays through {@link #openAnimation}: its color track and
+ * its alpha track, every frame converted to RGBA, with the loop count of the edit list (a track
+ * without an edit list loops forever). {@link #decode} returns the first frame of a sequence when
+ * the file's major brand is {@code avis}, and the primary image otherwise.
+ *
+ * <p>Every size the file declares is checked against the {@link MediaLimits} of the options
+ * before the corresponding allocation: the {@code meta} and {@code moov} boxes and every item
+ * against {@link MediaLimits#maxBytes()}, the picture, grid and tiles against the size limits,
+ * the sample counts against {@link MediaLimits#maxFrames()}. Malformed input raises
+ * {@link MediaException.Malformed}, never an unchecked runtime exception; a valid file using a
+ * feature this decoder lacks (an essential property it does not know, a primary item coded with
+ * another codec, an alpha plane of another size than the color) raises
+ * {@link MediaException.Unsupported}.
+ *
+ * <p>The reduced-size hint of {@link ImageDecoderOptions} is ignored: images always decode at
+ * full size. With {@link ImageDecoderOptions#convertToSrgb()} the pixels are converted to
+ * sRGB.
+ *
+ * @implNote This implementation follows libavif (BSD 2-clause) for the container semantics: the
+ *           item and track selection, the property rules, the grid and clean aperture validation
+ *           and the alpha handling. The AV1 payloads decode with the dav1d port of
+ *           {@link com.github.auties00.smalt.video.av1.Av1Decoder}, so the samples are those of
+ *           dav1d and libavif.
+ */
+public final class AvifDecoder {
+    /**
+     * Prevents instantiation.
+     */
+    private AvifDecoder() {
+        throw new AssertionError();
+    }
+
+    /**
+     * Summarizes an AVIF file from its headers, without decoding pixels.
+     *
+     * <p>The size is that of the shown image after the clean aperture and before the
+     * orientation; for a sequence it is the track size, and the frame count is the sample count.
+     *
+     * @param source the file
+     * @return the summary
+     * @throws NullPointerException       if {@code source} is {@code null}
+     * @throws MediaException.Malformed   if the file structure is invalid or truncated
+     * @throws MediaException.Unsupported if the file uses a feature this decoder lacks
+     * @throws MediaException.Io          if reading the source fails
+     */
+    public static ImageInfo probe(MediaSource source) {
+        Objects.requireNonNull(source, "source");
+        try (var _ = ParallelBands.operation()) {
+            return AvifFiles.probe(source, MediaLimits.DEFAULT);
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (OutOfMemoryError error) {
+            throw new MediaException.LimitExceeded("out of memory while probing an AVIF file");
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("malformed AVIF file", exception);
+        }
+    }
+
+    /**
+     * Decodes an AVIF image under the {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the file
+     * @return the decoded image
+     * @throws NullPointerException         if {@code source} is {@code null}
+     * @throws MediaException.Malformed     if the file is invalid, corrupt or truncated
+     * @throws MediaException.Unsupported   if the file uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io            if reading the source fails
+     * @see #decode(MediaSource, ImageDecoderOptions)
+     */
+    public static DecodedImage decode(MediaSource source) {
+        return decode(source, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes the image an AVIF file shows: its primary image, or the first frame of its sequence
+     * when its major brand is {@code avis}.
+     *
+     * @param source  the file
+     * @param options the limits, the bit depth choice and the color conversion; the reduced-size
+     *                hint is ignored
+     * @return the decoded image with its orientation, ICC profile and EXIF block
+     * @throws NullPointerException         if an argument is {@code null}
+     * @throws MediaException.Malformed     if the file is invalid, corrupt or truncated
+     * @throws MediaException.Unsupported   if the file uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io            if reading the source fails
+     */
+    public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        try (var _ = ParallelBands.operation()) {
+            var image = AvifFiles.decode(source, options.limits(), options.highBitDepth());
+            return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (OutOfMemoryError error) {
+            throw new MediaException.LimitExceeded("out of memory while decoding an AVIF file");
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("malformed AVIF file", exception);
+        }
+    }
+
+    /**
+     * Opens an AVIF file as an animation under the {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the file
+     * @return the animation reader
+     * @throws NullPointerException         if {@code source} is {@code null}
+     * @throws MediaException.Malformed     if the file structure is invalid or truncated
+     * @throws MediaException.Unsupported   if the file uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if the canvas or the frame count exceeds the limits
+     * @throws MediaException.Io            if reading the source fails
+     * @see #openAnimation(MediaSource, ImageDecoderOptions)
+     */
+    public static AnimationReader openAnimation(MediaSource source) {
+        return openAnimation(source, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Opens a reader over the frames of an AVIF image sequence.
+     *
+     * <p>A file without a sequence is presented as an animation of its primary image: one frame
+     * shown for zero microseconds that plays once. Frames are RGBA pictures in the stored
+     * orientation.
+     *
+     * @param source  the file
+     * @param options the limits; the reduced-size hint and the bit depth choice are ignored
+     * @return the reader; closing it does not close {@code source}
+     * @throws NullPointerException         if an argument is {@code null}
+     * @throws MediaException.Malformed     if the file structure is invalid or truncated
+     * @throws MediaException.Unsupported   if the file uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if the canvas or the frame count exceeds the limits
+     * @throws MediaException.Io            if reading the source fails
+     */
+    public static AnimationReader openAnimation(MediaSource source, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        try (var _ = ParallelBands.operation()) {
+            return AvifFiles.openAnimation(source, options.limits());
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (OutOfMemoryError error) {
+            throw new MediaException.LimitExceeded("out of memory while opening an AVIF animation");
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("malformed AVIF file", exception);
+        }
+    }
+}

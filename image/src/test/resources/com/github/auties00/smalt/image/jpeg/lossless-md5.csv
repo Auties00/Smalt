@@ -1,0 +1,49 @@
+# file, width, height, color space, precision, predictor, point transform, restart rows, md5 of the
+# djpeg (libjpeg-turbo 3.1.3) PNM payload: the samples as coded, components interleaved, 2 bytes
+# big-endian above 8 bits (djpeg converts no color space of a lossless file).
+# Generated with cjpeg -precision P -lossless psv,Pt [-restart N] from crops of libjpeg-turbo
+# testorig.jpg and testorig12.jpg; YCBCR files are RGB files with APP14 removed and component
+# identifiers 1, 2, 3.
+61x43-rgb-p8-psv1.jpg,61,43,RGB,8,1,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv1.jpg,61,43,GRAY,8,1,0,0,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv2.jpg,61,43,RGB,8,2,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv2.jpg,61,43,GRAY,8,2,0,0,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv3.jpg,61,43,RGB,8,3,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv3.jpg,61,43,GRAY,8,3,0,0,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv4.jpg,61,43,RGB,8,4,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv4.jpg,61,43,GRAY,8,4,0,0,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv5.jpg,61,43,RGB,8,5,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv5.jpg,61,43,GRAY,8,5,0,0,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv6.jpg,61,43,RGB,8,6,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv6.jpg,61,43,GRAY,8,6,0,0,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv7.jpg,61,43,RGB,8,7,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv7.jpg,61,43,GRAY,8,7,0,0,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv1-r1.jpg,61,43,RGB,8,1,0,1,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-rgb-p8-psv6-r3.jpg,61,43,RGB,8,6,0,3,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p8-psv7-r2.jpg,61,43,GRAY,8,7,0,2,621063dec4014ad51bf58f9a6ffe41b0
+61x43-rgb-p8-psv1-pt2.jpg,61,43,RGB,8,1,2,0,88c723d5092e37056c7ad9d81e86961d
+61x43-gray-p8-psv5-pt3-r1.jpg,61,43,GRAY,8,5,3,1,8cfe1b41fc361ee1e7bc130fd327104e
+61x43-ycbcr-p8-psv1.jpg,61,43,YCBCR,8,1,0,0,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-ycbcr-p8-psv4-r2.jpg,61,43,YCBCR,8,4,0,2,2e8bb5d3ef449136ef0b1abef31b2675
+61x43-gray-p2-psv1.jpg,61,43,GRAY,2,1,0,0,9ef5d4cb9d3977da7db8ca442fc4f838
+61x43-rgb-p2-psv7.jpg,61,43,RGB,2,7,0,0,94327abf61f1085e1a362af9e270ae8c
+61x43-gray-p5-psv1.jpg,61,43,GRAY,5,1,0,0,9e6c02b80cc4fde96743bdaa4b4b7520
+61x43-rgb-p5-psv7.jpg,61,43,RGB,5,7,0,0,b8a04739f0aeb58f92f8fceb624fee5e
+61x43-gray-p7-psv1.jpg,61,43,GRAY,7,1,0,0,8158780d73ba19ae91176337bf428262
+61x43-rgb-p7-psv7.jpg,61,43,RGB,7,7,0,0,8b796eb688d1af4e5c1f3b6403d4049f
+61x43-gray-p9-psv1.jpg,61,43,GRAY,9,1,0,0,cf05422745d7f9cdeca338c1343f30a5
+61x43-gray-p9-psv6.jpg,61,43,GRAY,9,6,0,0,cf05422745d7f9cdeca338c1343f30a5
+61x43-rgb-p9-psv4.jpg,61,43,RGB,9,4,0,0,32ff8adb62d0793cebd5364bf4127fc6
+61x43-rgb-p9-psv7-r2.jpg,61,43,RGB,9,7,0,2,32ff8adb62d0793cebd5364bf4127fc6
+61x43-gray-p12-psv1.jpg,61,43,GRAY,12,1,0,0,4800f8ae23cbb477cc1ce42b24ae6138
+61x43-gray-p12-psv6.jpg,61,43,GRAY,12,6,0,0,4800f8ae23cbb477cc1ce42b24ae6138
+61x43-rgb-p12-psv4.jpg,61,43,RGB,12,4,0,0,02ea3883dec211b127de2105bd96e688
+61x43-rgb-p12-psv7-r2.jpg,61,43,RGB,12,7,0,2,02ea3883dec211b127de2105bd96e688
+61x43-gray-p16-psv1.jpg,61,43,GRAY,16,1,0,0,78c54219464c42e582d9070cc27fcd1b
+61x43-gray-p16-psv6.jpg,61,43,GRAY,16,6,0,0,78c54219464c42e582d9070cc27fcd1b
+61x43-rgb-p16-psv4.jpg,61,43,RGB,16,4,0,0,536bb629d2e04325bb823112db83eab6
+61x43-rgb-p16-psv7-r2.jpg,61,43,RGB,16,7,0,2,536bb629d2e04325bb823112db83eab6
+61x43-gray-p12-psv2-pt3.jpg,61,43,GRAY,12,2,3,0,d281103f8b3ab5a398d6f26e4d6193db
+61x43-rgb-p16-psv5-pt4-r1.jpg,61,43,RGB,16,5,4,1,3ac98bd2d446ca5968bc0c97f589f9f5
+61x43-ycbcr-p12-psv1.jpg,61,43,YCBCR,12,1,0,0,02ea3883dec211b127de2105bd96e688
+61x43-ycbcr-p16-psv3.jpg,61,43,YCBCR,16,3,0,0,536bb629d2e04325bb823112db83eab6

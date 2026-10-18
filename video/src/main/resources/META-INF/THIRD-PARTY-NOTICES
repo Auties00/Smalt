@@ -1,0 +1,702 @@
+Smalt Video: Third-Party Notices
+================================
+
+Smalt Video (Maven artifact com.github.auties00:smalt-video, JPMS module
+com.github.auties00.smalt.video) is part of Smalt, a pure-Java media library
+(https://github.com/Auties00/Smalt), and is licensed under the MIT License.
+
+Smalt is written in Java, but parts of it are ports of, or are
+otherwise derived from, the open source projects listed below: C code
+translated to Java, tables copied from the C sources, or algorithms and code
+structure followed closely. Each section names the project, where its code
+and license text were obtained, the Smalt packages that derive from it, the
+upstream copyright notices, and the full upstream license text, reproduced
+as published upstream.
+
+The derived Java code is NOT the original software. It has been translated
+from C to Java and modified: restructured, adapted to Smalt's APIs,
+extended, and in places vectorized with the Java Vector API. The Java
+sources that derive from a project name the upstream files or functions they
+follow in their documentation.
+
+All package names below are relative to com.github.auties00.smalt.
+
+Contents
+  4.  libvpx
+  18. dav1d
+  19. libaom
+  20. libavif
+
+
+===============================================================================
+4. libvpx
+===============================================================================
+
+Project:      libvpx, the VP8/VP9 codec SDK of the WebM Project
+Home:         https://www.webmproject.org/code/
+Source:       https://chromium.googlesource.com/webm/libvpx
+              (mirror: https://github.com/webmproject/libvpx)
+License text: https://raw.githubusercontent.com/webmproject/libvpx/main/LICENSE
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  video.vp8.internal
+  video.vp9
+  video.vp9.internal
+
+Derivation: the VP8 decoder is a port of libvpx's single-threaded VP8
+decoder (vp8/decoder, vp8/common and the VP8 variants of vpx_dsp intra
+prediction), including its C kernels and the tables copied verbatim from
+vp8/common and vp8/decoder. The real-time VP8 encoder (Vp8Encoder) is a
+port of libvpx 1.17.0's one-pass real-time CBR path (vp8/encoder: onyx_if.c,
+encodeframe.c, rdopt.c, pickinter.c, mcomp.c, encodemb.c, tokenize.c,
+bitstream.c, ratectrl.c, picklpf.c, encodemv.c, modecosts.c, segmentation.c,
+vp8_skin_detection.c, and vp8/common/findnearmv.c) with the vpx_dsp C
+kernels it uses and its speed, threshold and cost tables. The VP9 decoder is
+a port of libvpx's VP9 decoder (vp9/decoder, vp9/common, vp9/vp9_dx_iface.c
+and the vpx_dsp C kernels it uses: inverse transforms, sub-pixel
+convolution, loop filters, intra prediction and their high bit depth
+variants), including the probability, scan, quantizer and filter tables
+copied from the C sources. The real-time VP9 encoder (Vp9VideoEncoder) is a
+port of libvpx 1.17.0's one-pass real-time CBR path (vp9/encoder:
+vp9_encoder.c, vp9_ratectrl.c, vp9_pickmode.c, vp9_aq_cyclicrefresh.c,
+vp9_mcomp.c, vp9_encodeframe.c, vp9_encodemb.c, vp9_tokenize.c,
+vp9_bitstream.c, vp9_subexp.c, vp9_segmentation.c, vp9_speed_features.c,
+vp9_svc_layercontext.c, vp9_noise_estimate.c, vp9_skin_detection.c,
+vp9_rd.c, vp9_picklpf.c, vp9_quantize.c, vp9_dct.c, vp9_encodemv.c and
+vp9_cost.c) with the vpx_dsp C kernels it uses (boolean encoder, forward
+transforms, sums of absolute differences, variances, Hadamard transforms,
+integral projections and skin detection) and its speed, threshold, rate
+model and cost tables.
+
+Copyright:
+  Copyright (c) 2010, The WebM Project authors. All rights reserved.
+
+libvpx also publishes an "Additional IP Rights Grant (Patents)" in its
+PATENTS file (https://raw.githubusercontent.com/webmproject/libvpx/main/PATENTS).
+It is a grant by Google, not a condition of the license, and is not
+reproduced here.
+
+-------------------------------------------------------------------------------
+libvpx license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2010, The WebM Project authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of Google, nor the WebM Project, nor the names
+    of its contributors may be used to endorse or promote products
+    derived from this software without specific prior written
+    permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+
+===============================================================================
+18. dav1d
+===============================================================================
+
+Project:      dav1d, the AV1 decoder of VideoLAN
+Source:       https://code.videolan.org/videolan/dav1d
+              (revision 7f12cf23560430c02a83e67bb68eec74d93ce5fd)
+License text: COPYING at the root of the repository
+License:      BSD 2-Clause License
+
+Derived Smalt packages:
+  video.av1, video.av1.internal (Av1Decoder: OBU, sequence and frame header
+  parsing, the entropy decoder and its CDF tables, block and coefficient
+  decoding, reference motion vector prediction, reconstruction, the inverse
+  transforms, motion compensation and warped motion, intra prediction, the
+  deblocking filter, CDEF, loop restoration, super-resolution, film grain
+  synthesis, and the two-pass frame threading of decode.c and thread_task.c:
+  the entropy pass, the reconstruction pass and the reference row tracking of
+  lowest_px); video.av1.internal.encoder (Av1Encoder: the symbol writer mirrors
+  the block, mode and coefficient decoding order and contexts of decode.c and
+  recon_tmpl.c, the CDF adaptation of msac.c, the motion mode and the local
+  warp of a block (the sample collection and model fit of the decoder, and the
+  warp_affine prediction of recon_tmpl.c), the projection and saving of the
+  motion vectors of references (refmvs.c), and every frame is reconstructed
+  and filtered with the decoder's ports of dav1d's kernels)
+
+Derivation: C reference code (src/*.c and the *_tmpl.c bit depth templates)
+translated to Java, with tables copied from its sources and the buffer
+layouts of its tile-threaded mode; the Vector API kernels follow the
+structure of its x86 assembly, but no assembly was translated.
+
+Copyright:
+  Copyright (c) 2018-2025, VideoLAN and dav1d authors
+
+AV1 is also covered by the Alliance for Open Media Patent License 1.0
+(https://aomedia.org/license/patent-license/), a royalty-free patent license
+granted by the AOMedia members. It is not a condition of the license below
+and is not reproduced here.
+
+-------------------------------------------------------------------------------
+dav1d license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright © 2018-2025, VideoLAN and dav1d authors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+19. libaom
+===============================================================================
+
+Project:      libaom, the AV1 codec library of the Alliance for Open Media
+Source:       https://aomedia.googlesource.com/aom
+              (release v3.12.1)
+License text: LICENSE at the root of the repository
+License:      BSD 2-Clause License
+
+Derived Smalt packages:
+  video.av1, video.av1.internal.encoder (Av1Encoder, and the intra-only still
+  encoder behind AvifEncoder and its animations)
+
+Derivation: the real-time AV1 encoder is a port of libaom 3.12.1's one-pass
+real-time path at speeds 7 to 10 (av1/encoder: nonrd_pickmode.c, nonrd_opt.c,
+var_based_part.c, mcomp.c, ratectrl.c, aq_cyclicrefresh.c, speed_features.c,
+rd.c, rdopt_utils.h, intra_mode_search.c, encodeframe.c, partition_search.c,
+picklpf.c, pickcdef.c, av1_quantize.c, av1_fwd_txfm1d.c, av1_fwd_txfm2d.c,
+encodetxb.c, bitstream.c, encodemv.c, segmentation.c and aom_dsp/entenc.c,
+the range encoder; the temporal layer patterns of examples/svc_encoder_rtc.c)
+with the aom_dsp C kernels it uses
+(sums of absolute differences, variances, sub-pixel variances, Hadamard
+transforms, integral projections, low-precision quantization) and its speed,
+threshold, rate model and cost tables.
+
+The intra-only still encoder follows libaom 3.12.1's all-intra mode: the
+rate-distortion partition, intra mode, angle delta, filter intra,
+chroma-from-luma, palette and transform size and type searches
+(partition_search.c, intra_mode_search.c, intra_mode_search_utils.h with its
+gradient-histogram mode pruning model, palette.c, tx_search.c with its
+transform-domain distortion, encodetxb.c), the all-intra speed features
+(speed_features.c), the screen content detection (encoder.c), the quantizer
+(av1_quantize.c), the identity and Walsh-Hadamard forward transforms
+(av1_fwd_txfm1d.c, av1_fwd_txfm2d.c), the loop filter, CDEF and loop
+restoration searches (picklpf.c, pickcdef.c, pickrst.c, with the self-guided
+filter of av1/common/restoration.c) and the bitstream syntax of key frames
+and reduced still picture headers (bitstream.c, binary_codes_writer.c).
+
+The good-quality AV1 encoder follows libaom 3.12.1's good-quality mode at
+cpu-used 2 to 6: the golden frame group pyramid (gop_structure.c), the
+reference buffer assignment (encode_strategy.c), the first-pass statistics,
+scene cut detection and frame boosts (firstpass.c, pass2_strategy.c), the
+constant-quality and variable-bitrate quantizer selection (ratectrl.c), the
+temporal filter of alternate references (temporal_filter.c), the temporal
+dependency model (tpl_model.c), the n-step motion search (mcomp.c), the
+rate-distortion multiplier layer factors (rd.c), the transform type and size
+searches of inter blocks (tx_search.c), the compound reference, compound
+mode and skip mode syntax (bitstream.c), the recursive partition search over
+the unsplit, rectangular and split candidates (partition_search.c), the
+optimization of quantized coefficient levels by rate and distortion
+(encodetxb.c, txb_rdopt.c), the downsampled sums of absolute differences of
+the motion search (mcomp.c), the sub-pixel search tree of the temporal
+filter (mcomp.c), the choice of the motion mode of a block by its coded cost
+(rdopt.c, motion_mode_rd), the compound mode set of the mode search (rdopt.c)
+and the speed features that widen the all-intra searches of key frames
+(speed_features.c).
+
+Copyright:
+  Copyright (c) 2016, Alliance for Open Media. All rights reserved.
+
+AV1 is also covered by the Alliance for Open Media Patent License 1.0
+(https://aomedia.org/license/patent-license/), published in libaom's
+PATENTS file. It is a royalty-free patent license granted by the AOMedia
+members, not a condition of the license below, and is not reproduced here.
+
+-------------------------------------------------------------------------------
+libaom license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2016, Alliance for Open Media. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in
+   the documentation and/or other materials provided with the
+   distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS
+FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE
+COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING,
+BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+
+
+===============================================================================
+20. libavif
+===============================================================================
+
+Project:      libavif, the reference library of the AV1 Image File Format
+Source:       https://github.com/AOMediaCodec/libavif
+              (revision e4db889c6b574bf221a380e9bddde0273c942023)
+License text: LICENSE at the root of the repository
+License:      BSD 2-Clause License
+
+Derived Smalt packages:
+  internal.heif (the HEIF item parser: the container rules it enforces, the
+  clean aperture arithmetic and the loop count of image sequences; the
+  limited-range alpha expansion of the image canvas)
+  image.avif, image.avif.internal (AvifDecoder: the choice between the primary
+  item and the image sequence, the color, alpha and grid tile selection, the
+  grid validation, the limited-range alpha expansion and the unpremultiplying
+  of premultiplied alpha; AvifEncoder: the box layout of still images, alpha
+  auxiliary items, grids, Exif and XMP items and image sequences, the quality
+  scale, the automatic tiling, the orientation properties and the RGB to YUV
+  conversion defaults)
+
+Derivation: the semantics of src/read.c, src/write.c, src/avif.c, src/alpha.c
+and src/reformat.c followed in Java; no code was translated line by line.
+
+Copyright:
+  Copyright 2019 Joe Drago. All rights reserved.
+
+-------------------------------------------------------------------------------
+libavif license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright 2019 Joe Drago. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------
+
+Files: src/obu.c
+
+Copyright © 2018-2019, VideoLAN and dav1d authors
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+(INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
+ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------
+
+Files: third_party/iccjpeg/*
+
+In plain English:
+
+1. We don't promise that this software works.  (But if you find any bugs,
+   please let us know!)
+2. You can use this software for whatever you want.  You don't have to pay us.
+3. You may not pretend that you wrote this software.  If you use it in a
+   program, you must acknowledge somewhere in your documentation that
+   you've used the IJG code.
+
+In legalese:
+
+The authors make NO WARRANTY or representation, either express or implied,
+with respect to this software, its quality, accuracy, merchantability, or
+fitness for a particular purpose.  This software is provided "AS IS", and you,
+its user, assume the entire risk as to its quality and accuracy.
+
+This software is copyright (C) 1991-2013, Thomas G. Lane, Guido Vollbeding.
+All Rights Reserved except as specified below.
+
+Permission is hereby granted to use, copy, modify, and distribute this
+software (or portions thereof) for any purpose, without fee, subject to these
+conditions:
+(1) If any part of the source code for this software is distributed, then this
+README file must be included, with this copyright and no-warranty notice
+unaltered; and any additions, deletions, or changes to the original files
+must be clearly indicated in accompanying documentation.
+(2) If only executable code is distributed, then the accompanying
+documentation must state that "this software is based in part on the work of
+the Independent JPEG Group".
+(3) Permission for use of this software is granted only if the user accepts
+full responsibility for any undesirable consequences; the authors accept
+NO LIABILITY for damages of any kind.
+
+These conditions apply to any software derived from or based on the IJG code,
+not just to the unmodified library.  If you use our work, you ought to
+acknowledge us.
+
+Permission is NOT granted for the use of any IJG author's name or company name
+in advertising or publicity relating to this software or products derived from
+it.  This software may be referred to only as "the Independent JPEG Group's
+software".
+
+We specifically permit and encourage the use of this software as the basis of
+commercial products, provided that all warranty or liability claims are
+assumed by the product vendor.
+
+
+The Unix configuration script "configure" was produced with GNU Autoconf.
+It is copyright by the Free Software Foundation but is freely distributable.
+The same holds for its supporting scripts (config.guess, config.sub,
+ltmain.sh).  Another support script, install-sh, is copyright by X Consortium
+but is also freely distributable.
+
+The IJG distribution formerly included code to read and write GIF files.
+To avoid entanglement with the Unisys LZW patent, GIF reading support has
+been removed altogether, and the GIF writer has been simplified to produce
+"uncompressed GIFs".  This technique does not use the LZW algorithm; the
+resulting GIF files are larger than usual, but are readable by all standard
+GIF decoders.
+
+We are required to state that
+    "The Graphics Interchange Format(c) is the Copyright property of
+    CompuServe Incorporated.  GIF(sm) is a Service Mark property of
+    CompuServe Incorporated."
+
+------------------------------------------------------------------------------
+
+Files: contrib/gdk-pixbuf/*
+
+Copyright 2020 Emmanuel Gil Peyrot. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+------------------------------------------------------------------------------
+
+Files: android_jni/gradlew*
+
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+------------------------------------------------------------------------------
+
+Files: third_party/libyuv/*
+
+Copyright 2011 The LibYuv Project Authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of Google nor the names of its contributors may
+    be used to endorse or promote products derived from this software
+    without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

@@ -1,0 +1,8 @@
+com.github.auties00.smalt.desktop.imageio.WebpImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.AvifImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.HeicImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.ApngImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.GifImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.IcoImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.Jp2ImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.TiffImageWriterSpi

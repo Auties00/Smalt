@@ -1,0 +1,4 @@
+com.github.auties00.smalt.internal.provider.video.Vp9CodecProvider
+com.github.auties00.smalt.internal.provider.video.Av1CodecProvider
+com.github.auties00.smalt.internal.provider.video.ProResCodecProvider
+com.github.auties00.smalt.internal.provider.video.DnxhdCodecProvider

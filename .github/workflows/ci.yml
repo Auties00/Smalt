@@ -1,0 +1,193 @@
+# Pull requests and pushes: build, unit tests on the smoke data tier (SIMD and scalar), the javadoc
+# lints, the comment lint, the generated-code check and the third-party notices check. The full
+# conformance tier runs nightly (nightly.yml).
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '26'
+  # Tests read only what the smoke tier cached; a vector outside it skips its test instead of downloading.
+  SMALT_CONFORMANCE_DOWNLOAD: 'false'
+
+jobs:
+  test:
+    name: test (${{ matrix.os }}, ${{ matrix.simd }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Vector API kernels on x86 (AVX2/AVX-512) and on arm64 (NEON); the JIT guard runs in it.
+          - { os: ubuntu-latest, simd: vector, modules: '' }
+          - { os: windows-latest, simd: vector, modules: '' }
+          - { os: macos-latest, simd: vector, modules: '' }
+          # Scalar twins only. The it module is left out: its JIT guard forces the Vector API anyway.
+          - { os: ubuntu-latest, simd: scalar, modules: '-pl !it' }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # The differential tests use ffmpeg, ffprobe, cwebp and dwebp as black-box oracles and skip
+      # without them; Linux has them cheaply, the other runners skip those tests.
+      - name: Install the oracle tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+
+      - name: Restore the smoke test data
+        id: smoke-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.smalt/cache/conformance
+          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
+          enableCrossOsArchive: true
+
+      - name: Fetch the smoke test data
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
+        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+
+      - name: Build and test
+        shell: bash
+        run: mvn -B -ntp -fae ${{ matrix.modules }} verify -Dsmalt.test.simd=${{ matrix.simd == 'vector' }}
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.os }}-${{ matrix.simd }}
+          path: |
+            **/target/surefire-reports/
+            it/target/jit-guard/
+          retention-days: 7
+
+  javadoc:
+    name: javadoc
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Every {@link}, @see, @param and @throws must resolve, private members included.
+      - name: Javadoc reference lint
+        run: mvn -B -ntp -fae -Pjavadoc-check compile javadoc:javadoc-no-fork -DskipTests
+
+      # doclint "all" on the exported API: its warnings may not exceed tools/lint/baseline.tsv.
+      - name: Javadoc doclint on the exported API
+        shell: bash
+        run: |
+          mvn -B -ntp -fae -Pjavadoc-check compile javadoc:javadoc-no-fork@doclint-all -DskipTests | tee doclint-all.log
+          python tools/lint/doclint.py --javadoc-log doclint-all.log
+
+      # The jars Central receives: sources, and javadoc built with doclint on (all groups but missing).
+      - name: Sources and javadoc jars
+        run: mvn -B -ntp -fae -Prelease -pl '!it' package -DskipTests
+
+  lint:
+    name: comment lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # The comment rules of CLAUDE.md (Documentation, section 11) against the shrink-only baseline.
+      - name: Comment lint
+        run: python tools/lint/doclint.py
+
+      # A pull request may shrink the baseline but never grow it.
+      - name: Baseline only shrinks
+        if: github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          git show "origin/${{ github.base_ref }}:tools/lint/baseline.tsv" > base-baseline.tsv 2>/dev/null || : > base-baseline.tsv
+          if [ -s base-baseline.tsv ]; then python tools/lint/doclint.py --shrink-only base-baseline.tsv; fi
+
+  codegen:
+    name: generated code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # Every generated kernel must be exactly what its generator and template produce.
+      - name: Regenerate into a temporary copy and compare
+        run: python tools/codegen/check.py
+
+  notices:
+    name: third-party notices
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      # The committed notices must be exactly what the scripts produce from tools/notices.
+      - name: Regenerate the notices
+        run: bash tools/notices/build-notices.sh && python tools/notices/split-notices.py
+
+      - name: Check they match the committed files
+        run: |
+          git status --porcelain -- tools/notices '*/src/main/resources/META-INF/THIRD-PARTY-NOTICES'
+          git diff --exit-code -- tools/notices '*/src/main/resources/META-INF/THIRD-PARTY-NOTICES'
+          test -z "$(git status --porcelain --untracked-files=all -- '*/src/main/resources/META-INF/')"
+
+  # Inactive until the repository variable SMALT_API_BASELINE names a released version (from 1.0 on).
+  api-compat:
+    name: API compatibility
+    if: vars.SMALT_API_BASELINE != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - name: japicmp against ${{ vars.SMALT_API_BASELINE }}
+        run: mvn -B -ntp -fae -pl '!it' verify -DskipTests -Dsmalt.api.baseline=${{ vars.SMALT_API_BASELINE }}

@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    The BOM inherits smalt-build, not smalt-parent: an imported BOM carries its whole dependencyManagement, and the
+    parent's holds the test-only entries (JUnit, JMH, the test kit) that must not reach consumers. Metadata and the
+    release profile come from smalt-build; the versions below follow the BOM's own, which every Smalt artifact
+    shares.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.auties00</groupId>
+        <artifactId>smalt-build</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>../build/pom.xml</relativePath>
+    </parent>
+
+    <artifactId>smalt-bom</artifactId>
+    <packaging>pom</packaging>
+    <name>${project.groupId}:${project.artifactId}</name>
+    <description>Smalt bill of materials: aligns the versions of every Smalt artifact</description>
+
+    <dependencyManagement>
+        <dependencies>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-image</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-audio</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-video</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-mpeg</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-capture</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-raw</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-desktop</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.auties00</groupId>
+            <artifactId>smalt-aot</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        </dependencies>
+    </dependencyManagement>
+</project>

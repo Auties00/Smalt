@@ -1,0 +1,8 @@
+Smalt AOT: Third-Party Notices
+==============================
+
+Smalt AOT (Maven artifact com.github.auties00:smalt-aot, JPMS module
+com.github.auties00.smalt.aot) is part of Smalt, a pure-Java media library
+(https://github.com/Auties00/Smalt), and is licensed under the MIT License.
+
+This module contains no code derived from third-party projects.

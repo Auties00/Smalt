@@ -1,0 +1,197 @@
+package com.github.auties00.smalt.image.raw;
+
+import com.github.auties00.smalt.Media;
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.image.Images;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.io.MediaSource;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Decodes the CC0 sample files of every supported format and checks each description, the size of
+ * the rendering, and the rendering against the camera's own embedded preview (its image area, when it
+ * letterboxes a wider image): their luminance on a coarse grid must correlate, which catches wrong
+ * CFA layouts, bit packings, crops and levels.
+ */
+class RawSamplesTest {
+    private static final int GRID_WIDTH = 48;
+
+    private static final int GRID_HEIGHT = 32;
+
+    @ParameterizedTest(name = "{0}")
+    @DisplayName("describes, renders and recognizes the sample files")
+    @CsvSource({
+            "ADC_5D3_UNCOMPRESSED, DNG, 5760, 3840, RGGB, 16, true, Canon EOS 5D Mark III, 200",
+            "ADC_5D3_LOSSLESS, DNG, 5760, 3840, RGGB, 16, true, Canon EOS 5D Mark III, 200",
+            "ADC_5D3_LOSSY, DNG, 5760, 3840, -, 8, true, Canon EOS 5D Mark III, 200",
+            "ADC_5D3_LINEAR_LOSSLESS, DNG, 3960, 2640, -, 16, true, Canon EOS 5D Mark III, 200",
+            "ADC_5D3_LINEAR_LOSSY, DNG, 3960, 2640, -, 8, true, Canon EOS 5D Mark III, 200",
+            "DNG_5D3_14BIT_SMALL, DNG, 1920, 818, RGGB, 14, true, Canon EOS 5D Mark III, 200",
+            "DNG_5D3_16BIT_SMALL, DNG, 1904, 1064, RGGB, 16, true, Canon EOS 5D Mark III, 100",
+            "DNG_7D2_JPEG_XL, DNG, 5472, 3648, RGGB, 16, true, Canon EOS 7D Mark II, 4000",
+            "CR2_5D3, CR2, 5760, 3840, RGGB, 14, true, Canon EOS 5D Mark III, 200",
+            "DNG_PIXEL_2_XL, DNG, 4016, 3008, BGGR, 16, true, Pixel 2 XL, 51",
+            "DNG_LEICA_M9, DNG, 5212, 3468, RGGB, 8, true, M9 Digital Camera, 640",
+            "DNG_X100S, DNG, 4896, 3264, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 16, true, X100S, 200",
+            "DNG_PENTAX_KX, DNG, 4288, 2848, BGGR, 12, true, PENTAX K-x, 2000",
+            "PEF_PENTAX_KX, PEF, 4288, 2848, BGGR, 12, true, PENTAX K-x, 2000",
+            "DNG_IPHONE_7_PLUS, DNG, 4032, 3024, RGGB, 16, true, iPhone 7 Plus, 20",
+            "NEF_D7000_LOSSLESS_14, NEF, 4928, 3264, RGGB, 14, true, NIKON D7000, 100",
+            "NEF_D7000_LOSSY_12, NEF, 4928, 3264, RGGB, 12, true, NIKON D7000, 100",
+            "NEF_D5100_UNCOMPRESSED_14, NEF, 4928, 3264, RGGB, 14, true, NIKON D5100, 500",
+            "NEF_D70S_LOSSY_12, NEF, 3008, 2000, BGGR, 12, true, NIKON D70s, 0",
+            "NEF_D300S_LOSSLESS_12, NEF, 4288, 2848, RGGB, 12, true, NIKON D300S, 0",
+            "NEF_D300S_LOSSLESS_14, NEF, 4288, 2848, RGGB, 14, true, NIKON D300S, 0",
+            "NEF_D5600_LOSSY_12_SPLIT, NEF, 6000, 4000, RGGB, 12, true, NIKON D5600, 12800",
+            "NEF_D7000_LOSSY_14_SPLIT, NEF, 4928, 3264, RGGB, 14, true, NIKON D7000, 0",
+            "NEF_E5700, NEF, 2576, 1924, YCGM, 12, false, E5700, 0",
+            "NEF_E8400, NEF, 3280, 2454, BGGR, 12, true, E8400, 0",
+            "NEF_E8800, NEF, 3280, 2454, BGGR, 12, true, E8800, 0",
+            "ARW_NEX6_CRAW_12, ARW, 4912, 3264, RGGB, 14, true, NEX-6, 200",
+            "ARW_A7M2_UNCOMPRESSED_14, ARW, 6000, 4000, RGGB, 14, true, ILCE-7M2, 100",
+            "DNG_RICOH_GR, DNG, 4928, 3264, RGGB, 12, true, GR, 100",
+            "DNG_SAMSUNG_GX20, DNG, 4672, 3104, BGGR, 12, true, SAMSUNG GX20, 400",
+            "ORF_EM10, ORF, 4608, 3456, RGGB, 12, true, E-M10, 200",
+            "ORF_E410, ORF, 3648, 2736, RGGB, 12, true, E-410, 400",
+            "ORF_E1, ORF, 2560, 1920, GRBG, 12, true, E-1, 100",
+            "ORF_XZ2, ORF, 3968, 2976, RGGB, 12, true, XZ-2, 100",
+            "RW2_GF6, RW2, 4592, 3448, GRBG, 12, true, DMC-GF6, 160",
+            "RW2_GH5S, RW2, 3680, 2760, RGGB, 14, true, DC-GH5S, 800",
+            "RW2_S1, RW2, 6000, 4000, RGGB, 14, true, DC-S1, 800",
+            "RW2_S5M2, RW2, 6000, 4000, RGGB, 14, true, DC-S5M2, 100",
+            "RW2_G9M2, RW2, 5776, 4336, RGGB, 16, true, DC-G9M2, 100",
+            "PEF_IST_D, PEF, 3008, 2008, RGGB, 12, true, PENTAX *ist D, 200",
+            "PEF_IST_DL, PEF, 3008, 2000, RGGB, 12, true, PENTAX *ist DL, 200",
+            "PEF_K5, PEF, 4928, 3264, BGGR, 14, true, PENTAX K-5, 160",
+            "PEF_KS1, PEF, 5472, 3648, RGGB, 12, true, PENTAX K-S1, 100",
+            "PEF_K3III_MONOCHROME, PEF, 6192, 4128, -, 14, true, PENTAX K-3 Mark III Monochrome, 200",
+            "CR2_7D_SRAW, CR2, 2592, 1728, -, 16, true, Canon EOS 7D, 1250",
+            "CR2_7D_MRAW, CR2, 3888, 2592, -, 16, true, Canon EOS 7D, 1250",
+            "CR2_5D3_SRAW, CR2, 2880, 1920, -, 16, true, Canon EOS 5D Mark III, 200",
+            "CR2_40D_SRAW, CR2, 1944, 1296, -, 16, true, Canon EOS 40D, 100",
+            "RAF_XA1, RAF, 4896, 3264, RGGB, 12, true, X-A1, 1000",
+            "RAF_XE2, RAF, 4896, 3264, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E2, 200",
+            "RAF_XT2_COMPRESSED, RAF, 0, 0, -, 0, false, X-T2, 400",
+            "CR3_250D, CR3, 0, 0, -, 0, false, Canon EOS 250D, 100",
+            "MRW_ALPHA_7D, MRW, 3008, 2000, RGGB, 12, true, ALPHA-7 DIGITAL, 200",
+            "MRW_ALPHA_7D_2025, MRW, 3008, 2000, RGGB, 12, true, ALPHA-7 DIGITAL, 100",
+            "MRW_ALPHA_SWEET, MRW, 3008, 2000, RGGB, 12, true, ALPHA SWEET DIGITAL, 400",
+            "MRW_DIMAGE_5, MRW, 2048, 1544, RGGB, 12, true, DiMAGE 5, 100",
+            "MRW_DIMAGE_A2, MRW, 3264, 2448, RGGB, 12, true, DiMAGE A2, 64",
+            "MRW_DYNAX_5D, MRW, 3008, 2000, RGGB, 12, true, DYNAX 5D, 100",
+            "MRW_DYNAX_7D, MRW, 3008, 2000, RGGB, 12, true, DYNAX 7D, 100",
+            "MRW_MAXXUM_7D, MRW, 3008, 2000, RGGB, 12, true, MAXXUM 7D, 200",
+            "CRW_D30, CRW, 2160, 1440, RGGB, 12, true, Canon EOS D30, 1600",
+            "CRW_D60, CRW, 3072, 2048, RGGB, 12, true, Canon EOS D60, 100",
+            "CRW_10D, CRW, 3072, 2048, RGGB, 12, true, Canon EOS 10D, 200",
+            "CRW_10D_3164, CRW, 3072, 2048, RGGB, 12, true, Canon EOS 10D, 100",
+            "CRW_10D_3165, CRW, 3072, 2048, RGGB, 12, true, Canon EOS 10D, 200",
+            "CRW_300D, CRW, 3072, 2048, RGGB, 12, true, Canon EOS 300D DIGITAL, 100",
+            "CRW_300D_3162, CRW, 3072, 2048, RGGB, 12, true, Canon EOS 300D DIGITAL, 100",
+            "CRW_DIGITAL_REBEL, CRW, 3072, 2048, RGGB, 12, true, Canon EOS DIGITAL REBEL, 1600",
+            "CRW_G1, CRW, 2048, 1536, YCGM, 10, false, Canon PowerShot G1, 50",
+            "CRW_G5, CRW, 2592, 1944, RGGB, 12, true, Canon PowerShot G5, 100",
+            "CRW_G6, CRW, 3072, 2304, RGGB, 12, true, Canon PowerShot G6, 100",
+            "X3F_DP1, X3F, 2640, 1760, -, 12, true, SIGMA DP1, 400",
+            "X3F_SD14, X3F, 2640, 1760, -, 12, true, SIGMA SD14, 100",
+            "X3F_SD15, X3F, 2640, 1760, -, 12, true, SIGMA SD15, 50",
+            "X3F_SD1_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA SD1 Merrill, 100",
+            "X3F_DP2_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA DP2 Merrill, 100",
+            "X3F_DP2_QUATTRO, X3F, 0, 0, -, 0, false, SIGMA dp2 Quattro, 100"
+    })
+    void sample(RawSamples sample, RawFormat format, int width, int height, String cfa, int bits, boolean decodable,
+                String model, long iso) {
+        try (var source = MediaSource.of(sample.fetch())) {
+            var info = RawDecoder.info(source);
+            assertEquals(format, info.format());
+            assertEquals(width, info.width());
+            assertEquals(height, info.height());
+            assertEquals(cfa, info.cfaPattern().map(Object::toString).orElse("-"));
+            assertEquals(bits, info.bitsPerSample());
+            assertEquals(decodable, info.isDecodable());
+            assertEquals(model, info.model().orElseThrow());
+            assertEquals(iso, info.iso().orElse(0));
+            var expected = format == RawFormat.DNG ? ImageFormat.DNG : ImageFormat.RAW;
+            assertEquals(expected, Images.detect(source).orElse(null));
+            var media = Media.probe(source);
+            assertEquals(expected, media.imageFormat().orElseThrow());
+            assertEquals(model, media.tags().get("model"), media.tags().toString());
+            if (!info.previews().isEmpty()) {
+                var hinted = Images.decode(source, ImageDecoderOptions.builder().minSize(200, 130).build());
+                assertTrue(hinted.picture().width() >= 200 || hinted.picture().height() >= 130);
+            }
+            if (!decodable) {
+                assertThrows(MediaException.Unsupported.class, () -> RawDecoder.decode(source));
+                return;
+            }
+            var image = RawDecoder.decode(source);
+            assertEquals(width, image.picture().width());
+            assertEquals(height, image.picture().height());
+            assertEquals(width, Images.probe(source).width());
+            var preview = RawDecoder.extractPreview(source);
+            if (preview.isPresent()) {
+                assertArrayEquals(preview.get(), RawDecoder.extractPreview(source, MediaLimits.DEFAULT).orElseThrow());
+                var tight = MediaLimits.builder().maxBytes(preview.get().length - 1).build();
+                assertThrows(MediaException.LimitExceeded.class, () -> RawDecoder.extractPreview(source, tight));
+                var camera = letterboxed(Images.decode(MediaSource.of(preview.get())).picture(), width, height);
+                var correlation = correlation(grid(image.picture()), grid(camera));
+                assertTrue(correlation > 0.9, "luminance correlation with the preview " + correlation);
+            }
+        }
+    }
+
+    // the image area of a preview letterboxed to show a wider image across its whole width
+    static Picture letterboxed(Picture preview, int width, int height) {
+        var shown = (int) ((long) preview.width() * height / width);
+        if (shown > preview.height() - 2) {
+            return preview;
+        }
+        return ImageOps.crop(preview, 0, (preview.height() - shown) / 2, preview.width(), shown);
+    }
+
+    static double[] grid(Picture picture) {
+        var small = ImageOps.toRgba(ImageOps.resize(picture, GRID_WIDTH, GRID_HEIGHT,
+                com.github.auties00.smalt.image.ops.ResizeFilter.AREA));
+        var values = new double[GRID_WIDTH * GRID_HEIGHT];
+        var pixels = small.pixels();
+        for (var y = 0; y < GRID_HEIGHT; y++) {
+            for (var x = 0; x < GRID_WIDTH; x++) {
+                var at = y * small.stride() + x * 4;
+                values[y * GRID_WIDTH + x] = 0.2126 * (pixels[at] & 0xFF) + 0.7152 * (pixels[at + 1] & 0xFF)
+                        + 0.0722 * (pixels[at + 2] & 0xFF);
+            }
+        }
+        return values;
+    }
+
+    static double correlation(double[] a, double[] b) {
+        var meanA = 0.0;
+        var meanB = 0.0;
+        for (var i = 0; i < a.length; i++) {
+            meanA += a[i];
+            meanB += b[i];
+        }
+        meanA /= a.length;
+        meanB /= b.length;
+        var covariance = 0.0;
+        var varianceA = 0.0;
+        var varianceB = 0.0;
+        for (var i = 0; i < a.length; i++) {
+            covariance += (a[i] - meanA) * (b[i] - meanB);
+            varianceA += (a[i] - meanA) * (a[i] - meanA);
+            varianceB += (b[i] - meanB) * (b[i] - meanB);
+        }
+        return covariance / Math.sqrt(varianceA * varianceB);
+    }
+}

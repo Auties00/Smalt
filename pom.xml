@@ -1,0 +1,370 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    smalt-parent: the reactor and the parent of every code artifact (dependency versions, compiler, test and jar
+    configuration). Metadata, plugin versions and the release profiles come from smalt-build (build/pom.xml),
+    which smalt-bom inherits too. child.*.inherit.append.path="false" is repeated here because the flag applies
+    to the children of the pom that declares it.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+         child.project.url.inherit.append.path="false">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.github.auties00</groupId>
+        <artifactId>smalt-build</artifactId>
+        <version>0.1.0-SNAPSHOT</version>
+        <relativePath>build/pom.xml</relativePath>
+    </parent>
+
+    <artifactId>smalt-parent</artifactId>
+    <packaging>pom</packaging>
+    <name>${project.groupId}:${project.artifactId}</name>
+    <description>Smalt: pure-Java image, audio and video codecs, containers, processing and capture</description>
+
+    <scm child.scm.connection.inherit.append.path="false"
+         child.scm.developerConnection.inherit.append.path="false"
+         child.scm.url.inherit.append.path="false"/>
+
+    <modules>
+        <module>build</module>
+        <module>bom</module>
+        <module>core</module>
+        <module>image</module>
+        <module>audio</module>
+        <module>video</module>
+        <module>mpeg</module>
+        <module>capture</module>
+        <module>raw</module>
+        <module>desktop</module>
+        <module>aot</module>
+        <module>it</module>
+    </modules>
+
+    <properties>
+        <junit.version>5.13.4</junit.version>
+        <jmh.version>1.37</jmh.version>
+        <chicory.version>1.7.5</chicory.version>
+        <!-- false runs every kernel on its scalar twin (CI's scalar leg): mvn test -Dsmalt.test.simd=false -->
+        <smalt.test.simd>true</smalt.test.simd>
+        <!-- jdk.management: the allocation tests read the per-thread allocation counter reflectively -->
+        <smalt.test.argLine>--add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -Xss4m -Dsmalt.simd=${smalt.test.simd}</smalt.test.argLine>
+        <!-- The release profile sets it: these test jars feed only the unpublished it module, so they are not published
+             (core's test jar, the test kit every module's tests compile against, is built in every profile) -->
+        <smalt.skipTestJar>false</smalt.skipTestJar>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-core</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-image</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-audio</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-video</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-mpeg</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-capture</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-raw</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-desktop</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-aot</artifactId>
+            <version>${project.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-core</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-image</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-audio</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-video</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-mpeg</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-capture</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <dependency>
+            <groupId>${project.groupId}</groupId>
+            <artifactId>smalt-raw</artifactId>
+            <version>${project.version}</version>
+            <type>test-jar</type>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-core</artifactId>
+            <version>${jmh.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.dylibso.chicory</groupId>
+            <artifactId>runtime</artifactId>
+            <version>${chicory.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.dylibso.chicory</groupId>
+            <artifactId>wasi</artifactId>
+            <version>${chicory.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.dylibso.chicory</groupId>
+            <artifactId>compiler</artifactId>
+            <version>${chicory.version}</version>
+        </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <!-- Every module's tests use JUnit and may hold JMH benchmarks (the JMH annotation processor runs on test sources) -->
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.openjdk.jmh</groupId>
+            <artifactId>jmh-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <configuration>
+                        <release>${smalt.java.release}</release>
+                    </configuration>
+                    <executions>
+                        <!-- Doc comments the doclet would drop, and exported API naming a type its module does not export -->
+                        <execution>
+                            <id>default-compile</id>
+                            <configuration>
+                                <compilerArgs>
+                                    <arg>-Xlint:dangling-doc-comments,exports</arg>
+                                </compilerArgs>
+                            </configuration>
+                        </execution>
+                        <execution>
+                            <id>default-testCompile</id>
+                            <configuration>
+                                <annotationProcessorPaths>
+                                    <annotationProcessorPath>
+                                        <groupId>org.openjdk.jmh</groupId>
+                                        <artifactId>jmh-generator-annprocess</artifactId>
+                                        <version>${jmh.version}</version>
+                                    </annotationProcessorPath>
+                                </annotationProcessorPaths>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <configuration>
+                        <argLine>${smalt.test.argLine}</argLine>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <executions>
+                        <execution>
+                            <id>test-jar</id>
+                            <goals>
+                                <goal>test-jar</goal>
+                            </goals>
+                            <configuration>
+                                <skipIfEmpty>true</skipIfEmpty>
+                                <skip>${smalt.skipTestJar}</skip>
+                            </configuration>
+                        </execution>
+                    </executions>
+                </plugin>
+                <!--
+                    Runs JMH benchmarks and scratch mains from src/test/java against the test class path:
+                    mvn -DskipTests test-compile exec:exec -Dexec.executable=java
+                        -Dexec.args="add-modules-flag -cp %classpath org.openjdk.jmh.Main <regex>"
+                -->
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <configuration>
+                        <classpathScope>test</classpathScope>
+                    </configuration>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+            </plugin>
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <!--
+            Javadoc lints, two runs of the javadoc tool (CLAUDE.md, Documentation section 11):
+            - javadoc:javadoc-no-fork (default-cli): doclint "reference" on every member, private included; fails on
+              a {@link}, @see, @param or @throws that does not resolve.
+            - javadoc:javadoc-no-fork@doclint-all: doclint "all" on the exported API (protected and public members
+              of the unqualified-exported packages), missing comments and tags included. It never fails the build:
+              tools/lint/doclint.py reads its warnings from the build log and gates them with tools/lint/baseline.tsv.
+            Compile in the same invocation, and hand the second run's log to the lint (its javadoc-log option):
+                mvn -Pjavadoc-check -fae compile javadoc:javadoc-no-fork -DskipTests
+                mvn -Pjavadoc-check -fae compile javadoc:javadoc-no-fork@doclint-all -DskipTests > javadoc.log
+        -->
+        <profile>
+            <id>javadoc-check</id>
+            <build>
+                <plugins>
+                    <!--
+                        The javadoc plugin skips a module whose options and source list are unchanged, without
+                        looking at the sources' contents, and a skipped run prints no doclint output: drop its
+                        record of the previous run so that every run lints the current sources.
+                    -->
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-clean-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>javadoc-stale-data</id>
+                                <phase>initialize</phase>
+                                <goals>
+                                    <goal>clean</goal>
+                                </goals>
+                                <configuration>
+                                    <excludeDefaultDirectories>true</excludeDefaultDirectories>
+                                    <filesets>
+                                        <fileset>
+                                            <directory>${project.build.directory}</directory>
+                                            <includes>
+                                                <include>*stale-data.txt</include>
+                                            </includes>
+                                        </fileset>
+                                    </filesets>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <configuration>
+                            <show>private</show>
+                            <doclint>reference</doclint>
+                            <failOnError>true</failOnError>
+                            <failOnWarnings>false</failOnWarnings>
+                            <detectLinks>false</detectLinks>
+                            <detectJavaApiLink>false</detectJavaApiLink>
+                            <detectOfflineLinks>false</detectOfflineLinks>
+                            <additionalOptions combine.children="append">
+                                <additionalOption>-Xmaxerrs 100000</additionalOption>
+                                <additionalOption>-Xmaxwarns 100000</additionalOption>
+                            </additionalOptions>
+                        </configuration>
+                        <executions>
+                            <execution>
+                                <id>doclint-all</id>
+                                <!-- Run only when named on the command line -->
+                                <phase>none</phase>
+                                <goals>
+                                    <goal>javadoc-no-fork</goal>
+                                </goals>
+                                <configuration>
+                                    <show>protected</show>
+                                    <doclint>all</doclint>
+                                    <failOnError>false</failOnError>
+                                    <quiet>false</quiet>
+                                    <outputDirectory>${project.build.directory}/doclint-all</outputDirectory>
+                                    <!-- The exported API only: internal packages are exported to Smalt modules at most -->
+                                    <excludePackageNames>*.internal:*.internal.*</excludePackageNames>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!-- The release profile itself is in smalt-build; here it only stops building the unpublished test jars -->
+        <profile>
+            <id>release</id>
+            <properties>
+                <smalt.skipTestJar>true</smalt.skipTestJar>
+            </properties>
+        </profile>
+    </profiles>
+</project>

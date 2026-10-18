@@ -1,0 +1,9 @@
+com.github.auties00.smalt.internal.provider.image.BmpCodecProvider
+com.github.auties00.smalt.internal.provider.image.GifCodecProvider
+com.github.auties00.smalt.internal.provider.image.IcoCodecProvider
+com.github.auties00.smalt.internal.provider.image.Jp2CodecProvider
+com.github.auties00.smalt.internal.provider.image.JpegCodecProvider
+com.github.auties00.smalt.internal.provider.image.JxlCodecProvider
+com.github.auties00.smalt.internal.provider.image.PngCodecProvider
+com.github.auties00.smalt.internal.provider.image.TiffCodecProvider
+com.github.auties00.smalt.internal.provider.image.WebpCodecProvider

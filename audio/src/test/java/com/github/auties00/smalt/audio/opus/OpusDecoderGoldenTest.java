@@ -1,0 +1,114 @@
+package com.github.auties00.smalt.audio.opus;
+
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.security.MessageDigest;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.stream.Stream;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+
+/**
+ * Checks that the decoder is bit-exact with the libopus 1.5.2 reference decoder (float build
+ * without SIMD): every RFC 8251 vector is decoded like {@code opus_demo -d} at 48 kHz and 24 kHz stereo,
+ * 16 kHz and 12 kHz mono and 8 kHz stereo, once intact and once with every seventh packet replaced by an empty packet (which
+ * runs the packet-loss concealment exactly as {@code opus_demo} does), and the SHA-256 of the
+ * 16-bit output must equal the reference's.
+ */
+class OpusDecoderGoldenTest {
+    /** Vector, rate, channels, SHA-256 of the intact decode, SHA-256 of the lossy decode. */
+    private static final String[] GOLDENS = {
+            "01 48000 2 6587e6d8a04725a7b5e11d00e8d8df923d01d4eb84e98bf63199cf4951f6dcef fa6752925bfdd4eb21741e22bbd566e2d431c9dc1c944999aeeee26f73540fe7",
+            "01 16000 1 14996d2fa667ed652485daf5116ce9cb25e0f99ea14e75a754062a52662f35cc c6207aa2b70f2309b77545e91e7022bbe064c9ac38b93753a783a227e57bd2a8",
+            "02 48000 2 4ad3b7aeaea242acc96cafebee69edb0914abc2e46c0c884f812ce10bbee4dbc b9ec5c8f926cdf71311730c5a70efe0f19a1165b6fc344942603731eebcb6eee",
+            "02 16000 1 adad099a4c955b5a2c7926902c287e6c5c04bf232600acefd343601a258d492f 62cb13775b811b7e800cbb74e41e0e71ad4412f4707f4b38a07573d74beeea19",
+            "03 48000 2 e00f4ee27f007d849fb67f4386db93254631d2ff31b580394d854819560f1bc7 82860b3d4f8bbe7893b7ba944545fd48f83e0d7e920f266108fd09f036cf3314",
+            "03 16000 1 b361fe6d30f06d13778328667de6eb7cfc098ebb46345dc07fcb3fc4337da7fb 9d1c21f1aff6d89a0658258852256b0473b35cae5ad610a8316209a320aaa06e",
+            "04 48000 2 ce7450716f4911284332e76dab66518dcfd5c84e320c0a8a54014e658f5c6908 dec198198c84499cec36994ca6a55c62f7354f52cb2dcd968bf3bee3a00b7eb0",
+            "04 16000 1 c29a0dcca024b208efb09dbf19e395bb9f9ffe15eae1a0c2b72a6b2213717527 19bef49aee00d8088a72adb6182f5d95aca2718d84d82ad06b1944f92de52d0a",
+            "05 48000 2 5626f1cd051675af88da5c68c7a195d27ac653d9d3a972be1368337af1251191 4049a14220b1af84a5df6d0b942025e1aa95d1a4fd0ad3a7e2ec393d33f1c020",
+            "05 16000 1 eab67e1c312427aa110322a15660f1b35020664277b0597aaff66b972416c71f 09aeaf68e90b7e03e5de925ec47ec41f74ad990a2a332a869f97109250c1c5e2",
+            "06 48000 2 3eb35dde1395fc269315ede0f077ad5be04cf08044476a51166f1e962d109f69 449a9905c2c21dec498385df633d670df9924e86a326d885156fe2508acc8876",
+            "06 16000 1 1ff987eabfe6f55883ec0a81c1556ec320c645ea52226e5dc945d20715fbff89 0b136f02847bd940f872021b63139595f6484d243215a7d4cefbea28b1f46c51",
+            "07 48000 2 5f844a50372024b7f33d41980aba1eba8a0cfc2f8b364174a70e1366f53b7fab cbf15dc33cb2fb424339b3b1f6622f7daf42e8f92d9b13960965e90dc33af91a",
+            "07 16000 1 bcfd92aa6dc821bcd9f956d29672ded71b705d42fd10bf482d860ae70e4bebeb c7aa37e35d0ef00eae7eefa7b945df7c6a3a79bdde6f3d331fb1a8a8b10e2fb3",
+            "08 48000 2 78e4ecb9f66d6138569e2fe455445805dc1ec67d2109584fad3fd12fa21e235a 5defd8ee28fffb5f9d6a1f5414f7ee2596785f582dadc12d65a474e01f5474f5",
+            "08 16000 1 aa548de31d1daf43a5524446bc83db05f3c66c1af2aba554d03a0d490a37d813 cce54557f3b49f0d389c8758e0e66bd31b0dd70766513ac5901d3fac722c268b",
+            "09 48000 2 7b16aaafd46daa49b53ca1712865e9cf5f081269334c6b14cb3fae380d562da9 a0008b5133b9a1237c23c9fbed08c4c0723e949831b996a3bd4de229b12c6d0f",
+            "09 16000 1 a5d6ae87c2c04a845d0adac06117992d131288047e149a62286859da59f12abd c66a762e0b7d2bce0f430ad13a766ee16ac53fe5cc345d0e0fa875b52d3f666b",
+            "10 48000 2 d74a3b3b030cd7ec5c1b2d681e6014bce28d004eae22e4e99d1a1097c85522f9 ca4aaaf65bf688f77a53d7e47e812eab5a2f97593491f142e5b22a1d0c97e9e7",
+            "10 16000 1 6465ac1d524c8afffd8761434b487a5d5c1f6503251de4ac63acf4da25eec925 82f6e7ab7a914ac884543a7db92684894ef65ee905a327c17ed51bc84b0ac81a",
+            "11 48000 2 4d7712a51723790d72c0379a32fdb3df2499b9c7cee5cbd46697fe8f8eb5ba26 a5a9f23ee6cf8303236af632f25da7074e301f5e600e615f400d4bfda42a6e6e",
+            "11 16000 1 95b5ce34f467a125d8836e9df462333c6c9e5c202d0cd405a3ce61fbcc5908ad cabcdd00e95bfcc49bf38315cd28b5cc057a1cad887112bbaa190b970fdd0e5a",
+            "12 48000 2 bd7f89a4cb02fb8dcb8fca4425bbcfdbdb3487beed9cd9d49883beb0960e617b 783c312e6469a345232623e9c441120aa7a999fbc9ff1dc08fa39831f9d8cdb1",
+            "12 16000 1 54f82f8b868a9c43ec51edf6d88fa2382d9e0ca89c9f194941b5a0fe46f7c637 18ca8a2c4b50bc350e9098b56cce00171a8b82d0c9d8918dea6ba5f9446c1da1",
+            "01 24000 2 afe42064e27d955b85b2be0249cc29245dbcb13e88ea9c8cd40ae7233b8b8522 202855eed73fa841541c77ac2a5d9198fd7b40828853527730e8ca2886bac3f4",
+            "01 12000 1 4d64cec56a4cbb18a30dfbf3fc46a9492fd9e4ce376cc888722c0adb343150a0 8be7c99e17a2002b6d689306924232252bd5df0295bb76690314553763e38fbd",
+            "01 8000 2 b63f501b2d32ab42916ff30434068bd237189186d6a1b1bbeede669a120e193e 6cbe3896639ef676142642d67df6dbb8ab1eabecc4a3728708de5b1036772859",
+            "02 24000 2 992b6b74e83e433e5aefcee6041a0789f7cef9c3b754c56ee33c867af01783f7 98086d5f11ccd420969073b096d44f6e937ba1741cfecc570f4a27539ccfe9f9",
+            "02 12000 1 e815e62d80d0726273fc748bf2df6905d7404c383613816309315cf18e610498 a8c8cbaaff73d7e2133ae9d740eb30ca14e3e70aaa52879e76409111c45d2403",
+            "02 8000 2 4c66762001f1b612fe3a07b25731361b460d82dbefa62864ea6048c1f1826097 43ff9bc7303342d1000265e0b85bf8ed1ef4716b455f52ac45b4123e7ff4c83c",
+            "03 24000 2 cc55826534587959a9dad7692c1774893c46267a3cab84a91c88da4cdbac85a9 cb36d542ce01a06ca827aae6aa529b65871bba903649e9ab5914d07f3bc56af5",
+            "03 12000 1 9b67f878718b7f3da774676b3c5f94ae816147549331bec28de8e5c15e70f46e af61100ca7bcb63d65e5e8f354504c8176d5a658ef158dc24e6e330d822d8767",
+            "03 8000 2 6e22f0ea150d26556ec4372066d828efea18c28585361a510685a9cac90fae85 35a65efcda27f7bd0010da074bf2e7644a52ce04540e43f4133404f5a685cd6a",
+            "04 24000 2 39f408a2105e7c5600ba4475c1c8930144d07bea74bb15be735b6e344e7e9362 50da062b28a30529739bc32b5014d0f758d1fc9a3ae0bb7c149b370a544588f0",
+            "04 12000 1 2b7f4c4348ac62a3337607c2338dd4d0e2213de0d39e198af2fb8b53bd609eb3 e6e0138e4b01d658a2940b3b06a0d2c8264f56fe0f4b5e99e8100957c98fbae4",
+            "04 8000 2 b00196f0a6912d9db1a826433924a0337d0cc542f2d64adbcdd68bc092e3000e d069bc399caddfe80d57709dc1d316c6982054c81ce68aa41d4a1f9be1567dba",
+            "05 24000 2 5711ac08d2e8f7ed36f5b36cdd8a7ced0171bb32bc1a75374b59a50bc215eb4a ad00c621987b687a7a376ef315e7eacdc6f2ea7277088f0af7f8c12031b61a76",
+            "05 12000 1 2ff76a1533dee9e0c003874c31b992cf16e2dc85ca9d30dd5c7f8d81d0bbe171 ab81ef2349b7f49e4751f4e2159c04996c981726466b695315015443a72fdb2b",
+            "05 8000 2 57cd78e21031678858c7a7b481d197ead528dd2640f024962517e5272696f4ed a47e89dd0303290cf58586c2bd33df78c21e27e2615ac5392c6011a97a9c2705",
+            "06 24000 2 383515f0adbb1f77a35ce707ad4876d4eb08e2583606973c1c3403017f3a5b0e 80fde840de9481d68c3986dcf90ac9f8bd85bce188502e154b81f9e721ae472a",
+            "06 12000 1 cadd4b96bef52fa84802597715b9779a83c71ae509351b9d7cee66d4ef6ff14d 65e8cba5fea885247c33a913b34af1f7b030962c60d6a136093a7d3b3fe2e816",
+            "06 8000 2 3f189f4d0d684188c4e5c31ad0148fef713eab4be1c83c40fdd9ee3e33fd73d2 f577a85d0d34916264d37229b3d0b280c0915f9dc1da67a12a0910d78485d841",
+            "07 24000 2 005547ed45998151aa5ff49a10b281195161cb6b691b3a8b87e9bfa050dd3274 000fb50d2417b48d991f17020aa7477e83558ed5310ea680db1cf3e175bdcd78",
+            "07 12000 1 fd67c01bf81ad004566c352f0eae9dd69c2a262047d1da2789229a07c3d336ed 2b6b652f0814b5022b16b291d31ce1410e8bfec23c76cceeb38cd9f84c108d35",
+            "07 8000 2 c1875680b14c484d5b8162bacbb819ed1c3cb02bae3cb69fec4a6d39e1efd67c 728a84a35a92e53a71a72de279eb5f4c061f4ac78af62cf33f7603bd45ee495f",
+            "08 24000 2 cdd594ea2bd29a7767cfc4e91e768185ec3c3185190f97d1bdabfd486170938a dc322e059f9c0c710e725b421b10642f818209ddd2fc676ba414c09de84ae09f",
+            "08 12000 1 b1d38f125e4755e5dc55403c36ff139fc82d361baa7eba19d3f35847922f6a55 b4d534726b83336aada691e779df4e1feb0beed098b647bec2a67525ad6bd3ec",
+            "08 8000 2 4d13cc295ff19c0c0bf7b7a1f7beee0295086bd00de335658d3eee18d4d92564 422f49587fe8984b4bd84b262da34855c81a5fd4968322a72404058533979a7e",
+            "09 24000 2 2a555e6a8cf2be38afe717d805a8182e4a158d42adf26fdf2613e264080bf284 06cf60bec58390939ef8aa72d31f2eb0f5442f355b62f6d930008e570029a2b7",
+            "09 12000 1 cf495983a91a52b293aeb54ce80d3769d91835e9e2ee96f7138ff465e30594ef 850330c6251c8add8915a7640f8596f8f84b40a08d096f6633e79982afe808b7",
+            "09 8000 2 a9433b8fe26501d530a2fc7dcd92f6ff61d38a23556609d39c99c9317ad513dc bd00719dd86846a93d2d8333efbed3f66c06815962755836b0e3be0d61e8fb3a",
+            "10 24000 2 b114e987c94737065e200a1737730919c14ae2feb5b054d71f1ca3be07164ec8 51aad37476c26f0d36b1cafa2bab0fd80eced7791d7c977568f0db35f27affac",
+            "10 12000 1 ec1426216c021ed052ecee36575fbf84962a56f8b87400c6b535bc0df23cd433 3ca9c3b6a30ef98a877b03b2ec2d70ae0f83fd04434e5bbf011432313e1a4cb5",
+            "10 8000 2 5dc6733ca0084ac6afef3e846262d1969c7baa6daf3dcf0b6823827ea7a96017 eeb48cace354011631aa147c471179184447addb37d07a8215bf246065efa8c4",
+            "11 24000 2 82e63272a0021af112f9c7e5301c3ee5d82abdcc2679447eabbf0a4355605005 89ae1cfaf16c19d66fde4e2ccf2e5b2aac78ca9f797c9bfa2fa7832d989cf183",
+            "11 12000 1 72a5bcd5e314fb79dfd8c1fbe66502d5ddebb6b1c496ba6487940b3bba102d15 1707fac764db8a6264fb462165625f221362b136308b5e06f5cdb4688d7a7733",
+            "11 8000 2 1e6a0918479466d7cbe4c020fe657b0a2f9e1ab8cc7a594ea0532f84d850527a 5b38b378f5b3dd0878b1e6011072a250f771ec15ce9d088706bd01ac9872bf86",
+            "12 24000 2 98a27fe5f870980366580d720cbb7a3c7f6a3f3b74551d1ffb3f7ef37d028ac1 d2469ae608c2bc8e6c50adca2a29b19c8096573648e9a61f0f22cc68f993402b",
+            "12 12000 1 f0e92b64736ec2bd728839a6ce6328b9d9420eb496190f1a24789a70843d0f7a 82fa1228d1a14654c3a6fe1a08c48484a99c9a9aa0e9034e86c858e74df47ac1",
+            "12 8000 2 8ca3d64c2029f48f07a3d2d94f9262d00fa29c6590f4ae0250824f8ac3af27d8 d4bed80aa3ea1d0c770c4ebad3d15dec6c7129cc62743ecc2efa388ca925e7a7",
+    };
+
+    static Stream<String> goldens() {
+        return Stream.of(GOLDENS);
+    }
+
+    static String hash(short[] samples) throws Exception {
+        var bytes = new byte[samples.length * 2];
+        for (var i = 0; i < samples.length; i++) {
+            bytes[2 * i] = (byte) samples[i];
+            bytes[2 * i + 1] = (byte) (samples[i] >> 8);
+        }
+        return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(bytes));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("goldens")
+    @DisplayName("decodes intact and lossy streams bit-exactly like the libopus reference")
+    void bitExact(String line) throws Exception {
+        var f = line.split(" ");
+        var rate = Integer.parseInt(f[1]);
+        var channels = Integer.parseInt(f[2]);
+        var packets = OpusVectors.readBit(OpusVectors.directory().resolve("testvector" + f[0] + ".bit"));
+        assertEquals(f[3], hash(OpusConformanceTest.decode(packets, rate, channels)), "intact decode");
+        var lossy = new ArrayList<OpusVectors.BitPacket>();
+        for (var i = 0; i < packets.size(); i++) {
+            lossy.add(i % 7 == 3 ? new OpusVectors.BitPacket(new byte[0], packets.get(i).finalRange()) : packets.get(i));
+        }
+        assertEquals(f[4], hash(OpusConformanceTest.decode(lossy, rate, channels)), "decode with concealed packets");
+    }
+}

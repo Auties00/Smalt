@@ -1,0 +1,5 @@
+com.github.auties00.smalt.internal.provider.audio.AlacCodecProvider
+com.github.auties00.smalt.internal.provider.audio.FlacCodecProvider
+com.github.auties00.smalt.internal.provider.audio.Mp3CodecProvider
+com.github.auties00.smalt.internal.provider.audio.OpusCodecProvider
+com.github.auties00.smalt.internal.provider.audio.VorbisCodecProvider

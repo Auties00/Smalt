@@ -1,0 +1,136 @@
+# Release: a tag vX.Y.Z publishes every smalt-* artifact at version X.Y.Z to Maven Central, signed,
+# with sources and javadoc jars, through the Central Portal (central-publishing-maven-plugin).
+#
+# Repository secrets:
+#   CENTRAL_TOKEN_USERNAME, CENTRAL_TOKEN_PASSWORD  a Central Portal user token (central.sonatype.com,
+#                                                   View Account, Generate User Token)
+#   GPG_PRIVATE_KEY                                 the ASCII-armored secret signing key
+#   GPG_PASSPHRASE                                  its passphrase
+# The version comes from the tag; the poms keep their -SNAPSHOT version in git.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build, without the leading v (for example 0.1.0)
+        required: true
+      publish:
+        description: Publish on Central (unchecked uploads and validates the bundle only)
+        type: boolean
+        default: false
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '26'
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install the oracle tools
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+
+      - name: Restore the smoke test data
+        id: smoke-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.smalt/cache/conformance
+          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
+          enableCrossOsArchive: true
+
+      - name: Fetch the smoke test data
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
+        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+
+      - name: Build and test
+        run: mvn -B -ntp -fae verify
+
+  publish:
+    name: publish
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # Add required reviewers to this environment to gate every upload behind an approval.
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_TOKEN_USERNAME
+          server-password: CENTRAL_TOKEN_PASSWORD
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+      - name: Resolve the version
+        id: version
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            version="${GITHUB_REF_NAME#v}"
+            publish=true
+          else
+            version="${{ inputs.version }}"
+            publish="${{ inputs.publish }}"
+          fi
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || [[ "$version" == *-SNAPSHOT ]]; then
+            echo "not a release version: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+
+      # Every module, the BOM included, takes the tag's version (the BOM's entries follow its own).
+      - name: Set the version
+        run: |
+          mvn -B -ntp org.codehaus.mojo:versions-maven-plugin:2.19.1:set -DnewVersion=${{ steps.version.outputs.version }} -DprocessAllModules=true -DgenerateBackupPoms=false
+          ! grep -rn --include=pom.xml -- '-SNAPSHOT' .
+
+      # it needs the test jars, which the release profile does not build; smalt-core's test jar (the test kit) is
+      # built and uploaded with smalt-core.
+      - name: Deploy to Central
+        env:
+          CENTRAL_TOKEN_USERNAME: ${{ secrets.CENTRAL_TOKEN_USERNAME }}
+          CENTRAL_TOKEN_PASSWORD: ${{ secrets.CENTRAL_TOKEN_PASSWORD }}
+          MAVEN_GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: >
+          mvn -B -ntp -Prelease -pl '!it' deploy -DskipTests
+          -Dcentral.autoPublish=${{ steps.version.outputs.publish }}
+          -Dcentral.waitUntil=${{ steps.version.outputs.publish == 'true' && 'published' || 'validated' }}
+
+      - name: Create the GitHub release
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "Smalt ${{ steps.version.outputs.version }}"

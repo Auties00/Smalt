@@ -1,0 +1,334 @@
+package com.github.auties00.smalt.image.raw.internal;
+
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
+
+import java.nio.charset.StandardCharsets;
+
+/**
+ * Parses a Pentax PEF file: a TIFF/EP structure whose color filter array directory holds the
+ * sensor data, uncompressed or with Pentax's Huffman compression (TIFF compression 65535), and
+ * whose maker note holds the Huffman table, the black levels and the white balance.
+ *
+ * <p>The maker note starts with {@code AOC\0} (its directory's offsets relative to the file) or
+ * {@code PENTAX \0} (offsets relative to the maker note) followed by a byte order mark. Its tag
+ * {@code 0x0220} holds the Huffman table after a 14-byte header: {@code n} 16-bit codes in the
+ * maker note's byte order, left-aligned on 12 bits, then their {@code n} bit lengths, with
+ * {@code n} 13 for 12-bit data and 15 for 14-bit data; the code of index {@code c} announces a
+ * difference of {@code c} bits, extended as in a JPEG DC table. The data is one stream of such
+ * codes, most significant bit first, one per photosite row by row; each photosite is predicted
+ * from the previous one of the same color in its row, the first two of a row from the first two
+ * of the row two above, starting from zero. Tag {@code 0x0200} holds the black level of each CFA
+ * position and tag {@code 0x0201} the as-shot white balance levels. Uncompressed 12-bit data is
+ * packed most significant bit first, also when the older models label it with TIFF compression
+ * 32773, or stored in 16-bit words when the strip holds two bytes per photosite. A monochrome
+ * sensor stores linear raw data of one sample.
+ *
+ * @implNote This implementation derives the stream layout from the table the files embed and from
+ * decoding CC0 sample files, with tag names from the ExifTool tag documentation; it reads
+ * no other implementation. The table layout of the 14-bit and little-endian files and the
+ * packing of the files labeled with compression 32773 were checked against Adobe DNG
+ * Converter, run as a black box. Files whose maker note carries no Huffman table are not
+ * supported.
+ */
+final class PefParser {
+    /**
+     * The TIFF compression code of Pentax's raw data.
+     */
+    private static final int PENTAX_COMPRESSION = 65535;
+
+    /**
+     * The TIFF compression code (PackBits) the oldest models give their uncompressed data.
+     */
+    private static final int PACKBITS_LABEL = 32773;
+
+    /**
+     * Prevents instantiation.
+     */
+    private PefParser() {
+        throw new AssertionError();
+    }
+
+    /**
+     * Parses the file.
+     *
+     * @param reader the TIFF structure
+     * @param file the description to fill
+     */
+    static void parse(TiffReader reader, RawFile file) {
+        var tree = new TiffTree(reader);
+        tree.describe(file);
+        var raw = TiffEpParser.rawDirectory(tree);
+        if (raw == null) {
+            file.unsupported = "the PEF file holds no raw image";
+            return;
+        }
+        var note = makerNote(tree);
+        var sensor = new Sensor();
+        var compression = raw.intValue(TiffSamples.COMPRESSION, 1);
+        if (compression == PENTAX_COMPRESSION) {
+            sensor.width = raw.intValue(TiffSamples.IMAGE_WIDTH, 0);
+            sensor.height = raw.intValue(TiffSamples.IMAGE_LENGTH, 0);
+            sensor.bitsPerSample = raw.intValue(TiffSamples.BITS_PER_SAMPLE, 12);
+            if (sensor.width <= 0 || sensor.height <= 0 || sensor.bitsPerSample < 8 || sensor.bitsPerSample > 16) {
+                throw new MediaException.Malformed("invalid PEF raw image");
+            }
+            var table = note == null ? null : note.bytes(0x220);
+            if (table == null || table.length < 39) {
+                // TODO: decode PEF files whose maker note carries no Huffman table; every CC0 model on
+                //  raw.pixls.us carries one, so no sample was available to derive the default from
+                file.unsupported = "PEF files without a Huffman table are not supported";
+                return;
+            }
+            var spec = huffman(table, note.reader().little());
+            var offsets = raw.longs(TiffSamples.STRIP_OFFSETS);
+            var counts = raw.longs(TiffSamples.STRIP_BYTE_COUNTS);
+            if (offsets == null || counts == null || offsets.length == 0 || counts.length == 0) {
+                throw new MediaException.Malformed("PEF raw image without data");
+            }
+            var offset = reader.base() + offsets[0];
+            var length = counts[0];
+            var maximum = (1 << sensor.bitsPerSample) - 1;
+            sensor.compression = "Pentax Huffman";
+            sensor.reader = (plane, limits) -> decompress(reader, offset, length, spec, maximum, plane, limits);
+        } else if (compression == 1 && words(raw)) {
+            sensor.width = raw.intValue(TiffSamples.IMAGE_WIDTH, 0);
+            sensor.height = raw.intValue(TiffSamples.IMAGE_LENGTH, 0);
+            sensor.bitsPerSample = raw.intValue(TiffSamples.BITS_PER_SAMPLE, 12);
+            sensor.compression = "uncompressed";
+            var offset = reader.base() + raw.longs(TiffSamples.STRIP_OFFSETS)[0];
+            var width = sensor.width;
+            var source = reader.source();
+            var little = reader.little();
+            var bits = sensor.bitsPerSample;
+            sensor.reader = (plane, limits) -> {
+                var row = new byte[width * 2];
+                for (var y = 0; y < plane.height; y++) {
+                    var read = source.read(offset + (long) y * row.length, row, 0, row.length);
+                    if (read <= 0) {
+                        return;
+                    }
+                    Unpack.words(row, 0, read, little, bits, plane.integers, y * width, width);
+                }
+            };
+        } else if (compression == PACKBITS_LABEL && packed(raw)) {
+            sensor.width = raw.intValue(TiffSamples.IMAGE_WIDTH, 0);
+            sensor.height = raw.intValue(TiffSamples.IMAGE_LENGTH, 0);
+            sensor.bitsPerSample = 12;
+            sensor.compression = "uncompressed";
+            var offset = reader.base() + raw.longs(TiffSamples.STRIP_OFFSETS)[0];
+            var width = sensor.width;
+            var source = reader.source();
+            sensor.reader = (plane, limits) -> {
+                var stride = width * 3 / 2;
+                LimitChecks.checkAllocation(limits, stride);
+                var row = new byte[stride];
+                for (var y = 0; y < plane.height; y++) {
+                    var read = source.read(offset + (long) y * stride, row, 0, stride);
+                    if (read <= 0) {
+                        return;
+                    }
+                    Unpack.msbFirst(row, 0, read, 12, plane.integers, y * width, width);
+                }
+            };
+        } else {
+            try {
+                sensor.reader = TiffSamples.describe(raw, sensor);
+            } catch (MediaException.Unsupported exception) {
+                file.unsupported = exception.getMessage();
+                return;
+            }
+        }
+        sensor.cfa = TiffEpParser.cfa(raw, tree.exif);
+        var monochrome = raw.intValue(TiffSamples.PHOTOMETRIC, 0) == DngParser.PHOTOMETRIC_LINEAR_RAW
+                && raw.intValue(TiffSamples.SAMPLES_PER_PIXEL, 1) == 1;
+        if (sensor.cfa == null && !monochrome) {
+            file.unsupported = "the PEF raw image has no CFA pattern";
+            return;
+        }
+        if (monochrome) {
+            sensor.cfa = null;
+        }
+        if (note != null) {
+            levels(note, sensor, file);
+        }
+        sensor.defaultCrop = NefParser.previewCrop(file, sensor);
+        file.sensor = sensor;
+    }
+
+    /**
+     * Returns whether an uncompressed directory of fewer than 16 bits per sample stores its samples
+     * in whole 16-bit words: one strip of exactly two bytes per photosite.
+     *
+     * @param raw the raw image directory
+     * @return whether the data is 16-bit words
+     */
+    private static boolean words(Ifd raw) {
+        var width = raw.longValue(TiffSamples.IMAGE_WIDTH, 0);
+        var height = raw.longValue(TiffSamples.IMAGE_LENGTH, 0);
+        var bits = raw.intValue(TiffSamples.BITS_PER_SAMPLE, 0);
+        var offsets = raw.longs(TiffSamples.STRIP_OFFSETS);
+        var counts = raw.longs(TiffSamples.STRIP_BYTE_COUNTS);
+        return bits > 8 && bits < 16 && width > 0 && height > 0 && offsets != null && offsets.length == 1
+                && counts != null && counts.length == 1 && counts[0] == width * height * 2;
+    }
+
+    /**
+     * Returns whether a directory labeled with compression 32773 holds 12-bit samples packed
+     * without compression: one strip of exactly one and a half bytes per photosite.
+     *
+     * @param raw the raw image directory
+     * @return whether the data is packed 12-bit samples
+     */
+    private static boolean packed(Ifd raw) {
+        var width = raw.longValue(TiffSamples.IMAGE_WIDTH, 0);
+        var height = raw.longValue(TiffSamples.IMAGE_LENGTH, 0);
+        var offsets = raw.longs(TiffSamples.STRIP_OFFSETS);
+        var counts = raw.longs(TiffSamples.STRIP_BYTE_COUNTS);
+        return raw.intValue(TiffSamples.BITS_PER_SAMPLE, 0) == 12 && width > 0 && height > 0 && width % 2 == 0
+                && offsets != null && offsets.length == 1 && counts != null && counts.length == 1
+                && counts[0] == width * height * 3 / 2;
+    }
+
+    /**
+     * Converts the table of tag {@code 0x0220} to sixteen code counts followed by the values.
+     *
+     * @param table the tag's bytes: a 14-byte header, then the 16-bit codes and their lengths
+     * @param little whether the maker note is little endian
+     * @return the table in the {@code DHT} form
+     * @throws MediaException.Malformed if the codes are not a canonical prefix code
+     */
+    private static int[] huffman(byte[] table, boolean little) {
+        var count = (table.length - 14) % 3 == 0 ? (table.length - 14) / 3 : 13;
+        if (count < 13 || count > 16) {
+            count = 13;
+        }
+        var codes = new int[count];
+        var lengths = new int[count];
+        var start = table.length - 3 * count;
+        for (var index = 0; index < count; index++) {
+            codes[index] = ByteArrays.u16(table, start + 2 * index, little);
+            lengths[index] = table[start + 2 * count + index] & 0xFF;
+            if (lengths[index] < 1 || lengths[index] > 12) {
+                throw new MediaException.Malformed("invalid PEF Huffman code length " + lengths[index]);
+            }
+        }
+        return Huffman.fromCodes(codes, lengths, 12);
+    }
+
+    /**
+     * Decodes Pentax-compressed sensor data.
+     *
+     * @param reader the TIFF structure
+     * @param offset the absolute offset of the data
+     * @param length the length of the data
+     * @param spec the Huffman table
+     * @param maximum the largest sample value
+     * @param plane the plane to fill
+     * @param limits the resource bounds
+     */
+    private static void decompress(TiffReader reader, long offset, long length, int[] spec, int maximum,
+                                   SensorPlane plane, MediaLimits limits) {
+        LimitChecks.checkAllocation(limits, length);
+        var data = reader.bytes(offset, Math.min(length, reader.size() < 0 ? length : reader.size() - offset));
+        var bits = new MsbBits(data, 0, data.length);
+        var table = new MsbBits.Table(spec);
+        var vertical = new int[4];
+        var out = plane.integers;
+        var width = plane.width;
+        for (var row = 0; row < plane.height; row++) {
+            var even = 0;
+            var odd = 0;
+            var line = row * width;
+            var parity = (row & 1) * 2;
+            for (var column = 0; column < width; column++) {
+                var size = bits.decode(table);
+                var difference = bits.read(size);
+                if (size > 0 && (difference & (1 << (size - 1))) == 0) {
+                    difference -= (1 << size) - 1;
+                }
+                int value;
+                if (column < 2) {
+                    vertical[parity + column] += difference;
+                    value = vertical[parity + column];
+                    if (column == 0) {
+                        even = value;
+                    } else {
+                        odd = value;
+                    }
+                } else if ((column & 1) == 0) {
+                    even += difference;
+                    value = even;
+                } else {
+                    odd += difference;
+                    value = odd;
+                }
+                out[line + column] = (short) Math.clamp(value, 0, maximum);
+            }
+            if (bits.exhausted()) {
+                return;
+            }
+        }
+    }
+
+    /**
+     * Finds the maker note's directory.
+     *
+     * @param tree the directories
+     * @return the directory, or {@code null}
+     */
+    private static Ifd makerNote(TiffTree tree) {
+        if (tree.exif == null) {
+            return null;
+        }
+        var position = tree.exif.valuePosition(TiffTree.MAKER_NOTE);
+        if (position < 0) {
+            return null;
+        }
+        var reader = tree.first.reader();
+        var head = new byte[10];
+        if (reader.readAvailable(position, head, 0, 10) < 10) {
+            return null;
+        }
+        try {
+            if (head[0] == 'A' && head[1] == 'O' && head[2] == 'C' && head[3] == 0) {
+                var little = head[4] == 'I';
+                return reader.with(reader.base(), little).directory(position + 6 - reader.base());
+            }
+            if (new String(head, 0, 7, StandardCharsets.ISO_8859_1).equals("PENTAX ")) {
+                var little = head[8] == 'I';
+                return reader.with(position, little).directory(10);
+            }
+        } catch (MediaException.Malformed exception) {
+            return null;
+        }
+        return null;
+    }
+
+    /**
+     * Reads the black levels and white balance of the maker note.
+     *
+     * @param note the maker note's directory
+     * @param sensor the sensor description to fill
+     * @param file the description to fill
+     */
+    private static void levels(Ifd note, Sensor sensor, RawFile file) {
+        var black = note.longs(0x200);
+        if (black != null && black.length >= 4) {
+            var values = new double[4];
+            for (var index = 0; index < 4; index++) {
+                values[index] = black[index];
+            }
+            sensor.blackRows = 2;
+            sensor.blackColumns = 2;
+            sensor.black = values;
+        }
+        var white = note.longs(0x201);
+        if (white != null && white.length >= 4 && white[0] > 0 && white[1] > 0 && white[2] > 0 && white[3] > 0) {
+            var green = (white[1] + white[2]) / 2.0;
+            file.color.asShotNeutral = new double[]{green / white[0], 1, green / white[3]};
+        }
+    }
+}

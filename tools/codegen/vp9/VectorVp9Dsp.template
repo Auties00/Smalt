@@ -1,0 +1,1062 @@
+/* Ports libvpx 1.17.0 (vpx_dsp: vpx_convolve.c, loopfilter.c, inv_txfm.c, intrapred.c). Copyright (c) 2010,
+   The WebM Project authors; BSD 3-Clause License. Modified for Smalt. */
+package com.github.auties00.smalt.video.vp9.internal;
+
+import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.IntVector;
+import jdk.incubator.vector.LongVector;
+import jdk.incubator.vector.ShortVector;
+import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorSpecies;
+
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.VarHandle;
+import java.nio.ByteOrder;
+import java.util.Arrays;
+
+/**
+ * Implements {@link Vp9Dsp} with the Vector API; the output equals {@link ScalarVp9Dsp} sample for
+ * sample for every input a conformant stream can produce.
+ *
+ * <p>Generated from {@code tools/codegen/vp9}; edit the template.
+ *
+ * @implNote This implementation follows the kernel rules of
+ * {@link com.github.auties00.smalt.internal.simd.Simd} and needs 256-bit vectors: on narrower
+ * hardware {@link #create()} returns the scalar kernels. The note at the top of the class body
+ * describes the lane layouts.
+ */
+final class VectorVp9Dsp extends Vp9Dsp {
+    /*
+     * Sub-pixel motion compensation filters 16 samples per 256-bit vector of 16-bit lanes (8 for blocks narrower than
+     * 16). The sum of the eight products of one sample lies in [-13770, 46410] for every VP9 filter, a range narrower
+     * than 2^16, so it is accumulated modulo 2^16 on top of a bias of 128 * 128 plus the rounding term: the biased sum
+     * then equals the exact one moved into [0, 65535], a logical shift by 7 rounds it, and taking away 128 and clamping
+     * gives the 8-bit sample. Two-dimensional filters run the horizontal pass into an intermediate block and the
+     * vertical pass from it, as the reference does; the intermediate samples are rounded to 8 bits like the reference's
+     * but kept as 16-bit values, which spares two conversions. Scaled prediction runs the scalar kernels.
+     *
+     * Loop filters process 16 lines across an edge at once in 16-bit lanes: two groups of 8 lines with their own
+     * thresholds, or one group of 8 with 8 more lines that are filtered alongside and discarded. The kernels read rows
+     * of 16 samples, one per position across the edge, straight from the plane for horizontal edges and from scratch
+     * rows for vertical edges, which are transposed there, one 8x8 block per 64-bit lane, and back; they write their
+     * results to scratch rows, which are then copied to the plane. The 16-tap filter computes its 15-tap sums with a
+     * running window, one kernel per side of the edge, after the 8-tap filter has left its results in scratch rows.
+     *
+     * Inverse transforms run 8 rows (4 for 4x4 blocks) at once, one per lane, then 8 columns at once: the coefficients
+     * are stored column by column within each group of 8 rows (see coefficientLayout), so that each vector loads one
+     * element of the 8 transforms, the row pass leaves its outputs transposed, and the columns are transposed back
+     * before the column pass; a small kernel then adds the rounded outputs to the prediction row by row. Both passes of
+     * a 1-D transform run the same methods, which write their outputs with a stride, so that the compilers see them
+     * twice as often. The vector code of each 1-D transform is generated from the scalar one statement by statement,
+     * without its 16-bit truncations, which never change a value of a conformant stream; transforms too long for one
+     * method run as stages that leave the values later stages read in scratch slots. Blocks whose only coefficient is
+     * the DC add one saturated value to every sample, 32 samples per vector. The lossless Walsh-Hadamard transform runs
+     * the scalar kernel.
+     *
+     * The true-motion intra predictor computes 16 samples per vector; the other predictors fill and copy rows with the
+     * scalar kernels.
+     */
+
+    /**
+     * The 8-lane byte species of 8-sample rows.
+     */
+    private static final VectorSpecies<Byte> B64 = ByteVector.SPECIES_64;
+
+    /**
+     * The 16-lane byte species of 16-sample rows.
+     */
+    private static final VectorSpecies<Byte> B128 = ByteVector.SPECIES_128;
+
+    /**
+     * The 32-lane byte species of 32-sample rows.
+     */
+    private static final VectorSpecies<Byte> B256 = ByteVector.SPECIES_256;
+
+    /**
+     * The 8-lane short species of 8-sample filters.
+     */
+    private static final VectorSpecies<Short> S128 = ShortVector.SPECIES_128;
+
+    /**
+     * The 16-lane short species of 16-sample filters and loop filters.
+     */
+    private static final VectorSpecies<Short> S256 = ShortVector.SPECIES_256;
+
+    /**
+     * The 2-lane long species of loop filter rows and transposes.
+     */
+    private static final VectorSpecies<Long> L128 = LongVector.SPECIES_128;
+
+    /**
+     * The 2-lane int species that extracts the first 4 bytes of an 8-byte vector.
+     */
+    private static final VectorSpecies<Integer> I64 = IntVector.SPECIES_64;
+
+    /**
+     * The 4-lane int species of the 4-point transforms.
+     */
+    private static final VectorSpecies<Integer> I128 = IntVector.SPECIES_128;
+
+    /**
+     * The 8-lane int species of the 8, 16 and 32-point transforms.
+     */
+    private static final VectorSpecies<Integer> I256 = IntVector.SPECIES_256;
+
+    /**
+     * The exact class of the vectors of {@link #I128}.
+     */
+    private static final Class<IntVector> INT128 = vectorClass(I128);
+
+    /**
+     * The exact class of the vectors of {@link #I256}.
+     */
+    private static final Class<IntVector> INT256 = vectorClass(I256);
+
+    /**
+     * The exact class of the vectors of {@link #B64}.
+     */
+    private static final Class<ByteVector> BYTE64 = vectorClass(B64);
+
+    /**
+     * The exact class of the vectors of {@link #B128}.
+     */
+    private static final Class<ByteVector> BYTE128 = vectorClass(B128);
+
+    /**
+     * The exact class of the vectors of {@link #B256}.
+     */
+    private static final Class<ByteVector> BYTE256 = vectorClass(B256);
+
+    /**
+     * The exact class of the vectors of {@link #S128}.
+     */
+    private static final Class<ShortVector> SHORT128 = vectorClass(S128);
+
+    /**
+     * The exact class of the vectors of {@link #S256}.
+     */
+    private static final Class<ShortVector> SHORT256 = vectorClass(S256);
+
+    /**
+     * The exact class of the vectors of {@link #L128}.
+     */
+    private static final Class<LongVector> LONG128 = vectorClass(L128);
+
+    /**
+     * The exact class of the vectors of {@link #I64}.
+     */
+    private static final Class<IntVector> INT64 = vectorClass(I64);
+
+    /**
+     * The start value of a sub-pixel filter sum: the bias {@code 128 * 128} that keeps the sum
+     * non-negative, plus the rounding term 64.
+     */
+    private static final short FILTER_BIAS = 128 * 128 + 64;
+
+    /**
+     * {@link #FILTER_BIAS} in every 16-bit lane of {@link #S256}.
+     */
+    private static final ShortVector S256_BIAS = ShortVector.broadcast(S256, FILTER_BIAS);
+
+    /**
+     * {@link #FILTER_BIAS} in every 16-bit lane of {@link #S128}.
+     */
+    private static final ShortVector S128_BIAS = ShortVector.broadcast(S128, FILTER_BIAS);
+
+    /**
+     * Sixteen shorts equal to {@code 128}, the bias left after the rounding shift.
+     */
+    private static final ShortVector S256_128 = ShortVector.broadcast(S256, (short) 128);
+
+    /**
+     * Sixteen shorts equal to {@code 383}, the biased value of the largest sample.
+     */
+    private static final ShortVector S256_383 = ShortVector.broadcast(S256, (short) 383);
+
+    /**
+     * Eight shorts equal to {@code 128}.
+     */
+    private static final ShortVector S128_128 = ShortVector.broadcast(S128, (short) 128);
+
+    /**
+     * Eight shorts equal to {@code 383}.
+     */
+    private static final ShortVector S128_383 = ShortVector.broadcast(S128, (short) 383);
+
+    /**
+     * Eight shorts equal to {@code 1}.
+     */
+    private static final ShortVector S128_1 = ShortVector.broadcast(S128, (short) 1);
+
+    /**
+     * Eight shorts equal to {@code 0}.
+     */
+    private static final ShortVector S128_0 = ShortVector.broadcast(S128, (short) 0);
+
+    /**
+     * Eight shorts equal to {@code 255}.
+     */
+    private static final ShortVector S128_255 = ShortVector.broadcast(S128, (short) 255);
+
+    /**
+     * Sixteen shorts equal to {@code 0}.
+     */
+    private static final ShortVector S256_0 = ShortVector.broadcast(S256, (short) 0);
+
+    /**
+     * Sixteen shorts equal to {@code -1}.
+     */
+    private static final ShortVector S256_M1 = ShortVector.broadcast(S256, (short) -1);
+
+    /**
+     * Sixteen shorts equal to {@code 1}.
+     */
+    private static final ShortVector S256_1 = ShortVector.broadcast(S256, (short) 1);
+
+    /**
+     * Sixteen shorts equal to {@code 3}.
+     */
+    private static final ShortVector S256_3 = ShortVector.broadcast(S256, (short) 3);
+
+    /**
+     * Sixteen shorts equal to {@code 4}.
+     */
+    private static final ShortVector S256_4 = ShortVector.broadcast(S256, (short) 4);
+
+    /**
+     * Sixteen shorts equal to {@code 7}.
+     */
+    private static final ShortVector S256_7 = ShortVector.broadcast(S256, (short) 7);
+
+    /**
+     * Sixteen shorts equal to {@code 8}.
+     */
+    private static final ShortVector S256_8 = ShortVector.broadcast(S256, (short) 8);
+
+    /**
+     * Sixteen shorts equal to {@code 127}, the largest signed byte.
+     */
+    private static final ShortVector S256_127 = ShortVector.broadcast(S256, (short) 127);
+
+    /**
+     * Sixteen shorts equal to {@code -128}, the smallest signed byte.
+     */
+    private static final ShortVector S256_M128 = ShortVector.broadcast(S256, (short) -128);
+
+    /**
+     * Sixteen shorts equal to {@code 255}, the largest sample.
+     */
+    private static final ShortVector S256_255 = ShortVector.broadcast(S256, (short) 255);
+
+    /**
+     * Selects the odd bytes of each 64-bit lane, for the first transpose step.
+     */
+    private static final LongVector L128_BYTES = LongVector.broadcast(L128, 0x00FF00FF00FF00FFL);
+
+    /**
+     * Selects the odd 16-bit halves of each 32-bit word, for the second transpose step.
+     */
+    private static final LongVector L128_SHORTS = LongVector.broadcast(L128, 0x0000FFFF0000FFFFL);
+
+    /**
+     * Selects the low 32 bits of each 64-bit lane, for the third transpose step.
+     */
+    private static final LongVector L128_INTS = LongVector.broadcast(L128, 0x00000000FFFFFFFFL);
+
+    /**
+     * Reads and writes eight bytes of a byte array as a little-endian {@code long}.
+     */
+    private static final VarHandle LONG = MethodHandles.byteArrayViewVarHandle(long[].class, ByteOrder.LITTLE_ENDIAN);
+
+    /**
+     * Reads and writes four bytes of a byte array as a little-endian {@code int}.
+     */
+    private static final VarHandle INT = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
+
+    /**
+     * The first of the 3 scratch rows holding the edge limit, interior limit and high edge
+     * variance threshold of every line; vertical edges transpose their samples at positions
+     * {@code p7} to {@code q7} into the 16 rows before it.
+     */
+    private static final int THRESHOLD_ROW = 16;
+
+    /**
+     * The first of the 4 scratch rows holding the results of {@link #filter4} at positions
+     * {@code p1} to {@code q1}.
+     */
+    private static final int FILTER4_ROW = 19;
+
+    /**
+     * The first of the 7 scratch rows holding the results of {@link #filter8} at positions
+     * {@code p2} to {@code q2}, then its flags.
+     */
+    private static final int FILTER8_ROW = 23;
+
+    /**
+     * The first of the 14 scratch rows holding the results of {@link #filter16Before} and
+     * {@link #filter16After} at positions {@code p6} to {@code q6}.
+     */
+    private static final int FILTER16_ROW = 30;
+
+    /**
+     * The index in the transform scratch array of the slots in which the stages of a transform
+     * leave the values later stages read, 8 entries per value, after the 32x32 intermediate block.
+     */
+    private static final int SLOTS = 32 * 32;
+
+    /**
+     * The number of entries of the stage slots: 66 values of 8.
+     */
+    private static final int SLOT_GROUP = 66 * 8;
+
+    /**
+     * The index in the transform scratch array of the input rows of the column pass, after the
+     * slots: the values of element {@code k} of the 8 (or 4) transforms of a group are stored
+     * together, 8 (or 4) entries per element, {@link #INPUT_GROUP} entries per group.
+     */
+    private static final int INPUT = SLOTS + SLOT_GROUP;
+
+    /**
+     * The number of entries of the input rows of one group of 8 transforms: 32 elements of 8.
+     */
+    private static final int INPUT_GROUP = 32 * 8;
+
+    /**
+     * The index in the transform scratch array of the outputs of the column pass of a group of 8
+     * columns, 8 per row, after the input rows of 4 groups.
+     */
+    private static final int OUTPUT = INPUT + 4 * INPUT_GROUP;
+
+    /**
+     * The coefficient layout of each transform size; see {@link #coefficientLayout}.
+     */
+    private static final short[][] LAYOUTS = {layout(0), layout(1), layout(2), layout(3)};
+
+    /**
+     * Four ints equal to {@code 0}.
+     */
+    private static final IntVector I128_0 = IntVector.broadcast(I128, 0);
+
+    /**
+     * Four ints equal to {@code 255}.
+     */
+    private static final IntVector I128_255 = IntVector.broadcast(I128, 255);
+
+    /**
+     * Eight ints equal to {@code 0}.
+     */
+    private static final IntVector I256_0 = IntVector.broadcast(I256, 0);
+
+    /**
+     * Eight ints equal to {@code 255}.
+     */
+    private static final IntVector I256_255 = IntVector.broadcast(I256, 255);
+
+//@TXCONST
+    /**
+     * The scalar kernels used where vectors do not pay off.
+     */
+    private final ScalarVp9Dsp scalar = new ScalarVp9Dsp();
+
+    /**
+     * Creates the vector implementation.
+     */
+    private VectorVp9Dsp() {
+    }
+
+    /**
+     * Creates the vector implementation when the hardware has 256-bit vectors, otherwise the
+     * scalar one; called only when the Vector API is available.
+     *
+     * @return the implementation
+     */
+    static Vp9Dsp create() {
+        return ShortVector.SPECIES_PREFERRED.vectorBitSize() >= 256 ? new VectorVp9Dsp() : new ScalarVp9Dsp();
+    }
+
+    /**
+     * Returns the exact class of the vectors of a species.
+     *
+     * @param species the species whose vector class is wanted
+     * @param <E>     the element type
+     * @param <V>     the vector type
+     * @return the class
+     */
+    @SuppressWarnings("unchecked")
+    private static <E, V> Class<V> vectorClass(VectorSpecies<E> species) {
+        return (Class<V>) species.vectorType();
+    }
+
+    @Override
+    public void inverseTransformAdd(int txSize, int txType, int eob, int[] coef, int coefOff, byte[] dst,
+                                    int dstOff, int stride, int[] scratch) {
+        if (txType == Vp9Constants.DCT_DCT && eob == 1) {
+            var out = ((short) coef[coefOff] * ScalarVp9Dsp.COSPI_16_64 + 8192) >> 14;
+            out = (out * ScalarVp9Dsp.COSPI_16_64 + 8192) >> 14;
+            var shift = txSize == Vp9Constants.TX_4X4 ? 4 : txSize == Vp9Constants.TX_8X8 ? 5 : 6;
+            dcAdd(4 << txSize, (out + (1 << (shift - 1))) >> shift, dst, dstOff, stride);
+            return;
+        }
+        var rowAdst = (txType & 2) != 0;
+        var columnAdst = (txType & 1) != 0;
+        switch (txSize) {
+            case Vp9Constants.TX_4X4 -> {
+                if (rowAdst) {
+                    iadst4(coef, coefOff, scratch, 0, 4);
+                } else {
+                    idct4(coef, coefOff, scratch, 0, 4);
+                }
+                transposeIntermediate(scratch, 4, 4, 1);
+                if (columnAdst) {
+                    iadst4(scratch, INPUT, scratch, OUTPUT, 4);
+                } else {
+                    idct4(scratch, INPUT, scratch, OUTPUT, 4);
+                }
+                addColumns4(scratch, dst, dstOff, stride);
+            }
+            case Vp9Constants.TX_8X8 -> {
+                if (rowAdst) {
+                    iadst8(coef, coefOff, scratch, 0, 8);
+                } else {
+                    idct8(coef, coefOff, scratch, 0, 8);
+                }
+                transposeIntermediate(scratch, 8, 8, 1);
+                if (columnAdst) {
+                    iadst8(scratch, INPUT, scratch, OUTPUT, 8);
+                } else {
+                    idct8(scratch, INPUT, scratch, OUTPUT, 8);
+                }
+                addColumns8(scratch, dst, dstOff, stride, 8, 5);
+            }
+            case Vp9Constants.TX_16X16 -> {
+                var groups = txType == Vp9Constants.DCT_DCT ? (ScalarVp9Dsp.partialRows(txSize, eob) + 7) >> 3 : 2;
+                for (var g = 0; g < groups; g++) {
+                    if (rowAdst) {
+                        iadst16(coef, coefOff + g * INPUT_GROUP, scratch, g * 8, 16);
+                    } else {
+                        idct16(coef, coefOff + g * INPUT_GROUP, scratch, g * 8, 16);
+                    }
+                }
+                clearRows(scratch, 16, groups * 8);
+                transposeIntermediate(scratch, 16, 8, 2);
+                for (var g = 0; g < 2; g++) {
+                    if (columnAdst) {
+                        iadst16(scratch, INPUT + g * INPUT_GROUP, scratch, OUTPUT, 8);
+                    } else {
+                        idct16(scratch, INPUT + g * INPUT_GROUP, scratch, OUTPUT, 8);
+                    }
+                    addColumns8(scratch, dst, dstOff + g * 8, stride, 16, 6);
+                }
+            }
+            default -> {
+                var groups = (ScalarVp9Dsp.partialRows(txSize, eob) + 7) >> 3;
+                for (var g = 0; g < groups; g++) {
+                    idct32(coef, coefOff + g * INPUT_GROUP, scratch, g * 8, 32);
+                }
+                clearRows(scratch, 32, groups * 8);
+                transposeIntermediate(scratch, 32, 8, 4);
+                for (var g = 0; g < 4; g++) {
+                    idct32(scratch, INPUT + g * INPUT_GROUP, scratch, OUTPUT, 8);
+                    addColumns8(scratch, dst, dstOff + g * 8, stride, 32, 6);
+                }
+            }
+        }
+    }
+
+    /**
+     * Rounds the outputs of the column pass of a group of 8 columns, adds them to the prediction
+     * and clamps the result to 8 bits, two rows per iteration.
+     *
+     * @param s      the scratch array holding the outputs from {@link #OUTPUT}, 8 per row
+     * @param dst    the plane holding the prediction
+     * @param dstOff the index of the group's top-left sample
+     * @param stride the plane's row stride
+     * @param rows   the number of rows, even
+     * @param shift  the final rounding shift of the transform size
+     */
+    private static void addColumns8(int[] s, byte[] dst, int dstOff, int stride, int rows, int shift) {
+        var round = INT256.cast(IntVector.broadcast(I256, 1 << (shift - 1)));
+        for (var j = 0; j < rows; j += 2) {
+            var d0 = dstOff + j * stride;
+            var d1 = d0 + stride;
+            var v0 = INT256.cast(IntVector.fromArray(I256, s, OUTPUT + 8 * j)).lanewise(VectorOperators.ADD, round)
+                    .lanewise(VectorOperators.ASHR, shift);
+            var v1 = INT256.cast(IntVector.fromArray(I256, s, OUTPUT + 8 * j + 8)).lanewise(VectorOperators.ADD, round)
+                    .lanewise(VectorOperators.ASHR, shift);
+            BYTE64.cast(INT256.cast(BYTE64.cast(ByteVector.fromArray(B64, dst, d0))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0)).lanewise(VectorOperators.ADD, v0)
+                    .lanewise(VectorOperators.MAX, I256_0).lanewise(VectorOperators.MIN, I256_255)
+                    .convertShape(VectorOperators.I2B, B64, 0)).intoArray(dst, d0);
+            BYTE64.cast(INT256.cast(BYTE64.cast(ByteVector.fromArray(B64, dst, d1))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2I, I256, 0)).lanewise(VectorOperators.ADD, v1)
+                    .lanewise(VectorOperators.MAX, I256_0).lanewise(VectorOperators.MIN, I256_255)
+                    .convertShape(VectorOperators.I2B, B64, 0)).intoArray(dst, d1);
+        }
+    }
+
+    /**
+     * Rounds the outputs of the column pass of a 4x4 block, adds them to the prediction and clamps
+     * the result to 8 bits.
+     *
+     * @param s      the scratch array holding the outputs from {@link #OUTPUT}, 4 per row
+     * @param dst    the plane holding the prediction
+     * @param dstOff the index of the block's top-left sample
+     * @param stride the plane's row stride
+     */
+    private static void addColumns4(int[] s, byte[] dst, int dstOff, int stride) {
+        var round = INT128.cast(IntVector.broadcast(I128, 8));
+        for (var j = 0; j < 4; j += 2) {
+            var d0 = dstOff + j * stride;
+            var d1 = d0 + stride;
+            var v0 = INT128.cast(IntVector.fromArray(I128, s, OUTPUT + 4 * j)).lanewise(VectorOperators.ADD, round)
+                    .lanewise(VectorOperators.ASHR, 4);
+            var v1 = INT128.cast(IntVector.fromArray(I128, s, OUTPUT + 4 * j + 4)).lanewise(VectorOperators.ADD, round)
+                    .lanewise(VectorOperators.ASHR, 4);
+            INT.set(dst, d0, INT64.cast(BYTE64.cast(INT128.cast(BYTE64.cast(ByteVector.fromArray(B64, dst, d0))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2I, I128, 0)).lanewise(VectorOperators.ADD, v0)
+                    .lanewise(VectorOperators.MAX, I128_0).lanewise(VectorOperators.MIN, I128_255)
+                    .convertShape(VectorOperators.I2B, B64, 0)).reinterpretShape(I64, 0)).lane(0));
+            INT.set(dst, d1, INT64.cast(BYTE64.cast(INT128.cast(BYTE64.cast(ByteVector.fromArray(B64, dst, d1))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2I, I128, 0)).lanewise(VectorOperators.ADD, v1)
+                    .lanewise(VectorOperators.MAX, I128_0).lanewise(VectorOperators.MIN, I128_255)
+                    .convertShape(VectorOperators.I2B, B64, 0)).reinterpretShape(I64, 0)).lane(0));
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>This implementation stores the coefficients of each group of 8 rows (4 for 4x4 blocks)
+     * column by column: the coefficient of row {@code r} and column {@code c} is at
+     * {@code INPUT_GROUP * (r / 8) + 8 * c + r % 8} ({@code 4 * c + r} for 4x4 blocks), so that the
+     * row pass loads element {@code c} of 8 rows as one vector.
+     */
+    @Override
+    public short[] coefficientLayout(int txSize) {
+        return LAYOUTS[txSize];
+    }
+
+    /**
+     * Builds the coefficient layout of a transform size, as {@link #coefficientLayout} describes.
+     *
+     * @param txSize the transform size
+     * @return the layout
+     */
+    private static short[] layout(int txSize) {
+        var size = 4 << txSize;
+        var lanes = txSize == Vp9Constants.TX_4X4 ? 4 : 8;
+        var layout = new short[size * size];
+        for (var r = 0; r < size; r++) {
+            for (var c = 0; c < size; c++) {
+                layout[r * size + c] = (short) (INPUT_GROUP * (r / lanes) + lanes * c + r % lanes);
+            }
+        }
+        return layout;
+    }
+
+    /**
+     * Copies groups of columns of the intermediate block, which the row pass leaves transposed at
+     * the start of the scratch array, to the input rows of the scratch array, so that row
+     * {@code j} of the columns of a group is contiguous.
+     *
+     * @param s      the scratch array
+     * @param size   the block size
+     * @param lanes  the number of columns in a group
+     * @param groups the number of groups
+     */
+    private static void transposeIntermediate(int[] s, int size, int lanes, int groups) {
+        for (var g = 0; g < groups; g++) {
+            var base = INPUT + g * INPUT_GROUP;
+            for (var i = 0; i < lanes; i++) {
+                var column = (g * lanes + i) * size;
+                for (var j = 0; j < size; j++) {
+                    s[base + j * lanes + i] = s[column + j];
+                }
+            }
+        }
+    }
+
+    /**
+     * Clears the entries of the transposed intermediate block that belong to rows the row pass
+     * skipped because their coefficients are all zero.
+     *
+     * @param t    the scratch array holding the transposed block from index 0
+     * @param size the block size
+     * @param from the first skipped row
+     */
+    private static void clearRows(int[] t, int size, int from) {
+        if (from < size) {
+            for (var k = 0; k < size; k++) {
+                Arrays.fill(t, k * size + from, k * size + size, 0);
+            }
+        }
+    }
+
+    /**
+     * Adds one value to every sample of a square block, clamping to {@code [0, 255]}.
+     *
+     * <p>The value is applied as a saturating unsigned addition of its positive part followed
+     * by a saturating subtraction of its negative part, which clamps exactly like the reference.
+     *
+     * @param size   the block size, 4 to 32
+     * @param value  the value to add
+     * @param dst    the plane
+     * @param dstOff the index of the block's top-left sample
+     * @param stride the plane's row stride
+     */
+    private static void dcAdd(int size, int value, byte[] dst, int dstOff, int stride) {
+        var plus = (byte) Math.clamp(value, 0, 255);
+        var minus = (byte) Math.clamp(-value, 0, 255);
+        if (size == 32) {
+            var add = BYTE256.cast(ByteVector.broadcast(B256, plus));
+            var sub = BYTE256.cast(ByteVector.broadcast(B256, minus));
+            for (var y = 0; y < 32; y++) {
+                var row = dstOff + y * stride;
+                BYTE256.cast(BYTE256.cast(ByteVector.fromArray(B256, dst, row)).lanewise(VectorOperators.SUADD, add)
+                        .lanewise(VectorOperators.SUSUB, sub)).intoArray(dst, row);
+            }
+        } else if (size == 16) {
+            var add = BYTE128.cast(ByteVector.broadcast(B128, plus));
+            var sub = BYTE128.cast(ByteVector.broadcast(B128, minus));
+            for (var y = 0; y < 16; y++) {
+                var row = dstOff + y * stride;
+                BYTE128.cast(BYTE128.cast(ByteVector.fromArray(B128, dst, row)).lanewise(VectorOperators.SUADD, add)
+                        .lanewise(VectorOperators.SUSUB, sub)).intoArray(dst, row);
+            }
+        } else {
+            var add = BYTE64.cast(ByteVector.broadcast(B64, plus));
+            var sub = BYTE64.cast(ByteVector.broadcast(B64, minus));
+            for (var y = 0; y < size; y++) {
+                var row = dstOff + y * stride;
+                var sum = BYTE64.cast(BYTE64.cast(ByteVector.fromArray(B64, dst, row)).lanewise(VectorOperators.SUADD, add)
+                        .lanewise(VectorOperators.SUSUB, sub));
+                if (size == 8) {
+                    sum.intoArray(dst, row);
+                } else {
+                    INT.set(dst, row, INT64.cast(sum.reinterpretShape(I64, 0)).lane(0));
+                }
+            }
+        }
+    }
+
+//@TX
+    @Override
+    public void inverseWhtAdd(int eob, int[] coef, int coefOff, byte[] dst, int dstOff, int stride, int[] scratch) {
+        scalar.inverseWhtAdd(eob, coef, coefOff, dst, dstOff, stride, scratch);
+    }
+
+    @Override
+    public void convolve(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
+                         short[] kernels, int kernelBase, int subX, int xStep, int subY, int yStep,
+                         int w, int h, boolean average, byte[] scratch) {
+        if (xStep != 16 || yStep != 16) {
+            scalar.convolve(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, kernelBase, subX, xStep, subY,
+                    yStep, w, h, average, scratch);
+        } else if (subX == 0 && subY == 0) {
+            copyOrAverage(src, srcOff, srcStride, dst, dstOff, dstStride, w, h, average);
+        } else if (subY == 0) {
+            horizontal(src, srcOff - 3, srcStride, dst, dstOff, dstStride, kernels, kernelBase + subX * 8, w, h, average);
+        } else if (subX == 0) {
+            vertical(src, srcOff - 3 * srcStride, srcStride, dst, dstOff, dstStride, kernels, kernelBase + subY * 8, w,
+                    h, average);
+        } else {
+            twoDimensional(src, srcOff - 3 * srcStride - 3, srcStride, dst, dstOff, dstStride, kernels,
+                    kernelBase + subX * 8, kernelBase + subY * 8, w, h, average, scratch);
+        }
+    }
+
+    /**
+     * Filters a block horizontally into the scratch array, as 16-bit values 64 to a row, and then
+     * vertically into the destination, as {@code vpx_convolve8} does through its 8-bit
+     * intermediate block.
+     *
+     * @param src       the source plane
+     * @param srcOff    the index of the source sample 3 rows above and 3 columns left of the first
+     *                  output sample
+     * @param srcStride the source row stride
+     * @param dst       the destination plane
+     * @param dstOff    the index of the first destination sample
+     * @param dstStride the destination row stride
+     * @param kernels   the filter kernels
+     * @param kx        the index of the horizontal filter phase in {@code kernels}
+     * @param ky        the index of the vertical filter phase in {@code kernels}
+     * @param w         the block width: 4, 8 or a multiple of 16
+     * @param h         the block height, even
+     * @param average   whether to average into the destination
+     * @param scratch   the scratch array, at least {@code (h + 8) * 128} bytes
+     */
+    private static void twoDimensional(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
+                                       short[] kernels, int kx, int ky, int w, int h, boolean average,
+                                       byte[] scratch) {
+        if (w > 16) {
+            horizontalWideToShorts(src, srcOff, srcStride, scratch, 0, 128, kernels, kx, w, h + 7);
+            verticalWideFromShorts(scratch, 0, 128, dst, dstOff, dstStride, kernels, ky, w, h, average);
+        } else if (w == 16) {
+            horizontal16ToShorts(src, srcOff, srcStride, scratch, 0, 128, kernels, kx, h + 7);
+            vertical16FromShorts(scratch, 0, 128, dst, dstOff, dstStride, kernels, ky, h, average);
+        } else if (w == 8) {
+            horizontal8ToShorts(src, srcOff, srcStride, scratch, 0, 128, kernels, kx, h + 7);
+            vertical8FromShorts(scratch, 0, 128, dst, dstOff, dstStride, kernels, ky, h, average);
+        } else {
+            horizontal4ToShorts(src, srcOff, srcStride, scratch, 0, 128, kernels, kx, h + 7);
+            vertical4FromShorts(scratch, 0, 128, dst, dstOff, dstStride, kernels, ky, h, average);
+        }
+    }
+
+    /**
+     * Filters a block horizontally with the kernel for its width.
+     *
+     * @param src       the source plane
+     * @param srcOff    the index of the source sample 3 columns left of the first output sample
+     * @param srcStride the source row stride
+     * @param dst       the destination plane
+     * @param dstOff    the index of the first destination sample
+     * @param dstStride the destination row stride
+     * @param kernels   the filter kernels
+     * @param k         the index of the filter phase in {@code kernels}
+     * @param w         the block width: 4, 8 or a multiple of 16
+     * @param h         the number of rows
+     * @param average   whether to average into the destination
+     */
+    private static void horizontal(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
+                                   short[] kernels, int k, int w, int h, boolean average) {
+        if (w > 16) {
+            horizontalWide(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, w, h, average);
+        } else if (w == 16) {
+            horizontal16(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, h, average);
+        } else if (w == 8) {
+            horizontal8(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, h, average);
+        } else {
+            horizontal4(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, h, average);
+        }
+    }
+
+    /**
+     * Filters a block vertically with the kernel for its width.
+     *
+     * @param src       the source plane
+     * @param srcOff    the index of the source sample 3 rows above the first output sample
+     * @param srcStride the source row stride
+     * @param dst       the destination plane
+     * @param dstOff    the index of the first destination sample
+     * @param dstStride the destination row stride
+     * @param kernels   the filter kernels
+     * @param k         the index of the filter phase in {@code kernels}
+     * @param w         the block width: 4, 8 or a multiple of 16
+     * @param h         the number of rows
+     * @param average   whether to average into the destination
+     */
+    private static void vertical(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
+                                 short[] kernels, int k, int w, int h, boolean average) {
+        if (w > 16) {
+            verticalWide(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, w, h, average);
+        } else if (w == 16) {
+            vertical16(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, h, average);
+        } else if (w == 8) {
+            vertical8(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, h, average);
+        } else {
+            vertical4(src, srcOff, srcStride, dst, dstOff, dstStride, kernels, k, h, average);
+        }
+    }
+
+    /**
+     * Copies a block, or averages it into the destination rounding up ({@code vpx_convolve_copy},
+     * {@code vpx_convolve_avg}).
+     *
+     * <p>The average of {@code a} and {@code b} is computed per byte as
+     * {@code (a | b) - ((a ^ b) >>> 1)}, which equals {@code (a + b + 1) >> 1}.
+     *
+     * @param src       the source plane
+     * @param srcOff    the index of the first source sample
+     * @param srcStride the source row stride
+     * @param dst       the destination plane
+     * @param dstOff    the index of the first destination sample
+     * @param dstStride the destination row stride
+     * @param w         the block width: 4, 8, 16 or a multiple of 32
+     * @param h         the block height
+     * @param average   whether to average into the destination
+     */
+    private static void copyOrAverage(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
+                                      int w, int h, boolean average) {
+        if (w >= 32) {
+            for (var y = 0; y < h; y++) {
+                var s = srcOff + y * srcStride;
+                var d = dstOff + y * dstStride;
+                for (var x = 0; x < w; x += 32) {
+                    var a = BYTE256.cast(ByteVector.fromArray(B256, src, s + x));
+                    if (average) {
+                        var b = BYTE256.cast(ByteVector.fromArray(B256, dst, d + x));
+                        BYTE256.cast(a.lanewise(VectorOperators.OR, b).lanewise(VectorOperators.SUB,
+                                a.lanewise(VectorOperators.XOR, b).lanewise(VectorOperators.LSHR, 1))).intoArray(dst, d + x);
+                    } else {
+                        a.intoArray(dst, d + x);
+                    }
+                }
+            }
+        } else if (w == 16) {
+            for (var y = 0; y < h; y++) {
+                var s = srcOff + y * srcStride;
+                var d = dstOff + y * dstStride;
+                var a = BYTE128.cast(ByteVector.fromArray(B128, src, s));
+                if (average) {
+                    var b = BYTE128.cast(ByteVector.fromArray(B128, dst, d));
+                    BYTE128.cast(a.lanewise(VectorOperators.OR, b).lanewise(VectorOperators.SUB,
+                            a.lanewise(VectorOperators.XOR, b).lanewise(VectorOperators.LSHR, 1))).intoArray(dst, d);
+                } else {
+                    a.intoArray(dst, d);
+                }
+            }
+        } else if (!average) {
+            for (var y = 0; y < h; y++) {
+                var s = srcOff + y * srcStride;
+                var d = dstOff + y * dstStride;
+                if (w == 8) {
+                    LONG.set(dst, d, (long) LONG.get(src, s));
+                } else {
+                    INT.set(dst, d, (int) INT.get(src, s));
+                }
+            }
+        } else {
+            for (var y = 0; y < h; y++) {
+                var s = srcOff + y * srcStride;
+                var d = dstOff + y * dstStride;
+                var a = BYTE64.cast(ByteVector.fromArray(B64, src, s));
+                var b = BYTE64.cast(ByteVector.fromArray(B64, dst, d));
+                var mean = BYTE64.cast(a.lanewise(VectorOperators.OR, b).lanewise(VectorOperators.SUB,
+                        a.lanewise(VectorOperators.XOR, b).lanewise(VectorOperators.LSHR, 1)));
+                if (w == 8) {
+                    mean.intoArray(dst, d);
+                } else {
+                    INT.set(dst, d, INT64.cast(mean.reinterpretShape(I64, 0)).lane(0));
+                }
+            }
+        }
+    }
+
+//@MC
+
+    @Override
+    public void lpfHorizontal4(byte[] s, int off, int pitch, int blimit, int limit, int thresh, byte[] scratch) {
+        thresholds(scratch, blimit, limit, thresh, blimit, limit, thresh);
+        filter4(s, off, pitch, scratch);
+        storeRows(scratch, FILTER4_ROW, s, off - 2 * pitch, pitch, 4, false);
+    }
+
+    @Override
+    public void lpfHorizontal4Dual(byte[] s, int off, int pitch, int blimit0, int limit0, int thresh0,
+                                   int blimit1, int limit1, int thresh1, byte[] scratch) {
+        thresholds(scratch, blimit0, limit0, thresh0, blimit1, limit1, thresh1);
+        filter4(s, off, pitch, scratch);
+        storeRows(scratch, FILTER4_ROW, s, off - 2 * pitch, pitch, 4, true);
+    }
+
+    @Override
+    public void lpfHorizontal8(byte[] s, int off, int pitch, int blimit, int limit, int thresh, byte[] scratch) {
+        thresholds(scratch, blimit, limit, thresh, blimit, limit, thresh);
+        filter8(s, off, pitch, scratch);
+        storeRows(scratch, FILTER8_ROW, s, off - 3 * pitch, pitch, 6, false);
+    }
+
+    @Override
+    public void lpfHorizontal8Dual(byte[] s, int off, int pitch, int blimit0, int limit0, int thresh0,
+                                   int blimit1, int limit1, int thresh1, byte[] scratch) {
+        thresholds(scratch, blimit0, limit0, thresh0, blimit1, limit1, thresh1);
+        filter8(s, off, pitch, scratch);
+        storeRows(scratch, FILTER8_ROW, s, off - 3 * pitch, pitch, 6, true);
+    }
+
+    @Override
+    public void lpfHorizontal16(byte[] s, int off, int pitch, int blimit, int limit, int thresh, int count,
+                                byte[] scratch) {
+        thresholds(scratch, blimit, limit, thresh, blimit, limit, thresh);
+        filter8(s, off, pitch, scratch);
+        filter16Before(s, off, pitch, scratch);
+        filter16After(s, off, pitch, scratch);
+        storeRows(scratch, FILTER16_ROW, s, off - 7 * pitch, pitch, 14, count == 2);
+    }
+
+    @Override
+    public void lpfVertical4(byte[] s, int off, int pitch, int blimit, int limit, int thresh, byte[] scratch) {
+        transposeIn(s, off - 4, pitch, 0, scratch, 64);
+        thresholds(scratch, blimit, limit, thresh, blimit, limit, thresh);
+        filter4(scratch, 128, 16, scratch);
+        System.arraycopy(scratch, FILTER4_ROW * 16, scratch, 6 * 16, 4 * 16);
+        transposeOut(scratch, 64, s, off - 4, pitch, 0);
+    }
+
+    @Override
+    public void lpfVertical4Dual(byte[] s, int off, int pitch, int blimit0, int limit0, int thresh0,
+                                 int blimit1, int limit1, int thresh1, byte[] scratch) {
+        transposeIn(s, off - 4, pitch, 8 * pitch, scratch, 64);
+        thresholds(scratch, blimit0, limit0, thresh0, blimit1, limit1, thresh1);
+        filter4(scratch, 128, 16, scratch);
+        System.arraycopy(scratch, FILTER4_ROW * 16, scratch, 6 * 16, 4 * 16);
+        transposeOut(scratch, 64, s, off - 4, pitch, 8 * pitch);
+    }
+
+    @Override
+    public void lpfVertical8(byte[] s, int off, int pitch, int blimit, int limit, int thresh, byte[] scratch) {
+        transposeIn(s, off - 4, pitch, 0, scratch, 64);
+        thresholds(scratch, blimit, limit, thresh, blimit, limit, thresh);
+        filter8(scratch, 128, 16, scratch);
+        System.arraycopy(scratch, FILTER8_ROW * 16, scratch, 5 * 16, 6 * 16);
+        transposeOut(scratch, 64, s, off - 4, pitch, 0);
+    }
+
+    @Override
+    public void lpfVertical8Dual(byte[] s, int off, int pitch, int blimit0, int limit0, int thresh0,
+                                 int blimit1, int limit1, int thresh1, byte[] scratch) {
+        transposeIn(s, off - 4, pitch, 8 * pitch, scratch, 64);
+        thresholds(scratch, blimit0, limit0, thresh0, blimit1, limit1, thresh1);
+        filter8(scratch, 128, 16, scratch);
+        System.arraycopy(scratch, FILTER8_ROW * 16, scratch, 5 * 16, 6 * 16);
+        transposeOut(scratch, 64, s, off - 4, pitch, 8 * pitch);
+    }
+
+    @Override
+    public void lpfVertical16(byte[] s, int off, int pitch, int blimit, int limit, int thresh, int rows,
+                              byte[] scratch) {
+        var lower = rows == 16 ? 8 * pitch : 0;
+        transposeIn(s, off - 8, pitch, lower, scratch, 0);
+        transposeIn(s, off, pitch, lower, scratch, 128);
+        thresholds(scratch, blimit, limit, thresh, blimit, limit, thresh);
+        filter8(scratch, 128, 16, scratch);
+        filter16Before(scratch, 128, 16, scratch);
+        filter16After(scratch, 128, 16, scratch);
+        System.arraycopy(scratch, FILTER16_ROW * 16, scratch, 16, 14 * 16);
+        transposeOut(scratch, 0, s, off - 8, pitch, lower);
+        transposeOut(scratch, 128, s, off, pitch, lower);
+    }
+
+    /**
+     * Copies consecutive result rows of the scratch array to consecutive rows of a plane, 8 or 16
+     * samples per row.
+     *
+     * <p>The kernels filter a single group of 8 lines together with the 8 samples that follow it
+     * in each row; only the first 8 samples of each result row are copied for it.
+     *
+     * @param t        the scratch array
+     * @param firstRow the first scratch row
+     * @param s        the plane
+     * @param to       the index of the first sample of the first row
+     * @param pitch    the row stride
+     * @param rows     the number of rows
+     * @param dual     whether to copy 16 samples per row rather than 8
+     */
+    private static void storeRows(byte[] t, int firstRow, byte[] s, int to, int pitch, int rows, boolean dual) {
+        for (var r = 0; r < rows; r++) {
+            var from = (firstRow + r) * 16;
+            LONG.set(s, to + r * pitch, (long) LONG.get(t, from));
+            if (dual) {
+                LONG.set(s, to + r * pitch + 8, (long) LONG.get(t, from + 8));
+            }
+        }
+    }
+
+    /**
+     * Writes the thresholds of the two groups of 8 lines to the threshold rows of the scratch
+     * array, one byte per line.
+     *
+     * @param t       the scratch array
+     * @param blimit0 the edge limit of the first 8 lines
+     * @param limit0  the interior limit of the first 8 lines
+     * @param thresh0 the high edge variance threshold of the first 8 lines
+     * @param blimit1 the edge limit of the second 8 lines
+     * @param limit1  the interior limit of the second 8 lines
+     * @param thresh1 the high edge variance threshold of the second 8 lines
+     */
+    private static void thresholds(byte[] t, int blimit0, int limit0, int thresh0, int blimit1, int limit1,
+                                   int thresh1) {
+        LONG.set(t, THRESHOLD_ROW * 16, spread(blimit0));
+        LONG.set(t, THRESHOLD_ROW * 16 + 8, spread(blimit1));
+        LONG.set(t, THRESHOLD_ROW * 16 + 16, spread(limit0));
+        LONG.set(t, THRESHOLD_ROW * 16 + 24, spread(limit1));
+        LONG.set(t, THRESHOLD_ROW * 16 + 32, spread(thresh0));
+        LONG.set(t, THRESHOLD_ROW * 16 + 40, spread(thresh1));
+    }
+
+    /**
+     * Returns a byte repeated in the 8 bytes of a {@code long}.
+     *
+     * @param value the byte, from 0 to 255
+     * @return the repeated byte
+     */
+    private static long spread(int value) {
+        return (value & 0xFFL) * 0x0101010101010101L;
+    }
+
+//@LF
+    /**
+     * {@inheritDoc}
+     *
+     * @implNote This implementation computes the true-motion predictor with vectors and runs the
+     *           scalar kernels for the other modes, which fill rows, copy rows and filter the
+     *           {@code 2 * size} edge samples once.
+     */
+    @Override
+    public void intraPredict(int mode, int txSize, int dcEdges, byte[] dst, int dstOff, int stride,
+                             byte[] above, int aboveOff, byte[] left, int leftOff) {
+        if (mode == Vp9Constants.TM_PRED) {
+            trueMotion(4 << txSize, dst, dstOff, stride, above, aboveOff, left, leftOff);
+        } else {
+            scalar.intraPredict(mode, txSize, dcEdges, dst, dstOff, stride, above, aboveOff, left, leftOff);
+        }
+    }
+
+    /**
+     * Predicts a block with the true-motion predictor ({@code vpx_tm_predictor_NxN}): sample
+     * {@code (r, c)} is {@code left[r] + above[c] - above[-1]} clamped to {@code [0, 255]},
+     * computed in 16-bit lanes, 16 samples per vector.
+     *
+     * @param bs       the block size, 4 to 32
+     * @param dst      the destination plane
+     * @param dstOff   the index of the block's top-left sample
+     * @param stride   the destination row stride
+     * @param above    the array holding the above row, at least 8 samples from {@code aboveOff}
+     * @param aboveOff the index of the first above sample
+     * @param left     the array holding the left column
+     * @param leftOff  the index of the first left sample
+     */
+    private static void trueMotion(int bs, byte[] dst, int dstOff, int stride, byte[] above, int aboveOff,
+                                   byte[] left, int leftOff) {
+        var topLeft = above[aboveOff - 1] & 0xFF;
+        if (bs == 32) {
+            var a0 = SHORT256.cast(BYTE128.cast(ByteVector.fromArray(B128, above, aboveOff))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
+            var a1 = SHORT256.cast(BYTE128.cast(ByteVector.fromArray(B128, above, aboveOff + 16))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
+            for (var r = 0; r < 32; r++) {
+                var l = SHORT256.cast(ShortVector.broadcast(S256, (short) ((left[leftOff + r] & 0xFF) - topLeft)));
+                var row = dstOff + r * stride;
+                BYTE128.cast(SHORT256.cast(a0).lanewise(VectorOperators.ADD, l).lanewise(VectorOperators.MAX, S256_0)
+                        .lanewise(VectorOperators.MIN, S256_255).convertShape(VectorOperators.S2B, B128, 0))
+                        .intoArray(dst, row);
+                BYTE128.cast(SHORT256.cast(a1).lanewise(VectorOperators.ADD, l).lanewise(VectorOperators.MAX, S256_0)
+                        .lanewise(VectorOperators.MIN, S256_255).convertShape(VectorOperators.S2B, B128, 0))
+                        .intoArray(dst, row + 16);
+            }
+        } else if (bs == 16) {
+            var a0 = SHORT256.cast(BYTE128.cast(ByteVector.fromArray(B128, above, aboveOff))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
+            for (var r = 0; r < 16; r++) {
+                var l = SHORT256.cast(ShortVector.broadcast(S256, (short) ((left[leftOff + r] & 0xFF) - topLeft)));
+                BYTE128.cast(SHORT256.cast(a0).lanewise(VectorOperators.ADD, l).lanewise(VectorOperators.MAX, S256_0)
+                        .lanewise(VectorOperators.MIN, S256_255).convertShape(VectorOperators.S2B, B128, 0))
+                        .intoArray(dst, dstOff + r * stride);
+            }
+        } else {
+            var a0 = SHORT128.cast(BYTE64.cast(ByteVector.fromArray(B64, above, aboveOff))
+                    .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
+            for (var r = 0; r < bs; r++) {
+                var l = SHORT128.cast(ShortVector.broadcast(S128, (short) ((left[leftOff + r] & 0xFF) - topLeft)));
+                var row = BYTE64.cast(SHORT128.cast(a0).lanewise(VectorOperators.ADD, l).lanewise(VectorOperators.MAX, S128_0)
+                        .lanewise(VectorOperators.MIN, S128_255).convertShape(VectorOperators.S2B, B64, 0));
+                if (bs == 8) {
+                    row.intoArray(dst, dstOff + r * stride);
+                } else {
+                    INT.set(dst, dstOff + r * stride, INT64.cast(row.reinterpretShape(I64, 0)).lane(0));
+                }
+            }
+        }
+    }
+}

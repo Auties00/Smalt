@@ -1,0 +1,371 @@
+package com.github.auties00.smalt.video.h264;
+
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.testkit.Fixtures;
+import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoFrame;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
+import java.util.Random;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
+
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+
+/**
+ * Feeds mutated streams (bit flips, truncation, corrupt length fields, dropped, duplicated and
+ * reordered packets, garbage NAL units and corrupt parameter sets) to the decoder with one and
+ * several threads. Every call must return or raise a {@link MediaException} within the time
+ * limit; any other exception, a hang or an out-of-memory condition fails the test. After the
+ * damage, the clean stream fed again from its first IDR picture must decode exactly.
+ */
+@DisplayName("H.264 decoder robustness")
+class H264RobustnessTest {
+    private static final Duration LIMIT = Duration.ofMinutes(2);
+
+    record Source(String name, List<String> options) {
+        @Override
+        public String toString() {
+            return name;
+        }
+
+        byte[] bytes() {
+            var output = new ArrayList<String>(List.of("-frames:v", "16", "-c:v", "libx264"));
+            output.addAll(options);
+            output.addAll(List.of("-f", "h264"));
+            return Fixtures.read(Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "testsrc2=size=128x96:rate=25"), output));
+        }
+
+        List<List<byte[]>> units() {
+            return H264TestStreams.accessUnits(H264TestStreams.nalUnits(bytes()));
+        }
+    }
+
+    static Stream<Source> sources() {
+        return Stream.of(
+                new Source("baseline cavlc slices", List.of("-profile:v", "baseline", "-x264-params", "keyint=8:slices=3")),
+                new Source("high cabac bframes", List.of("-profile:v", "high", "-bf", "3", "-refs", "3", "-x264-params",
+                        "keyint=8:weightp=2:b-pyramid=normal:direct=temporal:8x8dct=1")),
+                new Source("main cabac spatial", List.of("-profile:v", "main", "-bf", "2", "-refs", "4", "-x264-params",
+                        "keyint=8:direct=spatial"))
+        );
+    }
+
+    static Stream<Arguments> configurations() {
+        return sources().flatMap(source -> Stream.of(Arguments.of(source, 1), Arguments.of(source, 3)));
+    }
+
+    private static final Consumer<VideoFrame> DISCARD = frame -> {
+    };
+
+    /** Decodes packets, tolerating {@link MediaException} only, then optionally the clean stream. */
+    private static List<byte[]> decodeHostile(VideoTrack track, List<Packet> packets, List<Packet> clean, int threads) {
+        var frames = new ArrayList<byte[]>();
+        Consumer<VideoFrame> collect = frame -> frames.add(H264TestStreams.serialize((com.github.auties00.smalt.image.YuvPicture) frame.picture()));
+        H264Decoder decoder;
+        try {
+            decoder = new H264Decoder(track, H264DecoderOptions.builder().threads(threads).build());
+        } catch (MediaException expected) {
+            return frames;
+        }
+        try (decoder) {
+            for (var packet : packets) {
+                try {
+                    decoder.decode(packet, DISCARD);
+                } catch (MediaException expected) {
+                    // Corrupt packets may be rejected; decoding continues with the next one.
+                }
+            }
+            for (var packet : clean) {
+                try {
+                    decoder.decode(packet, collect);
+                } catch (MediaException expected) {
+                    // Leftover corrupt state may fail a packet before the IDR resets it.
+                }
+            }
+            try {
+                decoder.flush(collect);
+            } catch (MediaException expected) {
+                // A picture still in progress may be reported corrupt.
+            }
+        }
+        return frames;
+    }
+
+    private static List<Packet> annexB(List<List<byte[]>> units) {
+        var payloads = new ArrayList<byte[]>();
+        for (var unit : units) {
+            payloads.add(H264TestStreams.annexB(unit));
+        }
+        return H264TestStreams.packets(payloads);
+    }
+
+    private static void runTrials(Source source, int threads, int trials, long seed,
+                                  java.util.function.BiFunction<Random, List<List<byte[]>>, List<Packet>> mutation) {
+        var units = source.units();
+        var clean = annexB(units);
+        var track = H264TestStreams.track(Optional.empty(), Optional.empty());
+        var reference = H264TestStreams.decode(track, clean, 1);
+        assertTimeoutPreemptively(LIMIT, () -> {
+            var random = new Random(seed);
+            for (var trial = 0; trial < trials; trial++) {
+                var frames = decodeHostile(track, mutation.apply(random, units), clean, threads);
+                assertTrue(frames.size() >= reference.size(), "trial " + trial + " lost frames of the clean stream");
+                var offset = frames.size() - reference.size();
+                for (var i = 0; i < reference.size(); i++) {
+                    assertArrayEquals(reference.get(i).samples(), frames.get(offset + i),
+                            "trial " + trial + ": clean frame " + i + " after recovery");
+                }
+            }
+        });
+    }
+
+    private static byte[] flip(Random random, byte[] data, int flips) {
+        var copy = data.clone();
+        for (var i = 0; i < flips && copy.length > 0; i++) {
+            var position = random.nextInt(copy.length);
+            copy[position] ^= (byte) (1 << random.nextInt(8));
+        }
+        return copy;
+    }
+
+    @ParameterizedTest(name = "{0}, {1} threads")
+    @MethodSource("configurations")
+    @DisplayName("survives random bit flips in slices")
+    void bitFlips(Source source, int threads) {
+        runTrials(source, threads, 120, 1, (random, units) -> {
+            var packets = new ArrayList<Packet>();
+            for (var unit : units) {
+                var mutated = new ArrayList<byte[]>();
+                for (var nal : unit) {
+                    mutated.add(random.nextInt(4) == 0 ? flip(random, nal, 1 + random.nextInt(8)) : nal);
+                }
+                packets.add(new Packet(1, H264TestStreams.annexB(mutated), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, false));
+            }
+            return packets;
+        });
+    }
+
+    @ParameterizedTest(name = "{0}, {1} threads")
+    @MethodSource("configurations")
+    @DisplayName("survives corrupt parameter sets and NAL headers")
+    void parameterSets(Source source, int threads) {
+        runTrials(source, threads, 150, 2, (random, units) -> {
+            var packets = new ArrayList<Packet>();
+            for (var unit : units) {
+                var mutated = new ArrayList<byte[]>();
+                for (var nal : unit) {
+                    var type = nal[0] & 0x1F;
+                    if (type == 7 || type == 8 || type == 6) {
+                        mutated.add(flip(random, nal, 1 + random.nextInt(3)));
+                    } else if (random.nextInt(10) == 0) {
+                        var copy = nal.clone();
+                        copy[0] = (byte) random.nextInt(256);
+                        mutated.add(copy);
+                    } else {
+                        mutated.add(nal);
+                    }
+                }
+                packets.add(new Packet(1, H264TestStreams.annexB(mutated), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, false));
+            }
+            return packets;
+        });
+    }
+
+    @ParameterizedTest(name = "{0}, {1} threads")
+    @MethodSource("configurations")
+    @DisplayName("survives truncated packets")
+    void truncation(Source source, int threads) {
+        runTrials(source, threads, 80, 3, (random, units) -> {
+            var packets = new ArrayList<Packet>();
+            for (var packet : annexB(units)) {
+                var data = packet.data();
+                var cut = random.nextInt(3) == 0 ? Arrays.copyOf(data, random.nextInt(data.length + 1)) : data;
+                packets.add(new Packet(1, cut, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, false));
+            }
+            return packets;
+        });
+    }
+
+    @ParameterizedTest(name = "{0}, {1} threads")
+    @MethodSource("configurations")
+    @DisplayName("survives dropped, duplicated and reordered packets")
+    void packetOrder(Source source, int threads) {
+        runTrials(source, threads, 80, 4, (random, units) -> {
+            var packets = new ArrayList<>(annexB(units));
+            for (var i = 0; i < 4; i++) {
+                switch (random.nextInt(3)) {
+                    case 0 -> packets.remove(random.nextInt(packets.size()));
+                    case 1 -> packets.add(random.nextInt(packets.size()), packets.get(random.nextInt(packets.size())));
+                    default -> {
+                        var a = random.nextInt(packets.size());
+                        var b = random.nextInt(packets.size());
+                        var swap = packets.get(a);
+                        packets.set(a, packets.get(b));
+                        packets.set(b, swap);
+                    }
+                }
+            }
+            return packets;
+        });
+    }
+
+    @ParameterizedTest(name = "{0}, {1} threads")
+    @MethodSource("configurations")
+    @DisplayName("survives garbage NAL units between valid ones")
+    void garbage(Source source, int threads) {
+        runTrials(source, threads, 80, 5, (random, units) -> {
+            var packets = new ArrayList<Packet>();
+            for (var unit : units) {
+                var mutated = new ArrayList<byte[]>(unit);
+                if (random.nextInt(3) == 0) {
+                    var junk = new byte[1 + random.nextInt(400)];
+                    random.nextBytes(junk);
+                    junk[0] = (byte) ((random.nextInt(4) << 5) | (1 + random.nextInt(23)));
+                    mutated.add(random.nextInt(mutated.size() + 1), junk);
+                }
+                packets.add(new Packet(1, H264TestStreams.annexB(mutated), Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, false));
+            }
+            return packets;
+        });
+    }
+
+    @ParameterizedTest(name = "{0}, {1} threads")
+    @MethodSource("configurations")
+    @DisplayName("survives corrupt length prefixes and configuration records")
+    void lengthPrefixes(Source source, int threads) {
+        var units = source.units();
+        var nals = units.stream().flatMap(List::stream).toList();
+        assertTimeoutPreemptively(LIMIT, () -> {
+            var random = new Random(6);
+            for (var trial = 0; trial < 100; trial++) {
+                var record = H264TestStreams.avcC(nals, 4, true);
+                if (random.nextInt(3) == 0) {
+                    record = flip(random, record, 1 + random.nextInt(4));
+                }
+                var packets = new ArrayList<Packet>();
+                for (var unit : units) {
+                    var data = H264TestStreams.lengthPrefixed(unit, 4);
+                    if (random.nextInt(4) == 0) {
+                        var position = random.nextInt(Math.max(1, data.length - 4));
+                        data[position] = (byte) random.nextInt(256);
+                    }
+                    packets.add(new Packet(1, data, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, false));
+                }
+                decodeHostile(H264TestStreams.track(Optional.of(record), Optional.empty()), packets, List.of(), threads);
+            }
+        });
+    }
+
+    static Stream<H264ConformanceTest.Vector> conformanceVectors() {
+        var names = List.of("FM1_FT_E", "FM2_SVA_C", "MR4_TANDBERG_C", "FRExt_MMCO4_Sony_B", "CAPM3_Sony_D", "HCBP2_HHI_A",
+                "CVSEFDFT3_Sony_E", "MR6_BT_B");
+        return H264ConformanceTest.vectors().stream().filter(vector -> names.contains(vector.name()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("conformanceVectors")
+    @DisplayName("survives bit flips and dropped NAL units in conformance streams")
+    void conformanceMutations(H264ConformanceTest.Vector vector) throws java.io.IOException {
+        var nals = H264TestStreams.splitAnnexB(H264ConformanceTest.bitstream(vector));
+        var track = H264TestStreams.track(Optional.empty(), Optional.empty());
+        assertTimeoutPreemptively(LIMIT, () -> {
+            var random = new Random(vector.name().hashCode());
+            for (var trial = 0; trial < 12; trial++) {
+                var packets = new ArrayList<Packet>();
+                for (var nal : nals) {
+                    var roll = random.nextInt(100);
+                    if (roll < 2) {
+                        continue;
+                    }
+                    var data = roll < 6 ? flip(random, nal, 1 + random.nextInt(6)) : nal;
+                    packets.add(new Packet(1, data, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, false));
+                }
+                decodeHostile(track, packets, List.of(), 1 + 2 * (trial & 1));
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("random bytes as configuration record or packets never escape as runtime errors")
+    void randomInput() {
+        assertTimeoutPreemptively(LIMIT, () -> {
+            var random = new Random(7);
+            for (var trial = 0; trial < 300; trial++) {
+                var config = new byte[random.nextInt(64)];
+                random.nextBytes(config);
+                if (config.length > 0 && random.nextBoolean()) {
+                    config[0] = 1;
+                }
+                var packets = new ArrayList<Packet>();
+                for (var i = 0; i < 4; i++) {
+                    var data = new byte[random.nextInt(2000)];
+                    random.nextBytes(data);
+                    if (data.length > 4 && random.nextBoolean()) {
+                        data[0] = 0;
+                        data[1] = 0;
+                        data[2] = 1;
+                    }
+                    packets.add(new Packet(1, data, random.nextLong(), Packet.NO_TIMESTAMP, 0, false));
+                }
+                var track = H264TestStreams.track(config.length == 0 ? Optional.empty() : Optional.of(config), Optional.empty());
+                decodeHostile(track, packets, List.of(), 1 + trial % 3);
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("probing mutated and random input raises only MediaException")
+    void probe() {
+        var nals = sources().toList().get(1).units().stream().flatMap(List::stream).toList();
+        var sps = nals.stream().filter(nal -> (nal[0] & 0x1F) == 7).findFirst().orElseThrow();
+        var record = H264TestStreams.avcC(nals, 4, true);
+        assertTimeoutPreemptively(LIMIT, () -> {
+            var random = new Random(8);
+            for (var trial = 0; trial < 3000; trial++) {
+                byte[] input = switch (trial % 4) {
+                    case 0 -> flip(random, sps, 1 + random.nextInt(4));
+                    case 1 -> flip(random, record, 1 + random.nextInt(4));
+                    case 2 -> Arrays.copyOf(record, random.nextInt(record.length + 1));
+                    default -> {
+                        var bytes = new byte[random.nextInt(64)];
+                        random.nextBytes(bytes);
+                        yield bytes;
+                    }
+                };
+                try {
+                    H264StreamInfo.probe(input);
+                } catch (MediaException expected) {
+                    // Corrupt parameter sets are reported as media errors.
+                }
+            }
+        });
+    }
+
+    @Test
+    @DisplayName("slices without parameter sets are rejected as malformed")
+    void missingParameterSets() {
+        var units = sources().findFirst().orElseThrow().units();
+        var slices = units.stream().flatMap(List::stream).filter(nal -> (nal[0] & 0x1F) == 5 || (nal[0] & 0x1F) == 1).toList();
+        var track = H264TestStreams.track(Optional.empty(), Optional.empty());
+        try (var decoder = new H264Decoder(track)) {
+            assertThrows(MediaException.Malformed.class, () -> decoder.decode(new Packet(1, H264TestStreams.annexB(List.of(slices.getFirst())),
+                    0, Packet.NO_TIMESTAMP, 0, true), DISCARD));
+            assertDoesNotThrow(() -> decoder.flush(DISCARD));
+        }
+    }
+}

@@ -1,0 +1,8 @@
+Smalt Desktop: Third-Party Notices
+==================================
+
+Smalt Desktop (Maven artifact com.github.auties00:smalt-desktop, JPMS module
+com.github.auties00.smalt.desktop) is part of Smalt, a pure-Java media library
+(https://github.com/Auties00/Smalt), and is licensed under the MIT License.
+
+This module contains no code derived from third-party projects.

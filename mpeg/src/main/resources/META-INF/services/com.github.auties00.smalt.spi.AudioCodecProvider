@@ -1,0 +1,3 @@
+com.github.auties00.smalt.internal.provider.mpeg.AacCodecProvider
+com.github.auties00.smalt.internal.provider.mpeg.AmrCodecProvider
+com.github.auties00.smalt.internal.provider.mpeg.Ac3CodecProvider

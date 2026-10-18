@@ -1,0 +1,1314 @@
+package com.github.auties00.smalt.container.avi;
+
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.ContainerFormat;
+import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.internal.SeekTimes;
+import com.github.auties00.smalt.container.internal.WaveFormat;
+import com.github.auties00.smalt.internal.header.MpegAudioHeader;
+import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.io.ForwardOnlySource;
+import com.github.auties00.smalt.internal.io.SourceReader;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.VideoTrack;
+
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * Reads AVI files: the RIFF {@code AVI } form of the Video for Windows file format with the
+ * OpenDML 1.02 extensions for files over 1 GiB.
+ *
+ * <p>The demuxer reads the {@code hdrl} headers of every video ({@code vids}) and audio
+ * ({@code auds}) stream: the stream header ({@code strh}) gives the time base and the stream
+ * format ({@code strf}) the codec: the compression FourCC and extra data of a
+ * {@code BITMAPINFOHEADER}, or the format tag (with the sub-format of
+ * {@code WAVEFORMATEXTENSIBLE}) and extra data of a {@code WAVEFORMATEX}. Streams of other types
+ * (text, MIDI, interleaved DV) are skipped. The extra data becomes {@link Track#codecConfig()}:
+ * the video object layer headers of MPEG-4 Part 2, an {@code AVCDecoderConfigurationRecord} or
+ * {@code HEVCDecoderConfigurationRecord} when the extra data is one (Annex B parameter sets are
+ * left in band), the {@code AudioSpecificConfig} of AAC.
+ *
+ * <p>Samples are located through the OpenDML super index ({@code indx}) and the standard indexes
+ * ({@code ix##}) it points to, or else through the legacy {@code idx1} index (with offsets relative
+ * to the {@code movi} list or absolute, as found), or else by walking the {@code movi} lists of the
+ * {@code AVI } and {@code AVIX} RIFF forms, which also recovers truncated files. Packets are read in
+ * file order. Video packets carry their frame number in the stream's time base as both
+ * presentation and decoding timestamps (AVI stores no reordering information; decoders of codecs
+ * with B-frames derive the display order themselves) and are key frames when the index flags them,
+ * or, for walked files, when their data starts an intra picture. Empty video chunks, which writers
+ * use to drop frames, produce no packet but keep their time slot. Audio packets are chunks with
+ * timestamps counted in chunks (variable bitrate streams) or in sample blocks (constant bitrate
+ * streams); MPEG audio is re-framed so that every packet is one whole frame, whatever the chunking,
+ * with timestamps counted in samples.
+ *
+ * <p>{@link #seek(long)} moves every stream to its last key frame (audio: its last chunk) at or
+ * before the target, through the index. {@code LIST INFO} tags are reported by
+ * {@link #metadata()} under their chunk identifiers ({@code INAM}, {@code IART}, ...).
+ *
+ * <p>Instances are not thread-safe.
+ *
+ * <p>A source that reads its input once, front to back (a stream), is told after every chunk which
+ * bytes are no longer needed; the legacy index at the end of the file keeps the media data until
+ * it is read.
+ */
+public final class AviDemuxer implements Demuxer {
+    /**
+     * The largest header list read into memory.
+     */
+    private static final int MAX_HEADER = 16 << 20;
+
+    /**
+     * The largest number of chunks a file may index.
+     */
+    private static final int MAX_CHUNKS = 64 << 20;
+
+    /**
+     * The {@code AVIIF_KEYFRAME} flag of {@code idx1} entries.
+     */
+    private static final int KEYFRAME = 0x10;
+
+    /**
+     * The {@code AVIIF_LIST} flag of {@code idx1} entries.
+     */
+    private static final int LIST_FLAG = 0x01;
+
+    /**
+     * The source.
+     */
+    private final MediaSource source;
+
+    /**
+     * The limits.
+     */
+    private final MediaLimits limits;
+
+    /**
+     * The reader used for headers and indexes.
+     */
+    private final SourceReader reader;
+
+    /**
+     * The streams by stream number, {@code null} for skipped streams.
+     */
+    private final List<Stream> streams = new ArrayList<>();
+
+    /**
+     * The tracks.
+     */
+    private final List<Track> tracks;
+
+    /**
+     * The {@code LIST INFO} tags.
+     */
+    private final Map<String, String> metadata = new LinkedHashMap<>();
+
+    /**
+     * The {@code movi} lists: the position of their {@code movi} FourCC and their end.
+     */
+    private final List<long[]> moviLists = new ArrayList<>();
+
+    /**
+     * The position of the {@code idx1} chunk body, or {@code -1}.
+     */
+    private long idx1Position = -1;
+
+    /**
+     * The size of the {@code idx1} chunk body.
+     */
+    private long idx1Size;
+
+    /**
+     * The microseconds per frame of the main header.
+     */
+    private long microsPerFrame;
+
+    /**
+     * The total frame count of the OpenDML extended header, or 0.
+     */
+    private long extendedFrames;
+
+    /**
+     * The stream of every chunk in file order.
+     */
+    private int[] orderStream;
+
+    /**
+     * The index entry of every chunk in file order.
+     */
+    private int[] orderEntry;
+
+    /**
+     * The number of chunks in file order.
+     */
+    private int orderCount;
+
+    /**
+     * The next chunk in file order.
+     */
+    private int cursor;
+
+    /**
+     * The re-framed MPEG audio packets waiting to be returned.
+     */
+    private final ArrayDeque<Packet> pending = new ArrayDeque<>();
+
+    /**
+     * Constructs a demuxer over {@code source} with {@link DemuxerOptions#defaults()}.
+     *
+     * @param source the input, not closed by this demuxer
+     * @throws MediaException.Malformed if the input is not a valid AVI file
+     * @throws MediaException.LimitExceeded if a size exceeds the limits
+     * @throws MediaException.Io if reading fails
+     */
+    public AviDemuxer(MediaSource source) {
+        this(source, DemuxerOptions.defaults());
+    }
+
+    /**
+     * Constructs a demuxer over {@code source} that enforces the limits of {@code options}.
+     *
+     * @param source the input, not closed by this demuxer
+     * @param options the demuxing options
+     * @throws MediaException.Malformed if the input is not a valid AVI file
+     * @throws MediaException.LimitExceeded if a size exceeds the limits
+     * @throws MediaException.Io if reading fails
+     */
+    public AviDemuxer(MediaSource source, DemuxerOptions options) {
+        this(source, options.limits());
+    }
+
+    private AviDemuxer(MediaSource source, MediaLimits limits) {
+        this.source = Objects.requireNonNull(source, "source");
+        this.limits = Objects.requireNonNull(limits, "limits");
+        try {
+            this.reader = new SourceReader(source, 64 * 1024);
+            parseFile();
+            var list = new ArrayList<Track>();
+            for (var stream : streams) {
+                if (stream != null) {
+                    list.add(stream.track);
+                }
+            }
+            if (list.isEmpty()) {
+                throw new MediaException.Malformed("AVI file without audio or video streams");
+            }
+            this.tracks = Collections.unmodifiableList(list);
+            buildIndex();
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("invalid AVI file", exception);
+        }
+    }
+
+    /**
+     * Returns whether a stream starts with the RIFF AVI signature.
+     *
+     * @param header the first bytes of the stream
+     * @return {@code true} for an AVI file
+     */
+    public static boolean matches(byte[] header) {
+        return header.length >= 12 && header[0] == 'R' && header[1] == 'I' && header[2] == 'F' && header[3] == 'F'
+                && header[8] == 'A' && header[9] == 'V' && header[10] == 'I' && header[11] == ' ';
+    }
+
+    /**
+     * Returns the integer value of a FourCC as {@link SourceReader#fourCc()} reads it.
+     *
+     * @param tag the four characters
+     * @return the value
+     */
+    private static int fourCc(String tag) {
+        return (tag.charAt(0) << 24) | (tag.charAt(1) << 16) | (tag.charAt(2) << 8) | tag.charAt(3);
+    }
+
+    /**
+     * Returns the characters of a FourCC value.
+     *
+     * @param value the four-character code, first character in the high byte
+     * @return the four characters
+     */
+    private static String fourCcString(int value) {
+        var bytes = new byte[]{(byte) (value >>> 24), (byte) (value >>> 16), (byte) (value >>> 8), (byte) value};
+        return new String(bytes, StandardCharsets.ISO_8859_1);
+    }
+
+    /**
+     * Reads the RIFF forms of the file: the headers and the positions of the {@code movi} lists
+     * and of the legacy index.
+     */
+    private void parseFile() {
+        var size = reader.size();
+        if (size >= 0 && size < 12) {
+            throw new MediaException.Malformed("truncated AVI header");
+        }
+        var position = 0L;
+        var first = true;
+        var forms = 0;
+        while (true) {
+            reader.seek(position);
+            if (reader.remaining(12) < 12) {
+                break;
+            }
+            var id = reader.fourCc();
+            var formSize = reader.u32le();
+            var type = reader.fourCc();
+            if (id != fourCc("RIFF") || (first && type != fourCc("AVI ")) || (!first && type != fourCc("AVIX"))) {
+                if (first) {
+                    throw new MediaException.Malformed("not an AVI file");
+                }
+                break;
+            }
+            var end = position + 8 + formSize;
+            if (formSize < 4 || size >= 0 && end > size) {
+                end = size >= 0 ? size : Long.MAX_VALUE;
+            }
+            parseForm(position + 12, end, first);
+            first = false;
+            if (++forms > 4096) {
+                throw new MediaException.Malformed("too many RIFF forms");
+            }
+            position = end + (end & 1);
+            if (size >= 0 && position >= size) {
+                break;
+            }
+        }
+        if (streams.isEmpty()) {
+            throw new MediaException.Malformed("AVI file without stream headers");
+        }
+    }
+
+    /**
+     * Reads the chunks of one RIFF form.
+     *
+     * @param start the position of the first chunk
+     * @param end the end of the form
+     * @param first whether the form is the {@code AVI } form
+     */
+    private void parseForm(long start, long end, boolean first) {
+        var position = start;
+        var count = 0;
+        while (position + 8 <= end) {
+            reader.seek(position);
+            var id = reader.fourCc();
+            var chunkSize = reader.u32le();
+            var body = position + 8;
+            var chunkEnd = Math.min(end, body + chunkSize);
+            if (id == fourCc("LIST") && chunkSize >= 4) {
+                var listType = reader.fourCc();
+                if (listType == fourCc("hdrl") && first) {
+                    parseHeaderList(body + 4, chunkEnd);
+                } else if (listType == fourCc("movi")) {
+                    moviLists.add(new long[]{body, chunkEnd});
+                } else if (listType == fourCc("INFO")) {
+                    parseInfo(body + 4, chunkEnd);
+                }
+            } else if (id == fourCc("idx1") && first) {
+                idx1Position = body;
+                idx1Size = chunkEnd - body;
+            }
+            if (++count > 1 << 20) {
+                throw new MediaException.Malformed("too many chunks in a RIFF form");
+            }
+            position = body + chunkSize + (chunkSize & 1);
+        }
+    }
+
+    /**
+     * Reads the {@code hdrl} list: the main header, the stream lists and the OpenDML header.
+     *
+     * @param start the position of the first chunk of the list
+     * @param end the end of the list
+     */
+    private void parseHeaderList(long start, long end) {
+        if (end - start > MAX_HEADER) {
+            throw new MediaException.Malformed("oversized AVI header list");
+        }
+        var position = start;
+        while (position + 8 <= end) {
+            reader.seek(position);
+            var id = reader.fourCc();
+            var chunkSize = reader.u32le();
+            var body = position + 8;
+            var chunkEnd = Math.min(end, body + chunkSize);
+            if (id == fourCc("avih") && chunkSize >= 4) {
+                microsPerFrame = reader.u32le();
+            } else if (id == fourCc("LIST") && chunkSize >= 4) {
+                var listType = reader.fourCc();
+                if (listType == fourCc("strl")) {
+                    if (streams.size() >= 100) {
+                        throw new MediaException.Malformed("more than 100 AVI streams");
+                    }
+                    streams.add(parseStream(body + 4, chunkEnd, streams.size()));
+                } else if (listType == fourCc("odml")) {
+                    reader.seek(body + 4);
+                    if (chunkEnd - reader.position() >= 12 && reader.fourCc() == fourCc("dmlh")) {
+                        reader.u32le();
+                        extendedFrames = reader.u32le();
+                    }
+                }
+            }
+            position = body + chunkSize + (chunkSize & 1);
+        }
+    }
+
+    /**
+     * Reads one {@code strl} list into a stream.
+     *
+     * @param start the position of the first chunk of the list
+     * @param end the end of the list
+     * @param number the stream number
+     * @return the stream, or {@code null} for a stream of an unsupported type
+     */
+    private Stream parseStream(long start, long end, int number) {
+        var position = start;
+        int type = 0;
+        int handler = 0;
+        long scale = 0;
+        long rate = 0;
+        long first = 0;
+        long length = 0;
+        long sampleSize = 0;
+        byte[] format = null;
+        var superIndex = -1L;
+        var superIndexSize = 0L;
+        String name = null;
+        while (position + 8 <= end) {
+            reader.seek(position);
+            var id = reader.fourCc();
+            var chunkSize = reader.u32le();
+            var body = position + 8;
+            var available = Math.min(end, body + chunkSize) - body;
+            if (id == fourCc("strh") && available >= 48) {
+                type = reader.fourCc();
+                handler = reader.fourCc();
+                reader.u32le();
+                reader.u32le();
+                reader.u32le();
+                scale = reader.u32le();
+                rate = reader.u32le();
+                first = reader.u32le();
+                length = reader.u32le();
+                reader.u32le();
+                reader.u32le();
+                sampleSize = reader.u32le();
+            } else if (id == fourCc("strf")) {
+                format = reader.bytes(Math.min(available, MAX_HEADER), MAX_HEADER);
+            } else if (id == fourCc("indx")) {
+                superIndex = body;
+                superIndexSize = available;
+            } else if (id == fourCc("strn") && available > 0) {
+                var bytes = reader.bytes(Math.min(available, 4096), 4096);
+                var text = new String(bytes, StandardCharsets.UTF_8);
+                var zero = text.indexOf('\0');
+                name = (zero >= 0 ? text.substring(0, zero) : text).strip();
+            }
+            position = body + chunkSize + (chunkSize & 1);
+        }
+        if (scale == 0 || rate == 0) {
+            scale = 1;
+            rate = microsPerFrame > 0 ? 1_000_000 : 25;
+            if (microsPerFrame > 0) {
+                scale = microsPerFrame;
+            }
+        }
+        var timeBase = new Rational(scale, rate).reduce();
+        Stream stream;
+        if (type == fourCc("vids")) {
+            stream = videoStream(number, handler, format, timeBase, first, length);
+        } else if (type == fourCc("auds")) {
+            stream = audioStream(number, format, timeBase, scale, rate, first, length, sampleSize);
+        } else {
+            return null;
+        }
+        if (stream == null) {
+            return null;
+        }
+        stream.superIndex = superIndex;
+        stream.superIndexSize = superIndexSize;
+        stream.name = name;
+        return stream;
+    }
+
+    /**
+     * Builds a video stream from its stream format.
+     *
+     * @param number the stream number
+     * @param handler the handler FourCC of the stream header
+     * @param format the {@code BITMAPINFOHEADER}, or {@code null}
+     * @param timeBase the time base
+     * @param first the start time in time base units
+     * @param length the length in frames
+     * @return the stream
+     */
+    private Stream videoStream(int number, int handler, byte[] format, Rational timeBase, long first, long length) {
+        var width = 0;
+        var height = 0;
+        var codec = Codec.UNKNOWN_VIDEO;
+        byte[] config = null;
+        if (format != null && format.length >= 40) {
+            var headerSize = (int) Math.min(ByteArrays.u32le(format, 0), format.length);
+            width = (int) Math.min(Math.abs((long) ByteArrays.i32le(format, 4)), Integer.MAX_VALUE);
+            height = (int) Math.min(Math.abs((long) ByteArrays.i32le(format, 8)), Integer.MAX_VALUE);
+            var compression = new String(format, 16, 4, StandardCharsets.ISO_8859_1);
+            codec = RiffCodecs.video(compression);
+            if (codec == Codec.UNKNOWN_VIDEO && handler != 0) {
+                codec = RiffCodecs.video(fourCcString(handler));
+            }
+            if (headerSize >= 40 && format.length > headerSize) {
+                config = Arrays.copyOfRange(format, headerSize, format.length);
+            }
+        } else if (handler != 0) {
+            codec = RiffCodecs.video(fourCcString(handler));
+        }
+        if ((codec == Codec.H264 || codec == Codec.HEVC) && config != null && (config.length < 7 || config[0] != 1)) {
+            config = null;
+        }
+        if (width > 0 && height > 0) {
+            LimitChecks.checkPicture(limits, width, height);
+        }
+        var track = VideoTrack.builder().id(number + 1).codec(codec).timeBase(timeBase)
+                .duration(length > 0 ? first + length : -1)
+                .codecConfig(config)
+                .width(width)
+                .height(height)
+                .frameRate(timeBase.invert())
+                .build();
+        var stream = new Stream(number, track, true);
+        stream.first = first;
+        return stream;
+    }
+
+    /**
+     * Builds an audio stream from its stream format.
+     *
+     * @param number the stream number
+     * @param format the {@code WAVEFORMATEX}, or {@code null}
+     * @param timeBase the time base of the stream header
+     * @param scale the {@code dwScale} of the stream header
+     * @param rate the {@code dwRate} of the stream header
+     * @param first the start time in time base units
+     * @param length the length in time base units
+     * @param sampleSize the {@code dwSampleSize} of the stream header
+     * @return the stream, or {@code null} without a format
+     */
+    private Stream audioStream(int number, byte[] format, Rational timeBase, long scale, long rate, long first,
+                               long length, long sampleSize) {
+        if (format == null || format.length < 14) {
+            return null;
+        }
+        var wave = WaveFormat.parse(format, format.length, false);
+        var channels = wave.channels();
+        var sampleRate = (int) Math.min(wave.sampleRate(), Integer.MAX_VALUE);
+        var blockAlign = wave.blockAlign();
+        var bits = wave.bitsPerSample();
+        var codec = WaveFormat.codec(wave.tag(), bits);
+        LimitChecks.checkChannels(limits, Math.max(1, channels));
+        var extra = wave.extra();
+        var config = codec == Codec.AAC && extra.length > 0 ? extra : null;
+        var mpegAudio = codec == Codec.MP3 || codec == Codec.MP2;
+        var trackBase = mpegAudio && sampleRate > 0 ? Rational.timeBaseOf(sampleRate) : timeBase;
+        long duration = -1;
+        if (length > 0) {
+            duration = mpegAudio ? timeBase.rescale(first + length, trackBase) : first + length;
+            if (mpegAudio && sampleSize > 0) {
+                duration = -1;
+            }
+        }
+        var track = AudioTrack.builder().id(number + 1).codec(codec).timeBase(trackBase)
+                .duration(duration)
+                .codecConfig(config)
+                .sampleRate(sampleRate)
+                .layout(channels > 0 ? wave.layout() : ChannelLayout.defaultFor(1))
+                .bitsPerSample(codec.isPcm() ? bits : 0)
+                .build();
+        var stream = new Stream(number, track, false);
+        stream.first = first;
+        stream.sampleSize = sampleSize > 0 ? sampleSize : 0;
+        stream.blockAlign = Math.max(1, blockAlign);
+        stream.mpegAudio = mpegAudio;
+        stream.headerTimeBase = timeBase;
+        stream.sampleRate = sampleRate;
+        if (mpegAudio && sampleSize > 0 && sampleRate > 0) {
+            stream.bytesPerSecond = rate * (long) Math.max(1, (int) sampleSize) / Math.max(1, scale);
+        }
+        return stream;
+    }
+
+    /**
+     * Reads the {@code LIST INFO} entries.
+     *
+     * @param start the position of the first entry
+     * @param end the end of the list
+     */
+    private void parseInfo(long start, long end) {
+        if (end - start > MAX_HEADER) {
+            return;
+        }
+        var position = start;
+        while (position + 8 <= end) {
+            reader.seek(position);
+            var id = reader.fourCc();
+            var chunkSize = reader.u32le();
+            var available = Math.min(end, position + 8 + chunkSize) - position - 8;
+            if (available > 0 && available < 1 << 20) {
+                var bytes = reader.bytes(available, 1 << 20);
+                var text = new String(bytes, StandardCharsets.UTF_8);
+                var zero = text.indexOf('\0');
+                var value = (zero >= 0 ? text.substring(0, zero) : text).strip();
+                if (!value.isEmpty()) {
+                    metadata.put(fourCcString(id), value);
+                }
+            }
+            position = position + 8 + chunkSize + (chunkSize & 1);
+        }
+    }
+
+    /**
+     * Locates every chunk of every stream and orders the chunks by file position.
+     */
+    private void buildIndex() {
+        var indexed = false;
+        for (var stream : streams) {
+            if (stream != null && stream.superIndex >= 0) {
+                indexed |= readSuperIndex(stream);
+            }
+        }
+        if (!indexed && idx1Position >= 0) {
+            indexed = readIdx1();
+        }
+        if (!indexed) {
+            for (var stream : streams) {
+                if (stream != null) {
+                    stream.count = 0;
+                }
+            }
+            walkMovi();
+        }
+        var total = 0L;
+        for (var stream : streams) {
+            if (stream != null) {
+                total += stream.count;
+                stream.computeTimes();
+            }
+        }
+        LimitChecks.checkFrames(limits, total);
+        orderStream = new int[(int) total];
+        orderEntry = new int[(int) total];
+        var heads = new int[streams.size()];
+        for (var k = 0; k < total; k++) {
+            var best = -1;
+            var bestOffset = Long.MAX_VALUE;
+            for (var s = 0; s < streams.size(); s++) {
+                var stream = streams.get(s);
+                if (stream != null && heads[s] < stream.count && stream.offsets[heads[s]] < bestOffset) {
+                    bestOffset = stream.offsets[heads[s]];
+                    best = s;
+                }
+            }
+            orderStream[k] = best;
+            orderEntry[k] = heads[best]++;
+        }
+        orderCount = (int) total;
+    }
+
+    /**
+     * Reads the OpenDML super index of a stream and the standard indexes it points to.
+     *
+     * @param stream the stream whose super index is read
+     * @return {@code true} when an index was read
+     */
+    private boolean readSuperIndex(Stream stream) {
+        if (stream.superIndexSize < 24) {
+            return false;
+        }
+        reader.seek(stream.superIndex);
+        var longsPerEntry = reader.u16le();
+        reader.u8();
+        var indexType = reader.u8();
+        var entries = reader.u32le();
+        reader.u32le();
+        reader.skip(12);
+        if (indexType == 1) {
+            readStandardIndex(stream, stream.superIndex, stream.superIndexSize);
+            return stream.count > 0;
+        }
+        if (indexType != 0 || longsPerEntry != 4 || entries > (stream.superIndexSize - 24) / 16) {
+            return false;
+        }
+        var targets = new long[(int) entries];
+        for (var i = 0; i < entries; i++) {
+            targets[i] = reader.u64le();
+            reader.u32le();
+            reader.u32le();
+        }
+        for (var target : targets) {
+            if (target < 0 || reader.size() >= 0 && target + 8 > reader.size()) {
+                continue;
+            }
+            reader.seek(target);
+            reader.fourCc();
+            var size = reader.u32le();
+            readStandardIndex(stream, target + 8, size);
+        }
+        return stream.count > 0;
+    }
+
+    /**
+     * Reads one OpenDML standard index ({@code AVI_INDEX_OF_CHUNKS}).
+     *
+     * @param stream the stream whose index entries are added
+     * @param start the position of the index header
+     * @param size the size of the index
+     */
+    private void readStandardIndex(Stream stream, long start, long size) {
+        if (size < 24) {
+            return;
+        }
+        reader.seek(start);
+        var longsPerEntry = reader.u16le();
+        var subType = reader.u8();
+        var indexType = reader.u8();
+        var entries = reader.u32le();
+        reader.u32le();
+        var base = reader.u64le();
+        reader.u32le();
+        if (indexType != 1 || subType != 0 || longsPerEntry != 2 || entries > (size - 24) / 8) {
+            return;
+        }
+        for (var i = 0; i < entries; i++) {
+            var offset = reader.u32le();
+            var chunkSize = reader.u32le();
+            stream.add(base + offset, (int) (chunkSize & 0x7FFFFFFFL), (chunkSize & 0x80000000L) == 0, limits);
+        }
+    }
+
+    /**
+     * Reads the legacy {@code idx1} index.
+     *
+     * @return {@code true} when the index located chunks
+     */
+    private boolean readIdx1() {
+        if (moviLists.isEmpty()) {
+            return false;
+        }
+        var count = idx1Size / 16;
+        if (count == 0) {
+            return false;
+        }
+        LimitChecks.checkFrames(limits, count);
+        var movi = moviLists.getFirst()[0];
+        reader.seek(idx1Position);
+        long baseOffset = -1;
+        for (var i = 0; i < count; i++) {
+            var id = reader.fourCc();
+            var flags = reader.u32le();
+            var offset = reader.u32le();
+            var size = reader.u32le();
+            if ((flags & LIST_FLAG) != 0) {
+                continue;
+            }
+            var stream = streamOf(id);
+            if (stream == null) {
+                continue;
+            }
+            if (baseOffset < 0) {
+                var saved = reader.position();
+                baseOffset = matchesChunk(movi + offset, id) ? movi : matchesChunk(offset, id) ? 0 : movi;
+                reader.seek(saved);
+            }
+            stream.add(baseOffset + offset + 8, (int) Math.min(size, Integer.MAX_VALUE), (flags & KEYFRAME) != 0,
+                    limits);
+        }
+        for (var stream : streams) {
+            if (stream != null && stream.count > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether a chunk with an identifier starts at a position.
+     *
+     * @param position the absolute offset of the candidate chunk header
+     * @param id the identifier
+     * @return {@code true} when it does
+     */
+    private boolean matchesChunk(long position, int id) {
+        if (position < 0 || reader.size() >= 0 && position + 8 > reader.size()) {
+            return false;
+        }
+        reader.seek(position);
+        return reader.fourCc() == id;
+    }
+
+    /**
+     * Returns the stream a chunk identifier belongs to.
+     *
+     * @param id the chunk identifier, {@code ##dc}, {@code ##wb} and so on
+     * @return the stream, or {@code null}
+     */
+    private Stream streamOf(int id) {
+        var high = (id >>> 24) & 0xFF;
+        var low = (id >>> 16) & 0xFF;
+        if (high < '0' || high > '9' || low < '0' || low > '9') {
+            return null;
+        }
+        var number = (high - '0') * 10 + (low - '0');
+        var kind = id & 0xFFFF;
+        if (number >= streams.size() || kind == ('p' << 8 | 'c') || kind == ('i' << 8 | 'x')) {
+            return null;
+        }
+        return streams.get(number);
+    }
+
+    /**
+     * Locates chunks by walking the {@code movi} lists, for files without a usable index.
+     */
+    private void walkMovi() {
+        var probe = new byte[64];
+        for (var list : moviLists) {
+            walkList(list[0] + 4, list[1], probe, 0);
+        }
+    }
+
+    /**
+     * Walks the chunks of a list, descending into {@code rec } lists.
+     *
+     * @param start the position of the first chunk
+     * @param end the end of the list
+     * @param probe a buffer for the start of video chunks
+     * @param depth the nesting depth
+     */
+    private void walkList(long start, long end, byte[] probe, int depth) {
+        var position = start;
+        while (position + 8 <= end) {
+            reader.seek(position);
+            var id = reader.fourCc();
+            var size = reader.u32le();
+            if (id == fourCc("LIST") && depth < 4) {
+                walkList(position + 12, Math.min(end, position + 8 + size), probe, depth + 1);
+            } else {
+                var stream = streamOf(id);
+                if (stream != null && position + 8 + size <= end) {
+                    var key = true;
+                    if (stream.video) {
+                        var head = (int) Math.min(size, probe.length);
+                        reader.readFully(probe, 0, head);
+                        key = stream.count == 0 || startsIntra(stream.track.codec(), probe, head);
+                    }
+                    stream.add(position + 8, (int) Math.min(size, Integer.MAX_VALUE), key, limits);
+                }
+            }
+            position = position + 8 + size + (size & 1);
+        }
+    }
+
+    /**
+     * Returns whether the start of a video chunk begins an intra picture, for files without an
+     * index.
+     *
+     * @param codec the codec of the stream
+     * @param data the start of the chunk
+     * @param length the number of valid bytes
+     * @return {@code true} for a key frame
+     */
+    private static boolean startsIntra(Codec codec, byte[] data, int length) {
+        switch (codec) {
+            case MJPEG -> {
+                return true;
+            }
+            case MPEG4_PART2 -> {
+                for (var i = 0; i + 4 < length; i++) {
+                    if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1 && (data[i + 3] & 0xFF) == 0xB6) {
+                        return (data[i + 4] & 0xC0) == 0;
+                    }
+                }
+                return false;
+            }
+            case H264 -> {
+                for (var i = 0; i + 3 < length; i++) {
+                    if (data[i] == 0 && data[i + 1] == 0 && data[i + 2] == 1) {
+                        var type = data[i + 3] & 0x1F;
+                        if (type == 5 || type == 7) {
+                            return true;
+                        }
+                        if (type == 1) {
+                            return false;
+                        }
+                    }
+                }
+                return false;
+            }
+            default -> {
+                return false;
+            }
+        }
+    }
+
+    @Override
+    public ContainerFormat format() {
+        return ContainerFormat.AVI;
+    }
+
+    @Override
+    public List<Track> tracks() {
+        return tracks;
+    }
+
+    @Override
+    public Map<String, String> metadata() {
+        return Collections.unmodifiableMap(metadata);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The tags of a stream are its {@code strn} name, under {@code "title"}.
+     */
+    @Override
+    public Map<String, String> trackMetadata(int trackId) {
+        for (var stream : streams) {
+            if (stream != null && stream.track.id() == trackId && stream.name != null && !stream.name.isEmpty()) {
+                return Map.of("title", stream.name);
+            }
+        }
+        return Map.of();
+    }
+
+    @Override
+    public long durationMicros() {
+        var longest = -1L;
+        for (var stream : streams) {
+            if (stream == null) {
+                continue;
+            }
+            var end = stream.endTime();
+            if (end >= 0) {
+                longest = Math.max(longest, stream.track.timeBase().toMicros(end));
+            }
+        }
+        if (longest < 0 && microsPerFrame > 0 && extendedFrames > 0) {
+            longest = microsPerFrame * extendedFrames;
+        }
+        return longest;
+    }
+
+    /**
+     * Returns the number of samples of a track, as the index lists them, without reading the samples.
+     *
+     * @param trackId the identifier of the track
+     * @return the sample count, or {@code -1} for an unknown track or an MPEG audio track, whose index entries are not
+     * frames
+     */
+    public long sampleCount(int trackId) {
+        for (var stream : streams) {
+            if (stream != null && stream.track.id() == trackId) {
+                return stream.mpegAudio ? -1 : stream.count;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Returns the total size of the samples of a track, as the index lists them, without reading the
+     * samples.
+     *
+     * @param trackId the identifier of the track
+     * @return the size in bytes, or {@code -1} for an unknown track
+     */
+    public long sampleBytes(int trackId) {
+        for (var stream : streams) {
+            if (stream != null && stream.track.id() == trackId) {
+                var total = 0L;
+                for (var i = 0; i < stream.count; i++) {
+                    total += stream.sizes[i];
+                }
+                return total;
+            }
+        }
+        return -1;
+    }
+
+    @Override
+    public Packet read() {
+        try {
+            while (true) {
+                var queued = pending.poll();
+                if (queued != null) {
+                    return queued;
+                }
+                if (cursor >= orderCount) {
+                    return null;
+                }
+                var stream = streams.get(orderStream[cursor]);
+                var entry = orderEntry[cursor];
+                cursor++;
+                if (entry < stream.skipBefore) {
+                    continue;
+                }
+                var size = stream.sizes[entry];
+                if (size == 0) {
+                    continue;
+                }
+                var offset = stream.offsets[entry];
+                if (reader.size() >= 0 && offset + size > reader.size()) {
+                    size = (int) Math.max(0, reader.size() - offset);
+                    if (size == 0) {
+                        continue;
+                    }
+                }
+                LimitChecks.checkAllocation(limits, size);
+                var data = new byte[size];
+                reader.seek(offset);
+                reader.readFully(data, 0, size);
+                ForwardOnlySource.release(reader.source(), cursor < orderCount
+                        ? streams.get(orderStream[cursor]).offsets[orderEntry[cursor]] : Long.MAX_VALUE);
+                if (stream.mpegAudio) {
+                    stream.frame(data, entry, pending);
+                    continue;
+                }
+                var time = stream.times[entry];
+                var duration = entry + 1 < stream.count ? Math.max(0, stream.times[entry + 1] - time)
+                        : Packet.UNKNOWN_DURATION;
+                return new Packet(stream.track.id(), data, time, time, duration, stream.keys[entry]);
+            }
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("invalid AVI chunk", exception);
+        }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}: the index locates every chunk
+     */
+    @Override
+    public boolean isSeekable() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Every video stream restarts at its last key frame at or before the target and every
+     * audio stream at its last chunk starting at or before it; reading resumes at the first of
+     * these chunks in file order, skipping the earlier chunks of the other streams.
+     */
+    @Override
+    public void seek(long micros) {
+        pending.clear();
+        var earliest = Integer.MAX_VALUE;
+        var anyLeft = false;
+        for (var stream : streams) {
+            if (stream == null) {
+                continue;
+            }
+            var target = SeekTimes.floor(micros, stream.track.timeBase());
+            var chosen = -1;
+            for (var i = 0; i < stream.count; i++) {
+                if (stream.times[i] > target) {
+                    break;
+                }
+                if (stream.keys[i]) {
+                    chosen = i;
+                }
+            }
+            if (chosen < 0) {
+                chosen = 0;
+                while (chosen < stream.count && !stream.keys[chosen]) {
+                    chosen++;
+                }
+            }
+            var end = stream.endTime();
+            if (end >= 0 && target >= end || chosen >= stream.count) {
+                stream.skipBefore = stream.count;
+                continue;
+            }
+            anyLeft = true;
+            stream.skipBefore = chosen;
+            stream.resetFraming();
+            for (var k = 0; k < orderCount; k++) {
+                if (orderStream[k] == stream.number && orderEntry[k] == chosen) {
+                    earliest = Math.min(earliest, k);
+                    break;
+                }
+            }
+        }
+        cursor = anyLeft && earliest != Integer.MAX_VALUE ? earliest : orderCount;
+    }
+
+    /**
+     * Holds one stream: its track, its chunk index and the re-framing state of MPEG audio.
+     */
+    private static final class Stream {
+        /**
+         * The stream number.
+         */
+        final int number;
+
+        /**
+         * The track.
+         */
+        final Track track;
+
+        /**
+         * Whether the stream is a video stream.
+         */
+        final boolean video;
+
+        /**
+         * The start time of the stream header, in its time base.
+         */
+        long first;
+
+        /**
+         * The {@code dwSampleSize} of an audio stream, 0 for one chunk per time unit.
+         */
+        long sampleSize;
+
+        /**
+         * The block alignment of an audio stream.
+         */
+        int blockAlign = 1;
+
+        /**
+         * Whether the stream is MPEG audio, which is re-framed.
+         */
+        boolean mpegAudio;
+
+        /**
+         * The time base of the stream header.
+         */
+        Rational headerTimeBase;
+
+        /**
+         * The sample rate of an audio stream.
+         */
+        int sampleRate;
+
+        /**
+         * The byte rate of a constant bitrate MPEG audio stream, or 0.
+         */
+        long bytesPerSecond;
+
+        /**
+         * The position of the {@code indx} chunk body, or {@code -1}.
+         */
+        long superIndex = -1;
+
+        /**
+         * The size of the {@code indx} chunk body.
+         */
+        long superIndexSize;
+
+        /**
+         * The {@code strn} name, or {@code null}.
+         */
+        String name;
+
+        /**
+         * The positions of the chunks' data.
+         */
+        long[] offsets = new long[64];
+
+        /**
+         * The sizes of the chunks.
+         */
+        int[] sizes = new int[64];
+
+        /**
+         * Whether each chunk is a key frame.
+         */
+        boolean[] keys = new boolean[64];
+
+        /**
+         * The timestamps of the chunks in the track time base.
+         */
+        long[] times;
+
+        /**
+         * The number of chunks.
+         */
+        int count;
+
+        /**
+         * The first chunk to return after a seek.
+         */
+        int skipBefore;
+
+        /**
+         * The bytes of MPEG audio not yet framed.
+         */
+        byte[] carry = new byte[0];
+
+        /**
+         * The timestamp of the next MPEG audio frame, in samples, or {@code Long.MIN_VALUE} until
+         * the next chunk sets it.
+         */
+        long nextSample = Long.MIN_VALUE;
+
+        /**
+         * Constructs a stream.
+         *
+         * @param number the stream number
+         * @param track the track this stream feeds
+         * @param video whether the stream is a video stream
+         */
+        Stream(int number, Track track, boolean video) {
+            this.number = number;
+            this.track = track;
+            this.video = video;
+        }
+
+        /**
+         * Appends a chunk to the index.
+         *
+         * @param offset the position of its data
+         * @param size its size
+         * @param key whether it is a key frame
+         * @param limits the limits bounding the chunk count
+         */
+        void add(long offset, int size, boolean key, MediaLimits limits) {
+            if (count == offsets.length) {
+                if (count >= MAX_CHUNKS) {
+                    throw new MediaException.LimitExceeded("AVI stream with more than " + MAX_CHUNKS + " chunks");
+                }
+                LimitChecks.checkFrames(limits, count * 2L);
+                offsets = Arrays.copyOf(offsets, count * 2);
+                sizes = Arrays.copyOf(sizes, count * 2);
+                keys = Arrays.copyOf(keys, count * 2);
+            }
+            offsets[count] = offset;
+            sizes[count] = size;
+            keys[count] = key || !video;
+            count++;
+        }
+
+        /**
+         * Computes the timestamp of every chunk.
+         */
+        void computeTimes() {
+            times = new long[count + 1];
+            var bytes = 0L;
+            for (var i = 0; i <= count; i++) {
+                times[i] = headerTime(i, bytes);
+                if (i < count) {
+                    bytes += sizes[i];
+                }
+            }
+            if (video && count > 0) {
+                keys[0] = true;
+            }
+        }
+
+        /**
+         * Returns the timestamp of a chunk in the track time base.
+         *
+         * @param index the chunk index
+         * @param bytes the bytes of the stream before the chunk
+         * @return the timestamp
+         */
+        private long headerTime(int index, long bytes) {
+            if (video) {
+                return first + index;
+            }
+            var units = sampleSize > 0 ? first + bytes / sampleSize : first + index;
+            if (!mpegAudio) {
+                return units;
+            }
+            if (sampleSize > 0 && bytesPerSecond > 0) {
+                return headerTimeBase.rescale(first, track.timeBase()) + bytes * sampleRate / bytesPerSecond;
+            }
+            return headerTimeBase.rescale(units, track.timeBase());
+        }
+
+        /**
+         * {@return the end of the stream in the track time base, or {@code -1} when the stream has no chunk}
+         */
+        long endTime() {
+            return count == 0 ? -1 : times[count];
+        }
+
+        /**
+         * Forgets the framing state, as when reading restarts at another chunk.
+         */
+        void resetFraming() {
+            carry = new byte[0];
+            nextSample = Long.MIN_VALUE;
+        }
+
+        /**
+         * Splits MPEG audio chunk data into whole frames.
+         *
+         * @param data the chunk data
+         * @param entry the chunk index
+         * @param output receives one packet per complete frame
+         */
+        void frame(byte[] data, int entry, ArrayDeque<Packet> output) {
+            if (nextSample == Long.MIN_VALUE) {
+                nextSample = times[entry];
+                carry = new byte[0];
+            }
+            var buffer = carry.length == 0 ? data : concat(carry, data);
+            var offset = 0;
+            while (buffer.length - offset >= MpegAudioHeader.SIZE) {
+                var header = MpegAudioHeader.read(buffer, offset);
+                if (!MpegAudioHeader.isValid(header) || MpegAudioHeader.isFreeFormat(header)) {
+                    offset++;
+                    continue;
+                }
+                var size = MpegAudioHeader.frameBytes(header, 0) + MpegAudioHeader.padding(header);
+                if (size <= MpegAudioHeader.SIZE) {
+                    offset++;
+                    continue;
+                }
+                if (offset + size > buffer.length) {
+                    break;
+                }
+                var frame = Arrays.copyOfRange(buffer, offset, offset + size);
+                var samples = MpegAudioHeader.samplesPerFrame(header);
+                output.add(new Packet(track.id(), frame, nextSample, nextSample, samples, true));
+                nextSample += samples;
+                offset += size;
+            }
+            carry = offset >= buffer.length ? new byte[0] : Arrays.copyOfRange(buffer, offset, buffer.length);
+            if (carry.length > 1 << 16) {
+                carry = new byte[0];
+            }
+        }
+
+        /**
+         * Concatenates two arrays.
+         *
+         * @param a the first array
+         * @param b the second array
+         * @return the concatenation
+         */
+        private static byte[] concat(byte[] a, byte[] b) {
+            var result = Arrays.copyOf(a, a.length + b.length);
+            System.arraycopy(b, 0, result, a.length, b.length);
+            return result;
+        }
+    }
+}

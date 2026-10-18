@@ -1,0 +1,9 @@
+# Shell and Python scripts run on Linux CI runners: keep them LF whatever core.autocrlf says.
+*.sh text eol=lf
+*.py text eol=lf
+*.tsv text eol=lf
+# Java sources and the codegen templates are LF everywhere, so that a regenerated kernel compares equal to the
+# committed file (tools/codegen/check.py) and no checkout rewrites every line.
+*.java text eol=lf
+*.head text eol=lf
+*.template text eol=lf

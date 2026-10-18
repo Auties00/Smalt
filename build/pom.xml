@@ -1,0 +1,302 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    smalt-build: the root of the inheritance tree, shared by smalt-parent (every code artifact) and smalt-bom. It
+    holds what both publish with (project metadata, plugin versions, the release and API-compatibility profiles)
+    and no dependencyManagement, since an imported BOM carries its whole dependencyManagement to consumers. It is
+    published with each release, because the poms that inherit it are.
+    child.*.inherit.append.path="false" keeps the inherited url and scm coordinates pointing at the repository
+    instead of Maven's default <parent url>/<artifactId>, which would publish broken links on every artifact.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd"
+         child.project.url.inherit.append.path="false">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.github.auties00</groupId>
+    <artifactId>smalt-build</artifactId>
+    <version>0.1.0-SNAPSHOT</version>
+    <packaging>pom</packaging>
+    <name>${project.groupId}:${project.artifactId}</name>
+    <description>Smalt build configuration: the metadata, plugin versions and release profiles every Smalt pom inherits</description>
+    <url>https://github.com/Auties00/Smalt</url>
+
+    <developers>
+        <developer>
+            <name>Alessandro Autiero</name>
+            <email>alautiero@gmail.com</email>
+        </developer>
+    </developers>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://www.opensource.org/licenses/mit-license.php</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <scm child.scm.connection.inherit.append.path="false"
+         child.scm.developerConnection.inherit.append.path="false"
+         child.scm.url.inherit.append.path="false">
+        <url>https://github.com/Auties00/Smalt/tree/master</url>
+        <connection>scm:git:https://github.com/Auties00/Smalt.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/Auties00/Smalt.git</developerConnection>
+    </scm>
+
+    <issueManagement>
+        <system>GitHub</system>
+        <url>https://github.com/Auties00/Smalt/issues</url>
+    </issueManagement>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <smalt.java.release>26</smalt.java.release>
+        <maven.clean.plugin.version>3.5.0</maven.clean.plugin.version>
+        <maven.compiler.plugin.version>3.15.0</maven.compiler.plugin.version>
+        <maven.surefire.plugin.version>3.5.4</maven.surefire.plugin.version>
+        <maven.jar.plugin.version>3.4.1</maven.jar.plugin.version>
+        <maven.gpg.plugin.version>3.2.7</maven.gpg.plugin.version>
+        <maven.source.plugin.version>3.3.1</maven.source.plugin.version>
+        <maven.javadoc.plugin.version>3.11.2</maven.javadoc.plugin.version>
+        <maven.staging.plugin.version>0.8.0</maven.staging.plugin.version>
+        <japicmp.plugin.version>0.23.1</japicmp.plugin.version>
+        <build.helper.plugin.version>3.6.0</build.helper.plugin.version>
+        <exec.plugin.version>3.1.0</exec.plugin.version>
+        <!-- false uploads and validates the release on the Central Portal, leaving the publish button to a human -->
+        <central.autoPublish>true</central.autoPublish>
+        <central.waitUntil>published</central.waitUntil>
+    </properties>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-clean-plugin</artifactId>
+                    <version>${maven.clean.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-compiler-plugin</artifactId>
+                    <version>${maven.compiler.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>${maven.surefire.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-jar-plugin</artifactId>
+                    <version>${maven.jar.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>build-helper-maven-plugin</artifactId>
+                    <version>${build.helper.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId>
+                    <artifactId>exec-maven-plugin</artifactId>
+                    <version>${exec.plugin.version}</version>
+                </plugin>
+                <!--
+                    Shared by the javadoc-check profile (reference lint) and the release profile (javadoc jars):
+                    the JDK's own block tags, and the incubating Vector API the kernels compile against.
+                -->
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-javadoc-plugin</artifactId>
+                    <version>${maven.javadoc.plugin.version}</version>
+                    <configuration>
+                        <release>${smalt.java.release}</release>
+                        <quiet>true</quiet>
+                        <!-- Each artifact's javadoc is hosted on its own (javadoc.io), so sibling links would break -->
+                        <detectOfflineLinks>false</detectOfflineLinks>
+                        <additionalOptions>
+                            <additionalOption>--add-modules jdk.incubator.vector</additionalOption>
+                        </additionalOptions>
+                        <tags>
+                            <tag>
+                                <name>apiNote</name>
+                                <placement>a</placement>
+                                <head>API Note:</head>
+                            </tag>
+                            <tag>
+                                <name>implSpec</name>
+                                <placement>a</placement>
+                                <head>Implementation Requirements:</head>
+                            </tag>
+                            <tag>
+                                <name>implNote</name>
+                                <placement>a</placement>
+                                <head>Implementation Note:</head>
+                            </tag>
+                        </tags>
+                    </configuration>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-source-plugin</artifactId>
+                    <version>${maven.source.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-gpg-plugin</artifactId>
+                    <version>${maven.gpg.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.sonatype.central</groupId>
+                    <artifactId>central-publishing-maven-plugin</artifactId>
+                    <version>${maven.staging.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>com.github.siom79.japicmp</groupId>
+                    <artifactId>japicmp-maven-plugin</artifactId>
+                    <version>${japicmp.plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+    </build>
+
+    <profiles>
+        <!--
+            Publishing to Maven Central through the Central Portal: sources and javadoc jars (skipped for pom
+            artifacts), GPG signatures, and the upload by central-publishing-maven-plugin. Run by
+            .github/workflows/release.yml; by hand:
+                mvn -B -Prelease -pl !it deploy -DskipTests
+            The it module stays out: it needs the modules' test jars, which this profile does not build because
+            they are not published. smalt-core's test jar, the test kit, is built and uploaded with smalt-core
+            (classifier tests), because the other modules' tests compile against it.
+            Credentials: a server with id "central" (a Central Portal user token) in settings.xml, the signing
+            key in the local GPG keyring, and its passphrase in MAVEN_GPG_PASSPHRASE.
+            -Dcentral.autoPublish=false -Dcentral.waitUntil=validated uploads and validates without publishing;
+            -DskipPublishing=true -Dgpg.skip stops at the bundle (bom/target/central-publishing/central-bundle.zip).
+            Like install, the plugin's deploy also copies every artifact into the local repository.
+        -->
+        <profile>
+            <id>release</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-source-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-sources</id>
+                                <goals>
+                                    <goal>jar-no-fork</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-javadoc-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>attach-javadocs</id>
+                                <goals>
+                                    <goal>jar</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <doclint>all,-missing</doclint>
+                            <failOnError>true</failOnError>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-gpg-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>sign-artifacts</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>sign</goal>
+                                </goals>
+                                <configuration>
+                                    <gpgArguments>
+                                        <arg>--pinentry-mode</arg>
+                                        <arg>loopback</arg>
+                                    </gpgArguments>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.sonatype.central</groupId>
+                        <artifactId>central-publishing-maven-plugin</artifactId>
+                        <extensions>true</extensions>
+                        <configuration>
+                            <publishingServerId>central</publishingServerId>
+                            <autoPublish>${central.autoPublish}</autoPublish>
+                            <waitUntil>${central.waitUntil}</waitUntil>
+                            <excludeArtifacts>
+                                <excludeArtifact>smalt-it</excludeArtifact>
+                            </excludeArtifacts>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <!--
+            API compatibility check: japicmp compares every published jar with the release named by
+            smalt.api.baseline and fails on a binary or source incompatible change to an exported package.
+            Inactive until a 1.0 release exists; setting the property turns it on:
+                mvn -B -pl !it verify -DskipTests -Dsmalt.api.baseline=1.0.0
+            The internal packages are excluded: they are exported only to other Smalt artifacts.
+        -->
+        <profile>
+            <id>api-compat</id>
+            <activation>
+                <property>
+                    <name>smalt.api.baseline</name>
+                </property>
+            </activation>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>com.github.siom79.japicmp</groupId>
+                        <artifactId>japicmp-maven-plugin</artifactId>
+                        <executions>
+                            <execution>
+                                <id>api-compat</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>cmp</goal>
+                                </goals>
+                            </execution>
+                        </executions>
+                        <configuration>
+                            <oldVersion>
+                                <dependency>
+                                    <groupId>${project.groupId}</groupId>
+                                    <artifactId>${project.artifactId}</artifactId>
+                                    <version>${smalt.api.baseline}</version>
+                                    <type>jar</type>
+                                </dependency>
+                            </oldVersion>
+                            <newVersion>
+                                <file>
+                                    <path>${project.build.directory}/${project.build.finalName}.${project.packaging}</path>
+                                </file>
+                            </newVersion>
+                            <parameter>
+                                <onlyModified>true</onlyModified>
+                                <skipPomModules>true</skipPomModules>
+                                <ignoreMissingClasses>true</ignoreMissingClasses>
+                                <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
+                                <breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
+                                <excludes>
+                                    <exclude>com.github.auties00.smalt.internal*</exclude>
+                                    <exclude>com.github.auties00.smalt.*.internal*</exclude>
+                                </excludes>
+                            </parameter>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+</project>

@@ -1,0 +1,487 @@
+package com.github.auties00.smalt.video.hevc;
+
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.internal.codec.ConsumerFailure;
+import com.github.auties00.smalt.internal.nal.NalRecords;
+import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.internal.plane.Narrow;
+import com.github.auties00.smalt.internal.plane.Planes;
+import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoDecoder;
+import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.hevc.internal.HevcDecoderEngine;
+import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
+import com.github.auties00.smalt.video.hevc.internal.HevcSps;
+
+import java.util.Objects;
+import java.util.function.Consumer;
+
+/**
+ * A decoder of ITU-T H.265 / MPEG-H HEVC video tracks.
+ *
+ * <p>The decoder implements the Main, Main 10 and Main Still Picture profiles with every coding tool
+ * of version 1 of the specification: intra prediction in the 35 modes with neighbor filtering,
+ * inter prediction with merge and advanced motion vector prediction including temporal candidates,
+ * asymmetric partitions, weighted prediction, the 4x4 to 32x32 transforms with the 4x4 DST,
+ * transform skip, scaling lists, sign data hiding, PCM, transquant bypass, the deblocking filter
+ * and sample adaptive offset, tiles, wavefront parallel processing entry points, dependent slice
+ * segments, long-term reference pictures and the output order decoded picture buffer. It also
+ * implements the range extensions: the 4:0:0, 4:2:2 and 4:4:4 chroma formats, bit depths up to 16,
+ * and the range extension coding tools (cross-component prediction, implicit and explicit residual
+ * DPCM, transform skip rotation, contexts and blocks up to 32x32, extended precision processing,
+ * persistent Rice adaptation, CABAC bypass alignment, chroma QP offset lists, SAO offset scaling,
+ * disabled intra smoothing and high precision weighted prediction offsets). Output is bit-exact with
+ * the normative decoding process.
+ *
+ * <p>Packet format follows the track: when {@link VideoTrack#codecConfig()} holds an
+ * {@code HEVCDecoderConfigurationRecord} ({@code hvcC}), packets are NAL units prefixed by their
+ * big-endian length and the record's parameter sets are loaded at construction; otherwise packets
+ * are Annex B byte streams with start codes, which may split access units arbitrarily. Parameter
+ * sets carried in packets are honored in both cases. NAL units of reserved types and of layers
+ * other than the base layer are ignored.
+ *
+ * <p>Frames reach the consumer in output order as {@link YuvPicture}s cropped by the sequence's
+ * conformance window, in the stream's chroma format: {@link ChromaFormat#YUV420},
+ * {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV444} or {@link ChromaFormat#MONOCHROME}.
+ * Samples of streams deeper than 8 bits (up to 16 bits, the range extension profiles) are rounded
+ * to 8 bits, {@code min((v + (1 << (d - 9))) >> (d - 8), 255)} for bit depth {@code d}, unless
+ * {@link HevcDecoderOptions#highBitDepth()} is set, in which case they are handed out as
+ * {@link Yuv16Picture}s of the stream's bit depth: the luma depth for monochrome streams, the
+ * larger of the luma and chroma depths otherwise. When luma and chroma have different depths, the
+ * samples of the shallower component are scaled to that depth by a left shift.
+ * Each frame carries the timestamp of the packet in which its picture's first slice arrived. When
+ * that packet had no timestamp and a frame duration is known (from the packet, the track's frame
+ * rate or the stream's VUI timing), the timestamp continues from the previous frame. The color
+ * description comes from the VUI; components the VUI leaves unspecified default to BT.709 for
+ * pictures wider than 1024 or taller than 576 samples and to BT.601 otherwise. The chroma siting
+ * is the VUI's {@code chroma_sample_loc_type_top_field} when signaled, the transfer function the
+ * one an alternative transfer characteristics SEI message prefers when present, and the mastering
+ * display and content light level come from the last SEI messages that carried them. A frame is a
+ * keyframe when its picture is an IRAP picture.
+ *
+ * <p>Decoding starts at the first IRAP picture; the RASL pictures of a CRA picture that starts the
+ * stream are skipped. Unsupported but valid streams raise {@link MediaException.Unsupported} naming
+ * the feature: {@code "hevc separate color planes"} and {@code "hevc screen content coding"}.
+ * Every profile of version 1 and of the range extensions is decoded: Main, Main 10, Main Still
+ * Picture, Main 12, Main 4:2:2 10 and 12, Main 4:4:4 (8, 10, 12 and 16 Intra, with their Intra and
+ * Still Picture variants), Monochrome (8, 12 and 16) and High Throughput 4:4:4 16 Intra, with every
+ * range extension coding tool. A corrupt slice raises {@link MediaException.Malformed} once
+ * its picture is finished; the rest of the picture is still decoded and decoding continues with the
+ * next picture. With several threads ({@link HevcDecoderOptions#threads()}), a picture is decoded
+ * while later ones are parsed, so the failure of a corrupt picture is raised by the call that
+ * outputs it or by {@link #flush(Consumer)}. An exception thrown by the frame consumer reaches the
+ * caller unchanged.
+ *
+ * <p>With several threads, pictures and the wavefront rows of a slice segment are decoded
+ * concurrently on the shared pool that {@link com.github.auties00.smalt.MediaRuntime MediaRuntime}
+ * describes. The output never depends on the thread count.
+ *
+ * <p>Instances are not thread-safe.
+ */
+public final class HevcDecoder implements VideoDecoder {
+    /**
+     * The decoding engine.
+     */
+    private final HevcDecoderEngine engine;
+
+    /**
+     * The decoder options.
+     */
+    private final HevcDecoderOptions options;
+
+    /**
+     * The NAL unit length prefix size of packets, or 0 for Annex B packets.
+     */
+    private final int lengthSize;
+
+    /**
+     * The track time base.
+     */
+    private final Rational timeBase;
+
+    /**
+     * The frame duration derived from the track frame rate, in time base units, or 0.
+     */
+    private final long trackFrameDuration;
+
+    /**
+     * The consumer of the call in progress, or {@code null} between calls.
+     */
+    private ConsumerFailure<VideoFrame> output;
+
+    /**
+     * The recycled 8-bit output picture.
+     */
+    private YuvPicture picture;
+
+    /**
+     * The recycled high bit depth output picture.
+     */
+    private Yuv16Picture widePicture;
+
+    /**
+     * The timestamp of the last frame output, or {@link Packet#NO_TIMESTAMP}.
+     */
+    private long lastPts = Packet.NO_TIMESTAMP;
+
+    /**
+     * The operation the calls of this decoder form, whose computing time decides how long a call
+     * keeps its carrier thread.
+     */
+    private final ParallelBands.Operation operation = new ParallelBands.Operation();
+
+    /**
+     * Whether the decoder was closed.
+     */
+    private boolean closed;
+
+    /**
+     * Constructs a decoder for a track with the {@linkplain HevcDecoderOptions#defaults() default}
+     * options.
+     *
+     * @param track the track to decode
+     * @throws IllegalArgumentException if the track is not an HEVC track
+     * @throws MediaException.Malformed if the track's configuration record is corrupt
+     */
+    public HevcDecoder(VideoTrack track) {
+        this(track, HevcDecoderOptions.defaults());
+    }
+
+    /**
+     * Constructs a decoder for a track.
+     *
+     * @param track the track to decode
+     * @param options the decoder settings
+     * @throws IllegalArgumentException if the track is not an HEVC track
+     * @throws MediaException.Malformed if the track's configuration record is corrupt
+     */
+    public HevcDecoder(VideoTrack track, HevcDecoderOptions options) {
+        Objects.requireNonNull(track, "track");
+        Objects.requireNonNull(options, "options");
+        if (track.codec() != Codec.HEVC) {
+            throw new IllegalArgumentException(track.codec() + " is not an HEVC track");
+        }
+        this.options = options;
+        // TODO: decode the tiles of a picture concurrently too; pictures and wavefront rows already
+        // overlap when options.threads() allows it
+        this.engine = new HevcDecoderEngine(options.limits(), options.hashVerification(),
+                options.threads() == 0 ? ParallelBands.THREADS : options.threads(), this::emit);
+        this.timeBase = track.timeBase();
+        this.trackFrameDuration = track.frameRate()
+                .map(rate -> Math.max(0, rate.invert().rescale(1, timeBase)))
+                .orElse(0L);
+        this.lengthSize = loadConfiguration(track.codecConfig().orElse(null));
+    }
+
+    /**
+     * {@return the options this decoder was constructed with}
+     */
+    public HevcDecoderOptions options() {
+        return options;
+    }
+
+    /**
+     * Loads the parameter sets of a codec configuration.
+     *
+     * @param config the codec configuration, or {@code null}
+     * @return the NAL unit length prefix size of the packets, or 0 for Annex B packets
+     * @throws MediaException.Malformed if the configuration record is corrupt
+     */
+    private int loadConfiguration(byte[] config) {
+        if (config == null || config.length == 0) {
+            return 0;
+        }
+        try {
+            if (NalRecords.looksLikeHevc(config)) {
+                var record = NalRecords.parseHevcStrict(config);
+                engine.beginPacket(Packet.NO_TIMESTAMP, 0);
+                for (var unit : record.parameterSets()) {
+                    engine.decodeNal(unit, 0, unit.length);
+                }
+                return record.lengthSize();
+            }
+            if (NalUnits.looksLikeAnnexB(config)) {
+                engine.beginPacket(Packet.NO_TIMESTAMP, 0);
+                NalUnits.forEachAnnexB(config, engine::decodeNal);
+            }
+            return 0;
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("corrupt HEVCDecoderConfigurationRecord", exception);
+        }
+    }
+
+    @Override
+    public void decode(Packet packet, Consumer<VideoFrame> output) {
+        try (var _ = ParallelBands.operation(operation)) {
+            Objects.requireNonNull(packet, "packet");
+            Objects.requireNonNull(output, "output");
+            ensureOpen();
+            var handoff = ConsumerFailure.wrap(output);
+            this.output = handoff;
+            try {
+                engine.beginPacket(packet.pts(), packet.duration());
+                var data = packet.data();
+                if (lengthSize > 0
+                        && !(NalUnits.looksLikeAnnexB(data) && !NalUnits.isLengthPrefixed(data, lengthSize))) {
+                    feedLengthPrefixed(data);
+                    engine.endAccessUnit();
+                } else {
+                    NalUnits.forEachAnnexB(data, engine::decodeNal);
+                }
+            } catch (RuntimeException exception) {
+                throw handoff.translate("HEVC packet", exception);
+            } finally {
+                this.output = null;
+            }
+        }
+    }
+
+    @Override
+    public void flush(Consumer<VideoFrame> output) {
+        try (var _ = ParallelBands.operation(operation)) {
+            Objects.requireNonNull(output, "output");
+            ensureOpen();
+            var handoff = ConsumerFailure.wrap(output);
+            this.output = handoff;
+            try {
+                engine.flush();
+            } catch (RuntimeException exception) {
+                throw handoff.translate("HEVC stream", exception);
+            } finally {
+                this.output = null;
+            }
+        }
+    }
+
+    @Override
+    public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
+        try (var _ = ParallelBands.operation(operation)) {
+            engine.close();
+        }
+    }
+
+    /**
+     * Rejects calls after {@link #close()}.
+     *
+     * @throws IllegalStateException if the decoder is closed
+     */
+    private void ensureOpen() {
+        if (closed) {
+            throw new IllegalStateException("decoder is closed");
+        }
+    }
+
+    /**
+     * Feeds the NAL units of a length-prefixed packet to the engine.
+     *
+     * @param data the packet payload
+     * @throws MediaException.Malformed if a length prefix runs past the end of the packet
+     */
+    private void feedLengthPrefixed(byte[] data) {
+        var broken = NalUnits.forEachLengthPrefixed(data, lengthSize, engine::decodeNal);
+        if (broken < data.length) {
+            if (broken + lengthSize > data.length) {
+                throw new MediaException.Malformed("truncated NAL unit length prefix");
+            }
+            throw new MediaException.Malformed("NAL unit length " + NalUnits.readLength(data, broken, lengthSize)
+                    + " exceeds the packet");
+        }
+    }
+
+    /**
+     * Converts a decoded picture into a {@link VideoFrame} and hands it to the consumer.
+     *
+     * <p>When the conformance window crops nothing on the left or top, a picture whose samples are
+     * already in the requested sample size and depth (8-bit planes, or 16-bit planes of one bit
+     * depth with {@link HevcDecoderOptions#highBitDepth()}) is handed out as a view of the engine's
+     * planes, with the coded width as its row stride; the engine writes those planes again only
+     * after the consumer returns. Other pictures are copied into a recycled picture, narrowed when
+     * deeper than 8 bits or with the shallower component shifted up when the depths differ.
+     *
+     * @param frame the engine's picture
+     */
+    private void emit(HevcFrame frame) {
+        var sps = frame.sps;
+        var width = sps.width - sps.cropLeft - sps.cropRight;
+        var height = sps.height - sps.cropTop - sps.cropBottom;
+        var format = switch (sps.chromaFormatIdc) {
+            case 0 -> ChromaFormat.MONOCHROME;
+            case 2 -> ChromaFormat.YUV422;
+            case 3 -> ChromaFormat.YUV444;
+            default -> ChromaFormat.YUV420;
+        };
+        var color = frame.color;
+        var depth = sps.pictureBitDepth();
+        Picture result;
+        var uncropped = sps.cropLeft == 0 && sps.cropTop == 0;
+        if (uncropped && frame.eightBit()) {
+            var builder = YuvPicture.builder().size(width, height).chromaFormat(format).color(color)
+                    .luma(frame.y8, frame.width);
+            if (frame.cb8 != null) {
+                builder.chroma(frame.cb8, frame.cr8, frame.chromaWidth);
+            }
+            result = builder.build();
+        } else if (uncropped && depth > 8 && options.highBitDepth() && !sps.mixedBitDepth()) {
+            var builder = Yuv16Picture.builder().size(width, height).chromaFormat(format).bitDepth(depth).color(color)
+                    .luma(frame.y, frame.width);
+            if (frame.cb != null) {
+                builder.chroma(frame.cb, frame.cr, frame.chromaWidth);
+            }
+            result = builder.build();
+        } else if (depth > 8 && options.highBitDepth()) {
+            var target = widePicture;
+            if (target == null || target.width() != width || target.height() != height || target.chromaFormat() != format
+                    || target.bitDepth() != depth || !target.color().equals(color)) {
+                target = Yuv16Picture.allocate(width, height, format, depth, false, color);
+                widePicture = target;
+            }
+            copyWide(frame, sps, target, width, height);
+            result = target;
+        } else {
+            var target = picture;
+            if (target == null || target.width() != width || target.height() != height || target.chromaFormat() != format
+                    || !target.color().equals(color)) {
+                target = YuvPicture.allocate(width, height, format, false, color);
+                picture = target;
+            }
+            copyNarrow(frame, sps, target, width, height);
+            result = target;
+        }
+        var duration = frame.duration > 0 ? frame.duration : frameDuration(sps);
+        var pts = frame.pts;
+        if (pts == Packet.NO_TIMESTAMP && duration > 0) {
+            pts = lastPts == Packet.NO_TIMESTAMP ? 0 : lastPts + duration;
+        }
+        if (pts != Packet.NO_TIMESTAMP) {
+            lastPts = pts;
+        }
+        output.accept(new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.irap));
+    }
+
+    /**
+     * Copies the cropped samples of a picture into an 8-bit picture, rounding deeper samples to
+     * nearest.
+     *
+     * @param frame the decoded picture
+     * @param sps its sequence parameter set
+     * @param target the output picture
+     * @param width the cropped width
+     * @param height the cropped height
+     */
+    private static void copyNarrow(HevcFrame frame, HevcSps sps, YuvPicture target, int width, int height) {
+        if (frame.eightBit()) {
+            Planes.copy(frame.y8, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), 0,
+                    target.yStride(), width, height);
+            if (frame.cb8 != null) {
+                var offset = (sps.cropTop >> sps.chromaShiftY) * frame.chromaWidth + (sps.cropLeft >> sps.chromaShiftX);
+                var cw = target.chromaWidth();
+                var ch = target.chromaHeight();
+                Planes.copy(frame.cb8, offset, frame.chromaWidth, target.u(), 0, target.uvStride(), cw, ch);
+                Planes.copy(frame.cr8, offset, frame.chromaWidth, target.v(), 0, target.uvStride(), cw, ch);
+            }
+            return;
+        }
+        var narrow = Narrow.select();
+        narrow.narrow(frame.y, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), 0, target.yStride(), width,
+                height, sps.bitDepthLuma - 8);
+        if (frame.cb != null) {
+            var sx = sps.chromaShiftX;
+            var sy = sps.chromaShiftY;
+            var cw = target.chromaWidth();
+            var ch = target.chromaHeight();
+            var offset = (sps.cropTop >> sy) * frame.chromaWidth + (sps.cropLeft >> sx);
+            narrow.narrow(frame.cb, offset, frame.chromaWidth, target.u(), 0, target.uvStride(), cw, ch,
+                    sps.bitDepthChroma - 8);
+            narrow.narrow(frame.cr, offset, frame.chromaWidth, target.v(), 0, target.uvStride(), cw, ch,
+                    sps.bitDepthChroma - 8);
+        }
+    }
+
+    /**
+     * Copies the cropped samples of a picture into a high bit depth picture of the picture's bit
+     * depth, shifting the samples of a shallower component up to it.
+     *
+     * @param frame the decoded picture
+     * @param sps its sequence parameter set
+     * @param target the output picture
+     * @param width the cropped width
+     * @param height the cropped height
+     */
+    private static void copyWide(HevcFrame frame, HevcSps sps, Yuv16Picture target, int width, int height) {
+        var depth = target.bitDepth();
+        copyShifted(frame.y, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), target.yStride(),
+                width, height, depth - sps.bitDepthLuma);
+        if (frame.cb != null) {
+            var offset = (sps.cropTop >> sps.chromaShiftY) * frame.chromaWidth + (sps.cropLeft >> sps.chromaShiftX);
+            var cw = target.chromaWidth();
+            var ch = target.chromaHeight();
+            var shift = depth - sps.bitDepthChroma;
+            copyShifted(frame.cb, offset, frame.chromaWidth, target.u(), target.uvStride(), cw, ch, shift);
+            copyShifted(frame.cr, offset, frame.chromaWidth, target.v(), target.uvStride(), cw, ch, shift);
+        }
+    }
+
+    /**
+     * Copies a region of a 16-bit plane to the top-left corner of an output plane, shifting every
+     * sample left.
+     *
+     * @param src the source plane
+     * @param srcOffset the index of the region's top-left sample
+     * @param srcStride the source row stride
+     * @param dst the output plane
+     * @param dstStride the output row stride
+     * @param width the region width
+     * @param height the region height
+     * @param shift the left shift, from 0 to 8
+     */
+    private static void copyShifted(short[] src, int srcOffset, int srcStride, short[] dst, int dstStride, int width,
+                                    int height, int shift) {
+        if (shift == 0) {
+            Planes.copy(src, srcOffset, srcStride, dst, 0, dstStride, width, height);
+            return;
+        }
+        for (var y = 0; y < height; y++) {
+            var from = srcOffset + y * srcStride;
+            var to = y * dstStride;
+            for (var x = 0; x < width; x++) {
+                dst[to + x] = (short) (src[from + x] << shift);
+            }
+        }
+    }
+
+    /**
+     * Returns the nominal frame duration in track time base units: from the track's frame rate,
+     * or from the stream's VUI timing information, or 0 when neither is known.
+     *
+     * @param sps the sequence parameter set of the frame
+     * @return the duration, or 0
+     */
+    private long frameDuration(HevcSps sps) {
+        if (trackFrameDuration > 0) {
+            return trackFrameDuration;
+        }
+        if (sps.timingInfoPresent && sps.numUnitsInTick > 0 && sps.timeScale > 0) {
+            try {
+                return Math.max(0, new Rational(sps.numUnitsInTick, sps.timeScale).rescale(1, timeBase));
+            } catch (ArithmeticException | IllegalArgumentException ignored) {
+                return 0;
+            }
+        }
+        return 0;
+    }
+}

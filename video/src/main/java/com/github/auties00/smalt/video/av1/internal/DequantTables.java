@@ -1,0 +1,94 @@
+package com.github.auties00.smalt.video.av1.internal;
+
+/**
+ * Holds the AV1 dequantizer lookup tables and the mapping of the encoders' quantizer scale to
+ * quantizer indices.
+ *
+ * @implNote This implementation copies dav1d's {@code dav1d_dq_tbl} ({@code src/dequant_tables.c}),
+ * the {@code Dc_Qlookup} and {@code Ac_Qlookup} tables of the AV1 specification section 7.12.2.
+ */
+public final class DequantTables {
+    /**
+     * Holds the DC and AC quantizer step of each quantizer index at 8, 10 and 12 bits, as
+     * {@code [bit depth 3][qindex 256][dc/ac 2]}.
+     */
+    public static final int[] DQ = TableText.decode(
+            "AAEAAEAAIAAIAAIAAJAAJAAKAAKAALAALAAMAAMAANAAMAAOAANAAPAAOAAQAAPAARAAQAASAARAATAASAAUAATAAVAATAAW"
+                    + "AAUAAXAAVAAYAAWAAZAAXAAaAAYAAbAAZAAcAAaAAdAAaAAeAAbAAfAAcAAgAAdAAhAAeAAiAAfAAjAAgAAkAAgAAlAAhAAm"
+                    + "AAiAAnAAjAAoAAkAApAAlAAqAAmAArAAmAAsAAnAAtAAoAAuAApAAvAAqAAwAArAAxAArAAyAAsAAzAAtAA0AAuAA1AAvAA2"
+                    + "AAwAA3AAwAA4AAxAA5AAyAA6AAzAA7AA0AA8AA1AA9AA1AA+AA2AA/AA3ABAAA4ABBAA5ABCAA5ABDAA6ABEAA7ABFAA8ABG"
+                    + "AA9ABHAA+ABIAA+ABJAA/ABKABAABLABBABMABCABNABCABOABDABPABEABQABFABRABGABSABGABTABHABUABIABVABJABW"
+                    + "ABKABXABKABYABLABZABMABaABNABbABOABcABOABdABPABeABQABfABRABgABRABhABSABiABTABjABUABkABVABlABVABm"
+                    + "ABXABoABYABqABaABsABcABuABdABwABfAByABgAB0ABiAB2ABjAB4ABlAB6ABmAB8ABoAB+ABpACAABrACCABsACEABuACG"
+                    + "ABvACIABxACKAByACMAB0ACOAB1ACQAB2ACSAB4ACUAB5ACWAB7ACYAB9ACbAB/ACeACBAChACDACkACGACnACIACqACKACt"
+                    + "ACMACwACOACzACQAC2ACSAC5ACUAC8ACWAC/ACYADCACaADFACcADIACeADLAChADPACkADTACmADXACpADbACsADfACuADj"
+                    + "ACxADnAC0ADrAC2ADvAC5ADzAC7AD3AC+AD7ADAAD/ADDAEEADHAEJADKAEOADNAETADQAEYADTAEdADWAEiADZAEnADcAEs"
+                    + "ADfAExADiAE3ADmAE9ADpAFDADtAFJADwAFPADzAFVAD3AFbAD6AFhAD9AFnAEBAFuAEFAF1AEJAF8AENAGDAEQAGKAEUAGR"
+                    + "AEYAGYAEcAGgAEgAGoAEkAGwAEoAG4AEsAHAAEwAHIAE1AHRAE5AHaAE9AHjAFCAHsAFGAH1AFKAH+AFPAIIAFUAISAFYAIc"
+                    + "AFdAImAFiAIwAFnAI7AFsAJGAFxAJRAF2AJcAF7AJnAGAAJzAGFAJ/AGLAKLAGQAKXAGWAKkAGbAKxAGhAK+AGnALLAGtALZ"
+                    + "AGzALnAG5AL1AG/AMDAHGAMSAHNAMhAHTAMwAHbANAAHiANQAHpANgAHxANxAH5AOCAIBAOTAIKAOlAISAO3AIbAPJAIlAPc"
+                    + "AIvAPvAI5AQCAJDAQWAJOAQqAJaAQ/AJmARUAJyARpAKAAR/AKOASVAKcASsAKsATDAK8ATbALNATzALgAUMALzAUlAMHAU/"
+                    + "AMcAVZAMzAV0ANLAWPANlAWrAOAAXHAOdAXkAO7AYBAPcAYfAP+AY9AQiAZcARKAZ8ARzAacASgAa9ATQAbfAUCAcBAU4Ack"
+                    + "AAEAAEAAJAAJAAKAALAANAANAAPAAQAARAASAAUAAVAAWAAYAAZAAbAAcAAeAAfAAhAAiAAlAAlAAoAAoAAsAArAAwAAvAAz"
+                    + "AAyAA3AA1AA7AA5AA/AA8ABDABAABHABEABLABHABPABLABTABOABYABSABcABWABgABaABkABdABpABhABtABlAByABpAB2"
+                    + "ABtAB6ABxAB/AB0ACDAB4ACIAB8ACMACAACRACEACVACIACaACMACeACPACjACTACoACXACsACbACxACfAC1ACjAC6ACmAC+"
+                    + "ACqADDACuADHACyADMAC2ADQAC5ADVAC9ADZADBADeADFADiADIADnADMADrADQADwADUAD0ADXAD5ADbAD9ADfAECADiAEG"
+                    + "ADmAELADpAEPADtAETADxAEYAD0AEcAD4AEhAD7AElAD/AEpAEDAEuAEGAEyAEKAE3AENAE7AERAE/AEUAFEAEYAFIAEbAFM"
+                    + "AEfAFRAEiAFVAElAFZAEpAFdAEsAFiAEwAFmAEzAFqAE2AFvAE6AFzAE9AF3AFBAF7AFEAGAAFHAGEAFLAGIAFOAGMAFRAGR"
+                    + "AFXAGZAFeAGhAFkAGpAFqAGxAFxAG5AF3AHBAF9AHKAGDAHSAGKAHaAGQAHiAGWAHqAGcAHyAGiAH6AGoAICAGuAILAG0AIT"
+                    + "AG6AIbAHAAIjAHGAIrAHMAIzAHSAI7AHYAJDAHeAJMAHkAJUAHqAJcAHzAJoAH7AJ0AIEAKAAINAKMAIVAKYAIeAKkAImAKw"
+                    + "AIvAK8AI3ALJAJAALVAJIALhAJQALtAJZAL5AJhAMFAJpAMRAJxAMdAJ6AMpAKEAM5AKPANJAKaANZAKkANpAKvAN5AK6AOJ"
+                    + "ALEAOaALOAOqALZAO6ALjAPKALtAPaAL3APqAMCAP6AMOAQOAMbAQiAMnAQ2AMzARKAM/AReANMARyANYASGANkASaANwASu"
+                    + "AN7ATCAOKATaAOYATyAOlAUKAOzAUiAPBAU6APPAVSAPcAVqAPpAWDAP3AWbAQGAW3AQVAXTAQlAXvAQ0AYLARCAYnARRAZD"
+                    + "ARgAZfARxAZ/ASBAafASSAa/ASiAbfASyAb/ATCAcfATUAdDATlAdnAT3AeLAUIAevAUaAfTAUrAf3AU+AgfAVRAhHAVjAhv"
+                    + "AV2AiXAWIAi/AWcAjrAWwAkXAXEAlDAXYAlvAXsAmbAYBAnLAYXAn7AYsAorAZBApbAZYAqPAZvArDAaGAr3AacAsrAa1Atj"
+                    + "AbNAubAbmAvTAb/AwLAcZAxHAc0AyDAdPAy/AdsAz/AeJA0/AemA1/AfGA3DAflA4HAgGA5LAgoA6TAhLA7bAhvA8kAiVA9w"
+                    + "Ai8A+8AjkBAIAkPBBYAk7BCoAlqBD8AmaBFQAnMBGkAoBBH8Ao4BJUApzBKwAqxBMMAryBNsAs3BPMAuABQwAvMBSUAweBT8"
+                    + "Ax0BVkAzQBXQA0vBY8A2WBasA4CBccA52BeQA7vBgEA9xBh8A/5Bj0BCMBlwBEqBnwBHPBpwBKBBr0BNBBt8BQKBwEBTjByQ"
+                    + "AAEAAEAAMAANAASAATAAZAAbAAhAAjAApAAsAAyAA2AA8ABAABGABLABQABXABbABjABnABwABzAB+AB/ACLACMACaACZACo"
+                    + "ACmAC3AC0ADHADCADWADQADmADeAD3ADtAEHAD7AEYAEKAEpAEZAE6AEoAFLAE4AFdAFHAFuAFXAGAAFmAGSAF2AGkAGGAG2"
+                    + "AGVAHIAGlAHbAG1AHtAHFAH/AHVAISAHkAIkAH0AI3AIEAJKAIUAJcAIkAJvAI0AKCAJEAKUAJUAKnAJjAK6AJzALMAKDALf"
+                    + "AKTALxAKiAMEAKyAMXALCAMpALRAM8ALhANOALwANhAMAAN0AMPAOGAMeAOYAMuAOrAM9AO9ANMAPQANbAPiANqAP0AN5AQG"
+                    + "AOIAQZAOXAQrAOmAQ9AO1ARPAPEARhAPSARzAPhASFAPwASXAP+ASpAQNAS7AQbATNAQpATeAQ4ATwARGAUCARUAUTARiAUl"
+                    + "ARwAU3AR/AVIASNAVaASbAVrASoAV9AS2AWOATEAWgATSAWxATgAXCATtAXTAT7AXlAUIAX2AUWAYHAUjAYYAUxAYpAU+AY7"
+                    + "AVYAZbAVxAZ8AWLAadAWkAa9AW9AbeAXWAb/AXvAcgAYIAdAAYhAdhAY6AeCAZSAeiAZrAfDAaEAfkAacAgEAa1AglAbNAhG"
+                    + "AblAhmAb9AiHAcWAioAcuAjIAdGAjpAddAkJAd1AkqAeNAlKAelAlrAfIAmbAfrAnMAgNAn8AgwAotAhSApdAh1AqNAiXAq+"
+                    + "Ai5AruAjbAsfAj8AtPAkeAt/Ak/AuwAlgAvgAmCAwQAmjAxBAnDAxxAnkAyiAoPAziAo6A0iAplA1iAqQA2jAq6A3jArkA4j"
+                    + "AsOA5kAs4A6kAthA7kAuKA8kAuzA9lAvcA+lAwEA/lAw3BA1AxpBCGAyaBDWAzLBEmAz8BF2A0tBHGA1dBIXA2NBJnA29BK3"
+                    + "A3tBMHA4lBNnA5dBPIA6VBQoA7MBSIA8DBToA85BVIA9vBWoA+lBYJA/aBZpBAXBbZBBVBdJBCRBe5BDNBgpBEJBiZBFEBkK"
+                    + "BF/Bl6BHCBn6BIEBp6BJFBr6BKGBt6BLHBv6BMHBx6BNOB0LBOVB2bBPbB4rBQhB67BRmB9LBSrB/bBT3CB7BVCCEbBWNCG7"
+                    + "BXXCJbBYhCL8BZxCOsBbBCRcBcRCUMBdgCW8BevCZsBgFCcsBhaCfsBivCisBkEClsBlfCo8Bm7CsMBoWCvcBpxCytBrTC2N"
+                    + "Bs2C5tBuYC9NBv7DAtBxlDEdBzQDINB07DL9B2vDP9B4jDT9B6YDX9B8WDcNB+VDgdCAWDktCCgDpNCEsDttCG7DyOCJUD2+"
+                    + "CLxD7uCOQEAeCQ7EFeCTqEKeCWnEPuCZoEU+CcvEaOCgFEfuCjhElOCnOEq+CrCEwuCvKE2uCzaE8uC4AFC+C8xFJODB5FPu"
+                    + "DHOFWODM+Fc+DS9FjuDZZFquDgHFxuDnXF4+Du6GAOD3EGHuD/kGPPEIvGW/ESnGe/Ec9Gm/EoFGvPE0GG3vFApHAPFOLHI/", 3);
+
+    /**
+     * Returns the quantizer index of a level of the 0 to 63 quantizer scale encoders expose
+     * ({@code quantizer_to_qindex}): four index steps per level, with level 62 at 249 and level 63
+     * at 255.
+     *
+     * @param quantizer the quantizer level, from 0 to 63
+     * @return the quantizer index, from 0 to 255
+     */
+    public static int quantizerToQindex(int quantizer) {
+        return quantizer == 62 ? 249 : quantizer == 63 ? 255 : quantizer * 4;
+    }
+
+    /**
+     * Returns the quantizer index of a quality: the quantizer level
+     * {@code (100 - quality) * 63 / 100}, rounded to nearest, mapped by {@link #quantizerToQindex}.
+     *
+     * @param quality the quality, from 0 (coarsest) to 100 (finest)
+     * @return the quantizer index, from 0 to 255
+     */
+    public static int qualityToQindex(int quality) {
+        return quantizerToQindex(((100 - quality) * 63 + 50) / 100);
+    }
+
+    /**
+     * Prevents instantiation.
+     */
+    private DequantTables() {
+        throw new AssertionError();
+    }
+}

@@ -1,0 +1,8 @@
+Smalt Capture: Third-Party Notices
+==================================
+
+Smalt Capture (Maven artifact com.github.auties00:smalt-capture, JPMS module
+com.github.auties00.smalt.capture) is part of Smalt, a pure-Java media library
+(https://github.com/Auties00/Smalt), and is licensed under the MIT License.
+
+This module contains no code derived from third-party projects.

@@ -1,0 +1,1316 @@
+Smalt Image: Third-Party Notices
+================================
+
+Smalt Image (Maven artifact com.github.auties00:smalt-image, JPMS module
+com.github.auties00.smalt.image) is part of Smalt, a pure-Java media library
+(https://github.com/Auties00/Smalt), and is licensed under the MIT License.
+
+Smalt is written in Java, but parts of it are ports of, or are
+otherwise derived from, the open source projects listed below: C code
+translated to Java, tables copied from the C sources, or algorithms and code
+structure followed closely. Each section names the project, where its code
+and license text were obtained, the Smalt packages that derive from it, the
+upstream copyright notices, and the full upstream license text, reproduced
+as published upstream.
+
+The derived Java code is NOT the original software. It has been translated
+from C to Java and modified: restructured, adapted to Smalt's APIs,
+extended, and in places vectorized with the Java Vector API. The Java
+sources that derive from a project name the upstream files or functions they
+follow in their documentation.
+
+This software is based in part on the work of the Independent JPEG Group.
+
+All package names below are relative to com.github.auties00.smalt.
+
+Contents
+  3.  libwebp
+  4.  libvpx
+  5.  libjpeg-turbo and the Independent JPEG Group's JPEG software
+  21. giflib
+  25. LibTIFF
+  31. OpenJPEG
+  32. jxl-oxide
+  33. libjxl
+  34. Brotli
+  39. libdeflate
+
+
+===============================================================================
+3. libwebp
+===============================================================================
+
+Project:      libwebp, the WebP codec library of the WebM Project, version 1.6.0
+Home:         https://developers.google.com/speed/webp
+Source:       https://chromium.googlesource.com/webm/libwebp
+              (mirror: https://github.com/webmproject/libwebp)
+License text: https://raw.githubusercontent.com/webmproject/libwebp/v1.6.0/COPYING
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  image.webp
+  image.webp.internal.alpha
+  image.webp.internal.anim
+  image.webp.internal.color
+  image.webp.internal.lossless
+  image.webp.internal.riff
+  video.vp8.internal
+
+Derivation: the WebP decoder and encoder (VP8L lossless codec, alpha
+coding and filters, animation encoding and decoding, RIFF container rules,
+YUV conversion) follow libwebp's src/dec, src/enc, src/dsp, src/utils,
+src/mux and src/demux; the lossy VP8 encoder in video.vp8.internal is a
+port of libwebp 1.6.0's src/enc and src/dsp encoder, including tables
+copied verbatim.
+
+Copyright:
+  Copyright (c) 2010, Google Inc. All rights reserved.
+
+libwebp also publishes an "Additional IP Rights Grant (Patents)" in its
+PATENTS file (https://raw.githubusercontent.com/webmproject/libwebp/v1.6.0/PATENTS).
+It is a grant by Google, not a condition of the license, and is not
+reproduced here.
+
+-------------------------------------------------------------------------------
+libwebp license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2010, Google Inc. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of Google nor the names of its contributors may
+    be used to endorse or promote products derived from this software
+    without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+
+===============================================================================
+4. libvpx
+===============================================================================
+
+Project:      libvpx, the VP8/VP9 codec SDK of the WebM Project
+Home:         https://www.webmproject.org/code/
+Source:       https://chromium.googlesource.com/webm/libvpx
+              (mirror: https://github.com/webmproject/libvpx)
+License text: https://raw.githubusercontent.com/webmproject/libvpx/main/LICENSE
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  video.vp8.internal
+  video.vp9
+  video.vp9.internal
+
+Derivation: the VP8 decoder is a port of libvpx's single-threaded VP8
+decoder (vp8/decoder, vp8/common and the VP8 variants of vpx_dsp intra
+prediction), including its C kernels and the tables copied verbatim from
+vp8/common and vp8/decoder. The real-time VP8 encoder (Vp8Encoder) is a
+port of libvpx 1.17.0's one-pass real-time CBR path (vp8/encoder: onyx_if.c,
+encodeframe.c, rdopt.c, pickinter.c, mcomp.c, encodemb.c, tokenize.c,
+bitstream.c, ratectrl.c, picklpf.c, encodemv.c, modecosts.c, segmentation.c,
+vp8_skin_detection.c, and vp8/common/findnearmv.c) with the vpx_dsp C
+kernels it uses and its speed, threshold and cost tables. The VP9 decoder is
+a port of libvpx's VP9 decoder (vp9/decoder, vp9/common, vp9/vp9_dx_iface.c
+and the vpx_dsp C kernels it uses: inverse transforms, sub-pixel
+convolution, loop filters, intra prediction and their high bit depth
+variants), including the probability, scan, quantizer and filter tables
+copied from the C sources. The real-time VP9 encoder (Vp9VideoEncoder) is a
+port of libvpx 1.17.0's one-pass real-time CBR path (vp9/encoder:
+vp9_encoder.c, vp9_ratectrl.c, vp9_pickmode.c, vp9_aq_cyclicrefresh.c,
+vp9_mcomp.c, vp9_encodeframe.c, vp9_encodemb.c, vp9_tokenize.c,
+vp9_bitstream.c, vp9_subexp.c, vp9_segmentation.c, vp9_speed_features.c,
+vp9_svc_layercontext.c, vp9_noise_estimate.c, vp9_skin_detection.c,
+vp9_rd.c, vp9_picklpf.c, vp9_quantize.c, vp9_dct.c, vp9_encodemv.c and
+vp9_cost.c) with the vpx_dsp C kernels it uses (boolean encoder, forward
+transforms, sums of absolute differences, variances, Hadamard transforms,
+integral projections and skin detection) and its speed, threshold, rate
+model and cost tables.
+
+Copyright:
+  Copyright (c) 2010, The WebM Project authors. All rights reserved.
+
+libvpx also publishes an "Additional IP Rights Grant (Patents)" in its
+PATENTS file (https://raw.githubusercontent.com/webmproject/libvpx/main/PATENTS).
+It is a grant by Google, not a condition of the license, and is not
+reproduced here.
+
+-------------------------------------------------------------------------------
+libvpx license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2010, The WebM Project authors. All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are
+met:
+
+  * Redistributions of source code must retain the above copyright
+    notice, this list of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright
+    notice, this list of conditions and the following disclaimer in
+    the documentation and/or other materials provided with the
+    distribution.
+
+  * Neither the name of Google, nor the WebM Project, nor the names
+    of its contributors may be used to endorse or promote products
+    derived from this software without specific prior written
+    permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+
+===============================================================================
+5. libjpeg-turbo and the Independent JPEG Group's JPEG software
+===============================================================================
+
+Project:      libjpeg-turbo, which contains the Independent JPEG Group's
+              libjpeg code with libjpeg-turbo modifications
+Home:         https://libjpeg-turbo.org/
+Source:       https://github.com/libjpeg-turbo/libjpeg-turbo
+License text: https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/main/LICENSE.md
+              https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/main/README.ijg
+License:      IJG License (see README.ijg); the libjpeg-turbo license
+              overview (LICENSE.md) is reproduced as well
+
+Derived Smalt packages:
+  image.jpeg
+  image.jpeg.internal
+  image.ops (ColorMatrix, ColorKernel, ScalarColorKernel, ChromaUpsampling)
+  video.mpeg4.internal (ScalarMpeg4Dsp, VectorMpeg4Dsp)
+
+Derivation: ports of the libjpeg API library code of libjpeg-turbo: the
+marker reader, the sequential and progressive Huffman decoders, the
+arithmetic decoder, restart resynchronization, the accurate and reduced-size
+integer inverse DCTs, the accurate integer forward DCT, Huffman table
+optimization, the Huffman bit writer, color conversion, chroma upsampling
+and downsampling, quality scaling, quantization reciprocals, and ICC profile
+reassembly, including tables and constants taken from the C sources. The
+lossless transforms (JpegTransforms, JpegTransformOptions and, in
+image.jpeg.internal, LosslessTransform, CoefficientWriter and
+JpegTranscoder) port the jpegtran sample program: the coefficient
+rotations, flips, transpositions and crops of transupp.c, the transcoding
+of jctrans.c, the marker writer of jcmarker.c, the progressive Huffman
+encoder of jcphuff.c, the pass sequence of jcmaster.c, and the parameter
+handling of jpegtran.c. The accurate integer inverse DCT is also the inverse
+DCT of the MPEG-4 Part 2 and H.263 decoders.
+
+This software is based in part on the work of the Independent JPEG Group.
+
+Copyright (as stated in the headers of the libjpeg-turbo source files the
+Java code derives from):
+  jdmarker.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1998, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2012, 2015, 2022, 2024, 2026, D. R. Commander.
+  jdapimin.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1998, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2016, 2022, 2024-2026, D. R. Commander.
+  jdmaster.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Modified 2002-2009 by Guido Vollbeding.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2009-2011, 2016, 2019, 2022-2024, 2026, D. R. Commander.
+    Copyright (C) 2013, Linaro Limited.
+    Copyright (C) 2015, Google, Inc.
+  jdhuff.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2009-2011, 2016, 2018-2019, 2022, D. R. Commander.
+    Copyright (C) 2018, Matthias Räncker.
+  jdphuff.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1995-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015-2016, 2018-2022, D. R. Commander.
+  jdarith.c
+    This file was part of the Independent JPEG Group's software:
+    Developed 1997-2015 by Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015-2020, 2022, D. R. Commander.
+  jaricom.c
+    This file was part of the Independent JPEG Group's software:
+    Developed 1997-2009 by Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015, 2018, D. R. Commander.
+  jidctint.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1998, Thomas G. Lane.
+    Modification developed 2002-2018 by Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015, 2020, 2022, 2026, D. R. Commander.
+  jidctred.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1998, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015, 2022, 2026, D. R. Commander.
+  jfdctint.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1996, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015, 2020, 2022, D. R. Commander.
+  jchuff.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2009-2011, 2014-2016, 2018-2026, D. R. Commander.
+    Copyright (C) 2015, Matthieu Darbois.
+    Copyright (C) 2018, Matthias Räncker.
+    Copyright (C) 2020, Arm Limited.
+    Copyright (C) 2022, Felix Hanau.
+  jcdctmgr.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1996, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright (C) 1999-2006, MIYASAKA Masaru.
+    Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+    Copyright (C) 2011, 2014-2015, 2022, 2024-2026, D. R. Commander.
+  jcparam.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1998, Thomas G. Lane.
+    Modified 2003-2008 by Guido Vollbeding.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2009-2011, 2018, 2023-2024, D. R. Commander.
+  jdcolor.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Modified 2011 by Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+    Copyright (C) 2009, 2011-2012, 2014-2015, 2022, 2024-2025, D. R. Commander.
+    Copyright (C) 2013, Linaro Limited.
+  jccolor.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1996, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+    Copyright (C) 2009-2012, 2015, 2022, 2024-2025, D. R. Commander.
+  jdsample.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1996, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+    Copyright (C) 2010, 2015-2016, 2022, 2024-2026, D. R. Commander.
+    Copyright (C) 2015, Google, Inc.
+    Copyright (C) 2019-2020, Arm Limited.
+  jcsample.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1996, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+    Copyright (C) 2015, 2019, 2022, 2024-2026, D. R. Commander.
+  jdicc.c
+    Copyright (C) 1997-1998, Thomas G. Lane, Todd Newman.
+    Copyright (C) 2017, D. R. Commander.
+  jutils.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1996, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, D. R. Commander.
+  transupp.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1997-2019, Thomas G. Lane, Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2010, 2017, 2021-2022, 2024, D. R. Commander.
+  jctrans.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1995-1998, Thomas G. Lane.
+    Modified 2000-2009 by Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2020, 2022, D. R. Commander.
+  jcphuff.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1995-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2011, 2015, 2018, 2021-2022, 2024, D. R. Commander.
+    Copyright (C) 2016, 2018, 2022, Matthieu Darbois.
+    Copyright (C) 2020, Arm Limited.
+    Copyright (C) 2021, Alex Richardson.
+  jcmarker.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1998, Thomas G. Lane.
+    Modified 2003-2010 by Guido Vollbeding.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2010, 2022, D. R. Commander.
+  jcmaster.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Modified 2003-2010 by Guido Vollbeding.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2010, 2016, 2018, 2022-2024, D. R. Commander.
+  jpegtran.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1995-2019, Thomas G. Lane, Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2010, 2014, 2017, 2019-2022, 2024, D. R. Commander.
+
+-------------------------------------------------------------------------------
+libjpeg-turbo license overview (LICENSE.md)
+-------------------------------------------------------------------------------
+
+libjpeg-turbo Licenses
+======================
+
+libjpeg-turbo is covered by two compatible BSD-style open source licenses:
+
+- The IJG (Independent JPEG Group) License, which is listed in
+  [README.ijg](README.ijg)
+
+  This license applies to the libjpeg API library and associated programs,
+  including any code inherited from libjpeg and any modifications to that
+  code.
+
+- The Modified (3-clause) BSD License, which is listed below
+
+  This license applies to the TurboJPEG API library and associated programs,
+  [libspng](https://libspng.org) (which is used by cjpeg and djpeg), and the
+  build/test system.
+
+  * The TurboJPEG API library wraps the libjpeg API library, so in the context
+    of the overall TurboJPEG API library, both the terms of the IJG License and
+    the terms of the Modified (3-clause) BSD License apply.
+  * cjpeg and djpeg use libspng, so in the context of those programs, both the
+    terms of the IJG License and the terms of the Modified (3-clause) BSD
+    License apply.
+
+
+Component Licenses
+==================
+
+Some of libjpeg-turbo's modules and internal dependencies are covered by less
+restrictive licenses, but in the context of libjpeg-turbo as a whole, the terms
+of the less restrictive licenses are subsumed by either the IJG License or the
+Modified BSD License.  (In other words, the terms of the less restrictive
+licenses are satisfied if the terms of the IJG and Modified BSD Licenses are
+satisfied.)
+
+- The libjpeg-turbo SIMD source code and zlib are covered by the
+  [zlib License](https://spdx.org/licenses/Zlib.html), which is subsumed by the
+  IJG License in the context of the cjpeg and djpeg programs and the libjpeg
+  API library.
+
+- Some of the libspng source code is covered by the
+  [PNG Reference Library License v2](https://spdx.org/licenses/libpng-2.0.html),
+  which is subsumed by the IJG License in the context of the cjpeg and djpeg
+  programs and the TurboJPEG API library.
+
+- Most of the libspng source code is covered by the
+  [Simplified (2-clause) BSD License](https://spdx.org/licenses/BSD-2-Clause.html),
+  which is subsumed by the Modified BSD License in the context of the cjpeg and
+  djpeg programs and the TurboJPEG API library.
+
+
+Complying with the libjpeg-turbo Licenses
+=========================================
+
+This section provides a roll-up of the libjpeg-turbo licensing terms, to the
+best of our understanding.  This is not a license in and of itself.  It is
+intended solely for clarification.
+
+1.  If you are distributing a modified version of the libjpeg-turbo source,
+    then:
+
+    1.  You cannot alter or remove any existing copyright or license notices
+        from the source.
+
+        **Origin**
+        - Clause 1 of the IJG License
+        - Clause 1 of the Modified BSD License
+
+    2.  You must add your own copyright notice to the header of each source
+        file you modified, so others can tell that you modified that file.  (If
+        there is not an existing copyright header in that file, then you can
+        simply add a notice stating that you modified the file.)
+
+        **Origin**
+        - Clause 1 of the IJG License
+
+    3.  You must include the IJG README file, and you must not alter any of the
+        copyright or license text in that file.
+
+        **Origin**
+        - Clause 1 of the IJG License
+
+2.  If you are distributing only libjpeg-turbo binaries without the source, or
+    if you are distributing an application that statically links with
+    libjpeg-turbo, then:
+
+    1.  Your product documentation must include a message stating:
+
+        This software is based in part on the work of the Independent JPEG
+        Group.
+
+        **Origin**
+        - Clause 2 of the IJG license
+
+    2.  If your binary distribution includes or uses the TurboJPEG API or
+        associated programs, cjpeg, or djpeg, then your product documentation
+        must include the text of the Modified BSD License (see below.)
+
+        **Origin**
+        - Clause 2 of the Modified BSD License
+
+3.  You cannot use the name of the IJG or The libjpeg-turbo Project or the
+    contributors thereof in advertising, publicity, etc.
+
+    **Origin**
+    - IJG License
+    - Clause 3 of the Modified BSD License
+
+4.  The authors and distributors do not warrant libjpeg-turbo to be free of
+    defects, nor do we accept any liability for undesirable consequences
+    resulting from your use of the software.
+
+    **Origin**
+    - IJG License
+    - Modified BSD License
+
+
+The Modified (3-clause) BSD License
+===================================
+
+Copyright (C) 2009-2026 D. R. Commander<br>
+Copyright (C) 2018-2023 Randy <randy408@protonmail.com>
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+- Redistributions of source code must retain the above copyright notice,
+  this list of conditions and the following disclaimer.
+- Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+- Neither the name of the libjpeg-turbo Project nor the names of its
+  contributors may be used to endorse or promote products derived from this
+  software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS",
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+POSSIBILITY OF SUCH DAMAGE.
+
+-------------------------------------------------------------------------------
+The Independent JPEG Group's README, including the IJG License (README.ijg)
+-------------------------------------------------------------------------------
+
+libjpeg-turbo note:  This file has been modified by The libjpeg-turbo Project
+to include only information relevant to libjpeg-turbo, to wordsmith certain
+sections, and to remove impolitic language that existed in the libjpeg v8
+README.  It is included only for reference.  Please see README.md for
+information specific to libjpeg-turbo.
+
+
+The Independent JPEG Group's JPEG software
+==========================================
+
+This distribution contains a release of the Independent JPEG Group's free JPEG
+software.  You are welcome to redistribute this software and to use it for any
+purpose, subject to the conditions under LEGAL ISSUES, below.
+
+This software is the work of Tom Lane, Guido Vollbeding, Philip Gladstone,
+Bill Allombert, Jim Boucher, Lee Crocker, Bob Friesenhahn, Ben Jackson,
+Julian Minguillon, Luis Ortiz, George Phillips, Davide Rossi, Ge' Weijers,
+and other members of the Independent JPEG Group.
+
+IJG is not affiliated with the ISO/IEC JTC1/SC29/WG1 standards committee
+(also known as JPEG, together with ITU-T SG16).
+
+
+DOCUMENTATION ROADMAP
+=====================
+
+This file contains the following sections:
+
+OVERVIEW            General description of JPEG and the IJG software.
+LEGAL ISSUES        Copyright, lack of warranty, terms of distribution.
+REFERENCES          Where to learn more about JPEG.
+ARCHIVE LOCATIONS   Where to find newer versions of this software.
+FILE FORMAT WARS    Software *not* to get.
+TO DO               Plans for future IJG releases.
+
+Other documentation files in the distribution are:
+
+User documentation:
+  doc/usage.txt         Usage instructions for cjpeg, djpeg, jpegtran,
+                        rdjpgcom, and wrjpgcom.
+  doc/*.1               Unix-style man pages for programs (same info as
+                        usage.txt).
+  doc/wizard.txt        Advanced usage instructions for JPEG wizards only.
+  doc/change.log        Version-to-version change highlights.
+Programmer and internal documentation:
+  doc/libjpeg.txt       How to use the JPEG library in your own programs.
+  src/example.c         Sample code for calling the JPEG library.
+  doc/structure.txt     Overview of the JPEG library's internal structure.
+  doc/coderules.txt     Coding style rules --- please read if you contribute
+                        code.
+
+Please read at least usage.txt.  Some information can also be found in the JPEG
+FAQ (Frequently Asked Questions) article.  See ARCHIVE LOCATIONS below to find
+out where to obtain the FAQ article.
+
+If you want to understand how the JPEG code works, we suggest reading one or
+more of the REFERENCES, then looking at the documentation files (in roughly
+the order listed) before diving into the code.
+
+
+OVERVIEW
+========
+
+This package contains C software to implement JPEG image encoding, decoding,
+and transcoding.  JPEG (pronounced "jay-peg") is a standardized compression
+method for full-color and grayscale images.  JPEG's strong suit is compressing
+photographic images or other types of images that have smooth color and
+brightness transitions between neighboring pixels.  Images with sharp lines or
+other abrupt features may not compress well with JPEG, and a higher JPEG
+quality may have to be used to avoid visible compression artifacts with such
+images.
+
+JPEG is normally lossy, meaning that the output pixels are not necessarily
+identical to the input pixels.  However, on photographic content and other
+"smooth" images, very good compression ratios can be obtained with no visible
+compression artifacts, and extremely high compression ratios are possible if
+you are willing to sacrifice image quality (by reducing the "quality" setting
+in the compressor.)
+
+This software implements JPEG baseline, extended-sequential, progressive, and
+lossless compression processes.  Provision is made for supporting all variants
+of these processes, although some uncommon parameter settings aren't
+implemented yet.  We have made no provision for supporting the hierarchical
+processes defined in the standard.
+
+We provide a set of library routines for reading and writing JPEG image files,
+plus two sample applications "cjpeg" and "djpeg", which use the library to
+perform conversion between JPEG and some other popular image file formats.
+The library is intended to be reused in other applications.
+
+In order to support file conversion and viewing software, we have included
+considerable functionality beyond the bare JPEG coding/decoding capability;
+for example, the color quantization modules are not strictly part of JPEG
+decoding, but they are essential for output to colormapped file formats.  These
+extra functions can be compiled out of the library if not required for a
+particular application.
+
+We have also included "jpegtran", a utility for lossless transcoding between
+different JPEG processes, and "rdjpgcom" and "wrjpgcom", two simple
+applications for inserting and extracting textual comments in JFIF files.
+
+The emphasis in designing this software has been on achieving portability and
+flexibility, while also making it fast enough to be useful.  In particular,
+the software is not intended to be read as a tutorial on JPEG.  (See the
+REFERENCES section for introductory material.)  Rather, it is intended to
+be reliable, portable, industrial-strength code.  We do not claim to have
+achieved that goal in every aspect of the software, but we strive for it.
+
+We welcome the use of this software as a component of commercial products.
+No royalty is required, but we do ask for an acknowledgement in product
+documentation, as described under LEGAL ISSUES.
+
+
+LEGAL ISSUES
+============
+
+In plain English:
+
+1. We don't promise that this software works.  (But if you find any bugs,
+   please let us know!)
+2. You can use this software for whatever you want.  You don't have to pay us.
+3. You may not pretend that you wrote this software.  If you use it in a
+   program, you must acknowledge somewhere in your documentation that
+   you've used the IJG code.
+
+In legalese:
+
+The authors make NO WARRANTY or representation, either express or implied,
+with respect to this software, its quality, accuracy, merchantability, or
+fitness for a particular purpose.  This software is provided "AS IS", and you,
+its user, assume the entire risk as to its quality and accuracy.
+
+This software is copyright (C) 1991-2020, Thomas G. Lane, Guido Vollbeding.
+All Rights Reserved except as specified below.
+
+Permission is hereby granted to use, copy, modify, and distribute this
+software (or portions thereof) for any purpose, without fee, subject to these
+conditions:
+(1) If any part of the source code for this software is distributed, then this
+README file must be included, with this copyright and no-warranty notice
+unaltered; and any additions, deletions, or changes to the original files
+must be clearly indicated in accompanying documentation.
+(2) If only executable code is distributed, then the accompanying
+documentation must state that "this software is based in part on the work of
+the Independent JPEG Group".
+(3) Permission for use of this software is granted only if the user accepts
+full responsibility for any undesirable consequences; the authors accept
+NO LIABILITY for damages of any kind.
+
+These conditions apply to any software derived from or based on the IJG code,
+not just to the unmodified library.  If you use our work, you ought to
+acknowledge us.
+
+Permission is NOT granted for the use of any IJG author's name or company name
+in advertising or publicity relating to this software or products derived from
+it.  This software may be referred to only as "the Independent JPEG Group's
+software".
+
+We specifically permit and encourage the use of this software as the basis of
+commercial products, provided that all warranty or liability claims are
+assumed by the product vendor.
+
+
+REFERENCES
+==========
+
+We recommend reading one or more of these references before trying to
+understand the innards of the JPEG software.
+
+The best short technical introduction to the JPEG compression algorithm is
+        Wallace, Gregory K.  "The JPEG Still Picture Compression Standard",
+        Communications of the ACM, April 1991 (vol. 34 no. 4), pp. 30-44.
+(Adjacent articles in that issue discuss MPEG motion picture compression,
+applications of JPEG, and related topics.)  If you don't have the CACM issue
+handy, a PDF file containing a revised version of Wallace's article is
+available at http://www.ijg.org/files/Wallace.JPEG.pdf.  The file (actually
+a preprint for an article that appeared in IEEE Trans. Consumer Electronics)
+omits the sample images that appeared in CACM, but it includes corrections
+and some added material.  Note: the Wallace article is copyright ACM and IEEE,
+and it may not be used for commercial purposes.
+
+A somewhat less technical, more leisurely introduction to JPEG can be found in
+"The Data Compression Book" by Mark Nelson and Jean-loup Gailly, published by
+M&T Books (New York), 2nd ed. 1996, ISBN 1-55851-434-1.  This book provides
+good explanations and example C code for a multitude of compression methods
+including JPEG.  It is an excellent source if you are comfortable reading C
+code but don't know much about data compression in general.  The book's JPEG
+sample code is far from industrial-strength, but when you are ready to look
+at a full implementation, you've got one here...
+
+The best currently available description of JPEG is the textbook "JPEG Still
+Image Data Compression Standard" by William B. Pennebaker and Joan L.
+Mitchell, published by Van Nostrand Reinhold, 1993, ISBN 0-442-01272-1.
+Price US$59.95, 638 pp.  The book includes the complete text of the ISO JPEG
+standards (DIS 10918-1 and draft DIS 10918-2).
+
+The original JPEG standard is divided into two parts, Part 1 being the actual
+specification, while Part 2 covers compliance testing methods.  Part 1 is
+titled "Digital Compression and Coding of Continuous-tone Still Images,
+Part 1: Requirements and guidelines" and has document numbers ISO/IEC IS
+10918-1, ITU-T T.81.  Part 2 is titled "Digital Compression and Coding of
+Continuous-tone Still Images, Part 2: Compliance testing" and has document
+numbers ISO/IEC IS 10918-2, ITU-T T.83.
+
+The JPEG standard does not specify all details of an interchangeable file
+format.  For the omitted details, we follow the "JFIF" conventions, revision
+1.02.  JFIF version 1 has been adopted as ISO/IEC 10918-5 (05/2013) and
+Recommendation ITU-T T.871 (05/2011): Information technology - Digital
+compression and coding of continuous-tone still images: JPEG File Interchange
+Format (JFIF).  It is available as a free download in PDF file format from
+https://www.iso.org/standard/54989.html and http://www.itu.int/rec/T-REC-T.871.
+A PDF file of the older JFIF 1.02 specification is available at
+http://www.w3.org/Graphics/JPEG/jfif3.pdf.
+
+The TIFF 6.0 file format specification can be obtained from
+http://mirrors.ctan.org/graphics/tiff/TIFF6.ps.gz.  The JPEG incorporation
+scheme found in the TIFF 6.0 spec of 3-June-92 has a number of serious
+problems.  IJG does not recommend use of the TIFF 6.0 design (TIFF Compression
+tag 6).  Instead, we recommend the JPEG design proposed by TIFF Technical Note
+#2 (Compression tag 7).  Copies of this Note can be obtained from
+http://www.ijg.org/files/.  It is expected that the next revision
+of the TIFF spec will replace the 6.0 JPEG design with the Note's design.
+Although IJG's own code does not support TIFF/JPEG, the free libtiff library
+uses our library to implement TIFF/JPEG per the Note.
+
+
+ARCHIVE LOCATIONS
+=================
+
+The "official" archive site for this software is www.ijg.org.
+The most recent released version can always be found there in
+directory "files".
+
+The JPEG FAQ (Frequently Asked Questions) article is a source of some
+general information about JPEG.  It is available at
+http://www.faqs.org/faqs/jpeg-faq.
+
+
+FILE FORMAT COMPATIBILITY
+=========================
+
+This software implements ITU T.81 | ISO/IEC 10918 with some extensions from
+ITU T.871 | ISO/IEC 10918-5 (JPEG File Interchange Format-- see REFERENCES).
+Informally, the term "JPEG image" or "JPEG file" most often refers to JFIF or
+a subset thereof, but there are other formats containing the name "JPEG" that
+are incompatible with the original JPEG standard or with JFIF (for instance,
+JPEG 2000 and JPEG XR).  This software therefore does not support these
+formats.  Indeed, one of the original reasons for developing this free software
+was to help force convergence on a common, interoperable format standard for
+JPEG files.
+
+JFIF is a minimal or "low end" representation.  TIFF/JPEG (TIFF revision 6.0 as
+modified by TIFF Technical Note #2) can be used for "high end" applications
+that need to record a lot of additional data about an image.
+
+
+TO DO
+=====
+
+Please send bug reports, offers of help, etc. to jpeg-info@jpegclub.org.
+
+
+===============================================================================
+21. giflib
+===============================================================================
+
+Project:      GIFLIB, the GIF encoding and decoding library
+Source:       https://sourceforge.net/projects/giflib/ (release 5.2.2)
+License text: COPYING at the root of the release
+License:      MIT License
+
+Derived Smalt packages:
+  image.gif.internal (GifLzwEncoder: the LZW compressor and its string table
+  of egif_lib.c and gif_hash.c)
+
+Derivation: EGifSetupCompress, EGifCompressLine and EGifCompressOutput
+(egif_lib.c) and the hash table of gif_hash.c translated to Java; the output
+is byte-identical to giflib's for the same color indices.
+
+Copyright:
+  Copyright (c) 1997 Eric S. Raymond
+
+-------------------------------------------------------------------------------
+giflib license (COPYING)
+-------------------------------------------------------------------------------
+
+The GIFLIB distribution is Copyright (c) 1997  Eric S. Raymond
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+===============================================================================
+25. LibTIFF
+===============================================================================
+
+Project:      LibTIFF, the TIFF library and utilities, version 4.7.1
+Home:         https://libtiff.gitlab.io/libtiff/
+Source:       https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz
+License text: LICENSE.md at the root of the release
+License:      the LibTIFF license (permissive, BSD-like), with the original
+              Berkeley notice of the LZW code
+
+Derived Smalt packages:
+  image.tiff (TiffDecoder: the interpretation of the TIFF tags and the
+  tolerance of damaged files)
+  image.tiff.internal (YCbCrTables: TIFFYCbCrToRGBInit and TIFFYCbCrtoRGB of
+  tif_color.c; LzwDecoder and LzwEncoder: the code-width schedule, table reset
+  and old-style bit order of tif_lzw.c; Predictor: the horizontal and
+  floating-point predictors of tif_predict.c; ThunderScan: ThunderDecode of
+  tif_thunder.c; CcittFaxDecoder: the end-of-line and fill-bit handling of
+  tif_fax3.c; TiffPageDecoder and SampleConverter: the extra-sample, palette,
+  CMYK and YCbCr rules of tif_getimage.c; TiffJpeg: the old-style JPEG stream
+  reconstruction of tif_ojpeg.c; LabTables: TIFFCIELabToRGBInit,
+  TIFFCIELab16ToXYZ and TIFFXYZToRGB of tif_color.c with the display_sRGB
+  constants of tif_getimage.c; SgiLog: the LogL and LogLuv decoders and
+  conversions of tif_luv.c and the chromaticity table of uvcode.h)
+
+Derivation: the YCbCr tables, the CIE L*a*b* conversion, the SGILog decoders
+and conversions, the uvcode.h table and ThunderDecode translated to Java; the
+other listed functions followed for their algorithms and conventions, with the
+Java code structured differently.
+
+Copyright:
+  Copyright (c) 1988-1997 Sam Leffler
+  Copyright (c) 1991-1997 Silicon Graphics, Inc.
+  Copyright (c) 1985, 1986 The Regents of the University of California
+  (tif_lzw.c)
+  Copyright (c) 1997 Greg Ward Larson (tif_luv.c, uvcode.h)
+
+-------------------------------------------------------------------------------
+LibTIFF license (LICENSE.md)
+-------------------------------------------------------------------------------
+
+# LibTIFF license
+
+Copyright © 1988-1997 Sam Leffler\
+Copyright © 1991-1997 Silicon Graphics, Inc.
+
+Permission to use, copy, modify, distribute, and sell this software and 
+its documentation for any purpose is hereby granted without fee, provided
+that (i) the above copyright notices and this permission notice appear in
+all copies of the software and related documentation, and (ii) the names of
+Sam Leffler and Silicon Graphics may not be used in any advertising or
+publicity relating to the software without the specific, prior written
+permission of Sam Leffler and Silicon Graphics.
+
+THE SOFTWARE IS PROVIDED "AS-IS" AND WITHOUT WARRANTY OF ANY KIND, 
+EXPRESS, IMPLIED OR OTHERWISE, INCLUDING WITHOUT LIMITATION, ANY 
+WARRANTY OF MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.  
+
+IN NO EVENT SHALL SAM LEFFLER OR SILICON GRAPHICS BE LIABLE FOR
+ANY SPECIAL, INCIDENTAL, INDIRECT OR CONSEQUENTIAL DAMAGES OF ANY KIND,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER OR NOT ADVISED OF THE POSSIBILITY OF DAMAGE, AND ON ANY THEORY OF 
+LIABILITY, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE 
+OF THIS SOFTWARE.
+
+# Lempel-Ziv & Welch Compression (tif_lzw.c) license
+The code of tif_lzw.c is derived from the compress program whose code is
+derived from software contributed to Berkeley by James A. Woods,
+derived from original work by Spencer Thomas and Joseph Orost.
+
+The original Berkeley copyright notice appears below in its entirety:
+
+Copyright (c) 1985, 1986 The Regents of the University of California.
+All rights reserved.
+
+This code is derived from software contributed to Berkeley by
+James A. Woods, derived from original work by Spencer Thomas
+and Joseph Orost.
+
+Redistribution and use in source and binary forms are permitted
+provided that the above copyright notice and this paragraph are
+duplicated in all such forms and that any documentation,
+advertising materials, and other materials related to such
+distribution and use acknowledge that the software was developed
+by the University of California, Berkeley.  The name of the
+University may not be used to endorse or promote products derived
+from this software without specific prior written permission.
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND WITHOUT ANY EXPRESS OR
+IMPLIED WARRANTIES, INCLUDING, WITHOUT LIMITATION, THE IMPLIED
+WARRANTIES OF MERCHANTIBILITY AND FITNESS FOR A PARTICULAR PURPOSE.
+
+
+===============================================================================
+31. OpenJPEG
+===============================================================================
+
+Project:      OpenJPEG, the reference JPEG 2000 codec, version 2.5.3
+Home:         https://www.openjpeg.org/
+Source:       https://github.com/uclouvain/openjpeg (src/lib/openjp2,
+              src/bin/common/color.c)
+License text: https://raw.githubusercontent.com/uclouvain/openjpeg/v2.5.3/LICENSE
+License:      BSD 2-Clause License
+
+Derived Smalt packages:
+  image.jp2
+  image.jp2.internal
+
+Derivation: the JPEG 2000 decoder and encoder are ports of libopenjp2: the
+codestream reader and writer of j2k.c (marker segments, tile parts, packed
+packet headers, coding-parameter precedence, rate budgets), the JP2 boxes of
+jp2.c (including palette, component mapping and channel definitions), the
+tile geometry and coding pipeline of tcd.c, the tier-1 coder of t1.c and its
+MQ coder (mqc.c, including the lookup tables), the tier-2 packet coder of t2.c,
+the packet iterators of pi.c, the tag trees of tgt.c, the bit I/O of bio.c,
+the wavelet transforms of dwt.c, the component transforms of mct.c, the rate
+allocation of tcd.c, and the sYCC, e-sYCC and CMYK conversions of the
+opj_decompress tool (src/bin/common/color.c), including tables and constants
+taken from the C sources.
+
+Copyright (as stated in the headers of the OpenJPEG source files the Java
+code derives from):
+  Copyright (c) 2002-2014, Universite catholique de Louvain (UCL), Belgium
+  Copyright (c) 2002-2014, Professor Benoit Macq
+  Copyright (c) 2001-2003, David Janssens
+  Copyright (c) 2002-2003, Yannick Verschueren
+  Copyright (c) 2003-2007, Francois-Olivier Devaux
+  Copyright (c) 2003-2014, Antonin Descampe
+  Copyright (c) 2005, Herve Drolon, FreeImage Team
+  Copyright (c) 2006-2007, Parvatha Elangovan
+  Copyright (c) 2007, Callum Lerwick <seg@haxxed.com>
+  Copyright (c) 2007, Jonathan Ballard <dzonatas@dzonux.net>
+  Copyright (c) 2008, Jerome Fimes, Communications & Systemes
+  Copyright (c) 2008, 2011-2012, Centre National d'Etudes Spatiales (CNES),
+  France
+  Copyright (c) 2010-2011, Kaori Hagihara
+  Copyright (c) 2012, CS Systemes d'Information, France
+  Copyright (c) 2012, Carl Hetherington
+  Copyright (c) 2017, IntoPIX SA <support@intopix.com>
+
+-------------------------------------------------------------------------------
+OpenJPEG license (LICENSE)
+-------------------------------------------------------------------------------
+
+/*
+ * The copyright in this software is being made available under the 2-clauses 
+ * BSD License, included below. This software may be subject to other third 
+ * party and contributor rights, including patent rights, and no such rights
+ * are granted under this license.
+ *
+ * Copyright (c) 2002-2014, Universite catholique de Louvain (UCL), Belgium
+ * Copyright (c) 2002-2014, Professor Benoit Macq
+ * Copyright (c) 2003-2014, Antonin Descampe
+ * Copyright (c) 2003-2009, Francois-Olivier Devaux
+ * Copyright (c) 2005, Herve Drolon, FreeImage Team
+ * Copyright (c) 2002-2003, Yannick Verschueren
+ * Copyright (c) 2001-2003, David Janssens
+ * Copyright (c) 2011-2012, Centre National d'Etudes Spatiales (CNES), France 
+ * Copyright (c) 2012, CS Systemes d'Information, France
+ *
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS `AS IS'
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
+ * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
+ * POSSIBILITY OF SUCH DAMAGE.
+ */
+
+
+===============================================================================
+32. jxl-oxide
+===============================================================================
+
+Project:      jxl-oxide, a JPEG XL decoder written in Rust, version 0.12.6
+              (commit c0cc4c7ea57c1207f38ff2970d94757470613be4)
+Home:         https://github.com/tirr-c/jxl-oxide
+Source:       https://github.com/tirr-c/jxl-oxide
+License text: LICENSE-MIT and LICENSE-APACHE at the root of the repository
+License:      MIT OR Apache-2.0 (dual licensed; Smalt uses it under the MIT
+              License)
+
+Derived Smalt packages:
+  image.jxl
+  image.jxl.internal
+  image.jxl.internal.bitstream
+  image.jxl.internal.color
+  image.jxl.internal.entropy
+  image.jxl.internal.frame
+  image.jxl.internal.header
+  image.jxl.internal.jpeg
+  image.jxl.internal.modular
+  image.jxl.internal.render
+  image.jxl.internal.vardct
+
+Derivation: the JPEG XL decoder is a port of jxl-oxide's crates translated
+from Rust to Java: jxl-bitstream (bit reader, container), jxl-coding (ANS,
+prefix codes, hybrid integers, LZ77, clustering), jxl-image (image and
+color headers), jxl-color (ICC stream, color encodings, XYB and transfer
+functions), jxl-modular (meta-adaptive trees, predictors including the
+weighted predictor, RCT, palette and squeeze), jxl-vardct (dequantization
+matrices, coefficient orders, transforms), jxl-frame (frame headers, TOC,
+LF and pass groups, patches, splines, noise), jxl-render (restoration
+filters, upsampling, blending, rendering pipeline) and jxl-jbr (JPEG
+bitstream reconstruction).
+
+Copyright:
+  Copyright (c) Wonwoo Choi and the jxl-oxide contributors
+
+-------------------------------------------------------------------------------
+MIT License (jxl-oxide LICENSE-MIT)
+-------------------------------------------------------------------------------
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+===============================================================================
+33. libjxl
+===============================================================================
+
+Project:      libjxl, the JPEG XL reference implementation
+              (commit 5f92f524f1407de323c409c360ab38cae1d97b27)
+Home:         https://jpeg.org/jpegxl/
+Source:       https://github.com/libjxl/libjxl
+License text: LICENSE and PATENTS at the root of the repository
+License:      BSD 3-Clause, with the Additional IP Rights Grant (Patents)
+              reproduced below
+
+Derived Smalt packages:
+  image.jxl.internal.color
+  image.jxl.internal.header
+  image.jxl.internal.jpeg
+  image.jxl.internal.modular
+  image.jxl.internal.render
+
+Derivation: where jxl-oxide (section 32) and libjxl differ, the decoder
+follows libjxl, the reference: the palette transform semantics
+(GetPaletteValue in lib/jxl/modular/transform/palette), the treatment of
+negative values by the transfer functions, the rational approximation of
+the sRGB curve (lib/jxl/cms) and the fast power function used by the BT.709,
+DCI and gamma curves (lib/jxl/base/fast_math-inl.h), the ICC profiles
+synthesized for enumerated color encodings, the rendering order of the
+frame pipeline (lib/jxl/render_pipeline), and the MCU grid of a JPEG scan
+of one subsampled component (lib/jxl/jpeg/dec_jpeg_data_writer.cc).
+
+Copyright:
+  Copyright (c) the JPEG XL Project Authors.
+
+-------------------------------------------------------------------------------
+libjxl license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) the JPEG XL Project Authors.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-------------------------------------------------------------------------------
+libjxl Additional IP Rights Grant (PATENTS)
+-------------------------------------------------------------------------------
+
+Additional IP Rights Grant (Patents)
+
+"This implementation" means the copyrightable works distributed by
+Google as part of the JPEG XL project.
+
+Google hereby grants to You a perpetual, worldwide, non-exclusive,
+no-charge, royalty-free, irrevocable (except as stated in this section)
+patent license to make, have made, use, offer to sell, sell, import,
+transfer and otherwise run, modify and propagate the contents of this
+implementation of JPEG XL, where such license applies only to those patent
+claims, both currently owned or controlled by Google and acquired in
+the future, licensable by Google that are necessarily infringed by this
+implementation of JPEG XL.  This grant does not include claims that would be
+infringed only as a consequence of further modification of this
+implementation.  If you or your agent or exclusive licensee institute or
+order or agree to the institution of patent litigation against any
+entity (including a cross-claim or counterclaim in a lawsuit) alleging
+that this implementation of JPEG XL or any code incorporated within this
+implementation of JPEG XL constitutes direct or contributory patent
+infringement, or inducement of patent infringement, then any patent
+rights granted to you under this License for this implementation of JPEG XL
+shall terminate as of the date such litigation is filed.
+
+
+===============================================================================
+34. Brotli
+===============================================================================
+
+Project:      Brotli, the generic-purpose lossless compression library
+              (commit 42a2ed4355bc6287da6bb6319f090b499cba4550)
+Home:         https://github.com/google/brotli
+Source:       https://github.com/google/brotli
+License text: LICENSE at the root of the repository
+License:      MIT License
+
+Derived Smalt packages:
+  image.jxl.internal.brotli
+
+Derivation: the Brotli decoder (RFC 7932) used for the jbrd and brob boxes
+of JPEG XL containers follows the reference Java decoder
+(java/org/brotli/dec): its Huffman table layout and builder, its command,
+context and transform tables. The static dictionary resource is a verbatim
+copy of c/common/dictionary.bin.
+
+Copyright:
+  Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+
+-------------------------------------------------------------------------------
+Brotli license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+
+===============================================================================
+39. libdeflate
+===============================================================================
+
+Project:      libdeflate, a library for fast, whole-buffer DEFLATE-based compression
+              and decompression
+Home:         https://github.com/ebiggers/libdeflate
+Source:       https://github.com/ebiggers/libdeflate
+License text: https://raw.githubusercontent.com/ebiggers/libdeflate/master/COPYING
+License:      MIT
+
+Derived Smalt packages:
+  image.internal.zlib
+
+Derivation: the DEFLATE decompressor follows the design of libdeflate's
+decompressor: a 64-bit bit buffer refilled without a branch, decode-table
+entries that fuse a literal, or a length or distance base and its extra-bit
+count, with a primary lookup and second-level tables, and matches copied a
+word at a time. The DEFLATE compressor writes its blocks the way libdeflate
+does: buffered symbols with frequency counts, length-limited Huffman codes,
+a block cost comparison of stored, fixed and dynamic, a 64-bit bit
+accumulator stored once per symbol, and its block split heuristic (the
+distribution of literal and match classes compared every 512 symbols).
+
+Copyright:
+  Copyright 2016 Eric Biggers
+  Copyright 2024 Google LLC
+
+-------------------------------------------------------------------------------
+libdeflate license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright 2016 Eric Biggers
+Copyright 2024 Google LLC
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation files
+(the "Software"), to deal in the Software without restriction,
+including without limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of the Software,
+and to permit persons to whom the Software is furnished to do so,
+subject to the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

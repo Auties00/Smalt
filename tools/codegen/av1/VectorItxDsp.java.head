@@ -1,0 +1,433 @@
+package com.github.auties00.smalt.video.av1.internal;
+
+import jdk.incubator.vector.IntVector;
+import jdk.incubator.vector.ShortVector;
+import jdk.incubator.vector.VectorOperators;
+import jdk.incubator.vector.VectorSpecies;
+
+import java.util.Arrays;
+
+/**
+ * Implements the inverse transforms with the Vector API, producing output identical to
+ * {@link ScalarItxDsp}.
+ *
+ * <p>A block whose one-dimensional transforms are all at most 32 points long runs both passes
+ * 8 or 4 transforms at a time, one per 32-bit lane (the 32-point DCT only 8, in six methods that
+ * pass their live values through the elements of the odd inputs it has consumed). The row pass works
+ * in place on the coefficients, whose column-major order puts the same element of consecutive rows
+ * next to each other; the rounding between the passes transposes the rows into the intermediate
+ * buffer, where the same element of consecutive columns is contiguous for the column pass; the
+ * result is added to the destination a row at a time. The one-dimensional kernels are generated
+ * from the scalar ones statement by statement, so they compute exactly the same values. A block
+ * with a 64-point DCT runs its one-dimensional transforms through {@link ScalarItxDsp} and
+ * the rounding between the passes and the final addition through the vector kernels. Blocks with
+ * only a DC coefficient and the lossless Walsh-Hadamard transform use {@link ScalarItxDsp}.
+ *
+ * <p>Every Vector API operation goes through the per-shape methods, constants are
+ * {@code static final} vectors, no method takes or returns a vector, and every loaded or converted
+ * vector, and every vector stored or shifted by a scalar, is first cast through the
+ * {@code static final} class of its species; see {@link VectorMcDsp}.
+ *
+ * <p>Generated from {@code tools/codegen/av1}; edit the template.
+ *
+ * @implNote This implementation follows the structure of dav1d's x86 inverse transforms
+ *           ({@code src/x86/itx16_avx2.asm}), which also transform several rows or columns per
+ *           vector with 32-bit intermediates.
+ */
+public final class VectorItxDsp extends ItxDsp {
+    /**
+     * The 8-lane int species of 8 transforms at once.
+     */
+    private static final VectorSpecies<Integer> I256 = IntVector.SPECIES_256;
+
+    /**
+     * The 4-lane int species of 4 transforms at once.
+     */
+    private static final VectorSpecies<Integer> I128 = IntVector.SPECIES_128;
+
+    /**
+     * The 8-lane short species of 8-sample destination rows.
+     */
+    private static final VectorSpecies<Short> S128 = ShortVector.SPECIES_128;
+
+    /**
+     * The 4-lane short species of 4-sample destination rows.
+     */
+    private static final VectorSpecies<Short> S64 = ShortVector.SPECIES_64;
+
+    /**
+     * The exact class of {@link #I256} vectors.
+     */
+    private static final Class<IntVector> INT256 = vectorClass(I256);
+
+    /**
+     * The exact class of {@link #I128} vectors.
+     */
+    private static final Class<IntVector> INT128 = vectorClass(I128);
+
+    /**
+     * The exact class of {@link #S128} vectors.
+     */
+    private static final Class<ShortVector> SHORT128 = vectorClass(S128);
+
+    /**
+     * The exact class of {@link #S64} vectors.
+     */
+    private static final Class<ShortVector> SHORT64 = vectorClass(S64);
+
+    // CONSTANTS
+
+    /**
+     * The kernels used for the cases this class does not vectorize.
+     */
+    private final ScalarItxDsp scalar;
+
+    /**
+     * Constructs the kernels.
+     */
+    private VectorItxDsp() {
+        this.scalar = new ScalarItxDsp();
+    }
+
+    /**
+     * Creates the kernels.
+     *
+     * @return the vector kernels
+     */
+    static ItxDsp create() {
+        return new VectorItxDsp();
+    }
+
+    /**
+     * Returns the exact class of the vectors of a species.
+     *
+     * @param species the species whose vectors are asked for
+     * @param <E>     the element type
+     * @param <V>     the vector type
+     * @return the class
+     */
+    @SuppressWarnings("unchecked")
+    private static <E, V> Class<V> vectorClass(VectorSpecies<E> species) {
+        return (Class<V>) species.vectorType();
+    }
+
+    @Override
+    public void itxfmAdd(int txSize, int txType, short[] dst, int dstOff, int stride, int[] coef, int coefOff,
+                         int eob, int[] scratch, int bitdepthMax) {
+        if (txType == WHT_WHT || !isSupported(txSize, txType)) {
+            scalar.itxfmAdd(txSize, txType, dst, dstOff, stride, coef, coefOff, eob, scratch, bitdepthMax);
+            return;
+        }
+        int lw = ScalarItxDsp.LOG2_W[txSize];
+        int lh = ScalarItxDsp.LOG2_H[txSize];
+        int type = ScalarItxDsp.SLOT_TYPE[txType];
+        int first = ScalarItxDsp.FIRST_1D[type];
+        int second = ScalarItxDsp.SECOND_1D[type];
+        if (type == ScalarItxDsp.DCT_DCT && eob < 1) {
+            scalar.itxfmAdd(txSize, txType, dst, dstOff, stride, coef, coefOff, eob, scratch, bitdepthMax);
+            return;
+        }
+        if (!vectorized(lw, first) || !vectorized(lh, second)) {
+            hybridAdd(txSize, type, dst, dstOff, stride, coef, coefOff, eob, scratch, bitdepthMax);
+            return;
+        }
+        var w = 4 << lw;
+        var h = 4 << lh;
+        int shift = ScalarItxDsp.SHIFT[txSize];
+        var rnd = (1 << shift) >> 1;
+        int rowClipMin;
+        int colClipMin;
+        if (bitdepthMax == 255) {
+            rowClipMin = Short.MIN_VALUE;
+            colClipMin = Short.MIN_VALUE;
+        } else {
+            rowClipMin = ~bitdepthMax << 7;
+            colClipMin = ~bitdepthMax << 5;
+        }
+        int lastNonzeroCol;
+        if (second == ScalarItxDsp.IDENTITY && first != ScalarItxDsp.IDENTITY) {
+            lastNonzeroCol = Math.min(h - 1, eob);
+        } else if (first == ScalarItxDsp.IDENTITY && second != ScalarItxDsp.IDENTITY) {
+            lastNonzeroCol = eob >> (lw + 2);
+        } else {
+            lastNonzeroCol = ScalarItxDsp.LAST_NONZERO_COL[txSize][eob];
+        }
+        var rowLanes = h >= 8 ? 8 : 4;
+        var rect2 = w * 2 == h || h * 2 == w;
+        for (var y0 = 0; y0 <= lastNonzeroCol; y0 += rowLanes) {
+            var o = coefOff + y0;
+            if (rect2) {
+                if (rowLanes == 8) {
+                    scaleRect2(coef, o, h, w);
+                } else {
+                    scaleRect2Narrow(coef, o, h, w);
+                }
+            }
+            transform(lw, first, rowLanes, coef, o, h, rowClipMin, ~rowClipMin);
+        }
+        var colClipMax = ~colClipMin;
+        var rows = lastNonzeroCol + 1;
+        for (var y = 0; y < rows; y++) {
+            var row = y * w;
+            for (int x = 0, c = coefOff + y; x < w; x++, c += h) {
+                scratch[row + x] = Math.clamp((coef[c] + rnd) >> shift, colClipMin, colClipMax);
+            }
+        }
+        Arrays.fill(scratch, rows * w, h * w, 0);
+        Arrays.fill(coef, coefOff, coefOff + w * h, 0);
+        var colLanes = w >= 8 ? 8 : 4;
+        for (var x0 = 0; x0 < w; x0 += colLanes) {
+            transform(lh, second, colLanes, scratch, x0, w, colClipMin, colClipMax);
+        }
+        if (colLanes == 8) {
+            add(dst, dstOff, stride, scratch, w, h, bitdepthMax);
+        } else {
+            addNarrow(dst, dstOff, stride, scratch, h, bitdepthMax);
+        }
+    }
+
+    /**
+     * Inverse transforms a block that has a one-dimensional transform without a vector kernel (a
+     * 64-point DCT) and adds it to the destination: the one-dimensional transforms run
+     * through {@link ScalarItxDsp}, the rounding between the passes and the final addition through
+     * the vector kernels.
+     *
+     * @param txSize      the rectangular transform size
+     * @param type        the transform type after the slot mapping
+     * @param dst         the destination plane
+     * @param dstOff      the index of the block's top-left sample
+     * @param stride      the destination row stride
+     * @param coef        the coefficient buffer, reset to zero where read
+     * @param coefOff     the index of the block's first coefficient
+     * @param eob         the scan position of the last coded coefficient
+     * @param tmp         the intermediate buffer
+     * @param bitdepthMax the largest sample value
+     */
+    private static void hybridAdd(int txSize, int type, short[] dst, int dstOff, int stride, int[] coef,
+                                  int coefOff, int eob, int[] tmp, int bitdepthMax) {
+        int lw = ScalarItxDsp.LOG2_W[txSize];
+        int lh = ScalarItxDsp.LOG2_H[txSize];
+        var w = 4 << lw;
+        var h = 4 << lh;
+        int shift = ScalarItxDsp.SHIFT[txSize];
+        var rect2 = w * 2 == h || h * 2 == w;
+        var rnd = (1 << shift) >> 1;
+        int first = ScalarItxDsp.FIRST_1D[type];
+        int second = ScalarItxDsp.SECOND_1D[type];
+        var sh = Math.min(h, 32);
+        var sw = Math.min(w, 32);
+        int rowClipMin;
+        int colClipMin;
+        if (bitdepthMax == 255) {
+            rowClipMin = Short.MIN_VALUE;
+            colClipMin = Short.MIN_VALUE;
+        } else {
+            rowClipMin = ~bitdepthMax << 7;
+            colClipMin = ~bitdepthMax << 5;
+        }
+        var rowClipMax = ~rowClipMin;
+        var colClipMax = ~colClipMin;
+        int lastNonzeroCol;
+        if (second == ScalarItxDsp.IDENTITY && first != ScalarItxDsp.IDENTITY) {
+            lastNonzeroCol = Math.min(sh - 1, eob);
+        } else if (first == ScalarItxDsp.IDENTITY && second != ScalarItxDsp.IDENTITY) {
+            lastNonzeroCol = eob >> (lw + 2);
+        } else {
+            lastNonzeroCol = ScalarItxDsp.LAST_NONZERO_COL[txSize][eob];
+        }
+        var row = 0;
+        for (var y = 0; y <= lastNonzeroCol; y++, row += w) {
+            var source = coefOff + y;
+            if (rect2) {
+                for (var x = 0; x < sw; x++) {
+                    tmp[row + x] = (coef[source + x * sh] * 181 + 128) >> 8;
+                }
+            } else {
+                for (var x = 0; x < sw; x++) {
+                    tmp[row + x] = coef[source + x * sh];
+                }
+            }
+            ScalarItxDsp.transform1d(lw, first, tmp, row, 1, rowClipMin, rowClipMax);
+        }
+        if (lastNonzeroCol + 1 < sh) {
+            Arrays.fill(tmp, row, row + (sh - lastNonzeroCol - 1) * w, 0);
+        }
+        Arrays.fill(coef, coefOff, coefOff + sw * sh, 0);
+        roundClip(tmp, w * sh, rnd, shift, colClipMin, colClipMax);
+        for (var x = 0; x < w; x++) {
+            ScalarItxDsp.transform1d(lh, second, tmp, x, w, colClipMin, colClipMax);
+        }
+        add(dst, dstOff, stride, tmp, w, h, bitdepthMax);
+    }
+
+    /**
+     * Rounds, shifts and clamps a run of intermediate values in place, 8 at a time.
+     *
+     * @param tmp   the values
+     * @param count the number of values, a multiple of 8
+     * @param rnd   the rounding constant
+     * @param shift the right shift applied after rounding
+     * @param min   the lowest value
+     * @param max   the highest value
+     */
+    private static void roundClip(int[] tmp, int count, int rnd, int shift, int min, int max) {
+        var round = IntVector.broadcast(I256, rnd);
+        var low = IntVector.broadcast(I256, min);
+        var high = IntVector.broadcast(I256, max);
+        for (var i = 0; i < count; i += 8) {
+            var v = INT256.cast(IntVector.fromArray(I256, tmp, i));
+            INT256.cast(INT256.cast(v.lanewise(VectorOperators.ADD, INT256.cast(round)))
+                            .lanewise(VectorOperators.ASHR, shift)
+                            .lanewise(VectorOperators.MAX, INT256.cast(low))
+                            .lanewise(VectorOperators.MIN, INT256.cast(high)))
+                    .intoArray(tmp, i);
+        }
+    }
+
+    /**
+     * Returns whether a one-dimensional transform has a vector kernel.
+     *
+     * @param log2Size the base-two logarithm of the length in units of four samples
+     * @param type     the one-dimensional transform type
+     * @return {@code true} for transforms of at most 32 points
+     */
+    private static boolean vectorized(int log2Size, int type) {
+        return log2Size <= 3;
+    }
+
+    /**
+     * Runs one-dimensional transforms of a pass, one per lane.
+     *
+     * @param log2Size the base-two logarithm of the length in units of four samples
+     * @param type     the one-dimensional transform type
+     * @param lanes    the number of transforms, 8 or 4
+     * @param c        the values, transformed in place
+     * @param o        the index of the first value of the first transform
+     * @param s        the distance between consecutive values of a transform
+     * @param min      the lowest intermediate value
+     * @param max      the highest intermediate value
+     */
+    private static void transform(int log2Size, int type, int lanes, int[] c, int o, int s, int min, int max) {
+        var n = 4 << log2Size;
+        if (lanes == 8) {
+            switch (log2Size * 4 + type) {
+                case 0 -> vdct48(c, o, s, min, max);
+                case 1 -> vadst48(c, o, s, min, max, c, o, s);
+                case 2 -> videntity48(c, o, s);
+                case 3 -> vadst48(c, o, s, min, max, c, o + (n - 1) * s, -s);
+                case 4 -> vdct88(c, o, s, min, max);
+                case 5 -> vadst88(c, o, s, min, max, c, o, s);
+                case 6 -> videntity88(c, o, s);
+                case 7 -> vadst88(c, o, s, min, max, c, o + (n - 1) * s, -s);
+                case 8 -> vdct168(c, o, s, min, max);
+                case 9 -> vadst168(c, o, s, min, max, c, o, s);
+                case 10 -> videntity168(c, o, s);
+                case 11 -> vadst168(c, o, s, min, max, c, o + (n - 1) * s, -s);
+                case 12 -> vdct328(c, o, s, min, max);
+                default -> videntity328(c, o, s);
+            }
+        } else {
+            switch (log2Size * 4 + type) {
+                case 0 -> vdct44(c, o, s, min, max);
+                case 1 -> vadst44(c, o, s, min, max, c, o, s);
+                case 2 -> videntity44(c, o, s);
+                case 3 -> vadst44(c, o, s, min, max, c, o + (n - 1) * s, -s);
+                case 4 -> vdct84(c, o, s, min, max);
+                case 5 -> vadst84(c, o, s, min, max, c, o, s);
+                case 6 -> videntity84(c, o, s);
+                case 7 -> vadst84(c, o, s, min, max, c, o + (n - 1) * s, -s);
+                case 8 -> vdct164(c, o, s, min, max);
+                case 9 -> vadst164(c, o, s, min, max, c, o, s);
+                case 10 -> videntity164(c, o, s);
+                case 11 -> vadst164(c, o, s, min, max, c, o + (n - 1) * s, -s);
+                default -> videntity324(c, o, s);
+            }
+        }
+    }
+
+    /**
+     * Scales the inputs of 8 rows of a block with a 1:2 or 2:1 aspect ratio by 1/sqrt(2).
+     *
+     * @param coef the coefficients, column-major
+     * @param o    the index of the first row's first coefficient
+     * @param h    the column height, the distance between consecutive elements of a row
+     * @param w    the row length
+     */
+    private static void scaleRect2(int[] coef, int o, int h, int w) {
+        for (var x = 0; x < w; x++) {
+            var v = INT256.cast(IntVector.fromArray(I256, coef, o + x * h));
+            INT256.cast(v.lanewise(VectorOperators.MUL, K8_181).lanewise(VectorOperators.ADD, K8_128))
+                    .lanewise(VectorOperators.ASHR, 8).intoArray(coef, o + x * h);
+        }
+    }
+
+    /**
+     * Scales the inputs of 4 rows of a block with a 1:2 or 2:1 aspect ratio by 1/sqrt(2).
+     *
+     * @param coef the coefficients, column-major
+     * @param o    the index of the first row's first coefficient
+     * @param h    the column height, the distance between consecutive elements of a row
+     * @param w    the row length
+     */
+    private static void scaleRect2Narrow(int[] coef, int o, int h, int w) {
+        for (var x = 0; x < w; x++) {
+            var v = INT128.cast(IntVector.fromArray(I128, coef, o + x * h));
+            INT128.cast(v.lanewise(VectorOperators.MUL, K4_181).lanewise(VectorOperators.ADD, K4_128))
+                    .lanewise(VectorOperators.ASHR, 8).intoArray(coef, o + x * h);
+        }
+    }
+
+    /**
+     * Adds the rounded result of a block at least 8 samples wide to the destination.
+     *
+     * @param dst         the destination plane
+     * @param dstOff      the index of the block's top-left sample
+     * @param stride      the destination row stride
+     * @param tmp         the transformed block, row-major
+     * @param w           the block width, a multiple of 8
+     * @param h           the block height
+     * @param bitdepthMax the largest sample value
+     */
+    private static void add(short[] dst, int dstOff, int stride, int[] tmp, int w, int h, int bitdepthMax) {
+        var top = IntVector.broadcast(I256, bitdepthMax);
+        var zero = IntVector.zero(I256);
+        for (var y = 0; y < h; y++) {
+            var line = dstOff + y * stride;
+            var row = y * w;
+            for (var x = 0; x < w; x += 8) {
+                var d = INT256.cast(SHORT128.cast(ShortVector.fromArray(S128, dst, line + x))
+                        .convertShape(VectorOperators.S2I, I256, 0));
+                var r = INT256.cast(INT256.cast(IntVector.fromArray(I256, tmp, row + x)).lanewise(VectorOperators.ADD, K8_8))
+                        .lanewise(VectorOperators.ASHR, 4);
+                var value = d.lanewise(VectorOperators.ADD, r).lanewise(VectorOperators.MAX, INT256.cast(zero))
+                        .lanewise(VectorOperators.MIN, INT256.cast(top));
+                SHORT128.cast(value.convertShape(VectorOperators.I2S, S128, 0)).intoArray(dst, line + x);
+            }
+        }
+    }
+
+    /**
+     * Adds the rounded result of a block 4 samples wide to the destination.
+     *
+     * @param dst         the destination plane
+     * @param dstOff      the index of the block's top-left sample
+     * @param stride      the destination row stride
+     * @param tmp         the transformed block, row-major
+     * @param h           the block height
+     * @param bitdepthMax the largest sample value
+     */
+    private static void addNarrow(short[] dst, int dstOff, int stride, int[] tmp, int h, int bitdepthMax) {
+        var top = IntVector.broadcast(I128, bitdepthMax);
+        var zero = IntVector.zero(I128);
+        for (var y = 0; y < h; y++) {
+            var line = dstOff + y * stride;
+            var d = INT128.cast(SHORT64.cast(ShortVector.fromArray(S64, dst, line))
+                    .convertShape(VectorOperators.S2I, I128, 0));
+            var r = INT128.cast(INT128.cast(IntVector.fromArray(I128, tmp, 4 * y)).lanewise(VectorOperators.ADD, K4_8))
+                    .lanewise(VectorOperators.ASHR, 4);
+            var value = d.lanewise(VectorOperators.ADD, r).lanewise(VectorOperators.MAX, INT128.cast(zero))
+                    .lanewise(VectorOperators.MIN, INT128.cast(top));
+            SHORT64.cast(value.convertShape(VectorOperators.I2S, S64, 0)).intoArray(dst, line);
+        }
+    }
+}

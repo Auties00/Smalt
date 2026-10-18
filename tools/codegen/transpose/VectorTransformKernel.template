@@ -1,0 +1,425 @@
+package com.github.auties00.smalt.image.ops;
+
+import jdk.incubator.vector.ByteVector;
+import jdk.incubator.vector.IntVector;
+import jdk.incubator.vector.VectorMask;
+import jdk.incubator.vector.VectorShape;
+import jdk.incubator.vector.VectorShuffle;
+import jdk.incubator.vector.VectorSpecies;
+
+/**
+ * Implements {@link TransformKernel} with the Vector API.
+ *
+ * <p>Transpositions walk {@link TransformKernel#BLOCK}-byte square blocks and transpose square
+ * tiles held in registers: 16x16 samples of an 8-bit plane in sixteen 128-bit vectors, and 8x8
+ * (or, on 128-bit hardware, 4x4) 32-bit pixels. A tile of {@code n} rows is transposed by
+ * {@code log2(n)} identical rounds that interleave row {@code k} with row {@code k + n / 2}; each
+ * round rotates the bits of the row and column indices by one position, so the rounds together
+ * swap them. Mirroring reads the tile's source rows bottom-up (which reverses every output row)
+ * or walks the output rows backwards, so no lane reversal is needed. Partial tiles at the right
+ * and bottom edges use {@link ScalarTransformKernel}. Tiles are written out inline, without
+ * helper methods, so their vectors never leave registers; an 8-bit tile is transposed in two
+ * halves, each loading all sixteen rows and producing eight output rows, since the first round
+ * already separates the left eight columns from the right eight, and a single method for the
+ * whole tile would exceed 2000 bytecodes, the size up to which a kernel stays well inside the
+ * compiler's node budget.
+ *
+ * <p>An interleave of two vectors is spelled as two single-vector rearrangements that spread one
+ * half of each vector over every other lane and a blend that takes the odd lanes from the second:
+ * the Vector API's two-vector rearrangement blends internally on a vector whose class the
+ * compiler only knows from a profile shared by every caller. Every vector that a load or
+ * reinterpretation produces is cast to the exact class of its species before it is used as the
+ * receiver of a call, and so is the receiver of every {@code intoArray} and reinterpretation, so
+ * that the compiler binds those calls without consulting receiver-type profiles.
+ * Reinterpretations use the per-shape {@code reinterpretShape}, never the {@code reinterpretAs}
+ * methods.
+ *
+ * <p>Generated from {@code tools/codegen/transpose}; edit the template.
+ */
+final class VectorTransformKernel implements TransformKernel {
+    /**
+     * The byte species holding one 16-sample tile row.
+     */
+    private static final VectorSpecies<Byte> B16 = ByteVector.SPECIES_128;
+
+    /**
+     * The widest byte species, used for row reversal.
+     */
+    private static final VectorSpecies<Byte> B = ByteVector.SPECIES_PREFERRED;
+
+    /**
+     * The integer species of pixel tiles: 256 bits when the hardware has them, else 128 bits.
+     */
+    private static final VectorSpecies<Integer> I = IntVector.SPECIES_PREFERRED.vectorBitSize() >= 256
+            ? IntVector.SPECIES_256 : IntVector.SPECIES_128;
+
+    /**
+     * The side of a pixel tile.
+     */
+    private static final int L = I.length();
+
+    /**
+     * The byte species holding {@link #L} packed pixels.
+     */
+    private static final VectorSpecies<Byte> BP = VectorSpecies.of(byte.class, VectorShape.forBitSize(I.vectorBitSize()));
+
+    /**
+     * The byte species of one row of an 8x8 pixel tile.
+     */
+    private static final VectorSpecies<Byte> BP8 = ByteVector.SPECIES_256;
+
+    /**
+     * The byte species of one row of a 4x4 pixel tile.
+     */
+    private static final VectorSpecies<Byte> BP4 = ByteVector.SPECIES_128;
+
+    /**
+     * Repeats each lane of the low half of a 16-byte vector twice.
+     */
+    private static final VectorShuffle<Byte> SPREAD_LO_8 = spread(ByteVector.SPECIES_128, false);
+
+    /**
+     * Repeats each lane of the high half of a 16-byte vector twice.
+     */
+    private static final VectorShuffle<Byte> SPREAD_HI_8 = spread(ByteVector.SPECIES_128, true);
+
+    /**
+     * Selects the odd lanes of a 16-byte vector.
+     */
+    private static final VectorMask<Byte> ODD_8 = odd(ByteVector.SPECIES_128);
+
+    /**
+     * Reverses the lanes of the widest byte vector.
+     */
+    private static final VectorShuffle<Byte> REVERSE_B = reverse(ByteVector.SPECIES_PREFERRED);
+
+    /**
+     * Repeats each lane of the low half of an 8-lane integer vector twice.
+     */
+    private static final VectorShuffle<Integer> SPREAD_LO_32 = spread(IntVector.SPECIES_256, false);
+
+    /**
+     * Repeats each lane of the high half of an 8-lane integer vector twice.
+     */
+    private static final VectorShuffle<Integer> SPREAD_HI_32 = spread(IntVector.SPECIES_256, true);
+
+    /**
+     * Selects the odd lanes of an 8-lane integer vector.
+     */
+    private static final VectorMask<Integer> ODD_32 = odd(IntVector.SPECIES_256);
+
+    /**
+     * Repeats each lane of the low half of a 4-lane integer vector twice.
+     */
+    private static final VectorShuffle<Integer> SPREAD_LO_32_4 = spread(IntVector.SPECIES_128, false);
+
+    /**
+     * Repeats each lane of the high half of a 4-lane integer vector twice.
+     */
+    private static final VectorShuffle<Integer> SPREAD_HI_32_4 = spread(IntVector.SPECIES_128, true);
+
+    /**
+     * Selects the odd lanes of a 4-lane integer vector.
+     */
+    private static final VectorMask<Integer> ODD_32_4 = odd(IntVector.SPECIES_128);
+
+    /**
+     * The exact class of 16-byte vectors.
+     */
+    private static final Class<ByteVector> BYTE16 = vectorClass(ByteVector.SPECIES_128);
+
+    /**
+     * The exact class of the vectors of {@link #B}.
+     */
+    private static final Class<ByteVector> BYTE_WIDE = vectorClass(B);
+
+    /**
+     * The exact class of the vectors of {@link #BP}.
+     */
+    private static final Class<ByteVector> PIXEL_BYTES = vectorClass(BP);
+
+    /**
+     * The exact class of the vectors of {@link #I}.
+     */
+    private static final Class<IntVector> INT_VECTOR = vectorClass(I);
+
+    /**
+     * The exact class of 8-lane integer vectors.
+     */
+    private static final Class<IntVector> INT8 = vectorClass(IntVector.SPECIES_256);
+
+    /**
+     * The exact class of 4-lane integer vectors.
+     */
+    private static final Class<IntVector> INT4 = vectorClass(IntVector.SPECIES_128);
+
+    /**
+     * The exact class of 32-byte vectors.
+     */
+    private static final Class<ByteVector> BYTE32 = vectorClass(ByteVector.SPECIES_256);
+
+    /**
+     * Reverses the lanes of the pixel-tile integer vector.
+     */
+    private static final VectorShuffle<Integer> REVERSE_I = reverse(I);
+
+    /**
+     * Constructs the kernel.
+     */
+    private VectorTransformKernel() {
+    }
+
+    /**
+     * Creates the kernel.
+     *
+     * @return the vector kernel
+     */
+    static TransformKernel create() {
+        return new VectorTransformKernel();
+    }
+
+    /**
+     * Returns the exact class of the vectors of a species.
+     *
+     * @param species the vector shape and lane type
+     * @param <E> the element type
+     * @param <V> the vector type
+     * @return the class
+     */
+    @SuppressWarnings("unchecked")
+    private static <E, V> Class<V> vectorClass(VectorSpecies<E> species) {
+        return (Class<V>) species.vectorType();
+    }
+
+    /**
+     * Builds the shuffle that repeats each lane of one half of a vector twice: lane {@code j}
+     * takes lane {@code j / 2}, plus half the length for the high half.
+     *
+     * @param species the vector shape and lane type of the shuffle
+     * @param high whether to spread the high half
+     * @param <E> the lane type
+     * @return the shuffle
+     */
+    private static <E> VectorShuffle<E> spread(VectorSpecies<E> species, boolean high) {
+        var length = species.length();
+        var indexes = new int[length];
+        for (var j = 0; j < length; j++) {
+            indexes[j] = j / 2 + (high ? length / 2 : 0);
+        }
+        return VectorShuffle.fromArray(species, indexes, 0);
+    }
+
+    /**
+     * Builds the mask of the odd lanes of a vector.
+     *
+     * @param species the vector shape and lane type of the mask
+     * @param <E> the lane type
+     * @return the mask
+     */
+    private static <E> VectorMask<E> odd(VectorSpecies<E> species) {
+        return VectorMask.fromLong(species, 0xAAAAAAAAAAAAAAAAL & (species.length() == 64 ? -1L : (1L << species.length()) - 1));
+    }
+
+    /**
+     * Builds the shuffle that reverses the lanes of a vector.
+     *
+     * @param species the vector shape and lane type of the shuffle
+     * @param <E> the lane type
+     * @return the shuffle
+     */
+    private static <E> VectorShuffle<E> reverse(VectorSpecies<E> species) {
+        var length = species.length();
+        var indexes = new int[length];
+        for (var j = 0; j < length; j++) {
+            indexes[j] = length - 1 - j;
+        }
+        return VectorShuffle.fromArray(species, indexes, 0);
+    }
+
+    @Override
+    public void transpose8(byte[] src, int sOff, int sStride, int width, int height, byte[] dst, int dOff, int dStride,
+                           boolean reverseRows, boolean reverseColumns) {
+        for (var bx = 0; bx < width; bx += BLOCK) {
+            var xEnd = Math.min(bx + BLOCK, width);
+            for (var by = 0; by < height; by += BLOCK) {
+                var yEnd = Math.min(by + BLOCK, height);
+                for (var ty = by; ty < yEnd; ty += 16) {
+                    for (var tx = bx; tx < xEnd; tx += 16) {
+                        if (ty + 16 <= height && tx + 16 <= width) {
+                            tile8Left(src, sOff, sStride, width, height, dst, dOff, dStride, reverseRows, reverseColumns,
+                                    tx, ty);
+                            tile8Right(src, sOff, sStride, width, height, dst, dOff, dStride, reverseRows,
+                                    reverseColumns, tx, ty);
+                        } else {
+                            ScalarTransformKernel.transpose8Range(src, sOff, sStride, width, height, dst, dOff, dStride,
+                                    reverseRows, reverseColumns, tx, Math.min(tx + 16, width), ty, Math.min(ty + 16, height));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Transposes the left half of one full 16x16 tile of 8-bit samples: the destination rows that
+     * hold source columns 0 to 7 of the tile.
+     *
+     * <p>Every destination row needs one sample of each of the sixteen source rows, but the first
+     * interleaving step already separates source columns 0 to 7 from 8 to 15, so each half loads the
+     * sixteen rows and carries half of the interleavings on.
+     *
+     * @param src            the source samples
+     * @param sOff           the index of the source's first sample
+     * @param sStride        the source row stride
+     * @param width          the source width
+     * @param height         the source height
+     * @param dst            the destination samples
+     * @param dOff           the index of the destination's first sample
+     * @param dStride        the destination row stride
+     * @param reverseRows    whether destination rows run from the last source column
+     * @param reverseColumns whether destination columns run from the last source row
+     * @param tx             the tile's first column
+     * @param ty             the tile's first row
+     */
+    private static void tile8Left(byte[] src, int sOff, int sStride, int width, int height, byte[] dst, int dOff,
+                                 int dStride, boolean reverseRows, boolean reverseColumns, int tx, int ty) {
+        var srcStep = reverseColumns ? -sStride : sStride;
+        var base = sOff + (reverseColumns ? ty + 15 : ty) * sStride + tx;
+        var rowStep = reverseRows ? -dStride : dStride;
+        var out = dOff + (reverseRows ? width - 1 - tx : tx) * dStride + (reverseColumns ? height - 16 - ty : ty);
+@@B_LEFT@@
+    }
+
+    /**
+     * Transposes the right half of one full 16x16 tile of 8-bit samples: the destination rows that
+     * hold source columns 8 to 15 of the tile.
+     *
+     * <p>Every destination row needs one sample of each of the sixteen source rows, but the first
+     * interleaving step already separates source columns 0 to 7 from 8 to 15, so each half loads the
+     * sixteen rows and carries half of the interleavings on.
+     *
+     * @param src            the source samples
+     * @param sOff           the index of the source's first sample
+     * @param sStride        the source row stride
+     * @param width          the source width
+     * @param height         the source height
+     * @param dst            the destination samples
+     * @param dOff           the index of the destination's first sample
+     * @param dStride        the destination row stride
+     * @param reverseRows    whether destination rows run from the last source column
+     * @param reverseColumns whether destination columns run from the last source row
+     * @param tx             the tile's first column
+     * @param ty             the tile's first row
+     */
+    private static void tile8Right(byte[] src, int sOff, int sStride, int width, int height, byte[] dst, int dOff,
+                                  int dStride, boolean reverseRows, boolean reverseColumns, int tx, int ty) {
+        var srcStep = reverseColumns ? -sStride : sStride;
+        var base = sOff + (reverseColumns ? ty + 15 : ty) * sStride + tx;
+        var rowStep = reverseRows ? -dStride : dStride;
+        var out = dOff + (reverseRows ? width - 1 - tx : tx) * dStride + (reverseColumns ? height - 16 - ty : ty);
+@@B_RIGHT@@
+    }
+
+    @Override
+    public void transpose32(byte[] src, int sOff, int sStride, int width, int height, byte[] dst, int dOff, int dStride,
+                            boolean reverseRows, boolean reverseColumns) {
+        var block = BLOCK / 4;
+        for (var bx = 0; bx < width; bx += block) {
+            for (var by = 0; by < height; by += block) {
+                var yEnd = Math.min(by + block, height);
+                var xEnd = Math.min(bx + block, width);
+                for (var ty = by; ty < yEnd; ty += L) {
+                    for (var tx = bx; tx < xEnd; tx += L) {
+                        if (ty + L <= height && tx + L <= width) {
+                            if (L == 8) {
+                                tile32x8(src, sOff, sStride, width, height, dst, dOff, dStride, reverseRows, reverseColumns, tx, ty);
+                            } else {
+                                tile32x4(src, sOff, sStride, width, height, dst, dOff, dStride, reverseRows, reverseColumns, tx, ty);
+                            }
+                        } else {
+                            ScalarTransformKernel.transpose32Range(src, sOff, sStride, width, height, dst, dOff, dStride,
+                                    reverseRows, reverseColumns, tx, Math.min(tx + L, width), ty, Math.min(ty + L, height));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Transposes one full 8x8 tile of 32-bit pixels.
+     *
+     * @param src            the source bytes
+     * @param sOff           the index of the source's first byte
+     * @param sStride        the source row stride in bytes
+     * @param width          the source width in pixels
+     * @param height         the source height in pixels
+     * @param dst            the destination bytes
+     * @param dOff           the index of the destination's first byte
+     * @param dStride        the destination row stride in bytes
+     * @param reverseRows    whether destination rows run from the last source column
+     * @param reverseColumns whether destination columns run from the last source row
+     * @param tx             the tile's first column
+     * @param ty             the tile's first row
+     */
+    private static void tile32x8(byte[] src, int sOff, int sStride, int width, int height, byte[] dst, int dOff, int dStride,
+                                 boolean reverseRows, boolean reverseColumns, int tx, int ty) {
+        var srcStep = reverseColumns ? -sStride : sStride;
+        var base = sOff + (reverseColumns ? ty + 7 : ty) * sStride + 4 * tx;
+        var rowStep = reverseRows ? -dStride : dStride;
+        var out = dOff + (reverseRows ? width - 1 - tx : tx) * dStride + 4 * (reverseColumns ? height - 8 - ty : ty);
+@@I8@@
+    }
+
+    /**
+     * Transposes one full 4x4 tile of 32-bit pixels.
+     *
+     * @param src            the source bytes
+     * @param sOff           the index of the source's first byte
+     * @param sStride        the source row stride in bytes
+     * @param width          the source width in pixels
+     * @param height         the source height in pixels
+     * @param dst            the destination bytes
+     * @param dOff           the index of the destination's first byte
+     * @param dStride        the destination row stride in bytes
+     * @param reverseRows    whether destination rows run from the last source column
+     * @param reverseColumns whether destination columns run from the last source row
+     * @param tx             the tile's first column
+     * @param ty             the tile's first row
+     */
+    private static void tile32x4(byte[] src, int sOff, int sStride, int width, int height, byte[] dst, int dOff, int dStride,
+                                 boolean reverseRows, boolean reverseColumns, int tx, int ty) {
+        var srcStep = reverseColumns ? -sStride : sStride;
+        var base = sOff + (reverseColumns ? ty + 3 : ty) * sStride + 4 * tx;
+        var rowStep = reverseRows ? -dStride : dStride;
+        var out = dOff + (reverseRows ? width - 1 - tx : tx) * dStride + 4 * (reverseColumns ? height - 4 - ty : ty);
+@@I4@@
+    }
+
+    @Override
+    public void reverse8(byte[] src, int sOff, byte[] dst, int dOff, int count) {
+        var length = B.length();
+        var i = 0;
+        for (; i + length <= count; i += length) {
+            BYTE_WIDE.cast(BYTE_WIDE.cast(ByteVector.fromArray(B, src, sOff + count - length - i)).rearrange(REVERSE_B))
+                    .intoArray(dst, dOff + i);
+        }
+        for (; i < count; i++) {
+            dst[dOff + i] = src[sOff + count - 1 - i];
+        }
+    }
+
+    @Override
+    public void reverse32(byte[] src, int sOff, byte[] dst, int dOff, int count) {
+        var i = 0;
+        for (; i + L <= count; i += L) {
+            var pixels = INT_VECTOR.cast(PIXEL_BYTES.cast(ByteVector.fromArray(BP, src, sOff + 4 * (count - L - i)))
+                    .reinterpretShape(I, 0));
+            PIXEL_BYTES.cast(INT_VECTOR.cast(pixels.rearrange(REVERSE_I)).reinterpretShape(BP, 0))
+                    .intoArray(dst, dOff + 4 * i);
+        }
+        for (; i < count; i++) {
+            System.arraycopy(src, sOff + 4 * (count - 1 - i), dst, dOff + 4 * i, 4);
+        }
+    }
+}

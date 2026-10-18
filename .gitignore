@@ -1,0 +1,21 @@
+# Maven
+target/
+*.class
+hs_err_pid*
+replay_pid*
+
+# IDEs
+.idea/
+*.iml
+.settings/
+.project
+.classpath
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python (codegen scripts)
+__pycache__/
+*.pyc

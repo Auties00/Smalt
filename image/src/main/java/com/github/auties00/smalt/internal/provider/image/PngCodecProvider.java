@@ -1,0 +1,79 @@
+package com.github.auties00.smalt.internal.provider.image;
+
+import com.github.auties00.smalt.image.AnimationReader;
+import com.github.auties00.smalt.image.AnimationWriter;
+import com.github.auties00.smalt.image.DecodedImage;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.ImageEncoderOptions;
+import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.image.ImageInfo;
+import com.github.auties00.smalt.image.Images;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.png.ApngEncoder;
+import com.github.auties00.smalt.image.png.ApngEncoderOptions;
+import com.github.auties00.smalt.image.png.PngDecoder;
+import com.github.auties00.smalt.image.png.PngEncoder;
+import com.github.auties00.smalt.image.png.PngEncoderOptions;
+import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.spi.ImageCodecProvider;
+
+import java.util.Optional;
+
+/**
+ * Provides {@link PngDecoder} to {@link Images} for PNG and APNG images.
+ *
+ * <p>It also encodes PNG images for {@link Images}, at the default compression level whatever
+ * the quality, since PNG is lossless, and animations as APNG with {@link ApngEncoder} at the
+ * {@link ApngEncoderOptions#defaults()} and the requested loop count.
+ */
+public final class PngCodecProvider implements ImageCodecProvider {
+    /**
+     * Constructs the provider; {@link java.util.ServiceLoader} calls this constructor.
+     */
+    public PngCodecProvider() {
+    }
+
+    @Override
+    public boolean decodes(ImageFormat format) {
+        return format == ImageFormat.PNG;
+    }
+
+    @Override
+    public ImageInfo probe(MediaSource source) {
+        return PngDecoder.probe(source);
+    }
+
+    @Override
+    public DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
+        return PngDecoder.decode(source, options);
+    }
+
+    @Override
+    public Optional<AnimationReader> openAnimation(MediaSource source, ImageDecoderOptions options) {
+        return Optional.of(PngDecoder.openAnimation(source, options));
+    }
+
+    @Override
+    public boolean encodes(ImageFormat format) {
+        return format == ImageFormat.PNG;
+    }
+
+    @Override
+    public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        PngEncoder.encode(picture, PngEncoderOptions.defaults(), sink);
+    }
+
+    @Override
+    public boolean encodesAnimation(ImageFormat format) {
+        return format == ImageFormat.PNG;
+    }
+
+    @Override
+    public AnimationWriter openAnimationWriter(ImageFormat format, int width, int height, ImageEncoderOptions options,
+                                               MediaSink sink) {
+        var encoder = new ApngEncoder(width, height, ApngEncoderOptions.builder().loopCount(options.loopCount())
+                .build());
+        return new ApngAnimationWriter(encoder, width, height, sink);
+    }
+}
