@@ -248,6 +248,28 @@ final class IccReader {
     }
 
     /**
+     * Reads the {@code cicp} tag of ICC.1:2022 (version 4.4, section 9.2.17).
+     *
+     * <p>The code points follow the reserved field of the {@code cicpType}; in a tag of at least 16 bytes whose
+     * first four bytes after the reserved field are zero (defined color primaries and transfer characteristics
+     * are never zero), they follow those four bytes instead, the layout Little CMS 2.16 and 2.17 write.
+     *
+     * @return the color primaries, transfer characteristics, matrix coefficients and video full range flag codes,
+     * or {@code null} when the tag is absent or is not a {@code cicpType} of at least 12 bytes
+     */
+    int[] cicp() {
+        var entry = tags.get(signature("cicp"));
+        if (entry == null || entry[1] < 12 || u32(entry[0]) != signature("cicp")) {
+            return null;
+        }
+        var at = entry[0] + 8;
+        if (entry[1] >= 16 && u32(at) == 0) {
+            at += 4;
+        }
+        return new int[]{u8(at), u8(at + 1), u8(at + 2), u8(at + 3)};
+    }
+
+    /**
      * Reads a text tag: {@code multiLocalizedUnicodeType}, {@code textDescriptionType} or
      * {@code textType}.
      *

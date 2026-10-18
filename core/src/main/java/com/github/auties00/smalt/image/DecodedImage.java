@@ -23,8 +23,14 @@ import java.util.Optional;
  * empty. {@link com.github.auties00.smalt.image.ops.ImageOps#toSrgb(DecodedImage)} converts the
  * pixels to sRGB, and so do the decoders when {@link ImageDecoderOptions#convertToSrgb()} is set.
  *
- * <p>Two results are equal when they hold the same picture instance, the same components, and ICC
- * and EXIF bytes of equal content; the picture is compared by identity because pictures do not
+ * <p>{@link #xmp()} holds the XMP packet embedded in the file, its UTF-8 XML as stored (a HEIF item
+ * stored compressed is inflated), and {@link com.github.auties00.smalt.metadata.XmpPacket#parse(byte[])}
+ * reads it. A JPEG packet whose properties continue in Extended XMP segments is the main packet with
+ * the extended properties merged into it, serialized again. The JPEG, PNG, WebP, TIFF, JPEG 2000,
+ * JPEG XL, HEIC and AVIF decoders fill it; it is empty for the other formats.
+ *
+ * <p>Two results are equal when they hold the same picture instance, the same components, and ICC,
+ * EXIF and XMP bytes of equal content; the picture is compared by identity because pictures do not
  * define value equality.
  *
  * <p>Instances are not thread-safe. The picture and the byte arrays are shared, not copied: the
@@ -39,12 +45,13 @@ import java.util.Optional;
  * @param iccProfile the embedded ICC profile bytes, or empty when the file embeds none
  * @param exif the embedded EXIF block (a TIFF structure starting with its byte-order mark), or
  * empty when absent
+ * @param xmp the embedded XMP packet, UTF-8 XML, or empty when absent
  * @param colorProfile the color space of the pixels the file declares, or empty when it declares
  * none (sRGB)
  */
 public record DecodedImage(Picture picture, ImageFormat format, Orientation orientation, int sourceWidth,
                            int sourceHeight, Optional<byte[]> iccProfile, Optional<byte[]> exif,
-                           Optional<ColorProfile> colorProfile) {
+                           Optional<byte[]> xmp, Optional<ColorProfile> colorProfile) {
     /**
      * Validates the result.
      *
@@ -56,6 +63,7 @@ public record DecodedImage(Picture picture, ImageFormat format, Orientation orie
         Objects.requireNonNull(orientation, "orientation");
         Objects.requireNonNull(iccProfile, "iccProfile");
         Objects.requireNonNull(exif, "exif");
+        Objects.requireNonNull(xmp, "xmp");
         Objects.requireNonNull(colorProfile, "colorProfile");
         if (sourceWidth <= 0 || sourceHeight <= 0) {
             throw new IllegalArgumentException("invalid source size " + sourceWidth + "x" + sourceHeight);
@@ -63,7 +71,28 @@ public record DecodedImage(Picture picture, ImageFormat format, Orientation orie
     }
 
     /**
-     * Constructs a result whose color profile is parsed from the embedded ICC profile.
+     * Constructs a result without an XMP packet.
+     *
+     * @param picture the decoded pixels
+     * @param format the format decoded
+     * @param orientation the display orientation
+     * @param sourceWidth the stored width of the full-size image, positive
+     * @param sourceHeight the stored height of the full-size image, positive
+     * @param iccProfile the embedded ICC profile bytes, or empty
+     * @param exif the embedded EXIF block, or empty
+     * @param colorProfile the color space of the pixels the file declares, or empty (sRGB)
+     * @throws IllegalArgumentException if a source dimension is not positive
+     */
+    public DecodedImage(Picture picture, ImageFormat format, Orientation orientation, int sourceWidth,
+                        int sourceHeight, Optional<byte[]> iccProfile, Optional<byte[]> exif,
+                        Optional<ColorProfile> colorProfile) {
+        this(picture, format, orientation, sourceWidth, sourceHeight, iccProfile, exif, Optional.empty(),
+                colorProfile);
+    }
+
+    /**
+     * Constructs a result without an XMP packet whose color profile is parsed from the embedded ICC
+     * profile.
      *
      * <p>An ICC profile whose header or tag directory is invalid leaves {@link #colorProfile()}
      * empty; its bytes are still returned by {@link #iccProfile()}.
@@ -79,7 +108,19 @@ public record DecodedImage(Picture picture, ImageFormat format, Orientation orie
      */
     public DecodedImage(Picture picture, ImageFormat format, Orientation orientation, int sourceWidth,
                         int sourceHeight, Optional<byte[]> iccProfile, Optional<byte[]> exif) {
-        this(picture, format, orientation, sourceWidth, sourceHeight, iccProfile, exif, parse(iccProfile));
+        this(picture, format, orientation, sourceWidth, sourceHeight, iccProfile, exif, Optional.empty(),
+                parse(iccProfile));
+    }
+
+    /**
+     * Returns a copy of this result with another XMP packet.
+     *
+     * @param xmp the embedded XMP packet, UTF-8 XML, or empty for none
+     * @return the copy, which shares the picture and the other byte arrays with this result
+     */
+    public DecodedImage withXmp(Optional<byte[]> xmp) {
+        return new DecodedImage(picture, format, orientation, sourceWidth, sourceHeight, iccProfile, exif, xmp,
+                colorProfile);
     }
 
     /**
@@ -110,6 +151,7 @@ public record DecodedImage(Picture picture, ImageFormat format, Orientation orie
                 && sourceHeight == that.sourceHeight
                 && sameBytes(iccProfile, that.iccProfile)
                 && sameBytes(exif, that.exif)
+                && sameBytes(xmp, that.xmp)
                 && colorProfile.equals(that.colorProfile);
     }
 
@@ -122,6 +164,7 @@ public record DecodedImage(Picture picture, ImageFormat format, Orientation orie
         result = 31 * result + sourceHeight;
         result = 31 * result + iccProfile.map(Arrays::hashCode).orElse(0);
         result = 31 * result + exif.map(Arrays::hashCode).orElse(0);
+        result = 31 * result + xmp.map(Arrays::hashCode).orElse(0);
         return 31 * result + colorProfile.hashCode();
     }
 

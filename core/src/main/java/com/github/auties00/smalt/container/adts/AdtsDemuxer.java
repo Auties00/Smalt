@@ -5,7 +5,6 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.audio.AudioDecoders;
 import com.github.auties00.smalt.audio.ChannelLayout;
-import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ContainerFormat;
@@ -17,6 +16,7 @@ import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
 import com.github.auties00.smalt.container.mpeg.internal.TrailingTags;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
+import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.header.AacRates;
 import com.github.auties00.smalt.internal.io.ArrayBacked;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
@@ -43,7 +43,11 @@ import java.util.Optional;
  * Reads AAC elementary streams in ADTS framing (ISO/IEC 13818-7 and 14496-3 section 1.A.3).
  *
  * <p>Leading ID3v2 tags are skipped (their text frames become {@link #metadata()}) and trailing
- * ID3v1, APE and Lyrics3 tags are excluded from the audio. The stream is located by its first
+ * ID3v1, APE, Lyrics3 and appended ID3v2 tags are excluded from the audio. An ID3v2.4 tag
+ * appended after the audio or located by a {@code SEEK} frame replaces the ID3v2 fields and
+ * pictures read before it, or only those it holds when flagged as an update (ID3v2.4 section 5);
+ * the APE tag and then the ID3v1 tag add the fields still missing, and APE cover art counts only
+ * when no ID3v2 tag holds a picture. The stream is located by its first
  * ADTS header whose successor is another consistent header (same MPEG version, object type,
  * sampling frequency and channel configuration) or the end of the audio; after garbage in the
  * middle of the stream the demuxer resynchronizes the same way.
@@ -334,10 +338,19 @@ public final class AdtsDemuxer implements Demuxer {
             var tags = new LinkedHashMap<String, String>();
             var size = source.size();
             var annotations = new Annotations();
-            var start = Id3v2.skip(source, 0, size < 0 ? Long.MAX_VALUE : size, tags, annotations);
+            var leading = Id3v2.read(source, 0, size < 0 ? Long.MAX_VALUE : size, tags, annotations);
+            var start = leading.end();
+            if (size >= 0 && ForwardOnlySource.isCheapToReach(source, size)) {
+                var tail = new TrailingTags.Tail(source, start);
+                tail.load(size);
+                var trailing = TrailingTags.regions(tail, start, size);
+                this.audioEnd = trailing.isEmpty() ? size : trailing.getFirst().offset();
+                var located = TrailingTags.seekRegions(tail, leading.seekTarget(), start, audioEnd);
+                TrailingTags.readMetadata(tail, located, trailing, tags, annotations, Id3v2.Merge.REPLACE);
+            } else {
+                this.audioEnd = size < 0 ? -1 : size;
+            }
             this.pictures = annotations.pictures();
-            this.audioEnd = size < 0 ? -1
-                    : ForwardOnlySource.isCheapToReach(source, size) ? TrailingTags.audioEnd(source, start, size) : size;
             var first = synchronize(start, 0);
             if (first < 0) {
                 throw new MediaException.Malformed("no ADTS frame found");
@@ -773,19 +786,7 @@ public final class AdtsDemuxer implements Demuxer {
      * @return the layout, or empty for configuration zero
      */
     private static Optional<ChannelLayout> layout(int configuration) {
-        return switch (configuration) {
-            case 0 -> Optional.empty();
-            case 1 -> Optional.of(ChannelLayout.MONO);
-            case 2 -> Optional.of(ChannelLayout.STEREO);
-            case 3 -> Optional.of(ChannelLayout.defaultFor(3));
-            case 4 -> Optional.of(new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
-                    Speaker.FRONT_CENTER, Speaker.BACK_CENTER)));
-            case 5 -> Optional.of(ChannelLayout.defaultFor(5));
-            case 6 -> Optional.of(ChannelLayout.SURROUND_5_1);
-            default -> Optional.of(new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
-                    Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
-                    Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER)));
-        };
+        return Optional.ofNullable(AudioConfigs.aacLayout(configuration));
     }
 
     /**
@@ -1033,7 +1034,8 @@ public final class AdtsDemuxer implements Demuxer {
             throw new MediaException.Unsupported("seek", "an ADTS stream of unknown size cannot seek");
         }
         try {
-            var rate = track.sampleRate();
+            // the time base counts samples of the core rate, which an HE-AAC refinement does not change
+            var rate = track.timeBase().denominator();
             var target = micros <= 0 ? 0 : micros > Long.MAX_VALUE / rate ? Long.MAX_VALUE / 4 : micros * rate / 1_000_000;
             long offset;
             long time;

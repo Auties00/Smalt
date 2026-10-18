@@ -364,6 +364,26 @@ class H264DecoderTest {
             assertFalse(info.decoderSupported());
         }
 
+        @Test
+        @DisplayName("reports 10-bit streams as supported by the decoder")
+        void highBitDepth() {
+            var info = H264StreamInfo.probe(Fixtures.read(encode("64x64", 1, "yuv420p10le", List.of())));
+            assertEquals(110, info.profileIdc());
+            assertEquals(10, info.bitDepthLuma());
+            assertEquals(10, info.bitDepthChroma());
+            assertTrue(info.decoderSupported());
+        }
+
+        @Test
+        @DisplayName("reports interlaced streams as supported by the decoder")
+        void interlaced() {
+            var info = H264StreamInfo.probe(Fixtures.read(encode("64x64", 1, "yuv420p",
+                    List.of("-x264-params", "interlaced=1:tff=1"))));
+            assertFalse(info.frameMbsOnly());
+            assertTrue(info.mbAdaptiveFrameField());
+            assertTrue(info.decoderSupported());
+        }
+
         /** A 32x32 SPS with picture order count type 2 and no VUI, for any non-High profile. */
         private static byte[] sps(int profile, int constraintFlags, int level) {
             var rbsp = new H264BitWriter().bits(profile, 8).bits(constraintFlags, 8).bits(level, 8).ue(0).ue(0).ue(2)
@@ -399,10 +419,7 @@ class H264DecoderTest {
         @CsvSource({
                 "yuv444p, '', h264 4:4:4",
                 "yuv422p, '', h264 4:2:2",
-                "yuv420p10le, '', h264 high bit depth",
-                "yuv420p, -qp:0, h264 lossless",
-                "yuv420p, -flags:+ildct+ilme, h264 interlaced",
-                "yuv420p, -x264-params:interlaced=1:bff=1, h264 interlaced"
+                "yuv420p, -qp:0, h264 lossless"
         })
         @DisplayName("raises Unsupported with the documented feature name")
         void unsupported(String pixelFormat, String option, String feature) {

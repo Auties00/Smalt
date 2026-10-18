@@ -126,6 +126,27 @@ class AviTest {
             }
         }
 
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"eac3, EAC3", "pcm_s64le, PCM_S64LE", "dca, DTS"})
+        @DisplayName("maps the extensible sub-formats ffmpeg writes for E-AC-3 and 64-bit PCM, and the DTS tag")
+        void extensibleAudio(String encoder, Codec codec) {
+            var options = new java.util.ArrayList<>(List.of("-t", "1", "-c:v", "mjpeg", "-c:a", encoder, "-ac", "2"));
+            if (codec == Codec.DTS) {
+                options.addAll(0, List.of("-strict", "-2"));
+            }
+            var file = Fixtures.ffmpeg("avi", List.of("-f", "lavfi", "-i", "testsrc2=size=64x48:rate=25", "-f", "lavfi",
+                    "-i", "sine=frequency=440:sample_rate=48000"), options);
+            var ours = demux(file);
+            assertEquals(codec, ours.tracks().get(1).codec());
+            assertMatchesProbe(file, ours);
+            if (codec == Codec.PCM_S64LE) {
+                var output = Muxing.remux(ours, AviMuxerOptions.defaults());
+                var back = demux(output);
+                Muxing.assertSame(ours, back);
+                assertMatchesProbe(MuxSupport.save("remux-s64.avi", output), back);
+            }
+        }
+
         @Test
         @DisplayName("recovers a truncated file without index by walking the movi list")
         void truncated() {

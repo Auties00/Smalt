@@ -140,6 +140,11 @@ class ContainersApiTest {
                     case MP4, M4A, MOV -> assertInstanceOf(Mp4Muxer.class, muxer);
                     case FRAGMENTED_MP4 -> assertInstanceOf(FragmentedMp4Muxer.class, muxer);
                     case MATROSKA, WEBM -> assertInstanceOf(MatroskaMuxer.class, muxer);
+                    // the profiles narrower than their format's muxer reject the other codecs
+                    case OGG_FLAC, AC3, EAC3 -> assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(
+                            com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.PCM_S16LE)
+                                    .timeBase(Rational.timeBaseOf(48_000)).sampleRate(48_000).layout(ChannelLayout.STEREO)
+                                    .build()));
                     default -> {
                         try (var expected = Containers.openMuxer(container.format(), MediaSink.memory())) {
                             assertEquals(expected.getClass(), muxer.getClass());
@@ -197,9 +202,11 @@ class ContainersApiTest {
         @EnumSource(Codec.class)
         @DisplayName("isMuxable(ContainerFormat, Codec) keeps its answers for MP4, Ogg and the elementary streams")
         void formats(Codec codec) {
-            assertEquals(FragmentedMp4Muxer.supports(codec) || codec == Codec.MOV_TEXT || codec == Codec.WEBVTT,
-                    Containers.isMuxable(ContainerFormat.MP4, codec));
-            assertEquals(codec == Codec.OPUS || codec == Codec.VORBIS, Containers.isMuxable(ContainerFormat.OGG, codec));
+            assertEquals(Mp4Muxer.supports(Mp4MuxerOptions.Brand.MP4, codec), Containers.isMuxable(ContainerFormat.MP4, codec));
+            assertEquals(Mp4Muxer.supports(Mp4MuxerOptions.Brand.MP4, codec) || codec == Codec.PRORES || codec == Codec.DNXHD,
+                    FragmentedMp4Muxer.supports(codec));
+            assertEquals(codec == Codec.OPUS || codec == Codec.VORBIS || codec == Codec.FLAC || codec == Codec.SPEEX
+                    || codec == Codec.THEORA, Containers.isMuxable(ContainerFormat.OGG, codec));
             assertEquals(codec == Codec.MP3 || codec == Codec.MP2, Containers.isMuxable(ContainerFormat.MPEG_AUDIO, codec));
             assertEquals(codec == Codec.FLAC, Containers.isMuxable(ContainerFormat.FLAC, codec));
             assertEquals(codec == Codec.AMR_NB || codec == Codec.AMR_WB, Containers.isMuxable(ContainerFormat.AMR, codec));
@@ -219,7 +226,9 @@ class ContainersApiTest {
             if (mp4) {
                 assertTrue(quickTime);
             }
-            assertEquals(codec == Codec.PRORES || codec == Codec.DNXHD, quickTime && !mp4);
+            // ISO files have no sample entry for ProRes, DNxHD, 8-bit PCM and G.711
+            assertEquals(codec == Codec.PRORES || codec == Codec.DNXHD || codec == Codec.PCM_U8 || codec == Codec.PCM_S8
+                    || codec == Codec.PCM_ALAW || codec == Codec.PCM_MULAW, quickTime && !mp4);
         }
 
         @Test
@@ -227,7 +236,8 @@ class ContainersApiTest {
         void oggAndRaw() {
             assertTrue(OggMuxer.supports(Codec.OPUS));
             assertTrue(OggMuxer.supports(Codec.VORBIS));
-            assertFalse(OggMuxer.supports(Codec.FLAC));
+            assertTrue(OggMuxer.supports(Codec.FLAC));
+            assertFalse(OggMuxer.supports(Codec.AAC));
             assertTrue(RawMuxer.supports(ContainerFormat.AMR, Codec.AMR_WB));
             assertFalse(RawMuxer.supports(ContainerFormat.AMR, Codec.MP3));
             assertFalse(RawMuxer.supports(ContainerFormat.WAV, Codec.PCM_S16LE));

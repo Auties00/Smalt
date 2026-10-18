@@ -18,11 +18,6 @@ import com.github.auties00.smalt.image.TransferCharacteristics;
  */
 final class HdrEngine implements ColorEngine {
     /**
-     * The number of steps of the square-root-indexed tables.
-     */
-    private static final int STEPS = 4096;
-
-    /**
      * The number of pixels converted per block.
      */
     private static final int BLOCK = 64;
@@ -84,79 +79,25 @@ final class HdrEngine implements ColorEngine {
      */
     HdrEngine(ColorProfile.HdrSpec source, ColorEngine inner, int outputs, ColorTransformOptions options) {
         this.hlg = source.transfer() == TransferCharacteristics.HLG;
-        this.decode = hlg ? Tables.HLG : Tables.PQ;
-        var matrix = nativeMatrix(source);
+        this.decode = hlg ? Hdr.Tables.hlgDecode() : Hdr.Tables.pqDecode();
+        var matrix = Hdr.rgbToXyz(source);
         this.luminance = new float[]{(float) matrix[3], (float) matrix[4], (float) matrix[5]};
-        if (hlg) {
-            var gamma = Hdr.hlgGamma(Hdr.HLG_PEAK);
-            ootf = new float[STEPS + 2];
-            for (var k = 0; k <= STEPS; k++) {
-                var ys = Math.pow((double) k / STEPS, 2);
-                ootf[k] = (float) (Hdr.HLG_PEAK * Math.pow(ys, gamma - 1));
-            }
-            ootf[STEPS + 1] = ootf[STEPS];
-        } else {
-            ootf = null;
-        }
+        this.ootf = hlg ? Hdr.Tables.hlgOotf() : null;
         this.peak = (float) source.peak();
         var white = options.referenceWhite();
         if (options.toneMapping() == ToneMapping.BT2390 && source.peak() > white) {
-            gain = new float[STEPS + 2];
-            for (var k = 0; k <= STEPS; k++) {
-                var nits = Math.pow((double) k / STEPS, 2) * source.peak();
+            gain = new float[Hdr.STEPS + 2];
+            for (var k = 0; k <= Hdr.STEPS; k++) {
+                var nits = Math.pow((double) k / Hdr.STEPS, 2) * source.peak();
                 gain[k] = nits > 0 ? (float) (Hdr.eetf(nits, source.peak(), white) / nits) : 1f;
             }
-            gain[STEPS + 1] = gain[STEPS];
+            gain[Hdr.STEPS + 1] = gain[Hdr.STEPS];
         } else {
             gain = null;
         }
         this.inverseWhite = (float) (1.0 / white);
         this.inner = inner;
         this.outputs = outputs;
-    }
-
-    /**
-     * Returns the linear RGB to XYZ matrix of the source primaries relative to their own white.
-     *
-     * @param source the high-dynamic-range description of the source
-     * @return the matrix in row-major order
-     */
-    private static double[] nativeMatrix(ColorProfile.HdrSpec source) {
-        var primaries = new double[]{
-                source.red()[0], source.green()[0], source.blue()[0],
-                source.red()[1], source.green()[1], source.blue()[1],
-                1 - source.red()[0] - source.red()[1], 1 - source.green()[0] - source.green()[1],
-                1 - source.blue()[0] - source.blue()[1]
-        };
-        var inverse = ColorMath.invert(primaries);
-        var coefficients = ColorMath.apply(inverse, ColorMath.xyToXyz(source.white()[0], source.white()[1]));
-        var matrix = new double[9];
-        for (var row = 0; row < 3; row++) {
-            for (var column = 0; column < 3; column++) {
-                matrix[row * 3 + column] = coefficients[column] * primaries[row * 3 + column];
-            }
-        }
-        return matrix;
-    }
-
-    /**
-     * Interpolates a square-root-indexed table.
-     *
-     * @param table the samples, indexed by the square root of the argument
-     * @param x the argument, clamped to {@code 0..1}
-     * @return the interpolated value
-     */
-    private static float lookup(float[] table, float x) {
-        if (!(x > 0f)) {
-            return table[0];
-        }
-        if (x >= 1f) {
-            return table[STEPS];
-        }
-        var position = (float) Math.sqrt(x) * STEPS;
-        var index = (int) position;
-        var low = table[index];
-        return low + (table[index + 1] - low) * (position - index);
     }
 
     /**
@@ -171,7 +112,7 @@ final class HdrEngine implements ColorEngine {
     private void linearize(float r, float g, float b, short[] out, int index) {
         if (hlg) {
             var ys = luminance[0] * r + luminance[1] * g + luminance[2] * b;
-            var factor = lookup(ootf, ys);
+            var factor = Hdr.lookupSqrt(ootf, ys);
             r *= factor;
             g *= factor;
             b *= factor;
@@ -179,7 +120,7 @@ final class HdrEngine implements ColorEngine {
         var scale = inverseWhite;
         if (gain != null) {
             var max = Math.max(r, Math.max(g, b));
-            scale *= lookup(gain, max / peak);
+            scale *= Hdr.lookupSqrt(gain, max / peak);
         }
         out[index] = quantize(r * scale);
         out[index + 1] = quantize(g * scale);
@@ -229,43 +170,6 @@ final class HdrEngine implements ColorEngine {
                 linearize(table[src[s] & 0xFFFF], table[src[s + 1] & 0xFFFF], table[src[s + 2] & 0xFFFF], linear, i * 3);
             }
             inner.apply(linear, 0, 3, dst, dstOffset + start * dstStride, dstStride, n);
-        }
-    }
-
-    /**
-     * Holds the decoding tables, computed on first use.
-     */
-    private static final class Tables {
-        /**
-         * The luminance of every 16-bit PQ sample, in candelas per square meter.
-         */
-        static final float[] PQ = table(false);
-
-        /**
-         * The normalized scene light of every 16-bit HLG sample.
-         */
-        static final float[] HLG = table(true);
-
-        /**
-         * Prevents instantiation.
-         */
-        private Tables() {
-            throw new AssertionError();
-        }
-
-        /**
-         * Computes a decoding table.
-         *
-         * @param hlg whether to decode HLG rather than PQ
-         * @return the table of 65536 entries
-         */
-        private static float[] table(boolean hlg) {
-            var table = new float[65536];
-            for (var v = 0; v < 65536; v++) {
-                var signal = v / 65535.0;
-                table[v] = (float) (hlg ? Hdr.hlgToScene(signal) : Hdr.pqToNits(signal));
-            }
-            return table;
         }
     }
 }

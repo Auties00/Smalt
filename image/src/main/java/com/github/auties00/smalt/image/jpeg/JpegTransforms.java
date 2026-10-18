@@ -28,8 +28,9 @@ import java.util.Objects;
  * flip or rotation cannot move; {@link JpegTransformOptions#trim()} drops them (the default), and
  * {@link JpegTransformOptions#perfect()} rejects such images instead.
  *
- * <p>The source may be baseline, extended or progressive, Huffman or arithmetic coded, gray,
- * YCbCr, RGB, CMYK or YCCK, with any subsampling; the output is Huffman coded. Every image the
+ * <p>The source may be baseline, extended or progressive, 8-bit or 12-bit, Huffman or arithmetic
+ * coded, gray, YCbCr, RGB, CMYK or YCCK, with any subsampling; the output is Huffman coded at the
+ * source's precision, with optimized tables when it is 12-bit. Every DCT-coded image the
  * {@link JpegDecoder} decodes can be transformed. The marker segments the output keeps (EXIF, XMP,
  * ICC, comments) are chosen by {@link JpegTransformOptions#markerCopy()}; an EXIF thumbnail is
  * transformed with the image and {@link #autoOrient(MediaSource)} resets the EXIF orientation.
@@ -60,7 +61,7 @@ public final class JpegTransforms {
      * @throws IllegalArgumentException if the crop region does not fit the transformed image
      * @throws MediaException.Malformed if the source is not a valid JPEG stream
      * @throws MediaException.Unsupported if the source uses a coding feature {@link JpegDecoder}
-     * rejects (12-bit, lossless, hierarchical), if {@link JpegTransformOptions#perfect()} is set and
+     * rejects (lossless, hierarchical), if {@link JpegTransformOptions#perfect()} is set and
      * the transform is not perfect for the image, or if a grayscale conversion is asked of an image
      * that is not YCbCr or gray
      * @throws MediaException.LimitExceeded if the image or the input exceeds the limits
