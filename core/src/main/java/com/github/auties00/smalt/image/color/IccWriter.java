@@ -1,5 +1,8 @@
 package com.github.auties00.smalt.image.color;
 
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.color.TransferFunction;
+
 import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -8,14 +11,17 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Writes ICC version 4.3 display profiles of the matrix/TRC kind: RGB with three colorants and a
- * tone curve, or gray with a tone curve.
+ * Writes ICC display profiles of the matrix/TRC kind: version 4.3 RGB with three colorants and a
+ * tone curve, or gray with a tone curve, and version 4.4 RGB profiles of high-dynamic-range signals.
  *
  * <p>The profile holds a {@code desc} and a {@code cprt} ({@code multiLocalizedUnicodeType}), the
  * D50 media white ({@code wtpt}), the Bradford adaptation from the native white to D50
  * ({@code chad}, omitted when the white is D50), and for RGB the D50-adapted colorants and one
- * curve shared by the three channels. The header carries no creation date and the MD5 profile
- * identifier of ICC.1:2022 section 7.2.18, so the output depends only on the arguments.
+ * curve shared by the three channels. A high-dynamic-range profile adds the {@code cicp} tag of
+ * ICC.1:2022 (version 4.4, section 9.2.17) with its code points, the identity matrix and full
+ * range, and samples its curves into a {@code curveType} table. The header carries no creation
+ * date and the MD5 profile identifier of ICC.1:2022 section 7.2.18, so the output depends only on
+ * the arguments.
  *
  * @implNote This implementation builds the colorants the way Little CMS's {@code cmsCreateRGBProfile} does
  * ({@code _cmsBuildRGB2XYZtransferMatrix} with Bradford adaptation), so a profile written here matches the one Little
@@ -25,9 +31,9 @@ final class IccWriter {
     /**
      * Describes the tone curve of a written profile.
      *
-     * @param function the ICC {@code parametricCurveType} function, {@code 0..4}, or {@code -1} for a {@code curveType}
-     * holding one 8.8 fixed-point gamma
-     * @param params the parameters of the function, or the single gamma
+     * @param function the ICC {@code parametricCurveType} function, {@code 0..4}, {@code -1} for a {@code curveType}
+     * holding one 8.8 fixed-point gamma, or {@code -2} for a {@code curveType} table
+     * @param params the parameters of the function, the single gamma, or the table's samples in {@code 0..1}
      */
     record Curve(int function, double... params) {
         /**
@@ -51,11 +57,34 @@ final class IccWriter {
         }
 
         /**
+         * Returns the decoding direction of a transfer function sampled into a {@code curveType} table of
+         * {@link Hdr#ICC_CURVE_ENTRIES} entries, clipped to {@code 0..1}.
+         *
+         * @param transfer the transfer characteristics
+         * @return the curve
+         */
+        static Curve sampled(TransferCharacteristics transfer) {
+            var function = TransferFunction.of(transfer);
+            var samples = new double[Hdr.ICC_CURVE_ENTRIES];
+            for (var i = 0; i < samples.length; i++) {
+                samples[i] = Math.clamp(function.decode((double) i / (samples.length - 1)), 0, 1);
+            }
+            return new Curve(-2, samples);
+        }
+
+        /**
          * Returns the curve as a {@link ToneCurve} with the encoded precision.
          *
          * @return the tone curve
          */
         ToneCurve toToneCurve() {
+            if (function == -2) {
+                var table = new int[params.length];
+                for (var i = 0; i < table.length; i++) {
+                    table[i] = (int) Math.round(params[i] * 65535.0);
+                }
+                return ToneCurve.tabulated(table);
+            }
             if (function < 0) {
                 return ToneCurve.gamma(Math.round(params[0] * 256.0) / 256.0);
             }
@@ -103,7 +132,94 @@ final class IccWriter {
         tags.add(new Tag("rTRC", trc));
         tags.add(new Tag("gTRC", trc));
         tags.add(new Tag("bTRC", trc));
-        return assemble("RGB ", tags);
+        return assemble("RGB ", 0x04300000, tags);
+    }
+
+    /**
+     * Writes the version 4.4 RGB profile of a high-dynamic-range signal.
+     *
+     * <p>The tone curves hold {@link Hdr#ICC_CURVE_ENTRIES} samples of {@link Hdr#iccCurve}, the
+     * rendering of a reader that ignores the {@code cicp} tag.
+     *
+     * @param description the profile description
+     * @param red the red chromaticity, {@code {x, y}}
+     * @param green the green chromaticity, {@code {x, y}}
+     * @param blue the blue chromaticity, {@code {x, y}}
+     * @param white the white chromaticity, {@code {x, y}}
+     * @param primaries the ITU-T H.273 code of the primaries
+     * @param transfer {@link TransferCharacteristics#PQ} or {@link TransferCharacteristics#HLG}
+     * @return the profile bytes
+     * @throws IllegalArgumentException if the primaries are degenerate
+     */
+    static byte[] hdr(String description, double[] red, double[] green, double[] blue, double[] white, int primaries,
+                      TransferCharacteristics transfer) {
+        var matrix = ColorMath.rgbToD50(red, green, blue, white);
+        if (matrix == null) {
+            throw new IllegalArgumentException("degenerate primaries");
+        }
+        var tags = new ArrayList<Tag>();
+        tags.add(new Tag("desc", text(description)));
+        tags.add(new Tag("cprt", text("No copyright, use freely")));
+        tags.add(new Tag("wtpt", xyz(ColorMath.d50())));
+        addAdaptation(tags, white);
+        tags.add(new Tag("rXYZ", xyz(new double[]{matrix[0], matrix[3], matrix[6]})));
+        tags.add(new Tag("gXYZ", xyz(new double[]{matrix[1], matrix[4], matrix[7]})));
+        tags.add(new Tag("bXYZ", xyz(new double[]{matrix[2], matrix[5], matrix[8]})));
+        var trc = transfer == TransferCharacteristics.PQ ? HdrCurves.PQ : HdrCurves.HLG;
+        tags.add(new Tag("rTRC", trc));
+        tags.add(new Tag("gTRC", trc));
+        tags.add(new Tag("bTRC", trc));
+        var cicp = new ByteArrayOutputStream();
+        writeSignature(cicp, "cicp");
+        writeInt(cicp, 0);
+        cicp.write(primaries);
+        cicp.write(transfer.code());
+        cicp.write(0);
+        cicp.write(1);
+        tags.add(new Tag("cicp", cicp.toByteArray()));
+        return assemble("RGB ", 0x04400000, tags);
+    }
+
+    /**
+     * Holds the tone curve tags of high-dynamic-range profiles, each built on first use and never modified.
+     */
+    private static final class HdrCurves {
+        /**
+         * The {@code curveType} of a PQ profile.
+         */
+        static final byte[] PQ = table(TransferCharacteristics.PQ);
+
+        /**
+         * The {@code curveType} of an HLG profile.
+         */
+        static final byte[] HLG = table(TransferCharacteristics.HLG);
+
+        /**
+         * Prevents instantiation.
+         */
+        private HdrCurves() {
+            throw new AssertionError();
+        }
+    }
+
+    /**
+     * Encodes the sampled tone curve of a high-dynamic-range signal as a {@code curveType}.
+     *
+     * @param transfer the transfer characteristics, PQ or HLG
+     * @return the tag data
+     */
+    private static byte[] table(TransferCharacteristics transfer) {
+        var count = Hdr.ICC_CURVE_ENTRIES;
+        var data = new ByteArrayOutputStream(12 + 2 * count);
+        writeSignature(data, "curv");
+        writeInt(data, 0);
+        writeInt(data, count);
+        for (var i = 0; i < count; i++) {
+            var value = (int) Math.round(Hdr.iccCurve(transfer, (double) i / (count - 1)) * 65535.0);
+            data.write(value >>> 8);
+            data.write(value);
+        }
+        return data.toByteArray();
     }
 
     /**
@@ -121,7 +237,7 @@ final class IccWriter {
         tags.add(new Tag("wtpt", xyz(ColorMath.d50())));
         addAdaptation(tags, white);
         tags.add(new Tag("kTRC", curve(curve)));
-        return assemble("GRAY", tags);
+        return assemble("GRAY", 0x04300000, tags);
     }
 
     /**
@@ -156,10 +272,11 @@ final class IccWriter {
      * Assembles the header, the tag table and the tag data, and fills in the profile identifier.
      *
      * @param colorSpace the data color space signature
+     * @param version the profile version field, for example {@code 0x04300000} for 4.3
      * @param tags the tags of the profile, in file order
      * @return the profile bytes
      */
-    private static byte[] assemble(String colorSpace, List<Tag> tags) {
+    private static byte[] assemble(String colorSpace, int version, List<Tag> tags) {
         var tableEnd = 128 + 4 + 12 * tags.size();
         var offsets = new int[tags.size()];
         var body = new ByteArrayOutputStream();
@@ -188,7 +305,7 @@ final class IccWriter {
         var out = new ByteArrayOutputStream(size);
         writeInt(out, size);
         writeInt(out, 0);
-        writeInt(out, 0x04300000);
+        writeInt(out, version);
         writeSignature(out, "mntr");
         writeSignature(out, colorSpace);
         writeSignature(out, "XYZ ");
@@ -277,6 +394,17 @@ final class IccWriter {
      */
     private static byte[] curve(Curve curve) {
         var data = new ByteArrayOutputStream();
+        if (curve.function() == -2) {
+            writeSignature(data, "curv");
+            writeInt(data, 0);
+            writeInt(data, curve.params().length);
+            for (var sample : curve.params()) {
+                var value = (int) Math.round(sample * 65535.0);
+                data.write(value >>> 8);
+                data.write(value);
+            }
+            return data.toByteArray();
+        }
         if (curve.function() < 0) {
             writeSignature(data, "curv");
             writeInt(data, 0);

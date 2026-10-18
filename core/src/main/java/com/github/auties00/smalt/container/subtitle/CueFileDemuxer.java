@@ -3,7 +3,7 @@ package com.github.auties00.smalt.container.subtitle;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.Demuxer;
-import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.subtitle.TextFiles;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
@@ -76,22 +76,17 @@ abstract sealed class CueFileDemuxer implements Demuxer permits SubRipDemuxer, W
      * @return the text, with line feeds only and without a byte order mark
      * @throws MediaException.LimitExceeded if the file is larger than the limits allow or than an
      * array can hold
+     * @throws MediaException.Malformed if the source ends before its declared size
      * @throws MediaException.Io if reading the source fails
      */
     static String readText(MediaSource source, MediaLimits limits) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(limits, "limits");
         var size = source.size();
-        if (size < 0) {
-            throw new MediaException.Unsupported("subtitle file", "the subtitle file has no known size");
-        }
-        LimitChecks.checkAllocation(limits, size);
         if (size > Integer.MAX_VALUE - 16) {
             throw new MediaException.LimitExceeded("subtitle file of " + size + " bytes is too large");
         }
-        var data = new byte[(int) size];
-        source.readFully(0, data, 0, data.length);
-        return TextFiles.decode(data);
+        return TextFiles.decode(SourceBytes.readAll(source, limits, false));
     }
 
     /**

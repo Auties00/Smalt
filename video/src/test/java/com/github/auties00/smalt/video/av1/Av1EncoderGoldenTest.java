@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.av1;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
@@ -21,7 +22,6 @@ import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Pins the AV1 encoder's bitstream: each configuration encodes a fixed input and the SHA-256 of
@@ -220,9 +220,9 @@ class Av1EncoderGoldenTest {
     void natural(String name, String clip, int width, int height, Av1EncoderOptions options, String expected)
             throws IOException {
         var path = Vp9TestVideo.clip(clip);
-        assumeTrue(path != null, "clip " + clip + " is not cached");
+        Skip.unless(path != null, "data:clip", "clip " + clip + " is not cached");
         var frames = Vp9TestVideo.read(path, width, height, 0, 30);
-        assumeTrue(frames.size() == 30, "clip " + clip + " is too short");
+        Skip.unless(frames.size() == 30, "data:clip", "clip " + clip + " is too short");
         assertEquals(expected, digest(width, height, options, frames, List.of()), name);
     }
 }

@@ -1,0 +1,2 @@
+# Accepted skipped tests per CI job, module, test class and reason id (tools/testdata/skips.py).
+# job	module	class	reason	count

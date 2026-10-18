@@ -6,21 +6,81 @@ Smalt's tests read two kinds of external data, both listed here with SHA-256 che
   `Conformance.fetch` (ITU-T and ISO conformance streams, the libvpx, libaom, libwebp, Opus, Vorbis and
   FLAC test vectors, PngSuite, Xiph sequences). They are cached in `~/.smalt/cache/conformance`
   (`SMALT_CONFORMANCE_CACHE` or `-Dsmalt.conformance.cache` override it).
-- `clips.tsv`: raw 4:2:0 clips for the real-time VP8 and VP9 encoder tests and quality reports, derived
-  with ffmpeg from Xiph sequences (300 frames, the 60 fps sources halved to 30 fps, and a crop and scale
-  for the 640x480 ones; ffmpeg 7.1 reproduces every checksum). They are
-  cached in `~/.smalt/cache/clips` (`-Dsmalt.test.clips` for the tests, `SMALT_TEST_CLIPS` for the
-  script). Without them the encoder tests use synthetic video.
+- `clips.tsv`: raw 4:2:0 clips for the real-time VP8 and VP9 encoder tests, the AVIF and intra encoder
+  quality tests and the quality reports, derived with ffmpeg from Xiph sequences (300 frames, the 60 fps sources
+  halved to 30 fps, and a crop and scale for the 640x480 ones; three frames of `parkrun`; ffmpeg 7.1 reproduces
+  every checksum). They are cached in `~/.smalt/cache/clips` (`-Dsmalt.test.clips` for the tests,
+  `SMALT_TEST_CLIPS` for the script). Without them the encoder tests use synthetic video, except those whose
+  rate or quality assertions are calibrated on the clips' content, which skip (`data:clip`). CI derives the clips
+  once and keeps them in one Actions cache entry shared by every runner.
 
 Each entry belongs to a tier. `smoke` is small enough for the GitHub Actions cache and runs on every pull
 request; `full` (which includes `smoke`) runs nightly. A test whose data is absent is skipped.
 
 ```
-python tools/testdata/testdata.py fetch --tier smoke    # what CI's pull request jobs use
+python tools/testdata/testdata.py fetch --tier smoke    # the vectors CI's pull request jobs use
+python tools/testdata/testdata.py fetch --tier full --clips-only   # and the clips they derive (needs ffmpeg)
 python tools/testdata/testdata.py fetch --tier full     # everything, clips included (needs ffmpeg)
 python tools/testdata/testdata.py size                  # the size of each tier
 python tools/testdata/testdata.py verify --tier full    # check the cache against the checksums
 ```
+
+## Oracle tools
+
+`oracles.tsv` pins the reference tools the differential tests run as black boxes, per CI platform (`linux-x64`,
+`linux-arm64`, `windows-x64`, `macos-arm64`): an archive or package downloaded by URL and SHA-256 where an
+official build exists, the platform's package manager otherwise (its versions are recorded, not pinned), and the
+small programs of this directory and the reference programs without a release (libopus's `opus_compare`,
+mkvalidator, OpenJPEG 2.5.3 on Linux and macOS, libtiff 4.7.1 on Linux) built from pinned sources.
+
+```
+python tools/testdata/oracles.py install            # installs this platform's set into ~/.smalt/oracles
+python tools/testdata/oracles.py versions           # prints the version and path of every provisioned tool
+python tools/testdata/oracles.py required           # prints the executables the platform provisions
+```
+
+`install --github` (CI) also puts the tool directories on `PATH` and sets `SMALT_TEST_REQUIRE_ORACLES` to the
+provisioned executables, which makes the test kit's `Oracle` fail instead of skip when one of them is missing;
+`versions` fails when a tool is missing or resolves outside its pinned directory. Locally,
+`-Dsmalt.test.requireOracles=true` (or a comma-separated list of executables) does the same. A pinned ffmpeg build
+that lacks an encoder, decoder, format or filter skips the tests that need it with the reason id
+`oracle:ffmpeg-feature` (the Linux builds have no `libvo_amrwbenc` or `libspeex`, Homebrew's `ffmpeg@7` no
+`libvo_amrwbenc`). The `# Versions:` comment of `oracles.tsv` explains each choice of version.
+
+## Skip reasons and the skip baseline
+
+Every skip of a test goes through the test kit's `Skip`, with a stable reason id and a free-text detail,
+`[family:name] detail`; JUnit's conditions put the same prefix in their `disabledReason`, and core's `SkipTest`
+fails on any other way to skip. The families are `oracle` (a tool or a feature of one is missing), `device` (a
+capture device), `env` (a property of the machine or JVM), which CI provisions, and the structural `data`,
+`simd`, `platform`, `opt-in` and `input`.
+
+`skips.py` reads the surefire reports and counts the skips per CI job (operating system, architecture, SIMD leg
+and data tier, for example `linux-x64-vector-smoke`), module, test class and reason; `skip-baseline.tsv` holds
+the accepted counts.
+
+```
+python tools/testdata/skips.py report --job linux-x64-vector-smoke     # counts the reports of the last build
+python tools/testdata/skips.py check --job linux-x64-vector-smoke      # fails when a count grew
+python tools/testdata/skips.py update --job linux-x64-vector-smoke     # lowers the baseline (never raises)
+python tools/testdata/skips.py accept --job linux-x64-vector-smoke     # raises it for skips a change adds
+```
+
+CI runs `check` after every test job and uploads the job's `report` as an artifact (`skips-<job>`). A change that
+adds skips on purpose (tests whose data is outside the smoke tier, kernels the scalar leg skips) runs `accept`
+over that artifact (`--report <file>`) and commits the baseline; `accept` refuses to raise the `oracle`,
+`device` and `env` counts, which call for provisioning the tool or device instead (`--environment` overrides,
+for a new CI job), and a pull request whose baseline raises them fails (`shrink-only`).
+
+## Capture devices
+
+The capture workflow (`.github/workflows/capture.yml`, run by the nightly) provisions virtual devices on the
+hosted runners and names them in `SMALT_CAPTURE_REQUIRE_DEVICES`, so that `Skip.unlessDevice` fails instead of
+skipping for a provisioned kind: on Linux an Xvfb screen with a solid red root window (`SMALT_TEST_SCREEN_COLOR`),
+a PulseAudio null sink looped to the default source and, when the runner's kernel can load it, a v4l2loopback
+camera fed by ffmpeg; on Windows VB-Audio Virtual Cable (`.github/scripts/windows-audio.ps1`) and the runner's
+desktop; on macOS BlackHole and the runner's display. `SMALT_TEST_AUDIO_LOOPBACK` names the loopback pair of
+`AudioLoopbackLiveTest`, and `SMALT_CAPTURE_LIVE` turns on the macOS live tests.
 
 ## NEF oracle files
 
@@ -50,6 +110,134 @@ skipped. With `--coverage` the script converts every ORF sample and every RW2 or
 in `vectors.tsv` (about 6 GB of DNG files) into `<conformance cache>/raw-oracle-coverage` for
 `RawOracleCoverageTest` (`-Dsmalt.test.rawCoverage`).
 
+## PNG oracles
+
+The PNG encoder tests (`PngEncoderFormatsTest`, `PngEncoderChunksTest`, `ApngColorProfileTest`) read Smalt's
+output with two independent readers besides ffmpeg, and skip the comparisons whose reader is missing:
+
+- `png-oracle/smalt-pngdump.c`, a small libpng program (libpng 1.6.46 or later, for `cICP`, `mDCV` and `cLLI`)
+  that prints the chunks libpng reports with its warnings, or the RGBA expansion of the pixels. Build it with
+  `bash tools/testdata/png-oracle/build.sh <directory>` (from an MSYS2 UCRT64 shell on Windows, which provides
+  gcc, libpng and zlib) and put the directory on `PATH`; it was checked with libpng 1.6.55.
+- `png-oracle/ImageIoPngDump.java`, run by the tests as a source-file program in a separate JVM, so that no
+  Smalt module reads `java.desktop`: the JDK's own PNG reader, writing the native metadata tree and the pixels
+  as RGBA16.
+
+## Media Foundation oracle
+
+`Mpeg4InterlacedDirectTest` (`smalt-mpeg`) checks interlaced direct mode of MPEG-4 Part 2 B-VOPs, which ffmpeg
+neither encodes nor decodes as ISO/IEC 14496-2 7.7.2.2 specifies, against a model written in the test and, on
+Windows, against the MPEG-4 Part 2 decoder of Media Foundation. `mf-oracle/MfDecode.cs` drives that decoder through
+the Source Reader and writes planar 4:2:0 pictures; build it with `bash tools/testdata/mf-oracle/build.sh
+<directory>` (it uses the C# compiler of the .NET Framework that ships with Windows) and pass
+`-Dsmalt.test.mfDecode=<directory>/MfDecode.exe` to the tests; without it the comparison is skipped. The
+decoder filters its output, so pictures match within a few sample values, and it measures B-VOP distances in
+ticks of `vop_time_increment_resolution` rather than in frame periods, so only streams whose VOP times are frame
+numbers are compared.
+
+## HDR ICC profiles
+
+The high-dynamic-range color tests of `smalt-core` (`HdrColorTest`) read two profiles kept with the tests
+(`core/src/test/resources/com/github/auties00/smalt/image/color/hdr/`): `lcms-pq.icc` and `lcms-hlg.icc`, version
+4.4 RGB profiles with the BT.2020 primaries, tone curves of 1024 entries and a `cicp` tag, written by Little CMS
+2.17 in the 16-byte `cicp` layout it uses. `icc-hdr/smalt-lcmsdump.c` writes them (`smalt-lcmsdump write pq|hlg
+<file>`, with the creation date cleared so that the output depends only on the Little CMS version), and
+`icc-hdr/profiles.sha256` pins them. The same program is the oracle of the test that has Little CMS read Smalt's
+PQ and HLG profiles (`info`: version, color space and `cicp` tag as Little CMS reads them; `gray`: a gray ramp
+transformed to Little CMS's sRGB). Build it with `bash tools/testdata/icc-hdr/build.sh <lcms2 source directory>
+<directory>` against the Little CMS 2.16 or later sources (MIT; checked with the 2.17 release tarball) and put the
+directory on `PATH`; without it that test is skipped.
+
+## 12-bit JPEG vectors
+
+The 12-bit JPEG tests of `smalt-image` read vectors kept with the tests (`image/src/test/resources`): the
+`cjpeg -precision 12` files in `jpeg/cjpeg12/` with the MD5 of `djpeg -dct int -scale 1/N` for each
+(`jpeg/djpeg12-md5.csv`), the MD5 of `jpegtran` transforms of some of them (`jpeg/jpegtran12-md5.csv`), a
+Motion-JPEG AVI muxed by ffmpeg (`jpeg/mjpeg12.avi`), and JPEG-compressed 12-bit TIFF files (`tiff/jpeg12/`)
+with the MD5 of the samples libtiff decodes from them (`tiff/jpeg12.csv`). `bash
+tools/testdata/jpeg12/make-vectors.sh <testorig12.jpg> <checkout>` regenerates them all from libjpeg-turbo's
+testorig12.jpg (`ljt-testorig12.jpg` in `vectors.tsv`) and a synthetic pattern, with libjpeg-turbo 3.1.3,
+libtiff 4.7.1, ffmpeg 7.1 and Python 3; the output is deterministic and `cjpeg12.sha256` and `jpeg12.sha256`
+pin the files. The TIFF files are written by `tiff12.py` from strips and tiles coded by `cjpeg`, because
+libtiff 4.7.1 itself writes 12-bit JPEG strips that decode to the wrong samples; libtiff also drops the last
+sample of a decoded row with an odd number of samples, so the odd-width file is checked against djpeg strip
+by strip instead.
+
+## Lossless Motion-JPEG vectors
+
+`MjpegLosslessTest` of `smalt-image` reads AVI and Matroska files of two frames coded by ffmpeg's lossless JPEG
+encoder (`image/src/test/resources/com/github/auties00/smalt/image/jpeg/mjpeg/`: 4:2:0, 4:2:2 and 4:4:4 Y'CbCr
+with predictors 1 to 3, and RGB and RGBA through its reversible color transform), with the MD5 of the frames they
+were coded from (`jpeg/mjpeg-md5.csv`). `bash tools/testdata/mjpeg/make-vectors.sh <checkout>` regenerates them
+with ffmpeg 7.1, used as a black-box encoder, from its `testsrc2` pattern; the output is deterministic and
+`jpeg/mjpeg.sha256` pins the files.
+
+## TIFF codec vectors
+
+`TiffCodecCompressionTest` of `smalt-image` reads small TIFF files whose strips or tiles are WebP, JPEG XL and
+JPEG 2000 images (`image/src/test/resources/com/github/auties00/smalt/image/tiff/codecs/`), each next to a
+`.ref.tif` holding the samples libwebp, libjxl or OpenJPEG decode from it. `python -I
+tools/testdata/tiff-codecs/make-vectors.py <that directory>` writes them through tifffile 2026.10.15 and
+imagecodecs 2026.10.10 (both BSD-licensed, used as black-box writers; `pip install tifffile imagecodecs
+numpy`) from a synthetic pattern, checks that the lossless ones decode to it and the lossy ones do not, and
+pins them in `tiff/codecs.sha256`; the output is deterministic for those versions.
+
+## Aperio slide oracle files
+
+The same test decodes a pyramid level of two Aperio slides of the OpenSlide test data
+(`openslide-aperio-cmu-1-jp2k-33005.svs`, CC0, and `openslide-aperio-jp2k-33003-1.svs`, free to use and
+distribute; both `full` tier) and compares it with OpenSlide's rendering and, for the 33005 slide, with the
+tiles as OpenJPEG decodes them. `python -I tools/testdata/svs-oracle.py` writes both into
+`<conformance cache>/svs-oracle` (`-Dsmalt.test.svsOracle` overrides the directory the test reads), running
+OpenSlide 4.0.1 and imagecodecs as black boxes (`pip install openslide-python openslide-bin tifffile
+imagecodecs numpy`). Without them the comparison is skipped.
+
+## Opus oracle
+
+`OpusEncoderGoldenTest` and `OpusMultistreamGoldenTest` compare the SHA-256 of the Opus encoder's packets and
+final ranges with those of libopus 1.5.2, whose float build without SIMD Smalt's encoder matches packet for
+packet. `opus-oracle/` regenerates those hashes: `python -I tools/testdata/opus-oracle/build.py <dir>` (with gcc,
+from an MSYS2 UCRT64 shell on Windows) downloads libopus 1.5.2 (pinned by SHA-256) and compiles it with
+`msenc.c`, a harness that drives `opus_encoder_create` or `opus_multistream_surround_encoder_create` with the
+tests' controls and silence padding; `python -I tools/testdata/opus-oracle/goldens.py
+<conformance cache>/opus_testvectors-rfc8251 <dir>/msenc.exe <dir>/io` writes the inputs (`gen.py` builds
+them from the RFC 8251 vectors with the tests' integer operations) and prints one golden line per
+configuration. Its `check_` lines reproduce goldens of `OpusEncoderGoldenTest`, which validates the build; its
+`p` lines, coded with `opus_projection_ambisonics_encoder_create` and decoded with the projection decoder, are
+the goldens of `OpusProjectionGoldenTest`.
+
+`build.py` also compiles `msdec.c`, which decodes a bitstream with the libopus multistream or projection
+decoder while dropping packets by a fixed rule, concealing them or rebuilding them from the next packet's
+in-band FEC: `python -I tools/testdata/opus-oracle/traces.py <conformance cache>/opus_testvectors-rfc8251 <dir>
+<dir>/io` prints the goldens of `OpusPacketLossGoldenTest`. `python -I tools/testdata/opus-oracle/downmix.py
+<conformance cache>/opus_testvectors-rfc8251 <dir> <dir>/io` downloads libogg 1.3.5 and opusfile 0.12 (pinned by
+SHA-256), compiles `ofdown.c`, which muxes libopus packets into Ogg with libogg and decodes them with
+opusfile's `op_read_float_stereo`, and prints the goldens of `OpusDownmixTest`.
+
+## AAC-ELD low delay SBR oracle
+
+The ISO/IEC 14496-26 streams of AAC-ELD with low delay SBR (`er_eld_sbr_*`) ship without reference waveforms, and
+the suite has no stream with 480-sample frames, so `AacLowDelaySbrTest` (`smalt-mpeg`) compares its decodes with
+those of libxaac (Apache-2.0) and of the Fraunhofer FDK AAC library, both used as black boxes. `python -I
+tools/testdata/eld-sbr-oracle.py <work directory> [--fdk [library]]` (with CMake, Ninja and gcc; on Windows from an
+MSYS2 UCRT64 shell, with a Windows Python 3.14 or later for `--fdk`) downloads libxaac at commit
+`2fbadd57bca46693b7a077bcf1513131106d960c` (pinned by SHA-256), builds its `xaacdec` and `xaacenc` test
+applications, and writes into `<conformance cache>/eld-sbr-oracle` (`-Dsmalt.test.eldSbrOracle` overrides the
+directory the test reads):
+
+- one libxaac decode per conformance stream, fetching the streams first when the cache lacks them;
+- in `encoded/`, streams of 480- and 512-sample frames that `xaacenc` codes from a synthetic signal the script
+  computes (harmonic notes with attacks, a noise floor and noise bursts), as the AudioSpecificConfig followed by
+  the access units (`.raw`) with their sizes (`.meta`), and their libxaac decodes.
+
+With `--fdk` it also encodes 480-sample streams with the FDK AAC encoder, at dual rate and downsampled (which
+`xaacenc` does not code), and decodes them and the conformance streams with the FDK AAC decoder into
+`<conformance cache>/eld-sbr-fdk` (`-Dsmalt.test.eldSbrFdk`); the dual-rate ones are decoded by libxaac too. On
+Windows the library is the DLL of the MSYS2 package `mingw-w64-ucrt-x86_64-fdk-aac` 2.0.3-1 (pinned by SHA-256),
+downloaded unless `--fdk` names a library; elsewhere `--fdk` names the system's `libfdk-aac`. The encoded streams
+are deterministic for a build, and the script reports a stream whose digest differs from the reference build's.
+Without these files the comparisons are skipped.
+
 ## Adding a vector
 
 1. Call `Conformance.fetch(name, url, sha256)` from the test, with a cache name unique across suites.
@@ -59,3 +247,22 @@ in `vectors.tsv` (about 6 GB of DNG files) into `<conformance cache>/raw-oracle-
    `full` tier; move a row to `smoke` by hand when it is small and worth checking on every pull request.
 
 The nightly workflow records what the tests request and fails when `vectors.tsv` misses an entry.
+
+## I/O behavior samples
+
+The I/O behavior harnesses of the test kit (see the `testkit.io` package documentation) read small committed samples
+made from ffmpeg's synthetic lavfi sources: `behavior/make-samples.sh` writes the container samples of
+`core/src/test/resources/samples` (MP4, fragmented MP4, QuickTime with ProRes, DNxHR and H.263, Matroska and WebM,
+Ogg including a chained file, MPEG-TS and M2TS, AVI, WAVE, AIFF, MP3, MP2 with an ID3v1 tag, ADTS, AMR, AC-3,
+E-AC-3, IVF, FLAC, SubRip and WebVTT), and calls `behavior/make-wav-samples.py`, which wraps encoded streams into
+WAVE files with coded payloads (MPEG audio, AC-3, DTS, AAC in LOAS framing and as raw data blocks, FLAC frames, AMR
+frames, self-delimited Opus, and IEC 61937 bursts of AC-3 and AAC); `behavior/make-image-samples.sh` writes the
+image samples of `image/src/test/resources/samples` (GIF, BMP, ICO, TIFF with LZW, Deflate, PackBits, CCITT and JPEG
+compression, tiles and pages, animated WebP, APNG, 16-bit PNG, JP2 and JPEG). The scripts need ffmpeg 7.1 with
+libx264, libx265, libvpx, libaom, libopus, libvorbis, libmp3lame, opencore-amr and vo-amrwbenc, and libtiff's
+`tiffcp`.
+
+The golden dumps are tied to the samples' exact bytes, which another ffmpeg build does not reproduce, so the
+committed files are the reference: `behavior/samples.tsv` pins each by size and SHA-256 (the behavior tests check
+it), and `python -I tools/testdata/behavior/pin-samples.py` rewrites it after a deliberate regeneration, together
+with the dumps (`-Dsmalt.test.updateDumps=true`).

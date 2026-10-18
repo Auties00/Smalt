@@ -91,7 +91,8 @@ class RegistryCoverageTest {
         assertTrue(AudioDecoders.isSupported(Codec.EAC3));
         assertTrue(AudioEncoders.isSupported(Codec.AC3));
         assertTrue(AudioEncoders.isSupported(Codec.EAC3));
-        for (var codec : new Codec[]{Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.PRORES, Codec.DNXHD}) {
+        for (var codec : new Codec[]{Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.PRORES,
+                Codec.DNXHD}) {
             assertTrue(VideoEncoders.isSupported(codec), codec.name());
         }
         assertTrue(AudioEncoders.isSupported(Codec.OPUS));
@@ -257,6 +258,51 @@ class RegistryCoverageTest {
                         .speed(Av1EncoderSpeed.FAST).frameRate(rate).build(),
                         options);
                 assertEquals(Av1EncoderUsage.GOOD_QUALITY, options.usage());
+            }
+        }
+
+        @Test
+        @DisplayName("maps the key frame settings onto H.264, VP8, VP9 and AV1 options")
+        void keyframeSettings() {
+            var rate = new Rational(25, 1);
+            var interval = VideoEncoderOptions.of(320, 240, rate, 500_000).toBuilder().keyframeInterval(12).build();
+            var none = VideoEncoderOptions.of(320, 240, rate, 500_000).toBuilder().noPeriodicKeyframes().build();
+            try (var h264 = VideoEncoders.create(Codec.H264, interval)) {
+                assertEquals(OptionalInt.of(12), assertInstanceOf(H264Encoder.class, h264).options().keyframeInterval());
+            }
+            try (var h264 = VideoEncoders.create(Codec.H264, none)) {
+                assertEquals(H264EncoderOptions.forFile().toBuilder().frameRate(rate).timeBase(new Rational(1, 25))
+                        .bitrate(500_000).noPeriodicKeyframes().build(), assertInstanceOf(H264Encoder.class, h264).options());
+            }
+            try (var h264 = VideoEncoders.create(Codec.H264, VideoEncoderOptions.forRealtime(320, 240, rate, 500_000)
+                    .toBuilder().keyframeInterval(50).build())) {
+                assertEquals(H264EncoderOptions.forRealtime().toBuilder().frameRate(rate).bitrate(500_000)
+                        .keyframeInterval(50).build(), assertInstanceOf(H264Encoder.class, h264).options());
+            }
+            try (var vp8 = VideoEncoders.create(Codec.VP8, interval)) {
+                assertEquals(Vp8EncoderOptions.builder().frameRate(rate).bitrate(500_000).keyframeInterval(12).build(),
+                        assertInstanceOf(Vp8Encoder.class, vp8).options());
+            }
+            try (var vp8 = VideoEncoders.create(Codec.VP8, none)) {
+                assertEquals(Vp8EncoderOptions.builder().frameRate(rate).bitrate(500_000).noPeriodicKeyframes().build(),
+                        assertInstanceOf(Vp8Encoder.class, vp8).options());
+            }
+            try (var vp9 = VideoEncoders.create(Codec.VP9, interval)) {
+                assertEquals(Vp9EncoderOptions.builder().frameRate(rate).bitrate(500_000).keyframeInterval(12).build(),
+                        assertInstanceOf(Vp9Encoder.class, vp9).options());
+            }
+            try (var vp9 = VideoEncoders.create(Codec.VP9, none)) {
+                assertEquals(Vp9EncoderOptions.builder().frameRate(rate).bitrate(500_000).noPeriodicKeyframes().build(),
+                        assertInstanceOf(Vp9Encoder.class, vp9).options());
+            }
+            try (var av1 = VideoEncoders.create(Codec.AV1, interval)) {
+                assertEquals(Av1EncoderOptions.ofBitrate(500_000).toBuilder().speed(Av1EncoderSpeed.FAST).frameRate(rate)
+                        .keyframeInterval(12).build(), assertInstanceOf(Av1Encoder.class, av1).options());
+            }
+            try (var av1 = VideoEncoders.create(Codec.AV1, VideoEncoderOptions.forRealtime(320, 240, rate, 500_000)
+                    .toBuilder().keyframeInterval(12).build())) {
+                assertEquals(Av1EncoderOptions.forRealtime().toBuilder().frameRate(rate).bitrate(500_000)
+                        .keyframeInterval(12).build(), assertInstanceOf(Av1Encoder.class, av1).options());
             }
         }
 

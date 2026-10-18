@@ -1,0 +1,42 @@
+# Fills the test data caches of tools/testdata: the smoke tier of vectors.tsv and the clips of clips.tsv, each from
+# the Actions cache when present (one cross-OS entry each), derived or downloaded otherwise. The full tier is the
+# nightly's (nightly.yml), which caches part of it.
+name: Test data
+description: Restores or fetches the smoke vectors and the clips
+inputs:
+  vectors:
+    description: Restore or fetch the smoke vectors (the nightly restores its own entry of the full tier instead)
+    default: 'true'
+  clips:
+    description: Also restore or derive the clips (they need ffmpeg on PATH, so run the oracle action first)
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    - name: Restore the smoke vectors
+      id: smoke
+      if: inputs.vectors == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.smalt/cache/conformance
+        key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
+        enableCrossOsArchive: true
+
+    - name: Fetch the smoke vectors
+      if: inputs.vectors == 'true' && steps.smoke.outputs.cache-hit != 'true'
+      shell: bash
+      run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+
+    - name: Restore the clips
+      id: clips
+      if: inputs.clips == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.smalt/cache/clips
+        key: testdata-clips-${{ hashFiles('tools/testdata/clips.tsv') }}
+        enableCrossOsArchive: true
+
+    - name: Derive the clips
+      if: inputs.clips == 'true' && steps.clips.outputs.cache-hit != 'true'
+      shell: bash
+      run: python tools/testdata/testdata.py fetch --tier full --clips-only --strict

@@ -18,7 +18,8 @@ import java.util.List;
  * sample as a sync sample unless {@code sample_is_non_sync_sample} is set or
  * {@code sample_depends_on} says it depends on other samples; samples a track fragment's
  * {@code sbgp} assigns to a random access ({@code rap } or {@code sync}) group are sync samples
- * too.
+ * too. The samples of a track fragment use the sample description its {@code tfhd} names, or else
+ * the default of the track's {@code trex}.
  */
 final class FragmentParser {
     /**
@@ -161,8 +162,9 @@ final class FragmentParser {
         } else if ((flags & TFHD_DEFAULT_BASE_IS_MOOF) != 0) {
             base = moofStart;
         }
+        var description = track.defaultDescription;
         if ((flags & TFHD_DESCRIPTION_INDEX) != 0) {
-            tfhd.u32();
+            description = MovieParser.descriptionIndex(tfhd.u32(), track.entries.length);
         }
         var defaultDuration = (flags & TFHD_DEFAULT_DURATION) != 0 ? tfhd.u32() : track.defaultDuration;
         var defaultSize = (flags & TFHD_DEFAULT_SIZE) != 0 ? tfhd.u32() : track.defaultSize;
@@ -177,7 +179,7 @@ final class FragmentParser {
         while (traf.hasBox()) {
             var box = traf.nextBox();
             if (box.type() == BoxTypes.TRUN) {
-                position = parseRun(box, track, base, position, defaultDuration, defaultSize, defaultFlags);
+                position = parseRun(box, track, base, position, defaultDuration, defaultSize, defaultFlags, description);
             }
         }
         if (randomAccess != null) {
@@ -199,10 +201,11 @@ final class FragmentParser {
      * @param defaultDuration the default sample duration
      * @param defaultSize the default sample size
      * @param defaultFlags the default sample flags
+     * @param description the zero-based sample description index of the run's samples
      * @return the absolute offset just past the run's data
      */
     private static long parseRun(BoxCursor trun, Mp4Track track, long base, long position, long defaultDuration,
-                                 long defaultSize, int defaultFlags) {
+                                 long defaultSize, int defaultFlags, int description) {
         var flags = trun.fullBoxHeader() & 0xFFFFFF;
         var count = trun.u32();
         if ((flags & TRUN_DATA_OFFSET) != 0) {
@@ -237,6 +240,7 @@ final class FragmentParser {
             }
             var keyframe = (sampleFlags & NON_SYNC) == 0 && ((sampleFlags >>> 24) & 3) != 1;
             table.add(position, (int) size, dts, (int) duration, cts, keyframe);
+            table.setDescription(table.count - 1, description);
             position += size;
             dts += duration;
         }

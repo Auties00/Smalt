@@ -5,6 +5,8 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.container.internal.DiscardedFrames;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.plane.PictureCopy;
@@ -24,8 +26,13 @@ import java.util.Objects;
  * pulled with {@link #read()}, which returns {@code null} at the end. Frames the container places
  * before the start of the presentation (a negative presentation timestamp, as an MP4 edit list
  * produces for the frames preceding its first key frame) are decoded, because later frames
- * reference them, but not returned. A packet the decoder rejects as corrupt is skipped, as players
- * do; a run of {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row fails the read. The
+ * reference them, but not returned, and so are the frames of packets flagged
+ * {@link com.github.auties00.smalt.track.PacketFlag#DISCARD}. A packet whose side data carries a
+ * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration}
+ * that differs from the one in use drains the decoder and continues with a decoder created from
+ * the new configuration, so frames may change size. A packet the decoder rejects as corrupt is
+ * skipped, as players do; a run of {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row
+ * fails the read. The
  * track's {@link VideoTrack#orientation()} is reported but not applied: frames are returned as
  * coded. {@link #seek(long)} follows the contract shared by every Smalt reader: the next
  * {@link #read()} returns the frame displayed at the requested time.
@@ -69,9 +76,19 @@ public final class VideoReader implements AutoCloseable {
     private final ArrayDeque<Picture> spare;
 
     /**
-     * The decoder of {@link #track}, replaced by every seek.
+     * The decoder of {@link #track}, replaced by every seek and every codec configuration change.
      */
     private VideoDecoder decoder;
+
+    /**
+     * The codec configuration of {@link #decoder}, or {@code null} when it has none.
+     */
+    private byte[] config;
+
+    /**
+     * The timestamps of the discarded packets whose frames have not been dropped yet.
+     */
+    private final DiscardedFrames discarded = new DiscardedFrames();
 
     /**
      * The picture of the frame returned last, recycled by the next call.
@@ -116,6 +133,7 @@ public final class VideoReader implements AutoCloseable {
         this.ready = new ArrayDeque<>();
         this.spare = new ArrayDeque<>();
         this.dropBefore = Long.MIN_VALUE;
+        this.config = track.codecConfig().orElse(null);
     }
 
     /**
@@ -182,6 +200,20 @@ public final class VideoReader implements AutoCloseable {
     }
 
     /**
+     * {@return the duration of the video in microseconds as the file declares it: the track's
+     * duration, else the container's, or {@code -1} when it declares neither}
+     *
+     * <p>Nothing is read to find it.
+     */
+    public long durationMicros() {
+        if (track.duration() > 0) {
+            return track.timeBase().toMicros(track.duration());
+        }
+        var container = demuxer.durationMicros();
+        return container > 0 ? container : -1;
+    }
+
+    /**
      * Returns the next frame in presentation order.
      *
      * @return the frame, with timestamps in the track's time base and a picture valid until the next call, or
@@ -232,6 +264,8 @@ public final class VideoReader implements AutoCloseable {
         var replacement = VideoDecoders.create(track, options);
         decoder.close();
         decoder = replacement;
+        config = track.codecConfig().orElse(null);
+        discarded.clear();
         if (lent != null) {
             spare.add(lent);
             lent = null;
@@ -270,6 +304,15 @@ public final class VideoReader implements AutoCloseable {
         if (packet.trackId() != track.id()) {
             return;
         }
+        var newConfig = ConfigChanges.changed(packet, config);
+        if (newConfig != null) {
+            decoder.flush(this::accept);
+            var replacement = VideoDecoders.create(track.toBuilder().codecConfig(newConfig).build(), options);
+            decoder.close();
+            decoder = replacement;
+            config = newConfig;
+        }
+        discarded.note(packet);
         try {
             decoder.decode(packet, this::accept);
             failures = 0;
@@ -288,7 +331,7 @@ public final class VideoReader implements AutoCloseable {
     private void accept(VideoFrame frame) {
         var pts = frame.pts();
         if (pts != Packet.NO_TIMESTAMP) {
-            if (pts < 0) {
+            if (discarded.drop(pts) || pts < 0) {
                 return;
             }
             if (dropBefore != Long.MIN_VALUE) {

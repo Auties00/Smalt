@@ -16,6 +16,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
@@ -39,11 +40,15 @@ import java.util.Objects;
  * ({@code auds}) stream: the stream header ({@code strh}) gives the time base and the stream
  * format ({@code strf}) the codec: the compression FourCC and extra data of a
  * {@code BITMAPINFOHEADER}, or the format tag (with the sub-format of
- * {@code WAVEFORMATEXTENSIBLE}) and extra data of a {@code WAVEFORMATEX}. Streams of other types
- * (text, MIDI, interleaved DV) are skipped. The extra data becomes {@link Track#codecConfig()}:
+ * {@code WAVEFORMATEXTENSIBLE}, whose Dolby GUIDs announce AC-3 and E-AC-3) and extra data of a
+ * {@code WAVEFORMATEX}. Streams of other types (text, MIDI, interleaved DV) are skipped. The extra data
+ * becomes {@link Track#codecConfig()}:
  * the video object layer headers of MPEG-4 Part 2, an {@code AVCDecoderConfigurationRecord} or
  * {@code HEVCDecoderConfigurationRecord} when the extra data is one (Annex B parameter sets are
- * left in band), the {@code AudioSpecificConfig} of AAC.
+ * left in band), the {@code AudioSpecificConfig} of AAC. The OpenDML video properties header
+ * ({@code vprp}) of a video stream gives its sample aspect ratio, from the frame aspect ratio and
+ * frame size, and its scan, progressive for one field per frame and interlaced (in an undeclared
+ * order) for two ({@link VideoTrack#sampleAspectRatio()}, {@link VideoTrack#interlacing()}).
  *
  * <p>Samples are located through the OpenDML super index ({@code indx}) and the standard indexes
  * ({@code ix##}) it points to, or else through the legacy {@code idx1} index (with offsets relative
@@ -73,6 +78,12 @@ public final class AviDemuxer implements Demuxer {
      * The largest header list read into memory.
      */
     private static final int MAX_HEADER = 16 << 20;
+
+    /**
+     * The size of the fields of an OpenDML video properties header ({@code vprp}) that precede its
+     * per-field descriptions, through {@code nbFieldPerFrame}.
+     */
+    private static final int VPRP_HEADER = 36;
 
     /**
      * The largest number of chunks a file may index.
@@ -387,6 +398,7 @@ public final class AviDemuxer implements Demuxer {
         long length = 0;
         long sampleSize = 0;
         byte[] format = null;
+        byte[] properties = null;
         var superIndex = -1L;
         var superIndexSize = 0L;
         String name = null;
@@ -411,6 +423,8 @@ public final class AviDemuxer implements Demuxer {
                 sampleSize = reader.u32le();
             } else if (id == fourCc("strf")) {
                 format = reader.bytes(Math.min(available, MAX_HEADER), MAX_HEADER);
+            } else if (id == fourCc("vprp") && available >= VPRP_HEADER) {
+                properties = reader.bytes(VPRP_HEADER, VPRP_HEADER);
             } else if (id == fourCc("indx")) {
                 superIndex = body;
                 superIndexSize = available;
@@ -432,7 +446,7 @@ public final class AviDemuxer implements Demuxer {
         var timeBase = new Rational(scale, rate).reduce();
         Stream stream;
         if (type == fourCc("vids")) {
-            stream = videoStream(number, handler, format, timeBase, first, length);
+            stream = videoStream(number, handler, format, properties, timeBase, first, length);
         } else if (type == fourCc("auds")) {
             stream = audioStream(number, format, timeBase, scale, rate, first, length, sampleSize);
         } else {
@@ -453,12 +467,15 @@ public final class AviDemuxer implements Demuxer {
      * @param number the stream number
      * @param handler the handler FourCC of the stream header
      * @param format the {@code BITMAPINFOHEADER}, or {@code null}
+     * @param properties the first {@value #VPRP_HEADER} bytes of the OpenDML video properties
+     * header ({@code vprp}), or {@code null}
      * @param timeBase the time base
      * @param first the start time in time base units
      * @param length the length in frames
      * @return the stream
      */
-    private Stream videoStream(int number, int handler, byte[] format, Rational timeBase, long first, long length) {
+    private Stream videoStream(int number, int handler, byte[] format, byte[] properties, Rational timeBase, long first,
+                               long length) {
         var width = 0;
         var height = 0;
         var codec = Codec.UNKNOWN_VIDEO;
@@ -484,16 +501,52 @@ public final class AviDemuxer implements Demuxer {
         if (width > 0 && height > 0) {
             LimitChecks.checkPicture(limits, width, height);
         }
-        var track = VideoTrack.builder().id(number + 1).codec(codec).timeBase(timeBase)
+        var builder = VideoTrack.builder().id(number + 1).codec(codec).timeBase(timeBase)
                 .duration(length > 0 ? first + length : -1)
                 .codecConfig(config)
                 .width(width)
                 .height(height)
-                .frameRate(timeBase.invert())
-                .build();
-        var stream = new Stream(number, track, true);
+                .frameRate(timeBase.invert());
+        if (properties != null) {
+            var aspect = sampleAspect(properties, width, height);
+            if (aspect != null) {
+                builder.sampleAspectRatio(aspect);
+            }
+            var fields = ByteArrays.u32le(properties, 32);
+            if (fields == 1 || fields == 2) {
+                builder.interlacing(fields == 1 ? Interlacing.PROGRESSIVE : Interlacing.INTERLACED);
+            }
+        }
+        var stream = new Stream(number, builder.build(), true);
         stream.first = first;
         return stream;
+    }
+
+    /**
+     * Returns the sample aspect ratio of an OpenDML video properties header: the frame aspect
+     * ratio ({@code dwFrameAspectRatio}, the horizontal term in the high 16 bits) against the
+     * frame size ({@code dwFrameWidthInPixels} and {@code dwFrameHeightInLines}, or the stream
+     * format's size when they are zero).
+     *
+     * @param properties the header
+     * @param width the width of the stream format
+     * @param height the height of the stream format
+     * @return the ratio in lowest terms, or {@code null} when a term or a dimension is zero
+     */
+    private static Rational sampleAspect(byte[] properties, int width, int height) {
+        var ratio = ByteArrays.u32le(properties, 20);
+        var horizontal = ratio >>> 16;
+        var vertical = ratio & 0xFFFF;
+        var frameWidth = ByteArrays.u32le(properties, 24);
+        var frameHeight = ByteArrays.u32le(properties, 28);
+        if (frameWidth == 0 || frameHeight == 0) {
+            frameWidth = width;
+            frameHeight = height;
+        }
+        if (horizontal == 0 || vertical == 0 || frameWidth == 0 || frameHeight == 0) {
+            return null;
+        }
+        return new Rational(horizontal * frameHeight, vertical * frameWidth).reduce();
     }
 
     /**
@@ -519,7 +572,7 @@ public final class AviDemuxer implements Demuxer {
         var sampleRate = (int) Math.min(wave.sampleRate(), Integer.MAX_VALUE);
         var blockAlign = wave.blockAlign();
         var bits = wave.bitsPerSample();
-        var codec = WaveFormat.codec(wave.tag(), bits);
+        var codec = wave.codec();
         LimitChecks.checkChannels(limits, Math.max(1, channels));
         var extra = wave.extra();
         var config = codec == Codec.AAC && extra.length > 0 ? extra : null;
@@ -987,8 +1040,7 @@ public final class AviDemuxer implements Demuxer {
                     continue;
                 }
                 var time = stream.times[entry];
-                var duration = entry + 1 < stream.count ? Math.max(0, stream.times[entry + 1] - time)
-                        : Packet.UNKNOWN_DURATION;
+                var duration = Math.max(0, stream.times[entry + 1] - time);
                 return new Packet(stream.track.id(), data, time, time, duration, stream.keys[entry]);
             }
         } catch (MediaException exception) {

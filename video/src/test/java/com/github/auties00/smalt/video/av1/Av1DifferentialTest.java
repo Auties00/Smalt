@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.av1;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -12,7 +13,6 @@ import com.github.auties00.smalt.video.VideoReader;
 import com.github.auties00.smalt.video.av1.internal.Av1Context;
 import com.github.auties00.smalt.video.av1.internal.Av1Picture;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -288,7 +288,7 @@ class Av1DifferentialTest {
         void stream(Case c) {
             var encoder = c.output().get(1);
             var ffmpeg = findFfmpegWith(encoder);
-            Assumptions.assumeTrue(ffmpeg.isPresent(), "no ffmpeg with " + encoder + " on the PATH");
+            Skip.unless(ffmpeg.isPresent(), "oracle:ffmpeg-feature", "no ffmpeg with " + encoder + " on the PATH");
             var file = encodeWith(ffmpeg.get(), c);
             var tenBit = c.output().contains("yuv420p10le");
             var expected = Oracle.decodeVideo(file, tenBit ? "yuv420p10le" : "yuv420p", 0);

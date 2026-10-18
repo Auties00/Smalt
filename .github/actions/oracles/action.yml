@@ -1,0 +1,29 @@
+# Installs the black-box oracle tools pinned by tools/testdata/oracles.tsv for the runner's platform, puts them on
+# PATH and sets SMALT_TEST_REQUIRE_ORACLES, so that a test whose oracle is missing fails instead of skipping.
+# Downloads and built tools are cached; package-manager tools are installed on every run. The tool versions go to
+# the job summary and to oracle-versions.tsv in the workspace.
+name: Oracle tools
+description: Installs and pins the oracle tools of the tests
+runs:
+  using: composite
+  steps:
+    - name: Restore the oracle tools
+      uses: actions/cache@v4
+      with:
+        path: ~/.smalt/oracles
+        key: oracles-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv', 'tools/testdata/oracles.py', 'tools/testdata/png-oracle/*.c', 'tools/testdata/icc-hdr/*.c') }}
+
+    - name: Install the oracle tools
+      shell: bash
+      run: python tools/testdata/oracles.py install --github
+
+    - name: Record the oracle versions
+      shell: bash
+      run: |
+        python tools/testdata/oracles.py versions --out oracle-versions.tsv
+        {
+          echo "### Oracle tools (${{ runner.os }} ${{ runner.arch }})"
+          echo '```'
+          cat oracle-versions.tsv
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"

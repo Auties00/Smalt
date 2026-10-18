@@ -16,6 +16,9 @@ is absent skips, so any subset of the manifest is a valid cache.
 
 Commands:
   fetch [--tier smoke|full] [--no-clips]   downloads what the tier needs and is missing or corrupt
+        [--clips-only] [--host H]...      only the clips; only (or with --exclude-host, all but) the
+        [--exclude-host H]...             vectors downloaded from host H, so that CI can cache a part of
+                                          a tier in one entry and download the rest
   verify [--tier ...]                      checks the cached files against the manifest
   size                                     prints the size of each tier
   record FILE... [--check]                 merges the vectors that tests requested with
@@ -31,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -119,9 +123,14 @@ def download(url, target, expected):
             os.remove(temporary)
 
 
-def fetch_vectors(tier, jobs):
+def host(url):
+    return urllib.parse.urlparse(url).netloc.lower()
+
+
+def fetch_vectors(tier, jobs, hosts=(), excluded=()):
     directory = conformance_dir()
-    wanted = [row for row in read_tsv(VECTORS, VECTOR_COLUMNS) if in_tier(row, tier)]
+    wanted = [row for row in read_tsv(VECTORS, VECTOR_COLUMNS) if in_tier(row, tier)
+              and (not hosts or host(row['url']) in hosts) and host(row['url']) not in excluded]
     missing = [row for row in wanted if not valid(os.path.join(directory, row['name']), row['sha256'])]
     print(f'vectors: {len(wanted)} in the {tier} tier, {len(missing)} to download into {directory}')
     failures = []
@@ -192,7 +201,10 @@ def derive(source, row, directory):
 
 
 def command_fetch(arguments):
-    failures = fetch_vectors(arguments.tier, arguments.jobs)
+    failures = []
+    if not arguments.clips_only:
+        failures += fetch_vectors(arguments.tier, arguments.jobs, {h.lower() for h in arguments.host},
+                                  {h.lower() for h in arguments.exclude_host})
     if not arguments.no_clips:
         failures += fetch_clips(arguments.tier)
     if failures:
@@ -268,6 +280,9 @@ def main():
     fetch = commands.add_parser('fetch')
     fetch.add_argument('--tier', choices=TIERS, default='smoke')
     fetch.add_argument('--no-clips', action='store_true')
+    fetch.add_argument('--clips-only', action='store_true')
+    fetch.add_argument('--host', action='append', default=[], help='only the vectors downloaded from this host')
+    fetch.add_argument('--exclude-host', action='append', default=[], help='not the vectors from this host')
     fetch.add_argument('--jobs', type=int, default=4)
     fetch.add_argument('--strict', action='store_true', help='fail when an item cannot be fetched')
     fetch.set_defaults(handler=command_fetch)

@@ -1,0 +1,40 @@
+# video decode dump of avi/mjpeg-pcm.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 2000000
+seekable true
+track 1 MJPEG 160x120 timebase=1/15
+0 pts=0 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=2f411ed8 u=69e6b2be v=a02a6080
+1 pts=1 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=2dd175c1 u=0c5e0f72 v=91edb25d
+2 pts=2 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=b75e8e61 u=7c2dcf7f v=34459602
+3 pts=3 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=a2527e23 u=d9c33bbf v=5c52aabf
+4 pts=4 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=8f1a2a8e u=5559f702 v=f160b1db
+5 pts=5 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=74aba1ad u=81950910 v=62ec53fa
+6 pts=6 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=af7bbf91 u=480c74c5 v=f2238a10
+7 pts=7 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=8321dc51 u=1ff2279c v=b58a8eb1
+8 pts=8 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=0c24af11 u=f9f8250b v=a7f877c8
+9 pts=9 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=adbcbabb u=6ba5555e v=8ed61f0f
+10 pts=10 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=44d3cd89 u=37efb33a v=db1ebee5
+11 pts=11 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=fc6e3755 u=69225b9d v=c3c76001
+12 pts=12 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=8598aa72 u=bf5560fb v=482fa466
+13 pts=13 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=10a5ae1f u=819d5038 v=23ac2021
+14 pts=14 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=8913b8a3 u=54e44135 v=32cb9b97
+15 pts=15 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=8ff2114c u=71e5905d v=323ff149
+16 pts=16 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=d2a40f67 u=e23ffbd8 v=c0e15fb0
+17 pts=17 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=8c4d283c u=d40e0644 v=af2aba3b
+18 pts=18 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=5be1706f u=b2002524 v=500127c2
+19 pts=19 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=91ad76c2 u=7b515df0 v=54ddc963
+20 pts=20 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=326c02eb u=56ad79c8 v=7283054b
+21 pts=21 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=41df74c0 u=19869f07 v=987d7cc3
+22 pts=22 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=e84aea89 u=5cc140ac v=119e370a
+23 pts=23 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=b58b9b9c u=afb00c95 v=697ef8df
+24 pts=24 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=aa7a0590 u=386e0a46 v=8acbb85f
+25 pts=25 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=9bec06d3 u=8e250b96 v=9b5af797
+26 pts=26 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=c0474141 u=cdaa2aea v=5a4ee1c5
+27 pts=27 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=fb173fdd u=41ada087 v=6066df6c
+28 pts=28 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=f07f2382 u=bdff1ffb v=0a545657
+29 pts=29 dur=1 key=true 160x120 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=670257ee u=8b1e2c7d v=4f283dc8
+seek 0: @0
+seek 666666: @9
+seek 1333333: @19
+seek 2000000: end
+seek -1000000: @0

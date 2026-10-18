@@ -61,8 +61,9 @@ import static org.junit.jupiter.api.Assertions.fail;
  * compilation tier, so a workload settles only once its kernels are compiled by C2. A child JVM
  * that fails is run once more and fails the test only if the second one fails too, since the
  * compilers' decisions vary from JVM to JVM. The workloads decoding streams made by ffmpeg (x264
- * with B-frames, x265 HEVC, libvpx VP8 and VP9 with inter frames, libaom AV1 with tiles, LAME MP3) run only when
- * ffmpeg is installed. The AV1 decoder runs in the decoders' child and the VP9 encoder in the
+ * with B-frames, progressive, MBAFF and 10-bit, x265 HEVC, libvpx VP8 and VP9 with inter frames, libaom
+ * AV1 with tiles, LAME MP3) run only when ffmpeg is installed. The AV1 decoder runs in the
+ * decoders' child and the VP9 encoder in the
  * encoders' child, but neither runs in the child mixing every workload, whose compile queue their
  * kernels would overload; the AV1 encoder, whose seldom-called decoder kernels compile late, runs
  * in a child of its own, and the real-time configurations of a call (the H.264 real-time encoder
@@ -606,6 +607,8 @@ class JitRobustnessTest {
             var ffmpeg = Oracle.find(Oracle.Tool.FFMPEG).isPresent();
             if (ffmpeg) {
                 decode.add("h264dec:threads=2:bound=65536:input=" + x264Stream());
+                decode.add("h264dec:threads=1:bound=65536:input=" + x264InterlacedStream());
+                decode.add("h264dec:threads=1:bound=65536:input=" + x264HighBitDepthStream());
                 decode.add("vp8dec:bound=32768:input=" + libvpxStream());
                 decode.add("vp9dec:bound=16384:input=" + libvpxVp9Stream());
                 decode.add("hevcdec:threads=2:bound=65536:input=" + x265Stream());
@@ -703,6 +706,23 @@ class JitRobustnessTest {
                     .toAbsolutePath().toString();
         }
 
+        private static String x264InterlacedStream() {
+            return Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
+                            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"),
+                    List.of("-filter_complex", "[0][1]blend=all_mode=average,format=yuv420p", "-t", "2",
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-profile:v", "high",
+                            "-x264-params", "interlaced=1:tff=1", "-f", "h264"))
+                    .toAbsolutePath().toString();
+        }
+
+        private static String x264HighBitDepthStream() {
+            return Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
+                            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"),
+                    List.of("-filter_complex", "[0][1]blend=all_mode=average,format=yuv420p10le", "-t", "2",
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-f", "h264"))
+                    .toAbsolutePath().toString();
+        }
+
         private static String x265Stream() {
             return Fixtures.ffmpeg("hevc", List.of("-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
                             "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"),
@@ -754,6 +774,11 @@ class JitRobustnessTest {
             Files.createDirectories(log.getParent());
             var deadline = DEADLINE.compareTo(PER_WORKLOAD.multipliedBy(workloads.size())) >= 0
                     ? DEADLINE : PER_WORKLOAD.multipliedBy(workloads.size());
+            // The deadlines are measured on 8 cores: fewer cores leave fewer compiler threads for the same queue
+            var cores = java.lang.Runtime.getRuntime().availableProcessors();
+            if (cores < 8) {
+                deadline = deadline.multipliedBy(8).dividedBy(cores);
+            }
             // The compilation log goes to its own file: written to the same stream, the VM's lines
             // can land in the middle of the workload's result lines.
             var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),

@@ -83,7 +83,7 @@ public final class Jp2Reader {
                 return false;
             }
             var channels = channels();
-            var colors = Jp2Pictures.colorChannels(colorSpace(), channels);
+            var colors = Jp2Pictures.colorChannels(colorSpace(), boxes.iccProfile(), channels);
             return channels > colors;
         }
 
@@ -265,7 +265,7 @@ public final class Jp2Reader {
         var list = new ArrayList<>(channels);
         var definitions = boxes.definitions();
         if (definitions == null) {
-            var colors = Jp2Pictures.colorChannels(colorSpace, count);
+            var colors = Jp2Pictures.colorChannels(colorSpace, boxes.iccProfile(), count);
             for (var i = 0; i < count; i++) {
                 types[i] = i < colors ? Jp2ChannelType.COLOR : Jp2ChannelType.UNSPECIFIED;
                 associations[i] = i < colors ? i + 1 : -1;

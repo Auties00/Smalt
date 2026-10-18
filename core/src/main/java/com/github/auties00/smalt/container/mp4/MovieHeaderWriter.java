@@ -35,7 +35,7 @@ final class MovieHeaderWriter {
      *
      * @param track the track to check
      * @throws IllegalArgumentException if an H.264, HEVC, AAC, Opus, ALAC or FLAC track has no
-     * configuration
+     * configuration, or a TTML configuration is malformed
      * @throws com.github.auties00.smalt.MediaException.Malformed if an AAC, Opus or FLAC
      * configuration is invalid
      */
@@ -51,7 +51,9 @@ final class MovieHeaderWriter {
             default -> {
             }
         }
-        if (codec == Codec.OPUS) {
+        if (codec == Codec.TTML) {
+            track.codecConfig().filter(config -> config.length > 0).ifPresent(TtmlEntries::validate);
+        } else if (codec == Codec.OPUS) {
             AudioConfigs.parseOpusHead(track.codecConfig().orElseThrow());
         } else if (codec == Codec.AAC) {
             AudioConfigs.parseAac(track.codecConfig().orElseThrow());
@@ -121,11 +123,25 @@ final class MovieHeaderWriter {
     }
 
     /**
+     * {@return the handler type of a text track}
+     *
+     * @param codec the codec of the track
+     */
+    private static int textHandler(Codec codec) {
+        return switch (codec) {
+            case MOV_TEXT -> BoxTypes.SBTL;
+            case TTML -> BoxTypes.SUBT;
+            default -> BoxTypes.TEXT;
+        };
+    }
+
+    /**
      * Writes the {@code mdia} box of a track: {@code mdhd}, {@code hdlr} and a {@code minf} box
      * holding the media information header, a self-contained {@code dinf} and the sample table.
      *
-     * <p>The handler is {@code soun} for audio, {@code sbtl} for {@link Codec#MOV_TEXT}, {@code text}
-     * for other text tracks and {@code vide} for video.
+     * <p>The handler is {@code soun} for audio, {@code sbtl} for {@link Codec#MOV_TEXT}, {@code subt}
+     * (with a {@code sthd} media header) for {@link Codec#TTML}, {@code text} for other text tracks
+     * and {@code vide} for video.
      *
      * @param writer the destination
      * @param track the track the box describes
@@ -146,7 +162,7 @@ final class MovieHeaderWriter {
         writer.end();
         writer.beginFull(BoxTypes.HDLR, 0, 0);
         writer.u32(0);
-        writer.u32(audio ? BoxTypes.SOUN : text ? (track.codec() == Codec.MOV_TEXT ? BoxTypes.SBTL : BoxTypes.TEXT) : BoxTypes.VIDE);
+        writer.u32(audio ? BoxTypes.SOUN : text ? textHandler(track.codec()) : BoxTypes.VIDE);
         writer.zeros(12);
         writer.cString(audio ? "SoundHandler" : text ? "SubtitleHandler" : "VideoHandler");
         writer.end();
@@ -155,7 +171,7 @@ final class MovieHeaderWriter {
             writer.beginFull(BoxTypes.SMHD, 0, 0);
             writer.u32(0);
         } else if (text) {
-            writer.beginFull(BoxTypes.NMHD, 0, 0);
+            writer.beginFull(track.codec() == Codec.TTML ? BoxTypes.STHD : BoxTypes.NMHD, 0, 0);
         } else {
             writer.beginFull(BoxTypes.VMHD, 0, 1);
             writer.zeros(8);
