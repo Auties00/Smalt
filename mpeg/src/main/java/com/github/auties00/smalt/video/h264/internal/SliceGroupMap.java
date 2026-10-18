@@ -6,7 +6,7 @@ import java.util.Arrays;
 
 /**
  * Derives the macroblock to slice group map of flexible macroblock ordering (ITU-T H.264
- * 8.2.2) for frame pictures.
+ * 8.2.2) for frames, fields and MBAFF frames.
  */
 final class SliceGroupMap {
     private SliceGroupMap() {
@@ -14,16 +14,19 @@ final class SliceGroupMap {
     }
 
     /**
-     * Computes the macroblock to slice group map of a frame picture.
+     * Computes the macroblock to slice group map of a picture, indexed by the picture's own
+     * macroblock addresses (ITU-T H.264 8.2.2.8).
      *
      * @param pps the picture parameter set, with more than one slice group
      * @param sps the sequence parameter set
      * @param cycle the {@code slice_group_change_cycle} of the slice
+     * @param field whether the picture is a field
+     * @param mbaff whether the picture is an MBAFF frame
      * @param target receives the slice group of every macroblock; at least
      * {@code widthInMbs * frameHeightInMbs} entries
      * @throws MediaException.Malformed if the map parameters are inconsistent with the picture
      */
-    static void compute(H264Pps pps, H264Sps sps, int cycle, int[] target) {
+    static void compute(H264Pps pps, H264Sps sps, int cycle, boolean field, boolean mbaff, int[] target) {
         var width = sps.widthInMbs;
         var heightUnits = sps.heightInMapUnits;
         var units = width * heightUnits;
@@ -88,8 +91,13 @@ final class SliceGroupMap {
             }
             default -> throw new MediaException.Malformed("invalid slice_group_map_type");
         }
-        if (sps.frameMbsOnly) {
+        if (sps.frameMbsOnly || field) {
             System.arraycopy(map, 0, target, 0, units);
+        } else if (mbaff) {
+            var count = width * sps.frameHeightInMbs;
+            for (var i = 0; i < count; i++) {
+                target[i] = map[i / 2];
+            }
         } else {
             var count = width * sps.frameHeightInMbs;
             for (var i = 0; i < count; i++) {

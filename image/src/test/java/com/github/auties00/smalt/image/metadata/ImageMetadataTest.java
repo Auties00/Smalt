@@ -408,7 +408,7 @@ class ImageMetadataTest {
     @DisplayName("HEIF and TIFF")
     class HeifAndTiff {
         @Test
-        @DisplayName("reads TIFF metadata and refuses to edit it")
+        @DisplayName("reads and strips the metadata of a TIFF file written by ffmpeg and exiftool")
         void tiff() {
             var image = MetadataSupport.exiftoolWrite("meta.tif", com.github.auties00.smalt.testkit.Fixtures.read(
                     com.github.auties00.smalt.testkit.Fixtures.testImage("tif", 32, 32, List.of())),
@@ -417,8 +417,17 @@ class ImageMetadataTest {
             assertEquals(new ExifValue.Ascii("Tiff Artist"), metadata.exif().orElseThrow().ifd0().get(0x013B));
             assertEquals("Tiff title", metadata.xmp().orElseThrow().text(XmpPacket.DC, "title").orElseThrow());
             assertEquals("Roma", metadata.iptc().orElseThrow().string(IptcData.Field.CITY).orElseThrow());
-            assertThrows(MediaException.Unsupported.class, () -> ImageMetadataEditor.stripAll(image));
             assertSame(image, ImageMetadataEditor.apply(image, ImageMetadataEdit.keepAll()));
+            var stripped = ImageMetadataEditor.stripAll(image);
+            var bare = ImageMetadata.read(stripped);
+            assertTrue(bare.xmp().isEmpty() && bare.iptc().isEmpty());
+            assertFalse(bare.exif().map(exif -> exif.ifd0().containsKey(0x013B)).orElse(false));
+            TiffMetadataTest.assertOnlyMetadataChanged(image, stripped);
+            TiffMetadataTest.assertPagesIdentical(image, stripped);
+            var tags = MetadataSupport.exiftoolRead(stripped, "meta-stripped.tif");
+            assertNull(tags.get("IFD0:Artist"), tags.toString());
+            assertNull(tags.get("XMP-dc:Title"));
+            assertNull(tags.get("IPTC:City"));
         }
 
         @Test

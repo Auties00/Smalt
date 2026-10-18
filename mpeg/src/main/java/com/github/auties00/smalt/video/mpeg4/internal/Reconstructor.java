@@ -161,13 +161,14 @@ public final class Reconstructor {
                     chromaOffset, quarter, rounding, direction);
             default -> {
                 var overlapped = (blocks.flags[mb] & Macroblocks.OVERLAPPED) != 0;
+                var segments = blocks.segmented ? blocks.segment : null;
                 if ((direction & Macroblocks.FORWARD) != 0) {
                     predictFrame(blocks.forward, current, forwardRef, mb, mx, my, x, y, current.y, lumaOffset,
                             lumaStride, current.u, current.v, chromaOffset, chromaStride, kind, quarter, rounding,
-                            overlapped);
+                            overlapped, segments);
                     if ((direction & Macroblocks.BACKWARD) != 0) {
                         predictFrame(blocks.backward, current, backwardRef, mb, mx, my, x, y, backLuma, 0, 16, backU,
-                                backV, 0, 8, kind, quarter, rounding, false);
+                                backV, 0, 8, kind, quarter, rounding, false, null);
                         compensator.average(backLuma, 0, 16, current.y, lumaOffset, lumaStride, 16, 16);
                         compensator.average(backU, 0, 8, current.u, chromaOffset, chromaStride, 8, 8);
                         compensator.average(backV, 0, 8, current.v, chromaOffset, chromaStride, 8, 8);
@@ -175,7 +176,7 @@ public final class Reconstructor {
                 } else {
                     predictFrame(blocks.backward, current, backwardRef, mb, mx, my, x, y, current.y, lumaOffset,
                             lumaStride, current.u, current.v, chromaOffset, chromaStride, kind, quarter, rounding,
-                            false);
+                            false, null);
                 }
             }
         }
@@ -237,17 +238,19 @@ public final class Reconstructor {
      * @param quarter whether vectors are in quarter samples
      * @param rounding the rounding control
      * @param overlapped whether overlapped motion compensation applies
+     * @param segments the first macroblock of the slice of every macroblock, or {@code null} when
+     *        the picture is not coded in slices
      */
     private void predictFrame(int[] vectors, Frame current, Frame ref, int mb, int mx, int my, int x, int y,
                               byte[] lumaDst, int lumaOffset, int lumaStride, byte[] uDst, byte[] vDst,
                               int chromaOffset, int chromaStride, byte kind, boolean quarter, int rounding,
-                              boolean overlapped) {
+                              boolean overlapped, int[] segments) {
         var at = mb * 8;
         int chromaX;
         int chromaY;
         if (overlapped) {
             for (var block = 0; block < 4; block++) {
-                overlappedVectors(current, vectors, mb, mx, my, block);
+                overlappedVectors(current, vectors, segments, mb, mx, my, block, obmcVectors);
                 compensator.overlapped(ref, lumaDst, lumaOffset + (block >> 1) * 8 * lumaStride + (block & 1) * 8,
                         lumaStride, x + (block & 1) * 8, y + (block >> 1) * 8, obmcVectors, quarter, rounding);
             }
@@ -309,48 +312,49 @@ public final class Reconstructor {
     }
 
     /**
-     * Gathers the vectors of overlapped motion compensation for one luminance block (7.6.6):
-     * remote vectors of intra or absent neighbors are replaced by the block's own vector, those
-     * of skipped neighbors are zero, and the vector below the bottom blocks of a macroblock is the
-     * block's own.
+     * Gathers the vectors of overlapped motion compensation for one luminance block (7.6.6 and
+     * ITU-T H.263 F.3): the block's own vector, and the remote vectors of the nearest blocks above
+     * or below and left or right. A remote vector of a neighbor in another slice, intra coded or
+     * absent (outside the picture) is replaced by the block's own vector, one of a skipped neighbor
+     * is zero, and the vector below the bottom blocks of a macroblock is the block's own.
      *
      * @param current the picture with the side information of every macroblock
      * @param vectors the block vectors of the current picture
+     * @param segments the first macroblock of the slice of every macroblock, or {@code null} when
+     *        the picture is not coded in slices
      * @param mb the macroblock number
      * @param mx the macroblock column
      * @param my the macroblock row
      * @param block the block index, 0 to 3
+     * @param out the vectors as {@code x, y} pairs: current, above, below, left, right
      */
-    private void overlappedVectors(Frame current, int[] vectors, int mb, int mx, int my, int block) {
-        // FIXME: a few samples near the corners of some overlapped blocks differ from FFmpeg's
-        // decoding of FFmpeg-encoded H.263 Advanced Prediction streams (about 54 dB against more
-        // than 60 dB elsewhere); one of the remote vectors is likely chosen differently here.
+    static void overlappedVectors(Frame current, int[] vectors, int[] segments, int mb, int mx, int my, int block,
+                                  int[] out) {
         var at = mb * 8 + 2 * block;
         var cx = vectors[at];
         var cy = vectors[at + 1];
-        var v = obmcVectors;
-        v[0] = cx;
-        v[1] = cy;
+        out[0] = cx;
+        out[1] = cy;
         var row = block >> 1;
         var col = block & 1;
         if (row == 0) {
-            remote(current, my > 0 ? mb - current.mbWidth : -1, block + 2, cx, cy, 2);
-            v[4] = vectors[mb * 8 + 2 * (block + 2)];
-            v[5] = vectors[mb * 8 + 2 * (block + 2) + 1];
+            remote(current, segments, mb, my > 0 ? mb - current.mbWidth : -1, block + 2, cx, cy, out, 2);
+            out[4] = vectors[mb * 8 + 2 * (block + 2)];
+            out[5] = vectors[mb * 8 + 2 * (block + 2) + 1];
         } else {
-            v[2] = vectors[mb * 8 + 2 * (block - 2)];
-            v[3] = vectors[mb * 8 + 2 * (block - 2) + 1];
-            v[4] = cx;
-            v[5] = cy;
+            out[2] = vectors[mb * 8 + 2 * (block - 2)];
+            out[3] = vectors[mb * 8 + 2 * (block - 2) + 1];
+            out[4] = cx;
+            out[5] = cy;
         }
         if (col == 0) {
-            remote(current, mx > 0 ? mb - 1 : -1, block + 1, cx, cy, 6);
-            v[8] = vectors[mb * 8 + 2 * (block + 1)];
-            v[9] = vectors[mb * 8 + 2 * (block + 1) + 1];
+            remote(current, segments, mb, mx > 0 ? mb - 1 : -1, block + 1, cx, cy, out, 6);
+            out[8] = vectors[mb * 8 + 2 * (block + 1)];
+            out[9] = vectors[mb * 8 + 2 * (block + 1) + 1];
         } else {
-            v[6] = vectors[mb * 8 + 2 * (block - 1)];
-            v[7] = vectors[mb * 8 + 2 * (block - 1) + 1];
-            remote(current, mx < current.mbWidth - 1 ? mb + 1 : -1, block - 1, cx, cy, 8);
+            out[6] = vectors[mb * 8 + 2 * (block - 1)];
+            out[7] = vectors[mb * 8 + 2 * (block - 1) + 1];
+            remote(current, segments, mb, mx < current.mbWidth - 1 ? mb + 1 : -1, block - 1, cx, cy, out, 8);
         }
     }
 
@@ -359,29 +363,32 @@ public final class Reconstructor {
      * compensation.
      *
      * @param current the picture
+     * @param segments the first macroblock of the slice of every macroblock, or {@code null}
+     * @param mb the current macroblock
      * @param neighbor the neighboring macroblock, or {@code -1} when absent
      * @param block the block of the neighbor
      * @param cx the current block's horizontal vector
      * @param cy the current block's vertical vector
-     * @param slot the index of the remote vector in {@link #obmcVectors}
+     * @param out the vectors of overlapped motion compensation
+     * @param slot the index of the remote vector in {@code out}
      */
-    private void remote(Frame current, int neighbor, int block, int cx, int cy, int slot) {
-        var v = obmcVectors;
-        if (neighbor < 0) {
-            v[slot] = cx;
-            v[slot + 1] = cy;
+    private static void remote(Frame current, int[] segments, int mb, int neighbor, int block, int cx, int cy,
+                               int[] out, int slot) {
+        if (neighbor < 0 || segments != null && segments[neighbor] != segments[mb]) {
+            out[slot] = cx;
+            out[slot + 1] = cy;
             return;
         }
         var type = current.mbType[neighbor];
         if (type == Frame.MB_INTRA || type == Frame.MB_GMC) {
-            v[slot] = cx;
-            v[slot + 1] = cy;
+            out[slot] = cx;
+            out[slot + 1] = cy;
         } else if (type == Frame.MB_SKIPPED) {
-            v[slot] = 0;
-            v[slot + 1] = 0;
+            out[slot] = 0;
+            out[slot + 1] = 0;
         } else {
-            v[slot] = current.mv[neighbor * 8 + 2 * block];
-            v[slot + 1] = current.mv[neighbor * 8 + 2 * block + 1];
+            out[slot] = current.mv[neighbor * 8 + 2 * block];
+            out[slot + 1] = current.mv[neighbor * 8 + 2 * block + 1];
         }
     }
 
