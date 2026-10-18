@@ -1,0 +1,86 @@
+# Manual: builds the given modules with what they depend on, then runs only their own test suites on the chosen
+# runners with the smoke data tier. Development tooling dispatches it on snapshot branches to test one change
+# without the whole matrix.
+name: Package tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      modules:
+        description: Comma-separated modules whose suites run (for example core,image)
+        required: true
+      os:
+        description: JSON list of runners
+        default: '["ubuntu-latest"]'
+      tests:
+        description: Optional surefire -Dtest filter
+        default: ''
+      simd:
+        description: vector or scalar
+        default: vector
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '26'
+  SMALT_CONFORMANCE_DOWNLOAD: 'false'
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install the oracle tools
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+
+      - name: Restore the smoke test data
+        id: smoke-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.smalt/cache/conformance
+          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
+          enableCrossOsArchive: true
+
+      - name: Fetch the smoke test data
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
+        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+
+      - name: Build the modules they depend on
+        shell: bash
+        run: mvn -B -ntp -q -pl "${{ inputs.modules }}" -am install -DskipTests
+
+      - name: Test
+        shell: bash
+        run: >
+          mvn -B -ntp -fae -pl "${{ inputs.modules }}" verify
+          -Dsmalt.test.simd=${{ inputs.simd == 'vector' }}
+          ${{ inputs.tests != '' && format('-Dtest={0} -Dsurefire.failIfNoSpecifiedTests=false', inputs.tests) || '' }}
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ matrix.os }}
+          path: |
+            **/target/surefire-reports/
+            it/target/jit-guard/
+          retention-days: 7
