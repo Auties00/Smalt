@@ -344,6 +344,78 @@ class KernelEquivalenceTest {
     }
 
     @Nested
+    @DisplayName("double-precision resampling")
+    class DoubleResample {
+        private final DoubleResampleKernel vector = VectorDoubleResampleKernel.create();
+        private final ScalarDoubleResampleKernel scalar = new ScalarDoubleResampleKernel();
+
+        private static double[] doubles(SplittableRandom random, int length) {
+            var array = new double[length];
+            for (var i = 0; i < length; i++) {
+                array[i] = random.nextInt(4) == 0 ? 65535.0 * 65535.0 : random.nextDouble() * 70000 - 2000;
+            }
+            return array;
+        }
+
+        @Test
+        @DisplayName("vertical passes match bit for bit, overwriting and accumulating")
+        void vertical() {
+            var random = new SplittableRandom(23);
+            for (var length = 1; length <= 150; length++) {
+                var taps = 1 + random.nextInt(20);
+                var src = doubles(random, length * taps + 40);
+                var offsets = new int[taps];
+                var weights = new double[taps + 2];
+                for (var k = 0; k < taps; k++) {
+                    offsets[k] = random.nextInt(src.length - length + 1);
+                    weights[k + 2] = random.nextDouble() * 1.4 - 0.3;
+                }
+                var accumulate = random.nextBoolean();
+                var seed = doubles(random, length);
+                var expected = seed.clone();
+                var actual = seed.clone();
+                scalar.vertical(src, offsets, weights, 2, taps, length, expected, accumulate);
+                vector.vertical(src, offsets, weights, 2, taps, length, actual, accumulate);
+                for (var i = 0; i < length; i++) {
+                    assertEquals(Double.doubleToRawLongBits(expected[i]), Double.doubleToRawLongBits(actual[i]),
+                            "length " + length + " value " + i);
+                }
+            }
+        }
+
+        @ParameterizedTest(name = "{0} taps")
+        @ValueSource(ints = {1, 2, 3, 8, 9, 17, 40})
+        @DisplayName("horizontal passes over lane-interleaved blocks match bit for bit")
+        void horizontal(int maxTaps) {
+            var random = new SplittableRandom(maxTaps * 3L);
+            var lanes = vector.lanes();
+            var stride = maxTaps + random.nextInt(3);
+            for (var count = 1; count <= 70; count++) {
+                var inWidth = maxTaps + random.nextInt(200);
+                var src = doubles(random, inWidth * lanes);
+                var starts = new int[count];
+                var counts = new int[count];
+                var weights = new double[count * stride];
+                for (var i = 0; i < count; i++) {
+                    counts[i] = 1 + random.nextInt(maxTaps);
+                    starts[i] = random.nextInt(inWidth - counts[i] + 1);
+                    for (var k = 0; k < counts[i]; k++) {
+                        weights[i * stride + k] = random.nextDouble() * 1.4 - 0.3;
+                    }
+                }
+                var expected = new double[count * lanes];
+                var actual = new double[count * lanes];
+                scalar.horizontal(src, lanes, starts, counts, weights, stride, count, expected);
+                vector.horizontal(src, lanes, starts, counts, weights, stride, count, actual);
+                for (var i = 0; i < expected.length; i++) {
+                    assertEquals(Double.doubleToRawLongBits(expected[i]), Double.doubleToRawLongBits(actual[i]),
+                            "count " + count + " value " + i);
+                }
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("orientation")
     class Transform {
         private final TransformKernel vector = VectorTransformKernel.create();

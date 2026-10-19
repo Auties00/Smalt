@@ -50,10 +50,16 @@ jobs:
           python-version: '3.x'
 
       # The differential tests use ffmpeg, ffprobe, cwebp and dwebp as black-box oracles and skip
-      # without them; Linux has them cheaply, the other runners skip those tests.
+      # without them; Linux has them cheaply, the other runners skip those tests. Ubuntu's default
+      # libavcodec is built without the version3 libraries, so the AMR-NB and AMR-WB encoders
+      # (libopencore_amrnb, libvo_amrwbenc) and the opencore AMR decoders the tests use come from
+      # libavcodec-extra, which replaces it; the step fails when one of them is missing.
       - name: Install the oracle tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libavcodec-extra webp
+          for c in libopencore_amrnb libvo_amrwbenc; do ffmpeg -hide_banner -encoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c encoder"; exit 1; }; done
+          for c in libopencore_amrnb libopencore_amrwb; do ffmpeg -hide_banner -decoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c decoder"; exit 1; }; done
 
       - name: Restore the smoke test data
         id: smoke-cache

@@ -4,6 +4,7 @@
 package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Picture;
@@ -162,6 +163,21 @@ public final class JpegWriter {
     private final List<byte[]> iccSegments;
 
     /**
+     * The payload of the {@code APP0} segment after SOI.
+     */
+    private final byte[] app0;
+
+    /**
+     * Whether the DHT segments are written.
+     */
+    private final boolean huffmanTables;
+
+    /**
+     * The most threads one call uses, or 0 for the shared pool's default share.
+     */
+    private final int threads;
+
+    /**
      * Whether the blocks are transformed a batch at a time by the Vector API kernel, rather than one
      * at a time by {@link #BLOCK_FDCT}; both give the same coefficients.
      *
@@ -188,10 +204,14 @@ public final class JpegWriter {
      * @param format the target subsampling
      * @param restartInterval the restart interval in MCUs, or zero
      * @param iccProfile the ICC profile to embed, or {@code null}
+     * @param app0 the payload of the {@code APP0} segment after SOI
+     * @param huffmanTables whether the DHT segments are written
+     * @param threads the most threads one call uses, or 0 for the shared pool's default share
      * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
      * @throws MediaException.LimitExceeded if the profile needs more than 255 segments
      */
-    private JpegWriter(Picture picture, int quality, ChromaFormat format, int restartInterval, byte[] iccProfile) {
+    private JpegWriter(Picture picture, int quality, ChromaFormat format, int restartInterval, byte[] iccProfile,
+                       byte[] app0, boolean huffmanTables, int threads) {
         this.width = picture.width();
         this.height = picture.height();
         if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
@@ -199,6 +219,9 @@ public final class JpegWriter {
                     + MAX_DIMENSION + " pixels per side");
         }
         this.restartInterval = restartInterval;
+        this.app0 = app0;
+        this.huffmanTables = huffmanTables;
+        this.threads = threads;
         this.iccSegments = iccProfile == null ? List.of() : JpegIcc.segments(iccProfile);
         this.batched = Simd.ENABLED;
         this.fdct = batched ? VectorKernels.batchFdct() : null;
@@ -253,9 +276,14 @@ public final class JpegWriter {
                 case RgbaPicture rgba -> new YccRows.FromRgba(rgba, ColorKernel.INSTANCE);
                 case YuvPicture yuv when yuv.color().range() == ColorRange.FULL
                         && YccRows.FromOtherYuv.isBt601(yuv.color().matrix()) -> new YccRows.FromYuv(yuv);
+                case YuvPicture yuv when !YccRows.FromOtherYuv.converts(yuv.color().matrix()) ->
+                        new YccRows.FromRgba(ImageOps.toRgba(yuv), ColorKernel.INSTANCE);
                 case YuvPicture yuv -> new YccRows.FromOtherYuv(yuv, ColorKernel.INSTANCE);
                 case Rgba16Picture high -> new YccRows.FromRgba(ImageOps.toEightBit(high), ColorKernel.INSTANCE);
+                case Yuv16Picture high when !YccRows.FromOtherYuv.converts(high.color().matrix()) ->
+                        new YccRows.FromRgba(ImageOps.toRgba(high), ColorKernel.INSTANCE);
                 case Yuv16Picture high -> new YccRows.FromOtherYuv(ImageOps.toEightBit(high), ColorKernel.INSTANCE);
+                case ChannelPicture channels -> new YccRows.FromRgba(ImageOps.toRgba(channels), ColorKernel.INSTANCE);
             };
         }
         this.out = new JpegBitWriter((int) Math.min(Integer.MAX_VALUE - 16, (long) width * height / 2 + 1024));
@@ -272,13 +300,38 @@ public final class JpegWriter {
      * @param iccProfile the ICC profile written as {@code APP2 ICC_PROFILE} segments after the JFIF
      * segment, or {@code null} for none
      * @return the JPEG file
-     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side, or uses a
-     * color matrix with no conversion to BT.601
+     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
      * @throws MediaException.LimitExceeded if the profile needs more than 255 segments
      */
     public static byte[] encode(Picture picture, int quality, ChromaFormat format, boolean optimize, int restartInterval,
                                 byte[] iccProfile) {
-        return new JpegWriter(picture, quality, format, restartInterval, iccProfile).encode(optimize);
+        return new JpegWriter(picture, quality, format, restartInterval, iccProfile, JFIF, true, 0).encode(optimize);
+    }
+
+    /**
+     * Encodes a picture as one Motion-JPEG image: the output of
+     * {@link #encode(Picture, int, ChromaFormat, boolean, int, byte[])} with another {@code APP0}
+     * payload in place of the JFIF one, optionally without its DHT segments, and with a cap on the
+     * threads.
+     *
+     * @param picture the picture; the alpha channel is ignored
+     * @param quality the quality, from 1 to 100, scaled as libjpeg scales it
+     * @param format the target subsampling
+     * @param optimize whether to build optimal Huffman tables in a first pass; {@code false} when
+     * {@code huffmanTables} is {@code false}
+     * @param restartInterval the restart interval in MCUs, or zero
+     * @param app0 the payload of the {@code APP0} segment after SOI, or {@code null} for the JFIF one
+     * @param huffmanTables whether the DHT segments are written; without them the stream relies on
+     * the tables of T.81 Annex K
+     * @param threads the most threads the call uses, or 0 for the shared pool's default share; the
+     * output does not depend on it
+     * @return the JPEG stream
+     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
+     */
+    public static byte[] encodeMotion(Picture picture, int quality, ChromaFormat format, boolean optimize,
+                                      int restartInterval, byte[] app0, boolean huffmanTables, int threads) {
+        return new JpegWriter(picture, quality, format, restartInterval, null, app0 == null ? JFIF : app0,
+                huffmanTables, threads).encode(optimize);
     }
 
     /**
@@ -317,7 +370,8 @@ public final class JpegWriter {
      */
     private byte[] encode(boolean optimize) {
         var perMcu = blocksPerMcu();
-        var bandCount = ParallelBands.bands(mcusHigh, (long) mcusWide * mcusHigh * perMcu * BLOCK_WORK);
+        var bands = ParallelBands.bands(mcusHigh, (long) mcusWide * mcusHigh * perMcu * BLOCK_WORK);
+        var bandCount = threads > 0 ? Math.min(bands, threads) : bands;
         var stores = new BlockStore[bandCount];
         ParallelBands.run(bandCount, band -> stores[band] = new BandEncoder().transform(
                 ParallelBands.start(band, bandCount, mcusHigh), ParallelBands.start(band + 1, bandCount, mcusHigh)));
@@ -569,8 +623,8 @@ public final class JpegWriter {
     private void writeHeaders(HuffmanEncodingTable[] dc, HuffmanEncodingTable[] ac) {
         out.writeMarker(0xD8);
         out.writeMarker(0xE0);
-        out.writeShort(2 + JFIF.length);
-        for (var b : JFIF) {
+        out.writeShort(2 + app0.length);
+        for (var b : app0) {
             out.writeByte(b);
         }
         for (var segment : iccSegments) {
@@ -590,9 +644,11 @@ public final class JpegWriter {
             out.writeByte((h[c] << 4) | v[c]);
             out.writeByte(c == 0 ? 0 : 1);
         }
-        for (var t = 0; t < dc.length; t++) {
-            out.writeDht(t, dc[t].spec);
-            out.writeDht(0x10 | t, ac[t].spec);
+        if (huffmanTables) {
+            for (var t = 0; t < dc.length; t++) {
+                out.writeDht(t, dc[t].spec);
+                out.writeDht(0x10 | t, ac[t].spec);
+            }
         }
         if (restartInterval != 0) {
             out.writeDri(restartInterval);

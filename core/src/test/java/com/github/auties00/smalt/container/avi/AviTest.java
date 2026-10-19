@@ -126,6 +126,27 @@ class AviTest {
             }
         }
 
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"eac3, EAC3", "pcm_s64le, PCM_S64LE", "dca, DTS"})
+        @DisplayName("maps the extensible sub-formats ffmpeg writes for E-AC-3 and 64-bit PCM, and the DTS tag")
+        void extensibleAudio(String encoder, Codec codec) {
+            var options = new java.util.ArrayList<>(List.of("-t", "1", "-c:v", "mjpeg", "-c:a", encoder, "-ac", "2"));
+            if (codec == Codec.DTS) {
+                options.addAll(0, List.of("-strict", "-2"));
+            }
+            var file = Fixtures.ffmpeg("avi", List.of("-f", "lavfi", "-i", "testsrc2=size=64x48:rate=25", "-f", "lavfi",
+                    "-i", "sine=frequency=440:sample_rate=48000"), options);
+            var ours = demux(file);
+            assertEquals(codec, ours.tracks().get(1).codec());
+            assertMatchesProbe(file, ours);
+            if (codec == Codec.PCM_S64LE) {
+                var output = Muxing.remux(ours, AviMuxerOptions.defaults());
+                var back = demux(output);
+                Muxing.assertSame(ours, back);
+                assertMatchesProbe(MuxSupport.save("remux-s64.avi", output), back);
+            }
+        }
+
         @Test
         @DisplayName("recovers a truncated file without index by walking the movi list")
         void truncated() {
@@ -234,6 +255,53 @@ class AviTest {
                     assertArrayEquals(config, track.codecConfig().orElseThrow());
                 }
             }
+        }
+
+        @Test
+        @DisplayName("reports an unknown duration when the stream's end does not fit in microseconds")
+        void hugeTimeBase() {
+            // 5000 chunks of one second end at 5000 s; of 2^31 - 1 seconds each, past Long.MAX_VALUE microseconds
+            try (var demuxer = new AviDemuxer(MediaSource.of(chunkedAudio(1, 1, 5000)))) {
+                assertEquals(5_000_000_000L, demuxer.durationMicros());
+            }
+            try (var demuxer = new AviDemuxer(MediaSource.of(chunkedAudio(Integer.MAX_VALUE, 1, 5000)))) {
+                assertEquals(-1, demuxer.durationMicros());
+            }
+        }
+
+        // an AAC audio-only file of one-frame chunks whose stream header has the given scale and rate
+        private static byte[] chunkedAudio(int scale, int rate, int count) {
+            var format = java.nio.ByteBuffer.allocate(20).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            format.putShort((short) 0x00FF).putShort((short) 2).putInt(44100).putInt(16000).putShort((short) 1)
+                    .putShort((short) 0).putShort((short) 2).put(new byte[]{0x12, 0x10});
+            var file = audioOnly(format.array());
+            var strh = indexOf(file, "auds".getBytes(StandardCharsets.ISO_8859_1));
+            java.nio.ByteBuffer.wrap(file).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(strh + 20, scale)
+                    .putInt(strh + 24, rate);
+            var frame = new byte[]{0x21, 0x10, 0x04, 0x60, (byte) 0x8C, 0x1C};
+            var chunks = new byte[count][];
+            var index = java.nio.ByteBuffer.allocate(16 * count).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            for (var i = 0; i < count; i++) {
+                chunks[i] = chunk("00wb", frame);
+                index.put("00wb".getBytes(StandardCharsets.ISO_8859_1)).putInt(0x10).putInt(4 + 14 * i)
+                        .putInt(frame.length);
+            }
+            // the hdrl list follows the RIFF header and form type
+            var hdrlSize = java.nio.ByteBuffer.wrap(file).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(16);
+            var body = new java.io.ByteArrayOutputStream();
+            body.writeBytes(Arrays.copyOfRange(file, 12, 20 + hdrlSize + (hdrlSize & 1)));
+            body.writeBytes(list("LIST", "movi", chunks));
+            body.writeBytes(chunk("idx1", index.array()));
+            return list("RIFF", "AVI ", body.toByteArray());
+        }
+
+        private static int indexOf(byte[] data, byte[] pattern) {
+            for (var at = 0; at + pattern.length <= data.length; at++) {
+                if (Arrays.equals(data, at, at + pattern.length, pattern, 0, pattern.length)) {
+                    return at;
+                }
+            }
+            throw new AssertionError("pattern not found");
         }
 
         @Test

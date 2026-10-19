@@ -64,7 +64,7 @@ final class WebpTestSupport {
             if (frame == null) {
                 throw new AssertionError("no frame");
             }
-            return frame.picture();
+            return (RgbaPicture) frame.picture();
         }
     }
 

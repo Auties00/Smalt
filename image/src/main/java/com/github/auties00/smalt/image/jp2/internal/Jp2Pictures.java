@@ -2,7 +2,13 @@ package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
@@ -17,7 +23,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Converts the channels of a decoded JPEG 2000 image to a packed RGBA picture.
+ * Converts the channels of a decoded JPEG 2000 image to a packed RGBA picture, or the channels of
+ * a CMYK image to a channel picture.
  *
  * <p>The color channels are chosen by the channel definitions, or without them the first
  * channels the color space needs (one for gray, three for RGB-like spaces, four for CMYK), and
@@ -28,7 +35,7 @@ import java.util.List;
  * through, one color channel as gray and three as RGB in the declared color space. Samples
  * are scaled from their precision to 8 bits as {@code round(v * 255 / (2^p - 1))}, or to 16 bits
  * likewise, after signed samples are offset by {@code 2^(p-1)}; premultiplied opacity is divided
- * out.
+ * out (for CMYK, from the inks before the conversion).
  *
  * @implNote This implementation follows the color conversions of OpenJPEG's
  * {@code opj_decompress} ({@code color.c}): the per-sample formulas of {@code sycc_to_rgb},
@@ -47,14 +54,30 @@ public final class Jp2Pictures {
     }
 
     /**
-     * Returns the number of color channels of a color space, given the image's channel count.
+     * Returns the number of color channels of an image, given its color space, its ICC profile and
+     * its channel count: an ICC profile of a gray or CMYK color space decides 1 or 4 channels, and
+     * otherwise the color space decides: 1 for gray, 3 for RGB-like spaces and for an unspecified or ICC
+     * color space of at least three channels, 4 for CMYK.
      *
      * @param colorSpace the color space
+     * @param icc        the ICC profile, or {@code null}
      * @param channels   the number of channels
-     * @return the color channels: 1 for gray, 3 for RGB-like spaces, 4 for CMYK, at most
-     *         {@code channels}
+     * @return the color channels, at most {@code channels}
      */
-    public static int colorChannels(Jp2ColorSpace colorSpace, int channels) {
+    public static int colorChannels(Jp2ColorSpace colorSpace, byte[] icc, int channels) {
+        if (icc != null) {
+            try {
+                var profile = ColorProfile.parse(icc);
+                if (profile.colorSpace() == ProfileColorSpace.GRAY) {
+                    return Math.min(1, channels);
+                }
+                if (profile.colorSpace() == ProfileColorSpace.CMYK) {
+                    return Math.min(4, channels);
+                }
+            } catch (MediaException exception) {
+                // an unreadable profile leaves the color space to decide
+            }
+        }
         var colors = switch (colorSpace) {
             case BILEVEL, BILEVEL_INVERTED, GRAYSCALE -> 1;
             case CMYK, YCCK -> 4;
@@ -88,6 +111,7 @@ public final class Jp2Pictures {
             throw new MediaException.Unsupported("JPEG 2000", "converting " + space + " samples to RGB");
         }
         var count = colors.size() >= 3 ? 3 : 1;
+        var inksStraight = false;
         var planes = new int[count][];
         var precisions = new int[count];
         var signed = new boolean[count];
@@ -108,6 +132,13 @@ public final class Jp2Pictures {
             var cmyk = new int[4][];
             for (var i = 0; i < 4; i++) {
                 cmyk[i] = upsample(image, colors.get(i));
+            }
+            if (alpha != null && alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY) {
+                var opacity = upsample(image, alpha);
+                for (var i = 0; i < 4; i++) {
+                    cmyk[i] = straightInks(cmyk[i], colors.get(i).precision(), opacity, alpha);
+                }
+                inksStraight = true;
             }
             cmyk(cmyk, colors);
             for (var i = 0; i < 3; i++) {
@@ -133,7 +164,7 @@ public final class Jp2Pictures {
         int[] opacity = null;
         if (alpha != null) {
             opacity = scale(upsample(image, alpha), alpha.precision(), alpha.signed(), target);
-            if (alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY) {
+            if (alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY && !inksStraight) {
                 for (var plane : scaled) {
                     unpremultiply(plane, opacity, target);
                 }
@@ -161,6 +192,70 @@ public final class Jp2Pictures {
     }
 
     /**
+     * Converts the channels of a CMYK image to a channel picture, keeping the inks.
+     *
+     * <p>The cyan, magenta, yellow and black channels are chosen as {@link #toPicture} chooses
+     * them, upsampled as it upsamples them, and followed by the opacity channel when there is one,
+     * straight or premultiplied as the channel definitions declare. The samples keep their stored
+     * meaning, 0 being no ink, and are scaled to 8 bits as {@code round(v * 255 / (2^p - 1))}, or to
+     * 16 bits likewise when {@code highBitDepth} is set and a kept channel is wider than 8 bits,
+     * after signed samples are offset by {@code 2^(p-1)}.
+     *
+     * @param image        the decoded image
+     * @param highBitDepth whether an image with channels wider than 8 bits keeps 16 bits
+     * @param limits       the resource bounds checked before the allocation
+     * @return the picture of the {@link PixelLayout#CMYK} layout, followed by alpha when the image
+     *         has an opacity channel, or {@code null} when the color channels are not CMYK
+     * @throws MediaException.LimitExceeded if the picture exceeds the limits
+     */
+    public static ChannelPicture toChannels(Jp2Image image, boolean highBitDepth, MediaLimits limits) {
+        var colors = new ArrayList<Jp2Channel>();
+        var alpha = select(image, colors);
+        if (effectiveColorSpace(image, colors) != Jp2ColorSpace.CMYK || colors.size() < 4) {
+            return null;
+        }
+        var kept = new ArrayList<>(colors.subList(0, 4));
+        var layout = PixelLayout.CMYK;
+        if (alpha != null) {
+            kept.add(alpha);
+            layout = layout.withChannel(Channel.of(alpha.type() == Jp2ChannelType.PREMULTIPLIED_OPACITY
+                    ? ChannelType.PREMULTIPLIED_ALPHA : ChannelType.ALPHA));
+        }
+        var wide = false;
+        for (var channel : kept) {
+            wide |= channel.precision() > 8;
+        }
+        var target = highBitDepth && wide ? 65535 : 255;
+        var width = image.width();
+        var height = image.height();
+        var count = kept.size();
+        LimitChecks.checkAllocation(limits, (long) width * height * count * (target == 65535 ? 6 : 5));
+        var length = width * height;
+        if (target == 65535) {
+            var picture = Channel16Picture.allocate(width, height, layout);
+            var pixels = picture.pixels();
+            for (var c = 0; c < count; c++) {
+                var channel = kept.get(c);
+                var plane = scale(upsample(image, channel), channel.precision(), channel.signed(), target);
+                for (var i = 0; i < length; i++) {
+                    pixels[i * count + c] = (short) plane[i];
+                }
+            }
+            return picture;
+        }
+        var picture = Channel8Picture.allocate(width, height, layout);
+        var pixels = picture.pixels();
+        for (var c = 0; c < count; c++) {
+            var channel = kept.get(c);
+            var plane = scale(upsample(image, channel), channel.precision(), channel.signed(), target);
+            for (var i = 0; i < length; i++) {
+                pixels[i * count + c] = (byte) plane[i];
+            }
+        }
+        return picture;
+    }
+
+    /**
      * Chooses the color channels and the opacity channel.
      *
      * @param image  the decoded image
@@ -179,20 +274,7 @@ public final class Jp2Pictures {
                 }
             }
         }
-        var wanted = colorChannels(image.colorSpace(), channels.size());
-        var icc = image.iccProfile();
-        if (icc.isPresent()) {
-            try {
-                var profile = ColorProfile.parse(icc.get());
-                if (profile.colorSpace() == ProfileColorSpace.GRAY) {
-                    wanted = 1;
-                } else if (profile.colorSpace() == ProfileColorSpace.CMYK) {
-                    wanted = Math.min(4, channels.size());
-                }
-            } catch (MediaException exception) {
-                // an unreadable profile leaves the channel count to decide
-            }
-        }
+        var wanted = colorChannels(image.colorSpace(), image.iccProfile().orElse(null), channels.size());
         for (var channel : channels) {
             if (channel.type() == Jp2ChannelType.COLOR && colors.size() < wanted) {
                 colors.add(channel);
@@ -321,6 +403,30 @@ public final class Jp2Pictures {
             cb[i] = Math.clamp(g, 0, max);
             cr[i] = Math.clamp(b, 0, max);
         }
+    }
+
+    /**
+     * Divides premultiplied opacity out of an ink plane at the inks' precision, so that the naive
+     * conversion reads the inks of the color rather than the inks scaled by the opacity.
+     *
+     * @param inks      the ink samples
+     * @param precision the precision of the inks
+     * @param opacity   the opacity samples, upsampled to the image
+     * @param alpha     the opacity channel, for its precision and signedness
+     * @return the straight inks, {@code min(max, round(v * A / a))} for an opacity {@code a} of
+     *         largest value {@code A}, 0 where {@code a} is 0; in a new array
+     */
+    private static int[] straightInks(int[] inks, int precision, int[] opacity, Jp2Channel alpha) {
+        var max = (1L << precision) - 1;
+        var alphaMax = (1L << alpha.precision()) - 1;
+        var offset = alpha.signed() ? 1L << (alpha.precision() - 1) : 0;
+        var result = new int[inks.length];
+        for (var i = 0; i < inks.length; i++) {
+            var a = Math.clamp(opacity[i] + offset, 0, alphaMax);
+            var value = Math.clamp(inks[i], 0, max);
+            result[i] = a == 0 ? 0 : (int) Math.min(max, (value * alphaMax + a / 2) / a);
+        }
+        return result;
     }
 
     /**
