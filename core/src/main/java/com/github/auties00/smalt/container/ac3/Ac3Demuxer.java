@@ -4,10 +4,16 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.ContainerFormat;
+import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.internal.SeekIndex;
+import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
+import com.github.auties00.smalt.container.mpeg.internal.TrailingTags;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
+import com.github.auties00.smalt.internal.io.SlicedSource;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
@@ -16,6 +22,8 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,6 +39,14 @@ import java.util.Objects;
  * first access unit describes them; timestamps count samples, 256 per audio block. Bytes between
  * frames that do not start a valid frame are skipped, and the demuxer resynchronizes on the next
  * frame whose length leads to another sync word or to the end of the input.
+ *
+ * <p>The stream may start with ID3v2 tags and end with ID3v1, APE, Lyrics3 or appended ID3v2
+ * tags, which are excluded from the audio. The text frames of the ID3v2 tags become
+ * {@link #metadata()} and their pictures and chapters {@link #attachedPictures()} and
+ * {@link #chapters()}; an ID3v2.4 tag appended after the audio or located by a {@code SEEK} frame
+ * replaces what the tags before it gave, or only what it holds when flagged as an update (ID3v2.4
+ * section 5). The APE tag and then the ID3v1 tag add the fields still missing, APE cover art
+ * counting only when no ID3v2 tag holds a picture.
  *
  * <p>For a file of known size up to 64 MiB the duration is exact: the frame headers are walked once
  * at construction, which also indexes every sixteenth access unit for {@link #seek(long)}; larger
@@ -53,9 +69,24 @@ public final class Ac3Demuxer implements Demuxer {
     private static final int MAX_LEADING = 64 << 10;
 
     /**
-     * The source.
+     * The source, ending where the audio ends.
      */
     private final MediaSource source;
+
+    /**
+     * The tags of the ID3v2, APE and ID3v1 tags.
+     */
+    private final Map<String, String> metadata;
+
+    /**
+     * The pictures of the tags.
+     */
+    private final List<AttachedPicture> pictures;
+
+    /**
+     * The chapters of the ID3v2 tags.
+     */
+    private final List<Chapter> chapters;
 
     /**
      * The buffered reader.
@@ -130,12 +161,29 @@ public final class Ac3Demuxer implements Demuxer {
         this(source, options.limits());
     }
 
-    private Ac3Demuxer(MediaSource source, MediaLimits limits) {
-        this.source = Objects.requireNonNull(source, "source");
+    private Ac3Demuxer(MediaSource input, MediaLimits limits) {
+        Objects.requireNonNull(input, "source");
         this.limits = Objects.requireNonNull(limits, "limits");
         try {
+            var inputSize = input.size();
+            var tags = new LinkedHashMap<String, String>();
+            var annotations = new Annotations();
+            var id3 = Id3v2.read(input, 0, inputSize < 0 ? Long.MAX_VALUE : inputSize, tags, annotations);
+            var leading = id3.end();
+            var audioEnd = inputSize;
+            if (inputSize >= 0 && ForwardOnlySource.isCheapToReach(input, inputSize)) {
+                var tail = new TrailingTags.Tail(input, leading);
+                tail.load(inputSize);
+                var trailing = TrailingTags.regions(tail, leading, inputSize);
+                audioEnd = trailing.isEmpty() ? inputSize : trailing.getFirst().offset();
+                var located = TrailingTags.seekRegions(tail, id3.seekTarget(), leading, audioEnd);
+                TrailingTags.readMetadata(tail, located, trailing, tags, annotations, Id3v2.Merge.REPLACE);
+            }
+            this.source = audioEnd < inputSize ? new SlicedSource(input, 0, audioEnd) : input;
+            this.metadata = Collections.unmodifiableMap(tags);
+            this.pictures = annotations.pictures();
             this.reader = new SourceReader(source, 16 * 1024);
-            var first = findFrame(0, MAX_LEADING);
+            var first = findFrame(leading, MAX_LEADING);
             if (first < 0) {
                 throw new MediaException.Malformed("no AC-3 sync frame found");
             }
@@ -176,6 +224,7 @@ public final class Ac3Demuxer implements Demuxer {
                     .layout(stream.layout())
                     .build();
             this.tracks = List.of(track);
+            this.chapters = annotations.chapters(track.duration() < 0 ? -1 : track.timeBase().toMicros(track.duration()));
             reader.seek(first);
         } catch (MediaException exception) {
             throw exception;
@@ -273,10 +322,7 @@ public final class Ac3Demuxer implements Demuxer {
      * @return {@code true} for an AC-3 frame or an independent E-AC-3 frame of substream 0
      */
     private static boolean startsUnit(byte[] header) {
-        if ((header[5] & 0xFF) >> 3 <= 10) {
-            return true;
-        }
-        return ((header[2] & 0xFF) >> 6) != 1 && ((header[2] >> 3) & 0x07) == 0;
+        return Ac3Configs.startsAccessUnit(header, 0);
     }
 
     /**
@@ -359,7 +405,17 @@ public final class Ac3Demuxer implements Demuxer {
 
     @Override
     public Map<String, String> metadata() {
-        return Map.of();
+        return metadata;
+    }
+
+    @Override
+    public List<Chapter> chapters() {
+        return chapters;
+    }
+
+    @Override
+    public List<AttachedPicture> attachedPictures() {
+        return pictures;
     }
 
     @Override

@@ -243,6 +243,20 @@ class ImageMetadataTest {
     @DisplayName("JPEG")
     class Jpeg {
         @Test
+        @DisplayName("reads the metadata of a file that ends before its image data, but does not edit it")
+        void noImageData() {
+            // the start-of-image marker and a comment, then the end of the file
+            var image = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xFE, 0, 4, 'h', 'i'};
+            assertEquals(List.of("hi"), ImageMetadata.read(image).comments());
+            assertThrows(MediaException.Malformed.class, () -> ImageMetadataEditor.apply(image,
+                    ImageMetadataEdit.stripAll()));
+            var ended = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xFE, 0, 4, 'h', 'i', (byte) 0xFF,
+                    (byte) 0xD9};
+            assertArrayEquals(new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9},
+                    ImageMetadataEditor.apply(ended, ImageMetadataEdit.stripAll()));
+        }
+
+        @Test
         @DisplayName("splits a large XMP packet into Extended XMP and reads it back merged")
         void extendedXmp() {
             var large = "x".repeat(100_000);
@@ -408,7 +422,7 @@ class ImageMetadataTest {
     @DisplayName("HEIF and TIFF")
     class HeifAndTiff {
         @Test
-        @DisplayName("reads TIFF metadata and refuses to edit it")
+        @DisplayName("reads and strips the metadata of a TIFF file written by ffmpeg and exiftool")
         void tiff() {
             var image = MetadataSupport.exiftoolWrite("meta.tif", com.github.auties00.smalt.testkit.Fixtures.read(
                     com.github.auties00.smalt.testkit.Fixtures.testImage("tif", 32, 32, List.of())),
@@ -417,8 +431,17 @@ class ImageMetadataTest {
             assertEquals(new ExifValue.Ascii("Tiff Artist"), metadata.exif().orElseThrow().ifd0().get(0x013B));
             assertEquals("Tiff title", metadata.xmp().orElseThrow().text(XmpPacket.DC, "title").orElseThrow());
             assertEquals("Roma", metadata.iptc().orElseThrow().string(IptcData.Field.CITY).orElseThrow());
-            assertThrows(MediaException.Unsupported.class, () -> ImageMetadataEditor.stripAll(image));
             assertSame(image, ImageMetadataEditor.apply(image, ImageMetadataEdit.keepAll()));
+            var stripped = ImageMetadataEditor.stripAll(image);
+            var bare = ImageMetadata.read(stripped);
+            assertTrue(bare.xmp().isEmpty() && bare.iptc().isEmpty());
+            assertFalse(bare.exif().map(exif -> exif.ifd0().containsKey(0x013B)).orElse(false));
+            TiffMetadataTest.assertOnlyMetadataChanged(image, stripped);
+            TiffMetadataTest.assertPagesIdentical(image, stripped);
+            var tags = MetadataSupport.exiftoolRead(stripped, "meta-stripped.tif");
+            assertNull(tags.get("IFD0:Artist"), tags.toString());
+            assertNull(tags.get("XMP-dc:Title"));
+            assertNull(tags.get("IPTC:City"));
         }
 
         @Test

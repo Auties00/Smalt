@@ -7,3 +7,6 @@
 *.java text eol=lf
 *.head text eol=lf
 *.template text eol=lf
+# Fuzz seeds and saved findings are byte-exact inputs, text-looking ones (subtitles, XMP) included.
+**/src/test/resources/**/*Inputs/** -text -diff
+**/src/test/resources/fuzz-regressions/** -text -diff

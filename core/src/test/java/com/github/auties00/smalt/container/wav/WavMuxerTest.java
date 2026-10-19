@@ -43,6 +43,7 @@ class WavMuxerTest {
                 Arguments.of(Codec.PCM_S16LE, ChannelLayout.SURROUND_5_1, "pcm_s16le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_S24LE, ChannelLayout.STEREO, "pcm_s24le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_S32LE, ChannelLayout.MONO, "pcm_s32le", 0xFFFE, 40),
+                Arguments.of(Codec.PCM_S64LE, ChannelLayout.STEREO, "pcm_s64le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_F32LE, ChannelLayout.STEREO, "pcm_f32le", 3, 18),
                 Arguments.of(Codec.PCM_F64LE, ChannelLayout.SURROUND_7_1, "pcm_f64le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_ALAW, ChannelLayout.MONO, "pcm_alaw", 6, 18),

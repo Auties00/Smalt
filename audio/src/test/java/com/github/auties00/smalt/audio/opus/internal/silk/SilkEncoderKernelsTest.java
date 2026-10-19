@@ -150,8 +150,13 @@ class SilkEncoderKernelsTest {
             var warping = 0.25f + random.nextFloat() * 0.1f;
             var expected = new float[4 * 25];
             var single = new float[25];
+            // The work arrays are shared and start dirty: the kernel must clear them on every call.
+            var state = new double[25];
+            var corr = new double[25];
+            java.util.Arrays.fill(state, 1e9);
+            java.util.Arrays.fill(corr, -1e9);
             for (var c = 0; c < 4; c++) {
-                SigProcFlp.warpedAutocorrelationFlp(single, input, c * stride, warping, length, order);
+                SigProcFlp.warpedAutocorrelationFlp(single, input, c * stride, warping, length, order, state, corr);
                 System.arraycopy(single, 0, expected, c * 25, order + 1);
             }
             var scalar = new float[4 * 25];

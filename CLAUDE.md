@@ -15,14 +15,17 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
   `desktop`, `aot`, `it` (JIT guard and cross-artifact tests, not published). Parent of the code modules:
   `smalt-parent` (the root `pom.xml`), which also gives every module JUnit and JMH for its tests.
 - The test kit (`Oracle`, `Fixtures`, `Conformance`, `Quality`, `HeifBuilder`, `Bytes`, `Packets`, and the helpers
-  in `testkit.audio`, `testkit.image` and `testkit.container`) lives in core's `src/test/java` under `testkit` and
-  reaches the other modules through core's test jar (`smalt-core` with `<type>test-jar</type>`, test scope),
-  which holds only `testkit/**`.
+  in `testkit.audio`, `testkit.image`, `testkit.container` and `testkit.fuzz`) lives in core's `src/test/java` under
+  `testkit` and reaches the other modules through core's test jar (`smalt-core` with `<type>test-jar</type>`, test
+  scope), which holds only `testkit/**`.
 - `tools/codegen`: the generators of the VP9, AV1 and transposition vector kernels and of the Vorbis setup data
   (edit the generator or its template, never the generated file; `python tools/codegen/check.py` fails when a
   generated file differs from its generator's output); `tools/lint`: the comment lint (section 11 of
   Documentation); `tools/notices`: the third-party notices; `tools/testdata`: the test vector manifests and
-  oracle scripts.
+  oracle scripts; `tools/fuzz`: the fuzzing runner. Every decoder, demuxer and parser has a Jazzer `@FuzzTest`
+  target in its module's `fuzz` test package (the contract and the workflow are in `tools/fuzz/README.md`); a new
+  one gets a target with `valid-*` seeds, and a crash a fuzzer finds gets its input saved under
+  `src/test/resources/fuzz-regressions`, which every build replays.
 
 The README's Install table is the single source of these descriptions; the pom `<description>`s copy it.
 

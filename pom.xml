@@ -44,10 +44,20 @@
         <junit.version>5.13.4</junit.version>
         <jmh.version>1.37</jmh.version>
         <chicory.version>1.7.5</chicory.version>
+        <jazzer.version>0.30.0</jazzer.version>
+        <!-- The JUnit Platform release of junit.version; the standalone Jazzer runner needs its launcher -->
+        <junit.platform.version>1.13.4</junit.platform.version>
+        <!--
+            Jazzer instruments the classes loaded after a fuzz test starts. A normal build replays the fuzz inputs
+            without that instrumentation, so the other tests of the same JVM run unchanged; fuzzing sets it to true
+            (tools/fuzz/README.md).
+        -->
+        <jazzer.hooks>false</jazzer.hooks>
         <!-- false runs every kernel on its scalar twin (CI's scalar leg): mvn test -Dsmalt.test.simd=false -->
         <smalt.test.simd>true</smalt.test.simd>
-        <!-- jdk.management: the allocation tests read the per-thread allocation counter reflectively -->
-        <smalt.test.argLine>--add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -Xss4m -Dsmalt.simd=${smalt.test.simd}</smalt.test.argLine>
+        <!-- jdk.management: the allocation tests read the per-thread allocation counter reflectively;
+             EnableDynamicAgentLoading: the fuzz tests' Jazzer attaches its agent at run time -->
+        <smalt.test.argLine>--add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -Xss4m -XX:+EnableDynamicAgentLoading -Dsmalt.simd=${smalt.test.simd}</smalt.test.argLine>
         <!-- The release profile sets it: these test jars feed only the unpublished it module, so they are not published
              (core's test jar, the test kit every module's tests compile against, is built in every profile) -->
         <smalt.skipTestJar>false</smalt.skipTestJar>
@@ -153,6 +163,27 @@
             <version>${jmh.version}</version>
         </dependency>
         <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <version>${junit.platform.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <version>${jazzer.version}</version>
+            <!-- JUnit comes from junit.version, not the older release jazzer-junit was built against -->
+            <exclusions>
+                <exclusion>
+                    <groupId>org.junit.jupiter</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.junit.platform</groupId>
+                    <artifactId>*</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
             <groupId>com.dylibso.chicory</groupId>
             <artifactId>runtime</artifactId>
             <version>${chicory.version}</version>
@@ -222,6 +253,9 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <configuration>
                         <argLine>${smalt.test.argLine}</argLine>
+                        <systemPropertyVariables>
+                            <jazzer.hooks>${jazzer.hooks}</jazzer.hooks>
+                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
                 <plugin>

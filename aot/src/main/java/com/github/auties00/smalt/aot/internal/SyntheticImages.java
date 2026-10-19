@@ -20,8 +20,8 @@ import java.util.zip.Deflater;
  *
  * <p>The PNG, GIF, BMP and lossless JPEG files are written here rather than by Smalt's encoders,
  * so that they take paths Smalt's encoders never produce: every PNG row filter type alone and in
- * runs, GIF frames that update a window with transparent unchanged pixels, and BMP and lossless
- * JPEG, which Smalt does not encode.
+ * runs, GIF frames that update a window with transparent unchanged pixels, and BMP, lossless JPEG,
+ * 12-bit JPEG and JPEG-compressed TIFF, which Smalt does not encode.
  */
 final class SyntheticImages {
     /**
@@ -405,6 +405,204 @@ final class SyntheticImages {
             case 6 -> b + ((a - c) >> 1);
             default -> (a + b) >> 1;
         };
+    }
+
+    /**
+     * Writes a lossless JFIF JPEG (SOF3) of 8-bit Y'CbCr 4:2:0, the luma of factors 2x2 and the
+     * chroma of factors 1x1, as one block-interleaved scan with predictor 1 and the Huffman table
+     * of {@link #losslessJpeg}.
+     *
+     * @param picture the 8-bit source picture of even width and height, not modified; its green,
+     * blue and red channels stand for the luma and the two chroma components
+     * @return the JPEG file
+     */
+    static byte[] subsampledLosslessJpeg(RgbaPicture picture) {
+        var width = picture.width();
+        var height = picture.height();
+        var planes = new int[][]{new int[width * height], new int[width * height / 4], new int[width * height / 4]};
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var at = y * picture.stride() + x * 4;
+                planes[0][y * width + x] = picture.pixels()[at + 1] & 0xFF;
+                if ((x & 1) == 0 && (y & 1) == 0) {
+                    planes[1][(y / 2) * (width / 2) + x / 2] = picture.pixels()[at + 2] & 0xFF;
+                    planes[2][(y / 2) * (width / 2) + x / 2] = picture.pixels()[at] & 0xFF;
+                }
+            }
+        }
+        var out = new ByteArrayOutputStream();
+        marker(out, 0xD8);
+        marker(out, 0xE0);
+        out.writeBytes(new byte[]{0, 16, 'J', 'F', 'I', 'F', 0, 1, 2, 0, 0, 1, 0, 1, 0, 0});
+        marker(out, 0xC3);
+        u16be(out, 17);
+        out.write(8);
+        u16be(out, height);
+        u16be(out, width);
+        out.write(3);
+        for (var c = 0; c < 3; c++) {
+            out.write(c + 1);
+            out.write(c == 0 ? 0x22 : 0x11);
+            out.write(0);
+        }
+        marker(out, 0xC4);
+        u16be(out, 2 + 17 + 17);
+        out.write(0);
+        for (var length = 1; length <= 16; length++) {
+            out.write(length == 5 ? 17 : 0);
+        }
+        for (var category = 0; category <= 16; category++) {
+            out.write(category);
+        }
+        marker(out, 0xDA);
+        u16be(out, 12);
+        out.write(3);
+        for (var c = 0; c < 3; c++) {
+            out.write(c + 1);
+            out.write(0);
+        }
+        out.write(1);
+        out.write(0);
+        out.write(0);
+        var bits = new HuffmanBits(out);
+        var widths = new int[]{width, width / 2, width / 2};
+        var factors = new int[]{2, 1, 1};
+        for (var unitRow = 0; unitRow < height / 2; unitRow++) {
+            for (var unit = 0; unit < width / 2; unit++) {
+                for (var c = 0; c < 3; c++) {
+                    var plane = planes[c];
+                    var stride = widths[c];
+                    for (var by = 0; by < factors[c]; by++) {
+                        for (var bx = 0; bx < factors[c]; bx++) {
+                            var x = unit * factors[c] + bx;
+                            var y = unitRow * factors[c] + by;
+                            var index = y * stride + x;
+                            int prediction;
+                            if (y == 0) {
+                                prediction = x == 0 ? 128 : plane[index - 1];
+                            } else {
+                                prediction = x == 0 ? plane[index - stride] : plane[index - 1];
+                            }
+                            var difference = plane[index] - prediction;
+                            var category = 32 - Integer.numberOfLeadingZeros(Math.abs(difference));
+                            bits.write(category, 5);
+                            if (category > 0) {
+                                bits.write(difference >= 0 ? difference : difference + (1 << category) - 1,
+                                        category);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        bits.flush();
+        marker(out, 0xD9);
+        return out.toByteArray();
+    }
+
+    /**
+     * Converts a baseline JPEG to a QuickTime Motion-JPEG format B frame: a header of ten 32-bit
+     * words padded to 48 bytes, the quantization, Huffman, frame and scan segments merged by kind
+     * and stripped of their marker codes, and the entropy-coded data without its stuffed bytes.
+     *
+     * @param jpeg the JPEG, ending with EOI and without restart markers, not modified
+     * @return the frame
+     */
+    static byte[] formatB(byte[] jpeg) {
+        var body = new ByteArrayOutputStream();
+        var offsets = new int[4];
+        var kinds = new int[]{0xDB, 0xC4, 0xC0, 0xDA};
+        var scan = 0;
+        for (var slot = 0; slot < 4; slot++) {
+            var payload = new ByteArrayOutputStream();
+            for (var at = 2; at + 3 < jpeg.length; ) {
+                var marker = jpeg[at + 1] & 0xFF;
+                var end = at + 2 + (((jpeg[at + 2] & 0xFF) << 8) | (jpeg[at + 3] & 0xFF));
+                if (marker == kinds[slot]) {
+                    payload.write(jpeg, at + 4, end - at - 4);
+                }
+                if (marker == 0xDA) {
+                    scan = end;
+                    break;
+                }
+                at = end;
+            }
+            offsets[slot] = 48 + body.size();
+            u16be(body, payload.size() + 2);
+            body.writeBytes(payload.toByteArray());
+        }
+        var data = 48 + body.size();
+        for (var i = scan; i < jpeg.length - 2; i++) {
+            body.write(jpeg[i]);
+            if (jpeg[i] == (byte) 0xFF) {
+                i++;
+            }
+        }
+        var size = 48 + body.size();
+        var header = ByteBuffer.allocate(48).putInt(0).putInt(0x6D6A7067).putInt(size).putInt(size).putInt(0);
+        for (var offset : offsets) {
+            header.putInt(offset);
+        }
+        header.putInt(data);
+        var frame = new byte[size];
+        System.arraycopy(header.array(), 0, frame, 0, 48);
+        System.arraycopy(body.toByteArray(), 0, frame, 48, body.size());
+        return frame;
+    }
+
+    /**
+     * Returns a copy of a sequential 8-bit JPEG whose frame header declares 12-bit precision: a
+     * valid 12-bit JPEG whose samples lie within 128 of mid-gray, since the coefficients code
+     * 8-bit samples.
+     *
+     * @param jpeg an 8-bit JPEG with Huffman tables that cover its coefficients, not modified
+     * @return the 12-bit JPEG
+     */
+    static byte[] twelveBitJpeg(byte[] jpeg) {
+        var out = jpeg.clone();
+        var at = 2;
+        while (true) {
+            var marker = out[at + 1] & 0xFF;
+            if (marker >= 0xC0 && marker <= 0xC2) {
+                out[at + 4] = 12;
+                return out;
+            }
+            at += 2 + (((out[at + 2] & 0xFF) << 8) | (out[at + 3] & 0xFF));
+        }
+    }
+
+    /**
+     * Writes a little-endian TIFF holding one JPEG (compression 7) as its single strip, Y'CbCr
+     * 4:2:0 with 12-bit samples.
+     *
+     * @param jpeg the 12-bit 4:2:0 JPEG
+     * @param width the image width
+     * @param height the image height
+     * @return the TIFF file
+     */
+    static byte[] jpegTiff(byte[] jpeg, int width, int height) {
+        int[][] entries = {{256, 4, 1, width}, {257, 4, 1, height}, {258, 3, 3, 0}, {259, 3, 1, 7},
+                {262, 3, 1, 6}, {273, 4, 1, 8}, {277, 3, 1, 3}, {278, 4, 1, height}, {279, 4, 1, jpeg.length},
+                {530, 3, 2, 2 | 2 << 16}};
+        var data = 8 + jpeg.length + (jpeg.length & 1);
+        var bits = data + 2 + entries.length * 12 + 4;
+        entries[2][3] = bits;
+        var buffer = ByteBuffer.allocate(bits + 6).order(ByteOrder.LITTLE_ENDIAN);
+        buffer.put((byte) 'I').put((byte) 'I').putShort((short) 42).putInt(data);
+        buffer.put(jpeg);
+        buffer.position(data);
+        buffer.putShort((short) entries.length);
+        for (var entry : entries) {
+            buffer.putShort((short) entry[0]).putShort((short) entry[1]).putInt(entry[2]);
+            if (entry[1] == 3 && entry[2] == 1) {
+                buffer.putShort((short) entry[3]).putShort((short) 0);
+            } else {
+                buffer.putInt(entry[3]);
+            }
+        }
+        buffer.putInt(0);
+        buffer.putShort((short) 12).putShort((short) 12).putShort((short) 12);
+        return buffer.array();
     }
 
     /**
