@@ -1,0 +1,8 @@
+# image dump of vectors/libwebp-test-data-small_13x1.webp; regenerate with -Dsmalt.test.updateDumps=true
+format WEBP
+info ImageInfo[format=WEBP, width=13, height=1, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 13x1 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=873e45d9 u=ef80df44 v=a58e5f06
+  format=WEBP orientation=NORMAL source=13x1
+  icc=none exif=none xmp=none
+  profile=none

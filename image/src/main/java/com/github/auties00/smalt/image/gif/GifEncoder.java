@@ -40,8 +40,6 @@ public final class GifEncoder {
      *
      * @param picture the pixels to encode
      * @return the complete GIF datastream
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B'
      * @throws MediaException.LimitExceeded if a dimension exceeds 65535, the picture has more than
      * {@link Integer#MAX_VALUE} pixels, or encoding runs out of memory
      * @see #encode(Picture, GifEncoderOptions)
@@ -59,7 +57,7 @@ public final class GifEncoder {
      * @param options the palette, dithering, transparency and lossless settings
      * @param sink the output, written from its position; not closed
      * @throws MediaException.Unsupported if lossless coding is requested and the picture cannot be
-     * coded exactly, or a planar picture's color matrix has no conversion to R'G'B'
+     * coded exactly
      * @throws MediaException.LimitExceeded if a dimension exceeds 65535, the picture has more than
      * {@link Integer#MAX_VALUE} pixels, or encoding runs out of memory
      * @throws MediaException.Io if writing the sink fails
@@ -82,8 +80,7 @@ public final class GifEncoder {
      * @param options the palette, dithering, transparency and lossless settings
      * @return the complete GIF datastream
      * @throws MediaException.Unsupported if lossless coding is requested and the picture has
-     * translucent pixels or too many colors, or a planar picture's color matrix has no conversion
-     * to R'G'B'
+     * translucent pixels or too many colors
      * @throws MediaException.LimitExceeded if a dimension exceeds 65535, the picture has more than
      * {@link Integer#MAX_VALUE} pixels, or encoding runs out of memory
      */

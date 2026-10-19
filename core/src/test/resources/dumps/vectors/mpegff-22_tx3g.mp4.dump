@@ -1,0 +1,26 @@
+# demux dump of vectors/mpegff-22_tx3g.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 10486667
+seekable true
+metadata compatible_brands="isom"
+metadata creation_time="2016-02-22T00:39:12.000000Z"
+metadata major_brand="isom"
+metadata minor_version="1"
+track 1 DATA MOV_TEXT timebase=1/1000 duration=10487 config=48:a6508d2d
+packets 10
+0 t1 pts=0 dts=0 dur=1262 flags=KEY size=2 crc=41d912ff
+1 t1 pts=1262 dts=1262 dur=1525 flags=KEY size=32 crc=a91f9ba2
+2 t1 pts=2787 dts=2787 dur=631 flags=KEY size=2 crc=41d912ff
+3 t1 pts=3418 dts=3418 dur=1399 flags=KEY size=43 crc=f74c66dd
+4 t1 pts=4817 dts=4817 dur=1169 flags=KEY size=2 crc=41d912ff
+5 t1 pts=5986 dts=5986 dur=433 flags=KEY size=49 crc=460f98b6
+6 t1 pts=6419 dts=6419 dur=804 flags=KEY size=2 crc=41d912ff
+7 t1 pts=7223 dts=7223 dur=1264 flags=KEY size=53 crc=ff3e46af
+8 t1 pts=8487 dts=8487 dur=736 flags=KEY size=2 crc=41d912ff
+9 t1 pts=9223 dts=9223 dur=1264 flags=KEY size=26 crc=9ec7e1ac
+seek 0: t1@0
+seek 3495555: t1@3
+seek 6991111: t1@6
+seek 10487000: end
+seek 10486667: t1@9
+seek -1000000: t1@0

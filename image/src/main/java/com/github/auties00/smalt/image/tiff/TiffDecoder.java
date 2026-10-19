@@ -25,11 +25,16 @@ import java.util.Objects;
  *       ImageDecoderOptions)} reads every page), strips and tiles, and both planar
  *       configurations (interleaved and separate planes);</li>
  *   <li>compression: none, PackBits, LZW (with the pre-6.0 bit order), Deflate (codes 8 and
- *       32946), JPEG (compression 7, with {@code JPEGTables}), old-style JPEG (compression 6) when
- *       it points to a complete JPEG stream or stores its tables in the table tags, CCITT
+ *       32946), JPEG (compression 7, with {@code JPEGTables}; 8-bit and 12-bit samples), old-style
+ *       JPEG (compression 6, 8-bit samples) when it points to a complete JPEG stream or stores its
+ *       tables in the table tags, CCITT
  *       modified Huffman, T.4 (Group 3, one- and two-dimensional, with or without byte-aligned
- *       end-of-line codes) and T.6 (Group 4), ThunderScan, and SGILog (LogL, and LogLuv in its
- *       32-bit and 24-bit forms); {@code FillOrder} 2 (bit-reversed data);</li>
+ *       end-of-line codes) and T.6 (Group 4), ThunderScan, SGILog (LogL, and LogLuv in its
+ *       32-bit and 24-bit forms), and the compressions that store a complete image per strip or
+ *       tile: WebP (code 50001; 8-bit RGB or RGBA), JPEG XL (codes 50002 and DNG's 52546;
+ *       unsigned samples of up to 16 bits and 16- or 32-bit floating-point samples, as codestreams
+ *       or containers) and JPEG 2000 (code 34712 and the Aperio codes 33003 and 33005; integer
+ *       samples, as codestreams or JP2 files); {@code FillOrder} 2 (bit-reversed data);</li>
  *   <li>the horizontal predictor on 8-, 16-, 32- and 64-bit samples and the floating-point
  *       predictor;</li>
  *   <li>bilevel and gray (white-is-zero or black-is-zero), palette, RGB, CMYK (separated with
@@ -46,15 +51,28 @@ import java.util.Objects;
  * samples are offset by {@code 2^(n-1)}. Floating-point samples map the range from
  * {@code SMinSampleValue} to {@code SMaxSampleValue} (0.0 to 1.0 when the tags are absent) linearly
  * onto the 16-bit range, clamping outside it (NaN becomes 0). Palette entries that all fit 8 bits
- * are taken as an old-style 8-bit palette. CMYK is converted naively,
- * {@code R = (255 - K) * (255 - C) / 255} (truncating, likewise G and B); an embedded ICC profile
- * is returned in {@link DecodedImage#iccProfile()} for color management, not applied. YCbCr is
+ * are taken as an old-style 8-bit palette. CMYK is converted naively as
+ * {@link ImageOps#toRgba(com.github.auties00.smalt.image.Picture)} converts a CMYK picture,
+ * {@code R = round((M - C) * (M - K) / M)} at the samples' depth (likewise G and B, after an associated
+ * alpha is divided out of the inks); an embedded ICC profile is returned in
+ * {@link DecodedImage#iccProfile()} for color management, not applied. YCbCr is
  * converted with the {@code YCbCrCoefficients} and {@code ReferenceBlackWhite} tags, each chroma
  * sample shared by its whole subsampling block; JPEG-coded YCbCr is converted by the JPEG
- * decoder. L*a*b* is rendered for display: to XYZ relative to the
+ * decoder, at 12 bits for 12-bit JPEG data. L*a*b* is rendered for display: to XYZ relative to the
  * {@code WhitePoint} (CIE D50 when absent), then through the sRGB primaries with a pure 2.4 power
  * law, always to 8 bits (ICC L*a*b* takes the ICC version 2 encoding, ITU L*a*b* its
- * {@code Decode} ranges, by default those of ITU-T T.42). LogL and LogLuv are rendered for
+ * {@code Decode} ranges, by default those of ITU-T T.42). The images of WebP, JPEG XL and JPEG 2000
+ * strips and tiles supply the stored samples: sample {@code i} of each pixel takes channel
+ * {@code i} of the image (for JPEG XL the color channels, then the extra channels in order), JPEG XL
+ * integer samples scale its nominal range from 0 to 1 onto the sample range, JPEG 2000 samples are
+ * taken as stored, and a subsampled JPEG 2000 channel gives each pixel its nearest sample to the
+ * upper left. A YCbCr page of these compressions decodes to RGB: WebP and JPEG XL images are RGB,
+ * and JPEG 2000 Y, Cb and Cr channels (also those of Aperio code 33003, whose pages are tagged RGB)
+ * are converted with the {@code YCbCrCoefficients} and {@code ReferenceBlackWhite} tags as above,
+ * which default to full-range BT.601; the channels of Aperio code 33005 are RGB whatever the page's
+ * photometric interpretation. A coded image wider or taller than its strip or tile is
+ * cropped, one that is smaller leaves the samples it does not cover zero, and one with more pixels
+ * than a full strip or tile exceeds the limits. LogL and LogLuv are rendered for
  * display, to 8 bits with a square-root transfer (luminance 1 is white) through the ITU-R BT.709
  * primaries. The
  * color profile of CMYK, L*a*b*, LogL and LogLuv pages is reported empty, since an embedded
@@ -67,24 +85,52 @@ import java.util.Objects;
  * floating point) decodes to an {@link Rgba16Picture} holding the 16-bit values instead; reducing
  * it with {@link ImageOps#toEightBit(Rgba16Picture)} gives exactly the default 8-bit output.
  *
+ * <p>With {@link ImageDecoderOptions#keepChannels()} set (and {@link ImageDecoderOptions#convertToSrgb()}
+ * not set), a separated page of any ink set, and a gray or RGB page with floating-point samples or with
+ * extra samples other than one alpha sample, decodes to a
+ * {@link com.github.auties00.smalt.image.ChannelPicture ChannelPicture} holding the samples as stored: CMYK
+ * ({@code InkSet} 1) or named inks ({@code InkSet} 2, named by {@code InkNames}, counted by
+ * {@code NumberOfInks} or else by the samples that are not extra samples), gray or RGB, followed by one
+ * channel per extra sample as {@code ExtraSamples} codes it: the first one coded as associated or unassociated
+ * alpha is the alpha channel, and every other one is unspecified. Integer samples are scaled
+ * as above to 8 bits, or to 16 bits for samples wider than 8 bits when
+ * {@link ImageDecoderOptions#highBitDepth()} is also set; floating-point samples are kept unscaled and
+ * unclamped in a {@link com.github.auties00.smalt.image.ChannelFloatPicture ChannelFloatPicture}, 64-bit ones
+ * narrowed to the nearest float, and white-is-zero gray is inverted ({@code SMinSampleValue + SMaxSampleValue
+ * - v} for floating point). Converting the picture with
+ * {@link ImageOps#toRgba(com.github.auties00.smalt.image.Picture)} or
+ * {@link ImageOps#toRgba16(com.github.auties00.smalt.image.Picture)} gives exactly the default 8-bit or 16-bit
+ * output when the page is gray, RGB or CMYK, its samples are integers or 16 or 32-bit floating point without
+ * {@code SMinSampleValue} and {@code SMaxSampleValue} tags, samples wider than 8 bits were decoded with
+ * {@code highBitDepth}, and the page is not an RGB page whose first extra sample is coded as unspecified
+ * (which the default output takes as associated alpha). The color profile of the result is the embedded
+ * profile when it has as many channels as the color channels. A strip or tile that is missing leaves zero
+ * samples. Other pages decode as without the option.
+ *
  * <p>The {@code Orientation} tag supplies {@link DecodedImage#orientation()} (not applied), the
  * ICC profile tag {@link DecodedImage#iccProfile()}, and a page with an EXIF or GPS directory
  * supplies {@link DecodedImage#exif()}: a stand-alone EXIF block with the page's descriptive tags
  * and copies of those directories.
  *
  * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature:
- * CFA and linear raw photometric interpretations, transparency masks, ink sets other than CMYK,
+ * CFA and linear raw photometric interpretations, transparency masks, ink sets other than CMYK (except to a
+ * channel picture),
  * sample sizes that differ between samples, complex samples, 24-bit floating point, JPEG-coded
- * samples other than 8 bits, L*a*b* samples other than 8- and 16-bit integers, LogL and LogLuv
- * images with extra samples or separate planes or without SGILog compression, and the JBIG,
- * JPEG 2000, LZMA, Zstandard, WebP and JPEG XL compression schemes.
+ * samples other than 8 and 12 bits (old-style JPEG: other than 8 bits), L*a*b* samples other
+ * than 8- and 16-bit integers, LogL and LogLuv images with extra samples or separate planes or
+ * without SGILog compression, WebP pages other than interleaved 8-bit RGB or RGBA, JPEG XL pages of
+ * signed or wider samples, floating-point JPEG 2000 pages, JPEG 2000 YCbCr pages other than
+ * interleaved 8-bit, and the JBIG, LZMA and Zstandard compression schemes.
  *
  * <p>Damaged files decode as far as they can: a strip or tile that is missing leaves transparent
  * pixels (and the picture then reports alpha), data that ends early leaves zero samples, damaged
  * fax data ends its strip, and a directory chain that loops or points past the end of the file
- * ends at the last readable page. Invalid LZW or Deflate data and invalid structures are
+ * ends at the last readable page. Invalid LZW, Deflate, WebP, JPEG XL or JPEG 2000 data, a coded
+ * image with fewer channels than the page has samples, and invalid structures are
  * {@link MediaException.Malformed}. Decoded pixels, premultiplied, match those of libtiff 4.7's
- * {@code tiff2rgba} tool, up to one step of rounding for 16-bit samples and palettes.
+ * {@code tiff2rgba} tool, up to one step of rounding for 16-bit samples, palettes and CMYK (which
+ * {@code tiff2rgba} truncates); WebP pages with {@code FillOrder} 2 are bit-reversed before decoding,
+ * as for every other compression, which {@code tiff2rgba} does not do.
  *
  * <p>The size hint of {@link ImageDecoderOptions} is honored with a page's reduced-resolution
  * levels when it has any, as {@link TiffPages#read(int)} describes. Strips and tiles decode in

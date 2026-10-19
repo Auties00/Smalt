@@ -189,18 +189,20 @@ class H264ReconstructionTest {
         }
 
         @Test
-        @DisplayName("chroma DC prediction follows 8.3.4.1 to 8.3.4.3 per 4x4 block")
+        @DisplayName("chroma DC prediction follows 8.3.4.1 to 8.3.4.3 per 4x4 block, with the left samples of each half available apart")
         void chromaDc() {
             var random = new Random(12);
             var predictor = new IntraPredictor();
-            for (var availability = 0; availability < 4; availability++) {
-                var hasLeft = (availability & 1) != 0;
+            for (var availability = 0; availability < 8; availability++) {
+                var hasLeftUpper = (availability & 1) != 0;
                 var hasTop = (availability & 2) != 0;
+                var hasLeftLower = (availability & 4) != 0;
                 var plane = randomPlane(random);
                 var expected = new int[4];
                 for (var block = 0; block < 4; block++) {
                     var bx = (block & 1) * 4;
                     var by = (block >> 1) * 4;
+                    var hasLeft = block < 2 ? hasLeftUpper : hasLeftLower;
                     var top = 0;
                     var left = 0;
                     for (var i = 0; i < 4; i++) {
@@ -218,7 +220,8 @@ class H264ReconstructionTest {
                         expected[block] = hasLeft ? onlyLeft : hasTop ? onlyTop : 128;
                     }
                 }
-                predictor.predictChroma(0, plane, ORIGIN, STRIDE, hasLeft, hasTop, hasLeft && hasTop);
+                predictor.predictChroma(0, plane, ORIGIN, STRIDE, hasLeftUpper, hasLeftLower, hasTop,
+                        hasLeftUpper && hasTop);
                 for (var y = 0; y < 8; y++) {
                     for (var x = 0; x < 8; x++) {
                         assertEquals(expected[(y >> 2) * 2 + (x >> 2)], p(plane, x, y), "sample " + x + "," + y);
@@ -249,7 +252,7 @@ class H264ReconstructionTest {
                         expected[y * 8 + x] = clip((a + b * (x - 3) + c * (y - 3) + 16) >> 5);
                     }
                 }
-                predictor.predictChroma(3, plane, ORIGIN, STRIDE, true, true, true);
+                predictor.predictChroma(3, plane, ORIGIN, STRIDE, true, true, true, true);
                 for (var i = 0; i < 64; i++) {
                     assertEquals(expected[i], p(plane, i & 7, i >> 3));
                 }

@@ -1,0 +1,16 @@
+# image dump of vectors/apng-philip-036.png; regenerate with -Dsmalt.test.updateDumps=true
+format PNG
+info ImageInfo[format=PNG, width=128, height=64, hasAlpha=false, animated=true, frameCount=2, orientation=NORMAL]
+decode
+picture 128x64 rgba8 alpha=false crc=1430462e
+  format=PNG orientation=NORMAL source=128x64
+  icc=none exif=none xmp=none
+  profile=none
+scaled 32x16
+picture 128x64 rgba8 alpha=false crc=1430462e
+  format=PNG orientation=NORMAL source=128x64
+  icc=none exif=none xmp=none
+  profile=none
+animation 128x64 loops=1 frames=2
+frame 0 ts=0 dur=100000 128x64 rgba8 alpha=true crc=1430462e
+frame 1 ts=100000 dur=1000000 128x64 rgba8 alpha=true crc=7d39f77c

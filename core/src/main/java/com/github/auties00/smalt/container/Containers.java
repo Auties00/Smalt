@@ -50,13 +50,14 @@ import java.util.Arrays;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.function.Predicate;
 
 /**
  * Recognizes the container of a media file from its content and opens the matching demuxer, and
  * creates the muxer that writes a container.
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
- * skipping an ID3v2 tag first because MP3, AAC and FLAC files often start with one. Formats with a
+ * skipping an ID3v2 tag first because MP3, AAC, AC-3 and FLAC files often start with one. Formats with a
  * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR) are recognized exactly,
  * MPEG transport streams by the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
@@ -65,9 +66,9 @@ import java.util.Optional;
  * by its {@code WEBVTT} signature, a SubRip file by a timing line among its first lines.
  *
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
- * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an Opus {@link OggMuxer}, and the
+ * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
  * {@link WavMuxer}, {@link AiffMuxer}, {@link AdtsMuxer}, {@link IvfMuxer}, {@link TsMuxer} and {@link AviMuxer};
- * MPEG audio, FLAC, AMR and AC-3 files are the elementary streams a {@link RawMuxer} writes.
+ * MPEG audio, FLAC, AMR, AC-3, H.264, HEVC and AV1 files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
  * constructs the muxer directly.
@@ -121,6 +122,9 @@ public final class Containers {
             if (header.length >= 4 && header[0] == 'f' && header[1] == 'L' && header[2] == 'a' && header[3] == 'C') {
                 return Optional.of(ContainerFormat.FLAC);
             }
+            if (Ac3Demuxer.matches(header)) {
+                return Optional.of(ContainerFormat.AC3);
+            }
         }
         var frames = detectFrameStream(header);
         return Optional.ofNullable(frames != null ? frames : detectText(leading));
@@ -173,6 +177,9 @@ public final class Containers {
             case SUBRIP -> new SubRipDemuxer(source, options);
             case WEBVTT -> new WebVttDemuxer(source, options);
             case AVI -> new AviDemuxer(source, options);
+            // TODO: read H.264 and HEVC Annex B and AV1 OBU elementary streams, which detect() does not recognize yet
+            case H264, HEVC, AV1 -> throw new MediaException.Unsupported(format.name().toLowerCase(Locale.ROOT)
+                    + " elementary stream", "elementary video streams cannot be read");
         };
     }
 
@@ -196,7 +203,7 @@ public final class Containers {
             case ADTS -> AdtsMuxer.supports(codec);
             case IVF -> IvfMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
-            case MPEG_AUDIO, FLAC, AMR, AC3 -> RawMuxer.supports(format, codec);
+            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1 -> RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
             case WEBVTT -> WebVttMuxer.supports(codec);
             case AVI -> AviMuxer.supports(codec);
@@ -222,8 +229,8 @@ public final class Containers {
     /**
      * Creates the muxer that writes a container format with the default options of that format.
      *
-     * <p>The muxers are the ones the class description lists; MPEG audio, FLAC, AMR and AC-3 files
-     * are elementary streams whose muxer accepts only the codecs of the format.
+     * <p>The muxers are the ones the class description lists; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC
+     * and AV1 files are elementary streams whose muxer accepts only the codecs of the format.
      *
      * @param format the container format
      * @param output the sink, written from its position and not closed by the muxer
@@ -241,7 +248,7 @@ public final class Containers {
             case AIFF -> new AiffMuxer(output);
             case ADTS -> new AdtsMuxer(output);
             case IVF -> new IvfMuxer(output);
-            case MPEG_AUDIO, FLAC, AMR, AC3 -> new FormatMuxer(format, new RawMuxer(output));
+            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1 -> new FormatMuxer(format, new RawMuxer(output));
             case MPEG_TS -> new TsMuxer(output);
             case SUBRIP -> new SubRipMuxer(output);
             case WEBVTT -> new WebVttMuxer(output);
@@ -263,7 +270,9 @@ public final class Containers {
      *       {@link MatroskaMuxer} with the {@link MatroskaMuxerOptions#matroska()} and
      *       {@link MatroskaMuxerOptions#webm()} options;</li>
      *   <li>every other profile gets the muxer {@link #openMuxer(ContainerFormat, MediaSink)} returns
-     *       for its {@linkplain OutputContainer#format() format}.</li>
+     *       for its {@linkplain OutputContainer#format() format}; for {@link OutputContainer#OGG_FLAC},
+     *       {@link OutputContainer#AC3} and {@link OutputContainer#EAC3} it rejects a track of a codec
+     *       the profile does not {@linkplain OutputContainer#supports(Codec) carry}.</li>
      * </ul>
      *
      * @param container the output container profile
@@ -282,17 +291,39 @@ public final class Containers {
             case FRAGMENTED_MP4 -> new FragmentedMp4Muxer(output);
             case MATROSKA -> new MatroskaMuxer(output, MatroskaMuxerOptions.matroska());
             case WEBM -> new MatroskaMuxer(output, MatroskaMuxerOptions.webm());
+            case OGG_FLAC, AC3, EAC3 -> new FormatMuxer(container, openMuxer(container.format(), output));
             default -> openMuxer(container.format(), output);
         };
     }
 
     /**
-     * Restricts a {@link RawMuxer} to the codecs of one elementary-stream format.
+     * Restricts a muxer to the codecs of one file format or profile.
      *
-     * @param format the format written
-     * @param raw the muxer writing the stream
+     * @param name the name of the format, for messages
+     * @param accepts whether the format carries a codec
+     * @param raw the muxer writing the file
      */
-    private record FormatMuxer(ContainerFormat format, RawMuxer raw) implements Muxer {
+    private record FormatMuxer(String name, Predicate<Codec> accepts, Muxer raw) implements Muxer {
+        /**
+         * Restricts a {@link RawMuxer} to the codecs of an elementary-stream format.
+         *
+         * @param format the format written
+         * @param raw the muxer writing the stream
+         */
+        private FormatMuxer(ContainerFormat format, RawMuxer raw) {
+            this(format.name().toLowerCase(Locale.ROOT).replace('_', '-'), codec -> isMuxable(format, codec), raw);
+        }
+
+        /**
+         * Restricts a muxer to the codecs of an output container profile.
+         *
+         * @param container the profile written
+         * @param raw the muxer writing the file
+         */
+        private FormatMuxer(OutputContainer container, Muxer raw) {
+            this(container.name().toLowerCase(Locale.ROOT).replace('_', '-'), container::supports, raw);
+        }
+
         /**
          * {@inheritDoc}
          *
@@ -301,9 +332,8 @@ public final class Containers {
         @Override
         public void addTrack(Track track) {
             Objects.requireNonNull(track, "track");
-            if (!isMuxable(format, track.codec())) {
-                throw new IllegalArgumentException(format.name().toLowerCase(Locale.ROOT).replace('_', '-') + " cannot carry "
-                        + track.codec().displayName());
+            if (!accepts.test(track.codec())) {
+                throw new IllegalArgumentException(name + " cannot carry " + track.codec().displayName());
             }
             raw.addTrack(track);
         }
