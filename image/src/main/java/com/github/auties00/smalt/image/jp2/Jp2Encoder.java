@@ -4,6 +4,7 @@
 package com.github.auties00.smalt.image.jp2;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -26,7 +27,8 @@ import java.util.Objects;
  *
  * <p>A picture is coded as one component per channel at its own depth: an
  * {@link RgbaPicture} with 8 bits, an {@link Rgba16Picture} with 16 bits, a planar picture after
- * conversion to RGBA. A picture whose red, green and blue are equal everywhere is coded as one
+ * conversion to RGBA, and a {@link ChannelPicture} after conversion to RGBA of 16 bits for 16-bit and
+ * floating-point samples, of 8 bits otherwise. A picture whose red, green and blue are equal everywhere is coded as one
  * gray component, an opaque picture without its alpha channel, and a picture with alpha with an
  * opacity channel the JP2 channel definitions declare. The JP2 file declares sRGB (or grayscale),
  * or embeds the options' color profile. {@link #encode(Jp2Image, Jp2EncoderOptions)} codes
@@ -240,6 +242,9 @@ public final class Jp2Encoder {
         if (picture instanceof Rgba16Picture wide) {
             precision = 16;
             channels = split16(wide);
+        } else if (picture instanceof ChannelPicture deep && deep.bitDepth() > 8) {
+            precision = 16;
+            channels = split16(ImageOps.toRgba16(deep));
         } else {
             precision = 8;
             channels = split8(picture instanceof RgbaPicture rgba ? rgba : ImageOps.toRgba(picture));

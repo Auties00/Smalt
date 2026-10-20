@@ -10,7 +10,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Turns the cue packets of a text subtitle track into the gapless, non-overlapping samples an MP4
+ * Turns the packets of a text subtitle track into the gapless, non-overlapping samples an MP4
  * subtitle track stores.
  *
  * <p>Packets may overlap and leave gaps, as cues do. The timeline is cut wherever a cue starts or
@@ -21,6 +21,10 @@ import java.util.List;
  * starts later is preceded by an empty sample. A packet without a duration lasts until the next
  * packet starts, and is dropped when it is the last. An empty 3GPP sample only clears the screen,
  * so it adds no cue.
+ *
+ * <p>The packets of a {@link Codec#TTML} track are whole documents, which must not overlap: each
+ * becomes one sample, and a gap, the start of the track included, becomes a sample holding a
+ * document that shows nothing. Packets without a duration follow the same rule as cues.
  *
  * <p>Instances are not thread-safe.
  */
@@ -47,9 +51,19 @@ final class TextSamples {
     private final int trackId;
 
     /**
-     * The codec, {@link Codec#MOV_TEXT} or {@link Codec#WEBVTT}.
+     * The codec, {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT} or {@link Codec#TTML}.
      */
     private final Codec codec;
+
+    /**
+     * The receiver of the samples.
+     */
+    private final Sink sink;
+
+    /**
+     * The end of the last TTML sample, in track time-base units.
+     */
+    private long position;
 
     /**
      * The cutter of the timeline.
@@ -65,12 +79,13 @@ final class TextSamples {
      * Constructs the sample writer of one track.
      *
      * @param trackId the track identifier
-     * @param codec {@link Codec#MOV_TEXT} or {@link Codec#WEBVTT}
+     * @param codec {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT} or {@link Codec#TTML}
      * @param sink the receiver of the samples
      */
     TextSamples(int trackId, Codec codec, Sink sink) {
         this.trackId = trackId;
         this.codec = codec;
+        this.sink = sink;
         this.segmenter = new CueSegmenter<>((start, end, cues) -> sink.sample(trackId, encode(cues), start, end - start));
     }
 
@@ -78,21 +93,23 @@ final class TextSamples {
      * Returns whether a codec is written through this class.
      *
      * @param codec the codec to look up
-     * @return {@code true} for {@link Codec#MOV_TEXT} and {@link Codec#WEBVTT}
+     * @return {@code true} for {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT} and {@link Codec#TTML}
      */
     static boolean handles(Codec codec) {
-        return codec == Codec.MOV_TEXT || codec == Codec.WEBVTT;
+        return codec == Codec.MOV_TEXT || codec == Codec.WEBVTT || codec == Codec.TTML;
     }
 
     /**
-     * Adds one cue packet.
+     * Adds one packet.
      *
      * @param packet the packet, in start order
+     * @throws IllegalArgumentException if the packet of a TTML track starts before the previous
+     * one ends
      */
     void offer(Packet packet) {
         var start = packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
         if (start == Packet.NO_TIMESTAMP) {
-            start = segmenter.position();
+            start = codec == Codec.TTML ? position : segmenter.position();
         }
         if (open != null) {
             add(open, startOf(open), start);
@@ -131,13 +148,40 @@ final class TextSamples {
      * @param end the cue end
      */
     private void add(Packet packet, long start, long end) {
-        if (codec == Codec.MOV_TEXT) {
+        if (codec == Codec.TTML) {
+            addDocument(packet, start, end);
+        } else if (codec == Codec.MOV_TEXT) {
             if (!TimedText.isEmpty(packet.data())) {
                 segmenter.offer(start, end, packet.data());
             }
         } else {
             segmenter.offer(start, end, WebVttSamples.cue(packet));
         }
+    }
+
+    /**
+     * Emits the sample of a TTML document, preceded by an empty document when it starts after the
+     * previous sample ends.
+     *
+     * @param packet the packet holding the document
+     * @param start the document start
+     * @param end the document end
+     * @throws IllegalArgumentException if the document starts before the previous sample ends
+     */
+    private void addDocument(Packet packet, long start, long end) {
+        if (start < position || end < start) {
+            throw new IllegalArgumentException("TTML packets of track " + trackId + " overlap: a packet spans " + start
+                    + " to " + end + " and the track already reaches " + position);
+        }
+        if (end == start) {
+            return;
+        }
+        if (start > position) {
+            sink.sample(trackId, TtmlEntries.emptyDocument(), position, start - position);
+        }
+        // TODO: write the sub-sample information (subs) delimiting the image resources of IMSC image documents
+        sink.sample(trackId, packet.data().clone(), start, end - start);
+        position = end;
     }
 
     /**

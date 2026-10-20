@@ -40,7 +40,6 @@ public final class ImageQuantization {
      *
      * @param picture the picture to reduce
      * @return the quantized image
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the work arrays do not fit one Java array
      * @see QuantizeOptions#defaults()
      */
@@ -54,7 +53,6 @@ public final class ImageQuantization {
      * @param picture the picture to reduce
      * @param options the palette size, algorithm, dithering and alpha threshold
      * @return the quantized image
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the work arrays do not fit one Java array
      */
     public static QuantizedImage quantize(Picture picture, QuantizeOptions options) {

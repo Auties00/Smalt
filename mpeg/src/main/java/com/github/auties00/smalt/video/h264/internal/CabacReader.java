@@ -284,6 +284,11 @@ public final class CabacReader {
     private static final int[][] SIGNIFICANCE = new int[6][];
 
     /**
+     * The significance map contexts of field-coded blocks, laid out as {@link #SIGNIFICANCE}.
+     */
+    private static final int[][] SIGNIFICANCE_FIELD = new int[6][];
+
+    /**
      * The level contexts of each block category 0 to 5, one entry per coding state: the
      * {@code ctxIdx} of the first {@code coeff_abs_level_minus1} bin in the low 16 bits and of
      * the other bins in the high 16 bits (ITU-T H.264 9.3.3.1.3; the increment of the other bins
@@ -294,23 +299,31 @@ public final class CabacReader {
     static {
         for (var category = 0; category < 6; category++) {
             var significance = new int[category == 5 ? 63 : 15];
+            var fieldSignificance = new int[significance.length];
             for (var i = 0; i < significance.length; i++) {
                 int sigInc;
+                int fieldSigInc;
                 int lastInc;
                 if (category == 5) {
                     sigInc = CabacTables.SIG_8X8[i];
+                    fieldSigInc = CabacTables.SIG_8X8_FIELD[i];
                     lastInc = CabacTables.LAST_8X8[i];
                 } else if (category == 3) {
                     sigInc = Math.min(i, 2);
+                    fieldSigInc = sigInc;
                     lastInc = sigInc;
                 } else {
                     sigInc = i;
+                    fieldSigInc = i;
                     lastInc = i;
                 }
                 significance[i] = (CabacTables.SIG_OFFSET[category] + sigInc)
                         | ((CabacTables.LAST_OFFSET[category] + lastInc) << 16);
+                fieldSignificance[i] = (CabacTables.SIG_OFFSET_FIELD[category] + fieldSigInc)
+                        | ((CabacTables.LAST_OFFSET_FIELD[category] + lastInc) << 16);
             }
             SIGNIFICANCE[category] = significance;
+            SIGNIFICANCE_FIELD[category] = fieldSignificance;
             var levels = new int[8];
             var restCap = category == 3 ? 8 : 9;
             for (var state = 0; state < 8; state++) {
@@ -338,14 +351,16 @@ public final class CabacReader {
      *
      * @param category the {@code ctxBlockCat}, 0 to 5
      * @param maxCoeff the {@code maxNumCoeff} of the block, from 4 to 64
+     * @param field whether the block belongs to a field macroblock, whose significance map uses
+     * the field-coded contexts
      * @param indices receives the coefficient positions
      * @param levels receives the signed levels
      * @return the number of non-zero coefficients, at least 1
      * @throws com.github.auties00.smalt.MediaException.Malformed if a level is out of
      * range
      */
-    public int residualBlock(int category, int maxCoeff, int[] indices, int[] levels) {
-        var count = significanceMap(SIGNIFICANCE[category], maxCoeff - 1, indices);
+    public int residualBlock(int category, int maxCoeff, boolean field, int[] indices, int[] levels) {
+        var count = significanceMap((field ? SIGNIFICANCE_FIELD : SIGNIFICANCE)[category], maxCoeff - 1, indices);
         decodeLevels(LEVEL_CONTEXTS[category], count, levels);
         return count;
     }

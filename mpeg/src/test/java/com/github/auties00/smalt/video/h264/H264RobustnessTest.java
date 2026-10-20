@@ -37,13 +37,20 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class H264RobustnessTest {
     private static final Duration LIMIT = Duration.ofMinutes(2);
 
-    record Source(String name, List<String> options) {
+    record Source(String name, List<String> options, String resource) {
+        Source(String name, List<String> options) {
+            this(name, options, null);
+        }
+
         @Override
         public String toString() {
             return name;
         }
 
         byte[] bytes() {
+            if (resource != null) {
+                return H264HighBitDepthTest.resource(resource);
+            }
             var output = new ArrayList<String>(List.of("-frames:v", "16", "-c:v", "libx264"));
             output.addAll(options);
             output.addAll(List.of("-f", "h264"));
@@ -61,7 +68,20 @@ class H264RobustnessTest {
                 new Source("high cabac bframes", List.of("-profile:v", "high", "-bf", "3", "-refs", "3", "-x264-params",
                         "keyint=8:weightp=2:b-pyramid=normal:direct=temporal:8x8dct=1")),
                 new Source("main cabac spatial", List.of("-profile:v", "main", "-bf", "2", "-refs", "4", "-x264-params",
-                        "keyint=8:direct=spatial"))
+                        "keyint=8:direct=spatial")),
+                new Source("high cabac mbaff bframes", List.of("-profile:v", "high", "-bf", "3", "-refs", "3", "-x264-params",
+                        "keyint=8:interlaced=1:tff=1:direct=temporal:weightb=1:8x8dct=1")),
+                new Source("main cavlc mbaff spatial", List.of("-profile:v", "main", "-bf", "2", "-x264-params",
+                        "keyint=8:interlaced=1:bff=1:cabac=0:direct=spatial:slices=2")),
+                new Source("high 10 cabac bframes", List.of("-pix_fmt", "yuv420p10le", "-bf", "3", "-refs", "3",
+                        "-x264-params", "keyint=8:weightp=2:b-pyramid=normal:direct=temporal:8x8dct=1:qp=12")),
+                new Source("high 10 cavlc mbaff slices", List.of("-pix_fmt", "yuv420p10le", "-bf", "2", "-x264-params",
+                        "keyint=8:interlaced=1:tff=1:cabac=0:slices=3:qp=4")),
+                // JM streams holding I_PCM macroblocks of 12 and 14 bits in CABAC, CAVLC and CAVLC MBAFF slices
+                new Source("jm 8/12-bit cabac pcm", List.of(), "hd8-12-spatial"),
+                new Source("jm 12-bit cabac weighted", List.of(), "hd12-cabac-wp"),
+                new Source("jm 14-bit cavlc pcm", List.of(), "hd14-cavlc-implicit"),
+                new Source("jm 14-bit cavlc mbaff pcm", List.of(), "hd14-mbaff-slices")
         );
     }
 
@@ -273,7 +293,8 @@ class H264RobustnessTest {
 
     static Stream<H264ConformanceTest.Vector> conformanceVectors() {
         var names = List.of("FM1_FT_E", "FM2_SVA_C", "MR4_TANDBERG_C", "FRExt_MMCO4_Sony_B", "CAPM3_Sony_D", "HCBP2_HHI_A",
-                "CVSEFDFT3_Sony_E", "MR6_BT_B");
+                "CVSEFDFT3_Sony_E", "MR6_BT_B", "FI1_Sony_E", "CAMASL3_Sony_B", "CVMAQP3_Sony_D", "MR9_BT_B",
+                "CVMP_MOT_FLD_L30_B");
         return H264ConformanceTest.vectors().stream().filter(vector -> names.contains(vector.name()));
     }
 

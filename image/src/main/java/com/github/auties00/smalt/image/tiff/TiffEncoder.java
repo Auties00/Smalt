@@ -1,21 +1,37 @@
 package com.github.auties00.smalt.image.tiff;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.internal.zlib.ZlibDeflater;
+import com.github.auties00.smalt.image.jp2.Jp2Channel;
+import com.github.auties00.smalt.image.jp2.Jp2ChannelType;
+import com.github.auties00.smalt.image.jp2.Jp2ColorSpace;
+import com.github.auties00.smalt.image.jp2.Jp2Encoder;
+import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
+import com.github.auties00.smalt.image.jp2.Jp2Format;
+import com.github.auties00.smalt.image.jp2.Jp2Image;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.tiff.internal.IfdBuilder;
 import com.github.auties00.smalt.image.tiff.internal.LzwEncoder;
 import com.github.auties00.smalt.image.tiff.internal.PackBits;
 import com.github.auties00.smalt.image.tiff.internal.Predictor;
 import com.github.auties00.smalt.image.tiff.internal.TiffTags;
+import com.github.auties00.smalt.image.webp.WebpEncoder;
+import com.github.auties00.smalt.image.webp.WebpEncoderOptions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSink;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Encodes pictures as TIFF or BigTIFF files, one page per picture.
@@ -23,9 +39,24 @@ import java.util.Objects;
  * <p>Each page is written with the samples {@link TiffEncoderOptions#layout()} and
  * {@link TiffEncoderOptions#depth()} select (gray or RGB, with or without an unassociated alpha
  * sample, 8 or 16 bits), interleaved ({@code PlanarConfiguration} 1), in strips or tiles,
- * compressed with no compression, PackBits, LZW or Deflate and, for LZW and Deflate, the
- * horizontal predictor. Every page records a resolution of 72 dots per inch and, when the options
- * carry one, an ICC profile. Y'CbCr pictures are converted to RGB first.
+ * compressed with no compression, PackBits, LZW, Deflate, WebP or JPEG 2000 and, for LZW and
+ * Deflate, the horizontal predictor on integer samples. WebP holds 8-bit RGB or RGBA samples only,
+ * as {@link TiffEncoderOptions#compression()} describes. Every page records a resolution of 72 dots per inch and,
+ * when the options carry one, an ICC profile. Y'CbCr pictures are converted to RGB first.
+ *
+ * <p>A {@link ChannelPicture} is written with its own channels, whatever the layout option: gray
+ * (black-is-zero), RGB, CMYK (separated, {@code InkSet} 1) or named inks (separated, {@code InkSet}
+ * 2 with {@code NumberOfInks} and, when any ink is named, {@code InkNames}, each name up to its
+ * first NUL character), each extra channel an
+ * extra sample (associated alpha, unassociated alpha, or unspecified). Its samples are written as
+ * stored: 8 or 16-bit integers, or 32-bit IEEE floating point ({@code SampleFormat} 3) for a
+ * {@link ChannelFloatPicture}; {@link TiffEncoderOptions.Depth#EIGHT} and
+ * {@link TiffEncoderOptions.Depth#SIXTEEN} convert them first, as
+ * {@link ImageOps#toChannel8(Picture)} and {@link ImageOps#toChannel16(Picture)} do. Under WebP
+ * compression it is converted to RGBA first; otherwise, with lossless settings, decoding such a page
+ * with {@link com.github.auties00.smalt.image.ImageDecoderOptions#keepChannels()} (and
+ * {@link com.github.auties00.smalt.image.ImageDecoderOptions#highBitDepth()} for 16-bit samples)
+ * returns the same picture, sample for sample.
  *
  * <p>Pages are streamed: {@link #addPage(Picture)} compresses a page and writes it, keeping only
  * the directory of the previous page until the next page or {@link #finish()} fixes its link, so a
@@ -36,7 +67,8 @@ import java.util.Objects;
  *
  * @implNote This implementation's LZW coder follows libtiff's code-width schedule (see
  * {@code LzwEncoder}); the Deflate streams are zlib streams from {@link ZlibDeflater}, as libtiff
- * writes them under compression 8.
+ * writes them under compression 8. The pixels of a partial WebP or JPEG 2000 tile beyond the image
+ * repeat its last column and row, which keeps lossy coding from ringing at the image edges.
  */
 public final class TiffEncoder {
     /**
@@ -63,6 +95,16 @@ public final class TiffEncoder {
      * Whether the file is a BigTIFF.
      */
     private final boolean big;
+
+    /**
+     * The WebP settings of a strip or tile, without a color profile.
+     */
+    private final WebpEncoderOptions webpOptions;
+
+    /**
+     * The JPEG 2000 settings of a strip or tile: a raw codestream.
+     */
+    private final Jp2EncoderOptions jpeg2000Options;
 
     /**
      * The number of bytes written, the offset of the next byte from the start of the file.
@@ -113,6 +155,9 @@ public final class TiffEncoder {
         this.sink = Objects.requireNonNull(sink, "sink");
         this.little = !options.isBigEndian();
         this.big = options.isBigTiff();
+        this.webpOptions = options.webpOptions().toBuilder().colorProfile(null).build();
+        this.jpeg2000Options = options.jpeg2000Options().toBuilder().format(Jp2Format.CODESTREAM).colorProfile(null)
+                .build();
     }
 
     /**
@@ -133,7 +178,10 @@ public final class TiffEncoder {
      * @param options the encoder settings
      * @return the complete file
      * @throws NullPointerException if an argument is {@code null}
-     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB
+     * @throws IllegalArgumentException if the compression is {@link TiffCompression#JPEG_2000} and
+     * the picture is a {@link ChannelFloatPicture} that the depth option keeps floating point
+     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB, or a WebP strip or tile
+     * would exceed 16383 pixels per side or a JPEG 2000 one the limits of the JPEG 2000 options
      */
     public static byte[] encode(Picture picture, TiffEncoderOptions options) {
         var sink = MediaSink.memory();
@@ -148,7 +196,10 @@ public final class TiffEncoder {
      * @param options the encoder settings
      * @param sink the output, written from its position; not closed
      * @throws NullPointerException if an argument is {@code null}
-     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB
+     * @throws IllegalArgumentException if the compression is {@link TiffCompression#JPEG_2000} and
+     * the picture is a {@link ChannelFloatPicture} that the depth option keeps floating point
+     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB, or a WebP strip or tile
+     * would exceed 16383 pixels per side or a JPEG 2000 one the limits of the JPEG 2000 options
      * @throws MediaException.Io if writing the sink fails
      */
     public static void encode(Picture picture, TiffEncoderOptions options, MediaSink sink) {
@@ -165,7 +216,8 @@ public final class TiffEncoder {
      * @return the complete file
      * @throws NullPointerException if a picture is {@code null}
      * @throws IllegalArgumentException if {@code pictures} is empty
-     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB
+     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB, or a WebP strip or tile
+     * would exceed 16383 pixels per side or a JPEG 2000 one the limits of the JPEG 2000 options
      */
     public static byte[] encode(List<? extends Picture> pictures) {
         return encode(pictures, TiffEncoderOptions.defaults());
@@ -178,8 +230,11 @@ public final class TiffEncoder {
      * @param options the encoder settings
      * @return the complete file
      * @throws NullPointerException if an argument or a picture is {@code null}
-     * @throws IllegalArgumentException if {@code pictures} is empty
-     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB
+     * @throws IllegalArgumentException if {@code pictures} is empty, or the compression is
+     * {@link TiffCompression#JPEG_2000} and a picture is a {@link ChannelFloatPicture} that the
+     * depth option keeps floating point
+     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB, or a WebP strip or tile
+     * would exceed 16383 pixels per side or a JPEG 2000 one the limits of the JPEG 2000 options
      */
     public static byte[] encode(List<? extends Picture> pictures, TiffEncoderOptions options) {
         var sink = MediaSink.memory();
@@ -194,8 +249,11 @@ public final class TiffEncoder {
      * @param options the encoder settings
      * @param sink the output, written from its position; not closed
      * @throws NullPointerException if an argument or a picture is {@code null}
-     * @throws IllegalArgumentException if {@code pictures} is empty
-     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB
+     * @throws IllegalArgumentException if {@code pictures} is empty, or the compression is
+     * {@link TiffCompression#JPEG_2000} and a picture is a {@link ChannelFloatPicture} that the
+     * depth option keeps floating point
+     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB, or a WebP strip or tile
+     * would exceed 16383 pixels per side or a JPEG 2000 one the limits of the JPEG 2000 options
      * @throws MediaException.Io if writing the sink fails
      */
     public static void encode(List<? extends Picture> pictures, TiffEncoderOptions options, MediaSink sink) {
@@ -215,8 +273,11 @@ public final class TiffEncoder {
      *
      * @param picture the picture to add as the next page
      * @throws NullPointerException if {@code picture} is {@code null}
+     * @throws IllegalArgumentException if the compression is {@link TiffCompression#JPEG_2000} and
+     * the picture is a {@link ChannelFloatPicture} that the depth option keeps floating point
      * @throws IllegalStateException if {@link #finish()} already ran
-     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB
+     * @throws MediaException.LimitExceeded if a classic file would exceed 4 GiB, or a WebP strip or tile
+     * would exceed 16383 pixels per side or a JPEG 2000 one the limits of the JPEG 2000 options
      * @throws MediaException.Io if writing the sink fails
      */
     public void addPage(Picture picture) {
@@ -297,12 +358,17 @@ public final class TiffEncoder {
      *
      * @param width the width in pixels
      * @param height the height in pixels
-     * @param channels the samples per pixel: 1 to 4
-     * @param bits the bits per sample: 8 or 16
-     * @param alpha whether the last sample is alpha
+     * @param channels the samples per pixel
+     * @param bits the bits per sample: 8, 16 or 32
+     * @param floating whether the samples are IEEE floating point
+     * @param photometric the {@code PhotometricInterpretation} code: 1, 2 or 5
+     * @param extras the {@code ExtraSamples} codes, one per extra sample
+     * @param inks the number of inks of an ink set other than CMYK, or 0
+     * @param inkNames the {@code InkNames} text, or {@code null}
      * @param data the rows, {@code width * channels * bits / 8} bytes each
      */
-    private record Samples(int width, int height, int channels, int bits, boolean alpha, byte[] data) {
+    private record Samples(int width, int height, int channels, int bits, boolean floating, int photometric,
+                           int[] extras, int inks, String inkNames, byte[] data) {
         /**
          * Converts a picture to the samples the options select.
          *
@@ -312,6 +378,20 @@ public final class TiffEncoder {
          * @return the samples
          */
         static Samples of(Picture picture, TiffEncoderOptions options, boolean little) {
+            if (options.compression() == TiffCompression.WEBP) {
+                return narrow(ImageOps.toRgba(picture), options.layout(), true);
+            }
+            if (picture instanceof ChannelPicture channels) {
+                var samples = channels(switch (options.depth()) {
+                    case AUTO -> channels;
+                    case EIGHT -> ImageOps.toChannel8(channels);
+                    case SIXTEEN -> ImageOps.toChannel16(channels);
+                }, little);
+                if (samples.floating() && options.compression() == TiffCompression.JPEG_2000) {
+                    throw new IllegalArgumentException("JPEG 2000 cannot code floating-point samples");
+                }
+                return samples;
+            }
             var sixteen = switch (options.depth()) {
                 case AUTO -> picture instanceof Rgba16Picture;
                 case EIGHT -> false;
@@ -324,17 +404,18 @@ public final class TiffEncoder {
                 };
                 return wide(wide, options.layout(), little);
             }
-            return narrow(ImageOps.toRgba(picture), options.layout());
+            return narrow(ImageOps.toRgba(picture), options.layout(), false);
         }
 
         /**
          * Builds 8-bit samples.
          *
          * @param picture the pixels
-         * @param layout  the requested layout
+         * @param layout the requested layout
+         * @param color whether gray pixels are written as RGB too
          * @return the samples
          */
-        private static Samples narrow(RgbaPicture picture, TiffEncoderOptions.Layout layout) {
+        private static Samples narrow(RgbaPicture picture, TiffEncoderOptions.Layout layout, boolean color) {
             var width = picture.width();
             var height = picture.height();
             var pixels = picture.pixels();
@@ -350,7 +431,7 @@ public final class TiffEncoder {
                     }
                 }
             }
-            var color = layout == TiffEncoderOptions.Layout.RGB || layout == TiffEncoderOptions.Layout.RGBA
+            color |= layout == TiffEncoderOptions.Layout.RGB || layout == TiffEncoderOptions.Layout.RGBA
                     || (layout == TiffEncoderOptions.Layout.AUTO && !gray);
             var alpha = layout == TiffEncoderOptions.Layout.RGBA || layout == TiffEncoderOptions.Layout.GRAY_ALPHA
                     || (layout == TiffEncoderOptions.Layout.AUTO && translucent);
@@ -372,7 +453,86 @@ public final class TiffEncoder {
                     }
                 }
             }
-            return new Samples(width, height, channels, 8, alpha, data);
+            return new Samples(width, height, channels, 8, false, color ? 2 : 1, alpha ? new int[]{2} : new int[0],
+                    0, null, data);
+        }
+
+        /**
+         * Builds the samples of a channel picture, as stored.
+         *
+         * @param picture the pixels
+         * @param little whether multi-byte samples are little-endian
+         * @return the samples
+         */
+        private static Samples channels(ChannelPicture picture, boolean little) {
+            var width = picture.width();
+            var height = picture.height();
+            var layout = picture.layout();
+            var count = layout.count();
+            var colors = layout.colorChannels();
+            var model = layout.colorModel();
+            var photometric = switch (model) {
+                case GRAY -> 1;
+                case RGB -> 2;
+                default -> 5;
+            };
+            var inks = 0;
+            String inkNames = null;
+            if (model == ColorModel.INK) {
+                inks = colors;
+                var names = new StringBuilder();
+                var named = false;
+                for (var i = 0; i < colors; i++) {
+                    var name = layout.channel(i).name();
+                    var end = name.indexOf(0);
+                    if (end >= 0) {
+                        name = name.substring(0, end);
+                    }
+                    named |= !name.isEmpty();
+                    names.append(name).append('\0');
+                }
+                inkNames = named ? names.substring(0, names.length() - 1) : null;
+            }
+            var extras = new int[count - colors];
+            for (var i = colors; i < count; i++) {
+                extras[i - colors] = switch (layout.channel(i).type()) {
+                    case PREMULTIPLIED_ALPHA -> 1;
+                    case ALPHA -> 2;
+                    default -> 0;
+                };
+            }
+            var bits = picture.bitDepth();
+            var rowSamples = width * count;
+            var data = new byte[Math.multiplyExact(Math.multiplyExact(rowSamples, height), bits / 8)];
+            var stride = picture.stride();
+            var out = 0;
+            switch (picture) {
+                case Channel8Picture eight -> {
+                    for (var y = 0; y < height; y++, out += rowSamples) {
+                        System.arraycopy(eight.pixels(), y * stride, data, out, rowSamples);
+                    }
+                }
+                case Channel16Picture sixteen -> {
+                    var pixels = sixteen.pixels();
+                    for (var y = 0; y < height; y++) {
+                        for (var i = 0; i < rowSamples; i++) {
+                            out = put16(data, out, pixels[y * stride + i] & 0xFFFF, little);
+                        }
+                    }
+                }
+                case ChannelFloatPicture floating -> {
+                    var pixels = floating.pixels();
+                    for (var y = 0; y < height; y++) {
+                        for (var i = 0; i < rowSamples; i++) {
+                            var value = Float.floatToRawIntBits(pixels[y * stride + i]);
+                            out = put16(data, out, little ? value & 0xFFFF : value >>> 16, little);
+                            out = put16(data, out, little ? value >>> 16 : value & 0xFFFF, little);
+                        }
+                    }
+                }
+            }
+            return new Samples(width, height, count, bits, picture instanceof ChannelFloatPicture, photometric,
+                    extras, inks, inkNames, data);
         }
 
         /**
@@ -421,7 +581,8 @@ public final class TiffEncoder {
                     }
                 }
             }
-            return new Samples(width, height, channels, 16, alpha, data);
+            return new Samples(width, height, channels, 16, false, color ? 2 : 1, alpha ? new int[]{2} : new int[0],
+                    0, null, data);
         }
 
         /**
@@ -485,8 +646,9 @@ public final class TiffEncoder {
      * @return the compressed chunks
      */
     private Chunks compress(Samples page) {
-        // TODO: CMYK, palette and floating-point pages, and JPEG compression
+        // TODO: palette pages, the floating-point predictor and JPEG compression
         var tiled = options.tileWidth().isPresent();
+        var codec = options.compression() == TiffCompression.WEBP || options.compression() == TiffCompression.JPEG_2000;
         var rowBytes = page.rowBytes();
         int chunkWidth;
         int chunkHeight;
@@ -501,7 +663,7 @@ public final class TiffEncoder {
         var across = (page.width() + chunkWidth - 1) / chunkWidth;
         var down = (page.height() + chunkHeight - 1) / chunkHeight;
         var count = Math.multiplyExact(across, down);
-        var predicted = options.predictor() == TiffPredictor.HORIZONTAL
+        var predicted = options.predictor() == TiffPredictor.HORIZONTAL && !page.floating()
                 && (options.compression() == TiffCompression.LZW || options.compression() == TiffCompression.DEFLATE);
         var data = new byte[count][];
         var bytesPerPixel = page.channels() * page.bits() / 8;
@@ -521,6 +683,9 @@ public final class TiffEncoder {
                 for (var row = 0; row < copyRows; row++) {
                     System.arraycopy(page.data(), (y0 + row) * rowBytes + x0 * bytesPerPixel, chunk, row * chunkRow, copyBytes);
                 }
+                if (codec) {
+                    replicateEdges(chunk, chunkRow, rows, copyRows, copyBytes, bytesPerPixel);
+                }
                 if (predicted) {
                     Predictor.applyHorizontal(chunk, 0, chunkRow, rows, page.channels(), chunkWidth, page.bits() / 8, little);
                 }
@@ -528,11 +693,90 @@ public final class TiffEncoder {
                     case PACKBITS -> PackBits.encode(chunk, 0, chunkRow, rows);
                     case LZW -> lzw.encode(chunk, 0, chunk.length);
                     case DEFLATE -> ZlibDeflater.zlib(chunk, 0, chunk.length, options.compressionLevel());
+                    case WEBP -> webp(chunk, chunkWidth, rows, page.channels());
+                    case JPEG_2000 -> jpeg2000(chunk, chunkWidth, rows, page);
                     default -> chunk;
                 };
             }
         });
         return new Chunks(data, chunkWidth, chunkHeight, tiled, predicted);
+    }
+
+    /**
+     * Fills the part of a strip or tile beyond the image with copies of its last column and row.
+     *
+     * @param chunk the samples of the strip or tile
+     * @param chunkRow the size of one row
+     * @param rows the number of rows
+     * @param copyRows the number of rows inside the image, at least 1
+     * @param copyBytes the size of the part of a row inside the image, at least one pixel
+     * @param bytesPerPixel the size of one pixel
+     */
+    private static void replicateEdges(byte[] chunk, int chunkRow, int rows, int copyRows, int copyBytes,
+                                       int bytesPerPixel) {
+        if (copyBytes < chunkRow) {
+            for (var row = 0; row < copyRows; row++) {
+                var start = row * chunkRow;
+                var last = start + copyBytes - bytesPerPixel;
+                for (var at = start + copyBytes; at < start + chunkRow; at += bytesPerPixel) {
+                    System.arraycopy(chunk, last, chunk, at, bytesPerPixel);
+                }
+            }
+        }
+        for (var row = copyRows; row < rows; row++) {
+            System.arraycopy(chunk, (copyRows - 1) * chunkRow, chunk, row * chunkRow, chunkRow);
+        }
+    }
+
+    /**
+     * Codes one strip or tile of 8-bit RGB or RGBA samples as a WebP file.
+     *
+     * @param chunk the interleaved samples
+     * @param width the width of the strip or tile
+     * @param rows the number of rows
+     * @param channels the samples per pixel, 3 or 4
+     * @return the WebP file
+     */
+    private byte[] webp(byte[] chunk, int width, int rows, int channels) {
+        var pixels = new byte[width * rows * 4];
+        if (channels == 4) {
+            System.arraycopy(chunk, 0, pixels, 0, pixels.length);
+        } else {
+            for (int i = 0, o = 0; o < pixels.length; i += 3, o += 4) {
+                pixels[o] = chunk[i];
+                pixels[o + 1] = chunk[i + 1];
+                pixels[o + 2] = chunk[i + 2];
+                pixels[o + 3] = (byte) 0xFF;
+            }
+        }
+        return WebpEncoder.encode(RgbaPicture.of(width, rows, width * 4, pixels, channels == 4), webpOptions);
+    }
+
+    /**
+     * Codes one strip or tile as a JPEG 2000 codestream, one component per sample.
+     *
+     * @param chunk the interleaved samples
+     * @param width the width of the strip or tile
+     * @param rows the number of rows
+     * @param page the page the samples belong to
+     * @return the codestream
+     */
+    private byte[] jpeg2000(byte[] chunk, int width, int rows, Samples page) {
+        var count = page.channels();
+        var bytes = page.bits() / 8;
+        var channels = new ArrayList<Jp2Channel>(count);
+        for (var c = 0; c < count; c++) {
+            var values = new int[width * rows];
+            for (int i = 0, at = c * bytes; i < values.length; i++, at += count * bytes) {
+                values[i] = bytes == 1 ? chunk[at] & 0xFF
+                        : little ? (chunk[at] & 0xFF) | (chunk[at + 1] & 0xFF) << 8
+                        : (chunk[at] & 0xFF) << 8 | (chunk[at + 1] & 0xFF);
+            }
+            channels.add(new Jp2Channel(0, 0, width, rows, 1, 1, page.bits(), false, Jp2ChannelType.COLOR, -1, values));
+        }
+        var image = new Jp2Image(0, 0, width, rows, width, rows, 0, channels, Jp2ColorSpace.UNSPECIFIED,
+                Optional.empty(), Optional.empty(), Optional.empty());
+        return Jp2Encoder.encode(image, jpeg2000Options);
     }
 
     /**
@@ -552,7 +796,7 @@ public final class TiffEncoder {
         java.util.Arrays.fill(bits, page.bits());
         directory.shorts(TiffTags.BITS_PER_SAMPLE, bits);
         directory.shorts(TiffTags.COMPRESSION, options.compression().code());
-        directory.shorts(TiffTags.PHOTOMETRIC, page.channels() >= 3 ? 2 : 1);
+        directory.shorts(TiffTags.PHOTOMETRIC, page.photometric());
         directory.shorts(TiffTags.SAMPLES_PER_PIXEL, page.channels());
         directory.rational(TiffTags.X_RESOLUTION, 72, 1);
         directory.rational(TiffTags.Y_RESOLUTION, 72, 1);
@@ -561,8 +805,22 @@ public final class TiffEncoder {
         if (chunks.predicted()) {
             directory.shorts(TiffTags.PREDICTOR, 2);
         }
-        if (page.alpha()) {
-            directory.shorts(TiffTags.EXTRA_SAMPLES, 2);
+        if (page.photometric() == 5) {
+            directory.shorts(TiffTags.INK_SET, page.inks() > 0 ? 2 : 1);
+            if (page.inks() > 0) {
+                directory.shorts(TiffTags.NUMBER_OF_INKS, page.inks());
+            }
+            if (page.inkNames() != null) {
+                directory.ascii(TiffTags.INK_NAMES, page.inkNames());
+            }
+        }
+        if (page.extras().length > 0) {
+            directory.shorts(TiffTags.EXTRA_SAMPLES, page.extras());
+        }
+        if (page.floating()) {
+            var formats = new int[page.channels()];
+            java.util.Arrays.fill(formats, 3);
+            directory.shorts(TiffTags.SAMPLE_FORMAT, formats);
         }
         if (chunks.tiled()) {
             directory.longs(TiffTags.TILE_WIDTH, chunks.chunkWidth());

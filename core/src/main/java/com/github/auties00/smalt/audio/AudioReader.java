@@ -223,8 +223,9 @@ public final class AudioReader implements AutoCloseable {
      * @implNote This implementation pre-rolls by {@link AudioStreamDecoder.Timing#prerollMicros()}
      * after measuring, on the first seek, how the container's timestamps map to the decoder's output.
      * When container timestamps are coarser than a sample ({@link AudioStreamDecoder.Timing#isExact()}
-     * is {@code false}), it decodes from the start of the track and drops the samples before
-     * {@code micros}.
+     * is {@code false}), for AAC Main, LTP and LD, whose prediction state reaches back to the start
+     * of the stream, and for AAC-ELD with low delay spectral band replication, it decodes from the
+     * start of the track and drops the samples before {@code micros}.
      * @param micros the presentation time, in microseconds
      * @throws MediaException.Malformed if the index needed to seek is corrupt
      * @throws MediaException.Unsupported if the container cannot seek ({@link #isSeekable()} is

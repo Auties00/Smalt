@@ -1,6 +1,11 @@
 package com.github.auties00.smalt.internal.heif;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.io.FourCc;
 
 /**
@@ -56,5 +61,199 @@ public record HeifOverlay(int[] fill, long outputWidth, long outputHeight, long[
             throw new MediaException.Malformed("heif: image overlay canvas is " + width + "x" + height);
         }
         return new HeifOverlay(fill, width, height, offsetsX, offsetsY);
+    }
+
+    /**
+     * Starts the composition of this overlay on a canvas filled with its fill color.
+     *
+     * <p>The canvas starts at 8 bits, holding the fill reduced as {@code (v * 255 + 32767) / 65535}.
+     * When {@code deep} is set, the first input of more than 8 bits turns it into a 16-bit canvas:
+     * the pixels no input has changed take the exact 16-bit fill and the others are widened as
+     * {@code v * 257}, and every later input is drawn at 16 bits. A composition whose inputs all
+     * have 8 bits is therefore the same whether {@code deep} is set or not. The caller has checked
+     * the canvas size against its limits: 4 bytes per pixel, or 12 when {@code deep} is set, since
+     * the 8-bit canvas and the 16-bit one coexist while the canvas is promoted.
+     *
+     * @param width the canvas width, {@code outputWidth} checked to fit an int
+     * @param height the canvas height, {@code outputHeight} checked to fit an int
+     * @param deep whether inputs of more than 8 bits keep their depth
+     * @return the composition
+     */
+    public Composition compose(int width, int height, boolean deep) {
+        return new Composition(fill, width, height, deep);
+    }
+
+    /**
+     * Draws the inputs of an overlay over its canvas, in packed straight-alpha RGBA. Instances are
+     * not thread-safe.
+     *
+     * <p>An input that reports no alpha replaces the canvas pixels it covers with opaque ones; an
+     * input with alpha is blended over them with the source-over operator in straight alpha, every
+     * result rounded once at the canvas depth. Only the part of an input that overlaps the canvas
+     * is drawn.
+     */
+    public static final class Composition {
+        private final int[] fill;
+        private final long[] touched;
+        private RgbaPicture canvas8;
+        private Rgba16Picture canvas16;
+
+        /**
+         * Constructs a composition.
+         *
+         * @param fill the 16-bit fill
+         * @param width the canvas width
+         * @param height the canvas height
+         * @param deep whether inputs of more than 8 bits keep their depth
+         */
+        private Composition(int[] fill, int width, int height, boolean deep) {
+            this.fill = fill;
+            this.canvas8 = RgbaPicture.allocate(width, height, true);
+            this.touched = deep ? new long[(int) ((long) width * height + 63 >>> 6)] : null;
+            var pixels = canvas8.pixels();
+            var bytes = new byte[4];
+            for (var c = 0; c < 4; c++) {
+                bytes[c] = (byte) ((fill[c] * 255 + 32767) / 65535);
+            }
+            for (var offset = 0; offset < pixels.length; offset += 4) {
+                System.arraycopy(bytes, 0, pixels, offset, 4);
+            }
+        }
+
+        /**
+         * Draws one input over the canvas.
+         *
+         * @param input the input picture, of any representation; a 16-bit input on a canvas that does not keep
+         * the depth is reduced with {@link ImageOps#toRgba(Picture)}
+         * @param left the canvas column of the input's left edge
+         * @param top the canvas row of the input's top edge
+         */
+        public void draw(Picture input, long left, long top) {
+            var deepInput = input instanceof Yuv16Picture || input instanceof Rgba16Picture;
+            if (canvas16 == null && touched != null && deepInput) {
+                promote();
+            }
+            if (canvas16 != null) {
+                var packed = deepInput ? ImageOps.toRgba16(input) : ImageOps.toSixteenBit(ImageOps.toRgba(input));
+                draw(canvas16, packed, left, top);
+            } else {
+                draw(canvas8, ImageOps.toRgba(input), left, top, touched);
+            }
+        }
+
+        /**
+         * Returns the composed canvas.
+         *
+         * @return an {@link Rgba16Picture} when an input of more than 8 bits kept its depth, otherwise an
+         * {@link RgbaPicture}
+         */
+        public Picture result() {
+            return canvas16 != null ? canvas16 : canvas8;
+        }
+
+        /**
+         * Turns the 8-bit canvas into a 16-bit one, which replaces it: the exact fill where no
+         * input has changed a pixel, the widened 8-bit pixel elsewhere.
+         */
+        private void promote() {
+            var width = canvas8.width();
+            var height = canvas8.height();
+            canvas16 = Rgba16Picture.allocate(width, height, true);
+            var src = canvas8.pixels();
+            var dst = canvas16.pixels();
+            for (var i = 0; i < width * height; i++) {
+                var changed = (touched[i >>> 6] & (1L << i)) != 0;
+                for (var c = 0; c < 4; c++) {
+                    dst[4 * i + c] = (short) (changed ? (src[4 * i + c] & 0xFF) * 257 : fill[c]);
+                }
+            }
+            canvas8 = null;
+        }
+
+        /**
+         * Draws an 8-bit picture over an 8-bit canvas.
+         *
+         * @param canvas the canvas, drawn on
+         * @param picture the input, packed at the canvas depth
+         * @param left the canvas column of the picture's left edge
+         * @param top the canvas row of the picture's top edge
+         * @param touched the set of changed canvas pixels, one bit per pixel in raster order, or
+         * {@code null} when not tracked
+         */
+        private static void draw(RgbaPicture canvas, RgbaPicture picture, long left, long top, long[] touched) {
+            var x0 = (int) Math.clamp(left, 0, canvas.width());
+            var y0 = (int) Math.clamp(top, 0, canvas.height());
+            var x1 = (int) Math.clamp(left + picture.width(), 0, canvas.width());
+            var y1 = (int) Math.clamp(top + picture.height(), 0, canvas.height());
+            var dst = canvas.pixels();
+            var src = picture.pixels();
+            for (var y = y0; y < y1; y++) {
+                var in = (int) (y - top) * picture.stride() + (int) (x0 - left) * 4;
+                var out = y * canvas.stride() + x0 * 4;
+                for (var x = x0; x < x1; x++, in += 4, out += 4) {
+                    var alpha = picture.hasAlpha() ? src[in + 3] & 0xFF : 255;
+                    if (alpha == 0) {
+                        continue;
+                    }
+                    if (touched != null) {
+                        var index = y * canvas.width() + x;
+                        touched[index >>> 6] |= 1L << index;
+                    }
+                    if (alpha == 255) {
+                        System.arraycopy(src, in, dst, out, 3);
+                        dst[out + 3] = (byte) 255;
+                        continue;
+                    }
+                    var below = dst[out + 3] & 0xFF;
+                    var coverage = alpha * 255 + below * (255 - alpha);
+                    for (var c = 0; c < 3; c++) {
+                        var value = ((src[in + c] & 0xFF) * alpha * 255 + (dst[out + c] & 0xFF) * below * (255 - alpha)
+                                + coverage / 2) / coverage;
+                        dst[out + c] = (byte) value;
+                    }
+                    dst[out + 3] = (byte) ((coverage + 127) / 255);
+                }
+            }
+        }
+
+        /**
+         * Draws a 16-bit picture over a 16-bit canvas.
+         *
+         * @param canvas the canvas, drawn on
+         * @param picture the input, packed at the canvas depth
+         * @param left the canvas column of the picture's left edge
+         * @param top the canvas row of the picture's top edge
+         */
+        private static void draw(Rgba16Picture canvas, Rgba16Picture picture, long left, long top) {
+            var x0 = (int) Math.clamp(left, 0, canvas.width());
+            var y0 = (int) Math.clamp(top, 0, canvas.height());
+            var x1 = (int) Math.clamp(left + picture.width(), 0, canvas.width());
+            var y1 = (int) Math.clamp(top + picture.height(), 0, canvas.height());
+            var dst = canvas.pixels();
+            var src = picture.pixels();
+            for (var y = y0; y < y1; y++) {
+                var in = (int) (y - top) * picture.stride() + (int) (x0 - left) * 4;
+                var out = y * canvas.stride() + x0 * 4;
+                for (var x = x0; x < x1; x++, in += 4, out += 4) {
+                    long alpha = picture.hasAlpha() ? src[in + 3] & 0xFFFF : 0xFFFF;
+                    if (alpha == 0) {
+                        continue;
+                    }
+                    if (alpha == 0xFFFF) {
+                        System.arraycopy(src, in, dst, out, 3);
+                        dst[out + 3] = (short) 0xFFFF;
+                        continue;
+                    }
+                    long below = dst[out + 3] & 0xFFFF;
+                    var coverage = alpha * 0xFFFF + below * (0xFFFF - alpha);
+                    for (var c = 0; c < 3; c++) {
+                        var value = ((src[in + c] & 0xFFFF) * alpha * 0xFFFF
+                                + (dst[out + c] & 0xFFFF) * below * (0xFFFF - alpha) + coverage / 2) / coverage;
+                        dst[out + c] = (short) value;
+                    }
+                    dst[out + 3] = (short) ((coverage + 0x7FFF) / 0xFFFF);
+                }
+            }
+        }
     }
 }

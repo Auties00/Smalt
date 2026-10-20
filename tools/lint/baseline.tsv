@@ -3,11 +3,8 @@ implnote-start	image/src/main/java/com/github/auties00/smalt/image/webp/internal
 implnote-start	image/src/main/java/com/github/auties00/smalt/image/webp/internal/lossless/VectorLosslessDsp.java	1
 param-restates-name	audio/src/main/java/com/github/auties00/smalt/audio/vorbis/internal/PowerSpectrum.java	1
 param-restates-name	audio/src/main/java/com/github/auties00/smalt/audio/vorbis/internal/Psy.java	2
-param-restates-name	core/src/main/java/com/github/auties00/smalt/audio/AudioDecoders.java	2
 param-restates-name	core/src/main/java/com/github/auties00/smalt/audio/AudioEncoders.java	2
-param-restates-name	core/src/main/java/com/github/auties00/smalt/audio/loudness/LoudnessMeter.java	6
 param-restates-name	core/src/main/java/com/github/auties00/smalt/audio/loudness/VectorLoudnessKernels.java	1
-param-restates-name	core/src/main/java/com/github/auties00/smalt/audio/process/ChannelMixer.java	2
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/header/MpegAudioHeader.java	17
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/ArrayBacked.java	1
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/ForwardOnlySource.java	4
@@ -40,5 +37,4 @@ param-restates-name	image/src/main/java/com/github/auties00/smalt/image/webp/int
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/webp/internal/lossless/VectorLosslessDsp.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/webp/internal/lossless/Vp8lEncoder.java	13
 ports-header	core/src/main/java/com/github/auties00/smalt/container/ogg	1
-return-restates	core/src/main/java/com/github/auties00/smalt/audio/loudness/LoudnessMeter.java	1
 return-restates	image/src/main/java/com/github/auties00/smalt/image/metadata/IptcData.java	2

@@ -125,11 +125,29 @@ public final class Repacketizer {
      * @return the packet length, or a negative error code
      */
     public int outRange(int begin, int end, byte[] data, int off, int maxlen, boolean pad) {
+        return outRange(begin, end, data, off, maxlen, false, pad);
+    }
+
+    /**
+     * Writes frames {@code [begin, end)} as one packet, optionally in the self-delimited framing of
+     * RFC 6716 appendix B that every stream of a multistream packet but the last uses
+     * ({@code opus_repacketizer_out_range_impl}).
+     *
+     * @param begin         the first frame
+     * @param end           one past the last frame
+     * @param data          the output buffer, which may hold the input frames when padding in place
+     * @param off           the index of the first output byte
+     * @param maxlen        the space available
+     * @param selfDelimited whether to code the length of the last frame
+     * @param pad           whether to pad the packet to exactly {@code maxlen} bytes
+     * @return the packet length, or a negative error code
+     */
+    public int outRange(int begin, int end, byte[] data, int off, int maxlen, boolean selfDelimited, boolean pad) {
         if (begin < 0 || begin >= end || end > nb_frames) {
             return OPUS_BAD_ARG;
         }
         var count = end - begin;
-        var tot_size = 0;
+        var tot_size = selfDelimited ? 1 + (len[end - 1] >= 252 ? 1 : 0) : 0;
         var ptr = off;
         var ones_begin = 0;
         var ones_end = 0;
@@ -157,7 +175,7 @@ public final class Repacketizer {
         }
         if (count > 2 || (pad && tot_size < maxlen)) {
             ptr = off;
-            tot_size = 0;
+            tot_size = selfDelimited ? 1 + (len[end - 1] >= 252 ? 1 : 0) : 0;
             var vbr = false;
             for (var i = 1; i < count; i++) {
                 if (len[begin + i] != len[begin]) {
@@ -204,6 +222,9 @@ public final class Repacketizer {
                     ptr += OpusPacket.encodeSize(len[begin + i], data, ptr);
                 }
             }
+        }
+        if (selfDelimited) {
+            ptr += OpusPacket.encodeSize(len[end - 1], data, ptr);
         }
         for (var i = 0; i < count; i++) {
             System.arraycopy(frameData[begin + i], frames[begin + i], data, ptr, len[begin + i]);

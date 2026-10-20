@@ -12,21 +12,24 @@ import java.util.Objects;
  * {@link #builder()} or a preset such as {@link #defaults()}.
  */
 public final class ImageDecoderOptions {
-    private static final ImageDecoderOptions DEFAULTS = new ImageDecoderOptions(MediaLimits.DEFAULT, 0, 0, false, false);
+    private static final ImageDecoderOptions DEFAULTS = new ImageDecoderOptions(MediaLimits.DEFAULT, 0, 0, false, false,
+            false);
 
     private final MediaLimits limits;
     private final int minWidth;
     private final int minHeight;
     private final boolean highBitDepth;
     private final boolean convertToSrgb;
+    private final boolean keepChannels;
 
     private ImageDecoderOptions(MediaLimits limits, int minWidth, int minHeight, boolean highBitDepth,
-                                boolean convertToSrgb) {
+                                boolean convertToSrgb, boolean keepChannels) {
         this.limits = limits;
         this.minWidth = minWidth;
         this.minHeight = minHeight;
         this.highBitDepth = highBitDepth;
         this.convertToSrgb = convertToSrgb;
+        this.keepChannels = keepChannels;
     }
 
     /**
@@ -108,9 +111,11 @@ public final class ImageDecoderOptions {
      * <ul>
      *   <li>PNG (16-bit images), JPEG 2000, JPEG XL, TIFF and camera raw files decode to
      *       {@link Rgba16Picture}s;</li>
-     *   <li>lossless JPEG (SOF3) of 9 to 16 bits decodes gray and YCbCr images to {@link Yuv16Picture}s
-     *       and RGB images to {@code Rgba16Picture}s, and still reduces CMYK images;</li>
-     *   <li>HEIC and AVIF decode to {@code Yuv16Picture}s.</li>
+     *   <li>12-bit JPEG and lossless JPEG (SOF3) of 9 to 16 bits decode gray and YCbCr images to
+     *       {@link Yuv16Picture}s and RGB images to {@code Rgba16Picture}s, and still reduce CMYK and
+     *       YCCK images;</li>
+     *   <li>HEIC and AVIF decode to {@code Yuv16Picture}s, or to {@code Rgba16Picture}s for overlays and
+     *       premultiplied images, and their animation readers return {@code Rgba16Picture} frames.</li>
      * </ul>
      * <p>The other formats always decode to 8 bits. Sources of 8 bits or fewer are unaffected.
      */
@@ -135,6 +140,29 @@ public final class ImageDecoderOptions {
         return convertToSrgb;
     }
 
+    /**
+     * {@return whether decoders return the samples a packed RGBA or planar Y'CbCr picture cannot hold in a
+     * {@link ChannelPicture}; {@code false} by default}
+     *
+     * <p>When {@code false}, such sources are converted to RGBA as each decoder documents. When {@code true},
+     * these decoders return them in their stored color model instead:
+     * <ul>
+     *   <li>JPEG stored as CMYK or YCCK decodes to a CMYK {@link Channel8Picture}, and lossless CMYK of more
+     *       than 8 bits to a {@link Channel16Picture} when {@link #highBitDepth()} is also set;</li>
+     *   <li>TIFF decodes CMYK and multi-ink separations, floating-point samples, and pages with extra samples
+     *       other than one alpha channel to a channel picture, of 8 or 16 bits as {@link #highBitDepth()}
+     *       selects for integer samples, and a {@link ChannelFloatPicture} for floating-point ones;</li>
+     *   <li>JPEG XL decodes CMYK images, floating-point images, and images with extra channels other than
+     *       one alpha channel to a channel picture likewise.</li>
+     * </ul>
+     * <p>The decoded image of a channel picture keeps its embedded profile in
+     * {@link DecodedImage#colorProfile()}, which describes the color channels. Other sources are unaffected,
+     * and {@link #convertToSrgb()}, when also set, takes precedence.
+     */
+    public boolean keepChannels() {
+        return keepChannels;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof ImageDecoderOptions that
@@ -142,18 +170,20 @@ public final class ImageDecoderOptions {
                 && minWidth == that.minWidth
                 && minHeight == that.minHeight
                 && highBitDepth == that.highBitDepth
-                && convertToSrgb == that.convertToSrgb;
+                && convertToSrgb == that.convertToSrgb
+                && keepChannels == that.keepChannels;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, minWidth, minHeight, highBitDepth, convertToSrgb);
+        return Objects.hash(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels);
     }
 
     @Override
     public String toString() {
         return "ImageDecoderOptions[limits=" + limits + ", minWidth=" + minWidth + ", minHeight=" + minHeight
-                + ", highBitDepth=" + highBitDepth + ", convertToSrgb=" + convertToSrgb + "]";
+                + ", highBitDepth=" + highBitDepth + ", convertToSrgb=" + convertToSrgb
+                + ", keepChannels=" + keepChannels + "]";
     }
 
     /**
@@ -168,6 +198,7 @@ public final class ImageDecoderOptions {
         private int minHeight;
         private boolean highBitDepth;
         private boolean convertToSrgb;
+        private boolean keepChannels;
 
         private Builder(ImageDecoderOptions options) {
             this.limits = options.limits;
@@ -175,6 +206,7 @@ public final class ImageDecoderOptions {
             this.minHeight = options.minHeight;
             this.highBitDepth = options.highBitDepth;
             this.convertToSrgb = options.convertToSrgb;
+            this.keepChannels = options.keepChannels;
         }
 
         /**
@@ -237,6 +269,18 @@ public final class ImageDecoderOptions {
         }
 
         /**
+         * Sets whether samples RGBA and Y'CbCr pictures cannot hold are kept in channel pictures; see
+         * {@link ImageDecoderOptions#keepChannels()}.
+         *
+         * @param keepChannels the value
+         * @return this builder
+         */
+        public Builder keepChannels(boolean keepChannels) {
+            this.keepChannels = keepChannels;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -245,7 +289,7 @@ public final class ImageDecoderOptions {
         public ImageDecoderOptions build() {
             Checks.nonNegative("minimum width", minWidth);
             Checks.nonNegative("minimum height", minHeight);
-            return new ImageDecoderOptions(limits, minWidth, minHeight, highBitDepth, convertToSrgb);
+            return new ImageDecoderOptions(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels);
         }
     }
 }

@@ -69,7 +69,12 @@ import java.util.Objects;
  * end at the next top-level element. The default edition of {@code Chapters} becomes
  * {@link #chapters()}, and attachments whose media type is an image become
  * {@link #attachedPictures()} (a file named like {@code cover.jpg} as the front cover). Track
- * names and the tags that target one track become {@link #trackMetadata(int)}.
+ * names and the tags that target one track become {@link #trackMetadata(int)}. A video track's
+ * {@code DisplayWidth} and {@code DisplayHeight}, against its pixel size after the
+ * {@code PixelCrop} elements and in any known {@code DisplayUnit}, give its sample aspect ratio,
+ * and {@code FlagInterlaced} with {@code FieldOrder} its scan
+ * ({@link VideoTrack#sampleAspectRatio()},
+ * {@link VideoTrack#interlacing()}).
  *
  * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the
  * first video track (of any track when there is no video) name the cluster holding the last key

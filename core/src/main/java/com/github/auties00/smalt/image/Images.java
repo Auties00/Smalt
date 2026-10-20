@@ -233,10 +233,12 @@ public final class Images {
      *
      * <p>GIF, APNG and animated WebP files yield their frames; every other decodable image yields a
      * single frame, shown for zero microseconds and played once, so callers that build animations
-     * can accept still images too.
+     * can accept still images too. Frames are {@link RgbaPicture}s, except that the AVIF and HEIC
+     * readers return {@link Rgba16Picture}s for sources deeper than 8 bits under
+     * {@link ImageDecoderOptions#highBitDepth()}.
      *
      * @param source  the input
-     * @param options the limits; the reduced-size hint is ignored
+     * @param options the limits and the bit depth choice; the reduced-size hint is ignored
      * @return the reader, which the caller closes
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Unsupported   if the format is unknown or not decodable

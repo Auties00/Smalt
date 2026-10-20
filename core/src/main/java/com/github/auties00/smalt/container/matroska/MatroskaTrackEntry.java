@@ -20,10 +20,12 @@ import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -141,6 +143,37 @@ final class MatroskaTrackEntry {
     long pixelHeight;
 
     /**
+     * The {@code PixelCropTop}, {@code PixelCropBottom}, {@code PixelCropLeft} and
+     * {@code PixelCropRight}, in that order.
+     */
+    final long[] pixelCrop = new long[4];
+
+    /**
+     * The {@code DisplayWidth}, or {@code 0} when absent.
+     */
+    long displayWidth;
+
+    /**
+     * The {@code DisplayHeight}, or {@code 0} when absent.
+     */
+    long displayHeight;
+
+    /**
+     * The {@code DisplayUnit}: 0 pixels, 1 centimeters, 2 inches, 3 display aspect ratio, 4 unknown.
+     */
+    long displayUnit;
+
+    /**
+     * The {@code FlagInterlaced}: 0 undetermined, 1 interlaced, 2 progressive.
+     */
+    long flagInterlaced;
+
+    /**
+     * The {@code FieldOrder}, 2 (undetermined) unless declared.
+     */
+    long fieldOrder = 2;
+
+    /**
      * The color description of the {@code Color} element, or {@code null}.
      */
     ColorInfo color;
@@ -241,13 +274,21 @@ final class MatroskaTrackEntry {
      * @param video the element data
      */
     private void parseVideo(EbmlCursor video) {
-        // TODO: read DisplayWidth and DisplayHeight (the display aspect ratio) once VideoTrack can carry it
         while (video.hasMore()) {
             var element = video.next();
             var body = element.payload();
             switch ((int) element.id()) {
                 case EbmlIds.PIXEL_WIDTH -> pixelWidth = body.unsigned();
                 case EbmlIds.PIXEL_HEIGHT -> pixelHeight = body.unsigned();
+                case EbmlIds.PIXEL_CROP_TOP -> pixelCrop[0] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_BOTTOM -> pixelCrop[1] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_LEFT -> pixelCrop[2] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_RIGHT -> pixelCrop[3] = body.unsigned();
+                case EbmlIds.DISPLAY_WIDTH -> displayWidth = body.unsigned();
+                case EbmlIds.DISPLAY_HEIGHT -> displayHeight = body.unsigned();
+                case EbmlIds.DISPLAY_UNIT -> displayUnit = body.unsigned();
+                case EbmlIds.FLAG_INTERLACED -> flagInterlaced = body.unsigned();
+                case EbmlIds.FIELD_ORDER -> fieldOrder = body.unsigned();
                 case EbmlIds.COLOR -> color = parseColor(body);
                 case EbmlIds.PROJECTION -> {
                     while (body.hasMore()) {
@@ -265,6 +306,55 @@ final class MatroskaTrackEntry {
                 }
             }
         }
+    }
+
+    /**
+     * Returns the sample aspect ratio the display size declares (RFC 9559 section 5.1.4.1.28.12 to
+     * 5.1.4.1.28.14): the display size divided by the pixel size after the {@code PixelCrop}
+     * elements, whatever the unit of a known {@code DisplayUnit}.
+     *
+     * @return the ratio in lowest terms, or {@code null} when neither display dimension is declared, the unit is
+     * unknown, a dimension is zero or the crop leaves no picture
+     */
+    Rational sampleAspect() {
+        if ((displayWidth == 0 && displayHeight == 0) || displayUnit > 3) {
+            return null;
+        }
+        var width = pixelWidth - pixelCrop[2] - pixelCrop[3];
+        var height = pixelHeight - pixelCrop[0] - pixelCrop[1];
+        if (pixelWidth <= 0 || pixelHeight <= 0 || width <= 0 || height <= 0 || width > pixelWidth
+                || height > pixelHeight) {
+            return null;
+        }
+        var shownWidth = displayWidth != 0 ? displayWidth : displayUnit == 0 ? width : 0;
+        var shownHeight = displayHeight != 0 ? displayHeight : displayUnit == 0 ? height : 0;
+        if (shownWidth <= 0 || shownHeight <= 0) {
+            return null;
+        }
+        var numerator = BigInteger.valueOf(shownWidth).multiply(BigInteger.valueOf(height));
+        var denominator = BigInteger.valueOf(shownHeight).multiply(BigInteger.valueOf(width));
+        var gcd = numerator.gcd(denominator);
+        numerator = numerator.divide(gcd);
+        denominator = denominator.divide(gcd);
+        if (numerator.bitLength() > 63 || denominator.bitLength() > 63) {
+            return null;
+        }
+        return new Rational(numerator.longValue(), denominator.longValue());
+    }
+
+    /**
+     * Returns the scan {@code FlagInterlaced} and {@code FieldOrder} declare.
+     *
+     * @return the scan, or {@code null} when {@code FlagInterlaced} is undetermined or unknown
+     */
+    Interlacing interlacing() {
+        if (flagInterlaced == 2) {
+            return Interlacing.PROGRESSIVE;
+        }
+        if (flagInterlaced != 1) {
+            return null;
+        }
+        return fieldOrder == 0 ? Interlacing.INTERLACED : Interlacing.ofCode(fieldOrder);
     }
 
     /**
@@ -500,7 +590,7 @@ final class MatroskaTrackEntry {
                 LimitChecks.checkPicture(limits, width, height);
             }
             var frameRate = defaultDuration > 0 ? Optional.of(new Rational(1_000_000_000L, defaultDuration).reduce()) : Optional.<Rational>empty();
-            return VideoTrack.builder().id(id).codec(codec).timeBase(timeBase)
+            var builder = VideoTrack.builder().id(id).codec(codec).timeBase(timeBase)
                     .duration(duration(segmentBase, segmentDuration))
                     .codecConfig(config)
                     .language(lang.orElse(null))
@@ -508,8 +598,16 @@ final class MatroskaTrackEntry {
                     .height(height)
                     .frameRate(frameRate.orElse(null))
                     .color(color)
-                    .orientation(orientation)
-                    .build();
+                    .orientation(orientation);
+            var aspect = sampleAspect();
+            if (aspect != null) {
+                builder.sampleAspectRatio(aspect);
+            }
+            var scan = interlacing();
+            if (scan != null) {
+                builder.interlacing(scan);
+            }
+            return builder.build();
         }
         if (type == TYPE_AUDIO || codecId.startsWith("A_")) {
             var config = codecPrivate;
@@ -526,6 +624,8 @@ final class MatroskaTrackEntry {
                 case "A_PCM/FLOAT/IEEE" -> bits == 64 ? Codec.PCM_F64LE : bits == 32 ? Codec.PCM_F32LE : Codec.UNKNOWN_AUDIO;
                 case "A_AC3", "A_AC3/BSID9", "A_AC3/BSID10" -> Codec.AC3;
                 case "A_EAC3" -> Codec.EAC3;
+                case "A_DTS", "A_DTS/EXPRESS", "A_DTS/LOSSLESS" -> Codec.DTS;
+                case "A_TRUEHD" -> Codec.TRUEHD;
                 case "A_ALAC" -> Codec.ALAC;
                 case "A_AMR/NB" -> Codec.AMR_NB;
                 case "A_AMR/WB" -> Codec.AMR_WB;
@@ -622,6 +722,7 @@ final class MatroskaTrackEntry {
             case 16 -> littleEndian ? Codec.PCM_S16LE : Codec.PCM_S16BE;
             case 24 -> littleEndian ? Codec.PCM_S24LE : Codec.PCM_S24BE;
             case 32 -> littleEndian ? Codec.PCM_S32LE : Codec.PCM_S32BE;
+            case 64 -> littleEndian ? Codec.PCM_S64LE : Codec.PCM_S64BE;
             default -> Codec.UNKNOWN_AUDIO;
         };
     }
@@ -640,7 +741,7 @@ final class MatroskaTrackEntry {
             case "H264", "X264", "AVC1", "DAVC" -> Codec.H264;
             case "HEVC", "H265", "HVC1" -> Codec.HEVC;
             case "XVID", "DIVX", "DX50", "FMP4", "MP4V" -> Codec.MPEG4_PART2;
-            case "MJPG" -> Codec.MJPEG;
+            case "MJPG", "AVRN", "LJPG", "JPGL", "AVDJ", "DMB1" -> Codec.MJPEG;
             case "H263", "S263" -> Codec.H263;
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
@@ -677,7 +778,7 @@ final class MatroskaTrackEntry {
             return Codec.UNKNOWN_AUDIO;
         }
         var format = WaveFormat.parse(codecPrivate, codecPrivate.length, false);
-        return WaveFormat.codec(format.tag(), format.bitsPerSample());
+        return format.codec();
     }
 
     /**

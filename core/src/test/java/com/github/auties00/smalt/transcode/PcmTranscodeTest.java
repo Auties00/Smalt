@@ -231,9 +231,14 @@ class PcmTranscodeTest {
                     TranscodeOptions.of(OutputContainer.OGG)));
             assertEquals("smalt-audio", opus.artifact().orElseThrow());
             var aac = assertThrows(MediaException.Unsupported.class, () -> Transcoder.transcode(MediaSource.of(wav()), output,
-                    TranscodeOptions.of(OutputContainer.M4A)));
+                    TranscodeOptions.of(OutputContainer.ADTS)));
             assertEquals("smalt-mpeg", aac.artifact().orElseThrow());
             assertEquals(0, output.toByteArray().length);
+            // M4A carries PCM, so the default policy copies it instead of needing an AAC encoder
+            var m4a = MediaSink.memory();
+            var copied = Transcoder.transcode(MediaSource.of(wav()), m4a, TranscodeOptions.of(OutputContainer.M4A));
+            assertTrue(copied.remuxed());
+            assertEquals(Codec.PCM_S16LE, copied.streams().getFirst().track().codec());
         }
 
         @Test

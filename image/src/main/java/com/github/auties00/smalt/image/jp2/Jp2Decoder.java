@@ -162,7 +162,7 @@ public final class Jp2Decoder {
                 var exif = image.exif();
                 var orientation = exif.isEmpty() ? Orientation.NORMAL : ExifReader.orientation(exif.get());
                 var decoded = new DecodedImage(picture, ImageFormat.JP2, orientation, image.fullWidth(),
-                        image.fullHeight(), image.iccProfile(), exif, profile(image));
+                        image.fullHeight(), image.iccProfile(), exif, image.xmp(), profile(image));
                 return options.convertToSrgb() ? ImageOps.toSrgb(decoded) : decoded;
             });
         }

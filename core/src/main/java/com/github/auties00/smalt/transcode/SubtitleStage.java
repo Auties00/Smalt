@@ -10,6 +10,9 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
+import java.util.HashSet;
+import java.util.Set;
+
 /**
  * Copies or converts one text subtitle track.
  *
@@ -20,6 +23,10 @@ import com.github.auties00.smalt.track.Track;
  * pieces of cues an MP4 track split, cuts the cue to the kept range in the same way, and encodes
  * it for the output codec ({@link SubtitleEncoder}); a WebVTT or ASS track converted to the same
  * codec keeps its header.
+ *
+ * <p>After the transcode seeks to a trimmed start, the stage is first {@linkplain #prime(Packet) primed}
+ * with the packets that start before the range, read from the start of the input; the packets the
+ * seeked demuxer delivers again are then ignored.
  *
  * <p>An instance is not thread-safe.
  */
@@ -70,6 +77,11 @@ final class SubtitleStage implements Stage {
     private boolean done;
 
     /**
+     * The timestamps, in the source time base, of the packets {@link #prime(Packet)} received.
+     */
+    private final Set<Long> primed = new HashSet<>();
+
+    /**
      * Constructs a stage and declares its output track.
      *
      * @param source the input track, whose codec is a text subtitle codec
@@ -115,6 +127,39 @@ final class SubtitleStage implements Stage {
 
     @Override
     public void accept(Packet packet) {
+        if (!primed.isEmpty() && primed.contains(time(packet))) {
+            return;
+        }
+        process(packet);
+    }
+
+    /**
+     * Processes a packet that starts before the kept range and was read ahead of the seek point,
+     * so that a packet with the same timestamp from the seeked demuxer is ignored.
+     *
+     * @param packet a packet of the input track
+     */
+    void prime(Packet packet) {
+        primed.add(time(packet));
+        process(packet);
+    }
+
+    /**
+     * {@return the timestamp of a packet in the source time base: its presentation time, else its
+     * decoding time, else {@link Packet#NO_TIMESTAMP}}
+     *
+     * @param packet a packet of the input track
+     */
+    private static long time(Packet packet) {
+        return packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
+    }
+
+    /**
+     * Copies or decodes a packet.
+     *
+     * @param packet a packet of the input track
+     */
+    private void process(Packet packet) {
         if (done) {
             return;
         }
@@ -140,7 +185,7 @@ final class SubtitleStage implements Stage {
      */
     private void copyPacket(Packet packet) {
         var timeBase = source.timeBase();
-        var time = packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
+        var time = time(packet);
         if (time == Packet.NO_TIMESTAMP) {
             return;
         }

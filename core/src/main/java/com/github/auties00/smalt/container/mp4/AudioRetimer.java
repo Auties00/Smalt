@@ -1,17 +1,22 @@
 package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.codec.Ac3Configs;
+import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 
 /**
- * Converts the timestamps of an audio track whose stored timestamps were rounded to a coarse time
- * base (Matroska block timestamps, a millisecond by default) into exact sample counts.
+ * Converts the timestamps of an audio track whose stored timestamps were rounded to a time base
+ * other than its sampling rate (Matroska block timestamps, a millisecond by default; the 90 kHz
+ * clock of a transport stream; the chunk timing of AVI) into exact sample counts.
  *
  * <p>Each packet's duration is read from its bitstream when the codec has self-describing frames
- * (AAC frame length, Opus TOC, MPEG audio header, FLAC block size, ALAC frame length); the
+ * (AAC frame length, Opus TOC, MPEG audio header, FLAC block size, ALAC frame length, the blocks
+ * of AC-3 and E-AC-3 sync frames, the AMR frames of a storage-format packet, the frames of PCM); the
  * timestamps then advance by exactly those durations, and a stored timestamp is honored only
  * when it departs from the running count by more than {@value #TOLERANCE_MILLIS} ms (a gap in
  * the stream). Packets whose stored timestamp would move backwards keep the running count, so the
@@ -51,6 +56,11 @@ final class AudioRetimer {
     private final int alacFrameLength;
 
     /**
+     * The size of one frame of a PCM track, or {@code 0} for other codecs.
+     */
+    private final int pcmFrameBytes;
+
+    /**
      * The disagreement treated as rounding, in samples.
      */
     private final long tolerance;
@@ -87,6 +97,8 @@ final class AudioRetimer {
         }
         this.aac = parsedAac;
         this.alacFrameLength = Math.max(alac, 0);
+        this.pcmFrameBytes = track.codec().isPcm() && track.layout().isPresent()
+                ? track.layout().get().channels() * (track.codec().pcmBitsPerSample().orElseThrow() / 8) : 0;
     }
 
     /**
@@ -143,7 +155,20 @@ final class AudioRetimer {
             }
             case FLAC -> AudioConfigs.flacFrameSamples(data);
             case ALAC -> alacFrameLength;
-            default -> 0;
+            case AC3, EAC3 -> {
+                var stream = Ac3Configs.describe(data, 0, data.length);
+                yield stream == null || stream.sampleRate() <= 0 ? 0 : (long) stream.samples() * rate / stream.sampleRate();
+            }
+            case AMR_NB, AMR_WB -> {
+                var wideband = track.codec() == Codec.AMR_WB;
+                var frames = 0L;
+                for (var position = 0; position < data.length; frames++) {
+                    position += 1 + AmrConfigs.payloadSize(wideband, (data[position] >> 3) & 0x0F);
+                }
+                yield frames * (wideband ? 320 : 160) * rate / (wideband ? 16000 : 8000);
+            }
+            default -> pcmFrameBytes > 0 && track.sampleRate() > 0
+                    ? (long) (data.length / pcmFrameBytes) * rate / track.sampleRate() : 0;
         };
     }
 }

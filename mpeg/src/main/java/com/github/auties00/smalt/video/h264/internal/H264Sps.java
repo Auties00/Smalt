@@ -294,7 +294,7 @@ public final class H264Sps {
             }
             sps.bitDepthLuma = 8 + reader.readUe();
             sps.bitDepthChroma = 8 + reader.readUe();
-            if (sps.bitDepthLuma > 14 || sps.bitDepthChroma > 14) {
+            if (sps.bitDepthLuma < 8 || sps.bitDepthLuma > 14 || sps.bitDepthChroma < 8 || sps.bitDepthChroma > 14) {
                 throw new MediaException.Malformed("bit depth out of range");
             }
             sps.transformBypass = reader.readFlag();
@@ -495,6 +495,28 @@ public final class H264Sps {
             1, 1, 12, 11, 10, 11, 16, 11, 40, 33, 24, 11, 20, 11, 32, 11, 80, 33, 18, 11, 15, 11, 64, 33,
             160, 99, 4, 3, 3, 2, 2, 1
     };
+
+    /**
+     * Returns the width term of the sample aspect ratio of an {@code aspect_ratio_idc} of H.264
+     * Table E-1, which H.265 Table E.1 repeats.
+     *
+     * @param idc the {@code aspect_ratio_idc}
+     * @return the width term, or 0 for 0 (unspecified), 255 ({@code Extended_SAR}) and the reserved values
+     */
+    public static int aspectWidthOf(int idc) {
+        return idc > 0 && idc <= SAR.length / 2 ? SAR[(idc - 1) * 2] : 0;
+    }
+
+    /**
+     * Returns the height term of the sample aspect ratio of an {@code aspect_ratio_idc}; see
+     * {@link #aspectWidthOf(int)}.
+     *
+     * @param idc the {@code aspect_ratio_idc}
+     * @return the height term, or 0 when {@link #aspectWidthOf(int)} is 0
+     */
+    public static int aspectHeightOf(int idc) {
+        return idc > 0 && idc <= SAR.length / 2 ? SAR[(idc - 1) * 2 + 1] : 0;
+    }
 
     /**
      * Returns {@code ChromaArrayType}: the chroma format, or 0 when color planes are coded

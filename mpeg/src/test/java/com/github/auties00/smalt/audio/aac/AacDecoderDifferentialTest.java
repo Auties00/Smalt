@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.audio.aac;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
@@ -16,14 +15,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Compares the decoder with ffmpeg's native AAC decoder on streams produced by ffmpeg's native
  * encoder across bitrates, sampling rates, channel layouts, coders and coding tools: the output
- * must have exactly ffmpeg's sample count and an SNR of at least 80 dB against it, except for
- * perceptual noise substitution, whose pseudo-random noise is compared by band energy.
+ * must have exactly ffmpeg's sample count and an SNR of at least 80 dB against it (70 dB for AAC
+ * Main, whose predictor ffmpeg evaluates in single precision), except for perceptual noise
+ * substitution, whose pseudo-random noise is compared by band energy.
  */
 class AacDecoderDifferentialTest {
     private static final String TONES = "0.3*sin(2*PI*440*t)+0.2*sin(2*PI*1234*t)+0.1*sin(2*PI*5000*t)+0.02*sin(2*PI*11000*t)";
@@ -64,13 +63,18 @@ class AacDecoderDifferentialTest {
      * list, which ffmpeg applies) and at least 80 dB SNR per channel.
      */
     static void assertMatchesFfmpeg(Path file) {
+        assertMatchesFfmpeg(file, 80);
+    }
+
+    /** Decodes with both decoders and asserts equal sample counts and a minimum SNR per channel. */
+    static void assertMatchesFfmpeg(Path file, double minimumSnr) {
         var stream = parse(file);
         var planes = trimmed(stream, AacTestSupport.decodeAll(stream).planes());
         var reference = AacTestSupport.deinterleave(Oracle.decodeAudio(file), planes.length);
         assertEquals(reference[0].length, planes[0].length, "sample count");
         for (var channel = 0; channel < reference.length; channel++) {
             var snr = AacTestSupport.snr(new float[][]{reference[channel]}, new float[][]{planes[channel]});
-            assertTrue(snr >= 80, "channel " + channel + " SNR " + snr + " dB");
+            assertTrue(snr >= minimumSnr, "channel " + channel + " SNR " + snr + " dB");
         }
     }
 
@@ -272,16 +276,20 @@ class AacDecoderDifferentialTest {
     }
 
     @Nested
-    @DisplayName("unsupported profiles")
-    class Unsupported {
-        @ParameterizedTest(name = "{0}")
-        @CsvSource({"aac_main, -aac_pred, aac main", "aac_ltp, -aac_ltp, aac ltp"})
-        @DisplayName("are rejected with the profile named")
-        void profiles(String profile, String option, String format) {
-            var file = fixture("tones", 1, 48000, 1, "aac", "-strict", "-2", "-profile:a", profile, option, "1", "-b:a", "64000");
-            var stream = parse(file);
-            var exception = assertThrows(MediaException.Unsupported.class, () -> new AacDecoder(stream.track()));
-            assertEquals(format, exception.format());
+    @DisplayName("AAC Main and LTP")
+    class Prediction {
+        @ParameterizedTest(name = "{0}, {2} channels, {3}")
+        @CsvSource({"aac_main, -aac_pred, 1, tones", "aac_main, -aac_pred, 2, tones", "aac_main, -aac_pred, 2, chirp",
+                "aac_ltp, -aac_ltp, 1, tones", "aac_ltp, -aac_ltp, 2, tones", "aac_ltp, -aac_ltp, 2, clicks"})
+        @DisplayName("match ffmpeg on streams its encoder predicts")
+        void profiles(String profile, String option, int channels, String kind) {
+            // ffmpeg evaluates the AAC Main predictor in single precision and this decoder in double, as the
+            // ISO/IEC 14496-26 reference waveforms require, so the two drift apart below 80 dB; ffmpeg's LTP
+            // encoder emits no LTP data, which leaves the LTP syntax and predictor state to this comparison
+            // and the prediction itself to the conformance streams
+            var minimum = profile.equals("aac_main") ? 70 : 80;
+            assertMatchesFfmpeg(fixture(kind, channels, 48000, 2, "aac", "-strict", "-2", "-profile:a", profile, option, "1",
+                    "-aac_is", "0", "-b:a", Integer.toString(48000 * channels)), minimum);
         }
     }
 }

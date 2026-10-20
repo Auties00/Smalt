@@ -260,8 +260,12 @@ public final class DnxhdEncoderOptions {
      * {@link ColorInfo#BT709_LIMITED} by default}
      *
      * <p>An {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#UNSPECIFIED unspecified} matrix
-     * converts with BT.709. RGB input cannot be encoded as Y'CbCr with a matrix that two luma weights do
-     * not define (see {@link com.github.auties00.smalt.image.MatrixCoefficients#kr() MatrixCoefficients.kr()}).
+     * converts with BT.709; every other matrix converts as
+     * {@link com.github.auties00.smalt.image.ops.ImageOps#toYuv16 ImageOps.toYuv16} does, except the
+     * {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#IDENTITY identity} matrix, which RGB input
+     * cannot be encoded as Y'CbCr with (code it as {@linkplain #rgb() RGB} instead). The frame header
+     * signals coded Y'CbCr samples in the BT.2020 non-constant or constant luminance matrix as color volume 1
+     * or 2, and samples in every other matrix as color volume 0 (BT.709).
      */
     public ColorInfo color() {
         return color;

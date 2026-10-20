@@ -15,7 +15,8 @@ import java.util.Optional;
  * Recognizes Ogg Theora streams so they can be reported precisely even though this module does
  * not decode Theora.
  *
- * <p>The identification header gives the picture size and frame rate; the three headers are
+ * <p>The identification header gives the picture size, frame rate and pixel aspect ratio
+ * ({@code PARN}/{@code PARD}, Theora specification section 6.2); the three headers are
  * Xiph-laced into the track's configuration. The track uses {@link Codec#UNKNOWN_VIDEO}, its
  * packets carry no timestamps, and a data packet is a keyframe when its frame type bit is clear.
  */
@@ -40,6 +41,11 @@ final class TheoraMapping extends OggMapping {
      */
     private Rational frameRate;
 
+    /**
+     * The pixel aspect ratio, or {@code null} when the header leaves it unknown.
+     */
+    private Rational sampleAspect;
+
     @Override
     int headerCount() {
         return 3;
@@ -63,6 +69,11 @@ final class TheoraMapping extends OggMapping {
         var denominator = be32(packet, 26);
         if (numerator > 0 && denominator > 0) {
             frameRate = new Rational(numerator, denominator);
+        }
+        var aspectWidth = be24(packet, 30);
+        var aspectHeight = be24(packet, 33);
+        if (aspectWidth > 0 && aspectHeight > 0) {
+            sampleAspect = new Rational(aspectWidth, aspectHeight).reduce();
         }
     }
 
@@ -91,12 +102,15 @@ final class TheoraMapping extends OggMapping {
     @Override
     Track track(int id, long duration, long skipSamples) {
         var config = headers[2] == null ? Optional.<byte[]>empty() : Optional.of(XiphLacing.lace(headers));
-        return VideoTrack.builder().id(id).codec(Codec.UNKNOWN_VIDEO).timeBase(timeBase())
+        var builder = VideoTrack.builder().id(id).codec(Codec.UNKNOWN_VIDEO).timeBase(timeBase())
                 .codecConfig(config.orElse(null))
                 .width(width)
                 .height(height)
-                .frameRate(frameRate)
-                .build();
+                .frameRate(frameRate);
+        if (sampleAspect != null) {
+            builder.sampleAspectRatio(sampleAspect);
+        }
+        return builder.build();
     }
 
     @Override

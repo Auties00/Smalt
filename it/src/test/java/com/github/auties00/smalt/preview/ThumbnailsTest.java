@@ -122,6 +122,153 @@ class ThumbnailsTest {
         assertArrayEquals(new long[]{480_000, 1_480_000, 2_480_000, 3_480_000}, times);
     }
 
+    static Stream<Arguments> matroskaVideos() {
+        return Stream.of(
+                Arguments.of("mkv h264", video("mkv", List.of("-c:v", "libx264", "-g", "25", "-bf", "2", "-pix_fmt", "yuv420p"))),
+                Arguments.of("webm vp9", video("webm", List.of("-c:v", "libvpx-vp9", "-g", "25", "-deadline", "realtime",
+                        "-cpu-used", "8"))),
+                Arguments.of("webm vp8 without cues", video("webm", List.of("-c:v", "libvpx", "-g", "25", "-live", "1"))));
+    }
+
+    /**
+     * Replaces the segment's {@code Duration} element (ID {@code 0x4489}) with a {@code Void}
+     * element of the same size, as a recording whose header was never finalized lacks it.
+     */
+    static byte[] withoutDuration(byte[] matroska) {
+        var info = indexOf(matroska, new byte[]{0x15, 0x49, (byte) 0xA9, 0x66}, 0);
+        assertTrue(info >= 0, "no Info element");
+        var duration = indexOf(matroska, new byte[]{0x44, (byte) 0x89}, info);
+        assertTrue(duration >= 0, "no Duration element");
+        var sizeByte = matroska[duration + 2] & 0xFF;
+        assertTrue(sizeByte == 0x84 || sizeByte == 0x88, "one-byte size of a float");
+        var length = 3 + (sizeByte & 0x0F);
+        var result = matroska.clone();
+        result[duration] = (byte) 0xEC;
+        result[duration + 1] = 0x40;
+        result[duration + 2] = (byte) (length - 3);
+        java.util.Arrays.fill(result, duration + 3, duration + length, (byte) 0);
+        return result;
+    }
+
+    static int indexOf(byte[] data, byte[] pattern, int from) {
+        outer:
+        for (var index = from; index <= data.length - pattern.length; index++) {
+            for (var offset = 0; offset < pattern.length; offset++) {
+                if (data[index + offset] != pattern[offset]) {
+                    continue outer;
+                }
+            }
+            return index;
+        }
+        return -1;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("matroskaVideos")
+    @DisplayName("spreads pictures over a video without a declared duration as over the same video with it")
+    void evenlyWithoutDuration(String name, Path file) {
+        // ffmpeg also writes per-track DURATION tags; a copy through Smalt's muxer declares only the
+        // segment Duration, which the test then strips
+        var source = Fixtures.read(file);
+        var sink = com.github.auties00.smalt.io.MediaSink.memory();
+        com.github.auties00.smalt.transcode.Transcoder.transcode(MediaSource.of(source), sink,
+                com.github.auties00.smalt.transcode.TranscodeOptions.of(
+                        com.github.auties00.smalt.transcode.OutputContainer.MATROSKA));
+        var declared = sink.toByteArray();
+        var stripped = withoutDuration(declared);
+        try (var reader = com.github.auties00.smalt.video.VideoReader.open(MediaSource.of(declared))) {
+            assertTrue(reader.durationMicros() > 0, name + " declares a duration");
+            assertEquals(reader.durationMicros(), Thumbnails.measureDuration(MediaSource.of(declared), reader.track().id(),
+                    ThumbnailOptions.defaults()), 1000, name + " measured like declared");
+        }
+        try (var reader = com.github.auties00.smalt.video.VideoReader.open(MediaSource.of(stripped))) {
+            assertEquals(-1, reader.durationMicros(), name + " declares no duration");
+        }
+        var options = ThumbnailOptions.fitting(80, 80);
+        var expected = Thumbnails.evenly(MediaSource.of(declared), 5, options);
+        var inputs = new ArrayList<>(List.of(stripped));
+        try (var reader = com.github.auties00.smalt.video.VideoReader.open(MediaSource.of(source))) {
+            if (reader.durationMicros() < 0) {
+                inputs.add(source);
+            }
+        }
+        for (var input : inputs) {
+            var actual = Thumbnails.evenly(MediaSource.of(input), 5, options);
+            assertEquals(5, actual.size());
+            for (var index = 0; index < 5; index++) {
+                assertEquals(expected.get(index).timestampMicros(), actual.get(index).timestampMicros(),
+                        name + " picture " + index);
+                assertArrayEquals(expected.get(index).picture().pixels(), actual.get(index).picture().pixels(),
+                        name + " picture " + index);
+            }
+        }
+        assertEquals(3_960_000, Thumbnails.at(MediaSource.of(stripped), 60_000_000).timestampMicros(), 1000,
+                name + " past the end");
+    }
+
+    @Test
+    @DisplayName("measures a video whose packets carry no duration from its frame rate")
+    void evenlyWithoutPacketDurations() {
+        // IVF packets have no duration; zeroing the header's frame count leaves no declared duration
+        var declared = Fixtures.read(video("ivf", List.of("-c:v", "libvpx", "-g", "25")));
+        var counted = new byte[4];
+        System.arraycopy(declared, 24, counted, 0, 4);
+        assertArrayEquals(new byte[]{100, 0, 0, 0}, counted, "IVF frame count");
+        var stripped = declared.clone();
+        java.util.Arrays.fill(stripped, 24, 28, (byte) 0);
+        try (var reader = com.github.auties00.smalt.video.VideoReader.open(MediaSource.of(stripped))) {
+            assertEquals(-1, reader.durationMicros());
+            assertEquals(4_000_000, Thumbnails.measureDuration(MediaSource.of(stripped), reader.track().id(),
+                    ThumbnailOptions.defaults()));
+        }
+        var options = ThumbnailOptions.fitting(80, 80);
+        var expected = Thumbnails.evenly(MediaSource.of(declared), 5, options);
+        var actual = Thumbnails.evenly(MediaSource.of(stripped), 5, options);
+        for (var index = 0; index < 5; index++) {
+            assertEquals(expected.get(index).timestampMicros(), actual.get(index).timestampMicros(), "picture " + index);
+            assertArrayEquals(expected.get(index).picture().pixels(), actual.get(index).picture().pixels());
+        }
+        assertEquals(3_960_000, Thumbnails.at(MediaSource.of(stripped), 60_000_000).timestampMicros());
+    }
+
+    @Test
+    @DisplayName("measures the video track of a file whose audio outlasts it")
+    void evenlyWithLongerAudio() {
+        var file = Fixtures.ffmpeg("mkv", List.of("-f", "lavfi", "-i", VIDEO, "-f", "lavfi", "-i", "sine=duration=9"),
+                List.of("-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p", "-c:a", "flac"));
+        var sink = com.github.auties00.smalt.io.MediaSink.memory();
+        com.github.auties00.smalt.transcode.Transcoder.transcode(MediaSource.of(Fixtures.read(file)), sink,
+                com.github.auties00.smalt.transcode.TranscodeOptions.of(
+                        com.github.auties00.smalt.transcode.OutputContainer.MATROSKA));
+        var stripped = withoutDuration(sink.toByteArray());
+        try (var reader = com.github.auties00.smalt.video.VideoReader.open(MediaSource.of(stripped))) {
+            assertEquals(-1, reader.durationMicros());
+            assertEquals(4_000_000, Thumbnails.measureDuration(MediaSource.of(stripped), reader.track().id(),
+                    ThumbnailOptions.defaults()), 1000);
+        }
+        var times = Thumbnails.evenly(MediaSource.of(stripped), 5, ThumbnailOptions.fitting(80, 80)).stream()
+                .mapToLong(Thumbnail::timestampMicros).toArray();
+        assertArrayEquals(new long[]{400_000, 1_200_000, 2_000_000, 2_800_000, 3_600_000}, times);
+        assertEquals(3_960_000, Thumbnails.at(MediaSource.of(stripped), 60_000_000).timestampMicros(), 1000);
+    }
+
+    @Test
+    @DisplayName("refuses to measure a source read once")
+    void evenlyWithoutDurationOfStream() {
+        var file = video("mkv", List.of("-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p"));
+        var sink = com.github.auties00.smalt.io.MediaSink.memory();
+        com.github.auties00.smalt.transcode.Transcoder.transcode(MediaSource.of(Fixtures.read(file)), sink,
+                com.github.auties00.smalt.transcode.TranscodeOptions.of(
+                        com.github.auties00.smalt.transcode.OutputContainer.MATROSKA));
+        var stripped = withoutDuration(sink.toByteArray());
+        var failure = org.junit.jupiter.api.Assertions.assertThrows(com.github.auties00.smalt.MediaException.Unsupported.class,
+                () -> Thumbnails.evenly(MediaSource.of(new java.io.ByteArrayInputStream(stripped), stripped.length), 3));
+        assertTrue(failure.getMessage().contains("declares no duration"), failure.getMessage());
+        var declared = sink.toByteArray();
+        assertEquals(3, Thumbnails.evenly(MediaSource.of(new java.io.ByteArrayInputStream(declared), declared.length), 3)
+                .size());
+    }
+
     @Test
     @DisplayName("takes the same pictures from a file on disk as from a source")
     void pathOverloads() {
@@ -187,7 +334,7 @@ class ThumbnailsTest {
             var times = new ArrayList<Long>();
             try (var reader = Images.openAnimation(MediaSource.of(bytes))) {
                 for (var frame = reader.read(); frame != null; frame = reader.read()) {
-                    frames.add(frame.picture().pixels().clone());
+                    frames.add(((RgbaPicture) frame.picture()).pixels().clone());
                     times.add(frame.timestampMicros());
                 }
             }
@@ -199,7 +346,7 @@ class ThumbnailsTest {
                     var frame = reader.read();
                     var expected = (int) Math.min(9, Math.max(0, micros) / 100_000);
                     assertEquals(times.get(expected), frame.timestampMicros(), name + " at " + micros);
-                    assertArrayEquals(frames.get(expected), frame.picture().pixels(), name + " pixels at " + micros);
+                    assertArrayEquals(frames.get(expected), ((RgbaPicture) frame.picture()).pixels(), name + " pixels at " + micros);
                     if (expected < 9) {
                         assertEquals(times.get(expected + 1), reader.read().timestampMicros(), name + " continues");
                     }

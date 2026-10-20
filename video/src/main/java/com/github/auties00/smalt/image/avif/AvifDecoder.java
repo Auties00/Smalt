@@ -28,7 +28,9 @@ import java.util.Objects;
  * own depth instead, which
  * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Yuv16Picture)} reduces to
  * exactly the default 8-bit picture. An image whose color is premultiplied by its alpha
- * ({@code prem} reference) decodes to a straight-alpha {@link RgbaPicture} instead.
+ * ({@code prem} reference) decodes to a straight-alpha {@link RgbaPicture} instead, or, with
+ * {@link ImageDecoderOptions#highBitDepth()} and a source of more than 8 bits, to a straight-alpha
+ * {@link com.github.auties00.smalt.image.Rgba16Picture}.
  *
  * <p>The file structure follows ISO/IEC 23008-12 (HEIF), MIAF and the AVIF specification:
  * <ul>
@@ -37,7 +39,9 @@ import java.util.Objects;
  *       uses the AV1 decoder's frame-level threads);</li>
  *   <li>the alpha plane of an auxiliary item ({@code auxl} reference, alpha {@code auxC}
  *       URN), as one item, a grid, or one item per color tile; limited-range alpha is expanded
- *       to full range;</li>
+ *       to full range, alpha of another bit depth is rescaled to the color depth, and an alpha
+ *       image of another size than the color image (or color tile) it covers is resampled to it
+ *       with the triangle filter ({@link com.github.auties00.smalt.image.ops.ResizeFilter#BILINEAR});</li>
  *   <li>layered images: the operating point of {@code a1op} and the layer of {@code lsel};
  *       without {@code lsel} the highest layer of the operating point is shown;</li>
  *   <li>the clean aperture ({@code clap}) is applied to the pixels; the rotation ({@code irot})
@@ -50,15 +54,17 @@ import java.util.Objects;
  *   <li>the color description comes from the {@code nclx} color box, or from the AV1 sequence
  *       header without one, together with the {@code clli} and {@code mdcv} high-dynamic-range
  *       properties (or the AV1 metadata OBUs); an ICC profile ({@code colr} of type {@code rICC}
- *       or {@code prof}) and the EXIF item of the primary image are returned with the
- *       picture. The ICC profile is the {@link DecodedImage#colorProfile()}, which otherwise
- *       describes the color of the {@code nclx} box or the sequence header when it is not
- *       sRGB.</li>
+ *       or {@code prof}), the EXIF item and the XMP item ({@code mime} item of type
+ *       {@code application/rdf+xml}) of the primary image are returned with the picture. The ICC
+ *       profile is the {@link DecodedImage#colorProfile()}, which otherwise describes the color of
+ *       the {@code nclx} box or the sequence header when it is not sRGB.</li>
  * </ul>
  * The EXIF orientation is not used: AVIF orients images with {@code irot} and {@code imir}.
  *
  * <p>An image sequence ({@code avis}) plays through {@link #openAnimation}: its color track and
- * its alpha track, every frame converted to RGBA, with the loop count of the edit list (a track
+ * its alpha track, every frame converted to RGBA (16-bit RGBA when
+ * {@link ImageDecoderOptions#highBitDepth()} is set and the sequence has more than 8 bits), with
+ * the loop count of the edit list (a track
  * without an edit list loops forever). {@link #decode} returns the first frame of a sequence when
  * the file's major brand is {@code avis}, and the primary image otherwise.
  *
@@ -68,8 +74,7 @@ import java.util.Objects;
  * the sample counts against {@link MediaLimits#maxFrames()}. Malformed input raises
  * {@link MediaException.Malformed}, never an unchecked runtime exception; a valid file using a
  * feature this decoder lacks (an essential property it does not know, a primary item coded with
- * another codec, an alpha plane of another size than the color) raises
- * {@link MediaException.Unsupported}.
+ * another codec) raises {@link MediaException.Unsupported}.
  *
  * <p>The reduced-size hint of {@link ImageDecoderOptions} is ignored: images always decode at
  * full size. With {@link ImageDecoderOptions#convertToSrgb()} the pixels are converted to
@@ -138,7 +143,7 @@ public final class AvifDecoder {
      * @param source  the file
      * @param options the limits, the bit depth choice and the color conversion; the reduced-size
      *                hint is ignored
-     * @return the decoded image with its orientation, ICC profile and EXIF block
+     * @return the decoded image with its orientation, ICC profile, EXIF block and XMP packet
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Malformed     if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported   if the file uses a feature this decoder lacks
@@ -181,10 +186,12 @@ public final class AvifDecoder {
      *
      * <p>A file without a sequence is presented as an animation of its primary image: one frame
      * shown for zero microseconds that plays once. Frames are RGBA pictures in the stored
-     * orientation.
+     * orientation: {@link com.github.auties00.smalt.image.Rgba16Picture} pictures when
+     * {@link ImageDecoderOptions#highBitDepth()} is set and the source has more than 8 bits,
+     * {@link RgbaPicture} pictures otherwise.
      *
      * @param source  the file
-     * @param options the limits; the reduced-size hint and the bit depth choice are ignored
+     * @param options the limits and the bit depth choice; the reduced-size hint is ignored
      * @return the reader; closing it does not close {@code source}
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Malformed     if the file structure is invalid or truncated
@@ -196,7 +203,7 @@ public final class AvifDecoder {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         try (var _ = ParallelBands.operation()) {
-            return AvifFiles.openAnimation(source, options.limits());
+            return AvifFiles.openAnimation(source, options.limits(), options.highBitDepth());
         } catch (MediaException exception) {
             throw exception;
         } catch (OutOfMemoryError error) {

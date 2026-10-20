@@ -1,10 +1,17 @@
 package com.github.auties00.smalt.image.ops;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ColorInfo;
-import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
@@ -14,6 +21,7 @@ import com.github.auties00.smalt.image.color.ColorTransform;
 import com.github.auties00.smalt.image.color.ColorTransformOptions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.ArrayList;
 import java.util.Optional;
 
 /**
@@ -22,9 +30,12 @@ import java.util.Optional;
  * <p>Pictures are converted at their own depth: 8-bit pictures through packed 8-bit RGBA, 16-bit
  * pictures through packed 16-bit RGBA. Y'CbCr pictures are first converted to R'G'B' with the
  * matrix and range of their {@link ColorInfo}: 8-bit ones as {@link ImageOps#toRgba(Picture)}
- * does, 16-bit ones in floating point with bilinear chroma interpolation, keeping their full
- * precision. A gray source profile reads the red channel; a gray target profile writes the same
- * value to red, green and blue. Alpha is never changed.
+ * does, 16-bit ones as {@link ImageOps#toRgba16(Picture)} does, keeping their full precision. A
+ * gray source profile reads the red channel; a gray target profile writes the same value to red,
+ * green and blue. Alpha is never changed. A transform to a CMYK profile produces a
+ * {@link ChannelPicture}, and so does the conversion of a channel picture, whose color channels are
+ * converted while its extra channels are copied, premultiplied colors being divided by their alpha
+ * before the transform and multiplied again after it.
  */
 final class ManagedColor {
     /**
@@ -44,22 +55,38 @@ final class ManagedColor {
      * Applies a transform to a picture.
      *
      * @param picture the picture to convert
-     * @param transform the transform, from and to an RGB or gray profile
-     * @return an {@link RgbaPicture} for an 8-bit picture, an {@link Rgba16Picture} for a 16-bit one
-     * @throws IllegalArgumentException if a profile of the transform is neither RGB nor gray
+     * @param transform the transform, from an RGB or gray profile (or, for a channel picture, a profile with as
+     * many channels as its color channels) to an RGB, gray or CMYK profile
+     * @return an {@link RgbaPicture} for an 8-bit picture, an {@link Rgba16Picture} for a 16-bit one, or a
+     * {@link ChannelPicture} of the transform's target color model for a channel picture or a CMYK target
+     * @throws IllegalArgumentException if a profile of the transform does not fit the picture
+     * @throws MediaException.Unsupported if the picture has floating-point samples
      */
     static Picture convert(Picture picture, ColorTransform transform) {
         var in = transform.inputChannels();
         var out = transform.outputChannels();
-        if ((in != 1 && in != 3) || (out != 1 && out != 3)) {
-            throw new IllegalArgumentException("a picture converts only between RGB and gray profiles, not "
-                    + transform.source().colorSpace() + " to " + transform.target().colorSpace());
+        var model = targetModel(transform);
+        if (picture instanceof ChannelPicture channels) {
+            return convertChannels(channels, transform, model, false);
+        }
+        if ((in != 1 && in != 3) || (out != 1 && out != 3 && !(model == ColorModel.CMYK && in == 3))) {
+            throw new IllegalArgumentException("a picture converts only from RGB and gray profiles to RGB, gray"
+                    + " and CMYK profiles, not " + transform.source().colorSpace() + " to "
+                    + transform.target().colorSpace());
+        }
+        if (model == ColorModel.CMYK) {
+            Picture channels = switch (picture) {
+                case RgbaPicture _, YuvPicture _ -> ChannelOps.toChannel8(picture);
+                default -> ChannelOps.toChannel16(picture);
+            };
+            return convertChannels((ChannelPicture) channels, transform, model, false);
         }
         return switch (picture) {
             case RgbaPicture rgba -> convert8(rgba, transform);
             case YuvPicture yuv -> convert8(ImageOps.toRgba(yuv), transform);
             case Rgba16Picture rgba -> convert16(rgba, transform);
-            case Yuv16Picture yuv -> convert16(toRgba16(yuv), transform);
+            case Yuv16Picture yuv -> convert16(DeepColor.toRgba16(yuv, ChromaUpsampling.TRIANGLE), transform);
+            case ChannelPicture channels -> convertChannels(channels, transform, model, false);
         };
     }
 
@@ -84,23 +111,29 @@ final class ManagedColor {
             case Yuv16Picture yuv -> {
                 var profile = ColorProfile.of(yuv.color());
                 if (profile.isSrgb()) {
-                    yield ImageOps.toRgba(ImageOps.toEightBit(yuv));
+                    yield ImageOps.toRgba(yuv);
                 }
-                var converted = convert16(toRgba16(yuv), ColorTransform.create(profile, ColorProfile.srgb(), options));
+                var converted = convert16(DeepColor.toRgba16(yuv, ChromaUpsampling.TRIANGLE),
+                        ColorTransform.create(profile, ColorProfile.srgb(), options));
                 yield ImageOps.toEightBit(converted);
             }
+            case ChannelPicture channels -> (RgbaPicture) ChannelOps.toPacked(channels, false);
         };
     }
 
     /**
      * Converts a decoded image to sRGB with its declared profile, leaving it unchanged when the
-     * profile is absent, is sRGB, or cannot be applied to its pixels.
+     * profile is absent, is sRGB, or cannot be applied to its pixels; a channel picture is always
+     * converted to packed RGBA.
      *
      * @param image the decoded image
      * @param options the transform options
      * @return the converted image, or {@code image} itself
      */
     static DecodedImage toSrgb(DecodedImage image, ColorTransformOptions options) {
+        if (image.picture() instanceof ChannelPicture channels) {
+            return channelsToSrgb(image, channels, options);
+        }
         var profile = image.colorProfile().orElse(null);
         if (profile == null || profile.isSrgb() || (profile.channels() != 1 && profile.channels() != 3)) {
             return image;
@@ -113,7 +146,227 @@ final class ManagedColor {
             return image;
         }
         return new DecodedImage(converted, image.format(), image.orientation(), image.sourceWidth(),
-                image.sourceHeight(), Optional.empty(), image.exif(), Optional.of(ColorProfile.srgb()));
+                image.sourceHeight(), Optional.empty(), image.exif(), image.xmp(), Optional.of(ColorProfile.srgb()));
+    }
+
+    /**
+     * Converts a decoded channel picture to packed sRGB: through its profile when the profile applies to its
+     * color channels, otherwise without color management.
+     *
+     * @param image the decoded image
+     * @param channels its picture
+     * @param options the transform options
+     * @return the image holding an {@link RgbaPicture} for 8-bit samples and an {@link Rgba16Picture} otherwise
+     */
+    private static DecodedImage channelsToSrgb(DecodedImage image, ChannelPicture channels,
+                                               ColorTransformOptions options) {
+        var profile = image.colorProfile().orElse(null);
+        var sixteen = !(channels instanceof Channel8Picture);
+        var layout = channels.layout();
+        if (profile != null && !profile.isSrgb() && profile.channels() == layout.colorChannels()) {
+            try {
+                var transform = ColorTransform.create(profile, ColorProfile.srgb(), options);
+                ChannelPicture integer = channels instanceof ChannelFloatPicture ? ChannelOps.toChannel16(channels)
+                        : channels;
+                var converted = convertChannels(integer, transform, ColorModel.RGB, true);
+                return new DecodedImage(ChannelOps.toPacked(converted, sixteen), image.format(), image.orientation(),
+                        image.sourceWidth(), image.sourceHeight(), Optional.empty(), image.exif(),
+                        Optional.of(ColorProfile.srgb()));
+            } catch (MediaException.Malformed | MediaException.Unsupported exception) {
+                // a profile that cannot be applied leaves the conversion without color management
+            }
+        }
+        var model = layout.colorModel();
+        var describes = profile != null && (model == ColorModel.RGB || model == ColorModel.GRAY)
+                && profile.channels() == layout.colorChannels();
+        return new DecodedImage(ChannelOps.toPacked(channels, sixteen), image.format(), image.orientation(),
+                image.sourceWidth(), image.sourceHeight(), image.iccProfile(), image.exif(),
+                describes ? image.colorProfile() : Optional.empty());
+    }
+
+    /**
+     * Applies a transform to the color channels of a channel picture.
+     *
+     * @param picture the channel picture to convert
+     * @param transform the transform, reading as many channels as the picture's color channels
+     * @param model the color model of the transform's target
+     * @param straight whether premultiplied colors stay divided by their alpha, the alpha channel of the result
+     * becoming straight
+     * @return the picture of the target model, the extra channels copied
+     * @throws IllegalArgumentException if the channel counts do not match or the target is not gray, RGB or
+     * CMYK
+     * @throws MediaException.Unsupported if the picture has floating-point samples
+     */
+    private static ChannelPicture convertChannels(ChannelPicture picture, ColorTransform transform,
+                                                  ColorModel model, boolean straight) {
+        var layout = picture.layout();
+        var colors = layout.colorChannels();
+        if (transform.inputChannels() != colors) {
+            throw new IllegalArgumentException("the transform reads " + transform.inputChannels()
+                    + " channels, the picture has " + colors + " color channels");
+        }
+        if (model == null) {
+            throw new IllegalArgumentException("a picture converts only to RGB, gray and CMYK profiles, not "
+                    + transform.target().colorSpace());
+        }
+        if (picture instanceof ChannelFloatPicture) {
+            // TODO: floating-point color transforms, which keep values outside 0..1
+            throw new MediaException.Unsupported("floating-point color transform",
+                    "color transforms of floating-point samples are not supported; convert with"
+                            + " ImageOps.toChannel16 first");
+        }
+        var base = switch (model) {
+            case GRAY -> PixelLayout.GRAY;
+            case RGB -> PixelLayout.RGB;
+            default -> PixelLayout.CMYK;
+        };
+        var list = new ArrayList<>(base.channels());
+        list.addAll(layout.channels().subList(colors, layout.count()));
+        var premultiplied = layout.isAlphaPremultiplied();
+        var multiply = premultiplied && !straight;
+        if (premultiplied && straight) {
+            list.set(base.count() + layout.alphaIndex() - colors, Channel.of(ChannelType.ALPHA));
+        }
+        var outLayout = new PixelLayout(list);
+        var width = picture.width();
+        var height = picture.height();
+        OpChecks.checkArray((long) width * height * outLayout.count());
+        var out = ChannelOps.allocateLike(picture, width, height, outLayout);
+        var inChannels = layout.count();
+        var outChannels = outLayout.count();
+        var outColors = base.count();
+        var extras = inChannels - colors;
+        var alpha = layout.alphaIndex();
+        var bands = ParallelBands.bands(height, WORK * width * height);
+        ParallelBands.run(bands, band -> {
+            var top = ParallelBands.start(band, bands, height);
+            var bottom = ParallelBands.start(band + 1, bands, height);
+            var straight8 = premultiplied && picture instanceof Channel8Picture ? new byte[width * inChannels] : null;
+            var straight16 = premultiplied && picture instanceof Channel16Picture ? new short[width * inChannels]
+                    : null;
+            for (var y = top; y < bottom; y++) {
+                var s = y * picture.stride();
+                var d = y * out.stride();
+                switch (picture) {
+                    case Channel8Picture eight -> {
+                        var src = eight.pixels();
+                        var dst = ((Channel8Picture) out).pixels();
+                        var input = src;
+                        var inputOffset = s;
+                        if (premultiplied) {
+                            input = straightRow8(src, s, width, inChannels, colors, alpha, straight8);
+                            inputOffset = 0;
+                        }
+                        transform.transform(input, inputOffset, inChannels, dst, d, outChannels, width);
+                        for (var x = 0; x < width; x++) {
+                            System.arraycopy(src, s + x * inChannels + colors, dst, d + x * outChannels + outColors,
+                                    extras);
+                        }
+                        if (multiply) {
+                            var outAlpha = outColors + alpha - colors;
+                            for (var x = 0; x < width; x++) {
+                                var at = d + x * outChannels;
+                                var a = dst[at + outAlpha] & 0xFF;
+                                for (var c = 0; c < outColors; c++) {
+                                    dst[at + c] = (byte) (((dst[at + c] & 0xFF) * a + 127) / 255);
+                                }
+                            }
+                        }
+                    }
+                    case Channel16Picture sixteen -> {
+                        var src = sixteen.pixels();
+                        var dst = ((Channel16Picture) out).pixels();
+                        var input = src;
+                        var inputOffset = s;
+                        if (premultiplied) {
+                            input = straightRow16(src, s, width, inChannels, colors, alpha, straight16);
+                            inputOffset = 0;
+                        }
+                        transform.transform(input, inputOffset, inChannels, dst, d, outChannels, width);
+                        for (var x = 0; x < width; x++) {
+                            System.arraycopy(src, s + x * inChannels + colors, dst, d + x * outChannels + outColors,
+                                    extras);
+                        }
+                        if (multiply) {
+                            var outAlpha = outColors + alpha - colors;
+                            for (var x = 0; x < width; x++) {
+                                var at = d + x * outChannels;
+                                var a = dst[at + outAlpha] & 0xFFFF;
+                                for (var c = 0; c < outColors; c++) {
+                                    dst[at + c] = (short) (((long) (dst[at + c] & 0xFFFF) * a + 32767) / 65535);
+                                }
+                            }
+                        }
+                    }
+                    case ChannelFloatPicture _ -> throw new AssertionError();
+                }
+            }
+        });
+        return out;
+    }
+
+    /**
+     * Copies one row of 8-bit pixels with their color channels divided by their alpha.
+     *
+     * @param src the samples
+     * @param offset the index of the row
+     * @param width the pixels in the row
+     * @param channels the samples per pixel
+     * @param colors the leading color channels
+     * @param alpha the index of the alpha channel
+     * @param row the destination, {@code width * channels} samples
+     * @return {@code row}
+     */
+    private static byte[] straightRow8(byte[] src, int offset, int width, int channels, int colors, int alpha,
+                                       byte[] row) {
+        System.arraycopy(src, offset, row, 0, width * channels);
+        for (var at = 0; at < width * channels; at += channels) {
+            var a = row[at + alpha] & 0xFF;
+            for (var c = 0; c < colors; c++) {
+                row[at + c] = (byte) ChannelOps.unpremultiply(row[at + c] & 0xFF, a, 255);
+            }
+        }
+        return row;
+    }
+
+    /**
+     * Copies one row of 16-bit pixels with their color channels divided by their alpha.
+     *
+     * @param src the samples
+     * @param offset the index of the row
+     * @param width the pixels in the row
+     * @param channels the samples per pixel
+     * @param colors the leading color channels
+     * @param alpha the index of the alpha channel
+     * @param row the destination, {@code width * channels} samples
+     * @return {@code row}
+     */
+    private static short[] straightRow16(short[] src, int offset, int width, int channels, int colors, int alpha,
+                                         short[] row) {
+        System.arraycopy(src, offset, row, 0, width * channels);
+        for (var at = 0; at < width * channels; at += channels) {
+            var a = row[at + alpha] & 0xFFFF;
+            for (var c = 0; c < colors; c++) {
+                row[at + c] = (short) ChannelOps.unpremultiply(row[at + c] & 0xFFFF, a, 65535);
+            }
+        }
+        return row;
+    }
+
+    /**
+     * Returns the color model a transform's target profile describes.
+     *
+     * @param transform the color transform to apply
+     * @return {@link ColorModel#GRAY}, {@link ColorModel#RGB} or {@link ColorModel#CMYK}, or {@code null} for
+     * another color space
+     */
+    private static ColorModel targetModel(ColorTransform transform) {
+        return switch (transform.target().colorSpace()) {
+            case GRAY -> ColorModel.GRAY;
+            case RGB -> ColorModel.RGB;
+            case CMYK -> ColorModel.CMYK;
+            default -> null;
+        };
     }
 
     /**
@@ -184,132 +437,5 @@ final class ManagedColor {
             }
         });
         return out;
-    }
-
-    /**
-     * Converts a 16-bit planar picture to 16-bit packed R'G'B' at full precision, interpolating
-     * chroma bilinearly at sample positions centered between luma samples.
-     *
-     * @param picture the picture to convert
-     * @return the packed picture; alpha is rescaled to 16 bits, absent alpha becomes opaque
-     */
-    static Rgba16Picture toRgba16(Yuv16Picture picture) {
-        var width = picture.width();
-        var height = picture.height();
-        OpChecks.checkArray(4L * width * height);
-        var matrix = ColorMatrix.of(picture.color());
-        var out = Rgba16Picture.allocate(width, height, picture.hasAlpha());
-        var bands = ParallelBands.bands(height, WORK * width * height);
-        ParallelBands.run(bands, band -> toRgba16Rows(picture, matrix, out, ParallelBands.start(band, bands, height),
-                ParallelBands.start(band + 1, bands, height)));
-        return out;
-    }
-
-    /**
-     * Converts the rows {@code [top, bottom)} of a 16-bit planar picture.
-     *
-     * @param picture the picture to convert
-     * @param matrix the conversion coefficients
-     * @param out the destination
-     * @param top the first row
-     * @param bottom the row after the last one
-     */
-    private static void toRgba16Rows(Yuv16Picture picture, ColorMatrix matrix, Rgba16Picture out, int top, int bottom) {
-        var width = picture.width();
-        var depth = picture.bitDepth();
-        var unit = (float) (1.0 / (1 << (depth - 8)));
-        var alphaScale = 65535.0f / ((1 << depth) - 1);
-        var format = picture.chromaFormat();
-        var hasChroma = format.hasChroma();
-        var shiftX = format.shiftX();
-        var shiftY = format.shiftY();
-        var chromaWidth = picture.chromaWidth();
-        var chromaHeight = picture.chromaHeight();
-        var offsets = matrix.offsets;
-        var r0 = matrix.ir[0] / 65536f;
-        var r1 = matrix.ir[1] / 65536f;
-        var r2 = matrix.ir[2] / 65536f;
-        var g0 = matrix.ig[0] / 65536f;
-        var g1 = matrix.ig[1] / 65536f;
-        var g2 = matrix.ig[2] / 65536f;
-        var b0 = matrix.ib[0] / 65536f;
-        var b1 = matrix.ib[1] / 65536f;
-        var b2 = matrix.ib[2] / 65536f;
-        var grayScale = matrix.grayScale / 65536f;
-        var full = matrix.range == ColorRange.FULL;
-        var y = picture.y();
-        var u = picture.u();
-        var v = picture.v();
-        var alpha = picture.alpha();
-        var pixels = out.pixels();
-        for (var row = top; row < bottom; row++) {
-            var o = row * out.stride();
-            var cy = ((row + 0.5f) / (1 << shiftY)) - 0.5f;
-            var cy0 = Math.max(0, Math.min(chromaHeight - 1, (int) Math.floor(cy)));
-            var cy1 = Math.min(chromaHeight - 1, cy0 + 1);
-            var fy = Math.max(0f, Math.min(1f, cy - (float) Math.floor(cy)));
-            if (cy < 0) {
-                fy = 0;
-            }
-            for (var x = 0; x < width; x++) {
-                var luma = (y[row * picture.yStride() + x] & 0xFFFF) * unit - offsets[0];
-                float red;
-                float green;
-                float blue;
-                if (hasChroma) {
-                    var cx = ((x + 0.5f) / (1 << shiftX)) - 0.5f;
-                    var cx0 = Math.max(0, Math.min(chromaWidth - 1, (int) Math.floor(cx)));
-                    var cx1 = Math.min(chromaWidth - 1, cx0 + 1);
-                    var fx = cx < 0 ? 0f : Math.max(0f, Math.min(1f, cx - (float) Math.floor(cx)));
-                    var stride = picture.uvStride();
-                    var cb = bilinear(u, stride, cx0, cx1, cy0, cy1, fx, fy) * unit - offsets[1];
-                    var cr = bilinear(v, stride, cx0, cx1, cy0, cy1, fx, fy) * unit - offsets[2];
-                    red = r0 * luma + r1 * cb + r2 * cr;
-                    green = g0 * luma + g1 * cb + g2 * cr;
-                    blue = b0 * luma + b1 * cb + b2 * cr;
-                } else {
-                    red = green = blue = full ? luma : luma * grayScale;
-                }
-                pixels[o] = toSample(red);
-                pixels[o + 1] = toSample(green);
-                pixels[o + 2] = toSample(blue);
-                pixels[o + 3] = alpha == null ? (short) 0xFFFF
-                        : (short) Math.round((alpha[row * picture.alphaStride() + x] & 0xFFFF) * alphaScale);
-                o += 4;
-            }
-        }
-    }
-
-    /**
-     * Interpolates a chroma plane bilinearly.
-     *
-     * @param plane the chroma samples
-     * @param stride the row stride
-     * @param x0 the left column
-     * @param x1 the right column
-     * @param y0 the top row
-     * @param y1 the bottom row
-     * @param fx the horizontal fraction
-     * @param fy the vertical fraction
-     * @return the interpolated sample
-     */
-    private static float bilinear(short[] plane, int stride, int x0, int x1, int y0, int y1, float fx, float fy) {
-        var a = plane[y0 * stride + x0] & 0xFFFF;
-        var b = plane[y0 * stride + x1] & 0xFFFF;
-        var c = plane[y1 * stride + x0] & 0xFFFF;
-        var d = plane[y1 * stride + x1] & 0xFFFF;
-        var top = a + (b - a) * fx;
-        var bottom = c + (d - c) * fx;
-        return top + (bottom - top) * fy;
-    }
-
-    /**
-     * Converts an R'G'B' value in 8-bit code units to a 16-bit sample.
-     *
-     * @param value the value, nominally {@code 0..255}
-     * @return the sample, clamped
-     */
-    private static short toSample(float value) {
-        return (short) Math.round(Math.min(Math.max(value * (65535f / 255f), 0f), 65535f));
     }
 }

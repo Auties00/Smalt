@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.internal;
 
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
@@ -28,6 +29,11 @@ import java.util.Map;
  * packet ends at or before the target is dropped entirely, so a target past the end yields no
  * packet of it; a packet that declares no duration is taken to last as long as the interval
  * since the packet before it.
+ *
+ * <p>A dropped packet that carries a {@link PacketSideData#newCodecConfig() new codec
+ * configuration} passes it on to the next packet of its track that is queued, unless that packet
+ * carries one of its own, so that a decoder restarted at the start packet uses the configuration
+ * in force there.
  *
  * <p>Instances are not thread-safe.
  */
@@ -113,17 +119,23 @@ public final class SeekFilter {
      */
     public void offer(Packet packet) {
         var state = states.get(packet.trackId());
-        if (state == null || state.mode == Mode.RESOLVED) {
-            queue.add(new Entry(packet, state));
+        if (state == null) {
+            queue.add(new Entry(packet, null));
+            return;
+        }
+        if (state.mode == Mode.RESOLVED) {
+            queue.add(new Entry(carry(state, packet), state));
             return;
         }
         var time = packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
         if (time == Packet.NO_TIMESTAMP) {
             if (state.candidate == null && state.mode == Mode.PENDING) {
                 resolve(state);
-                queue.add(new Entry(packet, state));
+                queue.add(new Entry(carry(state, packet), state));
             } else if (state.candidate != null) {
                 hold(state, packet);
+            } else {
+                remember(state, packet);
             }
             return;
         }
@@ -133,16 +145,19 @@ public final class SeekFilter {
         if (state.mode == Mode.WAIT_KEY) {
             if (packet.keyframe()) {
                 resolve(state);
-                queue.add(new Entry(packet, state));
+                queue.add(new Entry(carry(state, packet), state));
+            } else {
+                remember(state, packet);
             }
             return;
         }
         if (packet.keyframe() && time <= state.target) {
             for (var entry : state.held) {
                 entry.dropped = true;
+                remember(state, entry.packet);
             }
             state.held.clear();
-            var entry = new Entry(packet, state);
+            var entry = new Entry(carry(state, packet), state);
             state.candidate = entry;
             state.held.add(entry);
             queue.add(entry);
@@ -152,12 +167,15 @@ public final class SeekFilter {
                 resolve(state);
             } else if (packet.keyframe()) {
                 resolve(state);
-                queue.add(new Entry(packet, state));
+                queue.add(new Entry(carry(state, packet), state));
             } else {
                 state.mode = Mode.WAIT_KEY;
+                remember(state, packet);
             }
         } else if (state.candidate != null) {
             hold(state, packet);
+        } else {
+            remember(state, packet);
         }
         if (overMargin(state, time) || queue.size() > MAX_HELD_PACKETS) {
             resolveAll();
@@ -171,9 +189,42 @@ public final class SeekFilter {
      * @param packet a packet of the track, after its candidate
      */
     private void hold(TrackState state, Packet packet) {
-        var entry = new Entry(packet, state);
+        var entry = new Entry(carry(state, packet), state);
         state.held.add(entry);
         queue.add(entry);
+    }
+
+    /**
+     * Notes the codec configuration change of a dropped packet.
+     *
+     * @param state the state of the packet's track
+     * @param packet the dropped packet
+     */
+    private static void remember(TrackState state, Packet packet) {
+        var config = packet.sideData().newCodecConfig();
+        if (config.isPresent()) {
+            state.droppedConfig = config.get();
+        }
+    }
+
+    /**
+     * Gives a packet about to be queued the codec configuration change of the dropped packets of
+     * its track before it, unless it carries one of its own.
+     *
+     * @param state the state of the packet's track
+     * @param packet the packet about to be queued
+     * @return the packet to queue
+     */
+    private static Packet carry(TrackState state, Packet packet) {
+        var config = state.droppedConfig;
+        if (config == null) {
+            return packet;
+        }
+        state.droppedConfig = null;
+        if (packet.sideData().newCodecConfig().isPresent()) {
+            return packet;
+        }
+        return packet.withSideData(packet.sideData().toBuilder().newCodecConfig(config).build());
     }
 
     /**
@@ -327,6 +378,12 @@ public final class SeekFilter {
          * The largest packet time seen, in the track's time base, or {@link Long#MIN_VALUE}.
          */
         private long lastTime = Long.MIN_VALUE;
+
+        /**
+         * The codec configuration the latest dropped packet that changed it established, not yet
+         * passed on to a queued packet, or {@code null}.
+         */
+        private byte[] droppedConfig;
 
         /**
          * Constructs the state of a pending track.

@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.ogg;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.header.XiphLacing;
@@ -16,33 +17,45 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ThreadLocalRandom;
 
 /**
- * Writes Opus audio into an Ogg file following RFC 7845, and Vorbis audio following the Vorbis I
- * specification's Ogg encapsulation.
+ * Writes Opus audio into an Ogg file following RFC 7845, Vorbis audio following the Vorbis I
+ * specification's Ogg encapsulation, and FLAC audio following the Ogg FLAC mapping 1.0.
  *
- * <p>Every declared track must be an {@link AudioTrack} with {@link Codec#OPUS} or
- * {@link Codec#VORBIS}. An Opus track's codec configuration is the {@code OpusHead} header
- * written on the stream's first page; a track without configuration gets a synthesized
+ * <p>Every declared track must be an {@link AudioTrack} with {@link Codec#OPUS},
+ * {@link Codec#VORBIS} or {@link Codec#FLAC}. An Opus track's codec configuration is the
+ * {@code OpusHead} header written on the stream's first page; a track without configuration gets a synthesized
  * {@code OpusHead} for channel mapping family 0 (at most two channels) with the track's
  * {@code skipSamples}, converted to 48 kHz, as pre-skip. The second header is an
  * {@code OpusTags} packet carrying the configured vendor string and comments; it may span several
  * pages and always finishes its page. A Vorbis track's configuration holds the three Vorbis
  * headers, Xiph-laced: the identification header is written alone on the first page, then the
  * comment header (rebuilt from the tags when {@link #setTags(MediaTags)} set some) and the setup
- * header, the last finishing its page. Several tracks become grouped logical streams with
+ * header, the last finishing its page. A FLAC track's configuration is the {@code fLaC} marker
+ * followed by the metadata blocks, {@code STREAMINFO} first: the first page holds the
+ * identification packet alone ({@code 0x7F "FLAC"}, mapping version 1.0, the number of header
+ * packets that follow, {@code fLaC} and {@code STREAMINFO}), then each further header packet holds
+ * one metadata block, the last finishing its page: the {@code VORBIS_COMMENT} block (rebuilt from
+ * the tags when {@link #setTags(MediaTags)} set some, otherwise the configuration's own, otherwise
+ * one of the configured vendor string and comments), then the other blocks of the configuration
+ * except {@code SEEKTABLE}, whose offsets point into a native FLAC file, and {@code PADDING}.
+ * Every FLAC data packet is one frame. Several tracks become grouped logical streams with
  * consecutive serial numbers: all beginning-of-stream pages come first, then the remaining
  * headers, then data pages in the order their pages fill up.
  *
  * <p>Opus granule positions count 48 kHz samples decoded from the start of the stream, pre-skip
  * included, using the duration coded in each packet's TOC byte. Vorbis granule positions count
  * samples at the stream's rate: each packet adds a quarter of the previous block size plus a
- * quarter of its own (the first adds nothing), the block size coming from the packet's mode.
+ * quarter of its own (the first adds nothing), the block size coming from the packet's mode. FLAC
+ * granule positions count samples at the stream's rate, each frame adding the block size its
+ * header codes. Header pages have granule position 0.
  * Packet timestamps are ignored.
  * A page is completed when it holds {@code maxPacketsPerPage} packets, when its packets last
  * {@code maxPageDurationMicros}, or when its 255 lacing values are used up, in which case a
@@ -57,6 +70,10 @@ import java.util.concurrent.ThreadLocalRandom;
  * trimmed granule position never drops below the granule position of the previous page nor rises
  * above the samples actually coded. A stream without data packets ends with an empty
  * end-of-stream page.
+ *
+ * <p>The final {@code STREAMINFO} of a FLAC stream, which its encoder reports once flushed,
+ * reaches the file through {@link #updateCodecConfig(int, byte[])}: the identification packet has a
+ * fixed size, so on a seekable sink its page is rewritten in place.
  *
  * <p>Instances are not thread-safe.
  */
@@ -76,6 +93,37 @@ public final class OggMuxer implements Muxer {
      * lacing table before it.
      */
     private static final int BODY_OFFSET = OggPageReader.HEADER_SIZE + 255;
+
+    /**
+     * The size of a FLAC {@code STREAMINFO} block body.
+     */
+    private static final int FLAC_STREAMINFO_SIZE = 34;
+
+    /**
+     * The index of the {@code STREAMINFO} block header in the Ogg FLAC identification packet,
+     * after the mapping header and the {@code fLaC} marker.
+     */
+    private static final int FLAC_STREAMINFO_OFFSET = 13;
+
+    /**
+     * The size of the Ogg FLAC identification packet.
+     */
+    private static final int FLAC_HEAD_SIZE = FLAC_STREAMINFO_OFFSET + 4 + FLAC_STREAMINFO_SIZE;
+
+    /**
+     * The FLAC metadata block type of {@code PADDING}.
+     */
+    private static final int FLAC_PADDING = 1;
+
+    /**
+     * The FLAC metadata block type of {@code SEEKTABLE}.
+     */
+    private static final int FLAC_SEEKTABLE = 3;
+
+    /**
+     * The FLAC metadata block type of {@code VORBIS_COMMENT}.
+     */
+    private static final int FLAC_VORBIS_COMMENT = 4;
 
     /**
      * The destination.
@@ -129,7 +177,8 @@ public final class OggMuxer implements Muxer {
     /**
      * Constructs a muxer writing to a sink.
      *
-     * <p>Ogg pages are written strictly in order, so any sink works, a streaming one included.
+     * <p>Ogg pages are written strictly in order, so any sink works, a streaming one included; only
+     * the final {@code STREAMINFO} of a FLAC stream needs a seekable sink to reach the file.
      *
      * @param output the destination, written from its position; not closed by this muxer
      * @param options the configuration
@@ -142,11 +191,12 @@ public final class OggMuxer implements Muxer {
     }
 
     /**
-     * Declares an Opus or Vorbis track.
+     * Declares an Opus, Vorbis or FLAC track.
      *
-     * @param track the track; an {@link AudioTrack} with {@link Codec#OPUS} or {@link Codec#VORBIS}
-     * @throws IllegalArgumentException if the track is neither Opus nor Vorbis, its identifier is already used, or its
-     * {@code OpusHead} or Vorbis headers are missing or invalid
+     * @param track the track; an {@link AudioTrack} with {@link Codec#OPUS}, {@link Codec#VORBIS} or
+     * {@link Codec#FLAC}
+     * @throws IllegalArgumentException if the track is not Opus, Vorbis or FLAC, its identifier is already used, or
+     * its {@code OpusHead}, Vorbis headers or FLAC metadata blocks are missing or invalid
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
     @Override
@@ -156,11 +206,19 @@ public final class OggMuxer implements Muxer {
         if (started) {
             throw new IllegalStateException("tracks must be declared before the first packet");
         }
-        if (!(track instanceof AudioTrack audio) || (audio.codec() != Codec.OPUS && audio.codec() != Codec.VORBIS)) {
-            throw new IllegalArgumentException("Ogg output supports only Opus and Vorbis audio, not " + track.codec().displayName());
+        if (!(track instanceof AudioTrack audio) || !supports(audio.codec())) {
+            throw new IllegalArgumentException("Ogg output supports only Opus, Vorbis and FLAC audio, not "
+                    + track.codec().displayName());
         }
         if (streams.containsKey(track.id())) {
             throw new IllegalArgumentException("duplicate track id " + track.id());
+        }
+        if (audio.codec() == Codec.FLAC) {
+            var writer = new StreamWriter(audio);
+            writer.configureFlac(audio.codecConfig().orElseThrow(
+                    () -> new IllegalArgumentException("a FLAC track needs its fLaC marker and STREAMINFO block")));
+            streams.put(track.id(), writer);
+            return;
         }
         if (audio.codec() == Codec.VORBIS) {
             var headers = unlace(audio.codecConfig().orElseThrow(
@@ -234,11 +292,11 @@ public final class OggMuxer implements Muxer {
      * Returns whether Ogg files written by this muxer can carry a codec.
      *
      * @param codec the codec of the track
-     * @return {@code true} for Opus and Vorbis
+     * @return {@code true} for Opus, Vorbis and FLAC
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case OPUS, VORBIS -> true;
+            case OPUS, VORBIS, FLAC -> true;
             default -> false;
         };
     }
@@ -258,8 +316,8 @@ public final class OggMuxer implements Muxer {
      *
      * <p>The tags become fields of the {@code OpusTags} header after the configured comments,
      * which they override for the same name: pictures as {@code METADATA_BLOCK_PICTURE} and
-     * chapters as {@code CHAPTERxxx} fields. A Vorbis stream's comment header is rebuilt the same
-     * way.
+     * chapters as {@code CHAPTERxxx} fields. A Vorbis stream's comment header and a FLAC stream's
+     * {@code VORBIS_COMMENT} block are rebuilt the same way.
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -271,12 +329,14 @@ public final class OggMuxer implements Muxer {
     }
 
     /**
-     * Writes one Opus or Vorbis packet.
+     * Writes one Opus, Vorbis or FLAC packet.
      *
      * @param packet the next packet of its track
      * @throws IllegalArgumentException if the packet's track was not declared or the packet is not a valid Opus or
-     * Vorbis audio packet
+     * Vorbis audio packet or FLAC frame
      * @throws IllegalStateException if the muxer is finished or no track was declared
+     * @throws MediaException.Unsupported if the packet changes the codec configuration, which the
+     * headers at the start of the stream fix
      * @throws MediaException.Io if writing fails
      */
     @Override
@@ -287,8 +347,14 @@ public final class OggMuxer implements Muxer {
         if (stream == null) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        ConfigChanges.reject(packet, stream.track.codecConfig().orElse(null), "Ogg");
         long samples;
-        if (stream.vorbis != null) {
+        if (stream.flacParameters != null) {
+            samples = AudioConfigs.flacFrameSamples(packet.data());
+            if (samples <= 0) {
+                throw new IllegalArgumentException("invalid FLAC frame of " + packet.size() + " bytes");
+            }
+        } else if (stream.vorbis != null) {
             var data = packet.data();
             if (data.length == 0 || (data[0] & 1) != 0) {
                 throw new IllegalArgumentException("invalid Vorbis audio packet of " + packet.size() + " bytes");
@@ -306,6 +372,47 @@ public final class OggMuxer implements Muxer {
         }
         start();
         stream.add(packet, samples);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A FLAC configuration replaces the track's. Before the first packet its blocks replace the
+     * initial ones; afterwards its {@code STREAMINFO} replaces the one of the identification packet,
+     * whose page is rewritten in place on a seekable sink and left as written first on a stream.
+     * Every other codec keeps its configuration.
+     *
+     * @throws IllegalArgumentException if the track was not declared, or a FLAC configuration does
+     * not start with {@code STREAMINFO} or describes another sample rate, channel count or sample
+     * size than the track's
+     * @throws IllegalStateException if the muxer is finished or closed
+     */
+    @Override
+    public void updateCodecConfig(int trackId, byte[] config) {
+        Objects.requireNonNull(config, "config");
+        checkOpen();
+        var stream = streams.get(trackId);
+        if (stream == null) {
+            throw new IllegalArgumentException("undeclared track " + trackId);
+        }
+        if (stream.flacParameters == null) {
+            return;
+        }
+        AudioConfigs.FlacConfig parsed;
+        try {
+            parsed = AudioConfigs.parseFlac(config);
+        } catch (MediaException.Malformed exception) {
+            throw new IllegalArgumentException("a FLAC configuration must start with STREAMINFO", exception);
+        }
+        if (!parsed.equals(stream.flacParameters)) {
+            throw new IllegalArgumentException("the final FLAC configuration of track " + trackId
+                    + " describes another stream than the initial one");
+        }
+        if (!started) {
+            stream.configureFlac(config);
+            return;
+        }
+        stream.rewriteStreamInfo(config);
     }
 
     /**
@@ -446,6 +553,17 @@ public final class OggMuxer implements Muxer {
     }
 
     /**
+     * Returns the body length coded in a FLAC metadata block header.
+     *
+     * @param data the bytes
+     * @param offset the index of the block header
+     * @return the 24-bit length
+     */
+    private static int blockLength(byte[] data, int offset) {
+        return (data[offset + 1] & 0xFF) << 16 | (data[offset + 2] & 0xFF) << 8 | (data[offset + 3] & 0xFF);
+    }
+
+    /**
      * Writes a little-endian 32-bit length.
      *
      * @param data the destination
@@ -472,7 +590,7 @@ public final class OggMuxer implements Muxer {
         /**
          * The identification header.
          */
-        private final byte[] head;
+        private byte[] head;
 
         /**
          * The pre-skip declared by the identification header, zero for Vorbis.
@@ -490,9 +608,37 @@ public final class OggMuxer implements Muxer {
         private final VorbisMapping vorbis;
 
         /**
-         * The unit of granule positions: 48 kHz for Opus, the sampling rate for Vorbis.
+         * The unit of granule positions: 48 kHz for Opus, the sampling rate for Vorbis and FLAC.
          */
-        private final Rational timeBase;
+        private Rational timeBase;
+
+        /**
+         * The sample rate, channel count and sample size of a FLAC stream, or {@code null} for Opus
+         * and Vorbis.
+         */
+        private AudioConfigs.FlacConfig flacParameters;
+
+        /**
+         * The body of the configuration's {@code VORBIS_COMMENT} block, or {@code null} when it has
+         * none.
+         */
+        private byte[] flacComment;
+
+        /**
+         * The FLAC metadata blocks written after the {@code VORBIS_COMMENT} block, each with its
+         * header and the last-block flag cleared.
+         */
+        private List<byte[]> flacBlocks;
+
+        /**
+         * The absolute offset of the FLAC identification page on a seekable sink, or {@code -1}.
+         */
+        private long headOffset = -1;
+
+        /**
+         * A copy of the FLAC identification page written at {@link #headOffset}, or {@code null}.
+         */
+        private byte[] headPage;
 
         /**
          * Whether a Vorbis audio packet was added.
@@ -613,6 +759,129 @@ public final class OggMuxer implements Muxer {
         }
 
         /**
+         * Constructs the writer of a FLAC track, configured by {@link #configureFlac(byte[])}.
+         *
+         * @param track the FLAC track written
+         */
+        private StreamWriter(AudioTrack track) {
+            this.track = track;
+            this.preSkip = 0;
+            this.vorbisHeaders = null;
+            this.vorbis = null;
+        }
+
+        /**
+         * Derives the identification packet and the header blocks of a FLAC stream from its
+         * configuration.
+         *
+         * <p>A truncated block chain ends at the last complete block.
+         *
+         * @param config the {@code fLaC} marker followed by the metadata blocks
+         * @throws IllegalArgumentException if the configuration does not start with a 34-byte
+         * {@code STREAMINFO} block
+         */
+        private void configureFlac(byte[] config) {
+            AudioConfigs.FlacConfig parsed;
+            try {
+                parsed = AudioConfigs.parseFlac(config);
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("a FLAC track needs its fLaC marker and STREAMINFO block",
+                        exception);
+            }
+            if (blockLength(config, 4) != FLAC_STREAMINFO_SIZE) {
+                throw new IllegalArgumentException("a FLAC STREAMINFO block has " + FLAC_STREAMINFO_SIZE + " bytes");
+            }
+            var blocks = new ArrayList<byte[]>();
+            byte[] comment = null;
+            var last = (config[4] & 0x80) != 0;
+            var offset = 8 + FLAC_STREAMINFO_SIZE;
+            while (!last && offset + 4 <= config.length) {
+                var type = config[offset] & 0x7F;
+                last = (config[offset] & 0x80) != 0;
+                var end = offset + 4 + blockLength(config, offset);
+                if (end > config.length) {
+                    break;
+                }
+                if (type == FLAC_VORBIS_COMMENT && comment == null) {
+                    comment = Arrays.copyOfRange(config, offset + 4, end);
+                } else if (type != FLAC_PADDING && type != FLAC_SEEKTABLE && type != FLAC_VORBIS_COMMENT) {
+                    var block = Arrays.copyOfRange(config, offset, end);
+                    block[0] &= 0x7F;
+                    blocks.add(block);
+                }
+                offset = end;
+            }
+            var packet = new byte[FLAC_HEAD_SIZE];
+            packet[0] = 0x7F;
+            System.arraycopy("FLAC".getBytes(StandardCharsets.US_ASCII), 0, packet, 1, 4);
+            packet[5] = 1;
+            var headers = 1 + blocks.size();
+            packet[7] = (byte) (headers >>> 8);
+            packet[8] = (byte) headers;
+            System.arraycopy(config, 0, packet, 9, 4);
+            System.arraycopy(config, 4, packet, FLAC_STREAMINFO_OFFSET, 4 + FLAC_STREAMINFO_SIZE);
+            packet[FLAC_STREAMINFO_OFFSET] = 0;
+            this.head = packet;
+            this.flacParameters = parsed;
+            this.flacComment = comment;
+            this.flacBlocks = blocks;
+            this.timeBase = Rational.timeBaseOf(parsed.sampleRate());
+        }
+
+        /**
+         * Replaces the {@code STREAMINFO} of the FLAC identification packet and, on a seekable
+         * sink, rewrites its page in place.
+         *
+         * @param config the final configuration, starting with {@code STREAMINFO}
+         * @throws MediaException.Io if rewriting the output fails
+         */
+        private void rewriteStreamInfo(byte[] config) {
+            var body = FLAC_STREAMINFO_OFFSET + 4;
+            System.arraycopy(config, 8, head, body, FLAC_STREAMINFO_SIZE);
+            if (headPage == null) {
+                return;
+            }
+            System.arraycopy(config, 8, headPage, OggPageReader.HEADER_SIZE + 1 + body, FLAC_STREAMINFO_SIZE);
+            seal(headPage, 0, headPage.length);
+            var end = output.position();
+            output.position(headOffset);
+            write(headPage, 0, headPage.length);
+            output.position(end);
+        }
+
+        /**
+         * Returns the FLAC header packets after the identification packet: the
+         * {@code VORBIS_COMMENT} block, then the other kept blocks, the last one flagged.
+         *
+         * @return the packets
+         * @throws MediaException.LimitExceeded if the comment block exceeds the 16 MiB a block holds
+         */
+        private List<byte[]> flacHeaders() {
+            var body = flacComment;
+            if (tags != null || body == null) {
+                var opusTags = tags();
+                body = Arrays.copyOfRange(opusTags, 8, opusTags.length);
+            }
+            if (body.length >= 1 << 24) {
+                throw new MediaException.LimitExceeded("FLAC comment block of " + body.length
+                        + " bytes exceeds the 16 MiB a block can hold");
+            }
+            var comment = new byte[4 + body.length];
+            comment[0] = FLAC_VORBIS_COMMENT;
+            comment[1] = (byte) (body.length >>> 16);
+            comment[2] = (byte) (body.length >>> 8);
+            comment[3] = (byte) body.length;
+            System.arraycopy(body, 0, comment, 4, body.length);
+            var packets = new ArrayList<byte[]>(1 + flacBlocks.size());
+            packets.add(comment);
+            for (var block : flacBlocks) {
+                packets.add(block.clone());
+            }
+            packets.getLast()[0] |= (byte) 0x80;
+            return packets;
+        }
+
+        /**
          * Constructs the writer of a Vorbis track.
          *
          * @param track the Vorbis track written
@@ -634,13 +903,25 @@ public final class OggMuxer implements Muxer {
          */
         private void writeHead() {
             appendPacket(head);
-            writeBuilt(buildPage(OggPageReader.FLAG_BOS, 0));
+            var page = buildPage(OggPageReader.FLAG_BOS, 0);
+            if (flacParameters != null && output.isSeekable()) {
+                headOffset = output.position();
+                headPage = Arrays.copyOfRange(page, builtStart, builtStart + builtLength);
+            }
+            writeBuilt(page);
         }
 
         /**
          * Writes the comment header, finishing its last page.
          */
         private void writeTags() {
+            if (flacParameters != null) {
+                var packets = flacHeaders();
+                for (var index = 0; index < packets.size(); index++) {
+                    writeContinued(packets.get(index), index == packets.size() - 1);
+                }
+                return;
+            }
             if (vorbisHeaders != null) {
                 writeContinued(vorbisTags(vorbisHeaders[1]), false);
                 writeContinued(vorbisHeaders[2], true);

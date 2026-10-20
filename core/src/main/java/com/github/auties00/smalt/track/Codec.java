@@ -131,6 +131,23 @@ public enum Codec {
     EAC3(TrackKind.AUDIO, "eac3"),
 
     /**
+     * DTS Coherent Acoustics (ETSI TS 102 114), including DTS-HD frames, whose extension substream follows the core
+     * frame.
+     *
+     * <p>A packet is one frame in the 16-bit big-endian form, which starts with the sync word {@code 0x7FFE8001}.
+     * The track has no configuration.
+     */
+    DTS(TrackKind.AUDIO, "dts"),
+
+    /**
+     * Dolby TrueHD.
+     *
+     * <p>A packet is one access unit; the units that open with a major sync are the key frames. The track has no
+     * configuration.
+     */
+    TRUEHD(TrackKind.AUDIO, "truehd"),
+
+    /**
      * Uncompressed signed 16-bit little-endian PCM.
      */
     PCM_S16LE(TrackKind.AUDIO, "pcm_s16le"),
@@ -159,6 +176,16 @@ public enum Codec {
      * Uncompressed signed 32-bit big-endian PCM.
      */
     PCM_S32BE(TrackKind.AUDIO, "pcm_s32be"),
+
+    /**
+     * Uncompressed signed 64-bit little-endian PCM.
+     */
+    PCM_S64LE(TrackKind.AUDIO, "pcm_s64le"),
+
+    /**
+     * Uncompressed signed 64-bit big-endian PCM.
+     */
+    PCM_S64BE(TrackKind.AUDIO, "pcm_s64be"),
 
     /**
      * Uncompressed 32-bit little-endian IEEE float PCM.
@@ -253,6 +280,26 @@ public enum Codec {
     ASS(TrackKind.DATA, "ass"),
 
     /**
+     * Timed Text Markup Language (W3C TTML, including its IMSC profiles), the ISO/IEC 14496-30
+     * {@code stpp} subtitles of MP4 files.
+     *
+     * <p>A packet is one TTML document in XML, as an MP4 sample stores it, covering the packet's
+     * presentation timestamp and duration; its time expressions count from the start of the
+     * track, not of the packet. Packets follow each other without overlapping. The configuration
+     * is the body of the {@code stpp} sample entry after its eight leading bytes: the
+     * {@code namespace}, {@code schema_location} and {@code auxiliary_mime_types} fields as
+     * null-terminated UTF-8 strings (the first a space-separated list of the XML namespaces the
+     * documents use, the others possibly empty), then any child boxes of the entry, such as
+     * {@code btrt}. A track without a configuration uses the TTML namespace alone:
+     * {@snippet :
+     * http://www.w3.org/ns/ttml\0\0\0
+     * }
+     * The packets are documents rather than cues, so this is not one of the text formats of
+     * {@link #isSubtitle()}.
+     */
+    TTML(TrackKind.DATA, "ttml"),
+
+    /**
      * A data, subtitle, or metadata stream.
      */
     DATA(TrackKind.DATA, "data");
@@ -319,7 +366,7 @@ public enum Codec {
             case PCM_S16LE, PCM_S16BE -> OptionalInt.of(16);
             case PCM_S24LE, PCM_S24BE -> OptionalInt.of(24);
             case PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE -> OptionalInt.of(32);
-            case PCM_F64LE, PCM_F64BE -> OptionalInt.of(64);
+            case PCM_S64LE, PCM_S64BE, PCM_F64LE, PCM_F64BE -> OptionalInt.of(64);
             default -> OptionalInt.empty();
         };
     }

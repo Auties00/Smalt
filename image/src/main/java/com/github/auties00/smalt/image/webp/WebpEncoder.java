@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.webp;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -68,8 +69,7 @@ public final class WebpEncoder {
      *
      * @param picture the picture, at most 16383 pixels per side
      * @return the WebP file
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B', or the image is lossy and no VP8 encoder is available
+     * @throws MediaException.Unsupported if the image is lossy and no VP8 encoder is available
      * @throws MediaException.LimitExceeded if a side exceeds 16383 pixels, encoding runs out of
      * memory, or the file would exceed the RIFF size limit
      * @see #encode(Picture, WebpEncoderOptions)
@@ -86,8 +86,7 @@ public final class WebpEncoder {
      * @param picture the picture, at most 16383 pixels per side
      * @param options the encoder settings
      * @param sink the output, written from its position and not closed
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B', or the image is lossy and no VP8 encoder is available
+     * @throws MediaException.Unsupported if the image is lossy and no VP8 encoder is available
      * @throws MediaException.LimitExceeded if a side exceeds 16383 pixels, encoding runs out of
      * memory, or the file would exceed the RIFF size limit
      * @throws MediaException.Io if writing the sink fails
@@ -105,13 +104,13 @@ public final class WebpEncoder {
      * representation lossy WebP decodes to, is coded as it is, its alpha plane kept; any other
      * {@link YuvPicture} is first converted with {@link ImageOps#toRgba(Picture)}. A
      * {@link Rgba16Picture} or {@link Yuv16Picture} is first reduced to 8 bits with
-     * {@link ImageOps#toEightBit(Picture)}.
+     * {@link ImageOps#toEightBit(Picture)}, and a {@link ChannelPicture} is first converted with
+     * {@link ImageOps#toRgba(Picture)}.
      *
      * @param picture the picture, at most 16383 pixels per side
      * @param options the encoder settings
      * @return the WebP file
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B', or the image is lossy and no VP8 encoder is available
+     * @throws MediaException.Unsupported if the image is lossy and no VP8 encoder is available
      * @throws MediaException.LimitExceeded if a side exceeds 16383 pixels, encoding runs out of
      * memory, or the file would exceed the RIFF size limit
      */
@@ -154,6 +153,9 @@ public final class WebpEncoder {
             case Yuv16Picture high -> {
                 return encodeLossless(ImageOps.toEightBit(high), options, icc);
             }
+            case ChannelPicture channels -> {
+                return encodeLossless(ImageOps.toRgba(channels), options, icc);
+            }
         }
         var image = FrameEncoder.encodeLossless(argb, width, height, options.quality(), options.method(), options.exact());
         return assemble(image, width, height, options.extendedFormat(), icc);
@@ -181,6 +183,7 @@ public final class WebpEncoder {
             case YuvPicture source when FrameEncoder.isLossyLayout(source) -> prepareLossyYuv(source, options);
             case YuvPicture source -> prepareLossyRgba(ImageOps.toRgba(source), options, limits);
             case Rgba16Picture high -> prepareLossyRgba(ImageOps.toEightBit(high), options, limits);
+            case ChannelPicture channels -> prepareLossyRgba(ImageOps.toRgba(channels), options, limits);
             case Yuv16Picture high -> {
                 var eight = ImageOps.toEightBit(high);
                 yield FrameEncoder.isLossyLayout(eight) ? prepareLossyYuv(eight, options)

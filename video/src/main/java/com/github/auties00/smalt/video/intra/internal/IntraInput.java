@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.video.intra.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
@@ -10,10 +11,11 @@ import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.color.LumaWeights;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
-import java.util.Locale;
+import java.util.Optional;
 
 /**
  * Prepares any {@link Picture} for the intra encoders: converts it to limited-range Y'CbCr (or
@@ -22,9 +24,11 @@ import java.util.Locale;
  * <p>Y'CbCr pictures keep their matrix: their samples are widened or rounded to the target depth,
  * full-range samples are mapped to limited range, and the chroma planes are resampled when the
  * layouts differ, with box averaging to reduce and linear interpolation to enlarge. RGB pictures
- * are converted with the luma weights of the requested matrix (BT.709 for an unspecified one), at
- * full precision, each subsampled chroma sample averaging the pixels it covers; a matrix that two
- * luma weights do not define is unsupported. Alpha, when requested, comes from the
+ * are converted with the luma weights of the requested matrix (BT.709 for an unspecified one, those
+ * the primaries derive for the chromaticity-derived matrix), at full precision, each subsampled
+ * chroma sample averaging the pixels it covers; every other matrix except the identity, which the intra
+ * formats cannot signal for Y'CbCr samples, converts as
+ * {@link ImageOps#toYuv16(Picture, ChromaFormat, ColorInfo, int)} does. Alpha, when requested, comes from the
  * alpha plane or channel, rescaled to the alpha depth; a picture without alpha gets opaque alpha.
  */
 public final class IntraInput {
@@ -52,11 +56,15 @@ public final class IntraInput {
      * @param recycled planes of an earlier call whose arrays the result may reuse when their sizes
      * fit, or {@code null}; the caller must not use them afterwards
      * @return the planes
-     * @throws MediaException.Unsupported if the picture is RGB and two luma weights do not define
-     * the matrix of {@code rgbColor}
+     * @throws MediaException.Unsupported if the picture is RGB and the matrix of {@code rgbColor} is
+     * {@link MatrixCoefficients#IDENTITY}
      */
     public static IntraPlanes yuv(Picture picture, ChromaFormat format, int depth, ColorInfo rgbColor, int alphaDepth,
                                   int paddedWidth, int paddedHeight, int threads, IntraPlanes recycled) {
+        if (picture instanceof ChannelPicture channels) {
+            return yuv(channels.bitDepth() > 8 ? ImageOps.toRgba16(channels) : ImageOps.toRgba(channels), format,
+                    depth, rgbColor, alphaDepth, paddedWidth, paddedHeight, threads, recycled);
+        }
         var width = picture.width();
         var height = picture.height();
         var shiftX = format.shiftX();
@@ -70,8 +78,9 @@ public final class IntraInput {
                 : null;
         ColorInfo color;
         switch (picture) {
+            case ChannelPicture _ -> throw new AssertionError();
             case RgbaPicture rgba -> {
-                rgbToYuv(rgba.pixels(), null, rgba.stride(), 8, width, height, format, depth, rgbColor, y, u, v,
+                rgbToYuv(rgba, rgba.pixels(), null, rgba.stride(), 8, width, height, format, depth, rgbColor, y, u, v,
                         paddedWidth, chromaStride);
                 color = limited(rgbColor);
                 if (alpha != null) {
@@ -85,7 +94,7 @@ public final class IntraInput {
                 }
             }
             case Rgba16Picture rgba -> {
-                rgbToYuv(null, rgba.pixels(), rgba.stride(), 16, width, height, format, depth, rgbColor, y, u, v,
+                rgbToYuv(rgba, null, rgba.pixels(), rgba.stride(), 16, width, height, format, depth, rgbColor, y, u, v,
                         paddedWidth, chromaStride);
                 color = limited(rgbColor);
                 if (alpha != null) {
@@ -769,6 +778,7 @@ public final class IntraInput {
     /**
      * Converts R'G'B' samples to limited-range Y'CbCr planes.
      *
+     * @param picture the RGBA picture the samples belong to
      * @param narrow the 8-bit RGBA samples, or {@code null}
      * @param wide the 16-bit RGBA samples, or {@code null}
      * @param stride the source row stride in samples
@@ -783,11 +793,30 @@ public final class IntraInput {
      * @param v the Cr plane
      * @param lumaStride the luma row stride
      * @param chromaStride the chroma row stride
+     * @throws MediaException.Unsupported if the matrix of {@code color} is {@link MatrixCoefficients#IDENTITY}
      */
-    private static void rgbToYuv(byte[] narrow, short[] wide, int stride, int sourceDepth, int width, int height,
-                                 ChromaFormat format, int depth, ColorInfo color, short[] y, short[] u, short[] v,
-                                 int lumaStride, int chromaStride) {
-        var weights = weights(color.matrix());
+    private static void rgbToYuv(Picture picture, byte[] narrow, short[] wide, int stride, int sourceDepth, int width,
+                                 int height, ChromaFormat format, int depth, ColorInfo color, short[] y, short[] u,
+                                 short[] v, int lumaStride, int chromaStride) {
+        if (color.matrix() == MatrixCoefficients.IDENTITY) {
+            throw new MediaException.Unsupported("matrix identity",
+                    "RGB input cannot be coded as Y'CbCr samples in the identity matrix");
+        }
+        var lumaWeights = weights(color);
+        if (lumaWeights.isEmpty()) {
+            var converted = ImageOps.toYuv16(picture, format, limited(color), depth);
+            for (var row = 0; row < height; row++) {
+                System.arraycopy(converted.y(), row * converted.yStride(), y, row * lumaStride, width);
+            }
+            for (var row = 0; row < converted.chromaHeight(); row++) {
+                System.arraycopy(converted.u(), row * converted.uvStride(), u, row * chromaStride,
+                        converted.chromaWidth());
+                System.arraycopy(converted.v(), row * converted.uvStride(), v, row * chromaStride,
+                        converted.chromaWidth());
+            }
+            return;
+        }
+        var weights = lumaWeights.get();
         var kr = weights.kr();
         var kb = weights.kb();
         var kg = weights.kg();
@@ -848,19 +877,18 @@ public final class IntraInput {
     }
 
     /**
-     * Returns the luma weights RGB samples are converted with.
+     * Returns the luma weights RGB samples are converted with directly.
      *
-     * @param matrix the matrix of the requested color description
-     * @return the matrix's weights, or those of BT.709 for an unspecified matrix
-     * @throws MediaException.Unsupported if two luma weights do not define {@code matrix}
+     * @param color the requested color description
+     * @return the matrix's weights, those of BT.709 for an unspecified matrix and those of the primaries for the
+     * chromaticity-derived non-constant-luminance matrix, or empty for a matrix that weighted luma does not define
      */
-    static LumaWeights weights(MatrixCoefficients matrix) {
-        if (matrix == MatrixCoefficients.UNSPECIFIED) {
-            return LumaWeights.BT709;
-        }
-        return LumaWeights.of(matrix).orElseThrow(() -> new MediaException.Unsupported(
-                "matrix " + matrix.name().toLowerCase(Locale.ROOT),
-                "RGB input cannot be converted to Y'CbCr with the " + matrix + " matrix coefficients"));
+    static Optional<LumaWeights> weights(ColorInfo color) {
+        return switch (color.matrix()) {
+            case UNSPECIFIED -> Optional.of(LumaWeights.BT709);
+            case CHROMA_DERIVED_NCL -> LumaWeights.of(color.matrix(), color.primaries());
+            default -> LumaWeights.of(color.matrix());
+        };
     }
 
     /**
