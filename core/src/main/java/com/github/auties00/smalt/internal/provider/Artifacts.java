@@ -71,9 +71,9 @@ public final class Artifacts {
      */
     public static String encoderOf(Codec codec) {
         return switch (codec) {
-            case H264, AAC, AMR_NB, AMR_WB, AC3 -> MPEG;
+            case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8 -> IMAGE;
+            case VP8, MJPEG -> IMAGE;
             case OPUS, FLAC, MP3, VORBIS -> AUDIO;
             default -> null;
         };

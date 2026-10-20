@@ -1,0 +1,13 @@
+# image dump of vectors/avif-Microsoft-bbb_alpha_inverted.avif; regenerate with -Dsmalt.test.updateDumps=true
+format AVIF
+info ImageInfo[format=AVIF, width=3840, height=2160, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 3840x2160 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=7b5c3e25 u=0b019312 v=a3c359ee a=13d21961
+  format=AVIF orientation=NORMAL source=3840x2160
+  icc=none exif=212:29260725 xmp=none
+  profile=none
+scaled 960x540
+picture 3840x2160 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=7b5c3e25 u=0b019312 v=a3c359ee a=13d21961
+  format=AVIF orientation=NORMAL source=3840x2160
+  icc=none exif=212:29260725 xmp=none
+  profile=none

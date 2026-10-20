@@ -70,6 +70,16 @@ public final class VideoTrack implements Track {
      */
     private final ColorInfo color;
 
+    /**
+     * The sample aspect ratio, or {@code null}.
+     */
+    private final Rational sampleAspectRatio;
+
+    /**
+     * The declared scan, or {@code null}.
+     */
+    private final Interlacing interlacing;
+
     private VideoTrack(Builder builder) {
         this.id = builder.id;
         this.codec = builder.codec;
@@ -82,14 +92,16 @@ public final class VideoTrack implements Track {
         this.orientation = builder.orientation;
         this.frameRate = builder.frameRate;
         this.color = builder.color;
+        this.sampleAspectRatio = builder.sampleAspectRatio;
+        this.interlacing = builder.interlacing;
     }
 
     /**
      * Returns a builder of video tracks.
      *
      * <p>The codec and the time base must be set; every other property starts at its "unknown"
-     * value: identifier {@code 0}, duration {@code -1}, no configuration, language, frame rate or
-     * color, size {@code 0x0} and {@link Orientation#NORMAL}.
+     * value: identifier {@code 0}, duration {@code -1}, no configuration, language, frame rate,
+     * color, sample aspect ratio or scan, size {@code 0x0} and {@link Orientation#NORMAL}.
      *
      * @return the builder
      */
@@ -115,6 +127,8 @@ public final class VideoTrack implements Track {
         builder.orientation = orientation;
         builder.frameRate = frameRate;
         builder.color = color;
+        builder.sampleAspectRatio = sampleAspectRatio;
+        builder.interlacing = interlacing;
         return builder;
     }
 
@@ -199,6 +213,33 @@ public final class VideoTrack implements Track {
     }
 
     /**
+     * Returns the shape of a coded sample declared by the container: its width divided by its
+     * height, so that a picture is displayed {@code width() * sampleAspectRatio()} pixels wide and
+     * {@code height()} pixels high.
+     *
+     * <p>The ratio is in coded orientation, before {@link #orientation()} is applied, and in lowest
+     * terms. A container that declares square samples gives {@code 1/1}; an empty result means the
+     * container is silent, and the bitstream's own signaling (or square samples) applies. A
+     * container without a field of its own (MPEG-TS) reports the ratio the sequence parameter set
+     * signals.
+     *
+     * @return the sample aspect ratio, or empty when the container does not declare one
+     */
+    public Optional<Rational> sampleAspectRatio() {
+        return Optional.ofNullable(sampleAspectRatio);
+    }
+
+    /**
+     * Returns the scan of the frames declared by the container.
+     *
+     * @return the scan, or empty when the container does not declare whether the frames are
+     * interlaced
+     */
+    public Optional<Interlacing> interlacing() {
+        return Optional.ofNullable(interlacing);
+    }
+
+    /**
      * Compares two tracks property by property, the configuration by content.
      *
      * @param other the object to compare with
@@ -210,7 +251,8 @@ public final class VideoTrack implements Track {
                 && id == that.id && codec == that.codec && timeBase.equals(that.timeBase) && duration == that.duration
                 && Arrays.equals(codecConfig, that.codecConfig) && Objects.equals(language, that.language)
                 && width == that.width && height == that.height && orientation == that.orientation
-                && Objects.equals(frameRate, that.frameRate) && Objects.equals(color, that.color);
+                && Objects.equals(frameRate, that.frameRate) && Objects.equals(color, that.color)
+                && Objects.equals(sampleAspectRatio, that.sampleAspectRatio) && interlacing == that.interlacing;
     }
 
     /**
@@ -221,7 +263,7 @@ public final class VideoTrack implements Track {
     @Override
     public int hashCode() {
         return Objects.hash(id, codec, timeBase, duration, Arrays.hashCode(codecConfig), language, width, height,
-                orientation, frameRate, color);
+                orientation, frameRate, color, sampleAspectRatio, interlacing);
     }
 
     /**
@@ -235,7 +277,8 @@ public final class VideoTrack implements Track {
         return "VideoTrack[id=" + id + ", codec=" + codec + ", timeBase=" + timeBase + ", duration=" + duration
                 + ", codecConfig=" + (codecConfig == null ? "none" : codecConfig.length + " bytes")
                 + ", language=" + language + ", width=" + width + ", height=" + height
-                + ", orientation=" + orientation + ", frameRate=" + frameRate + ", color=" + color + "]";
+                + ", orientation=" + orientation + ", frameRate=" + frameRate + ", color=" + color
+                + ", sampleAspectRatio=" + sampleAspectRatio + ", interlacing=" + interlacing + "]";
     }
 
     /**
@@ -298,6 +341,16 @@ public final class VideoTrack implements Track {
          * The color description, or {@code null}.
          */
         private ColorInfo color;
+
+        /**
+         * The sample aspect ratio in lowest terms, or {@code null}.
+         */
+        private Rational sampleAspectRatio;
+
+        /**
+         * The scan, or {@code null}.
+         */
+        private Interlacing interlacing;
 
         /**
          * Constructs a builder with every property unknown.
@@ -425,6 +478,51 @@ public final class VideoTrack implements Track {
          */
         public Builder color(ColorInfo color) {
             this.color = color;
+            return this;
+        }
+
+        /**
+         * Sets the sample aspect ratio declared by the container; see
+         * {@link VideoTrack#sampleAspectRatio()}.
+         *
+         * @param sampleAspectRatio the width of a coded sample divided by its height; stored in
+         * lowest terms
+         * @return this builder
+         */
+        public Builder sampleAspectRatio(Rational sampleAspectRatio) {
+            this.sampleAspectRatio = Objects.requireNonNull(sampleAspectRatio, "sampleAspectRatio").reduce();
+            return this;
+        }
+
+        /**
+         * Removes the sample aspect ratio, so that the track declares none.
+         *
+         * @return this builder
+         */
+        public Builder noSampleAspectRatio() {
+            this.sampleAspectRatio = null;
+            return this;
+        }
+
+        /**
+         * Sets the scan of the frames declared by the container; see
+         * {@link VideoTrack#interlacing()}.
+         *
+         * @param interlacing the scan
+         * @return this builder
+         */
+        public Builder interlacing(Interlacing interlacing) {
+            this.interlacing = Objects.requireNonNull(interlacing, "interlacing");
+            return this;
+        }
+
+        /**
+         * Removes the scan, so that the track does not declare whether its frames are interlaced.
+         *
+         * @return this builder
+         */
+        public Builder noInterlacing() {
+            this.interlacing = null;
             return this;
         }
 

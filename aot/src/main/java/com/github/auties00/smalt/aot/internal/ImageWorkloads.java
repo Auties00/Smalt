@@ -2,11 +2,17 @@ package com.github.auties00.smalt.aot.internal;
 
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.bmp.BmpDecoder;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifValue;
@@ -26,6 +32,8 @@ import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegTransforms;
 import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
+import com.github.auties00.smalt.image.jpeg.MjpegEncoder;
+import com.github.auties00.smalt.image.jpeg.MjpegEncoderOptions;
 import com.github.auties00.smalt.image.metadata.ImageMetadata;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
@@ -50,14 +58,18 @@ import com.github.auties00.smalt.image.webp.WebpEncoderOptions;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
+import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.vp8.Vp8Decoder;
 import com.github.auties00.smalt.video.vp8.Vp8Encoder;
 import com.github.auties00.smalt.video.vp8.Vp8EncoderOptions;
 import com.github.auties00.smalt.video.vp8.Vp8EncoderSpeed;
 
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -117,9 +129,11 @@ final class ImageWorkloads {
                 file("jpeg-decode-reduced", () -> jpegDecodeReduced(2)),
                 file("jpeg-decode-full", () -> jpegDecodeFull(2)),
                 file("jpeg-lossless-decode", ImageWorkloads::jpegLosslessDecode),
+                file("jpeg-decode-12bit", ImageWorkloads::jpegDecode12),
                 file("jpeg-encode", ImageWorkloads::jpegEncode),
                 file("jpeg-transform", ImageWorkloads::jpegTransform),
                 file("mjpeg-decode", ImageWorkloads::mjpegDecode),
+                file("mjpeg-encode", ImageWorkloads::mjpegEncode),
                 file("png-decode", () -> pngDecode(2)),
                 file("png-encode", ImageWorkloads::pngEncode),
                 file("apng", ImageWorkloads::apng),
@@ -242,6 +256,37 @@ final class ImageWorkloads {
     }
 
     /**
+     * Returns a workload that decodes 640x360 12-bit JPEG files, sequential and progressive (the
+     * progressive one made by the lossless transcoder), at their depth and reduced to 8 bits, at full
+     * size and at 1/2, 1/4 and 1/8 of it, as a Motion-JPEG frame, and as the strip of a 12-bit
+     * JPEG-compressed TIFF converted to RGB.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegDecode12() {
+        var source = JpegEncoder.encode(SyntheticVideo.natural(640, 360, 1).getFirst(), JpegEncoderOptions.ofQuality(90));
+        var sequential = SyntheticImages.twelveBitJpeg(source);
+        var tiff = SyntheticImages.jpegTiff(sequential, 640, 360);
+        var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        var shrunk = List.of(highBitDepth.toBuilder().minSize(320, 180).build(),
+                highBitDepth.toBuilder().minSize(160, 90).build(), ImageDecoderOptions.builder().minSize(80, 45).build());
+        var mjpeg = new MjpegDecoder(VideoDecoderOptions.builder().highBitDepth(true).build());
+        return TrainingWorkload.of("jpeg-decode-12bit", () -> {
+            var progressive = JpegTransforms.progressive(MediaSource.of(sequential));
+            for (var file : List.of(sequential, progressive)) {
+                Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), highBitDepth).picture().width());
+                Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), ImageDecoderOptions.defaults()).picture()
+                        .height());
+                for (var options : shrunk) {
+                    Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), options).picture().width());
+                }
+            }
+            Blackhole.consume(mjpeg.decodeFrame(sequential, 0, sequential.length).width());
+            Blackhole.consume(TiffDecoder.decode(MediaSource.of(tiff), highBitDepth).picture().height());
+        });
+    }
+
+    /**
      * Writes a lossless JPEG of a picture.
      *
      * @param picture the 8-bit source picture
@@ -299,19 +344,84 @@ final class ImageWorkloads {
     }
 
     /**
-     * Returns a workload that decodes eight Motion-JPEG frames of 640x360 Y'CbCr video.
+     * Returns a workload that decodes eight Motion-JPEG frames of 640x360 Y'CbCr video, then an
+     * interlaced frame of two field images, two QuickTime format B frames (one of them interlaced)
+     * and a lossless 4:2:0 frame.
      *
      * @return the workload
      */
     private static TrainingWorkload mjpegDecode() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, 8);
         var frames = new ArrayList<byte[]>();
-        for (var picture : SyntheticVideo.natural(WIDTH, HEIGHT, 8)) {
+        for (var picture : pictures) {
             frames.add(JpegEncoder.encode(picture, JpegEncoderOptions.ofQuality(85)));
         }
+        var interlaced = new MjpegEncoder(WIDTH, HEIGHT, MjpegEncoderOptions.builder()
+                .fieldOrder(FieldOrder.TOP_FIRST).chromaFormat(ChromaFormat.YUV422).build())
+                .encodeFrame(new VideoFrame(pictures.getFirst(), 0, 1, true)).data();
+        var field = JpegEncoder.encode(SyntheticVideo.natural(WIDTH, HEIGHT / 2, 1).getFirst(),
+                JpegEncoderOptions.ofQuality(85));
+        var fieldB = SyntheticImages.formatB(field);
+        var formatB = List.of(SyntheticImages.formatB(frames.get(1)), concat(withNextField(fieldB), fieldB));
+        var lossless = SyntheticImages.subsampledLosslessJpeg(SyntheticImages.rgba(pictures.get(2), false));
         var decoder = new MjpegDecoder();
         return TrainingWorkload.of("mjpeg-decode", () -> {
             for (var frame : frames) {
-                Blackhole.consume(decoder.decodeFrame(frame, 0, frame.length).y()[17]);
+                Blackhole.consume(((YuvPicture) decoder.decodeFrame(frame, 0, frame.length)).y()[17]);
+            }
+            Blackhole.consume(decoder.decodeFrame(interlaced, 0, interlaced.length).height());
+            for (var frame : formatB) {
+                Blackhole.consume(decoder.decodeFrame(frame, 0, frame.length).height());
+            }
+            Blackhole.consume(decoder.decodeFrame(lossless, 0, lossless.length).width());
+        });
+    }
+
+    /**
+     * Returns a copy of a format B field whose header points to a field that follows it.
+     *
+     * @param field the field, not modified
+     * @return the copy
+     */
+    private static byte[] withNextField(byte[] field) {
+        var copy = field.clone();
+        ByteBuffer.wrap(copy).putInt(16, copy.length);
+        return copy;
+    }
+
+    /**
+     * Returns two arrays one after the other.
+     *
+     * @param first the first array
+     * @param second the second array
+     * @return the concatenation
+     */
+    private static byte[] concat(byte[] first, byte[] second) {
+        var out = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, out, first.length, second.length);
+        return out;
+    }
+
+    /**
+     * Returns a workload that encodes four 640x360 frames as Motion-JPEG with each kind of frame:
+     * optimized tables on the calling thread, the AVI convention on the shared pool, interlaced
+     * 4:2:2 fields, and under rate control.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload mjpegEncode() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, 4);
+        var settings = List.of(MjpegEncoderOptions.builder().threads(1).build(), MjpegEncoderOptions.forAvi(),
+                MjpegEncoderOptions.builder().fieldOrder(FieldOrder.BOTTOM_FIRST).chromaFormat(ChromaFormat.YUV422)
+                        .build(),
+                MjpegEncoderOptions.builder().bitrate(8_000_000).build());
+        return TrainingWorkload.of("mjpeg-encode", () -> {
+            for (var options : settings) {
+                var encoder = new MjpegEncoder(WIDTH, HEIGHT, options);
+                for (var picture : pictures) {
+                    Blackhole.consume(encoder.encodeFrame(new VideoFrame(picture, Packet.NO_TIMESTAMP,
+                            Packet.UNKNOWN_DURATION, true)).data().length);
+                }
             }
         });
     }
@@ -339,7 +449,8 @@ final class ImageWorkloads {
 
     /**
      * Returns a workload that encodes a 640x360 picture with every fixed row filter and with the
-     * adaptive choice, a picture with alpha, and a 16-bit picture, which it decodes back at 16 bits.
+     * adaptive choice, a picture with alpha (also interlaced), a gray picture of 16 levels (4-bit
+     * grayscale), and a 16-bit picture, which it decodes back at 16 bits.
      *
      * @return the workload
      */
@@ -347,12 +458,26 @@ final class ImageWorkloads {
         var opaque = SyntheticImages.rgba(SyntheticVideo.natural(640, 360, 1).getFirst(), false);
         var alpha = SyntheticImages.rgba(SyntheticVideo.natural(320, 240, 1).getFirst(), true);
         var deep = SyntheticImages.deep(alpha);
+        var gray = RgbaPicture.allocate(alpha.width(), alpha.height(), false);
+        for (var y = 0; y < gray.height(); y++) {
+            for (var x = 0; x < gray.width(); x++) {
+                var i = y * gray.stride() + x * 4;
+                var level = (byte) ((alpha.pixels()[y * alpha.stride() + x * 4] & 0xF0) * 17 / 16);
+                gray.pixels()[i] = level;
+                gray.pixels()[i + 1] = level;
+                gray.pixels()[i + 2] = level;
+                gray.pixels()[i + 3] = (byte) 255;
+            }
+        }
         var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        var interlaced = PngEncoderOptions.builder().interlaced(true).build();
         return TrainingWorkload.of("png-encode", () -> {
             for (var filter : PngEncoderOptions.Filter.values()) {
                 Blackhole.consume(PngEncoder.encode(opaque, PngEncoderOptions.builder().filter(filter).build()).length);
             }
             Blackhole.consume(PngEncoder.encode(alpha, PngEncoderOptions.defaults()).length);
+            Blackhole.consume(PngEncoder.encode(alpha, interlaced).length);
+            Blackhole.consume(PngEncoder.encode(gray, PngEncoderOptions.defaults()).length);
             var file = PngEncoder.encode(deep, PngEncoderOptions.defaults());
             Blackhole.consume(PngDecoder.decode(MediaSource.of(file), highBitDepth).picture().width());
         });
@@ -374,7 +499,7 @@ final class ImageWorkloads {
             var file = encoder.finish();
             try (var reader = PngDecoder.openAnimation(MediaSource.of(file), ImageDecoderOptions.defaults())) {
                 for (var frame = reader.read(); frame != null; frame = reader.read()) {
-                    Blackhole.consume(frame.picture().pixels()[4099]);
+                    Blackhole.consume(((RgbaPicture) frame.picture()).pixels()[4099]);
                 }
             }
         });
@@ -393,7 +518,7 @@ final class ImageWorkloads {
             for (var i = 0; i < count; i++) {
                 try (var reader = GifDecoder.openAnimation(MediaSource.of(gif), ImageDecoderOptions.defaults())) {
                     for (var frame = reader.read(); frame != null; frame = reader.read()) {
-                        Blackhole.consume(frame.picture().pixels()[4099]);
+                        Blackhole.consume(((RgbaPicture) frame.picture()).pixels()[4099]);
                     }
                 }
             }
@@ -468,7 +593,7 @@ final class ImageWorkloads {
             }
             try (var reader = WebpDecoder.openAnimation(MediaSource.of(animation), ImageDecoderOptions.defaults())) {
                 for (var frame = reader.read(); frame != null; frame = reader.read()) {
-                    Blackhole.consume(frame.picture().pixels()[4099]);
+                    Blackhole.consume(((RgbaPicture) frame.picture()).pixels()[4099]);
                 }
             }
         });
@@ -514,8 +639,9 @@ final class ImageWorkloads {
 
     /**
      * Returns a workload that encodes a 640x480 picture as TIFF with LZW, Deflate with the
-     * horizontal predictor, PackBits and Deflate in tiles, and a 16-bit picture with alpha, and
-     * decodes every file back.
+     * horizontal predictor, PackBits, and Deflate, WebP and JPEG 2000 in tiles, a 16-bit picture
+     * with alpha, and CMYK, floating-point and extra-sample channel pictures, and decodes every file
+     * back, the channel pictures with their channels kept.
      *
      * @return the workload
      */
@@ -526,8 +652,15 @@ final class ImageWorkloads {
                 TiffEncoderOptions.builder().compression(TiffCompression.LZW).build(),
                 TiffEncoderOptions.deflate().toBuilder().predictor(TiffPredictor.HORIZONTAL).build(),
                 TiffEncoderOptions.builder().compression(TiffCompression.PACKBITS).build(),
-                TiffEncoderOptions.deflate().toBuilder().tiles(256, 256).build());
+                TiffEncoderOptions.deflate().toBuilder().tiles(256, 256).build(),
+                TiffEncoderOptions.builder().compression(TiffCompression.WEBP).tiles(256, 256).build(),
+                TiffEncoderOptions.builder().compression(TiffCompression.JPEG_2000).tiles(256, 256).build());
         var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        var keep = highBitDepth.toBuilder().keepChannels(true).build();
+        var cmyk = Channel8Picture.of(640, 480, 640 * 4, picture.pixels().clone(), PixelLayout.CMYK);
+        var floating = ImageOps.toChannelFloat(deep);
+        var extras = Channel16Picture.allocate(320, 240,
+                PixelLayout.RGBA.withChannel(Channel.of(ChannelType.UNSPECIFIED)));
         return TrainingWorkload.of("tiff", () -> {
             for (var option : options) {
                 var file = TiffEncoder.encode(picture, option);
@@ -536,12 +669,19 @@ final class ImageWorkloads {
             var file = TiffEncoder.encode(deep,
                     TiffEncoderOptions.deflate().toBuilder().predictor(TiffPredictor.HORIZONTAL).build());
             Blackhole.consume(TiffDecoder.decode(MediaSource.of(file), highBitDepth).picture().width());
+            for (var channels : List.of(cmyk, floating, extras)) {
+                var page = TiffEncoder.encode(channels, TiffEncoderOptions.deflate());
+                Blackhole.consume(TiffDecoder.decode(MediaSource.of(page), keep).picture().width());
+                Blackhole.consume(TiffDecoder.decode(MediaSource.of(page), ImageDecoderOptions.defaults()).picture()
+                        .width());
+            }
         });
     }
 
     /**
      * Returns a workload that encodes a 384x256 picture as lossless and as layered lossy JPEG 2000,
-     * and decodes both, the lossy one also at half resolution and as raw channels.
+     * and decodes both, the lossy one also at half resolution and as raw channels, and codes a CMYK
+     * channel picture losslessly and decodes it back to its inks.
      *
      * @return the workload
      */
@@ -549,12 +689,17 @@ final class ImageWorkloads {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), false);
         var lossy = Jp2EncoderOptions.lossy(20).toBuilder().compressionRatios(80, 40, 20).build();
         var reduced = Jp2DecoderOptions.builder().reduction(1).build();
+        var cmyk = Channel8Picture.of(192, 128, 192 * 4, Arrays.copyOf(picture.pixels(), 192 * 128 * 4),
+                PixelLayout.CMYK);
+        var keep = ImageDecoderOptions.builder().keepChannels(true).build();
         return TrainingWorkload.of("jpeg2000", () -> {
             var lossless = Jp2Encoder.encode(picture, Jp2EncoderOptions.lossless());
             var layered = Jp2Encoder.encode(picture, lossy);
             Blackhole.consume(Jp2Decoder.decode(MediaSource.of(lossless), ImageDecoderOptions.defaults()).picture().width());
             Blackhole.consume(Jp2Decoder.decode(MediaSource.of(layered), ImageDecoderOptions.defaults()).picture().width());
             Blackhole.consume(Jp2Decoder.decodeChannels(MediaSource.of(layered), reduced).hashCode());
+            var inks = Jp2Encoder.encode(cmyk, Jp2EncoderOptions.lossless());
+            Blackhole.consume(Jp2Decoder.decode(MediaSource.of(inks), keep).picture().width());
         });
     }
 
@@ -583,7 +728,7 @@ final class ImageWorkloads {
 
     /**
      * Returns a workload that reads, edits and probes the metadata of image files: EXIF with an
-     * orientation and a GPS position, and comments, written into JPEG, PNG and WebP files, read
+     * orientation and a GPS position, and comments, written into JPEG, PNG, WebP and TIFF files, read
      * back and stripped of the location; the metadata of GIF, TIFF and BMP files; and the
      * description of JPEG 2000 and ICO files.
      *
@@ -600,6 +745,8 @@ final class ImageWorkloads {
                 ImageMetadataEditor.apply(JpegEncoder.encode(picture, JpegEncoderOptions.ofQuality(85)), edit),
                 ImageMetadataEditor.apply(PngEncoder.encode(picture, PngEncoderOptions.defaults()), edit),
                 ImageMetadataEditor.apply(WebpEncoder.encode(picture, WebpEncoderOptions.lossy(75)),
+                        ImageMetadataEdit.keepAll().toBuilder().exif(exif).build()),
+                ImageMetadataEditor.apply(TiffEncoder.encode(picture, TiffEncoderOptions.deflate()),
                         ImageMetadataEdit.keepAll().toBuilder().exif(exif).build()));
         var described = List.of(GifEncoder.encode(picture, GifEncoderOptions.defaults()),
                 TiffEncoder.encode(picture, TiffEncoderOptions.deflate()),

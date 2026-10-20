@@ -44,7 +44,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           if command -v apt-get > /dev/null; then
-            sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+            sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libavcodec-extra webp
+            for c in libopencore_amrnb libvo_amrwbenc; do ffmpeg -hide_banner -encoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c encoder"; exit 1; }; done
+            for c in libopencore_amrnb libopencore_amrwb; do ffmpeg -hide_banner -decoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c decoder"; exit 1; }; done
           fi
 
       - name: Free disk space
@@ -71,6 +73,104 @@ jobs:
           path: |
             **/target/surefire-reports/
             it/target/jit-guard/
+          retention-days: 14
+
+  # Line and branch coverage of every module's tests on the smoke tier, as a map of the spec features no
+  # test exercises (tools/coverage/README.md). The agent changes how the JIT compiles, so this runs apart
+  # from the conformance job; it fails when an area falls below tools/coverage/baseline.tsv.
+  coverage:
+    name: coverage map
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install the oracle tools
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libavcodec-extra webp
+          for c in libopencore_amrnb libvo_amrwbenc; do ffmpeg -hide_banner -encoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c encoder"; exit 1; }; done
+
+      - name: Restore the smoke test data
+        id: smoke-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.smalt/cache/conformance
+          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
+          enableCrossOsArchive: true
+
+      - name: Fetch the smoke test data
+        if: steps.smoke-cache.outputs.cache-hit != 'true'
+        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+
+      - name: Test with the coverage agent
+        run: mvn -B -ntp -fae -Pcoverage verify -Dmaven.test.failure.ignore=true
+
+      - name: Summarize and check the coverage
+        shell: bash
+        run: |
+          status=0
+          python tools/coverage/coverage.py it/target/site/jacoco-aggregate/jacoco.xml --markdown coverage.md \
+            --tsv coverage.tsv --check tools/coverage/baseline.tsv || status=$?
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Upload the coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            it/target/site/jacoco-aggregate/
+            coverage.md
+            coverage.tsv
+          retention-days: 30
+
+  # A quarter of the fuzz targets each night, in turn, fuzzed in a 256 MiB heap at the default thread
+  # stack: an allocation the limits do not bound becomes an oom- finding and unbounded recursion a crash.
+  # The findings are uploaded; tools/fuzz/README.md describes how to reproduce and save one.
+  fuzz-small-heap:
+    name: fuzz shard (256 MiB heap)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Fuzz the shard of the day
+        shell: bash
+        run: |
+          shard=$(( 10#$(date -u +%j) % 4 ))
+          python tools/fuzz/fuzz.py budget --online --no-seeds --time 45 --memory 256 --select "shard=$shard/4"
+
+      - name: Upload the findings
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-small-heap-findings
+          path: |
+            target/fuzz/*/findings/
+            target/fuzz/*/fuzz.log
           retention-days: 14
 
   # The next feature release's early-access build: the incubating Vector API changes between

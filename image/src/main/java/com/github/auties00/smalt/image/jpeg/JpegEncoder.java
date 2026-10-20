@@ -30,10 +30,16 @@ import java.util.Objects;
  *   resampling.</li>
  *   <li>A {@link YuvPicture} in another layout has its chroma brought to full resolution with a
  *   triangle filter and then downsampled like RGB input; a limited-range or non-BT.601 picture
- *   (BT.709, BT.2020, FCC, SMPTE 240M, identity, YCgCo) is converted through R'G'B'.</li>
+ *   (BT.709, BT.2020, FCC, SMPTE 240M, identity, YCgCo) is converted through R'G'B', and a picture in
+ *   any other matrix is converted with
+ *   {@link com.github.auties00.smalt.image.ops.ImageOps#toRgba(Picture) ImageOps.toRgba} first, at its full
+ *   depth.</li>
  *   <li>An {@link RgbaPicture} is converted with fixed-point BT.601 arithmetic. Its alpha channel
  *   is ignored: callers that need transparency composited onto a background must flatten the
  *   picture first.</li>
+ *   <li>A 16-bit picture is first reduced to 8 bits, and a
+ *   {@link com.github.auties00.smalt.image.ChannelPicture ChannelPicture} is first converted with
+ *   {@link com.github.auties00.smalt.image.ops.ImageOps#toRgba(Picture) ImageOps.toRgba}.</li>
  * </ul>
  * Chroma is downsampled by averaging, and the forward DCT is the accurate integer transform. For
  * the same RGB input and settings the file is byte-identical to libjpeg-turbo's
@@ -54,8 +60,7 @@ public final class JpegEncoder {
      *
      * @param picture the picture; its alpha channel, if any, is ignored
      * @return the JPEG file
-     * @throws IllegalArgumentException if the picture is wider or taller than 65535 pixels, or is
-     * a {@link YuvPicture} with a color matrix that has no conversion to BT.601
+     * @throws IllegalArgumentException if the picture is wider or taller than 65535 pixels
      * @see #encode(Picture, JpegEncoderOptions)
      */
     public static byte[] encode(Picture picture) {
@@ -70,8 +75,7 @@ public final class JpegEncoder {
      * @param picture the picture; its alpha channel, if any, is ignored
      * @param options the quality, subsampling, Huffman, restart and color profile settings
      * @param sink the output; not closed
-     * @throws IllegalArgumentException if the picture is wider or taller than 65535 pixels, or is
-     * a {@link YuvPicture} with a color matrix that has no conversion to BT.601
+     * @throws IllegalArgumentException if the picture is wider or taller than 65535 pixels
      * @throws MediaException.LimitExceeded if the color profile needs more than 255
      * {@code APP2} segments
      * @throws MediaException.Io if writing the sink fails
@@ -86,12 +90,12 @@ public final class JpegEncoder {
      *
      * @param picture the picture; its alpha channel, if any, is ignored, and a high-bit-depth
      * picture is first reduced to 8 bits with
-     * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Picture)}
+     * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Picture)} (or converted to RGBA, as the
+     * class documentation describes)
      * @param options the quality, subsampling, Huffman, restart and color profile settings
      * @return the JPEG file
      * @throws IllegalArgumentException if the picture is wider or taller than 65535 pixels, the
-     * JPEG limit, or is a {@link YuvPicture} with a color matrix that has no conversion to BT.601
-     * (BT.2020 constant luminance, SMPTE 2085, chromaticity-derived, ICtCp)
+     * JPEG limit
      * @throws MediaException.LimitExceeded if the color profile needs more than 255
      * {@code APP2} segments
      */

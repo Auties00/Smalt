@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.tiff;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -32,7 +33,8 @@ import java.util.Optional;
  * <p>Opening reads only the directories; each {@link #read(int)} decodes one page with the options
  * the reader was opened with. Sub-directories ({@code SubIFDs}, such as the reduced-resolution
  * levels of a pyramid or the EXIF directory) are not pages; a page's EXIF and GPS directories
- * reach its {@link DecodedImage#exif()}, and its reduced-resolution levels serve the size hint
+ * reach its {@link DecodedImage#exif()}, its {@code XMLPacket} tag its {@link DecodedImage#xmp()},
+ * and its reduced-resolution levels serve the size hint
  * of {@link ImageDecoderOptions}.
  *
  * <p>The source is not closed by {@link #close()}. Instances are not thread-safe.
@@ -165,23 +167,43 @@ public final class TiffPages implements PageReader {
     private DecodedImage decode(int index) {
         try (var _ = ParallelBands.operation()) {
             var directory = file.pages().get(index);
-            var full = TiffPageDecoder.of(directory);
+            var full = pageDecoder(directory);
             var profile = directory.bytes(TiffTags.ICC_PROFILE);
             var icc = Optional.ofNullable(profile != null && profile.length > 0 ? profile : null);
             var exif = Optional.ofNullable(TiffExif.extract(directory));
+            var xmp = Optional.ofNullable(xmp(directory));
             if (options.minWidth() > 0 || options.minHeight() > 0) {
                 for (var level : levels(index, full.width(), full.height())) {
                     if (level.width() < options.minWidth() || level.height() < options.minHeight()) {
                         continue;
                     }
                     try {
-                        return image(level.directory(), TiffPageDecoder.of(level.directory()), full, icc, exif);
+                        return image(level.directory(), pageDecoder(level.directory()), full, icc, exif)
+                                .withXmp(xmp);
                     } catch (MediaException.Unsupported | MediaException.Malformed ignored) {
                         // an undecodable level gives way to the next larger one, then to the page
                     }
                 }
             }
-            return image(directory, full, full, icc, exif);
+            return image(directory, full, full, icc, exif).withXmp(xmp);
+        }
+    }
+
+    /**
+     * Reads the XMP packet of a page, its {@code XMLPacket} tag (700).
+     *
+     * <p>Metadata is not needed to show the page, so a tag whose values lie outside the file or
+     * exceed the limits is left out.
+     *
+     * @param directory the page directory
+     * @return the packet bytes, or {@code null} when the page has none
+     */
+    private static byte[] xmp(TiffDirectory directory) {
+        try {
+            var packet = directory.bytes(TiffTags.XMP);
+            return packet != null && packet.length > 0 ? packet : null;
+        } catch (MediaException.Malformed | MediaException.LimitExceeded exception) {
+            return null;
         }
     }
 
@@ -198,6 +220,14 @@ public final class TiffPages implements PageReader {
     private DecodedImage image(TiffDirectory directory, TiffPageDecoder decoder, TiffPageDecoder page,
                                Optional<byte[]> icc, Optional<byte[]> exif) {
         var orientation = page.orientation();
+        if (decoder.channels()) {
+            var picture = (ChannelPicture) decoder.decode(options.highBitDepth());
+            var parsed = new DecodedImage(picture, ImageFormat.TIFF, orientation, page.width(), page.height(), icc,
+                    exif);
+            var colors = picture.layout().colorChannels();
+            return new DecodedImage(picture, ImageFormat.TIFF, orientation, page.width(), page.height(), icc, exif,
+                    parsed.colorProfile().filter(profile -> profile.channels() == colors));
+        }
         switch (TiffPhotometric.of(decoder.photometric())) {
             case SEPARATED -> {
                 if (options.convertToSrgb()) {
@@ -220,6 +250,18 @@ public final class TiffPages implements PageReader {
                 return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             }
         }
+    }
+
+    /**
+     * Validates a directory for decoding as the options ask: to a channel picture when they keep channels and
+     * the page needs one.
+     *
+     * @param directory the image file directory to decode
+     * @return the decoder
+     */
+    private TiffPageDecoder pageDecoder(TiffDirectory directory) {
+        return options.keepChannels() && !options.convertToSrgb() ? TiffPageDecoder.ofChannels(directory)
+                : TiffPageDecoder.of(directory);
     }
 
     /**

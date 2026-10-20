@@ -5,9 +5,11 @@ package com.github.auties00.smalt.image.tiff;
  *
  * <p>{@link TiffDecoder} decodes {@link #NONE}, {@link #CCITT_RLE}, {@link #CCITT_T4},
  * {@link #CCITT_T6}, {@link #LZW}, {@link #OLD_JPEG} (when its stream or tables can be read),
- * {@link #JPEG}, {@link #DEFLATE}, {@link #PACKBITS}, {@link #CCITT_RLEW} and {@link #THUNDERSCAN};
- * {@link TiffEncoder} writes {@link #NONE}, {@link #PACKBITS}, {@link #LZW} and {@link #DEFLATE}.
- * The other constants name schemes a file may use, so that a page can report them.
+ * {@link #JPEG}, {@link #DEFLATE}, {@link #PACKBITS}, {@link #CCITT_RLEW}, {@link #THUNDERSCAN},
+ * {@link #SGILOG}, {@link #JPEG_2000}, {@link #WEBP} and {@link #JPEG_XL}; {@link TiffEncoder}
+ * writes {@link #NONE}, {@link #PACKBITS}, {@link #LZW}, {@link #DEFLATE}, {@link #WEBP} and
+ * {@link #JPEG_2000}. The other constants name schemes a file may use, so that a page can report
+ * them.
  *
  * <p>Constants may be added in minor releases, so a {@code switch} over this type needs a
  * {@code default} branch.
@@ -79,7 +81,9 @@ public enum TiffCompression {
     SGILOG(34676),
 
     /**
-     * JPEG 2000 (code 34712).
+     * JPEG 2000 (code 34712), each strip or tile a codestream or a JP2 file; also the Aperio codes
+     * 33003 (Y, Cb and Cr components, converted to RGB) and 33005 (RGB components), which decode
+     * the same.
      */
     JPEG_2000(34712),
 
@@ -94,12 +98,13 @@ public enum TiffCompression {
     ZSTD(50000),
 
     /**
-     * WebP (code 50001).
+     * WebP (code 50001), each strip or tile a WebP file of 8-bit RGB or RGBA samples.
      */
     WEBP(50001),
 
     /**
-     * JPEG XL (code 50002).
+     * JPEG XL (code 50002), each strip or tile a codestream or a container; also the DNG 1.7 code
+     * 52546, which decodes the same.
      */
     JPEG_XL(50002),
 
@@ -143,6 +148,12 @@ public enum TiffCompression {
         }
         if (code == 34677) {
             return SGILOG;
+        }
+        if (code == 33003 || code == 33005) {
+            return JPEG_2000;
+        }
+        if (code == 52546) {
+            return JPEG_XL;
         }
         for (var value : values()) {
             if (value.code == code) {

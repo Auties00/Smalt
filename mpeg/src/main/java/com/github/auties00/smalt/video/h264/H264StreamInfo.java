@@ -75,6 +75,8 @@ public final class H264StreamInfo {
 
     private final ColorInfo color;
 
+    private final Rational sampleAspectRatio;
+
     /**
      * Constructs the description of a parsed sequence parameter set.
      *
@@ -106,6 +108,9 @@ public final class H264StreamInfo {
                 ? new Rational(sps.timeScale, 2 * sps.numUnitsInTick).reduce()
                 : null;
         this.color = Objects.requireNonNull(sps.colorInfo(), "color");
+        this.sampleAspectRatio = sps.sarWidth > 0 && sps.sarHeight > 0
+                ? new Rational(sps.sarWidth, sps.sarHeight).reduce()
+                : null;
     }
 
     /**
@@ -362,6 +367,15 @@ public final class H264StreamInfo {
     }
 
     /**
+     * {@return the sample aspect ratio the VUI signals (the width of a sample divided by its
+     * height, in lowest terms, from {@code aspect_ratio_idc} or {@code Extended_SAR}), or empty when
+     * the VUI leaves it unspecified}
+     */
+    public Optional<Rational> sampleAspectRatio() {
+        return Optional.ofNullable(sampleAspectRatio);
+    }
+
+    /**
      * {@return the color description, with the defaults documented on {@link H264Decoder}}
      */
     public ColorInfo color() {
@@ -371,18 +385,17 @@ public final class H264StreamInfo {
     /**
      * Returns whether {@link H264Decoder} decodes streams with this configuration.
      *
-     * <p>The decoder supports 8-bit 4:2:0 and 4:0:0 progressive streams without the lossless
-     * transform bypass. Streams whose {@code frame_mbs_only_flag} is 0 are reported as unsupported
-     * because they may contain field pictures or MBAFF frames, which the decoder rejects; such
-     * streams made of frame pictures only still decode. Extended profile streams (88) are reported
-     * as supported only when {@code constraint_set0_flag} or {@code constraint_set1_flag} says they
-     * also conform to the Baseline or Main profile, since otherwise they may use slice data
-     * partitioning or SP and SI slices.
+     * <p>The decoder supports 4:2:0 and 4:0:0 streams of every bit depth from 8 to 14, progressive
+     * or interlaced (field pictures and MBAFF frames), without the lossless transform bypass.
+     * Extended profile streams (88) are reported as supported only when
+     * {@code constraint_set0_flag} or {@code constraint_set1_flag} says they also conform to the
+     * Baseline or Main profile, since otherwise they may use slice data partitioning or SP and SI
+     * slices.
      *
      * @return {@code true} when the decoder supports every picture this configuration allows
      */
     public boolean decoderSupported() {
-        return bitDepthLuma == 8 && bitDepthChroma == 8 && frameMbsOnly && !transformBypass
+        return !transformBypass
                 && (chromaFormat == ChromaFormat.YUV420 || chromaFormat == ChromaFormat.MONOCHROME)
                 && (profileIdc != 88 || (constraintFlags & (CONSTRAINT_SET0 | CONSTRAINT_SET1)) != 0);
     }
@@ -396,14 +409,15 @@ public final class H264StreamInfo {
                 && bitDepthChroma == that.bitDepthChroma && transformBypass == that.transformBypass
                 && frameMbsOnly == that.frameMbsOnly && mbAdaptiveFrameField == that.mbAdaptiveFrameField
                 && maxNumRefFrames == that.maxNumRefFrames && nalLengthSize == that.nalLengthSize
-                && Objects.equals(frameRate, that.frameRate) && color.equals(that.color);
+                && Objects.equals(frameRate, that.frameRate) && color.equals(that.color)
+                && Objects.equals(sampleAspectRatio, that.sampleAspectRatio);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(profileIdc, constraintFlags, levelIdc, codedWidth, codedHeight, width, height, chromaFormat,
                 bitDepthLuma, bitDepthChroma, transformBypass, frameMbsOnly, mbAdaptiveFrameField, maxNumRefFrames,
-                nalLengthSize, frameRate, color);
+                nalLengthSize, frameRate, color, sampleAspectRatio);
     }
 
     @Override
@@ -413,6 +427,7 @@ public final class H264StreamInfo {
                 + ", chromaFormat=" + chromaFormat + ", bitDepth=" + bitDepthLuma + "/" + bitDepthChroma
                 + ", transformBypass=" + transformBypass + ", frameMbsOnly=" + frameMbsOnly
                 + ", mbAdaptiveFrameField=" + mbAdaptiveFrameField + ", maxNumRefFrames=" + maxNumRefFrames
-                + ", nalLengthSize=" + nalLengthSize + ", frameRate=" + frameRate + ", color=" + color + "]";
+                + ", nalLengthSize=" + nalLengthSize + ", frameRate=" + frameRate + ", color=" + color
+                + ", sampleAspectRatio=" + sampleAspectRatio + "]";
     }
 }

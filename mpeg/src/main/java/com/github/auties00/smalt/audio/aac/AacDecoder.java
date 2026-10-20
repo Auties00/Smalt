@@ -12,21 +12,29 @@ import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 
+import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
- * Decodes MPEG-4 AAC Low Complexity audio and its HE-AAC extensions: spectral band replication
- * (HE-AAC) and parametric stereo (HE-AAC v2).
+ * Decodes MPEG-4 and MPEG-2 AAC audio of the Main, Low Complexity, Scalable Sample Rate (SSR) and
+ * Long Term Prediction (LTP) object types, of the error resilient ER AAC LC and ER AAC LTP, and of
+ * the low delay AAC-LD and AAC-ELD, with the HE-AAC extensions: spectral band replication (HE-AAC),
+ * parametric stereo (HE-AAC v2) and the low delay spectral band replication of AAC-ELD.
  *
  * <p>The track's {@link AudioTrack#codecConfig()} must hold the {@code AudioSpecificConfig};
  * each {@link Packet} holds one {@code raw_data_block} (for ADTS streams, the frame without its
- * header), or several back to back for a CRC-less multi-block ADTS frame. Every raw data block
+ * header), or several back to back for a CRC-less multi-block ADTS frame; an error resilient
+ * packet holds one {@code er_raw_data_block}, whose extension payloads are skipped. A stream whose
+ * configuration sets {@code epConfig} 1 stores each error sensitivity category instance of a
+ * block in an access unit of its own (an MP4 file carries them as separate tracks); such blocks
+ * are decoded by {@link #decode(List, Consumer)} from all their instances. Every raw data block
  * decodes to one block of 1024 samples per channel, or 960 for streams whose configuration sets
- * the frame length flag, twice that when spectral band replication doubles the rate. The first
- * block is output too: it holds the priming of the transform and the filterbanks, which the
- * container removes through the track's {@link AudioTrack#skipSamples()} rather than the
- * decoder.
+ * the frame length flag (512 and 480 for AAC-LD and AAC-ELD), twice that when spectral band
+ * replication doubles the rate. The first block is output too: it holds the priming of the
+ * transform and the filterbanks, which the container removes through the track's
+ * {@link AudioTrack#skipSamples()} rather than the decoder.
  *
  * <p>Output channels follow the WAVE order of {@link ChannelLayout} (the 5.1 configuration, coded
  * center, left, right, surrounds, LFE, is output front left, front right, center, LFE, back
@@ -44,6 +52,24 @@ import java.util.function.Consumer;
  * {@code AudioSpecificConfig} or in band. A block whose elements do not match the configured
  * layout is decoded with a layout inferred from its elements, which the returned
  * {@link AudioBuffer} reports.
+ *
+ * <p>The other object types add their tools: AAC Main the backward-adaptive frequency-domain
+ * prediction of ISO/IEC 13818-7 (with predictor reset groups and the interplay with intensity
+ * stereo and noise substitution), AAC LTP and ER AAC LTP long term prediction (with TNS on the
+ * predicted spectrum), and AAC SSR the four-band PQF filterbank with gain control. The error
+ * resilient object types decode every error resilience tool: virtual codebooks (VCB11), reversible
+ * variable length coded scalefactors (RVLC) and Huffman codeword reordering (HCR). AAC-LD adds the
+ * low overlap window and long term prediction with the low delay lag; AAC-ELD the low delay
+ * filterbank, the {@code ELDSpecificConfig} and low delay spectral band replication, at dual rate
+ * or downsampled as the configuration signals. Error resilient streams decode with {@code epConfig}
+ * 0 and 1. Spectral band replication or parametric stereo signaled around an error resilient
+ * core (object type 5 or 29) is not decoded: the core decodes alone at its own rate.
+ * Corrupt RVLC codewords and reordered spectral data are concealed rather than rejected: scalefactors
+ * that cannot be decoded in either direction take the quieter of the values decoded around them or the
+ * previous block's values, as {@code sf_concealment} allows, and spectral codewords that do not decode,
+ * overrun their segment or exceed their codebook's range are muted; the rest of the block decodes
+ * normally. Side information that leaves a block's own layout inconsistent still raises
+ * {@link MediaException.Malformed}.
  *
  * <p>Spectral band replication is decoded in the high quality (complex) mode, from 1024- and
  * 960-sample frames, on every channel element that carries it; parametric stereo is decoded by
@@ -74,10 +100,10 @@ import java.util.function.Consumer;
  * without extension data, so the output delay never changes within a stream; corrupt extension
  * data is ignored until the next valid payload. Dynamic range
  * control data is ignored. Unsupported object types raise {@link MediaException.Unsupported}
- * naming them ({@code "aac main"}, {@code "aac ssr"}, {@code "aac ltp"}, {@code "aac scalable"},
- * {@code "aac er lc"}, {@code "aac er ltp"}, {@code "aac er bsac"}, {@code "aac ld"},
- * {@code "aac eld"}, {@code "usac"}), as do the 22.2 configuration
- * ({@code "aac channel configuration 13"}) and SSR gain control data ({@code "aac gain control"}).
+ * naming them ({@code "aac scalable"}, {@code "aac er bsac"}, {@code "usac"}), as do the 22.2
+ * configuration ({@code "aac channel configuration 13"}), error resilient configurations that
+ * signal the error protection tool ({@code "aac er epconfig 2"} and {@code "aac er epconfig 3"}),
+ * and AAC-ELD with {@code epConfig} 1 ({@code "aac eld epconfig 1"}).
  *
  * <p>Instances are not thread-safe.
  */
@@ -91,6 +117,11 @@ public final class AacDecoder implements AudioDecoder {
      * The parsed stream configuration.
      */
     private final AudioSpecificConfig config;
+
+    /**
+     * The data of the category instances of the block being decoded, reused block after block.
+     */
+    private byte[][] instanceData = new byte[0][];
 
     /**
      * Constructs a decoder for a track under {@link AacDecoderOptions#defaults()}.
@@ -140,7 +171,7 @@ public final class AacDecoder implements AudioDecoder {
             var fallback = track.layout().orElse(ChannelLayout.STEREO);
             var mode = sbrMode(config, track.sampleRate(), options.spectralBandReplication());
             var stereo = mode != FrameDecoder.SbrMode.OFF && mode != FrameDecoder.SbrMode.DETECT_DOWNSAMPLED
-                    && !(config.psSignaled() && !config.ps());
+                    && !(config.psSignaled() && !config.ps()) && config.lowDelaySbr() == null;
             this.decoder = new FrameDecoder(config, limits, fallback, mode, stereo);
         } catch (MediaException exception) {
             throw exception;
@@ -160,7 +191,11 @@ public final class AacDecoder implements AudioDecoder {
     private static FrameDecoder.SbrMode sbrMode(AudioSpecificConfig config, int declaredRate, boolean enabled) {
         var core = config.sampleRate();
         var dual = 2L * core <= 96000;
-        if (!enabled || (config.sbrSignaled() && !config.sbr())) {
+        if (config.lowDelaySbr() != null && enabled) {
+            return config.lowDelaySbr().dualRate() && dual ? FrameDecoder.SbrMode.DUAL_RATE
+                    : FrameDecoder.SbrMode.DOWNSAMPLED;
+        }
+        if (!enabled || config.errorResilient() || (config.sbrSignaled() && !config.sbr())) {
             return FrameDecoder.SbrMode.OFF;
         }
         if (config.sbr()) {
@@ -196,7 +231,7 @@ public final class AacDecoder implements AudioDecoder {
         var rate = track.sampleRate();
         return new AudioSpecificConfig(AudioSpecificConfig.AOT_LC, rate,
                 SamplingTables.tableIndexFor(rate),
-                configuration, null, 1024, false, false, 0, false, false);
+                configuration, null, 1024, false, false, 0, false, false, 0, 0, null);
     }
 
     /**
@@ -224,8 +259,8 @@ public final class AacDecoder implements AudioDecoder {
 
     /**
      * {@return the number of samples per channel each raw data block decodes to: 1024, or 960 when
-     * the configuration sets the frame length flag, doubled when spectral band replication doubles
-     * the rate}
+     * the configuration sets the frame length flag (512 or 480 for AAC-LD and AAC-ELD), doubled
+     * when spectral band replication doubles the rate}
      */
     public int frameLength() {
         return decoder.frameLength();
@@ -242,6 +277,19 @@ public final class AacDecoder implements AudioDecoder {
      */
     public boolean spectralBandReplicationSignaled() {
         return config.sbr();
+    }
+
+    /**
+     * Returns whether the configuration stores each error sensitivity category instance of a block
+     * in an access unit of its own ({@code epConfig} 1).
+     *
+     * <p>Such streams are decoded by {@link #decode(List, Consumer)}; {@link #decode(Packet, Consumer)}
+     * rejects them.
+     *
+     * @return {@code true} when blocks come as several category instances
+     */
+    public boolean separateCategoryInstances() {
+        return config.epConfig() == 1;
     }
 
     /**
@@ -272,15 +320,62 @@ public final class AacDecoder implements AudioDecoder {
      * thrown by {@code output} propagates unchanged.
      *
      * @throws MediaException.Malformed if the packet is corrupt
-     * @throws MediaException.Unsupported if the packet uses a coding tool the decoder lacks, such as SSR gain
-     * control data
+     * @throws MediaException.Unsupported if the configuration stores category instances separately
+     * ({@code "aac er epconfig 1"}); {@link #decode(List, Consumer)} decodes such streams
      */
     @Override
     public void decode(Packet packet, Consumer<AudioBuffer> output) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(output, "output");
+        if (separateCategoryInstances()) {
+            throw new MediaException.Unsupported("aac er epconfig 1",
+                    "error resilient AAC with separate category instances needs every instance of a block");
+        }
         var data = packet.data();
         ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> decoder.decode(data, 0, data.length, emit));
+    }
+
+    /**
+     * Decodes one block of an {@code epConfig} 1 stream from its error sensitivity category
+     * instances and hands the block's samples to {@code output}.
+     *
+     * <p>{@code instances} holds the access units of one block, in the order of their elementary
+     * streams (the track order of an MP4 file): a channel pair element first contributes the
+     * instance of its common side information; then every channel, in element order, the instance
+     * of its side information, the instance of its RVLC codewords when the configuration codes
+     * scalefactors with RVLC, the instance of its TNS data and the instance of its spectral data.
+     * Instances after the last one the elements need, which carry extension payloads, are ignored.
+     * The packets are read only during the call. An exception thrown by {@code output} propagates
+     * unchanged.
+     *
+     * @param instances the category instances of the block
+     * @param output receives the block's samples, valid only during the call
+     * @throws NullPointerException if one of the packets of {@code instances} is {@code null}
+     * @throws IllegalStateException if the configuration does not store category instances
+     * separately
+     * @throws MediaException.Malformed if an instance is corrupt or missing
+     * @throws MediaException.LimitExceeded if the block declares more channels than the
+     * configured limits allow
+     */
+    public void decode(List<Packet> instances, Consumer<AudioBuffer> output) {
+        Objects.requireNonNull(instances, "instances");
+        Objects.requireNonNull(output, "output");
+        if (!separateCategoryInstances()) {
+            throw new IllegalStateException("the configuration does not store category instances separately");
+        }
+        var count = instances.size();
+        if (instanceData.length < count) {
+            instanceData = new byte[count][];
+        }
+        var data = instanceData;
+        for (var i = 0; i < count; i++) {
+            data[i] = Objects.requireNonNull(instances.get(i), "instance").data();
+        }
+        try {
+            ConsumerFailure.<AudioBuffer>run("AAC packet", output, emit -> decoder.decodeInstances(data, count, emit));
+        } finally {
+            Arrays.fill(data, 0, count, null);
+        }
     }
 
     /**

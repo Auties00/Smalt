@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.ico.IcoDecoder;
 import com.github.auties00.smalt.image.ico.IcoEncoder;
 import com.github.auties00.smalt.image.ico.IcoEncoderOptions;
+import com.github.auties00.smalt.internal.check.LosslessDepth;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -58,6 +59,9 @@ public final class IcoCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        if (options.isLossless()) {
+            picture = LosslessDepth.fit(picture, 8, "ico");
+        }
         var settings = picture.width() > 256 || picture.height() > 256
                 ? IcoEncoderOptions.builder().sizes(256).build()
                 : IcoEncoderOptions.defaults();
