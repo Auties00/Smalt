@@ -18,6 +18,12 @@ on:
       simd:
         description: vector or scalar
         default: vector
+      coverage:
+        description: true to run with the JaCoCo coverage profile and upload the reports
+        default: 'false'
+      maven_args:
+        description: Extra Maven arguments for the test run, for example -Dsmalt.soak.minutes=5
+        default: ''
 
 permissions:
   contents: read
@@ -50,7 +56,10 @@ jobs:
 
       - name: Install the oracle tools
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libavcodec-extra webp libimage-exiftool-perl
+          for c in libopencore_amrnb libvo_amrwbenc; do ffmpeg -hide_banner -encoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c encoder"; exit 1; }; done
+          for c in libopencore_amrnb libopencore_amrwb; do ffmpeg -hide_banner -decoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c decoder"; exit 1; }; done
 
       - name: Restore the smoke test data
         id: smoke-cache
@@ -73,6 +82,8 @@ jobs:
         run: >
           mvn -B -ntp -fae -pl "${{ inputs.modules }}" verify
           -Dsmalt.test.simd=${{ inputs.simd == 'vector' }}
+          ${{ inputs.coverage == 'true' && '-Pcoverage -Dmaven.test.failure.ignore=true' || '' }}
+          ${{ inputs.maven_args }}
           ${{ inputs.tests != '' && format('-Dtest={0} -Dsurefire.failIfNoSpecifiedTests=false', inputs.tests) || '' }}
 
       - name: Upload the test reports
@@ -84,3 +95,27 @@ jobs:
             **/target/surefire-reports/
             it/target/jit-guard/
           retention-days: 7
+
+      - name: Summarize the coverage
+        if: always() && inputs.coverage == 'true'
+        shell: bash
+        run: |
+          for report in it/target/site/jacoco-aggregate/jacoco.xml */target/site/jacoco/jacoco.xml; do
+            if [ -f "$report" ]; then
+              python tools/coverage/coverage.py "$report" --markdown coverage.md --tsv coverage.tsv
+              cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+              break
+            fi
+          done
+
+      - name: Upload the coverage reports
+        if: always() && inputs.coverage == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report-${{ matrix.os }}
+          path: |
+            **/target/site/jacoco*/jacoco.xml
+            it/target/site/jacoco-aggregate/
+            coverage.md
+            coverage.tsv
+          retention-days: 14

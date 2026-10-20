@@ -98,7 +98,15 @@ class HevcDifferentialTest {
                 new Case("4:2:2 adaptive quantization groups", "192x128", "yuv422p", "aq-mode=3:qg-size=8", 0.5,
                         natural),
                 new Case("4:4:4 constrained intra and PCM", "128x96", "yuv444p", "constrained-intra=1:pcm=1", 0.6,
-                        moving)
+                        moving),
+                new Case("weighted prediction main10", "128x96", "yuv420p10le", "weightp=1:weightb=1", 1.0, "fade"),
+                new Case("weighted prediction 4:4:4 12", "96x64", "yuv444p12le", "weightp=1:weightb=1", 1.0, "fade"),
+                // x265 restarts the chroma CRC at each row of coding tree blocks, so the CRC cases are one row tall;
+                // HevcPictureHashTest checks CRCs of taller pictures, which the HM reference encoder writes
+                new Case("CRC picture hashes", "128x64", "yuv420p", "hash=2", 0.4, moving),
+                new Case("CRC picture hashes 4:2:2 12", "96x64", "yuv422p12le", "hash=2", 0.4, natural),
+                new Case("checksum picture hashes main10", "128x96", "yuv420p10le", "hash=3", 0.4, moving),
+                new Case("checksum picture hashes monochrome", "96x64", "gray", "hash=3", 0.4, natural)
         );
     }
 

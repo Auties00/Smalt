@@ -26,10 +26,11 @@ public final class CodeSigns {
      * @param signalType      the signal type
      * @param quantOffsetType the quantization offset type
      * @param sum_pulses      the sum of absolute pulses of each shell block
+     * @param icdf            a work array of two values, overwritten
      */
     public static void encodeSigns(RangeEncoder psRangeEnc, byte[] pulses, int pulsesOff, int length, int signalType,
-                                   int quantOffsetType, int[] sum_pulses) {
-        var icdf = new short[2];
+                                   int quantOffsetType, int[] sum_pulses, short[] icdf) {
+        icdf[1] = 0;
         var q_ptr = pulsesOff;
         var i = smulbb(7, quantOffsetType + (signalType << 1));
         var icdf_ptr = i;

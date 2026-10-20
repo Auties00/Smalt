@@ -472,16 +472,19 @@ final class IntraPredictor {
      * @param plane the chroma plane
      * @param offset the index of the block's top-left sample
      * @param stride the row stride
-     * @param hasLeft whether the left references are available
+     * @param hasLeftUpper whether the left references of the upper four rows are available
+     * @param hasLeftLower whether the left references of the lower four rows are available
      * @param hasTop whether the top references are available
      * @param hasTopLeft whether the corner reference is available
      */
-    void predictChroma(int mode, byte[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
-                       boolean hasTopLeft) {
+    void predictChroma(int mode, byte[] plane, int offset, int stride, boolean hasLeftUpper, boolean hasLeftLower,
+                       boolean hasTop, boolean hasTopLeft) {
         var above = offset - stride;
+        var allLeft = hasLeftUpper && hasLeftLower;
         switch (mode) {
             case 0 -> {
                 for (var by = 0; by < 2; by++) {
+                    var hasLeft = by == 0 ? hasLeftUpper : hasLeftLower;
                     for (var bx = 0; bx < 2; bx++) {
                         var sumTop = 0;
                         var sumLeft = 0;
@@ -542,7 +545,7 @@ final class IntraPredictor {
                 }
             }
             default -> {
-                if (!hasTop || !hasLeft || !hasTopLeft) {
+                if (!hasTop || !allLeft || !hasTopLeft) {
                     fill(plane, offset, stride, 8, 128);
                     return;
                 }

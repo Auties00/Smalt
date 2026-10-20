@@ -118,6 +118,18 @@ public final class Images {
     }
 
     /**
+     * Returns whether multi-page images of a format can be encoded with the artifacts present at
+     * run time.
+     *
+     * @param format the image format to check
+     * @return {@code true} when {@link #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)} accepts it
+     * @throws NullPointerException if {@code format} is {@code null}
+     */
+    public static boolean isPageEncodable(ImageFormat format) {
+        return pageEncoder(Objects.requireNonNull(format, "format")) != null;
+    }
+
+    /**
      * Summarizes an image from its headers without decoding its pixels.
      *
      * @param source the input
@@ -233,10 +245,12 @@ public final class Images {
      *
      * <p>GIF, APNG and animated WebP files yield their frames; every other decodable image yields a
      * single frame, shown for zero microseconds and played once, so callers that build animations
-     * can accept still images too.
+     * can accept still images too. Frames are {@link RgbaPicture}s, except that the AVIF and HEIC
+     * readers return {@link Rgba16Picture}s for sources deeper than 8 bits under
+     * {@link ImageDecoderOptions#highBitDepth()}.
      *
      * @param source  the input
-     * @param options the limits; the reduced-size hint is ignored
+     * @param options the limits and the bit depth choice; the reduced-size hint is ignored
      * @return the reader, which the caller closes
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Unsupported   if the format is unknown or not decodable
@@ -322,7 +336,9 @@ public final class Images {
      * @return the complete encoded image
      * @throws NullPointerException       if an argument is {@code null}
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG)
+     *                                    options (lossless JPEG; a lossless picture with more bits
+     *                                    per sample than the format holds, unless its samples are
+     *                                    exactly those of an 8-bit picture)
      */
     public static byte[] encode(Picture picture, ImageFormat format, ImageEncoderOptions options) {
         var sink = MediaSink.memory();
@@ -343,7 +359,9 @@ public final class Images {
      * @param sink    the output; not closed
      * @throws NullPointerException       if an argument is {@code null}
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG)
+     *                                    options (lossless JPEG; a lossless picture with more bits
+     *                                    per sample than the format holds, unless its samples are
+     *                                    exactly those of an 8-bit picture)
      * @throws MediaException.Io          if writing the sink fails
      */
     public static void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
@@ -417,6 +435,51 @@ public final class Images {
     }
 
     /**
+     * Opens a writer that encodes the pages of a multi-image file of a format into a sink at the
+     * format's default settings.
+     *
+     * @param format the format to produce
+     * @param sink the output, written from its position; not closed
+     * @return the writer, which the caller finishes and closes
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws MediaException.Unsupported if multi-page images of the format are not encodable
+     * @see #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)
+     */
+    public static PageWriter openPageWriter(ImageFormat format, MediaSink sink) {
+        return openPageWriter(format, ImageEncoderOptions.defaults(), sink);
+    }
+
+    /**
+     * Opens a writer that encodes the pages of a multi-image file of a format into a sink.
+     *
+     * <p>Pages are written with {@link PageWriter#write(Picture)} and the file is completed with
+     * {@link PageWriter#finish()}; {@link #openPages(MediaSource, ImageDecoderOptions)} reads them
+     * back in order. A TIFF holds one page per picture, losslessly, with the page metadata of
+     * {@link PageWriter#write(DecodedImage)}; an icon holds one entry per picture, a picture larger
+     * than 256 pixels on a side being scaled into a 256-pixel square entry. The quality and the
+     * lossless flag apply as {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)}
+     * applies them to each page.
+     *
+     * @param format the format to produce
+     * @param options the lossless flag and the quality
+     * @param sink the output, written from its position; not closed
+     * @return the writer, which the caller finishes and closes
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws MediaException.Unsupported if multi-page images of the format are not encodable
+     */
+    public static PageWriter openPageWriter(ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        Objects.requireNonNull(format, "format");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(sink, "sink");
+        var provider = pageEncoder(format);
+        if (provider == null) {
+            throw Artifacts.unsupported(Artifacts.nameOf(format), "encodable with several pages",
+                    Artifacts.imagePageEncoderOf(format));
+        }
+        return provider.openPageWriter(format, options, sink);
+    }
+
+    /**
      * Recognizes the format of an image and finds the provider that decodes it.
      *
      * @param source the input
@@ -479,6 +542,22 @@ public final class Images {
     private static ImageCodecProvider animationEncoder(ImageFormat format) {
         for (var provider : Providers.image()) {
             if (provider.encodesAnimation(format)) {
+                return provider;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds the provider that encodes multi-page images of a format.
+     *
+     * @param format the format to encode pages in
+     * @return the first provider whose {@link ImageCodecProvider#encodesPages(ImageFormat)} accepts {@code format},
+     * or {@code null}
+     */
+    private static ImageCodecProvider pageEncoder(ImageFormat format) {
+        for (var provider : Providers.image()) {
+            if (provider.encodesPages(format)) {
                 return provider;
             }
         }

@@ -14,8 +14,8 @@
  *   <li><b>Remux when possible.</b> Every stream has a
  *       {@link com.github.auties00.smalt.transcode.StreamMode}; the default copies a stream when
  *       the output container can carry its codec and no requested operation needs its decoded
- *       content, and encodes it otherwise. A whole-file copy into MP4 goes through
- *       {@link com.github.auties00.smalt.container.mp4.Mp4Remuxer}.</li>
+ *       content, and encodes it otherwise. A whole-file copy into MP4, M4A or QuickTime goes
+ *       through {@link com.github.auties00.smalt.container.mp4.Mp4Remuxer}.</li>
  *   <li><b>Codecs from the registries.</b> Encoders and decoders are created through the
  *       registries with the codec-independent options
  *       ({@link com.github.auties00.smalt.video.VideoEncoderOptions},
@@ -30,7 +30,9 @@
  *   <li><b>Streaming and bounded memory.</b> One demuxer feeds all streams in file order; the
  *       caller's thread runs the job and codecs use the module's shared pool.</li>
  *   <li><b>Seek when possible.</b> A start time seeks the demuxer when it supports seeking, and
- *       otherwise decodes and drops the media before it, with the same output.</li>
+ *       otherwise decodes and drops the media before it, with the same output; subtitle packets
+ *       stored before the seek point are read through a second demuxer, so that the cues still
+ *       shown at the start are kept.</li>
  * </ul>
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
