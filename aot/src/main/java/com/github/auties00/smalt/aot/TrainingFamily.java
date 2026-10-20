@@ -19,9 +19,10 @@ public enum TrainingFamily {
      * filter, 8 and 16-bit), GIF (every quantizer and dithering, still and animated), WebP (lossy,
      * lossless, alpha, animated, on one and on several threads), TIFF (LZW, Deflate with the
      * predictor, PackBits, strips and tiles, 8 and 16-bit), JPEG 2000 (lossless and lossy, reduced
-     * resolution), ICO and BMP, image metadata reading and editing, and VP8: the real-time encoder
-     * at one and two threads, its decoder, and a real-time session that creates an encoder and a
-     * decoder every round next to one that runs across every round.
+     * resolution), ICO, BMP (every pixel format, run-length coding, 64-bit, wide-mask and CMYK
+     * pixels), image metadata reading and editing, and VP8: the real-time encoder at one and two
+     * threads, its decoder, and a real-time session that creates an encoder and a decoder every round
+     * next to one that runs across every round.
      */
     IMAGE,
 

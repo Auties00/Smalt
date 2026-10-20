@@ -1,0 +1,22 @@
+# audio decode dump of wav/loas.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 1044898
+seekable true
+track 0 AAC rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=a6b42a60
+1 frames=4096 crc16=6cc30f97
+2 frames=4096 crc16=fda44b29
+3 frames=4096 crc16=7aed3563
+4 frames=4096 crc16=22382abb
+5 frames=4096 crc16=acdc79c6
+6 frames=4096 crc16=4a0ea4fe
+7 frames=4096 crc16=af4bf372
+8 frames=4096 crc16=b7f05f93
+9 frames=4096 crc16=29304502
+10 frames=4096 crc16=a672202f
+11 frames=1024 crc16=e38bde4a
+seek 0: @sample 0
+seek 348299: @sample 15360
+seek 696598: @sample 30720
+seek 1044898: end
+seek -1000000: @sample 0

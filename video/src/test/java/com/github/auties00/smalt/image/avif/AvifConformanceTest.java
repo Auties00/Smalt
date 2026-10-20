@@ -302,7 +302,7 @@ class AvifConformanceTest {
                 for (var frame = reader.read(); frame != null; frame = reader.read()) {
                     assertTrue(frame.timestampMicros() > previous);
                     previous = frame.timestampMicros();
-                    var pixels = frame.picture().pixels();
+                    var pixels = ((com.github.auties00.smalt.image.RgbaPicture) frame.picture()).pixels();
                     for (var i = 0; i < lumaSize; i++) {
                         var alpha = expectedAlpha[frames * lumaSize + i] & 0xFF;
                         if (limitedAlpha) {

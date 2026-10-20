@@ -188,8 +188,7 @@ public final class GifAnimationEncoder {
      * @throws IllegalArgumentException if the frame size differs from the canvas size, the
      * duration is negative, or the delay exceeds 65535 hundredths of a second
      * @throws IllegalStateException if {@link #finish()} was called
-     * @throws MediaException.Unsupported if the frame's color matrix cannot be converted to RGB, or
-     * lossless coding is requested and the frame cannot be coded exactly
+     * @throws MediaException.Unsupported if lossless coding is requested and the frame cannot be coded exactly
      * @throws MediaException.LimitExceeded if encoding runs out of memory
      */
     public void addFrame(Picture frame, Duration duration) {

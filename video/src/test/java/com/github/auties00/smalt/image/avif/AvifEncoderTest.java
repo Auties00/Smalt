@@ -275,6 +275,20 @@ class AvifEncoderTest {
             assertTrue(decoded.exif().isPresent());
         }
 
+        @Test
+        @DisplayName("an HDR profile is embedded in its ICC form and decodes back as high dynamic range")
+        void hdrProfile() {
+            var profile = ColorProfile.of(new ColorInfo(com.github.auties00.smalt.image.MatrixCoefficients.BT2020_NCL,
+                    com.github.auties00.smalt.image.ColorRange.LIMITED, com.github.auties00.smalt.image.ColorPrimaries.BT2020,
+                    com.github.auties00.smalt.image.TransferCharacteristics.PQ));
+            var file = AvifEncoder.encode(rgba(64, 48, false), AvifEncoderOptions.lossy(50).toBuilder()
+                    .colorProfile(profile).build());
+            var decoded = AvifDecoder.decode(MediaSource.of(file));
+            assertArrayEquals(profile.toByteArray(), decoded.iccProfile().orElseThrow());
+            assertTrue(decoded.colorProfile().orElseThrow().isHighDynamicRange());
+            assertEquals(profile, decoded.colorProfile().orElseThrow());
+        }
+
         @ParameterizedTest(name = "speed {0}")
         @DisplayName("every speed writes a stream ffmpeg decodes like Smalt")
         @CsvSource({"0", "2", "4", "6", "8", "10"})
@@ -457,8 +471,8 @@ class AvifEncoderTest {
                 var count = 0;
                 for (var frame = reader.read(); frame != null; frame = reader.read()) {
                     var original = frames.get(count);
-                    var psnr = psnr(original.pixels(), original.stride(), frame.picture().pixels(),
-                            frame.picture().stride(), 160, 96, 4);
+                    var decoded = (RgbaPicture) frame.picture();
+                    var psnr = psnr(original.pixels(), original.stride(), decoded.pixels(), decoded.stride(), 160, 96, 4);
                     assertTrue(psnr > 28, "frame " + count + " psnr " + psnr);
                     assertEquals(40_000, frame.durationMicros());
                     count++;

@@ -419,15 +419,53 @@ final class ImageHeaders {
     }
 
     /**
-     * Reads the information header of a BMP file.
+     * Reads the information header of a BMP file, or of the bitmap an OS/2 bitmap array decodes to:
+     * its bitmap entry of the largest area, the first among equal ones.
      *
      * @param source the input
-     * @return the header
+     * @return the header, whose frame count is the number of bitmap entries of an array
      */
     private static Header bmp(MediaSource source) {
-        var result = new Header();
         var reader = new SourceReader(source, 256);
-        reader.seek(14);
+        if (reader.u16le() != ('A' << 8 | 'B')) {
+            return bmpEntry(reader, 0);
+        }
+        Header best = null;
+        var count = 0;
+        var position = 0L;
+        for (var step = 0; step < MAX_STEPS; step++) {
+            reader.seek(position + 14);
+            if (reader.u16le() == ('M' << 8 | 'B')) {
+                var entry = bmpEntry(reader, position + 14);
+                count++;
+                if (best == null || (long) entry.width * entry.height > (long) best.width * best.height) {
+                    best = entry;
+                }
+            }
+            reader.seek(position + 6);
+            var next = reader.u32le();
+            if (next == 0 || next <= position) {
+                break;
+            }
+            position = next;
+        }
+        if (best == null) {
+            throw new MediaException.Malformed("the OS/2 bitmap array holds no bitmap");
+        }
+        best.frames = count;
+        return best;
+    }
+
+    /**
+     * Reads the information header of one bitmap.
+     *
+     * @param reader the input
+     * @param start the offset of the bitmap's file header
+     * @return the header
+     */
+    private static Header bmpEntry(SourceReader reader, long start) {
+        var result = new Header();
+        reader.seek(start + 14);
         var headerSize = reader.u32le();
         if (headerSize == 12) {
             result.width = reader.u16le();
@@ -441,11 +479,12 @@ final class ImageHeaders {
         result.height = Math.abs(reader.s32le());
         reader.u16le();
         var bits = reader.u16le();
-        result.bitDepth = bits == 16 ? 5 : 8;
+        result.bitDepth = bits == 16 ? 5 : bits == 64 ? 16 : 8;
         if (bits == 32 && headerSize >= 56) {
-            reader.seek(14 + 40 + 12);
+            reader.seek(start + 14 + 40 + 12);
             result.alpha = reader.u32le() != 0;
         }
+        result.alpha |= bits == 64;
         return result;
     }
 

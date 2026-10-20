@@ -42,7 +42,8 @@ public enum ImageFormat {
     WEBP("image/webp"),
 
     /**
-     * Windows bitmap, magic {@code BM}.
+     * Windows and OS/2 bitmap, magic {@code BM}, or an OS/2 bitmap array, magic {@code BA}, whose first
+     * entry is a bitmap.
      */
     BMP("image/bmp"),
 
@@ -185,6 +186,9 @@ public enum ImageFormat {
             return WEBP;
         }
         if (length >= 14 && header[0] == 'B' && header[1] == 'M') {
+            return BMP;
+        }
+        if (length >= 28 && header[0] == 'B' && header[1] == 'A' && header[14] == 'B' && header[15] == 'M') {
             return BMP;
         }
         if (length >= 4 && ((header[0] == 'I' && header[1] == 'I' && (header[2] == 42 || header[2] == 43) && header[3] == 0)

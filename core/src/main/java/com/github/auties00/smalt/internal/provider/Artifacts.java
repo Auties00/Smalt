@@ -71,9 +71,9 @@ public final class Artifacts {
      */
     public static String encoderOf(Codec codec) {
         return switch (codec) {
-            case H264, AAC, AMR_NB, AMR_WB, AC3 -> MPEG;
+            case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8 -> IMAGE;
+            case VP8, MJPEG -> IMAGE;
             case OPUS, FLAC, MP3, VORBIS -> AUDIO;
             default -> null;
         };
@@ -119,6 +119,19 @@ public final class Artifacts {
         return switch (format) {
             case PNG, GIF, WEBP -> IMAGE;
             case AVIF -> VIDEO;
+            default -> null;
+        };
+    }
+
+    /**
+     * Returns the Smalt artifact that encodes multi-page images of an image format.
+     *
+     * @param format the image format of the pages
+     * @return the artifact id, or {@code null} when no Smalt artifact encodes its pages
+     */
+    public static String imagePageEncoderOf(ImageFormat format) {
+        return switch (format) {
+            case TIFF, ICO -> IMAGE;
             default -> null;
         };
     }

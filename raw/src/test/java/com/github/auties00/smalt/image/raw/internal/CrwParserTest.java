@@ -9,8 +9,10 @@ import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 
@@ -40,6 +42,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * unsupported files, random damage), and the metadata and previews of three sample files.
  */
 class CrwParserTest {
+    /** The fuzz test class whose seeds the synthetic files feed. */
+    private static final String FUZZ_TARGET = "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest";
+
     // a synthetic CRW file: the sensor data and a JPEG preview in the root heap, the records in sub-heaps
     private static final class Crw {
         int width = 80;
@@ -422,6 +427,18 @@ class CrwParserTest {
     }
 
     @Test
+    @DisplayName("reads a file without a model name as an RGGB sensor")
+    void noModel() {
+        var crw = new Crw();
+        crw.model = "";
+        var file = parse(crw.samples(5, 3).write());
+        assertNull(file.model);
+        assertEquals("RGGB", file.sensor.cfa.toString());
+        assertArrayEquals(new double[]{4095}, file.sensor.white);
+        assertArrayEquals(crw.samples, decode(file));
+    }
+
+    @Test
     @DisplayName("finds the end of a source whose size is unknown")
     void unknownSize() {
         var crw = new Crw().samples(5, 3);
@@ -605,5 +622,17 @@ class CrwParserTest {
             assertEquals(com.github.auties00.smalt.image.Orientation.ofExif(8), info.orientation());
             assertEquals("Canon EOS 300D DIGITAL", info.model().orElseThrow());
         }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true")
+    @DisplayName("writes the seeds of the CRW fuzz target")
+    void fuzzSeeds() {
+        var plain = new Crw().samples(1, 3);
+        FuzzSeeds.write(FUZZ_TARGET, "crw", "valid-set2-12bit.crw", plain.write());
+        var older = new Crw();
+        older.set = 0;
+        older.bits = 10;
+        FuzzSeeds.write(FUZZ_TARGET, "crw", "valid-set0-10bit.crw", older.samples(10, 3).write());
     }
 }

@@ -20,7 +20,19 @@ public enum TiffSampleFormat {
     FLOATING_POINT,
 
     /**
-     * Complex integers or complex floating point (codes 5 and 6), or an unknown code.
+     * Two's complement complex integers (code 5): a real part then an imaginary part, each of half the
+     * {@code BitsPerSample}.
+     */
+    COMPLEX_INTEGER,
+
+    /**
+     * IEEE complex floating point (code 6): a real part then an imaginary part, each of half the
+     * {@code BitsPerSample}.
+     */
+    COMPLEX_FLOATING_POINT,
+
+    /**
+     * An unknown code.
      */
     OTHER;
 
@@ -35,6 +47,8 @@ public enum TiffSampleFormat {
             case 1, 4 -> UNSIGNED_INTEGER;
             case 2 -> SIGNED_INTEGER;
             case 3 -> FLOATING_POINT;
+            case 5 -> COMPLEX_INTEGER;
+            case 6 -> COMPLEX_FLOATING_POINT;
             default -> OTHER;
         };
     }

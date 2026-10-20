@@ -53,7 +53,10 @@ jobs:
           python-version: '3.x'
 
       - name: Install the oracle tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg libavcodec-extra webp libimage-exiftool-perl
+          for c in libopencore_amrnb libvo_amrwbenc; do ffmpeg -hide_banner -encoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c encoder"; exit 1; }; done
+          for c in libopencore_amrnb libopencore_amrwb; do ffmpeg -hide_banner -decoders | grep -qw "$c" || { echo "::error::ffmpeg has no $c decoder"; exit 1; }; done
 
       - name: Restore the smoke test data
         id: smoke-cache

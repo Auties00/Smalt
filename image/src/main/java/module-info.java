@@ -1,16 +1,16 @@
 /**
  * Image codecs of Smalt: the JPEG, PNG (and APNG), GIF, WebP, BMP, TIFF, ICO/CUR, JPEG 2000 and
- * JPEG XL decoders, the JPEG, PNG (and APNG), GIF, WebP, TIFF, ICO/CUR and JPEG 2000 encoders
+ * JPEG XL decoders, the JPEG, PNG (and APNG), GIF, WebP, BMP, TIFF, ICO/CUR and JPEG 2000 encoders
  * (still, animated and multi-page), lossless JPEG transforms (rotation, flips, cropping, grayscale
  * and progressive transcoding without decoding pixels), EXIF reading and writing, image metadata
- * (EXIF, XMP, IPTC and ICC read from every image format and edited in JPEG, PNG, WebP and GIF
- * files without re-encoding them), the Motion-JPEG decoder, and the VP8 codec, since a lossy WebP
- * image is a VP8 key frame.
+ * (EXIF, XMP, IPTC and ICC read from every image format and edited in JPEG, PNG, WebP, GIF, HEIC,
+ * AVIF, TIFF and BMP files without re-encoding them), the Motion-JPEG codec, and the VP8 codec, since
+ * a lossy WebP image is a VP8 key frame.
  *
  * <p>The codecs register with the core registries through the core's service-provider interfaces,
  * so {@code Images} and {@code VideoDecoders} decode these formats (Motion-JPEG and VP8 video
- * included), and {@code Images} and {@code VideoEncoders} encode JPEG, PNG, GIF, WebP, TIFF, ICO,
- * JPEG 2000, animated WebP, GIF and APNG, and VP8, whenever this module is present.
+ * included), and {@code Images} and {@code VideoEncoders} encode JPEG, PNG, GIF, WebP, BMP, TIFF, ICO,
+ * JPEG 2000, animated WebP, GIF and APNG, Motion-JPEG and VP8, whenever this module is present.
  *
  * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
  * model are those of the core module ({@code com.github.auties00.smalt}).

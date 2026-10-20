@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.bmp.BmpDecoder;
 import com.github.auties00.smalt.image.bmp.internal.BmpHeader;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.png.PngDecoder;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.SourceBytes;
@@ -453,7 +454,7 @@ public final class IcoDecoder {
             }
             var header = BmpHeader.read(MediaSource.of(file));
             var decoded = BmpDecoder.decode(MediaSource.of(file), options);
-            var picture = (RgbaPicture) decoded.picture();
+            var picture = decoded.picture() instanceof RgbaPicture rgba ? rgba : ImageOps.toRgba(decoded.picture());
             var uncompressed = header.compression() == BmpHeader.RGB || header.compression() == BmpHeader.BITFIELDS;
             if (masked && uncompressed && !picture.hasAlpha()) {
                 var maskStart = header.dataOffset() - FILE_HEADER + header.rowStride() * height;
