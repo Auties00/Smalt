@@ -2,6 +2,7 @@ package com.github.auties00.smalt.io;
 
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
@@ -249,6 +250,7 @@ class SourceKindsDecodeTest {
         var width = picture.width();
         var height = picture.height();
         switch (picture) {
+            case ChannelPicture channels -> throw new AssertionError("unexpected " + channels);
             case RgbaPicture rgba -> rows(crc, rgba.pixels(), rgba.stride(), width * 4, height);
             case YuvPicture yuv -> {
                 rows(crc, yuv.y(), yuv.yStride(), width, height);

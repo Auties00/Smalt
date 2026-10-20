@@ -10,6 +10,9 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.color.ProfileColorSpace;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -28,8 +31,10 @@ import java.util.Optional;
  * methods (restore to background clears the rectangle to transparent, restore to previous restores
  * the rectangle; method 4 is read as restore to previous), images extending past the logical
  * screen (clipped), zero-size images (drawn as nothing, still counted as frames with their delay),
- * a zero-size logical screen (sized from the first image's extent), and the loop count of the
- * {@code NETSCAPE2.0}/{@code ANIMEXTS1.0} application extensions.
+ * a zero-size logical screen (sized from the first image's extent), the loop count of the
+ * {@code NETSCAPE2.0}/{@code ANIMEXTS1.0} application extensions, the ICC profile of the
+ * {@code ICCRGBG1} application extension (ICC.1 Annex B) and the XMP packet of the
+ * {@code XMP DataXMP} application extension.
  *
  * <p>Damage is rendered, not rejected: an LZW code past the current table stops
  * that image with the pixels decoded so far; a missing trailer, a truncated last image (drawn
@@ -102,8 +107,15 @@ public final class GifDecoder {
      * transparent index, does not cover the canvas, or was not fully decoded. The reduced-size
      * hint of {@code options} is ignored.
      *
+     * <p>The ICC profile of an {@code ICCRGBG1} application extension preceding the first image
+     * is returned in {@link DecodedImage#iccProfile()} and, when it parses and describes an RGB
+     * color space, describes the pixels in {@link DecodedImage#colorProfile()}; with
+     * {@link ImageDecoderOptions#convertToSrgb()} set, the pixels are converted to sRGB through it.
+     * The XMP packet of an {@code XMP DataXMP} application extension preceding the first image is
+     * returned in {@link DecodedImage#xmp()}.
+     *
      * @param source the input, read from offset zero
-     * @param options the limits; the size hint is ignored
+     * @param options the limits and the sRGB conversion; the size hint is ignored
      * @return the decoded image
      * @throws MediaException.Malformed if the header is invalid or the datastream holds no image
      * @throws MediaException.LimitExceeded if the canvas or the image exceeds the limits, or
@@ -133,9 +145,29 @@ public final class GifDecoder {
                 var complete = canvas.draw(frame);
                 var alpha = frame.transparentIndex >= 0 || !frame.covers(width, height) || !complete;
                 var picture = RgbaPicture.of(width, height, width * 4, canvas.picture().pixels(), alpha);
-                return new DecodedImage(picture, ImageFormat.GIF, Orientation.NORMAL, width, height, Optional.empty(),
-                        Optional.empty());
+                var icc = reader.iccProfile();
+                var image = new DecodedImage(picture, ImageFormat.GIF, Orientation.NORMAL, width, height,
+                        Optional.ofNullable(icc), Optional.empty(), Optional.ofNullable(reader.xmp()), rgbProfile(icc));
+                return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             });
+        }
+    }
+
+    /**
+     * Parses an embedded ICC profile as the color space of the pixels, which are always RGB.
+     *
+     * @param icc the profile bytes, or {@code null}
+     * @return the profile, or empty when absent, invalid or not of the RGB color space
+     */
+    private static Optional<ColorProfile> rgbProfile(byte[] icc) {
+        if (icc == null) {
+            return Optional.empty();
+        }
+        try {
+            var profile = ColorProfile.parse(icc);
+            return profile.colorSpace() == ProfileColorSpace.RGB ? Optional.of(profile) : Optional.empty();
+        } catch (MediaException exception) {
+            return Optional.empty();
         }
     }
 

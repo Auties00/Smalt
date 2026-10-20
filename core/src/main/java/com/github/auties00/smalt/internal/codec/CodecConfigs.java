@@ -8,7 +8,9 @@ import java.util.Arrays;
 /**
  * Derives the out-of-band configuration records muxers store from the in-band headers of the
  * first key frame, for tracks that arrive without one: the AV1 {@code av1C} record from a
- * sequence header OBU, and the VP9 {@code vpcC} record from an uncompressed frame header.
+ * sequence header OBU, the VP9 and VP8 {@code vpcC} records from a frame header, the MPEG-4
+ * Part 2 decoder configuration from the headers before the first picture, and the QuickTime sample
+ * entry type of ProRes and DNxHD from the frame header.
  *
  * <p>The headers are parsed by {@link VideoConfigs}, which the probe API shares. Every method
  * returns {@code null} instead of throwing when the bitstream does not hold what it needs, so a
@@ -116,14 +118,7 @@ public final class CodecConfigs {
         var subsamplingX = header.subsamplingX();
         var subsamplingY = header.subsamplingY();
         var chroma = subsamplingX == 1 && subsamplingY == 1 ? 1 : subsamplingX == 1 ? 2 : 3;
-        var level = VP9_LEVELS[VP9_LEVELS.length - 1];
-        var area = (long) width * height;
-        for (var i = 0; i < VP9_LEVEL_AREAS.length; i++) {
-            if (area <= VP9_LEVEL_AREAS[i]) {
-                level = VP9_LEVELS[i];
-                break;
-            }
-        }
+        var level = vpLevel(width, height);
         var fullRange = header.fullRange();
         int primaries;
         int transfer;
@@ -148,5 +143,114 @@ public final class CodecConfigs {
                 0,
                 0
         };
+    }
+
+    /**
+     * Returns the lowest VP9 level whose largest picture holds a frame size, the level the VP codec
+     * binding stores for VP8 and VP9 alike.
+     *
+     * @param width the picture width, or {@code 0} when unknown
+     * @param height the picture height, or {@code 0} when unknown
+     * @return the level code, {@code 10 * major + minor}
+     */
+    private static int vpLevel(int width, int height) {
+        var area = (long) width * height;
+        for (var i = 0; i < VP9_LEVEL_AREAS.length; i++) {
+            if (area <= VP9_LEVEL_AREAS[i]) {
+                return VP9_LEVELS[i];
+            }
+        }
+        return VP9_LEVELS[VP9_LEVELS.length - 1];
+    }
+
+    /**
+     * Builds the body of a {@code VPCodecConfigurationRecord} (VP codec ISOBMFF binding section
+     * 2.2, without the full-box version and flags) from the frame tag of a VP8 key frame (RFC 6386
+     * section 9.1).
+     *
+     * <p>The profile is the frame tag's version; VP8 is always 8-bit 4:2:0. The level is chosen as
+     * for VP9, and the color description is the track's when given, otherwise unspecified primaries,
+     * transfer and matrix with limited range. No codec initialization data is stored.
+     *
+     * @param frame the first frame of the track, a key frame
+     * @param width the picture width, or {@code 0} to take it from the frame
+     * @param height the picture height, or {@code 0} to take it from the frame
+     * @param color the color description of the track, or {@code null}
+     * @return the record body, or {@code null} when the frame is not a VP8 key frame
+     */
+    public static byte[] vp8Config(byte[] frame, int width, int height, ColorInfo color) {
+        if (frame.length < 10 || (frame[0] & 1) != 0 || (frame[3] & 0xFF) != 0x9D || (frame[4] & 0xFF) != 0x01
+                || (frame[5] & 0xFF) != 0x2A) {
+            return null;
+        }
+        var profile = (frame[0] >> 1) & 7;
+        if (profile > 3) {
+            return null;
+        }
+        if (width <= 0 || height <= 0) {
+            width = ((frame[6] & 0xFF) | (frame[7] & 0xFF) << 8) & 0x3FFF;
+            height = ((frame[8] & 0xFF) | (frame[9] & 0xFF) << 8) & 0x3FFF;
+        }
+        var fullRange = color != null && color.range() == ColorRange.FULL;
+        return new byte[]{
+                (byte) profile,
+                (byte) vpLevel(width, height),
+                (byte) ((8 << 4) | (1 << 1) | (fullRange ? 1 : 0)),
+                (byte) (color == null ? 2 : color.primaries().code()),
+                (byte) (color == null ? 2 : color.transfer().code()),
+                (byte) (color == null ? 2 : color.matrix().code()),
+                0,
+                0
+        };
+    }
+
+    /**
+     * Extracts the MPEG-4 Part 2 decoder configuration (ISO/IEC 14496-2 clause 6.2: the visual
+     * object sequence, visual object and video object layer headers) that a key frame carries in
+     * band, as the {@code DecoderSpecificInfo} of an {@code esds} box stores it.
+     *
+     * @param frame the first key frame of the track
+     * @return the bytes before the first group of VOP or VOP start code, or {@code null} when the
+     * frame does not start with a header holding a video object layer
+     */
+    public static byte[] mpeg4Config(byte[] frame) {
+        var hasLayer = false;
+        for (var index = 0; index + 3 < frame.length; index++) {
+            if (frame[index] != 0 || frame[index + 1] != 0 || frame[index + 2] != 1) {
+                continue;
+            }
+            var code = frame[index + 3] & 0xFF;
+            if (code == 0xB3 || code == 0xB6) {
+                return hasLayer && index > 0 ? Arrays.copyOf(frame, index) : null;
+            }
+            hasLayer |= code >= 0x20 && code <= 0x2F;
+            index += 3;
+        }
+        return null;
+    }
+
+    /**
+     * Returns the QuickTime sample entry type of a ProRes or DNxHD track: the track's
+     * four-character configuration when it has one, otherwise the type its first frame implies,
+     * {@code ap4h} for a ProRes 4:4:4 frame and {@code apcn} for any other ProRes frame,
+     * {@code AVdh} for a DNxHR frame and {@code AVdn} for any other DNxHD frame.
+     *
+     * @param prores {@code true} for ProRes, {@code false} for DNxHD
+     * @param config the track configuration, or {@code null}
+     * @param frame the first bytes of the first frame (ProRes with or without its frame size and
+     * {@code icpf} prefix), or {@code null} when unknown
+     * @return the sample entry type, four ASCII characters packed big-endian
+     */
+    public static int quickTimeVisualType(boolean prores, byte[] config, byte[] frame) {
+        if (config != null && config.length == 4) {
+            return (config[0] & 0xFF) << 24 | (config[1] & 0xFF) << 16 | (config[2] & 0xFF) << 8 | config[3] & 0xFF;
+        }
+        if (prores) {
+            var header = frame != null && frame.length >= 8 && frame[4] == 'i' && frame[5] == 'c' && frame[6] == 'p'
+                    && frame[7] == 'f' ? 8 : 0;
+            var chroma = frame != null && frame.length > header + 12 ? (frame[header + 12] & 0xFF) >>> 6 : 0;
+            return chroma == 3 ? 0x61703468 : 0x6170636E;
+        }
+        return frame != null && frame.length > 4 && frame[4] >= 3 ? 0x41566468 : 0x4156646E;
     }
 }
