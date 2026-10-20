@@ -34,8 +34,10 @@ import java.util.Optional;
  *   <li>GIF: the comment extensions and the {@code XMP DataXMP} application extension;</li>
  *   <li>HEIC and AVIF: the {@code Exif} and XMP items describing the primary item, and its ICC
  *       color property;</li>
- *   <li>TIFF: IFD0 as EXIF, with the XMP (tag 700), IPTC (tag 33723) and ICC (tag 34675)
- *       entries;</li>
+ *   <li>TIFF and BigTIFF: the descriptive entries of IFD0 and its Exif, GPS and interoperability
+ *       directories as EXIF (the entries that lay out the coded image are left out), with the XMP
+ *       (tag 700), IPTC (tag 33723, or else the IPTC resource of the Photoshop image resources in
+ *       tag 34377) and ICC (tag 34675) entries;</li>
  *   <li>BMP: nothing.</li>
  * </ul>
  *

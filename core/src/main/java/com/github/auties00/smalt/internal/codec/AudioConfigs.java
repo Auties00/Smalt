@@ -1,6 +1,8 @@
 package com.github.auties00.smalt.internal.codec;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.header.AacRates;
@@ -11,6 +13,7 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Reads and converts the audio codec configurations and frame headers the containers and the probe
@@ -44,6 +47,23 @@ public final class AudioConfigs {
     private static final int SYNC_EXTENSION_PS = 0x548;
 
     /**
+     * The coded streams of the Vorbis channel mapping of mapping family 1 by channel count, for counts 1 to 8
+     * (RFC 7845 clause 5.1.1.2).
+     */
+    private static final int[] OPUS_STREAMS = {1, 1, 2, 2, 3, 4, 4, 5};
+
+    /**
+     * The coupled streams of the Vorbis channel mapping of mapping family 1 by channel count, for counts 1 to 8.
+     */
+    private static final int[] OPUS_COUPLED = {0, 1, 1, 2, 2, 2, 3, 3};
+
+    /**
+     * The Vorbis channel mappings of mapping family 1 by channel count, for counts 1 to 8.
+     */
+    private static final int[][] OPUS_MAPPINGS = {{0}, {0, 1}, {0, 2, 1}, {0, 1, 2, 3}, {0, 4, 1, 2, 3},
+            {0, 4, 1, 2, 3, 5}, {0, 4, 1, 2, 3, 5, 6}, {0, 6, 1, 2, 3, 4, 5, 7}};
+
+    /**
      * The magic that starts a native FLAC stream and the codec configuration of a FLAC track.
      */
     public static final byte[] FLAC_MARKER = "fLaC".getBytes(StandardCharsets.US_ASCII);
@@ -66,10 +86,11 @@ public final class AudioConfigs {
      * @param objectType the audio object type of the core coder, for example {@code 2} for AAC-LC
      * @param sampleRate the core sampling rate in hertz
      * @param channels the channel count, or {@code 0} when a program config element defines it
-     * @param frameLength the number of samples per frame at the core rate, {@code 1024} or {@code 960}
+     * @param frameLength the number of samples per frame at the core rate, {@code 1024} or {@code 960}, or {@code 512}
+     * or {@code 480} for AAC-LD and AAC-ELD
      * @param outputRate the output sampling rate in hertz, which is twice the core rate when spectral band replication
-     * is signaled
-     * @param sbr whether spectral band replication is signaled explicitly
+     * is signaled at dual rate
+     * @param sbr whether spectral band replication is signaled explicitly, the low delay one of AAC-ELD included
      */
     public record AacConfig(int objectType, int sampleRate, int channels, int frameLength, int outputRate, boolean sbr) {
         }
@@ -99,6 +120,13 @@ public final class AudioConfigs {
         var frameLength = 1024;
         if (objectType == 23 || objectType == 39) {
             frameLength = reader.readFlag() ? 480 : 512;
+            if (objectType == 39) {
+                reader.read(3);
+                if (reader.readFlag()) {
+                    sbr = true;
+                    outputRate = reader.readFlag() ? 2 * sampleRate : sampleRate;
+                }
+            }
         } else if (objectType == 1 || objectType == 2 || objectType == 3 || objectType == 4 || objectType == 6
                 || objectType == 7 || objectType == 17 || objectType == 19 || objectType == 20
                 || objectType == 21 || objectType == 22) {
@@ -179,6 +207,28 @@ public final class AudioConfigs {
             return reader.overrun() ? 0 : rate;
         }
         return 0;
+    }
+
+    /**
+     * Returns the speakers of an AAC channel configuration in WAVE order, the order the AAC decoder outputs.
+     *
+     * @param configuration the channel configuration of an {@code AudioSpecificConfig} or ADTS header
+     * @return the layout, or {@code null} for configuration 0, whose program config element defines the channels
+     */
+    public static ChannelLayout aacLayout(int configuration) {
+        return switch (configuration) {
+            case 0 -> null;
+            case 1 -> ChannelLayout.MONO;
+            case 2 -> ChannelLayout.STEREO;
+            case 3 -> ChannelLayout.defaultFor(3);
+            case 4 -> new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER,
+                    Speaker.BACK_CENTER));
+            case 5 -> ChannelLayout.defaultFor(5);
+            case 6 -> ChannelLayout.SURROUND_5_1;
+            default -> new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER,
+                    Speaker.LOW_FREQUENCY, Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.FRONT_LEFT_OF_CENTER,
+                    Speaker.FRONT_RIGHT_OF_CENTER));
+        };
     }
 
     /**
@@ -348,7 +398,8 @@ public final class AudioConfigs {
      * @param inputRate the sampling rate of the original input, informational
      * @param outputGain the output gain in Q7.8 decibels
      * @param family the channel mapping family
-     * @param mapping the stream count, coupled count and channel mapping, or an empty array for family 0
+     * @param mapping the stream count, coupled count and channel mapping table (for family 3 the demixing
+     * matrix), or an empty array for family 0
      */
     public record OpusConfig(int channels, int preSkip, long inputRate, int outputGain, int family, byte[] mapping) {
     }
@@ -362,10 +413,48 @@ public final class AudioConfigs {
      */
     public static OpusConfig parseOpusHead(byte[] head) {
         var header = OpusHeader.parseLenient(head);
-        var mapping = header.family() == 0 ? new byte[0]
-                : Arrays.copyOfRange(head, OpusHeader.BASE_SIZE, OpusHeader.BASE_SIZE + 2 + header.channels());
+        var mapping = header.family() == 0 ? new byte[0] : Arrays.copyOfRange(head, OpusHeader.BASE_SIZE,
+                OpusHeader.BASE_SIZE + 2 + OpusHeader.tableSize(header.family(), header.channels(),
+                        header.streamCount(), header.coupledCount()));
         return new OpusConfig(header.channels(), header.preSkip(), header.inputSampleRate(), header.outputGain(),
                 header.family(), mapping);
+    }
+
+    /**
+     * Builds an Opus identification header for a stream whose container declares only its channel count
+     * (RFC 7845 clause 5.1).
+     *
+     * <p>One or two channels use mapping family 0; three to eight channels, and dual mono, use mapping
+     * family 1 with the Vorbis channel order and the stream counts RFC 7845 assigns to the channel count.
+     * The output gain is zero.
+     *
+     * @param channels the channel count, from 1 to 8
+     * @param preSkip the number of 48 kHz samples to discard at the start, from 0 to 65535
+     * @param inputRate the sampling rate of the original input, informational
+     * @param dualMono whether two channels are coded as two uncoupled mono streams
+     * @return the header bytes
+     * @throws IllegalArgumentException if {@code channels} is outside 1 to 8
+     */
+    public static byte[] opusHead(int channels, int preSkip, long inputRate, boolean dualMono) {
+        if (channels < 1 || channels > 8) {
+            throw new IllegalArgumentException(channels + " Opus channels without a channel mapping");
+        }
+        var family = channels > 2 || dualMono ? 1 : 0;
+        var head = new byte[family == 0 ? 19 : 21 + channels];
+        System.arraycopy(OPUS_HEAD, 0, head, 0, OPUS_HEAD.length);
+        head[8] = 1;
+        head[9] = (byte) channels;
+        ByteArrays.put16le(head, 10, preSkip);
+        ByteArrays.put32le(head, 12, (int) inputRate);
+        head[18] = (byte) family;
+        if (family != 0) {
+            head[19] = (byte) (dualMono ? 2 : OPUS_STREAMS[channels - 1]);
+            head[20] = (byte) (dualMono ? 0 : OPUS_COUPLED[channels - 1]);
+            for (var index = 0; index < channels; index++) {
+                head[21 + index] = (byte) (dualMono ? index : OPUS_MAPPINGS[channels - 1][index]);
+            }
+        }
+        return head;
     }
 
     /**
@@ -386,7 +475,10 @@ public final class AudioConfigs {
     /**
      * Converts the payload of an ISO base media {@code dOps} box into an {@code OpusHead}, per the
      * Opus-in-ISOBMFF encapsulation clause 4.3.2: the fields keep their order, the version
-     * becomes 1 and the multi-byte fields become little-endian.
+     * becomes 1 and the multi-byte fields become little-endian. For mapping family 3 the channel
+     * mapping table is the one of RFC 8486 section 3.2, the stream counts and the demixing matrix,
+     * copied as it is; a family 3 box whose table stops after one byte per channel, as some writers
+     * produce, keeps that short table, which an Opus decoder then reports as truncated.
      *
      * @param dops the {@code dOps} payload after the box header
      * @return the {@code OpusHead} bytes
@@ -402,6 +494,10 @@ public final class AudioConfigs {
         var channels = dops[1] & 0xFF;
         var family = dops[10] & 0xFF;
         var mappingLength = family == 0 ? 0 : 2 + channels;
+        if (family == 3 && dops.length >= 13) {
+            var matrix = 2 + OpusHeader.tableSize(family, channels, dops[11] & 0xFF, dops[12] & 0xFF);
+            mappingLength = dops.length >= 11 + matrix ? matrix : mappingLength;
+        }
         if (dops.length < 11 + mappingLength) {
             throw new MediaException.Malformed("dOps channel mapping truncated");
         }

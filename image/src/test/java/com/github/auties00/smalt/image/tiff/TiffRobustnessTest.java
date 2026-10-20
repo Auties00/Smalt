@@ -40,6 +40,8 @@ class TiffRobustnessTest {
                 seeds.add(LibTiff.tiffcp(source, List.of(options.split(" "))));
             }
         }
+        seeds.add(TiffJpeg12Test.resource("/com/github/auties00/smalt/image/tiff/jpeg12/226x149-ycbcr420-strips32.tif"));
+        seeds.add(TiffJpeg12Test.resource("/com/github/auties00/smalt/image/tiff/jpeg12/226x149-gray-strips16-tables.tif"));
         var pics = LibTiff.pics();
         for (var name : List.of("ycbcr-cat.tif", "zackthecat.tif", "smallliz.tif", "text.tif", "jello.tif", "caspian.tif")) {
             seeds.add(pics.get(name));

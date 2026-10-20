@@ -79,6 +79,10 @@ public final class TiffTags {
     public static final int SUB_IFDS = 330;
     /** InkSet. */
     public static final int INK_SET = 332;
+    /** InkNames. */
+    public static final int INK_NAMES = 333;
+    /** NumberOfInks. */
+    public static final int NUMBER_OF_INKS = 334;
     /** ExtraSamples. */
     public static final int EXTRA_SAMPLES = 338;
     /** SampleFormat. */

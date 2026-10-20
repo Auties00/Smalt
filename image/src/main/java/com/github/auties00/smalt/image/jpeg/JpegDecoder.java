@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.jpeg;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.DecodedImage;
@@ -10,19 +11,20 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.exif.ExifReader;
-import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.jpeg.internal.JpegColorSpace;
 import com.github.auties00.smalt.image.jpeg.internal.JpegOutput;
 import com.github.auties00.smalt.image.jpeg.internal.JpegPlanes;
 import com.github.auties00.smalt.image.jpeg.internal.JpegProbe;
 import com.github.auties00.smalt.image.jpeg.internal.JpegReader;
 import com.github.auties00.smalt.image.jpeg.internal.LosslessOutput;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.task.ParallelBands;
@@ -35,22 +37,27 @@ import java.util.Optional;
  * Decodes JPEG images (ITU-T T.81, JFIF, EXIF and Adobe variants).
  *
  * <p>Supported: baseline and extended sequential (SOF0, SOF1) and progressive (SOF2) Huffman
- * coding, and sequential and progressive arithmetic coding (SOF9, SOF10), all at 8-bit precision
- * with one, three or four components, any sampling factors from 1 to 4, arbitrary component
+ * coding, and sequential and progressive arithmetic coding (SOF9, SOF10), all at 8-bit and 12-bit
+ * precision with one, three or four components, any sampling factors from 1 to 4, arbitrary component
  * identifiers and scan order, 16-bit quantization tables, and streams without Huffman tables
  * (which use the tables of T.81 Annex K, as Motion-JPEG frames expect); lossless Huffman coding
- * (SOF3) at any precision from 2 to 16 with one, three or four components, every predictor and
- * point transform, in one interleaved scan; and, for every process, restart intervals and frame
- * heights defined by DNL. Corrupt or truncated entropy-coded data does not fail the decode:
- * damaged restart intervals of a DCT frame decode as gray and decoding resumes at the next restart
- * marker, and a lossless frame whose data ends early decodes as if the data went on with zero
- * bits. Only a DCT frame with no decodable data at all is rejected. Motion-JPEG frames are decoded
- * by {@link MjpegDecoder}.
+ * (SOF3) at any precision from 2 to 16 with one, three or four components, any sampling factors
+ * from 1 to 4, every predictor and point transform, in one interleaved scan; and, for every
+ * process, restart intervals and frame heights defined by DNL. A lossless JFIF image of 9-bit
+ * precision whose three or four components are not subsampled holds RGB samples (and alpha) through
+ * the reversible transform ffmpeg's lossless JPEG encoder applies, and decodes to them:
+ * {@code G = Y - ((U + V - 512) >> 2)}, {@code B = U - 256 + G}, {@code R = V - 256 + G} for the
+ * components {@code Y}, {@code U}, {@code V} of each sample. Corrupt or truncated entropy-coded
+ * data does not fail the decode: damaged restart intervals of a DCT frame decode as gray and
+ * decoding resumes at the next restart marker, and a lossless frame whose data ends early decodes
+ * as if the data went on with zero bits. Only a DCT frame with no decodable data at all is
+ * rejected. Motion-JPEG frames are decoded by {@link MjpegDecoder}.
  *
- * <p>Unsupported, and rejected with {@link MediaException.Unsupported}: 12-bit precision
- * ({@code "jpeg 12-bit precision"}) and 16-bit precision ({@code "jpeg 16-bit precision"}) of the
- * DCT processes; lossless coding other than SOF3 (SOF7, SOF11, SOF15), lossless frames with
- * subsampled components, and lossless frames coded in more than one scan ({@code "jpeg lossless"});
+ * <p>Unsupported, and rejected with {@link MediaException.Unsupported}: 16-bit precision of the
+ * DCT processes ({@code "jpeg 16-bit precision"}), which T.81 does not define; lossless coding
+ * other than SOF3 (SOF7, SOF11, SOF15), lossless frames coded in more than one scan, and
+ * subsampled lossless frames whose restart interval does not span whole rows of minimum coded
+ * units, which T.81 forbids ({@code "jpeg lossless"});
  * hierarchical coding ({@code "jpeg hierarchical"}, SOF5, SOF6, SOF13, SOF14, DHP, EXP); JPEG-LS
  * ({@code "jpeg-ls"}, SOF55, LSE); the reserved JPG extension marker ({@code "jpeg extensions"}); and
  * frames with two or more than four components ({@code "jpeg with N components"}). JPEG XT files
@@ -58,8 +65,9 @@ import java.util.Optional;
  * {@code APP11} segments are ignored.
  *
  * <p>Every decoded component plane of a DCT frame is bit-exact with libjpeg-turbo's accurate
- * integer IDCT ({@code djpeg -dct int}; its reduced-size IDCTs at 1/2, 1/4 and 1/8), so converting
- * the output with libjpeg's upsampling and color tables reproduces djpeg's output exactly. At a
+ * integer IDCT ({@code djpeg -dct int}; its reduced-size IDCTs at 1/2, 1/4 and 1/8), at 8 and at
+ * 12 bits, so converting the output with libjpeg's upsampling and color tables reproduces djpeg's
+ * output exactly. At a
  * reduced size every component is reduced by the same factor, so chroma keeps its stored
  * subsampling. A lossless frame decodes to exactly the samples it codes.
  *
@@ -124,15 +132,33 @@ public final class JpegDecoder {
      * decode to an opaque {@link RgbaPicture}; CMYK samples follow the inverted Adobe convention.
      * The planes of a {@link YuvPicture} are MCU-padded, so their strides may exceed the width.
      *
-     * <p>A lossless image decodes to the same picture types, with every sample rescaled to 8 bits
-     * as {@code round(v * 255 / (2^P - 1))} when its precision {@code P} is not 8. With
-     * {@link ImageDecoderOptions#highBitDepth()} set, a lossless image of more than 8 bits keeps
-     * its precision instead: a gray or YCbCr image decodes to a
+     * <p>A 12-bit image and a lossless image decode to the same picture types, with every sample
+     * rescaled to 8 bits as {@code round(v * 255 / (2^P - 1))} when its precision {@code P} is not 8;
+     * the samples of a 12-bit image are rescaled before any upsampling or color conversion. With
+     * {@link ImageDecoderOptions#highBitDepth()} set, such an image of more than 8 bits keeps its
+     * precision instead: a gray or YCbCr image decodes to a
      * {@link com.github.auties00.smalt.image.Yuv16Picture Yuv16Picture} of bit depth {@code P} with
-     * {@link ColorInfo#JPEG}, holding the samples as coded with tight strides, and an RGB image to
-     * an opaque {@link com.github.auties00.smalt.image.Rgba16Picture Rgba16Picture}, every sample
-     * rescaled as {@code round(v * 65535 / (2^P - 1))}; a CMYK or YCCK image is still reduced to
-     * 8 bits.
+     * {@link ColorInfo#JPEG}, holding the samples as decoded (in its stored subsampling, or upsampled
+     * to 4:4:4 at 12 bits, for a 12-bit image; with tight strides for a lossless one, in its stored
+     * subsampling when that is 4:2:0 or 4:2:2 and with its components replicated to 4:4:4
+     * otherwise), and an RGB image to an opaque
+     * {@link com.github.auties00.smalt.image.Rgba16Picture Rgba16Picture}, every sample rescaled as
+     * {@code round(v * 65535 / (2^P - 1))}; a CMYK or YCCK image is still reduced to 8 bits, except
+     * as the next paragraph describes. A lossless image holding RGB samples through the reversible
+     * transform the class description gives decodes to an {@link RgbaPicture}, with alpha when it
+     * has a fourth component, whatever the options.
+     *
+     * <p>With {@link ImageDecoderOptions#keepChannels()} set (and {@link ImageDecoderOptions#convertToSrgb()}
+     * not set), a CMYK or YCCK image decodes to a {@link Channel8Picture} of the {@link PixelLayout#CMYK} layout
+     * instead, YCCK being converted to CMYK as libjpeg-turbo does. Its samples follow the picture convention, 0
+     * being no ink: they are the stored samples inverted when an Adobe {@code APP14} segment is present (the
+     * convention of Adobe applications) and the stored samples otherwise. The result carries the embedded
+     * profile as its {@link DecodedImage#colorProfile()} when that profile is a CMYK one, so
+     * {@link ImageOps#toSrgb(DecodedImage)} converts it as the {@code convertToSrgb} option does. A lossless
+     * CMYK image of more than 8 bits decodes, with {@link ImageDecoderOptions#highBitDepth()} also set, to a
+     * {@link com.github.auties00.smalt.image.Channel16Picture Channel16Picture} with every sample rescaled as
+     * {@code round(v * 65535 / (2^P - 1))}. For an image with an Adobe segment, converting the channel picture
+     * with {@link ImageOps#toRgba(Picture)} gives exactly the default output.
      *
      * <p>When the options ask for a minimum size, the image is decoded at the smallest of 1/1,
      * 1/2, 1/4 and 1/8 of its stored size that still covers it, with reduced-size inverse DCTs, so
@@ -143,7 +169,9 @@ public final class JpegDecoder {
      * no decodable data, whatever the AC scans hold. A lossless image always decodes at full size.
      *
      * <p>The result carries the orientation of the first {@code APP1 Exif} segment, that segment's
-     * TIFF block, and the ICC profile reassembled from the {@code APP2 ICC_PROFILE} segments.
+     * TIFF block, the ICC profile reassembled from the {@code APP2 ICC_PROFILE} segments, and the
+     * packet of the first {@code APP1} XMP segment, with the properties of the Extended XMP packet
+     * it names merged into it when its segments hold the whole extended packet.
      *
      * <p>A CMYK or YCCK image is returned as RGBA converted without color management, from the
      * samples taken as stored inverted (the convention of Adobe applications):
@@ -171,22 +199,38 @@ public final class JpegDecoder {
                 var reader = new JpegReader(data, 0, data.length, options.limits());
                 var frame = reader.readHeaders();
                 reader.checkSupported();
-                var colorSpace = reader.colorSpace();
+                var reversible = LosslessOutput.reversibleRgb(reader);
+                var colorSpace = reversible ? JpegColorSpace.RGB : reader.colorSpace();
                 Picture wide = null;
                 JpegPlanes planes = null;
                 if (!reader.lossless()) {
-                    planes = reader.decodePlanes(reader.chooseScale(options.minWidth(), options.minHeight()));
+                    var scale = reader.chooseScale(options.minWidth(), options.minHeight());
+                    if (options.highBitDepth() && LosslessOutput.keepsPrecision(reader, colorSpace)) {
+                        wide = JpegOutput.toWidePicture(reader.decodeWidePlanes(scale), colorSpace, options.limits());
+                    } else {
+                        planes = reader.decodePlanes(scale);
+                    }
+                } else if (reversible) {
+                    wide = LosslessOutput.decodeReversibleRgb(reader, options.limits());
                 } else if (options.highBitDepth() && LosslessOutput.keepsPrecision(reader, colorSpace)) {
                     wide = LosslessOutput.decodePicture(reader, colorSpace, options.limits());
+                } else if (options.highBitDepth() && options.keepChannels() && !options.convertToSrgb()
+                        && LosslessOutput.keepsCmykPrecision(reader, colorSpace)) {
+                    wide = LosslessOutput.decodeCmyk(reader, reader.hasAdobeMarker(), options.limits());
                 } else {
                     planes = LosslessOutput.decodePlanes(reader, options.limits());
                 }
                 var exif = reader.exif();
                 var orientation = exif == null ? Orientation.NORMAL : ExifReader.orientation(exif);
                 var icc = reader.iccProfile();
+                var xmp = Optional.ofNullable(reader.xmp(options.limits()));
                 if (wide != null) {
                     var image = new DecodedImage(wide, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                            Optional.ofNullable(icc), Optional.ofNullable(exif));
+                            Optional.ofNullable(icc), Optional.ofNullable(exif)).withXmp(xmp);
+                    if (colorSpace == JpegColorSpace.CMYK) {
+                        return new DecodedImage(wide, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                                Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, cmykProfile(image));
+                    }
                     return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
                 }
                 var cmyk = colorSpace == JpegColorSpace.CMYK || colorSpace == JpegColorSpace.YCCK;
@@ -194,19 +238,57 @@ public final class JpegDecoder {
                     var converted = cmykToSrgb(planes, colorSpace, reader.hasAdobeMarker(), icc, options.limits());
                     if (converted != null) {
                         return new DecodedImage(converted, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                                Optional.empty(), Optional.ofNullable(exif), Optional.of(ColorProfile.srgb()));
+                                Optional.empty(), Optional.ofNullable(exif), xmp, Optional.of(ColorProfile.srgb()));
                     }
+                }
+                if (cmyk && options.keepChannels() && !options.convertToSrgb()) {
+                    var kept = keptCmyk(planes, colorSpace, reader.hasAdobeMarker(), options.limits());
+                    var image = new DecodedImage(kept, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                            Optional.ofNullable(icc), Optional.ofNullable(exif));
+                    return new DecodedImage(kept, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                            Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, cmykProfile(image));
                 }
                 var picture = JpegOutput.toPicture(planes, colorSpace, options.limits());
                 if (cmyk) {
                     return new DecodedImage(picture, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                            Optional.ofNullable(icc), Optional.ofNullable(exif), Optional.empty());
+                            Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, Optional.empty());
                 }
                 var image = new DecodedImage(picture, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                        Optional.ofNullable(icc), Optional.ofNullable(exif));
+                        Optional.ofNullable(icc), Optional.ofNullable(exif)).withXmp(xmp);
                 return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             });
         }
+    }
+
+    /**
+     * Returns the CMYK samples of a CMYK or YCCK frame in the picture convention, 0 being no ink.
+     *
+     * @param planes the decoded planes
+     * @param colorSpace {@link JpegColorSpace#CMYK} or {@link JpegColorSpace#YCCK}
+     * @param inverted whether the samples are stored inverted (Adobe convention)
+     * @param limits the resource bounds checked before every allocation
+     * @return the picture of the {@link PixelLayout#CMYK} layout
+     */
+    private static Channel8Picture keptCmyk(JpegPlanes planes, JpegColorSpace colorSpace, boolean inverted,
+                                            MediaLimits limits) {
+        var samples = JpegOutput.toCmyk(planes, colorSpace, limits);
+        if (inverted) {
+            for (var i = 0; i < samples.length; i++) {
+                samples[i] = (byte) ~samples[i];
+            }
+        }
+        var width = planes.width();
+        return Channel8Picture.of(width, planes.height(), width * 4, samples, PixelLayout.CMYK);
+    }
+
+    /**
+     * Returns the color profile of a decoded CMYK image: its parsed profile when that is a CMYK one.
+     *
+     * @param image the image, its profile parsed from the embedded bytes
+     * @return the CMYK profile, or empty
+     */
+    private static Optional<ColorProfile> cmykProfile(DecodedImage image) {
+        return image.colorProfile().filter(profile -> profile.colorSpace() == ProfileColorSpace.CMYK);
     }
 
     /**
