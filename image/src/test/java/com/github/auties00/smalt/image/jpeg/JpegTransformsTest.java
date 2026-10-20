@@ -158,6 +158,19 @@ class JpegTransformsTest {
         return out;
     }
 
+    // cjpeg -precision 12 outputs of tools/testdata/jpeg12/make-vectors.sh
+    private static final List<String> TWELVE_BIT = List.of("33x65-yuv422-progressive-arithmetic.jpg",
+            "227x149-yuv411-baseline.jpg", "227x149-yuv420-arithmetic-rst3.jpg", "227x149-rgb-progressive.jpg",
+            "33x65-monochrome-baseline.jpg", "64x48-yuv444-baseline-q100.jpg", "64x48-yuv420-progressive-q100.jpg");
+
+    static byte[] twelveBit(String name) {
+        try (var input = JpegTransformsTest.class.getResourceAsStream("cjpeg12/" + name)) {
+            return input.readAllBytes();
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+    }
+
     private static Map<String, byte[]> sources() {
         var sources = new LinkedHashMap<String, byte[]>();
         sources.put("testorig", JpegTestVectors.testorig());
@@ -169,6 +182,10 @@ class JpegTransformsTest {
         sources.put("gray 53x37", encode(53, 37, ChromaFormat.MONOCHROME, 0));
         sources.put("420 64x48", encode(64, 48, ChromaFormat.YUV420, 0));
         sources.put("exif first", withExif(encode(50, 34, ChromaFormat.YUV420, 0), 6, true));
+        sources.put("12-bit testorig12", JpegTestVectors.testorig12());
+        for (var name : TWELVE_BIT) {
+            sources.put("12-bit " + name, twelveBit(name));
+        }
         if (tool("cjpeg").isPresent()) {
             var image = ppm(45, 39);
             sources.put("cjpeg rgb", run("cjpeg", List.of("-rgb"), image));
@@ -260,6 +277,60 @@ class JpegTransformsTest {
         return options;
     }
 
+    static Stream<Arguments> recordedTwelveBit() {
+        var list = new ArrayList<Arguments>();
+        try (var input = JpegTransformsTest.class.getResourceAsStream("jpegtran12-md5.csv")) {
+            for (var line : new String(input.readAllBytes(), java.nio.charset.StandardCharsets.US_ASCII).split("\n")) {
+                if (line.isBlank() || line.startsWith("#")) {
+                    continue;
+                }
+                var fields = line.strip().split(";");
+                list.add(Arguments.of(fields[0] + " " + fields[1], fields[0], List.of(fields[1].split(" ")), fields[2]));
+            }
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+        return list.stream();
+    }
+
+    @Nested
+    @DisplayName("12-bit sources against recorded jpegtran output")
+    class RecordedTwelveBit {
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.image.jpeg.JpegTransformsTest#recordedTwelveBit")
+        @DisplayName("writes the bytes libjpeg-turbo 3.1.3 jpegtran wrote")
+        void identical(String name, String file, List<String> switches, String md5) {
+            var source = twelveBit(file);
+            if (md5.equals("fails")) {
+                assertThrows(MediaException.class, () -> JpegTransforms.transform(MediaSource.of(source), options(switches)));
+                return;
+            }
+            var actual = JpegTransforms.transform(MediaSource.of(source), options(switches));
+            assertEquals(md5, JpegTestSupport.md5(actual));
+            var coefficients = new com.github.auties00.smalt.image.jpeg.internal.JpegReader(actual, 0, actual.length,
+                    com.github.auties00.smalt.MediaLimits.DEFAULT).decodeCoefficients();
+            assertEquals(12, coefficients.frame().precision());
+        }
+
+        @Test
+        @DisplayName("four quarter turns give back the source's coefficients")
+        void fourTurns() {
+            var source = twelveBit("64x48-yuv444-baseline-q100.jpg");
+            var turned = source;
+            for (var i = 0; i < 4; i++) {
+                turned = JpegTransforms.rotate(MediaSource.of(turned), 90);
+            }
+            var a = new com.github.auties00.smalt.image.jpeg.internal.JpegReader(source, 0, source.length,
+                    com.github.auties00.smalt.MediaLimits.DEFAULT).decodeCoefficients();
+            var b = new com.github.auties00.smalt.image.jpeg.internal.JpegReader(turned, 0, turned.length,
+                    com.github.auties00.smalt.MediaLimits.DEFAULT).decodeCoefficients();
+            for (var c = 0; c < 3; c++) {
+                assertArrayEquals(a.coefficients(c), b.coefficients(c));
+                assertArrayEquals(a.quantization(c), b.quantization(c));
+            }
+        }
+    }
+
     @Nested
     @DisplayName("against jpegtran")
     class Jpegtran {
@@ -271,7 +342,10 @@ class JpegTransformsTest {
             try {
                 expected = run("jpegtran", switches, source);
             } catch (ToolFailure failure) {
-                assertThrows(MediaException.class, () -> JpegTransforms.transform(MediaSource.of(source), options(switches)));
+                // a crop that does not fit the transformed image is an argument error, anything else a media error
+                var thrown = assertThrows(RuntimeException.class,
+                        () -> JpegTransforms.transform(MediaSource.of(source), options(switches)));
+                assertTrue(thrown instanceof MediaException || thrown instanceof IllegalArgumentException, thrown.toString());
                 return;
             }
             var actual = JpegTransforms.transform(MediaSource.of(source), options(switches));

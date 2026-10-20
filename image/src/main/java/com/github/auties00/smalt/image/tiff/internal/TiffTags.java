@@ -79,6 +79,10 @@ public final class TiffTags {
     public static final int SUB_IFDS = 330;
     /** InkSet. */
     public static final int INK_SET = 332;
+    /** InkNames. */
+    public static final int INK_NAMES = 333;
+    /** NumberOfInks. */
+    public static final int NUMBER_OF_INKS = 334;
     /** ExtraSamples. */
     public static final int EXTRA_SAMPLES = 338;
     /** SampleFormat. */
@@ -121,6 +125,8 @@ public final class TiffTags {
     public static final int GPS_IFD = 34853;
     /** Interoperability IFD pointer, inside the EXIF IFD. */
     public static final int INTEROPERABILITY_IFD = 40965;
+    /** LercParameters: the LERC version and the compression around each blob (GDAL and libtiff). */
+    public static final int LERC_PARAMETERS = 50674;
 
     /**
      * Prevents instantiation.

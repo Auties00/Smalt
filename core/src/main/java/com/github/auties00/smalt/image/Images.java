@@ -233,10 +233,12 @@ public final class Images {
      *
      * <p>GIF, APNG and animated WebP files yield their frames; every other decodable image yields a
      * single frame, shown for zero microseconds and played once, so callers that build animations
-     * can accept still images too.
+     * can accept still images too. Frames are {@link RgbaPicture}s, except that the AVIF and HEIC
+     * readers return {@link Rgba16Picture}s for sources deeper than 8 bits under
+     * {@link ImageDecoderOptions#highBitDepth()}.
      *
      * @param source  the input
-     * @param options the limits; the reduced-size hint is ignored
+     * @param options the limits and the bit depth choice; the reduced-size hint is ignored
      * @return the reader, which the caller closes
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Unsupported   if the format is unknown or not decodable
@@ -322,7 +324,9 @@ public final class Images {
      * @return the complete encoded image
      * @throws NullPointerException       if an argument is {@code null}
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG)
+     *                                    options (lossless JPEG; a lossless picture with more bits
+     *                                    per sample than the format holds, unless its samples are
+     *                                    exactly those of an 8-bit picture)
      */
     public static byte[] encode(Picture picture, ImageFormat format, ImageEncoderOptions options) {
         var sink = MediaSink.memory();
@@ -343,7 +347,9 @@ public final class Images {
      * @param sink    the output; not closed
      * @throws NullPointerException       if an argument is {@code null}
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG)
+     *                                    options (lossless JPEG; a lossless picture with more bits
+     *                                    per sample than the format holds, unless its samples are
+     *                                    exactly those of an 8-bit picture)
      * @throws MediaException.Io          if writing the sink fails
      */
     public static void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {

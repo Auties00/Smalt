@@ -7,6 +7,8 @@ import com.github.auties00.smalt.container.mp4.Mp4Demuxer;
 import com.github.auties00.smalt.image.AnimationFrame;
 import com.github.auties00.smalt.image.AnimationReader;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
@@ -31,9 +33,11 @@ import java.util.ArrayDeque;
  * two tracks shows one frame, and the n-th alpha frame is the alpha plane of the n-th color
  * frame. The samples are read through {@link Mp4Demuxer}.
  *
- * <p>Each frame is converted to RGBA; color premultiplied by alpha ({@code prem} track
- * reference) is divided back. Timestamps are the sums of the sample durations. A reader is not
- * thread-safe.
+ * <p>Each frame is converted to RGBA: 16-bit RGBA when the reader keeps a source depth above 8
+ * bits, 8-bit RGBA otherwise. Color premultiplied by alpha ({@code prem} track reference) is
+ * divided back; alpha frames of another bit depth than the color frames are rescaled to it, and
+ * alpha frames of another size are resampled to it with {@link HeifPictures#resampleAlpha}.
+ * Timestamps are the sums of the sample durations. A reader is not thread-safe.
  *
  * @implNote This implementation chooses the tracks as libavif's {@code avifDecoderReset}
  * ({@code src/read.c}, BSD 2-clause) does.
@@ -120,16 +124,23 @@ public final class SequenceReader implements AnimationReader {
     private boolean drained;
 
     /**
+     * Whether the frames {@link #read()} returns keep a source depth above 8 bits.
+     */
+    private final boolean highBitDepth;
+
+    /**
      * Opens the sequence of a file.
      *
      * @param source the file
      * @param file the parsed file, which has a {@code moov} box
      * @param limits the bounds
+     * @param highBitDepth whether the frames {@link #read()} returns keep a source depth above 8
+     * bits, as {@link Rgba16Picture} pictures
      * @throws MediaException.Malformed if the file has no AV1 color track or its tracks are
      * corrupt
      * @throws MediaException.LimitExceeded if the canvas or the sample count exceeds the limits
      */
-    public SequenceReader(MediaSource source, HeifFile file, MediaLimits limits) {
+    public SequenceReader(MediaSource source, HeifFile file, MediaLimits limits, boolean highBitDepth) {
         var movie = HeifMovie.parse(source, file, limits);
         var color = colorTrack(movie);
         if (color == null) {
@@ -138,6 +149,7 @@ public final class SequenceReader implements AnimationReader {
         var alpha = alphaTrack(movie, color.id());
         this.info = color;
         this.limits = limits;
+        this.highBitDepth = highBitDepth;
         this.premultiplied = alpha != null && color.references("prem", alpha.id());
         this.nclx = color.property(HeifProperty.ColorNclx.class);
         this.demuxer = new Mp4Demuxer(source, DemuxerOptions.builder().limits(limits).build());
@@ -263,11 +275,13 @@ public final class SequenceReader implements AnimationReader {
                 }
             }
             LimitChecks.checkFrames(limits, frames + 1L);
-            var picture = decode(color, alpha, false);
+            var picture = decode(color, alpha, highBitDepth);
             frames++;
             var duration = Math.max(0, colorTrack.timeBase().toMicros(color.duration()));
-            var frame = new AnimationFrame(premultiplied ? HeifPictures.unpremultiply(picture) : ImageOps.toRgba(picture),
-                    timestamp, duration);
+            var straight = premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+            var rgba = highBitDepth && (straight instanceof Yuv16Picture || straight instanceof Rgba16Picture)
+                    ? ImageOps.toRgba16(straight) : ImageOps.toRgba(straight);
+            var frame = new AnimationFrame(rgba, timestamp, duration);
             timestamp += duration;
             return frame;
         } catch (MediaException exception) {
@@ -281,6 +295,9 @@ public final class SequenceReader implements AnimationReader {
 
     /**
      * Decodes the first frame as a planar picture, for still decoding.
+     *
+     * <p>Without {@code highBitDepth}, a YCgCo-Re or YCgCo-Ro source of more than 8 bits decodes to 8-bit RGBA
+     * (see {@link Colors#toEightBit}), and color premultiplied by alpha to straight RGBA.
      *
      * @param highBitDepth whether a source of more than 8 bits keeps its depth
      * @return the picture of the first frame
@@ -296,7 +313,8 @@ public final class SequenceReader implements AnimationReader {
             throw new MediaException.Malformed("avif: the alpha track has no sample");
         }
         var picture = decode(color, alpha, highBitDepth);
-        return premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+        var straight = premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+        return highBitDepth ? straight : Colors.toEightBit(straight);
     }
 
     /**
@@ -304,7 +322,8 @@ public final class SequenceReader implements AnimationReader {
      *
      * @param color the color sample
      * @param alpha the alpha sample, or {@code null}
-     * @param wide whether a source of more than 8 bits keeps its depth
+     * @param wide whether a source of more than 8 bits keeps its depth; a YCgCo-Re or YCgCo-Ro source keeps it
+     * regardless (see {@link Colors#reducesToRgb})
      * @return the picture
      */
     private Picture decode(Packet color, Packet alpha, boolean wide) {
@@ -313,8 +332,14 @@ public final class SequenceReader implements AnimationReader {
             throw new MediaException.Malformed("avif: a color sample shows no frame");
         }
         try {
+            var lightProperty = info.property(HeifProperty.ContentLightLevel.class);
+            var masteringProperty = info.property(HeifProperty.MasteringDisplay.class);
+            var description = Colors.colorInfo(nclx, colorFrame.seqHdr,
+                    masteringProperty != null ? HeifPictures.masteringDisplay(masteringProperty) : colorDecoder.masteringDisplay(),
+                    lightProperty != null ? HeifPictures.contentLightLevel(lightProperty) : colorDecoder.contentLightLevel());
             var canvas = new Canvas(limits, colorFrame.w, colorFrame.h, SequenceHeader.chromaFormat(colorFrame.layout),
-                    colorFrame.bpc, wide && colorFrame.bpc > 8, alpha != null);
+                    colorFrame.bpc, colorFrame.bpc > 8 && (wide || Colors.reducesToRgb(description.matrix(),
+                    colorFrame.bpc)), alpha != null);
             canvas.writeColor(colorFrame, 0, 0, colorFrame.w, colorFrame.h, true);
             if (alpha != null) {
                 var alphaFrame = alphaDecoder.decodeSample(alphaTrack.codecConfig().orElse(null), alpha.data());
@@ -322,19 +347,19 @@ public final class SequenceReader implements AnimationReader {
                     throw new MediaException.Malformed("avif: an alpha sample shows no frame");
                 }
                 try {
-                    if (alphaFrame.w != colorFrame.w || alphaFrame.h != colorFrame.h || alphaFrame.bpc != colorFrame.bpc) {
-                        throw new MediaException.Unsupported("avif", "the alpha frames differ from the color frames in size or depth");
+                    var limited = !alphaFrame.seqHdr.colorRange;
+                    if (alphaFrame.w == colorFrame.w && alphaFrame.h == colorFrame.h) {
+                        canvas.writeAlpha(alphaFrame, 0, 0, colorFrame.w, colorFrame.h, limited);
+                    } else {
+                        var luma = HeifPictures.lumaPicture(alphaFrame.data[0], 0, alphaFrame.stride[0], alphaFrame.w,
+                                alphaFrame.h, alphaFrame.bpc);
+                        canvas.writeAlpha(HeifPictures.resampleAlpha(luma, colorFrame.w, colorFrame.h), 0, 0,
+                                colorFrame.w, colorFrame.h, limited);
                     }
-                    canvas.writeAlpha(alphaFrame, 0, 0, colorFrame.w, colorFrame.h, !alphaFrame.seqHdr.colorRange);
                 } finally {
                     alphaFrame.release();
                 }
             }
-            var lightProperty = info.property(HeifProperty.ContentLightLevel.class);
-            var masteringProperty = info.property(HeifProperty.MasteringDisplay.class);
-            var description = Colors.colorInfo(nclx, colorFrame.seqHdr,
-                    masteringProperty != null ? HeifPictures.masteringDisplay(masteringProperty) : colorDecoder.masteringDisplay(),
-                    lightProperty != null ? HeifPictures.contentLightLevel(lightProperty) : colorDecoder.contentLightLevel());
             return canvas.toPicture(description);
         } finally {
             colorFrame.release();

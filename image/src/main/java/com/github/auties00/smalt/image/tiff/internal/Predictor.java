@@ -37,7 +37,25 @@ public final class Predictor {
      */
     public static void undoHorizontal(byte[] data, int offset, int rowBytes, int rows, int stride, int width,
                                       int bytesPerSample, boolean little) {
-        var count = width * stride;
+        undoHorizontalSamples(data, offset, rowBytes, rows, stride, width * stride, bytesPerSample, little);
+    }
+
+    /**
+     * Reverses the horizontal predictor on rows holding a number of samples that need not be a
+     * whole number of pixels, such as the rows of data units of subsampled YCbCr: each sample
+     * from index {@code stride} on adds the sample {@code stride} positions before it.
+     *
+     * @param data the rows, modified in place
+     * @param offset the index of the first row
+     * @param rowBytes the distance between rows
+     * @param rows the number of rows
+     * @param stride the distance in samples between a sample and the one it is predicted from
+     * @param count the number of samples per row
+     * @param bytesPerSample the sample size: 1, 2, 4 or 8
+     * @param little whether multi-byte samples are little-endian
+     */
+    public static void undoHorizontalSamples(byte[] data, int offset, int rowBytes, int rows, int stride, int count,
+                                             int bytesPerSample, boolean little) {
         for (var row = 0; row < rows; row++) {
             var base = offset + row * rowBytes;
             switch (bytesPerSample) {
@@ -136,6 +154,50 @@ public final class Predictor {
                 var at = base + sample * bytesPerSample;
                 for (var plane = 0; plane < bytesPerSample; plane++) {
                     data[at + plane] = scratch[plane * samples + sample];
+                }
+            }
+        }
+    }
+
+    /**
+     * Reverses the horizontal predictor on rows of pixels whose samples differ in size: each
+     * sample adds the same sample of the previous pixel, modulo its own size.
+     *
+     * @param data the rows, modified in place
+     * @param offset the index of the first row
+     * @param rowBytes the distance between rows
+     * @param rows the number of rows
+     * @param width the number of pixels per row
+     * @param sampleBytes the size of each sample of a pixel: 1, 2, 4 or 8
+     * @param little whether multi-byte samples are little-endian
+     */
+    public static void undoHorizontalMixed(byte[] data, int offset, int rowBytes, int rows, int width,
+                                           int[] sampleBytes, boolean little) {
+        var pixelBytes = 0;
+        for (var size : sampleBytes) {
+            pixelBytes += size;
+        }
+        for (var row = 0; row < rows; row++) {
+            var base = offset + row * rowBytes;
+            for (var x = 1; x < width; x++) {
+                var at = base + x * pixelBytes;
+                for (var size : sampleBytes) {
+                    var previous = at - pixelBytes;
+                    switch (size) {
+                        case 1 -> data[at] += data[previous];
+                        case 2 -> put16(data, at, get16(data, at, little) + get16(data, previous, little), little);
+                        case 4 -> ByteArrays.put32(data, at,
+                                ByteArrays.u32(data, at, little) + ByteArrays.u32(data, previous, little), little);
+                        default -> {
+                            var value = i64(data, at, little) + i64(data, previous, little);
+                            if (little) {
+                                ByteArrays.put64le(data, at, value);
+                            } else {
+                                ByteArrays.put64be(data, at, value);
+                            }
+                        }
+                    }
+                    at += size;
                 }
             }
         }

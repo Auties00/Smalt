@@ -3,11 +3,9 @@ package com.github.auties00.smalt.image.tiff;
 /**
  * Enumerates the TIFF compression schemes, as the {@code Compression} tag (259) names them.
  *
- * <p>{@link TiffDecoder} decodes {@link #NONE}, {@link #CCITT_RLE}, {@link #CCITT_T4},
- * {@link #CCITT_T6}, {@link #LZW}, {@link #OLD_JPEG} (when its stream or tables can be read),
- * {@link #JPEG}, {@link #DEFLATE}, {@link #PACKBITS}, {@link #CCITT_RLEW} and {@link #THUNDERSCAN};
- * {@link TiffEncoder} writes {@link #NONE}, {@link #PACKBITS}, {@link #LZW} and {@link #DEFLATE}.
- * The other constants name schemes a file may use, so that a page can report them.
+ * <p>{@link TiffDecoder} decodes every scheme but {@link #OTHER} ({@link #OLD_JPEG} when its stream
+ * or tables can be read); {@link TiffEncoder} writes {@link #NONE}, {@link #PACKBITS}, {@link #LZW},
+ * {@link #DEFLATE}, {@link #ZSTD}, {@link #WEBP} and {@link #JPEG_2000}.
  *
  * <p>Constants may be added in minor releases, so a {@code switch} over this type needs a
  * {@code default} branch.
@@ -54,6 +52,11 @@ public enum TiffCompression {
     DEFLATE(8),
 
     /**
+     * NeXT 2-bit gray run lengths (code 32766).
+     */
+    NEXT(32766),
+
+    /**
      * CCITT modified Huffman run lengths with word alignment (code 32771).
      */
     CCITT_RLEW(32771),
@@ -69,7 +72,12 @@ public enum TiffCompression {
     THUNDERSCAN(32809),
 
     /**
-     * JBIG (code 34661).
+     * PixarLog, companded 11-bit codes in zlib (code 32909).
+     */
+    PIXARLOG(32909),
+
+    /**
+     * JBIG (code 34661), each strip or tile a bi-level image entity of ITU-T T.82.
      */
     JBIG(34661),
 
@@ -79,27 +87,37 @@ public enum TiffCompression {
     SGILOG(34676),
 
     /**
-     * JPEG 2000 (code 34712).
+     * JPEG 2000 (code 34712), each strip or tile a codestream or a JP2 file; also the Aperio codes
+     * 33003 (Y, Cb and Cr components, converted to RGB) and 33005 (RGB components), which decode
+     * the same.
      */
     JPEG_2000(34712),
 
     /**
-     * LZMA2 (code 34925).
+     * LERC (code 34887), each strip or tile a LERC blob, wrapped in Deflate or Zstandard when the
+     * {@code LercParameters} tag (50674) says so.
+     */
+    LERC(34887),
+
+    /**
+     * LZMA2 (code 34925), each strip or tile an XZ stream.
      */
     LZMA(34925),
 
     /**
-     * Zstandard (code 50000).
+     * Zstandard (code 50000), each strip or tile a Zstandard frame; also the code 34926, which decodes the
+     * same.
      */
     ZSTD(50000),
 
     /**
-     * WebP (code 50001).
+     * WebP (code 50001), each strip or tile a WebP file of 8-bit RGB or RGBA samples.
      */
     WEBP(50001),
 
     /**
-     * JPEG XL (code 50002).
+     * JPEG XL (code 50002), each strip or tile a codestream or a container; also the DNG 1.7 code
+     * 52546, which decodes the same.
      */
     JPEG_XL(50002),
 
@@ -143,6 +161,15 @@ public enum TiffCompression {
         }
         if (code == 34677) {
             return SGILOG;
+        }
+        if (code == 33003 || code == 33005) {
+            return JPEG_2000;
+        }
+        if (code == 52546) {
+            return JPEG_XL;
+        }
+        if (code == 34926) {
+            return ZSTD;
         }
         for (var value : values()) {
             if (value.code == code) {
