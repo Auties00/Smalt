@@ -94,6 +94,8 @@ Contents
   37. Adobe Digital Negative (DNG) specification
   38. rawtoaces-data (camera spectral sensitivities)
   39. libdeflate
+  40. X3F tools
+  41. opusfile
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -116,17 +118,23 @@ Derived Smalt packages:
   audio.opus.internal.silk
 
 Derivation: a port of the float build of libopus 1.5.2 (CELT, SILK, the
-Opus framing, multistream and repacketizer layers, the tonality analysis and
-its MLP), including tables copied from the C sources.
+Opus framing, multistream, projection and repacketizer layers, the
+ambisonic mixing and demixing matrices, the tonality analysis and its MLP),
+including tables copied from the C sources.
 
 Copyright:
   Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                       Jean-Marc Valin, Timothy B. Terriberry,
                       CSIRO, Gregory Maxwell, Mark Borgerding,
                       Erik de Castro Lopo, Mozilla, Amazon
+  Copyright (c) 2017 Google Inc. (src/mapping_matrix.c,
+                      src/opus_projection_encoder.c,
+                      src/opus_projection_decoder.c)
 EOF
 license_start "libopus license (COPYING)"
 cat "$LIC/opus-COPYING"
+license_start "License of the projection files (header of src/mapping_matrix.c)"
+cat "$LIC/opus-mapping_matrix.c"
 
 section "2. KISS FFT (as modified in libopus)"
 cat <<'EOF'
@@ -294,6 +302,7 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (HuffmanTables; BandLayout, EncoderChannel,
   EncoderEngine, TnsEncoder, TransientDetector)
+  container.internal (AacHuffmanTables)
 
 Derivation: the AAC Huffman codeword and length values are taken from the
 tables of aacenc/src/aac_rom.c. The encoder's psychoacoustic model, block
@@ -1003,8 +1012,10 @@ absent from the AMR-NB code, was added. In the AMR-WB decoder, the arithmetic
 of the basic operators, filters, excitation, concealment and comfort noise
 routines was then aligned with the 3GPP TS 26.173 fixed-point reference (the
 normative specification of AMR-WB, release 18) wherever opencore departs from
-it, so that the decoder passes the TS 26.174 test sequences; no 3GPP source
-text was copied. The source files carry this notice about their 3GPP origin:
+it, so that the decoder passes the TS 26.174 test sequences, and the muting of
+the AMR-NB comfort noise was aligned with the TS 26.073 reference, which does
+not clamp the muted energy; no 3GPP source text was copied. The source files
+carry this notice about their 3GPP origin:
 
   Portions of this file are derived from the following 3GPP standard:
       3GPP TS 26.073 (AMR-NB) / 3GPP TS 26.173 (AMR-WB)
@@ -1373,6 +1384,66 @@ Copyright:
 EOF
 license_start "X3F tools license (doc/copyright.txt)"
 cat "$LIC/x3f-tools-copyright.txt"
+
+section "41. opusfile"
+cat <<'EOF'
+Project:      opusfile, the Xiph.Org library for decoding Ogg Opus files,
+              version 0.12
+Home:         https://opus-codec.org/
+Source:       https://gitlab.xiph.org/xiph/opusfile
+License text: https://gitlab.xiph.org/xiph/opusfile/-/raw/v0.12/COPYING
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.opus (OpusDownmix)
+
+Derivation: the stereo downmix matrices of three to eight channels in the
+Vorbis order (OP_STEREO_DOWNMIX in src/opusfile.c) are copied.
+
+Copyright:
+  Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+EOF
+license_start "opusfile license (COPYING)"
+cat "$LIC/opusfile-COPYING"
+
+section "42. libxaac"
+cat <<'EOF'
+Project:      libxaac, the Android extended HE-AAC decoder and encoder, at
+              commit 2fbadd57bca46693b7a077bcf1513131106d960c
+Source:       https://github.com/ittiam-systems/libxaac
+              https://android.googlesource.com/platform/external/libxaac
+License text: https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/LICENSE
+NOTICE:       https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/NOTICE
+License:      Apache License, Version 2.0
+
+Derived Smalt packages:
+  audio.aac.internal (CodewordReordering, ReversibleScalefactors,
+  LowDelayWindows, SamplingTables)
+  audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData)
+
+Derivation: Huffman codeword reordering follows the codebook priorities,
+section sorting, segmentation and set-wise decoding of
+decoder/ixheaacd_huff_code_reorder.c; the RVLC and escape codeword tables
+and the decoding order of RVLC scalefactors are taken from
+decoder/ixheaacd_rev_vlc.c. The 512-sample AAC-ELD synthesis window is
+taken from low_delay_window_eld of encoder/ixheaace_rom.c, the CLD QMF
+prototype of low delay SBR from cld_fb_64_640 of encoder/ixheaace_sbr_rom.c,
+the scalefactor band offsets and TNS limits of 512- and 480-sample frames
+from decoder/ixheaacd_aac_rom.c, and the LD_TRAN envelope tables from
+decoder/ixheaacd_env_extr.c. The Java code is a new implementation; it is
+not a copy of the original files.
+
+Copyright:
+  Copyright (C) 2018, 2023 The Android Open Source Project
+  Ittiam Systems
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+EOF
+printf '\n'
+cat "$LIC/libxaac-NOTICE"
+license_start "Apache License, Version 2.0 (libxaac LICENSE)"
+cat "$LIC/libxaac-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

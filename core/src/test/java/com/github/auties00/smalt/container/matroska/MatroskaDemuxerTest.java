@@ -100,7 +100,11 @@ class MatroskaDemuxerTest {
         cases.add(new Case("alac", () -> Fixtures.ffmpeg("mkv", audio(44100, 1), List.of("-c:a", "alac"))));
         cases.add(new Case("ac3", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-c:a", "ac3"))));
         cases.add(new Case("eac3", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-c:a", "eac3"))));
-        for (var pcm : List.of("pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_u8")) {
+        cases.add(new Case("dts", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-strict", "-2", "-c:a", "dca"))));
+        cases.add(new Case("truehd", () -> Fixtures.ffmpeg("mkv", audio(48000, 0.6), List.of("-strict", "-2", "-c:a",
+                "truehd"))));
+        for (var pcm : List.of("pcm_s16le", "pcm_s16be", "pcm_s24le", "pcm_s32le", "pcm_s64le", "pcm_f32le", "pcm_f64le",
+                "pcm_u8")) {
             cases.add(new Case(pcm, () -> Fixtures.ffmpeg("mkv", audio(22050, 0.5), List.of("-ac", "2", "-c:a", pcm))));
         }
         cases.add(new Case("opus webm audio only", () -> Fixtures.ffmpeg("webm", audio(48000, 1), List.of("-c:a", "libopus"))));

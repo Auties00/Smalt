@@ -9,6 +9,8 @@ import com.github.auties00.smalt.image.AnimationReader;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifCanvas;
 import com.github.auties00.smalt.internal.heif.HeifFile;
@@ -42,9 +44,11 @@ import java.util.function.Supplier;
  * picture. Pictures the stream marks as not output, and pictures whose presentation time falls
  * before the start of the edit list, are skipped.
  *
- * <p>Each frame is converted to RGBA; color premultiplied by alpha ({@code prem} track
- * reference) is divided back. Timestamps are the sums of the durations of the samples that
- * carried the pictures. Instances are not thread-safe.
+ * <p>Each frame is converted to RGBA: 16-bit RGBA when the reader keeps a source depth above 8
+ * bits, 8-bit RGBA otherwise. Color premultiplied by alpha ({@code prem} track reference) is
+ * divided back, and alpha pictures of another size than the color pictures are resampled to it
+ * with {@link HeifPictures#resampleAlpha}. Timestamps are the sums of the durations of the
+ * samples that carried the pictures. Instances are not thread-safe.
  */
 public final class SequenceReader implements AnimationReader {
     /**
@@ -111,6 +115,11 @@ public final class SequenceReader implements AnimationReader {
      * Whether color pictures being decoded keep a source depth above 8 bits.
      */
     private boolean wide;
+
+    /**
+     * Whether the frames {@link #read()} returns keep a source depth above 8 bits.
+     */
+    private final boolean highBitDepth;
 
     /**
      * The presentation time of the next frame, in microseconds.
@@ -219,11 +228,13 @@ public final class SequenceReader implements AnimationReader {
      * @param source the file
      * @param file the parsed file, which has a {@code moov} box
      * @param limits the bounds of the frames and of the samples held back
+     * @param highBitDepth whether the frames {@link #read()} returns keep a source depth above 8
+     * bits, as {@link Rgba16Picture} pictures
      * @throws MediaException.Malformed if the file has no HEVC color track or its tracks are
      * corrupt
      * @throws MediaException.LimitExceeded if the canvas or the sample count exceeds the limits
      */
-    public SequenceReader(MediaSource source, HeifFile file, MediaLimits limits) {
+    public SequenceReader(MediaSource source, HeifFile file, MediaLimits limits, boolean highBitDepth) {
         var movie = HeifMovie.parse(source, file, limits);
         var colorInfo = colorTrack(movie);
         if (colorInfo == null) {
@@ -232,6 +243,7 @@ public final class SequenceReader implements AnimationReader {
         var alphaInfo = alphaTrack(movie, colorInfo.id());
         this.info = colorInfo;
         this.limits = limits;
+        this.highBitDepth = highBitDepth;
         this.premultiplied = alphaInfo != null && colorInfo.references("prem", alphaInfo.id());
         this.alphaNclx = alphaInfo == null ? null : alphaInfo.property(HeifProperty.ColorNclx.class);
         this.demuxer = new Mp4Demuxer(source, DemuxerOptions.builder().limits(limits).build());
@@ -372,7 +384,7 @@ public final class SequenceReader implements AnimationReader {
     @Override
     public AnimationFrame read() {
         try {
-            wide = false;
+            wide = highBitDepth;
             var next = color.next();
             if (next == null) {
                 return null;
@@ -381,8 +393,10 @@ public final class SequenceReader implements AnimationReader {
             var picture = combine(next);
             frames++;
             var duration = Math.max(0, colorTrack.timeBase().toMicros(Math.max(0, next.duration())));
-            var frame = new AnimationFrame(premultiplied ? HeifPictures.unpremultiply(picture) : ImageOps.toRgba(picture),
-                    timestamp, duration);
+            var straight = premultiplied ? HeifPictures.unpremultiply(picture) : picture;
+            var rgba = straight instanceof Yuv16Picture || straight instanceof Rgba16Picture ? ImageOps.toRgba16(straight)
+                    : ImageOps.toRgba(straight);
+            var frame = new AnimationFrame(rgba, timestamp, duration);
             timestamp += duration;
             return frame;
         } catch (MediaException exception) {
@@ -417,7 +431,6 @@ public final class SequenceReader implements AnimationReader {
      * @param next the color picture
      * @return the planar picture
      * @throws MediaException.Malformed if the alpha track has fewer pictures
-     * @throws MediaException.Unsupported if the alpha picture differs from the color in size
      */
     private Picture combine(ColorPicture next) {
         var canvas = next.canvas();
@@ -426,10 +439,8 @@ public final class SequenceReader implements AnimationReader {
             if (plane == null) {
                 throw new MediaException.Malformed("heic: the alpha track has fewer pictures than the color track");
             }
-            if (plane.picture().width() != canvas.width() || plane.picture().height() != canvas.height()) {
-                throw new MediaException.Unsupported("heic", "the alpha frames differ from the color frames in size");
-            }
-            canvas.writeAlpha(plane.picture(), plane.limited());
+            canvas.writeAlpha(HeifPictures.resampleAlpha(plane.picture(), canvas.width(), canvas.height()),
+                    plane.limited());
         }
         return canvas.toPicture(next.color());
     }

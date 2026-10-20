@@ -147,6 +147,29 @@ class MatroskaMuxerTest {
         assertEquals(decodedIn.length, decodedOut.length, "ffmpeg decodes the same number of samples");
     }
 
+    @ParameterizedTest(name = "{0} samples")
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 1000, 69_999, 70_000, 70_001})
+    @DisplayName("ends the segment Duration on the last sample, finer than a millisecond, so no sample is cut")
+    void exactDuration(int samples) {
+        var track = AudioTrack.builder().id(1).codec(Codec.PCM_S16LE).timeBase(new Rational(1, 44_100))
+                .sampleRate(44_100).layout(ChannelLayout.MONO).build();
+        var sink = MediaSink.memory();
+        try (var muxer = new MatroskaMuxer(sink)) {
+            muxer.addTrack(track);
+            for (var start = 0; start < samples; start += 1000) {
+                var count = Math.min(1000, samples - start);
+                muxer.writePacket(new Packet(1, new byte[2 * count], start, start, count, true));
+            }
+            muxer.finish();
+        }
+        var structure = MatroskaStructure.check(sink.toByteArray());
+        assertEquals(samples * 1000.0 / 44_100, structure.duration, 1e-6, "segment Duration in milliseconds");
+        try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                com.github.auties00.smalt.io.MediaSource.of(sink.toByteArray()))) {
+            assertEquals(samples, demuxer.tracks().getFirst().duration(), "track duration in samples");
+        }
+    }
+
     @Test
     @DisplayName("produces byte-identical output for the same input")
     void deterministic() {

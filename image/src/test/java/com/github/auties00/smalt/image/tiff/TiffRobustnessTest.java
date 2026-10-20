@@ -40,6 +40,8 @@ class TiffRobustnessTest {
                 seeds.add(LibTiff.tiffcp(source, List.of(options.split(" "))));
             }
         }
+        seeds.add(TiffJpeg12Test.resource("/com/github/auties00/smalt/image/tiff/jpeg12/226x149-ycbcr420-strips32.tif"));
+        seeds.add(TiffJpeg12Test.resource("/com/github/auties00/smalt/image/tiff/jpeg12/226x149-gray-strips16-tables.tif"));
         var pics = LibTiff.pics();
         for (var name : List.of("ycbcr-cat.tif", "zackthecat.tif", "smallliz.tif", "text.tif", "jello.tif", "caspian.tif")) {
             seeds.add(pics.get(name));
@@ -151,12 +153,12 @@ class TiffRobustnessTest {
         var lzma = base.tag(259, 34925).bytes();
         var failure = assertThrows(MediaException.Unsupported.class, () -> TiffDecoder.decode(MediaSource.of(lzma)));
         assertEquals("tiff lzma compression", failure.format());
-        var mask = TiffFiles.of(4, 4, 1, 1).photometric(4).data(new byte[4]).bytes();
-        assertEquals("tiff transparency mask", assertThrows(MediaException.Unsupported.class,
-                () -> TiffDecoder.decode(MediaSource.of(mask))).format());
+        var cfa = TiffFiles.of(4, 4, 1, 8).photometric(32803).data(new byte[16]).bytes();
+        assertEquals("tiff raw", assertThrows(MediaException.Unsupported.class,
+                () -> TiffDecoder.decode(MediaSource.of(cfa))).format());
         // the page description is still available
-        try (var pages = TiffDecoder.openPages(MediaSource.of(mask))) {
-            assertEquals(TiffPhotometric.TRANSPARENCY_MASK, pages.page(0).photometric());
+        try (var pages = TiffDecoder.openPages(MediaSource.of(cfa))) {
+            assertEquals(32803, pages.page(0).photometric().code());
         }
         assertEquals("tiff", assertThrows(MediaException.Unsupported.class,
                 () -> Images.decode(MediaSource.of(TiffFiles.of(2, 2, 70, 8).data(new byte[280]).bytes()))).format());
