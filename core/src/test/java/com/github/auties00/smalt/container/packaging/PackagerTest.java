@@ -1,6 +1,8 @@
 package com.github.auties00.smalt.container.packaging;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
 import com.github.auties00.smalt.container.ts.TsDemuxerOptions;
 import com.github.auties00.smalt.io.MediaSink;
@@ -10,6 +12,7 @@ import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -25,6 +28,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +37,7 @@ import java.util.regex.Pattern;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -246,6 +251,18 @@ class PackagerTest {
             assertTrue(master.contains("CODECS=\"mp4a.40.2\""), master);
             assertTrue(ffmpeg(directory.resolve("master.m3u8")).isBlank());
             assertEquals(List.of(Codec.AAC), result.streams().getFirst().codecs());
+        }
+
+        @Test
+        @DisplayName("names the ipcm sample entry of a PCM rendition in both manifests")
+        void pcmCodecs() {
+            var directory = OUTPUT.resolve("cmaf-pcm");
+            var input = Fixtures.tone("wav", 440, 48_000, 2, 5, List.of("-c:a", "pcm_s16le"));
+            var result = pack("cmaf", directory, input);
+            assertEquals(List.of(Codec.PCM_S16LE), result.streams().getFirst().codecs());
+            assertEquals("ipcm", result.streams().getFirst().codecString());
+            assertTrue(text(directory.resolve("master.m3u8")).contains("CODECS=\"ipcm\""));
+            assertTrue(text(directory.resolve("manifest.mpd")).contains("codecs=\"ipcm\""));
         }
     }
 
@@ -473,6 +490,71 @@ class PackagerTest {
             assertEquals("mp4a.40.5", CodecStrings.of(heaac, null));
             assertEquals("ec-3", CodecStrings.of(AudioTrack.builder().id(3).codec(Codec.EAC3)
                     .timeBase(Rational.timeBaseOf(48_000)).build(), null));
+        }
+
+        @Test
+        @DisplayName("name the sample entries of the other codecs a CMAF segment carries")
+        void cmafEntries() {
+            // a VP8 key frame tag (version 0), its start code and a 320x240 picture
+            var vp8Frame = new byte[]{0x50, 0x2A, 0x00, (byte) 0x9D, 0x01, 0x2A, 0x40, 0x01, (byte) 0xF0, 0x00};
+            assertEquals("vp08.00.20.08", CodecStrings.of(video(Codec.VP8, null), vp8Frame));
+            // visual object sequence header with profile_and_level_indication 0xF5 (Advanced Simple, level 5)
+            var mpeg4 = new byte[]{0, 0, 1, (byte) 0xB0, (byte) 0xF5, 0, 0, 1, (byte) 0xB5, 0x09};
+            assertEquals("mp4v.20.245", CodecStrings.of(video(Codec.MPEG4_PART2, mpeg4), null));
+            var frame = new byte[24];
+            System.arraycopy(mpeg4, 0, frame, 0, mpeg4.length);
+            frame[10] = 0;
+            frame[11] = 0;
+            frame[12] = 1;
+            frame[13] = 0x20;
+            frame[16] = 0;
+            frame[17] = 0;
+            frame[18] = 1;
+            frame[19] = (byte) 0xB6;
+            assertEquals("mp4v.20.245", CodecStrings.of(video(Codec.MPEG4_PART2, null), frame));
+            assertEquals("mp4v.20", CodecStrings.of(video(Codec.MPEG4_PART2, null), null));
+            assertEquals("s263", CodecStrings.of(video(Codec.H263, null), null));
+            assertEquals("mp4v.6C", CodecStrings.of(video(Codec.MJPEG, null), null));
+            assertEquals("apch", CodecStrings.of(video(Codec.PRORES, "apch".getBytes(StandardCharsets.US_ASCII)), null));
+            var prores = new byte[32];
+            System.arraycopy("icpf".getBytes(StandardCharsets.US_ASCII), 0, prores, 4, 4);
+            prores[20] = (byte) 0xC0;
+            assertEquals("ap4h", CodecStrings.of(video(Codec.PRORES, null), prores));
+            assertEquals("ap4h", CodecStrings.of(video(Codec.PRORES, null), Arrays.copyOfRange(prores, 8, 32)));
+            prores[20] = (byte) 0x80;
+            assertEquals("apcn", CodecStrings.of(video(Codec.PRORES, null), prores));
+            assertEquals("AVdh", CodecStrings.of(video(Codec.DNXHD, null), new byte[]{0, 0, 2, (byte) 0x80, 3, 0, 0, 0}));
+            assertEquals("AVdn", CodecStrings.of(video(Codec.DNXHD, null), new byte[]{0, 0, 2, (byte) 0x80, 1, 0, 0, 0}));
+            assertEquals("samr", CodecStrings.of(audio(Codec.AMR_NB), null));
+            assertEquals("sawb", CodecStrings.of(audio(Codec.AMR_WB), null));
+            for (var codec : List.of(Codec.PCM_S16LE, Codec.PCM_S16BE, Codec.PCM_S24LE, Codec.PCM_S24BE, Codec.PCM_S32LE,
+                    Codec.PCM_S32BE)) {
+                assertEquals("ipcm", CodecStrings.of(audio(codec), null), codec.name());
+            }
+            for (var codec : List.of(Codec.PCM_F32LE, Codec.PCM_F32BE, Codec.PCM_F64LE, Codec.PCM_F64BE)) {
+                assertEquals("fpcm", CodecStrings.of(audio(codec), null), codec.name());
+            }
+            // every codec a CMAF segment carries gets a codec string
+            for (var codec : Codec.values()) {
+                if (FragmentedMp4Muxer.supports(codec) && codec.kind() != TrackKind.DATA) {
+                    var track = codec.kind() == TrackKind.VIDEO ? video(codec, null) : audio(codec);
+                    assertNotNull(CodecStrings.of(track, null), codec.name());
+                }
+            }
+        }
+
+        static VideoTrack video(Codec codec, byte[] config) {
+            var builder = VideoTrack.builder().id(1).codec(codec).timeBase(Rational.timeBaseOf(90_000)).width(320)
+                    .height(240);
+            if (config != null) {
+                builder.codecConfig(config);
+            }
+            return builder.build();
+        }
+
+        static AudioTrack audio(Codec codec) {
+            return AudioTrack.builder().id(2).codec(codec).timeBase(Rational.timeBaseOf(48_000)).sampleRate(48_000)
+                    .layout(ChannelLayout.STEREO).build();
         }
     }
 }

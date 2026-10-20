@@ -79,7 +79,9 @@ public final class ImageEncoderOptions {
      *
      * <p>A format that is always lossless (PNG) codes losslessly whatever this says; a format that
      * is never lossless (JPEG) rejects a lossless request with
-     * {@link com.github.auties00.smalt.MediaException.Unsupported}.
+     * {@link com.github.auties00.smalt.MediaException.Unsupported}, and so does a format that holds
+     * fewer bits per sample than the picture has (8 for WebP, GIF and ICO, 12 for AVIF), unless the
+     * picture's samples are exactly those of an 8-bit picture, which it then codes.
      */
     public boolean isLossless() {
         return lossless;

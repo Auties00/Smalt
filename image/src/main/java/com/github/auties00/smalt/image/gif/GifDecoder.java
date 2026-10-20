@@ -133,6 +133,7 @@ public final class GifDecoder {
                 var complete = canvas.draw(frame);
                 var alpha = frame.transparentIndex >= 0 || !frame.covers(width, height) || !complete;
                 var picture = RgbaPicture.of(width, height, width * 4, canvas.picture().pixels(), alpha);
+                // TODO: return the packet of the XMP DataXMP application extension as DecodedImage.xmp()
                 return new DecodedImage(picture, ImageFormat.GIF, Orientation.NORMAL, width, height, Optional.empty(),
                         Optional.empty());
             });

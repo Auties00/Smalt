@@ -82,6 +82,7 @@ class RegistryTest {
         assertFalse(VideoEncoders.isSupported(Codec.VP9));
         assertMissing("vp9", "smalt-video", () -> VideoEncoders.create(Codec.VP9, options));
         assertMissing("vp8", "smalt-image", () -> VideoEncoders.create(Codec.VP8, options));
+        assertMissing("mjpeg", "smalt-image", () -> VideoEncoders.create(Codec.MJPEG, options));
         assertMissing("h264", "smalt-mpeg", () -> VideoEncoders.create(Codec.H264, options));
         assertMissing("av1", "smalt-video", () -> VideoEncoders.create(Codec.AV1, options));
         assertThrows(IllegalArgumentException.class, () -> VideoEncoders.create(Codec.OPUS, options));

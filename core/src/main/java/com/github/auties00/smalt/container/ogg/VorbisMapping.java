@@ -442,12 +442,13 @@ final class VorbisMapping extends OggMapping {
     /**
      * {@inheritDoc}
      *
-     * <p>The next packet's duration is computed as if it were the first of the stream, half its
-     * block size, because the size of the block before it is unknown.
+     * <p>The size of the block before the next packet is unknown, so that packet's duration is
+     * computed as if that block were long: its start is then never later than its true start, which
+     * keeps it a candidate for the seek filter whenever its true start is at or before the target.
      */
     @Override
     void reset() {
-        previousBlock = 0;
+        previousBlock = longBlock;
     }
 
     @Override

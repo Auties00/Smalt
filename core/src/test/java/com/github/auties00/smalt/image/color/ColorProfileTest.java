@@ -1,16 +1,22 @@
 package com.github.auties00.smalt.image.color;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.ContentLightLevel;
+import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -51,7 +57,7 @@ class ColorProfileTest {
             assertTrue(profile.channels() == 1 || profile.channels() == 3 || profile.channels() == 4);
             assertTrue(profile.version().startsWith("2.") || profile.version().startsWith("4."), profile.version());
             assertTrue(profile.connectionSpace() == ProfileColorSpace.XYZ || profile.connectionSpace() == ProfileColorSpace.LAB);
-            assertFalse(profile.isHighDynamicRange());
+            assertEquals(name.contains("_PQ_cicp"), profile.isHighDynamicRange(), name);
             assertTrue(profile.description().isPresent(), name);
             var transform = ColorTransform.create(profile, ColorProfile.srgb());
             assertEquals(profile.channels(), transform.inputChannels());
@@ -164,29 +170,152 @@ class ColorProfileTest {
         }
 
         @Test
-        @DisplayName("maps PQ and HLG to high-dynamic-range profiles without an ICC form")
+        @DisplayName("maps PQ and HLG to high-dynamic-range profiles with a cicp-tagged ICC form")
         void hdr() {
             for (var transfer : List.of(TransferCharacteristics.PQ, TransferCharacteristics.HLG)) {
                 var profile = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRange.LIMITED,
                         ColorPrimaries.BT2020, transfer));
                 assertTrue(profile.isHighDynamicRange());
                 assertEquals(3, profile.channels());
-                assertThrows(MediaException.Unsupported.class, profile::toByteArray);
-                assertThrows(MediaException.Unsupported.class, () -> ColorTransform.create(ColorProfile.srgb(), profile));
+                assertEquals("4.4.0", profile.version());
+                assertTrue(profile.isMatrixShaper());
+                assertFalse(profile.isSrgb());
+                var parsed = ColorProfile.parse(profile.toByteArray());
+                assertTrue(parsed.isHighDynamicRange());
+                assertEquals(profile, parsed);
+                assertEquals(3, ColorTransform.create(ColorProfile.srgb(), profile).outputChannels());
             }
         }
 
-        @ParameterizedTest(name = "{0}")
-        @EnumSource(value = TransferCharacteristics.class, names = {"LOG100", "LOG316", "BT1361", "SMPTE428"})
-        @DisplayName("rejects transfers without a defined inverse")
-        void unsupportedTransfers(TransferCharacteristics transfer) {
-            var color = new ColorInfo(MatrixCoefficients.BT709, ColorRange.LIMITED, ColorPrimaries.BT709, transfer);
-            assertThrows(MediaException.Unsupported.class, () -> ColorProfile.of(color));
+        @Test
+        @DisplayName("keeps the R'G'B' description of a high-dynamic-range profile, metadata included")
+        void hdrColorInfo() {
+            var display = new MasteringDisplay(new Chromaticity(0.708, 0.292), new Chromaticity(0.17, 0.797),
+                    new Chromaticity(0.131, 0.046), new Chromaticity(0.3127, 0.329), 1000, 0.005);
+            var source = new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRange.LIMITED, ColorPrimaries.BT2020,
+                    TransferCharacteristics.PQ).withChromaSiting(ChromaSiting.LEFT).withMasteringDisplay(display)
+                    .withContentLightLevel(new ContentLightLevel(1200, 300));
+            var profile = ColorProfile.of(source);
+            var color = profile.colorInfo().orElseThrow();
+            assertEquals(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, ColorPrimaries.BT2020,
+                    TransferCharacteristics.PQ).withMasteringDisplay(display)
+                    .withContentLightLevel(new ContentLightLevel(1200, 300)), color);
+            assertEquals(profile, ColorProfile.of(source.withMatrix(MatrixCoefficients.BT709).withRange(ColorRange.FULL)));
+            assertEquals(profile.hashCode(), ColorProfile.of(source.withRange(ColorRange.FULL)).hashCode());
+            assertNotEquals(profile, ColorProfile.of(source.withContentLightLevel(new ContentLightLevel(1200, 301))));
+            assertNotEquals(profile, ColorProfile.of(source.withMasteringDisplay(new MasteringDisplay(display.red(),
+                    display.green(), display.blue(), new Chromaticity(0.3128, 0.329), 1000, 0.005))));
+            assertTrue(ColorProfile.of(source.withTransfer(TransferCharacteristics.HLG)).colorInfo().isPresent());
+            // unspecified primaries are BT.709 for the profile, so its description names them
+            var unspecified = ColorProfile.of(source.withPrimaries(ColorPrimaries.UNSPECIFIED));
+            assertEquals(ColorPrimaries.BT709, unspecified.colorInfo().orElseThrow().primaries());
+            assertEquals(ColorProfile.of(source.withPrimaries(ColorPrimaries.BT709)), unspecified);
+            assertTrue(ColorProfile.srgb().colorInfo().isEmpty());
+            assertTrue(ColorProfile.of(ColorInfo.BT709_LIMITED).colorInfo().isEmpty());
         }
 
         @ParameterizedTest(name = "{0}")
-        @EnumSource(value = ColorPrimaries.class, names = "SMPTE428", mode = EnumSource.Mode.EXCLUDE)
-        @DisplayName("maps every chromaticity-defined set of primaries")
+        @EnumSource(TransferCharacteristics.class)
+        @DisplayName("maps every transfer to a profile")
+        void everyTransfer(TransferCharacteristics transfer) {
+            var color = new ColorInfo(MatrixCoefficients.BT709, ColorRange.LIMITED, ColorPrimaries.BT709, transfer);
+            var profile = ColorProfile.of(color);
+            assertEquals(ProfileColorSpace.RGB, profile.colorSpace());
+            assertEquals(3, ColorTransform.create(profile, ColorProfile.srgb()).outputChannels());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"LOG100, 2", "LOG316, 2.5"})
+        @DisplayName("decodes the logarithmic transfers with the inverse of their function")
+        void logarithmic(TransferCharacteristics transfer, double decades) {
+            var source = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709, ColorRange.FULL, ColorPrimaries.BT709,
+                    transfer));
+            var linear = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709, ColorRange.FULL, ColorPrimaries.BT709,
+                    TransferCharacteristics.LINEAR));
+            var levels = new int[]{0, 64, 128, 192, 255};
+            var out = grays(source, linear, levels);
+            assertEquals(0, out[0], 1);
+            for (var i = 1; i < out.length; i++) {
+                var v = levels[i] / 255.0;
+                assertEquals(255 * Math.pow(10, decades * (v - 1)), out[i], 1.01, transfer + " at " + v);
+            }
+        }
+
+        @Test
+        @DisplayName("decodes SMPTE ST 428-1 with 52.37 / 48 * V^2.6, clipping above the reference white")
+        void dci() {
+            var source = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709, ColorRange.FULL, ColorPrimaries.BT709,
+                    TransferCharacteristics.SMPTE428));
+            var linear = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709, ColorRange.FULL, ColorPrimaries.BT709,
+                    TransferCharacteristics.LINEAR));
+            var levels = new int[]{0, 60, 120, 180, 240, 250, 255};
+            var out = grays(source, linear, levels);
+            for (var i = 0; i < levels.length; i++) {
+                var expected = Math.min(255, 255 * 52.37 / 48 * Math.pow(levels[i] / 255.0, 2.6));
+                assertEquals(expected, out[i], 1.01, "at " + levels[i]);
+            }
+        }
+
+        @Test
+        @DisplayName("renders BT.1361 like BT.709 inside the nominal range")
+        void bt1361() {
+            var bt709 = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709, ColorRange.LIMITED,
+                    ColorPrimaries.BT709, TransferCharacteristics.BT709));
+            var bt1361 = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709, ColorRange.LIMITED,
+                    ColorPrimaries.BT709, TransferCharacteristics.BT1361));
+            var levels = new int[]{0, 30, 90, 180, 255};
+            assertArrayEquals(grays(bt709, ColorProfile.srgb(), levels), grays(bt1361, ColorProfile.srgb(), levels));
+        }
+
+        @Test
+        @DisplayName("maps the CIE XYZ primaries with their equal-energy white, so equal X, Y and Z is neutral")
+        void xyzPrimaries() {
+            var xyz = ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL,
+                    ColorPrimaries.SMPTE428, TransferCharacteristics.LINEAR));
+            var linear709 = ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL,
+                    ColorPrimaries.BT709, TransferCharacteristics.LINEAR));
+            var picture = RgbaPicture.allocate(3, 1, false);
+            int[][] colors = {{128, 128, 128}, {255, 255, 255}, {0, 255, 0}};
+            for (var i = 0; i < 3; i++) {
+                for (var c = 0; c < 3; c++) {
+                    picture.pixels()[4 * i + c] = (byte) colors[i][c];
+                }
+                picture.pixels()[4 * i + 3] = (byte) 255;
+            }
+            var out = (RgbaPicture) ImageOps.convertColor(picture, xyz, linear709);
+            for (var c = 0; c < 3; c++) {
+                assertEquals(128, out.pixels()[c] & 0xFF, 2);
+                assertEquals(255, out.pixels()[4 + c] & 0xFF, 2);
+            }
+            // pure Y is outside the BT.709 gamut: green saturates and red and blue clip at 0
+            assertEquals(0, out.pixels()[8] & 0xFF, 1);
+            assertEquals(255, out.pixels()[9] & 0xFF);
+            assertEquals(0, out.pixels()[10] & 0xFF, 1);
+            var hdr = ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL,
+                    ColorPrimaries.SMPTE428, TransferCharacteristics.PQ));
+            assertTrue(hdr.isHighDynamicRange());
+            assertEquals(ColorPrimaries.SMPTE428, hdr.colorInfo().orElseThrow().primaries());
+        }
+
+        private static int[] grays(ColorProfile source, ColorProfile target, int[] levels) {
+            var picture = RgbaPicture.allocate(levels.length, 1, false);
+            for (var i = 0; i < levels.length; i++) {
+                picture.pixels()[4 * i] = (byte) levels[i];
+                picture.pixels()[4 * i + 1] = (byte) levels[i];
+                picture.pixels()[4 * i + 2] = (byte) levels[i];
+                picture.pixels()[4 * i + 3] = (byte) 255;
+            }
+            var out = (RgbaPicture) ImageOps.convertColor(picture, source, target);
+            var result = new int[levels.length];
+            for (var i = 0; i < levels.length; i++) {
+                result[i] = out.pixels()[4 * i + 1] & 0xFF;
+            }
+            return result;
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(ColorPrimaries.class)
+        @DisplayName("maps every set of primaries")
         void primaries(ColorPrimaries primaries) {
             var profile = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709, ColorRange.LIMITED, primaries,
                     TransferCharacteristics.BT709));

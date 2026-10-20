@@ -139,6 +139,60 @@ public final class Conformance {
     }
 
     /**
+     * Returns the cached copy of a vector listed in {@code tools/testdata/vectors.tsv}, downloading it
+     * first when needed, with the URL and SHA-256 of its manifest row.
+     *
+     * <p>The manifest is found by walking up from the working directory; a test that cannot find it, or
+     * whose vector is not listed, fails, because the manifest is part of the repository.
+     *
+     * @param name the vector name, the second column of the manifest
+     * @return the verified file
+     */
+    public static Path fetchListed(String name) {
+        var row = Manifest.ROWS.get(name);
+        if (row == null) {
+            throw new IllegalArgumentException("vector " + name + " is not listed in " + Manifest.FILE);
+        }
+        return fetch(name, row[1], row[0]);
+    }
+
+    /**
+     * The rows of {@code tools/testdata/vectors.tsv}, loaded on first use.
+     */
+    private static final class Manifest {
+        static final Path FILE = locate();
+        static final java.util.Map<String, String[]> ROWS = load();
+
+        private static Path locate() {
+            for (var directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
+                var candidate = directory.resolve("tools").resolve("testdata").resolve("vectors.tsv");
+                if (Files.isRegularFile(candidate)) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException("tools/testdata/vectors.tsv not found above " + Path.of("").toAbsolutePath());
+        }
+
+        private static java.util.Map<String, String[]> load() {
+            var rows = new java.util.HashMap<String, String[]>();
+            try {
+                for (var line : Files.readAllLines(FILE)) {
+                    if (line.isBlank() || line.startsWith("#")) {
+                        continue;
+                    }
+                    var columns = line.split("\t");
+                    if (columns.length >= 5) {
+                        rows.put(columns[1], new String[]{columns[3], columns[4]});
+                    }
+                }
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+            return rows;
+        }
+    }
+
+    /**
      * Appends a requested vector to the record file, when recording is on.
      *
      * @param name   the cache file name

@@ -2,14 +2,24 @@ package com.github.auties00.smalt.image.tiff.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.internal.zlib.ZlibInflater;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.zip.DataFormatException;
 
@@ -26,11 +36,20 @@ import java.util.zip.DataFormatException;
  *
  * <p>Damaged data is tolerated as libtiff tolerates it: a strip or tile whose offset is missing
  * or zero, or whose data ends early, leaves its pixels zero (transparent when missing); invalid
- * LZW or Deflate data is malformed; damaged fax data ends the strip.
+ * LZW, Deflate, WebP, JPEG XL or JPEG 2000 data is malformed; damaged fax data ends the strip.
+ *
+ * <p>WebP, JPEG XL and JPEG 2000 strips and tiles hold complete images, which
+ * {@link TiffImageCodecs} decodes into the stored sample layout before the predictor and the
+ * sample conversion run.
  *
  * <p>SGILog data (LogL and LogLuv) is decoded row by row to 8-bit gray or RGB, as libtiff renders
  * it for display, and then takes the gray or RGB path; a row whose run-length data ends early
  * ends its strip or tile, leaving the rest zero.
+ *
+ * <p>A decoder created with {@link #ofChannels(TiffDirectory)} decodes the pages that need a
+ * {@link ChannelPicture} (see {@link #channels()}) to one instead: the samples are unpacked into
+ * one interleaved buffer, without photometric conversion except that white-is-zero gray is
+ * inverted, and wrapped with the page's {@link PixelLayout}.
  *
  * @implNote This implementation follows libtiff's {@code TIFFReadRGBAImage} (tif_getimage.c) for
  * the meaning of the tags it combines: the sample layout as {@link TiffLayout} reads it, and a
@@ -67,6 +86,18 @@ public final class TiffPageDecoder {
     static final int SGILOG = 34676;
     /** Compression: SGILog24 (24-bit LogLuv). */
     static final int SGILOG24 = 34677;
+    /** Compression: JPEG 2000 codestreams or JP2 files. */
+    static final int JPEG_2000 = 34712;
+    /** Compression: Aperio JPEG 2000 codestreams of Y, Cb and Cr components. */
+    static final int APERIO_YCBCR = 33003;
+    /** Compression: Aperio JPEG 2000 codestreams of RGB components. */
+    static final int APERIO_RGB = 33005;
+    /** Compression: WebP files. */
+    static final int WEBP = 50001;
+    /** Compression: JPEG XL codestreams or containers. */
+    static final int JPEG_XL = 50002;
+    /** Compression: JPEG XL, DNG 1.7 code. */
+    static final int JPEG_XL_DNG = 52546;
 
     /** Photometric: white is zero. */
     static final int WHITE_IS_ZERO = 0;
@@ -92,6 +123,15 @@ public final class TiffPageDecoder {
     static final int LOG_L = 32844;
     /** Photometric: LogLuv. */
     static final int LOG_LUV = 32845;
+
+    /** The mode of {@link #of(TiffDirectory)}: RGBA pixels. */
+    private static final int RGBA_MODE = 0;
+
+    /** The mode of {@link #ofRawCmyk(TiffDirectory)}: CMYK inks copied into the RGBA slots. */
+    private static final int RAW_CMYK_MODE = 1;
+
+    /** The mode of {@link #ofChannels(TiffDirectory)}: channel pictures for the pages that need them. */
+    private static final int CHANNELS_MODE = 2;
 
     /**
      * The directory.
@@ -209,9 +249,20 @@ public final class TiffPageDecoder {
     private final int subsampleY;
 
     /**
-     * Whether the JPEG data is YCbCr that decodes to RGB.
+     * Whether the samples are YCbCr that the compression decodes to RGB: JPEG, WebP, JPEG XL and
+     * JPEG 2000 data of a YCbCr page.
      */
     private final boolean jpegYcbcr;
+
+    /**
+     * The conversion of the Y, Cb and Cr channels of JPEG 2000 data to RGB, or {@code null}.
+     */
+    private final YCbCrTables jpeg2000Ycbcr;
+
+    /**
+     * The decoders of WebP, JPEG XL and JPEG 2000 data, or {@code null} for other compressions.
+     */
+    private final TiffImageCodecs codecs;
 
     /**
      * The {@code JPEGTables} stream, or {@code null}.
@@ -239,15 +290,26 @@ public final class TiffPageDecoder {
     private final Orientation orientation;
 
     /**
+     * The layout of the channel picture the page decodes to, or {@code null} when it decodes to RGBA.
+     */
+    private final PixelLayout channelLayout;
+
+    /**
+     * The sum of {@code SMinSampleValue} and {@code SMaxSampleValue}, which inverts white-is-zero
+     * floating-point gray.
+     */
+    private final double floatRange;
+
+    /**
      * Validates a directory.
      *
      * @param directory the directory to decode
-     * @param rawCmyk whether a CMYK image keeps its ink samples instead of converting them
+     * @param mode {@link #RGBA_MODE}, {@link #RAW_CMYK_MODE} or {@link #CHANNELS_MODE}
      * @throws MediaException.Malformed if a required tag is missing or invalid
      * @throws MediaException.Unsupported if the directory uses a feature this decoder lacks
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
-    private TiffPageDecoder(TiffDirectory directory, boolean rawCmyk) {
+    private TiffPageDecoder(TiffDirectory directory, int mode) {
         this.directory = directory;
         this.file = directory.file();
         this.limits = file.limits();
@@ -291,6 +353,13 @@ public final class TiffPageDecoder {
                     "TIFF photometric interpretation " + photometric + " is not supported");
         }
         var colorChannels = layout.colorChannels();
+        var inkSet = photometric == SEPARATED ? directory.longValue(TiffTags.INK_SET, 1) : 1;
+        var inks = inkSet != 1 && mode == CHANNELS_MODE ? inkCount(directory, samples) : 0;
+        if (inks > 0) {
+            colorChannels = inks;
+        } else if (inkSet != 1) {
+            throw new MediaException.Unsupported("tiff ink set", "TIFF separated images with an ink set other than CMYK are not supported");
+        }
         if (samples < colorChannels) {
             throw new MediaException.Malformed("TIFF photometric interpretation " + photometric + " needs " + colorChannels
                     + " samples per pixel, the image has " + samples);
@@ -304,12 +373,25 @@ public final class TiffPageDecoder {
                         "LogL and LogLuv TIFF images with extra samples or separate planes are not supported");
             }
         }
-        if (photometric == SEPARATED && directory.longValue(TiffTags.INK_SET, 1) != 1) {
-            throw new MediaException.Unsupported("tiff ink set", "TIFF separated images with an ink set other than CMYK are not supported");
-        }
         var alpha = layout.alpha();
         var associated = layout.associated();
-        jpegYcbcr = (compression == JPEG || compression == OLD_JPEG) && photometric == YCBCR;
+        var channelEligible = photometric == SEPARATED || photometric == WHITE_IS_ZERO || photometric == BLACK_IS_ZERO
+                || photometric == RGB;
+        if (mode == CHANNELS_MODE && channelEligible && (inks > 0 || directory.has(TiffTags.EXTRA_SAMPLES))) {
+            // the stored meaning of each extra sample, not the unspecified-as-alpha reading of RGBA mode
+            alpha = -1;
+            associated = false;
+            var kinds = directory.longs(TiffTags.EXTRA_SAMPLES);
+            for (var i = 0; kinds != null && i < kinds.length && colorChannels + i < samples; i++) {
+                if (kinds[i] == 1 || kinds[i] == 2) {
+                    alpha = colorChannels + i;
+                    associated = kinds[i] == 1;
+                    break;
+                }
+            }
+        }
+        var codec = codec(compression);
+        jpegYcbcr = (compression == JPEG || compression == OLD_JPEG || codec) && photometric == YCBCR;
         if (photometric == YCBCR && !jpegYcbcr) {
             if (bits != 8 || format != 1) {
                 throw new MediaException.Unsupported("tiff ycbcr " + bits + "-bit", "only 8-bit YCbCr TIFF images are supported");
@@ -337,10 +419,18 @@ public final class TiffPageDecoder {
                     floats(directory.doubles(TiffTags.REFERENCE_BLACK_WHITE), new float[]{0, 255, 128, 255, 128, 255}))
                     : null;
         }
-        if (compression == JPEG || compression == OLD_JPEG) {
-            if (bits != 8 || format != 1) {
-                throw new MediaException.Unsupported("tiff jpeg " + bits + "-bit", "only 8-bit JPEG-compressed TIFF images are supported");
-            }
+        jpeg2000Ycbcr = compression == APERIO_YCBCR || (compression == JPEG_2000 && photometric == YCBCR)
+                ? new YCbCrTables(
+                        floats(directory.doubles(TiffTags.Y_CB_CR_COEFFICIENTS), new float[]{0.299F, 0.587F, 0.114F}),
+                        floats(directory.doubles(TiffTags.REFERENCE_BLACK_WHITE), new float[]{0, 255, 128, 255, 128, 255}))
+                : null;
+        if (compression == JPEG && ((bits != 8 && bits != 12) || format != 1)) {
+            throw new MediaException.Unsupported("tiff jpeg " + bits + "-bit",
+                    "only 8-bit and 12-bit JPEG-compressed TIFF images are supported");
+        }
+        if (compression == OLD_JPEG && (bits != 8 || format != 1)) {
+            throw new MediaException.Unsupported("tiff old-style jpeg " + bits + "-bit",
+                    "only 8-bit old-style JPEG TIFF images are supported");
         }
         long[] colorMap = null;
         if (photometric == PALETTE) {
@@ -370,7 +460,7 @@ public final class TiffPageDecoder {
         var kind = switch (photometric) {
             case WHITE_IS_ZERO, BLACK_IS_ZERO, LOG_L -> SampleConverter.GRAY;
             case PALETTE -> SampleConverter.PALETTE;
-            case SEPARATED -> rawCmyk && alpha < 0 ? SampleConverter.RAW_CMYK : SampleConverter.CMYK;
+            case SEPARATED -> mode == RAW_CMYK_MODE && alpha < 0 ? SampleConverter.RAW_CMYK : SampleConverter.CMYK;
             case YCBCR -> jpegYcbcr ? SampleConverter.RGB : SampleConverter.YCBCR;
             case CIELAB, ICCLAB, ITULAB -> SampleConverter.LAB;
             default -> SampleConverter.RGB;
@@ -397,6 +487,7 @@ public final class TiffPageDecoder {
             offsets = directory.longs(TiffTags.STRIP_OFFSETS);
             byteCounts = directory.longs(TiffTags.STRIP_BYTE_COUNTS);
         }
+        codecs = codec ? new TiffImageCodecs(limits, chunkWidth, chunkHeight) : null;
         across = (int) ((width + (long) chunkWidth - 1) / chunkWidth);
         down = (int) ((height + (long) chunkHeight - 1) / chunkHeight);
         planes = planar ? samples : 1;
@@ -410,6 +501,92 @@ public final class TiffPageDecoder {
             jpegTables = null;
         }
         LimitChecks.checkAllocation(limits, chunkBytes());
+        floatRange = minimum + maximum;
+        var needsChannels = photometric == SEPARATED
+                || ((photometric == WHITE_IS_ZERO || photometric == BLACK_IS_ZERO || photometric == RGB)
+                && !jpegYcbcr && (format == 3 || samples > colorChannels + (alpha >= 0 ? 1 : 0)));
+        channelLayout = mode == CHANNELS_MODE && needsChannels
+                ? channelLayout(directory, colorChannels, inks, alpha, associated) : null;
+    }
+
+    /**
+     * Returns the number of inks of a separated image with an ink set other than CMYK.
+     *
+     * @param directory the image file directory to decode
+     * @param samples the samples per pixel
+     * @return {@code NumberOfInks}, or the samples that are not extra samples when the tag is absent
+     * @throws MediaException.Malformed if the count is not positive or exceeds the samples per pixel
+     */
+    private static int inkCount(TiffDirectory directory, int samples) {
+        var extrasIndex = directory.find(TiffTags.EXTRA_SAMPLES);
+        var extras = extrasIndex < 0 ? 0 : directory.valueCount(extrasIndex);
+        var inks = directory.longValue(TiffTags.NUMBER_OF_INKS, samples - extras);
+        if (inks <= 0 || inks > samples) {
+            throw new MediaException.Malformed("the TIFF separated image has " + inks + " inks and " + samples
+                    + " samples per pixel");
+        }
+        return (int) inks;
+    }
+
+    /**
+     * Builds the channel layout of a page.
+     *
+     * @param directory the image file directory to decode
+     * @param colors the number of color samples
+     * @param inks the number of inks of an ink set other than CMYK, or 0
+     * @param alpha the index of the alpha sample, or -1
+     * @param associated whether the alpha is associated
+     * @return the layout
+     * @throws MediaException.Malformed if a tag it reads is invalid
+     */
+    private PixelLayout channelLayout(TiffDirectory directory, int colors, int inks, int alpha,
+                                        boolean associated) {
+        var channels = new ArrayList<Channel>(samples);
+        if (inks > 0) {
+            var names = inkNames(directory, inks);
+            for (var i = 0; i < inks; i++) {
+                channels.add(Channel.ofInk(names[i]));
+            }
+        } else {
+            channels.addAll((switch (photometric) {
+                case SEPARATED -> PixelLayout.CMYK;
+                case RGB -> PixelLayout.RGB;
+                default -> PixelLayout.GRAY;
+            }).channels());
+        }
+        for (var i = colors; i < samples; i++) {
+            channels.add(Channel.of(i == alpha ? (associated ? ChannelType.PREMULTIPLIED_ALPHA : ChannelType.ALPHA)
+                    : ChannelType.UNSPECIFIED));
+        }
+        return new PixelLayout(channels);
+    }
+
+    /**
+     * Reads the names of the inks.
+     *
+     * @param directory the image file directory to decode
+     * @param inks the number of inks
+     * @return one name per ink, empty for an ink {@code InkNames} does not name
+     * @throws MediaException.Malformed if the tag's values are truncated
+     */
+    private static String[] inkNames(TiffDirectory directory, int inks) {
+        var names = new String[inks];
+        Arrays.fill(names, "");
+        var data = directory.bytes(TiffTags.INK_NAMES);
+        if (data == null) {
+            return names;
+        }
+        var start = 0;
+        var index = 0;
+        for (var i = 0; i <= data.length && index < inks; i++) {
+            if (i == data.length || data[i] == 0) {
+                if (i > start || i < data.length) {
+                    names[index++] = new String(data, start, i - start, StandardCharsets.UTF_8);
+                }
+                start = i + 1;
+            }
+        }
+        return names;
     }
 
     /**
@@ -422,7 +599,33 @@ public final class TiffPageDecoder {
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
     public static TiffPageDecoder of(TiffDirectory directory) {
-        return new TiffPageDecoder(directory, false);
+        return new TiffPageDecoder(directory, RGBA_MODE);
+    }
+
+    /**
+     * Validates a directory for decoding, to a channel picture when the page needs one.
+     *
+     * <p>A separated page of any ink set, and a gray or RGB page with floating-point samples or with
+     * extra samples other than one alpha sample, then decodes to a {@link ChannelPicture}; other
+     * pages decode as {@link #of(TiffDirectory)} decodes them.
+     *
+     * @param directory the directory to decode
+     * @return the decoder
+     * @throws MediaException.Malformed if a required tag is missing or invalid
+     * @throws MediaException.Unsupported if the directory uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    public static TiffPageDecoder ofChannels(TiffDirectory directory) {
+        return new TiffPageDecoder(directory, CHANNELS_MODE);
+    }
+
+    /**
+     * Returns whether the page decodes to a channel picture.
+     *
+     * @return {@code true} for a decoder from {@link #ofChannels(TiffDirectory)} of a page that needs one
+     */
+    public boolean channels() {
+        return channelLayout != null;
     }
 
     /**
@@ -439,7 +642,7 @@ public final class TiffPageDecoder {
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
     public static TiffPageDecoder ofRawCmyk(TiffDirectory directory) {
-        return new TiffPageDecoder(directory, true);
+        return new TiffPageDecoder(directory, RAW_CMYK_MODE);
     }
 
     /**
@@ -503,11 +706,16 @@ public final class TiffPageDecoder {
      * @param highBitDepth whether a 16-bit picture is wanted when the samples are wider than
      * 8 bits
      * @return an {@link RgbaPicture}, or an {@link Rgba16Picture} when {@code highBitDepth} is set
-     * and {@link #wide()} holds
+     * and {@link #wide()} holds; for a page for which {@link #channels()} holds, a
+     * {@link ChannelFloatPicture} for floating-point samples, a {@link Channel16Picture} for wider
+     * integer samples when {@code highBitDepth} is set, and a {@link Channel8Picture} otherwise
      * @throws MediaException.Malformed if the compressed data is invalid
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
     public Picture decode(boolean highBitDepth) {
+        if (channelLayout != null) {
+            return decodeChannels(highBitDepth);
+        }
         var sixteen = highBitDepth && converter.wideOutput();
         LimitChecks.checkAllocation(limits, (long) width * height * (sixteen ? 8 : 4));
         byte[] out8 = null;
@@ -558,6 +766,79 @@ public final class TiffPageDecoder {
     }
 
     /**
+     * Decodes a page to a channel picture.
+     *
+     * @param highBitDepth whether integer samples wider than 8 bits keep 16 bits
+     * @return the picture
+     * @throws MediaException.Malformed if the compressed data is invalid
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    private ChannelPicture decodeChannels(boolean highBitDepth) {
+        var floating = converter.floating();
+        var wide = !floating && bits > 8;
+        var count = (long) width * height * samples;
+        LimitChecks.checkAllocation(limits, count * (floating ? 4 : wide ? 2 : 1));
+        var target = new Target(null, null);
+        target.channels = true;
+        if (floating) {
+            target.workF = new float[(int) count];
+        } else if (wide) {
+            target.work16 = new short[(int) count];
+        } else {
+            target.work8 = new byte[(int) count];
+        }
+        if (!(compression == OLD_JPEG && directory.has(TiffTags.JPEG_INTERCHANGE_FORMAT)
+                && decodeOldJpegStream(target))) {
+            if (compression == OLD_JPEG && (offsets == null || !directory.has(TiffTags.JPEG_Q_TABLES))) {
+                throw new MediaException.Unsupported("tiff old-style jpeg", "the old-style JPEG TIFF image has neither a decodable JPEG stream nor JPEG tables");
+            }
+            var chunks = planes * across * down;
+            var bands = ParallelBands.bands(chunks, count);
+            ParallelBands.run(bands, band -> {
+                var context = new Context();
+                try {
+                    var first = ParallelBands.start(band, bands, chunks);
+                    var last = ParallelBands.start(band + 1, bands, chunks);
+                    for (var chunk = first; chunk < last; chunk++) {
+                        decodeChunk(chunk, context, target);
+                    }
+                } finally {
+                    context.close();
+                }
+            });
+        }
+        var invert = photometric == WHITE_IS_ZERO;
+        var stride = width * samples;
+        if (floating) {
+            var work = target.workF;
+            if (invert) {
+                var range = (float) floatRange;
+                for (var i = 0; i < work.length; i += samples) {
+                    work[i] = range - work[i];
+                }
+            }
+            return ChannelFloatPicture.of(width, height, stride, work, channelLayout);
+        }
+        if (wide) {
+            var work = target.work16;
+            if (invert) {
+                for (var i = 0; i < work.length; i += samples) {
+                    work[i] = (short) ~work[i];
+                }
+            }
+            var picture = Channel16Picture.of(width, height, stride, work, channelLayout);
+            return highBitDepth ? picture : ImageOps.toChannel8(picture);
+        }
+        var work = target.work8;
+        if (invert) {
+            for (var i = 0; i < work.length; i += samples) {
+                work[i] = (byte) ~work[i];
+            }
+        }
+        return Channel8Picture.of(width, height, stride, work, channelLayout);
+    }
+
+    /**
      * Marks a picture as carrying transparency when strips or tiles were missing.
      *
      * @param picture the decoded picture
@@ -597,6 +878,17 @@ public final class TiffPageDecoder {
          * The interleaved 16-bit work samples of a planar image, or {@code null}.
          */
         private short[] work16;
+
+        /**
+         * The interleaved floating-point samples of a channel picture, or {@code null}.
+         */
+        private float[] workF;
+
+        /**
+         * Whether the samples are unpacked into the work samples of a channel picture rather than
+         * converted to RGBA.
+         */
+        private boolean channels;
 
         /**
          * Whether a strip or tile was missing.
@@ -658,6 +950,11 @@ public final class TiffPageDecoder {
          * The fax decoder, created on first use.
          */
         private CcittFaxDecoder fax;
+
+        /**
+         * The samples of one row decoded by a WebP, JPEG XL or JPEG 2000 decoder.
+         */
+        private int[] values = new int[0];
 
         /**
          * Releases the Deflate decompressor.
@@ -824,6 +1121,20 @@ public final class TiffPageDecoder {
             case THUNDERSCAN -> ThunderScan.decode(raw, length, chunk, rowBytes, chunkWidth, rows);
             case SGILOG, SGILOG24 -> SgiLog.decode(raw, length, chunk, chunkWidth, rows,
                     photometric == LOG_L ? SgiLog.LOG_L : compression == SGILOG24 ? SgiLog.LOG_LUV_24 : SgiLog.LOG_LUV_32);
+            case WEBP -> {
+                codecs.webp(raw, length, chunk, rowBytes, chunkWidth, rows, samples);
+                yield expected;
+            }
+            case JPEG_XL, JPEG_XL_DNG -> {
+                context.values = codecs.jpegXl(raw, length, chunk, rowBytes, chunkWidth, rows, planar ? 1 : samples,
+                        bits, format == 3, file.little(), context.values);
+                yield expected;
+            }
+            case JPEG_2000, APERIO_YCBCR, APERIO_RGB -> {
+                context.values = codecs.jpeg2000(raw, length, chunk, rowBytes, chunkWidth, rows, planar ? 1 : samples,
+                        bits, file.little(), jpeg2000Ycbcr, context.values);
+                yield expected;
+            }
             default -> throw new IllegalStateException("unchecked compression " + compression);
         };
     }
@@ -893,12 +1204,17 @@ public final class TiffPageDecoder {
             throw new MediaException.Malformed("a TIFF JPEG strip or tile has " + decoded.components()
                     + " components, the image " + components);
         }
+        if (decoded.bits() != bits) {
+            throw new MediaException.Malformed("a TIFF JPEG strip or tile has " + decoded.bits()
+                    + "-bit samples, the image " + bits);
+        }
         var expected = rowBytes * rows;
         Arrays.fill(chunk, 0, expected, (byte) 0);
         var copyRows = Math.min(rows, decoded.height());
-        var copyBytes = Math.min(rowBytes, decoded.width() * components);
+        var decodedRowBytes = decoded.rowBytes();
+        var copyBytes = Math.min(rowBytes, decodedRowBytes);
         for (var row = 0; row < copyRows; row++) {
-            System.arraycopy(decoded.samples(), row * decoded.width() * components, chunk, row * rowBytes, copyBytes);
+            System.arraycopy(decoded.samples(), row * decodedRowBytes, chunk, row * rowBytes, copyBytes);
         }
         convertChunk(chunk, rowBytes, rows, plane, x0, y0, context, target);
     }
@@ -982,7 +1298,7 @@ public final class TiffPageDecoder {
         } catch (MediaException.Malformed | MediaException.Unsupported exception) {
             return false;
         }
-        if (decoded.components() != samples) {
+        if (decoded.components() != samples || decoded.bits() != 8) {
             return false;
         }
         var rowBytes = decoded.width() * samples;
@@ -1024,7 +1340,10 @@ public final class TiffPageDecoder {
         if (planar) {
             for (var row = 0; row < visibleRows; row++) {
                 var workOffset = ((y0 + row) * width + x0) * samples + plane;
-                if (target.work16 != null) {
+                if (target.workF != null) {
+                    converter.unpackFloat(chunk, row * rowBytes, columns, target.workF, workOffset, samples,
+                            predictor == 3);
+                } else if (target.work16 != null) {
                     converter.unpack16(chunk, row * rowBytes, columns, target.work16, workOffset, samples, predictor == 3);
                 } else {
                     converter.unpack8(chunk, row * rowBytes, columns, target.work8, workOffset, samples);
@@ -1049,8 +1368,19 @@ public final class TiffPageDecoder {
      * @param target the destination
      */
     private void convertRow(byte[] data, int offset, int columns, int x, int y, Context context, Target target) {
-        var outOffset = (y * width + x) * 4;
         var count = columns * samples;
+        if (target.channels) {
+            var at = (y * width + x) * samples;
+            if (target.workF != null) {
+                converter.unpackFloat(data, offset, count, target.workF, at, 1, predictor == 3);
+            } else if (target.work16 != null) {
+                converter.unpack16(data, offset, count, target.work16, at, 1, predictor == 3);
+            } else {
+                converter.unpack8(data, offset, count, target.work8, at, 1);
+            }
+            return;
+        }
+        var outOffset = (y * width + x) * 4;
         if (converter.wide()) {
             if (context.row16.length < count) {
                 context.row16 = new short[count];
@@ -1154,9 +1484,55 @@ public final class TiffPageDecoder {
                     throw new MediaException.Malformed("SGILog-compressed TIFF images must be LogL or LogLuv");
                 }
             }
+            case WEBP -> {
+                if (bits != 8 || format != 1 || planar || (samples != 3 && samples != 4)
+                        || (photometric != RGB && photometric != YCBCR)) {
+                    throw new MediaException.Unsupported("tiff webp layout",
+                            "WebP-compressed TIFF images must be interleaved 8-bit RGB or RGBA");
+                }
+            }
+            case JPEG_XL, JPEG_XL_DNG -> {
+                if (format == 2 || (format == 3 ? bits != 16 && bits != 32 : bits > 16)) {
+                    throw new MediaException.Unsupported("tiff jpeg xl " + bits + "-bit",
+                            "JPEG XL-compressed TIFF images need unsigned samples of up to 16 bits or 16- or 32-bit"
+                                    + " floating-point samples");
+                }
+            }
+            case JPEG_2000, APERIO_YCBCR, APERIO_RGB -> {
+                if (format == 3) {
+                    throw new MediaException.Unsupported("tiff jpeg 2000 floating-point",
+                            "JPEG 2000-compressed TIFF images with floating-point samples are not supported");
+                }
+                if ((compression == APERIO_YCBCR || (compression == JPEG_2000 && photometric == YCBCR))
+                        && (bits != 8 || format != 1 || planar || samples < 3)) {
+                    throw new MediaException.Unsupported("tiff jpeg 2000 ycbcr",
+                            "JPEG 2000 YCbCr TIFF images must be interleaved with 8-bit unsigned samples");
+                }
+            }
             default -> throw new MediaException.Unsupported("tiff " + compressionName(compression) + " compression",
                     "TIFF compression " + compressionName(compression) + " (" + compression + ") is not supported");
         }
+    }
+
+    /**
+     * Returns whether a compression stores complete images of another format, which a codec
+     * decodes to samples.
+     *
+     * @param code the compression code
+     * @return {@code true} for WebP, JPEG XL and JPEG 2000
+     */
+    private static boolean codec(int code) {
+        return code == WEBP || code == JPEG_XL || code == JPEG_XL_DNG || jpeg2000(code);
+    }
+
+    /**
+     * Returns whether a compression is JPEG 2000.
+     *
+     * @param code the compression code
+     * @return {@code true} for the JPEG 2000 code and the two Aperio codes
+     */
+    private static boolean jpeg2000(int code) {
+        return code == JPEG_2000 || code == APERIO_YCBCR || code == APERIO_RGB;
     }
 
     /**
@@ -1173,12 +1549,12 @@ public final class TiffPageDecoder {
             case 32908 -> "pixar";
             case 34661 -> "jbig";
             case 34676, 34677 -> "sgilog";
-            case 34712 -> "jpeg 2000";
+            case 33003, 33005, 34712 -> "jpeg 2000";
             case 34887, 34888, 34889 -> "lerc";
             case 34925 -> "lzma";
             case 50000 -> "zstd";
             case 50001 -> "webp";
-            case 50002 -> "jpeg xl";
+            case 50002, 52546 -> "jpeg xl";
             default -> String.valueOf(code);
         };
     }
