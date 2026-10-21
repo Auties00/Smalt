@@ -325,6 +325,20 @@ so its CRC streams can only be one row tall). `python -I tools/testdata/hevc-has
 <that directory>` codes them with HM-18.0 (BSD-3-Clause, built with CMake as a black box), fails unless HM's
 decoder verifies every hash, and records the SHA-256 of each stream and of HM's decoded output in `hash.tsv`.
 
+## HEVC recovery point and field vectors
+
+`HevcRandomAccessTest` and `HevcFieldTest` of `smalt-mpeg` decode short streams with MD5 picture hashes
+(`mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/random/`): HM-18.0 random access and low delay P
+streams whose intra pictures are trailing I pictures carrying recovery point SEI messages (`DecodingRefreshType`
+3), HM field coded streams (top and bottom field first, 8 and 10 bits, fields cropped by a conformance window),
+x265 field coded streams (ffmpeg 7.1's libx265 4.0, with and without B pictures) and an HM progressive stream with
+picture timing messages. `python -I tools/testdata/hevc-random-access/make-vectors.py <HM source tree> <that
+directory>` codes them from ffmpeg's `testsrc2` pattern (interlaced with `tinterlace` for the fields), fails
+unless HM's decoder verifies every hash and, for the fields, unless ffmpeg's decode woven two by two holds the
+same frames as HM's output, and records in `vectors.tsv` the SHA-256 of each stream and of HM's output, the
+picture order counts in decoding order and the MD5 of every output frame. HM's encoder output is deterministic;
+x265's depends on its version.
+
 ## Aperio slide oracle files
 
 The same test decodes a pyramid level of two Aperio slides of the OpenSlide test data

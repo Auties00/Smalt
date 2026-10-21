@@ -320,6 +320,12 @@ public final class HevcSps {
     public boolean fieldSeq;
 
     /**
+     * {@code frame_field_info_present_flag}: whether picture timing SEI messages start with
+     * {@code pic_struct}.
+     */
+    public boolean frameFieldInfoPresent;
+
+    /**
      * The left offset of the VUI default display window inside the conformance window, in luma
      * samples, 0 when absent or when an offset exceeds 65535 chroma samples (the four offsets are
      * then all 0).
@@ -648,8 +654,8 @@ public final class HevcSps {
 
     /**
      * Parses a {@code vui_parameters()} structure (ITU-T H.265 E.2.1), keeping the sample aspect
-     * ratio, the color description, chroma location, {@code field_seq_flag}, the default display
-     * window and timing.
+     * ratio, the color description, chroma location, {@code field_seq_flag},
+     * {@code frame_field_info_present_flag}, the default display window and timing.
      *
      * @param reader the reader, positioned at the syntax structure
      * @param sps the sequence parameter set being parsed, with its chroma format known
@@ -688,7 +694,7 @@ public final class HevcSps {
         }
         reader.readBit();
         sps.fieldSeq = reader.readFlag();
-        reader.readBit();
+        sps.frameFieldInfoPresent = reader.readFlag();
         if (reader.readFlag()) {
             var left = reader.readUe();
             var right = reader.readUe();

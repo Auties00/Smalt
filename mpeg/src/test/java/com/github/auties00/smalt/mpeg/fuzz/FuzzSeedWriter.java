@@ -370,6 +370,88 @@ class FuzzSeedWriter {
         }
     }
 
+    @Test
+    @DisplayName("writes the HEVC seeds of field coding and of a start at a recovery point")
+    void hevcRandomAccess() {
+        var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "hevc",
+                "random");
+        var fields = Fixtures.read(vectors.resolve("field-ld-bff-10.hevc"));
+        write(MpegFuzzTest.class, "hevc", "valid-field-annexb.bin",
+                FuzzPackets.video(1, 128, 128, null, accessUnits(fields, 6)));
+        // the low delay stream cut at its second recovery point, its parameter sets kept
+        var recovery = Fixtures.read(vectors.resolve("rp-ld.hevc"));
+        var starts = nalStarts(recovery);
+        var parameterSets = 0;
+        while (nalType(recovery, starts.get(parameterSets)) >= 32
+                && nalType(recovery, starts.get(parameterSets)) <= 34) {
+            parameterSets++;
+        }
+        var recoveryPoints = 0;
+        var cut = -1;
+        for (var start : starts) {
+            if (nalType(recovery, start) == 39 && (recovery[payloadOffset(recovery, start)] & 0xFF) == 6
+                    && ++recoveryPoints == 2) {
+                cut = start;
+                break;
+            }
+        }
+        var stream = new byte[starts.get(parameterSets) + recovery.length - cut];
+        System.arraycopy(recovery, 0, stream, 0, starts.get(parameterSets));
+        System.arraycopy(recovery, cut, stream, starts.get(parameterSets), recovery.length - cut);
+        write(MpegFuzzTest.class, "hevc", "valid-recovery-cut-annexb.bin",
+                FuzzPackets.video(0, 128, 96, null, accessUnits(stream, 6)));
+    }
+
+    /**
+     * Splits an Annex B HEVC stream into its first access units, each from the start code (with its leading zero
+     * byte) of its first NAL unit; a new access unit starts at a parameter set, prefix SEI or access unit delimiter
+     * or a first slice segment once the current one holds a slice. Only the first is flagged as a keyframe.
+     */
+    private static List<FuzzPackets.Part> accessUnits(byte[] stream, int limit) {
+        var starts = nalStarts(stream);
+        var boundaries = new ArrayList<Integer>();
+        var slice = false;
+        for (var start : starts) {
+            var type = nalType(stream, start);
+            var vcl = type < 32;
+            var first = vcl && (stream[payloadOffset(stream, start)] & 0x80) != 0;
+            if (boundaries.isEmpty() || slice && (first || type >= 32 && type <= 39)) {
+                boundaries.add(start);
+                slice = false;
+            }
+            slice |= vcl;
+        }
+        boundaries.add(stream.length);
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var index = 0; index + 1 < boundaries.size() && parts.size() < limit; index++) {
+            parts.add(new FuzzPackets.Part(Arrays.copyOfRange(stream, boundaries.get(index), boundaries.get(index + 1)),
+                    index == 0));
+        }
+        return parts;
+    }
+
+    /**
+     * Returns the index of the start code of every NAL unit, at its leading zero byte for a four-byte start code.
+     */
+    private static List<Integer> nalStarts(byte[] stream) {
+        var starts = new ArrayList<Integer>();
+        for (var index = 0; index + 2 < stream.length; index++) {
+            if (stream[index] == 0 && stream[index + 1] == 0 && stream[index + 2] == 1) {
+                starts.add(index > 0 && stream[index - 1] == 0 ? index - 1 : index);
+                index += 2;
+            }
+        }
+        return starts;
+    }
+
+    private static int payloadOffset(byte[] stream, int start) {
+        return start + (stream[start + 2] == 1 ? 3 : 4) + 2;
+    }
+
+    private static int nalType(byte[] stream, int start) {
+        return (stream[start + (stream[start + 2] == 1 ? 3 : 4)] >> 1) & 0x3F;
+    }
+
     private static void seed(String method, String name, Codec codec, Path file) {
         write(MpegFuzzTest.class, method, name, FuzzSeeds.packets(file, codec, 0, 6));
     }
