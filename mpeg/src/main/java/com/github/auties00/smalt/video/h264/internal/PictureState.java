@@ -11,9 +11,9 @@ import java.util.Arrays;
  */
 final class PictureState {
     /**
-     * The number of entries per macroblock in {@link #nnz}: 16 luma, 4 Cb and 4 Cr blocks.
+     * The number of entries per macroblock in {@link #nnz}: 16 luma, 8 Cb and 8 Cr blocks.
      */
-    static final int NNZ_STRIDE = 24;
+    static final int NNZ_STRIDE = 32;
 
     /**
      * The width in macroblocks.
@@ -57,7 +57,8 @@ final class PictureState {
     /**
      * The per-4x4-block coefficient counts ({@code TotalCoeff}) under CAVLC or
      * {@code coded_block_flag} values under CABAC, indexed {@code mbAddr * NNZ_STRIDE + block}
-     * with luma blocks in raster order 0 to 15, then Cb blocks 16 to 19 and Cr blocks 20 to 23.
+     * with luma blocks in raster order 0 to 15, then the Cb blocks from 16 and the Cr blocks from
+     * 24 by {@code chroma4x4BlkIdx} (four blocks each for 4:2:0, eight for 4:2:2).
      */
     final byte[] nnz;
 
@@ -93,6 +94,28 @@ final class PictureState {
      * The {@code intra_chroma_pred_mode} of each macroblock.
      */
     final byte[] chromaMode;
+
+    /**
+     * Returns the index in the per-macroblock arrays (see {@link DecoderFrame#mv}) of a
+     * macroblock address of a picture.
+     *
+     * @param address the macroblock address in the picture's own numbering
+     * @param structure the picture structure: {@link DecoderFrame#FRAME}, {@link DecoderFrame#TOP}
+     * or {@link DecoderFrame#BOTTOM}
+     * @param mbaff whether the picture is an MBAFF frame, whose addresses number macroblock pairs
+     * @param mbWidth the picture width in macroblocks
+     * @return the index
+     */
+    static int mbIndex(int address, int structure, boolean mbaff, int mbWidth) {
+        if (mbaff) {
+            var pair = address >> 1;
+            return (2 * (pair / mbWidth) + (address & 1)) * mbWidth + pair % mbWidth;
+        }
+        if (structure == DecoderFrame.FRAME) {
+            return address;
+        }
+        return (2 * (address / mbWidth) + (structure == DecoderFrame.BOTTOM ? 1 : 0)) * mbWidth + address % mbWidth;
+    }
 
     /**
      * Allocates the state of a picture size.

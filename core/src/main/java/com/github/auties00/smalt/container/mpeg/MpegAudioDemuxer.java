@@ -23,7 +23,6 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -36,7 +35,11 @@ import java.util.Objects;
  *
  * <p>The stream may start with any number of ID3v2 tags (versions 2.2 to 2.4, with or without a
  * footer), which are skipped and whose text frames become {@link #metadata()}, and may end with
- * ID3v1, APE, Lyrics3v2 or appended ID3v2 tags, which are excluded from the audio. The first
+ * ID3v1, APE, Lyrics3 or appended ID3v2 tags, which are excluded from the audio. An ID3v2.4 tag
+ * appended after the audio or located by a {@code SEEK} frame replaces the ID3v2 fields, pictures
+ * and chapters read before it, or only those it holds when flagged as an update (ID3v2.4 section
+ * 5); the APE tag and then the ID3v1 tag add the fields still missing, and APE cover art counts
+ * only when no ID3v2 tag holds a picture. The first
  * frame is found by scanning up to {@value #INITIAL_SYNC_WINDOW} bytes for a header followed by
  * three compatible headers at the predicted positions (a stream that starts exactly after its
  * tags may be shorter); garbage between frames is skipped the same way, and a new format (sample
@@ -88,7 +91,7 @@ import java.util.Objects;
  * <p>A source that reads its input once, front to back (a stream), is told after every frame which
  * bytes are no longer needed. Its trailing tags and the frame-by-frame count of a file without a
  * tag frame are read only when the whole input fits the source's memory budget; otherwise the
- * duration is the estimate above and the ID3v1 and APE tags are not read.
+ * duration is the estimate above and the trailing tags are not read.
  *
  * @implNote This implementation keeps the count's packets because an exact duration without a
  * tag frame needs every frame header, and frames are at most 8 KiB apart, so the count reads the
@@ -304,12 +307,15 @@ public final class MpegAudioDemuxer implements Demuxer {
             var end = size < 0 ? Long.MAX_VALUE : size;
             var tags = new LinkedHashMap<String, String>();
             var annotations = new Annotations();
-            var start = Id3v2.skip(source, 0, end, tags, annotations);
+            var leading = Id3v2.read(source, 0, end, tags, annotations);
+            var start = leading.end();
             if (size >= 0 && ForwardOnlySource.isCheapToReach(source, end)) {
                 var tail = new TrailingTags.Tail(source, start);
                 tail.load(end);
-                readId3v1(tail, start, end, tags);
-                end = TrailingTags.audioEnd(tail, start, end);
+                var trailing = TrailingTags.regions(tail, start, end);
+                end = trailing.isEmpty() ? end : trailing.getFirst().offset();
+                var located = TrailingTags.seekRegions(tail, leading.seekTarget(), start, end);
+                TrailingTags.readMetadata(tail, located, trailing, tags, annotations, Id3v2.Merge.REPLACE);
             }
             this.metadata = Collections.unmodifiableMap(tags);
             var cursor = new FrameCursor(source, start, end);
@@ -531,58 +537,6 @@ public final class MpegAudioDemuxer implements Demuxer {
         }
         var frames = (double) payload / frameBytes;
         return Math.round(frames * MpegAudioHeader.samplesPerFrame(header) * 1_000_000.0 / MpegAudioHeader.sampleRate(header));
-    }
-
-    /**
-     * Adds the fields of an ID3v1 tag at the end of the source to the metadata, without replacing
-     * fields the ID3v2 tag already set.
-     *
-     * @param tail     the tail window over the source, holding its end
-     * @param start    the offset of the audio start
-     * @param end      the source size
-     * @param metadata the metadata map
-     */
-    private static void readId3v1(TrailingTags.Tail tail, long start, long end, Map<String, String> metadata) {
-        if (end - start < 128) {
-            return;
-        }
-        var tag = new byte[128];
-        if (!tail.read(end - 128, tag, 128)) {
-            return;
-        }
-        if (tag[0] != 'T' || tag[1] != 'A' || tag[2] != 'G') {
-            return;
-        }
-        putField(metadata, "TIT2", tag, 3, 30);
-        putField(metadata, "TPE1", tag, 33, 30);
-        putField(metadata, "TALB", tag, 63, 30);
-        putField(metadata, "TYER", tag, 93, 4);
-        if (tag[125] == 0 && tag[126] != 0) {
-            putField(metadata, "COMM", tag, 97, 28);
-            metadata.putIfAbsent("TRCK", Integer.toString(tag[126] & 0xFF));
-        } else {
-            putField(metadata, "COMM", tag, 97, 30);
-        }
-    }
-
-    /**
-     * Adds one fixed-width ISO-8859-1 ID3v1 field, trimmed of padding, unless the key is present.
-     *
-     * @param metadata the metadata map
-     * @param key      the ID3v2-style key
-     * @param tag      the tag bytes
-     * @param offset   the field offset
-     * @param length   the field width
-     */
-    private static void putField(Map<String, String> metadata, String key, byte[] tag, int offset, int length) {
-        var end = offset;
-        while (end < offset + length && tag[end] != 0) {
-            end++;
-        }
-        var value = new String(tag, offset, end - offset, StandardCharsets.ISO_8859_1).strip();
-        if (!value.isEmpty()) {
-            metadata.putIfAbsent(key, value);
-        }
     }
 
     @Override

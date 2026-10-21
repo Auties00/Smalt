@@ -129,6 +129,26 @@ class IvfDemuxerTest {
     }
 
     @Test
+    @DisplayName("takes the frame rate of a 90 kHz clock time base from the step of the frame timestamps")
+    void clockRate() {
+        var frames = 3;
+        var buffer = ByteBuffer.allocate(32 + frames * 13).order(ByteOrder.LITTLE_ENDIAN);
+        buffer.put("DKIF".getBytes(StandardCharsets.US_ASCII)).putShort((short) 0).putShort((short) 32)
+                .put("VP80".getBytes(StandardCharsets.US_ASCII)).putShort((short) 16).putShort((short) 16)
+                .putInt(90_000).putInt(1).putInt(frames).putInt(0);
+        for (var index = 0; index < frames; index++) {
+            buffer.putInt(1).putLong(index * 3600L).put((byte) 1);
+        }
+        try (var demuxer = new IvfDemuxer(MediaSource.of(buffer.array()))) {
+            var track = (VideoTrack) demuxer.tracks().getFirst();
+            assertEquals(new Rational(1, 90_000), track.timeBase());
+            var rate = track.frameRate().orElseThrow();
+            assertEquals(25.0, (double) rate.numerator() / rate.denominator(), 1e-9);
+            assertEquals(120_000, demuxer.durationMicros());
+        }
+    }
+
+    @Test
     @DisplayName("maps unknown FourCCs to an unknown video codec and defaults the time base")
     void unknownCodec() {
         var data = ivf("XYZ1", 16, 16, 0, 0, new byte[]{1, 2, 3});
