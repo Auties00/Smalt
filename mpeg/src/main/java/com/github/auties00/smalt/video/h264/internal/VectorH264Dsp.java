@@ -1548,15 +1548,15 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
      * is first clamped to {@code [-255, 255]}, which leaves every clamped sample unchanged.
      */
     @Override
-    public void chromaDcAdd(int[] c, byte[] dst, int dstOffset, int dstStride) {
-        var dc0 = (short) Math.clamp((c[0] + 32) >> 6, -255, 255);
-        var dc1 = (short) Math.clamp((c[16] + 32) >> 6, -255, 255);
-        var dc2 = (short) Math.clamp((c[32] + 32) >> 6, -255, 255);
-        var dc3 = (short) Math.clamp((c[48] + 32) >> 6, -255, 255);
-        c[0] = 0;
-        c[16] = 0;
-        c[32] = 0;
-        c[48] = 0;
+    public void chromaDcAdd(int[] c, int o, byte[] dst, int dstOffset, int dstStride) {
+        var dc0 = (short) Math.clamp((c[o] + 32) >> 6, -255, 255);
+        var dc1 = (short) Math.clamp((c[o + 16] + 32) >> 6, -255, 255);
+        var dc2 = (short) Math.clamp((c[o + 32] + 32) >> 6, -255, 255);
+        var dc3 = (short) Math.clamp((c[o + 48] + 32) >> 6, -255, 255);
+        c[o] = 0;
+        c[o + 16] = 0;
+        c[o + 32] = 0;
+        c[o + 48] = 0;
         var upper = ShortVector.broadcast(S128, dc0).blend(ShortVector.broadcast(S128, (short) dc1), RIGHT_HALF_8);
         var lower = ShortVector.broadcast(S128, dc2).blend(ShortVector.broadcast(S128, (short) dc3), RIGHT_HALF_8);
         for (var y = 0; y < 4; y++) {

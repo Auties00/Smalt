@@ -564,7 +564,9 @@ final class CrwParser {
         if (right > left && bottom > top && right < sensor.width && bottom < sensor.height) {
             sensor.activeArea = new int[]{top, left, bottom + 1, right + 1};
         }
-        if (FOUR_COLOR.contains(file.model)) {
+        // a file without a model name is read as the common RGGB sensor
+        var model = file.model == null ? "" : file.model;
+        if (FOUR_COLOR.contains(model)) {
             sensor.cfa = CfaPattern.of(2, 2, List.of(CfaColor.GREEN, CfaColor.MAGENTA, CfaColor.YELLOW, CfaColor.CYAN));
             sensor.planeOfColor = new int[]{-1, 0, -1, 2, 1, 3, -1};
             file.color.asShotNeutral = null;
@@ -572,7 +574,7 @@ final class CrwParser {
             sensor.cfa = CfaPattern.bayer("RGGB");
             sensor.estimateBalance = file.color.asShotNeutral == null;
         }
-        sensor.white = new double[]{WHITE_4000.contains(file.model) ? 4000 : (1 << sensor.bitsPerSample) - 1};
+        sensor.white = new double[]{WHITE_4000.contains(model) ? 4000 : (1 << sensor.bitsPerSample) - 1};
         var mask = info.length > 12
                 ? new int[]{info[9] & 0xFFFF, info[10] & 0xFFFF, info[11] & 0xFFFF, info[12] & 0xFFFF} : null;
         var source = reader.source();

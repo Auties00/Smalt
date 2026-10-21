@@ -16,8 +16,8 @@ import java.util.function.Consumer;
  * Encodes planar float samples into uncompressed PCM packets.
  *
  * <p>Every {@code PCM_*} {@link Codec} is produced: unsigned and signed 8-bit, signed 16, 24
- * (three packed bytes) and 32-bit integers, 32 and 64-bit IEEE floats, each in the byte order the
- * codec names, and ITU-T G.711 A-law and mu-law. A packet holds
+ * (three packed bytes), 32 and 64-bit integers, 32 and 64-bit IEEE floats, each in the byte order
+ * the codec names, and ITU-T G.711 A-law and mu-law. A packet holds
  * {@link PcmEncoderOptions#framesPerPacket()} interleaved frames, except the last one emitted by
  * {@link #flush(Consumer)}, which holds the frames left over and is not padded: PCM has no frame
  * structure, so padding would only lengthen the output.
@@ -54,6 +54,11 @@ public final class PcmEncoder implements AudioEncoder {
      * The scale applied to 32-bit integers.
      */
     private static final double SCALE_32 = 2147483648.0;
+
+    /**
+     * The scale applied to 64-bit integers.
+     */
+    private static final double SCALE_64 = 0x1p63;
 
     /**
      * The bias added to a mu-law magnitude before its segment is found, ITU-T G.711.
@@ -317,6 +322,16 @@ public final class PcmEncoder implements AudioEncoder {
                     ByteArrays.put32be(target, position, quantize32(source[i]));
                 }
             }
+            case PCM_S64LE -> {
+                for (var i = from; i < end; i++, position += stride) {
+                    ByteArrays.put64le(target, position, quantize64(source[i]));
+                }
+            }
+            case PCM_S64BE -> {
+                for (var i = from; i < end; i++, position += stride) {
+                    ByteArrays.put64be(target, position, quantize64(source[i]));
+                }
+            }
             case PCM_F32LE -> {
                 for (var i = from; i < end; i++, position += stride) {
                     ByteArrays.put32le(target, position, Float.floatToRawIntBits(clip(source[i])));
@@ -362,6 +377,16 @@ public final class PcmEncoder implements AudioEncoder {
      */
     private static int quantize32(float sample) {
         return Math.clamp(Math.round(sample * SCALE_32), Integer.MIN_VALUE, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Scales a sample to a signed 64-bit code, rounding to nearest and clipping.
+     *
+     * @param sample the sample, nominally in {@code [-1, 1]}
+     * @return the code; zero for NaN
+     */
+    private static long quantize64(float sample) {
+        return Math.round(sample * SCALE_64);
     }
 
     /**

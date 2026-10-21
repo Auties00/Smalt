@@ -95,6 +95,11 @@ class QualityTest {
     private static double[] x264(Path raw, String preset, String profile, int kbps) {
         var out = Path.of("target", "h264enc-work", "quality-x264-" + raw.getFileName() + "-" + preset + "-" + kbps
                 + ".264");
+        try {
+            Files.createDirectories(out.getParent());
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
         Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-y", "-f", "rawvideo", "-pix_fmt",
                 "yuv420p", "-s", WIDTH + "x" + HEIGHT, "-r", Integer.toString(FPS), "-i", raw.toString(), "-c:v",
                 "libx264", "-preset", preset, "-profile:v", profile, "-bf", "0", "-b:v", kbps + "k", "-maxrate",

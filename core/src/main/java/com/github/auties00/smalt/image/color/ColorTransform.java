@@ -21,8 +21,32 @@ import java.util.Objects;
  * RGB conversions use the same 1.14 fixed-point tables and give the same values, and the other
  * conversions are sampled into the same lookup tables. 16-bit matrix/TRC conversions are computed
  * directly in floating point, which is more accurate than Little CMS's 16-bit lookup tables.
- * A high-dynamic-range source is decoded, tone-mapped and converted as {@link ToneMapping}
- * describes.
+ *
+ * <p>High-dynamic-range profiles ({@link ColorProfile#isHighDynamicRange()}) are converted through
+ * display light in candelas per square meter, PQ by the SMPTE ST 2084 EOTF and HLG by the ITU-R
+ * BT.2100 EOTF of the 1000 candelas per square meter reference display (system gamma 1.2,
+ * luminance from the profile's primaries), never through their ICC tone curves:
+ * <ul>
+ *   <li>from a high-dynamic-range source to a standard-dynamic-range target, luminance is
+ *       compressed to {@link ColorTransformOptions#referenceWhite()} as {@link ToneMapping}
+ *       describes, and the target white is that reference white;</li>
+ *   <li>from a standard-dynamic-range source to a high-dynamic-range target, the source white is
+ *       placed at the reference white (ITU-R BT.2408: 203 candelas per square meter by default,
+ *       HLG signal 0.75) and colors are converted to the target primaries with the rendering
+ *       intent;</li>
+ *   <li>between two high-dynamic-range profiles (PQ to HLG and back, as ITU-R BT.2390 section 7
+ *       converts them through display light), luminance is kept and colors are converted between
+ *       the primaries with a 3x3 matrix, adapting the white with the Bradford transform and
+ *       clipping colors outside the target gamut; a source whose peak exceeds the target limit is
+ *       compressed to that limit as {@link ToneMapping} describes.</li>
+ * </ul>
+ * The limit of an HLG target is the 1000 candelas per square meter of its reference display; that
+ * of a PQ target is the peak of its mastering display or content light level when its
+ * {@link ColorProfile#colorInfo()} describes one, else the 10000 of the PQ signal range. A source
+ * peak is the one {@link ColorProfile#of(com.github.auties00.smalt.image.ColorInfo)} documents,
+ * and the reference white for a standard-dynamic-range source. A transform between two profiles
+ * with the same transfer characteristics and primaries whose source peak is within the target
+ * limit leaves values unchanged.
  *
  * <p>Creating a transform reads and links the tags it needs, and the tables of each sample depth are
  * built on their first use; both costs grow with the size of the profiles' lookup tables, so a
@@ -68,9 +92,17 @@ public final class ColorTransform {
     private final ColorTransformOptions options;
 
     /**
-     * The linked and simplified pipeline, or {@code null} for a high-dynamic-range source.
+     * The linked and simplified pipeline, or {@code null} when a profile is high-dynamic-range.
      */
     private final Pipeline pipeline;
+
+    /**
+     * The ICC transform between the standard-dynamic-range profile and the linear light (for a
+     * high-dynamic-range source) or gamma-2 light (for a high-dynamic-range target) of the
+     * high-dynamic-range profile's primaries, or {@code null} when no profile or both profiles are
+     * high-dynamic-range.
+     */
+    private final ColorTransform inner;
 
     /**
      * The number of source channels.
@@ -110,14 +142,24 @@ public final class ColorTransform {
         this.options = options;
         this.inputs = source.channels();
         this.outputs = target.channels();
-        if (target.isHighDynamicRange()) {
-            // TODO: encode to PQ and HLG targets
-            throw new MediaException.Unsupported("icc", "a high-dynamic-range target profile");
-        }
-        if (source.isHighDynamicRange()) {
+        var hdr = source.hdr();
+        var into = target.hdr();
+        if (hdr != null || into != null) {
             this.pipeline = null;
+            if (hdr != null && into != null) {
+                this.inner = null;
+            } else if (into != null) {
+                var gamma2 = ColorProfile.parse(IccWriter.rgb("Gamma 2", into.red(), into.green(), into.blue(),
+                        into.white(), IccWriter.Curve.gamma(2.0)));
+                this.inner = create(source, gamma2, options);
+            } else {
+                var linear = ColorProfile.parse(IccWriter.rgb("Linear", hdr.red(), hdr.green(), hdr.blue(), hdr.white(),
+                        IccWriter.Curve.gamma(1.0)));
+                this.inner = create(linear, target, options);
+            }
             return;
         }
+        this.inner = null;
         var intent = options.intent().code();
         var bpc = options.blackPointCompensation();
         var linked = Linker.link(List.of(Linker.Node.of(source.icc(), intent, bpc), Linker.Node.of(target.icc(), intent, bpc)));
@@ -132,8 +174,7 @@ public final class ColorTransform {
      * @param target the profile to convert them to
      * @return the transform
      * @throws MediaException.Malformed if a profile lacks a tag its role needs or a tag is damaged
-     * @throws MediaException.Unsupported if a profile is a device link, abstract or named color profile, or the target
-     * is high-dynamic-range
+     * @throws MediaException.Unsupported if a profile is a device link, abstract or named color profile
      */
     public static ColorTransform create(ColorProfile source, ColorProfile target) {
         return create(source, target, ColorTransformOptions.defaults());
@@ -147,8 +188,7 @@ public final class ColorTransform {
      * @param options the rendering intent, black point compensation and tone mapping
      * @return the transform
      * @throws MediaException.Malformed if a profile lacks a tag its role needs or a tag is damaged
-     * @throws MediaException.Unsupported if a profile is a device link, abstract or named color profile, or the target
-     * is high-dynamic-range
+     * @throws MediaException.Unsupported if a profile is a device link, abstract or named color profile
      */
     public static ColorTransform create(ColorProfile source, ColorProfile target, ColorTransformOptions options) {
         Objects.requireNonNull(source, "source");
@@ -310,7 +350,7 @@ public final class ColorTransform {
             synchronized (lock) {
                 engine = engine8;
                 if (engine == null) {
-                    engine = source.isHighDynamicRange() ? hdrEngine() : build8(pipeline);
+                    engine = pipeline == null ? hdrEngine() : build8(pipeline);
                     engine8 = engine;
                 }
             }
@@ -329,7 +369,7 @@ public final class ColorTransform {
             synchronized (lock) {
                 engine = engine16;
                 if (engine == null) {
-                    engine = source.isHighDynamicRange() ? hdrEngine() : build16(pipeline);
+                    engine = pipeline == null ? hdrEngine() : build16(pipeline);
                     engine16 = engine;
                 }
             }
@@ -338,22 +378,25 @@ public final class ColorTransform {
     }
 
     /**
-     * Builds the engine of a high-dynamic-range source, shared by both depths.
+     * Builds the engine of a transform with a high-dynamic-range profile, shared by both depths.
      *
      * @return the engine
      */
     private ColorEngine hdrEngine() {
-        if (engine8 instanceof HdrEngine built) {
-            return built;
-        }
-        if (engine16 instanceof HdrEngine built) {
+        var built = engine8 != null ? engine8 : engine16;
+        if (built != null) {
             return built;
         }
         var hdr = source.hdr();
-        var linear = ColorProfile.parse(IccWriter.rgb("Linear", hdr.red(), hdr.green(), hdr.blue(), hdr.white(),
-                IccWriter.Curve.gamma(1.0)));
-        var inner = create(linear, target, options).engine16();
-        return new HdrEngine(hdr, inner, outputs, options);
+        var into = target.hdr();
+        if (into != null) {
+            if (hdr != null) {
+                return HdrTargetEngine.isIdentity(hdr, into) ? new IdentityEngine(3)
+                        : HdrTargetEngine.fromHigh(hdr, into, options);
+            }
+            return HdrTargetEngine.fromStandard(inner.engine16(), inputs, into, options);
+        }
+        return new HdrEngine(hdr, inner.engine16(), outputs, options);
     }
 
     /**
