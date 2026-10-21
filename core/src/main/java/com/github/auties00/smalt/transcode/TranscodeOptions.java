@@ -173,7 +173,11 @@ public final class TranscodeOptions {
      * {@return whether the job seeks the input to the start of the kept range when the demuxer supports
      * it, instead of reading and discarding the media before it; {@code true} by default}
      *
-     * <p>The output is the same either way.
+     * <p>The output is the same either way. When subtitle streams are kept, the packets before the
+     * start are still read (not decoded) to find the cues shown at the start, which costs reading
+     * time linear in the start position; a source that reads its input once
+     * ({@link com.github.auties00.smalt.io.MediaSource#of(java.io.InputStream, long)}) cannot be read
+     * a second time, so such a job does not seek and decodes the media before the start.
      */
     public boolean seeking() {
         return seeking;

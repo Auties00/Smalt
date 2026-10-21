@@ -11,6 +11,7 @@ import com.github.auties00.smalt.internal.bits.MsbBitReader;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.Arrays;
 
@@ -98,6 +99,22 @@ public final class VideoConfigs {
      */
     public record Vp9KeyFrame(int profile, int bitDepth, int colorSpace, boolean fullRange, int subsamplingX,
                               int subsamplingY, int width, int height) {
+    }
+
+    /**
+     * Returns the sample aspect ratio a player applies to a video track: the one the track
+     * declares, else the one its configuration record signals.
+     *
+     * @param track the video track whose container declaration and configuration record are read
+     * @return the ratio in lowest terms, or {@code null} when neither declares one
+     */
+    public static Rational sampleAspect(VideoTrack track) {
+        var declared = track.sampleAspectRatio();
+        if (declared.isPresent()) {
+            return declared.get();
+        }
+        var info = describe(track.codec(), track.codecConfig().orElse(null));
+        return info == null || info.sampleAspect() == null ? null : info.sampleAspect().reduce();
     }
 
     /**

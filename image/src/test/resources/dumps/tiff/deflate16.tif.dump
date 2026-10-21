@@ -1,0 +1,19 @@
+# image dump of tiff/deflate16.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=false crc=38b0fb9a
+  format=TIFF orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 48x32 rgba8 alpha=false crc=38b0fb9a
+  format=TIFF orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=TIFF, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 48x32 rgba8 alpha=false crc=38b0fb9a
+  format=TIFF orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none

@@ -47,7 +47,7 @@ public final class Mp4MuxerOptions {
 
         /**
          * An iTunes-style audio file: major brand {@code M4A }, compatible with {@code M4A },
-         * {@code isom}, {@code iso2} and {@code mp42}; carries audio only.
+         * {@code isom}, {@code iso2} and {@code mp42}; carries compressed audio only, no PCM.
          */
         M4A,
 

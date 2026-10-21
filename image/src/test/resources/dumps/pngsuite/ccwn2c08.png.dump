@@ -1,0 +1,13 @@
+# image dump of pngsuite/ccwn2c08.png; regenerate with -Dsmalt.test.updateDumps=true
+format PNG
+info ImageInfo[format=PNG, width=32, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 32x32 rgba8 alpha=false crc=40a6a67c
+  format=PNG orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=ColorProfile[RGB, gamma 1.0, RGB, DISPLAY, v4.3.0]
+scaled 8x8
+picture 32x32 rgba8 alpha=false crc=40a6a67c
+  format=PNG orientation=NORMAL source=32x32
+  icc=none exif=none xmp=none
+  profile=ColorProfile[RGB, gamma 1.0, RGB, DISPLAY, v4.3.0]

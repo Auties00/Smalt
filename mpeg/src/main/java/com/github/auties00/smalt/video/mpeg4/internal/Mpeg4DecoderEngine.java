@@ -201,8 +201,9 @@ public final class Mpeg4DecoderEngine {
     private long futureTime;
 
     /**
-     * The frame period of interlaced direct mode: the time from the first B-VOP's forward
-     * reference to it.
+     * The frame period {@code Tframe} of interlaced direct mode (7.7.2.2): the time from the
+     * forward reference of the first B-VOP after the video object layer header to that B-VOP, or 0
+     * before it.
      */
     private long framePeriod;
 
@@ -559,6 +560,7 @@ public final class Mpeg4DecoderEngine {
         } else if (code == 0xB5) {
             readVisualObject(data, offset, length);
         } else if (code >= 0x20 && code <= 0x2F) {
+            framePeriod = 0;
             var bytes = Arrays.copyOfRange(data, offset, offset + length);
             if (layer != null && layerBytes != null && Arrays.equals(bytes, layerBytes)) {
                 return;
@@ -778,7 +780,7 @@ public final class Mpeg4DecoderEngine {
             frame.codingType = Vop.B;
             frame.time = time;
             frame.keyframe = false;
-            run(frame, past, future, trb, trd);
+            run(frame, past, future, trb, trd, framesBetween(pastTime, time), framesBetween(pastTime, futureTime));
             emit(frame);
             return;
         }
@@ -790,7 +792,7 @@ public final class Mpeg4DecoderEngine {
         frame.codingType = type;
         frame.time = time;
         frame.keyframe = type == Vop.I;
-        run(frame, future, null, 0, 0);
+        run(frame, future, null, 0, 0, 0, 0);
         frame.extendEdges(layer.mbWidth() * 16, layer.mbHeight() * 16);
         if (past != null) {
             pool.add(past);
@@ -839,7 +841,8 @@ public final class Mpeg4DecoderEngine {
             frame.codingType = Vop.B;
             frame.time = time;
             frame.keyframe = false;
-            start(frame, past, future, vop, trb, trd);
+            start(frame, past, future, vop, trb, trd, framesBetween(pastTime, time),
+                    framesBetween(pastTime, futureTime));
             emit(frame);
             return;
         }
@@ -851,7 +854,7 @@ public final class Mpeg4DecoderEngine {
         frame.codingType = type;
         frame.time = time;
         frame.keyframe = type == Vop.I;
-        start(frame, future, null, vop, 0, 0);
+        start(frame, future, null, vop, 0, 0, 0, 0);
         past = future;
         pastTime = futureTime;
         var held = future;
@@ -878,8 +881,11 @@ public final class Mpeg4DecoderEngine {
      * @param vop the header
      * @param trb the temporal distance from the past to a B-VOP
      * @param trd the temporal distance from the past to the future picture
+     * @param framesB the distance from the past to a B-VOP in frame periods
+     * @param framesD the distance from the past to the future picture in frame periods
      */
-    private void start(Frame frame, Frame forward, Frame backward, Vop vop, long trb, long trd) {
+    private void start(Frame frame, Frame forward, Frame backward, Vop vop, long trb, long trd, int framesB,
+                       int framesD) {
         while (!jobs.isEmpty() && jobs.peekFirst().finished()) {
             jobs.pollFirst().join();
         }
@@ -887,7 +893,7 @@ public final class Mpeg4DecoderEngine {
             jobs.pollFirst().join();
         }
         var job = new VopJob(frame, forward, backward, vop, layer, windowData, windowOffset, windowLength, trb, trd,
-                framePeriod, threads, pools);
+                framesB, framesD, threads, pools);
         frame.job = job;
         jobs.addLast(job);
         job.start();
@@ -1018,6 +1024,29 @@ public final class Mpeg4DecoderEngine {
     }
 
     /**
+     * Returns the number of frame periods between two VOP times,
+     * {@code T(later) // Tframe - T(earlier) // Tframe} (7.7.2.2).
+     *
+     * @param earlier the earlier time in ticks
+     * @param later the later time in ticks
+     * @return the distance in frame periods
+     */
+    private int framesBetween(long earlier, long later) {
+        return (int) (frameNumber(later, framePeriod) - frameNumber(earlier, framePeriod));
+    }
+
+    /**
+     * Returns {@code time // period}: the quotient rounded to nearest, halves away from zero.
+     *
+     * @param time the time in ticks, at least 0
+     * @param period the frame period in ticks, at least 1
+     * @return the quotient
+     */
+    static long frameNumber(long time, long period) {
+        return (time + period / 2) / period;
+    }
+
+    /**
      * Parses and reconstructs a picture.
      *
      * @param frame the destination
@@ -1025,10 +1054,12 @@ public final class Mpeg4DecoderEngine {
      * @param backward the backward reference, or {@code null}
      * @param trb the B-VOP distance to the forward reference
      * @param trd the B-VOP distance between the references
+     * @param framesB the B-VOP distance to the forward reference in frame periods
+     * @param framesD the B-VOP distance between the references in frame periods
      */
-    private void run(Frame frame, Frame forward, Frame backward, long trb, long trd) {
+    private void run(Frame frame, Frame forward, Frame backward, long trb, long trd, int framesB, int framesD) {
         reader.seek(vop.dataPosition);
-        var corrupt = parser.parse(reader, vop, frame, backward, trb, trd, framePeriod);
+        var corrupt = parser.parse(reader, vop, frame, backward, trb, trd, framesB, framesD);
         frame.damaged = corrupt;
         if (corrupt) {
             damaged = true;

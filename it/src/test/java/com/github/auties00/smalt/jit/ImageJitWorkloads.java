@@ -189,7 +189,7 @@ final class ImageJitWorkloads {
                 try (var reader = GifDecoder.openAnimation(MediaSource.of(gif), ImageDecoderOptions.defaults())) {
                     for (var current = reader.read(); current != null; current = reader.read()) {
                         frames++;
-                        sink += current.picture().pixels()[frames * 4099 % (480 * 270 * 4)];
+                        sink += ((RgbaPicture) current.picture()).pixels()[frames * 4099 % (480 * 270 * 4)];
                     }
                 }
             }

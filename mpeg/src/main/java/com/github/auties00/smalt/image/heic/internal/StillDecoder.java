@@ -2,9 +2,11 @@ package com.github.auties00.smalt.image.heic.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -43,18 +45,24 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li>for an image grid ({@code grid}), its input images placed edge to edge and cropped to the
  *       output size. Inputs that are coded items without transformative properties, the grids of
  *       cameras, decode in parallel on the module's shared helper threads, each written straight
- *       into its region of the picture; other inputs are reconstructed one after the other;</li>
+ *       into its region of the picture; other inputs are reconstructed one after the other. When
+ *       an input is packed RGBA (an overlay or a premultiplied image), the grid is packed RGBA
+ *       too, its planar inputs converted;</li>
  *   <li>for an identity derivation ({@code iden}), its input image;</li>
  *   <li>for an image overlay ({@code iovl}), its input images placed over a canvas filled with
- *       the fill color, each over the ones before it, as 8-bit RGBA: an opaque input replaces the
- *       pixels it covers and an input with alpha is blended over them.</li>
+ *       the fill color, each over the ones before it, as straight-alpha RGBA (16-bit when a
+ *       source of more than 8 bits keeps its depth, 8-bit otherwise): an opaque input replaces
+ *       the pixels it covers and an input with alpha is blended over them.</li>
  * </ul>
  * The input images of a derived image are the reconstructed images of the referenced items with
  * their own transformative properties applied, cropped and turned upright. An item with an alpha
  * auxiliary image ({@code auxl} reference, alpha {@code auxC} URN) gets its alpha plane from it,
  * and a grid without one gets it from the alpha auxiliary images of its tiles when every tile has
- * one; color premultiplied by the alpha ({@code prem} reference) is divided back into a
- * straight-alpha RGBA picture. Depth maps, gain maps and the other auxiliary images are ignored.
+ * one. An alpha image of another size than its color image is resampled to it with
+ * {@link HeifPictures#resampleAlpha}, and alpha of another bit depth is rescaled to the color
+ * depth (see {@link HeifCanvas}); color premultiplied by the alpha ({@code prem} reference) is
+ * divided back into a straight-alpha RGBA picture. Depth maps, gain maps and the other auxiliary
+ * images are ignored.
  *
  * <p>Derived images nest at most {@value #MAX_DEPTH} deep, and the coded pictures decoded for one
  * image total at most four times the pixel limit; a file that goes beyond either is rejected, so a
@@ -269,7 +277,7 @@ public final class StillDecoder {
                 case "hvc1" -> coded(item, wide, depth);
                 case "grid" -> grid(item, wide, depth);
                 case "iden" -> identity(item, wide, depth);
-                case "iovl" -> overlay(item, depth);
+                case "iovl" -> overlay(item, wide, depth);
                 default -> throw new MediaException.Unsupported(FORMAT, "item " + item.id() + " is coded as '"
                         + item.type() + "', not HEVC");
             };
@@ -389,28 +397,31 @@ public final class StillDecoder {
     }
 
     /**
-     * Decodes the alpha auxiliary image of an item into the alpha plane of its canvas.
+     * Decodes the alpha auxiliary image of an item into the alpha plane of its canvas, resampling
+     * it to the canvas size when its size differs.
      *
      * @param canvas the canvas of the item, which has an alpha plane
      * @param alpha the alpha item
      * @param depth the nesting depth of the item
-     * @throws MediaException.Unsupported if the alpha image differs from the color in size
      */
     private void attachAlpha(HeifCanvas canvas, HeifItem alpha, int depth) {
         if (isPlainCoded(alpha) && alpha.references("pred").length == 0) {
             var frame = decodeCoded(decoder, alpha);
-            checkAlpha(HevcTile.widthOf(frame), HevcTile.heightOf(frame), canvas);
-            canvas.writeAlpha(HevcTile.of(frame), 0, 0, canvas.width(), canvas.height(),
-                    Colors.limitedAlpha(frame, alpha.property(HeifProperty.ColorNclx.class)));
+            var limited = Colors.limitedAlpha(frame, alpha.property(HeifProperty.ColorNclx.class));
+            if (HevcTile.widthOf(frame) == canvas.width() && HevcTile.heightOf(frame) == canvas.height()) {
+                canvas.writeAlpha(HevcTile.of(frame), 0, 0, canvas.width(), canvas.height(), limited);
+            } else {
+                canvas.writeAlpha(HeifPictures.resampleAlpha(HevcTile.lumaPicture(frame), canvas.width(),
+                        canvas.height()), limited);
+            }
             return;
         }
         var picture = output(alpha, true, depth + 1);
-        checkAlpha(picture.width(), picture.height(), canvas);
         var limited = switch (picture) {
-            case RgbaPicture _ -> false;
+            case RgbaPicture _, Rgba16Picture _ -> false;
             default -> colorOf(picture).range() == ColorRange.LIMITED;
         };
-        canvas.writeAlpha(picture, limited);
+        canvas.writeAlpha(HeifPictures.resampleAlpha(picture, canvas.width(), canvas.height()), limited);
     }
 
     /**
@@ -425,22 +436,6 @@ public final class StillDecoder {
             case Yuv16Picture yuv -> yuv.color();
             default -> ColorInfo.JPEG;
         };
-    }
-
-    /**
-     * Checks that an alpha image has the size of its color image.
-     *
-     * @param width the alpha width
-     * @param height the alpha height
-     * @param canvas the color canvas
-     * @throws MediaException.Unsupported if the sizes differ
-     */
-    private static void checkAlpha(int width, int height, HeifCanvas canvas) {
-        if (width != canvas.width() || height != canvas.height()) {
-            // TODO: resample an alpha plane whose size differs from the color, as HEIF 6.9.1 allows
-            throw new MediaException.Unsupported(FORMAT, "the alpha plane is " + width + "x" + height + ", not the "
-                    + canvas.width() + "x" + canvas.height() + " of the color");
-        }
     }
 
     /**
@@ -468,7 +463,7 @@ public final class StillDecoder {
             if (tile == null) {
                 throw new MediaException.Malformed("heic: input " + id + " of grid item " + item.id() + " is missing");
             }
-            plain &= isPlainCoded(tile) && tile.references("pred").length == 0;
+            plain &= isPlainCoded(tile) && tile.references("pred").length == 0 && !premultiplied(tile);
             tiles.add(tile);
         }
         var alpha = alphaOf(file, item);
@@ -543,13 +538,13 @@ public final class StillDecoder {
             if (perTileAlpha != null) {
                 var tileAlpha = perTileAlpha.get(index);
                 var alphaFrame = decodeCoded(tileDecoder, tileAlpha);
-                if (HevcTile.widthOf(alphaFrame) != tileWidth || HevcTile.heightOf(alphaFrame) != tileHeight) {
-                    throw new MediaException.Unsupported(FORMAT, "the alpha plane of a grid tile is "
-                            + HevcTile.widthOf(alphaFrame) + "x" + HevcTile.heightOf(alphaFrame) + ", not " + tileWidth
-                            + "x" + tileHeight);
+                var limited = Colors.limitedAlpha(alphaFrame, tileAlpha.property(HeifProperty.ColorNclx.class));
+                if (HevcTile.widthOf(alphaFrame) == tileWidth && HevcTile.heightOf(alphaFrame) == tileHeight) {
+                    canvas.writeAlpha(HevcTile.of(alphaFrame), x, y, w, h, limited);
+                } else {
+                    canvas.writeAlpha(HeifPictures.resampleAlpha(HevcTile.lumaPicture(alphaFrame), tileWidth,
+                            tileHeight), x, y, w, h, limited);
                 }
-                canvas.writeAlpha(HevcTile.of(alphaFrame), x, y, w, h,
-                        Colors.limitedAlpha(alphaFrame, tileAlpha.property(HeifProperty.ColorNclx.class)));
             }
         });
         var canvas = state.canvas;
@@ -661,6 +656,12 @@ public final class StillDecoder {
      * Reconstructs a grid whose inputs are derived images or carry transformative properties, one
      * input after the other.
      *
+     * <p>Planar inputs are stitched into a planar picture. When an input is reconstructed as packed
+     * RGBA, an overlay or a premultiplied image, the grid is a packed straight-alpha RGBA picture
+     * instead: each planar input is converted to RGBA on its own, with the grid's color properties
+     * applied, each input replaces the pixels it covers, and the picture is 16-bit when
+     * {@code wide} and an input has more than 8 bits.
+     *
      * @param item the grid item
      * @param grid the parsed grid payload
      * @param tiles the input items in row-major order
@@ -673,7 +674,16 @@ public final class StillDecoder {
      */
     private Picture derivedGrid(HeifItem item, HeifGrid grid, List<HeifItem> tiles, HeifItem alpha, int width,
                                 int height, boolean wide, int depth) {
+        var packedGrid = false;
+        for (var tile : tiles) {
+            packedGrid |= reconstructsPacked(tile, depth + 1);
+        }
         HeifCanvas canvas = null;
+        Picture packed = null;
+        if (packedGrid) {
+            LimitChecks.checkAllocation(limits, (wide ? 12L : 4L) * width * height);
+            packed = RgbaPicture.allocate(width, height, true);
+        }
         ColorInfo color = null;
         int tileWidth = 0;
         int tileHeight = 0;
@@ -683,29 +693,208 @@ public final class StillDecoder {
                 tileWidth = picture.width();
                 tileHeight = picture.height();
                 grid.validateCoverage(tileWidth, tileHeight);
-                color = colorOf(picture);
-                var format = switch (picture) {
-                    case YuvPicture yuv -> yuv.chromaFormat();
-                    case Yuv16Picture yuv -> yuv.chromaFormat();
-                    default -> throw new MediaException.Unsupported(FORMAT, "a grid of RGBA images");
-                };
-                canvas = new HeifCanvas(FORMAT, limits, width, height, format, picture.bitDepth(),
-                        picture instanceof Yuv16Picture, alpha != null);
+                color = Colors.override(colorOf(picture), item);
             } else if (picture.width() != tileWidth || picture.height() != tileHeight) {
                 throw new MediaException.Malformed("heic: the inputs of grid item " + item.id() + " differ in size");
             }
             var x = (index % grid.columns()) * tileWidth;
             var y = (index / grid.columns()) * tileHeight;
+            var w = Math.min(tileWidth, width - x);
+            var h = Math.min(tileHeight, height - y);
+            if (packed != null) {
+                packed = place(packed, isPacked(picture) ? picture
+                        : withColor(picture, Colors.override(colorOf(picture), item)), x, y, w, h);
+                continue;
+            }
+            if (canvas == null) {
+                var format = switch (picture) {
+                    case YuvPicture yuv -> yuv.chromaFormat();
+                    case Yuv16Picture yuv -> yuv.chromaFormat();
+                    default -> throw new MediaException.Malformed("heic: grid item " + item.id()
+                            + " mixes planar and packed inputs");
+                };
+                canvas = new HeifCanvas(FORMAT, limits, width, height, format, picture.bitDepth(),
+                        picture instanceof Yuv16Picture, alpha != null);
+            }
             if ((x & ((1 << canvas.format().shiftX()) - 1)) != 0 || (y & ((1 << canvas.format().shiftY()) - 1)) != 0) {
                 throw new MediaException.Malformed("heic: grid inputs of " + tileWidth + "x" + tileHeight
                         + " split the subsampled chroma");
             }
-            canvas.writeColor(picture, x, y, Math.min(tileWidth, width - x), Math.min(tileHeight, height - y));
+            canvas.writeColor(picture, x, y, w, h);
+        }
+        if (canvas != null) {
+            if (alpha != null) {
+                attachAlpha(canvas, alpha, depth);
+            }
+            return canvas.toPicture(color);
         }
         if (alpha != null) {
-            attachAlpha(canvas, alpha, depth);
+            var deep = packed instanceof Rgba16Picture;
+            var plane = new HeifCanvas(FORMAT, limits, width, height, ChromaFormat.MONOCHROME, deep ? 16 : 8, deep, true);
+            attachAlpha(plane, alpha, depth);
+            replaceAlpha(packed, plane.toPicture(ColorInfo.JPEG));
         }
-        return canvas.toPicture(Colors.override(color, item));
+        return packed;
+    }
+
+    /**
+     * Returns whether the reconstructed image of an item is packed RGBA, as {@link #reconstruct}
+     * makes it: an overlay, an image whose color is premultiplied by its alpha, or an identity
+     * derivation or a grid of such an image.
+     *
+     * @param item the item, or {@code null}
+     * @param depth the nesting depth of the item
+     * @return {@code true} for an item reconstructed as packed RGBA; {@code false} for a missing
+     * item and beyond the nesting limit, where reconstruction fails anyway
+     */
+    private boolean reconstructsPacked(HeifItem item, int depth) {
+        if (item == null || depth > MAX_DEPTH) {
+            return false;
+        }
+        return switch (item.type()) {
+            case "iovl" -> true;
+            case "hvc1" -> premultiplied(item);
+            case "iden" -> {
+                var ids = item.references("dimg");
+                yield ids.length == 1 && reconstructsPacked(file.item(ids[0]), depth + 1);
+            }
+            case "grid" -> {
+                if (premultiplied(item)) {
+                    yield true;
+                }
+                for (var id : item.references("dimg")) {
+                    if (reconstructsPacked(file.item(id), depth + 1)) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
+            default -> false;
+        };
+    }
+
+    /**
+     * {@return whether the color of an item is premultiplied by its alpha auxiliary image}
+     *
+     * @param item the coded item or grid
+     */
+    private boolean premultiplied(HeifItem item) {
+        var alpha = alphaOf(file, item);
+        return alpha != null && item.references("prem", alpha.id());
+    }
+
+    /**
+     * {@return whether a picture is packed RGBA}
+     *
+     * @param picture the reconstructed input
+     */
+    private static boolean isPacked(Picture picture) {
+        return picture instanceof RgbaPicture || picture instanceof Rgba16Picture;
+    }
+
+    /**
+     * {@return whether a picture stores samples of more than 8 bits}
+     *
+     * @param picture the reconstructed input
+     */
+    private static boolean isDeep(Picture picture) {
+        return picture instanceof Yuv16Picture || picture instanceof Rgba16Picture;
+    }
+
+    /**
+     * {@return a planar picture with another color description, sharing its planes}
+     *
+     * @param picture the planar picture
+     * @param color the color description
+     */
+    private static Picture withColor(Picture picture, ColorInfo color) {
+        return switch (picture) {
+            case YuvPicture yuv -> yuv.toBuilder().color(color).build();
+            case Yuv16Picture yuv -> yuv.toBuilder().color(color).build();
+            default -> picture;
+        };
+    }
+
+    /**
+     * Copies the top-left region of a picture into a region of a packed grid canvas, converted to
+     * RGBA at the canvas depth, an input of 8 bits converted at 8 bits and widened as {@code v * 257};
+     * the pixels of a picture without alpha become opaque.
+     *
+     * @param canvas the packed canvas, an {@link RgbaPicture} or an {@link Rgba16Picture} with alpha
+     * @param picture the input picture
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     * @return the canvas, promoted to 16 bits when it was 8-bit and the input is deeper
+     */
+    private static Picture place(Picture canvas, Picture picture, int x, int y, int w, int h) {
+        if (canvas instanceof RgbaPicture narrow && isDeep(picture)) {
+            canvas = ImageOps.toSixteenBit(narrow);
+        }
+        switch (canvas) {
+            case Rgba16Picture target -> {
+                var source = isDeep(picture) ? ImageOps.toRgba16(picture) : ImageOps.toSixteenBit(ImageOps.toRgba(picture));
+                var opaque = !source.hasAlpha();
+                for (var row = 0; row < h; row++) {
+                    var out = (y + row) * target.stride() + 4 * x;
+                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(), out, 4 * w);
+                    if (opaque) {
+                        for (var col = 0; col < w; col++) {
+                            target.pixels()[out + 4 * col + 3] = (short) 0xFFFF;
+                        }
+                    }
+                }
+            }
+            case RgbaPicture target -> {
+                var source = ImageOps.toRgba(picture);
+                var opaque = !source.hasAlpha();
+                for (var row = 0; row < h; row++) {
+                    var out = (y + row) * target.stride() + 4 * x;
+                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(), out, 4 * w);
+                    if (opaque) {
+                        for (var col = 0; col < w; col++) {
+                            target.pixels()[out + 4 * col + 3] = (byte) 0xFF;
+                        }
+                    }
+                }
+            }
+            default -> throw new IllegalStateException("unexpected " + canvas.getClass().getSimpleName());
+        }
+        return canvas;
+    }
+
+    /**
+     * Replaces the alpha channel of a packed grid canvas.
+     *
+     * @param canvas the packed canvas
+     * @param alpha a monochrome picture of the canvas size and depth whose alpha plane holds the
+     * full-range alpha
+     */
+    private static void replaceAlpha(Picture canvas, Picture alpha) {
+        switch (canvas) {
+            case Rgba16Picture target -> {
+                var plane = (Yuv16Picture) alpha;
+                for (var row = 0; row < target.height(); row++) {
+                    var out = row * target.stride() + 3;
+                    var in = row * plane.alphaStride();
+                    for (var col = 0; col < target.width(); col++) {
+                        target.pixels()[out + 4 * col] = plane.alpha()[in + col];
+                    }
+                }
+            }
+            case RgbaPicture target -> {
+                var plane = (YuvPicture) alpha;
+                for (var row = 0; row < target.height(); row++) {
+                    var out = row * target.stride() + 3;
+                    var in = row * plane.alphaStride();
+                    for (var col = 0; col < target.width(); col++) {
+                        target.pixels()[out + 4 * col] = plane.alpha()[in + col];
+                    }
+                }
+            }
+            default -> throw new IllegalStateException("unexpected " + canvas.getClass().getSimpleName());
+        }
     }
 
     /**
@@ -733,10 +922,11 @@ public final class StillDecoder {
      * Reconstructs an image overlay.
      *
      * @param item the {@code iovl} item
+     * @param wide whether inputs of more than 8 bits keep their depth, composing at 16 bits
      * @param depth the nesting depth of the item
-     * @return the composed RGBA picture
+     * @return the composed RGBA picture: 16-bit when {@code wide} and an input has more than 8 bits
      */
-    private Picture overlay(HeifItem item, int depth) {
+    private Picture overlay(HeifItem item, boolean wide, int depth) {
         var ids = item.references("dimg");
         if (ids.length == 0) {
             throw new MediaException.Malformed("heic: overlay item " + item.id() + " has no input");
@@ -744,76 +934,19 @@ public final class StillDecoder {
         if (item.size() > 20 + 8L * ids.length) {
             throw new MediaException.Malformed("heic: overlay item " + item.id() + " holds " + item.size() + " bytes");
         }
-        // TODO: compose overlays of high-bit-depth inputs at their depth instead of 8-bit RGBA
         var overlay = HeifOverlay.parse(file.readItem(source, item, limits), ids.length);
         var width = HeifStills.checkedSize(FORMAT, overlay.outputWidth());
         var height = HeifStills.checkedSize(FORMAT, overlay.outputHeight());
         LimitChecks.checkPicture(limits, width, height);
-        LimitChecks.checkAllocation(limits, 4L * width * height);
-        var canvas = RgbaPicture.allocate(width, height, true);
-        var pixels = canvas.pixels();
-        var fill = new byte[4];
-        for (var c = 0; c < 4; c++) {
-            fill[c] = (byte) ((overlay.fill()[c] * 255 + 32767) / 65535);
-        }
-        for (var offset = 0; offset < pixels.length; offset += 4) {
-            System.arraycopy(fill, 0, pixels, offset, 4);
-        }
+        LimitChecks.checkAllocation(limits, (wide ? 12L : 4L) * width * height);
+        var composition = overlay.compose(width, height, wide);
         for (var i = 0; i < ids.length; i++) {
             var input = file.item(ids[i]);
             if (input == null) {
                 throw new MediaException.Malformed("heic: input " + ids[i] + " of overlay item " + item.id() + " is missing");
             }
-            var picture = ImageOps.toRgba(output(input, false, depth + 1));
-            compose(canvas, picture, overlay.offsetsX()[i], overlay.offsetsY()[i]);
+            composition.draw(output(input, wide, depth + 1), overlay.offsetsX()[i], overlay.offsetsY()[i]);
         }
-        return canvas;
-    }
-
-    /**
-     * Places one RGBA picture over a canvas.
-     *
-     * <p>An opaque picture replaces the canvas pixels it covers; a picture with alpha is blended
-     * over them with the source-over operator, in straight alpha. Only the part that overlaps the
-     * canvas is drawn.
-     *
-     * @param canvas the overlay canvas, drawn on
-     * @param picture the input picture
-     * @param left the canvas column of the picture's left edge
-     * @param top the canvas row of the picture's top edge
-     */
-    private static void compose(RgbaPicture canvas, RgbaPicture picture, long left, long top) {
-        var x0 = (int) Math.clamp(left, 0, canvas.width());
-        var y0 = (int) Math.clamp(top, 0, canvas.height());
-        var x1 = (int) Math.clamp(left + picture.width(), 0, canvas.width());
-        var y1 = (int) Math.clamp(top + picture.height(), 0, canvas.height());
-        var dst = canvas.pixels();
-        var src = picture.pixels();
-        for (var y = y0; y < y1; y++) {
-            var in = (int) (y - top) * picture.stride() + (int) (x0 - left) * 4;
-            var out = y * canvas.stride() + x0 * 4;
-            if (!picture.hasAlpha()) {
-                System.arraycopy(src, in, dst, out, (x1 - x0) * 4);
-                continue;
-            }
-            for (var x = x0; x < x1; x++, in += 4, out += 4) {
-                var alpha = src[in + 3] & 0xFF;
-                if (alpha == 255) {
-                    System.arraycopy(src, in, dst, out, 4);
-                    continue;
-                }
-                if (alpha == 0) {
-                    continue;
-                }
-                var below = dst[out + 3] & 0xFF;
-                var coverage = alpha * 255 + below * (255 - alpha);
-                for (var c = 0; c < 3; c++) {
-                    var value = ((src[in + c] & 0xFF) * alpha * 255 + (dst[out + c] & 0xFF) * below * (255 - alpha)
-                            + coverage / 2) / coverage;
-                    dst[out + c] = (byte) value;
-                }
-                dst[out + 3] = (byte) ((coverage + 127) / 255);
-            }
-        }
+        return composition.result();
     }
 }

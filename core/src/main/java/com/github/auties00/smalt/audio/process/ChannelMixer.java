@@ -31,8 +31,14 @@ import java.util.Objects;
  *   <li>a missing back center is split at -3 dB each into the back pair when the output has
  *       it, else into the side pair when the output has that, else into back left and right,
  *       which then fold into the front speakers at -3 dB (a total of -6 dB per side);</li>
- *   <li>the low-frequency channel is dropped unless the output has one;</li>
- *   <li>top speakers fold into the speaker below them at -3 dB;</li>
+ *   <li>the front wide pair goes to front left and right at gain {@code 1}, and the surround
+ *       direct pair to the side surrounds, at gain {@code 1} when the input lacks side surrounds
+ *       and at -3 dB when it has them;</li>
+ *   <li>the low-frequency channel is dropped unless the output has one; the second low-frequency
+ *       channel goes to it, at gain {@code 1} when the input lacks the first and at -3 dB when it
+ *       has it;</li>
+ *   <li>top speakers fold into the speaker below them at -3 dB, and bottom speakers into the
+ *       speaker above them at -3 dB;</li>
  *   <li>{@link Speaker#UNKNOWN} channels are mapped by index, input channel {@code i} to output
  *       channel {@code i}; when every speaker of either layout is unknown, all channels are mapped
  *       by index.</li>
@@ -280,6 +286,19 @@ public final class ChannelMixer {
             case TOP_BACK_LEFT -> route(Speaker.BACK_LEFT, folded, input, output, column, next);
             case TOP_BACK_RIGHT -> route(Speaker.BACK_RIGHT, folded, input, output, column, next);
             case TOP_BACK_CENTER -> route(Speaker.BACK_CENTER, folded, input, output, column, next);
+            case TOP_SIDE_LEFT -> route(Speaker.SIDE_LEFT, folded, input, output, column, next);
+            case TOP_SIDE_RIGHT -> route(Speaker.SIDE_RIGHT, folded, input, output, column, next);
+            case BOTTOM_FRONT_CENTER -> route(Speaker.FRONT_CENTER, folded, input, output, column, next);
+            case BOTTOM_FRONT_LEFT -> route(Speaker.FRONT_LEFT, folded, input, output, column, next);
+            case BOTTOM_FRONT_RIGHT -> route(Speaker.FRONT_RIGHT, folded, input, output, column, next);
+            case WIDE_LEFT -> route(Speaker.FRONT_LEFT, gain, input, output, column, next);
+            case WIDE_RIGHT -> route(Speaker.FRONT_RIGHT, gain, input, output, column, next);
+            case SURROUND_DIRECT_LEFT -> route(Speaker.SIDE_LEFT, input.indexOf(Speaker.SIDE_LEFT) >= 0 ? folded : gain,
+                    input, output, column, next);
+            case SURROUND_DIRECT_RIGHT -> route(Speaker.SIDE_RIGHT,
+                    input.indexOf(Speaker.SIDE_RIGHT) >= 0 ? folded : gain, input, output, column, next);
+            case LOW_FREQUENCY_2 -> route(Speaker.LOW_FREQUENCY,
+                    input.indexOf(Speaker.LOW_FREQUENCY) >= 0 ? folded : gain, input, output, column, next);
             case LOW_FREQUENCY, UNKNOWN -> false;
         };
     }
@@ -310,7 +329,7 @@ public final class ChannelMixer {
     /**
      * Returns whether a layout is a single channel feeding the center or no declared position.
      *
-     * @param layout the layout
+     * @param layout the speakers to test
      * @return {@code true} for mono
      */
     private static boolean isMono(ChannelLayout layout) {
@@ -324,7 +343,7 @@ public final class ChannelMixer {
     /**
      * Returns whether no speaker of a layout has a declared position.
      *
-     * @param layout the layout
+     * @param layout the speakers to test
      * @return {@code true} when every speaker is {@link Speaker#UNKNOWN}
      */
     private static boolean allUnknown(ChannelLayout layout) {

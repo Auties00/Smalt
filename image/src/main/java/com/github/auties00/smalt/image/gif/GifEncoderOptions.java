@@ -1,10 +1,14 @@
 package com.github.auties00.smalt.image.gif;
 
+import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.ops.Dithering;
 import com.github.auties00.smalt.image.ops.QuantizeMethod;
 import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Holds the settings of a {@link GifEncoder} and a {@link GifAnimationEncoder}. Instances are
@@ -50,6 +54,8 @@ public final class GifEncoderOptions {
 
     private final boolean lossless;
 
+    private final ColorProfile colorProfile;
+
     private GifEncoderOptions(Builder builder) {
         this.method = builder.method;
         this.sampleFactor = builder.sampleFactor;
@@ -60,6 +66,7 @@ public final class GifEncoderOptions {
         this.interlaced = builder.interlaced;
         this.loopCount = builder.loopCount;
         this.lossless = builder.lossless;
+        this.colorProfile = builder.colorProfile;
     }
 
     /**
@@ -187,6 +194,18 @@ public final class GifEncoderOptions {
         return lossless;
     }
 
+    /**
+     * {@return the color profile embedded in the output, or empty when none is; empty by default}
+     *
+     * <p>The profile tells readers which color space the pixels are in; it does not convert them.
+     * Without one, readers take the pixels as sRGB. Its ICC bytes, which must describe an RGB color
+     * space, are stored in an {@code ICCRGBG1} application extension (ICC.1 Annex B) that follows
+     * the global color table; a high-dynamic-range profile is written in its ICC form.
+     */
+    public Optional<ColorProfile> colorProfile() {
+        return Optional.ofNullable(colorProfile);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof GifEncoderOptions that
@@ -198,13 +217,14 @@ public final class GifEncoderOptions {
                 && paletteMode == that.paletteMode
                 && interlaced == that.interlaced
                 && loopCount == that.loopCount
-                && lossless == that.lossless;
+                && lossless == that.lossless
+                && Objects.equals(colorProfile, that.colorProfile);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(method, sampleFactor, maxColors, dithering, alphaThreshold, paletteMode, interlaced,
-                loopCount, lossless);
+                loopCount, lossless, colorProfile);
     }
 
     @Override
@@ -212,7 +232,8 @@ public final class GifEncoderOptions {
         return "GifEncoderOptions[method=" + method + ", sampleFactor=" + sampleFactor
                 + ", maxColors=" + maxColors + ", dithering=" + dithering + ", alphaThreshold=" + alphaThreshold
                 + ", paletteMode=" + paletteMode + ", interlaced=" + interlaced + ", loopCount=" + loopCount
-                + ", lossless=" + lossless + "]";
+                + ", lossless=" + lossless
+                + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed")) + "]";
     }
 
     /**
@@ -240,6 +261,8 @@ public final class GifEncoderOptions {
 
         private boolean lossless;
 
+        private ColorProfile colorProfile;
+
         private Builder() {
         }
 
@@ -253,6 +276,7 @@ public final class GifEncoderOptions {
             this.interlaced = options.interlaced;
             this.loopCount = options.loopCount;
             this.lossless = options.lossless;
+            this.colorProfile = options.colorProfile;
         }
 
         /**
@@ -356,18 +380,44 @@ public final class GifEncoderOptions {
         }
 
         /**
+         * Sets the color profile embedded in the output; see {@link GifEncoderOptions#colorProfile()}.
+         *
+         * @param colorProfile the value
+         * @return this builder
+         */
+        public Builder colorProfile(ColorProfile colorProfile) {
+            this.colorProfile = Objects.requireNonNull(colorProfile, "colorProfile");
+            return this;
+        }
+
+        /**
+         * Removes the color profile; see {@link GifEncoderOptions#colorProfile()}.
+         *
+         * @return this builder
+         */
+        public Builder noColorProfile() {
+            this.colorProfile = null;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
          * @throws IllegalArgumentException if the sample factor is not in [1, 30], the palette size is
          * not in [2, 256], the alpha threshold is not in [0, 255] or the loop count is not in [0,
          * {@link GifEncoderOptions#MAX_LOOP_COUNT}]
+         * @throws MediaException.Unsupported if the color profile does not describe an RGB color space
          */
         public GifEncoderOptions build() {
             Checks.inRange("sample factor", sampleFactor, 1, 30);
             Checks.inRange("palette size", maxColors, 2, 256);
             Checks.inRange("alpha threshold", alphaThreshold, 0, 255);
             Checks.inRange("loop count", loopCount, 0, MAX_LOOP_COUNT);
+            if (colorProfile != null && colorProfile.colorSpace() != ProfileColorSpace.RGB) {
+                throw new MediaException.Unsupported("gif " + colorProfile.colorSpace(),
+                        "GIF holds only RGB ICC profiles, not " + colorProfile.colorSpace());
+            }
             return new GifEncoderOptions(this);
         }
     }

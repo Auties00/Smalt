@@ -24,6 +24,8 @@ import java.util.OptionalInt;
  *   <li>crop ({@link #crop()}), in displayed coordinates;</li>
  *   <li>orientation ({@link #orientation()}): the pixels are turned upright, or kept as coded with
  *       the rotation recorded in the output;</li>
+ *   <li>sample aspect ratio ({@link #sampleAspect()}): non-square samples are resampled to square
+ *       ones, or kept with the ratio recorded in the output;</li>
  *   <li>scaling to a box ({@link #width()}, {@link #height()}, {@link #scaleMode()},
  *       {@link #upscale()}), then to the edge limits ({@link #maxLongEdge()},
  *       {@link #maxShortEdge()}), rounded to even dimensions when {@link #evenDimensions()} is
@@ -36,7 +38,8 @@ import java.util.OptionalInt;
  * </ol>
  * The encoder is the one {@link com.github.auties00.smalt.video.VideoEncoders} finds for
  * {@link #codec()}, configured through {@link com.github.auties00.smalt.video.VideoEncoderOptions}
- * with {@link #bitrate()} and {@link #threads()}.
+ * with {@link #bitrate()}, {@link #threads()}, {@link #keyframeInterval()} and
+ * {@link #periodicKeyframes()}.
  */
 public final class VideoTranscodeOptions {
     /**
@@ -63,10 +66,23 @@ public final class VideoTranscodeOptions {
 
     private final int threads;
 
+    /**
+     * The key frame distance in frames, or {@code 0} to let the codec choose or when periodic key
+     * frames are off.
+     */
+    private final int keyframeInterval;
+
+    private final boolean periodicKeyframes;
+
     private final ResizeSettings resize;
     private final boolean evenDimensions;
 
     private final OrientationMode orientation;
+
+    /**
+     * How non-square samples are handled.
+     */
+    private final SampleAspectMode sampleAspect;
 
     /**
      * The constant output frame rate, or {@code null} to keep the source timing.
@@ -93,15 +109,19 @@ public final class VideoTranscodeOptions {
      */
     private final int background;
 
-    private VideoTranscodeOptions(Builder builder, int trackId, int bitrate, ResizeSettings resize) {
+    private VideoTranscodeOptions(Builder builder, int trackId, int bitrate, int keyframeInterval,
+                                  ResizeSettings resize) {
         this.mode = builder.mode;
         this.trackId = trackId;
         this.codec = builder.codec;
         this.bitrate = bitrate;
         this.threads = builder.threads;
+        this.keyframeInterval = keyframeInterval;
+        this.periodicKeyframes = builder.periodicKeyframes;
         this.resize = resize;
         this.evenDimensions = builder.evenDimensions;
         this.orientation = builder.orientation;
+        this.sampleAspect = builder.sampleAspect;
         this.frameRate = builder.frameRate;
         this.maxFrameRate = builder.maxFrameRate;
         this.chromaFormat = builder.chromaFormat;
@@ -209,6 +229,30 @@ public final class VideoTranscodeOptions {
     }
 
     /**
+     * {@return the most frames from one key frame to the next in an encoded stream, positive, or empty
+     * when the encoder chooses the distance or {@link #periodicKeyframes()} is {@code false}; empty by
+     * default}
+     *
+     * <p>The interval counts output frames, after any frame-rate conversion; it has the meaning of
+     * {@link com.github.auties00.smalt.video.VideoEncoderOptions#keyframeInterval()}. A copied stream
+     * keeps its own key frames.
+     */
+    public OptionalInt keyframeInterval() {
+        return keyframeInterval == 0 ? OptionalInt.empty() : OptionalInt.of(keyframeInterval);
+    }
+
+    /**
+     * {@return whether an encoded stream may have periodic key frames; {@code true} by default}
+     *
+     * <p>When {@code false}, the first frame and the scene cuts the encoder detects are the only key
+     * frames; when {@code true}, their distance is {@link #keyframeInterval()}, or the encoder's
+     * default when that is empty.
+     */
+    public boolean periodicKeyframes() {
+        return periodicKeyframes;
+    }
+
+    /**
      * {@return the width of the target box, in pixels, positive, or empty when free; empty by default}
      */
     public OptionalInt width() {
@@ -288,6 +332,16 @@ public final class VideoTranscodeOptions {
      */
     public OrientationMode orientation() {
         return orientation;
+    }
+
+    /**
+     * {@return how a stream of non-square samples is handled; {@link SampleAspectMode#AUTO} by default}
+     *
+     * <p>The sample aspect ratio of a stream is the one its container declares, else the one its
+     * codec configuration signals; a stream that declares neither has square samples.
+     */
+    public SampleAspectMode sampleAspect() {
+        return sampleAspect;
     }
 
     /**
@@ -395,8 +449,8 @@ public final class VideoTranscodeOptions {
      * @return the field values
      */
     private Object[] state() {
-        return new Object[]{mode, trackId, codec, bitrate, threads, resize, evenDimensions, orientation, frameRate, maxFrameRate, chromaFormat, color,
-                background};
+        return new Object[]{mode, trackId, codec, bitrate, threads, keyframeInterval, periodicKeyframes, resize,
+                evenDimensions, orientation, sampleAspect, frameRate, maxFrameRate, chromaFormat, color, background};
     }
 
     @Override
@@ -412,8 +466,10 @@ public final class VideoTranscodeOptions {
     @Override
     public String toString() {
         return "VideoTranscodeOptions[mode=" + mode + ", trackId=" + trackId() + ", codec=" + codec() + ", bitrate="
-                + bitrate() + ", threads=" + threads + ", " + resize.describe() + ", evenDimensions=" + evenDimensions
+                + bitrate() + ", threads=" + threads + ", keyframeInterval=" + keyframeInterval() + ", periodicKeyframes="
+                + periodicKeyframes + ", " + resize.describe() + ", evenDimensions=" + evenDimensions
                 + ", filter=" + resize.filter() + ", crop=" + crop() + ", orientation=" + orientation
+                + ", sampleAspect=" + sampleAspect
                 + ", frameRate=" + frameRate() + ", maxFrameRate=" + maxFrameRate() + ", chromaFormat=" + chromaFormat()
                 + ", color=" + color() + ", background=0x" + Integer.toHexString(background) + "]";
     }
@@ -442,6 +498,14 @@ public final class VideoTranscodeOptions {
         private boolean bitrateSet;
 
         private int threads;
+        private int keyframeInterval;
+
+        /**
+         * Whether {@link #keyframeInterval} is set; {@code false} to let the encoder choose.
+         */
+        private boolean keyframeIntervalSet;
+
+        private boolean periodicKeyframes = true;
         private int width;
         private int height;
         private ScaleMode scaleMode = ScaleMode.FIT;
@@ -464,6 +528,7 @@ public final class VideoTranscodeOptions {
         private ResizeFilter filter = ResizeFilter.BILINEAR;
         private Region crop;
         private OrientationMode orientation = OrientationMode.AUTO;
+        private SampleAspectMode sampleAspect = SampleAspectMode.AUTO;
         private Rational frameRate;
         private Rational maxFrameRate;
         private ChromaFormat chromaFormat;
@@ -481,6 +546,9 @@ public final class VideoTranscodeOptions {
             this.bitrate = options.bitrate;
             this.bitrateSet = options.bitrate != 0;
             this.threads = options.threads;
+            this.keyframeInterval = options.keyframeInterval;
+            this.keyframeIntervalSet = options.keyframeInterval != 0;
+            this.periodicKeyframes = options.periodicKeyframes;
             var resize = options.resize;
             this.width = resize.width();
             this.height = resize.height();
@@ -494,6 +562,7 @@ public final class VideoTranscodeOptions {
             this.filter = resize.filter();
             this.crop = resize.crop();
             this.orientation = options.orientation;
+            this.sampleAspect = options.sampleAspect;
             this.frameRate = options.frameRate;
             this.maxFrameRate = options.maxFrameRate;
             this.chromaFormat = options.chromaFormat;
@@ -585,6 +654,44 @@ public final class VideoTranscodeOptions {
          */
         public Builder threads(int threads) {
             this.threads = threads;
+            return this;
+        }
+
+        /**
+         * Sets the most frames from one key frame to the next, turning periodic key frames on; see
+         * {@link VideoTranscodeOptions#keyframeInterval()}.
+         *
+         * @param frames the distance in frames
+         * @return this builder
+         */
+        public Builder keyframeInterval(int frames) {
+            this.keyframeInterval = frames;
+            this.keyframeIntervalSet = true;
+            this.periodicKeyframes = true;
+            return this;
+        }
+
+        /**
+         * Codes key frames only at the first frame and at scene cuts; see
+         * {@link VideoTranscodeOptions#periodicKeyframes()}.
+         *
+         * @return this builder
+         */
+        public Builder noPeriodicKeyframes() {
+            this.keyframeIntervalSet = false;
+            this.periodicKeyframes = false;
+            return this;
+        }
+
+        /**
+         * Lets the encoder choose the key frame distance; see
+         * {@link VideoTranscodeOptions#keyframeInterval()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticKeyframeInterval() {
+            this.keyframeIntervalSet = false;
+            this.periodicKeyframes = true;
             return this;
         }
 
@@ -730,6 +837,17 @@ public final class VideoTranscodeOptions {
         }
 
         /**
+         * Sets the handling of non-square samples; see {@link VideoTranscodeOptions#sampleAspect()}.
+         *
+         * @param sampleAspect the value
+         * @return this builder
+         */
+        public Builder sampleAspect(SampleAspectMode sampleAspect) {
+            this.sampleAspect = Objects.requireNonNull(sampleAspect, "sampleAspect");
+            return this;
+        }
+
+        /**
          * Sets the constant output frame rate; see {@link VideoTranscodeOptions#frameRate()}.
          *
          * @param frameRate the value
@@ -831,7 +949,8 @@ public final class VideoTranscodeOptions {
          *
          * @return the options
          * @throws IllegalArgumentException if the track identifier, the thread count or a box dimension
-         * is negative, the codec is not a video codec, or the bitrate or an edge limit is not positive
+         * is negative, the codec is not a video codec, or the bitrate, the key frame interval or an edge
+         * limit is not positive
          */
         public VideoTranscodeOptions build() {
             if (codec != null && codec.kind() != TrackKind.VIDEO) {
@@ -843,6 +962,7 @@ public final class VideoTranscodeOptions {
             return new VideoTranscodeOptions(this,
                     byId ? Checks.nonNegative("track identifier", trackId) : -1,
                     bitrateSet ? Checks.positive("bitrate", bitrate) : 0,
+                    keyframeIntervalSet ? Checks.positive("key frame interval", keyframeInterval) : 0,
                     resize);
         }
     }

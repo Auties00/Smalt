@@ -63,6 +63,8 @@ public final class H264StreamInfo {
 
     private final boolean transformBypass;
 
+    private final boolean separateColorPlanes;
+
     private final boolean frameMbsOnly;
 
     private final boolean mbAdaptiveFrameField;
@@ -74,6 +76,8 @@ public final class H264StreamInfo {
     private final Rational frameRate;
 
     private final ColorInfo color;
+
+    private final Rational sampleAspectRatio;
 
     /**
      * Constructs the description of a parsed sequence parameter set.
@@ -89,15 +93,16 @@ public final class H264StreamInfo {
         this.codedHeight = sps.codedHeight();
         this.width = sps.croppedWidth();
         this.height = sps.croppedHeight();
-        this.chromaFormat = switch (sps.chromaArrayType()) {
+        this.chromaFormat = switch (sps.chromaFormatIdc) {
             case 0 -> ChromaFormat.MONOCHROME;
             case 2 -> ChromaFormat.YUV422;
             case 3 -> ChromaFormat.YUV444;
             default -> ChromaFormat.YUV420;
         };
         this.bitDepthLuma = sps.bitDepthLuma;
-        this.bitDepthChroma = sps.bitDepthChroma;
+        this.bitDepthChroma = sps.separateColorPlane ? sps.bitDepthLuma : sps.bitDepthChroma;
         this.transformBypass = sps.transformBypass;
+        this.separateColorPlanes = sps.separateColorPlane;
         this.frameMbsOnly = sps.frameMbsOnly;
         this.mbAdaptiveFrameField = sps.mbAdaptiveFrameField;
         this.maxNumRefFrames = sps.maxNumRefFrames;
@@ -106,6 +111,9 @@ public final class H264StreamInfo {
                 ? new Rational(sps.timeScale, 2 * sps.numUnitsInTick).reduce()
                 : null;
         this.color = Objects.requireNonNull(sps.colorInfo(), "color");
+        this.sampleAspectRatio = sps.sarWidth > 0 && sps.sarHeight > 0
+                ? new Rational(sps.sarWidth, sps.sarHeight).reduce()
+                : null;
     }
 
     /**
@@ -310,10 +318,19 @@ public final class H264StreamInfo {
     }
 
     /**
-     * {@return the chroma sample bit depth}
+     * {@return the chroma sample bit depth: the luma bit depth when the color planes are coded
+     * separately, each like luma (see {@link #separateColorPlanes()})}
      */
     public int bitDepthChroma() {
         return bitDepthChroma;
+    }
+
+    /**
+     * {@return the {@code separate_colour_plane_flag}: {@code true} when the three color planes of a
+     * 4:4:4 stream are coded separately, each as a monochrome picture of its own}
+     */
+    public boolean separateColorPlanes() {
+        return separateColorPlanes;
     }
 
     /**
@@ -362,6 +379,15 @@ public final class H264StreamInfo {
     }
 
     /**
+     * {@return the sample aspect ratio the VUI signals (the width of a sample divided by its
+     * height, in lowest terms, from {@code aspect_ratio_idc} or {@code Extended_SAR}), or empty when
+     * the VUI leaves it unspecified}
+     */
+    public Optional<Rational> sampleAspectRatio() {
+        return Optional.ofNullable(sampleAspectRatio);
+    }
+
+    /**
      * {@return the color description, with the defaults documented on {@link H264Decoder}}
      */
     public ColorInfo color() {
@@ -371,20 +397,18 @@ public final class H264StreamInfo {
     /**
      * Returns whether {@link H264Decoder} decodes streams with this configuration.
      *
-     * <p>The decoder supports 8-bit 4:2:0 and 4:0:0 progressive streams without the lossless
-     * transform bypass. Streams whose {@code frame_mbs_only_flag} is 0 are reported as unsupported
-     * because they may contain field pictures or MBAFF frames, which the decoder rejects; such
-     * streams made of frame pictures only still decode. Extended profile streams (88) are reported
-     * as supported only when {@code constraint_set0_flag} or {@code constraint_set1_flag} says they
-     * also conform to the Baseline or Main profile, since otherwise they may use slice data
-     * partitioning or SP and SI slices.
+     * <p>The decoder supports 4:2:0, 4:2:2, 4:4:4 (with the color planes coded together or
+     * separately) and 4:0:0 streams of every bit depth from 8 to 14, progressive or interlaced
+     * (field pictures and MBAFF frames), with or without the lossless transform bypass.
+     * Extended profile streams (88) are reported as supported only when
+     * {@code constraint_set0_flag} or {@code constraint_set1_flag} says they also conform to the
+     * Baseline or Main profile, since otherwise they may use slice data partitioning or SP and SI
+     * slices.
      *
      * @return {@code true} when the decoder supports every picture this configuration allows
      */
     public boolean decoderSupported() {
-        return bitDepthLuma == 8 && bitDepthChroma == 8 && frameMbsOnly && !transformBypass
-                && (chromaFormat == ChromaFormat.YUV420 || chromaFormat == ChromaFormat.MONOCHROME)
-                && (profileIdc != 88 || (constraintFlags & (CONSTRAINT_SET0 | CONSTRAINT_SET1)) != 0);
+        return profileIdc != 88 || (constraintFlags & (CONSTRAINT_SET0 | CONSTRAINT_SET1)) != 0;
     }
 
     @Override
@@ -394,16 +418,17 @@ public final class H264StreamInfo {
                 && codedWidth == that.codedWidth && codedHeight == that.codedHeight && width == that.width
                 && height == that.height && chromaFormat == that.chromaFormat && bitDepthLuma == that.bitDepthLuma
                 && bitDepthChroma == that.bitDepthChroma && transformBypass == that.transformBypass
-                && frameMbsOnly == that.frameMbsOnly && mbAdaptiveFrameField == that.mbAdaptiveFrameField
+                && separateColorPlanes == that.separateColorPlanes && frameMbsOnly == that.frameMbsOnly && mbAdaptiveFrameField == that.mbAdaptiveFrameField
                 && maxNumRefFrames == that.maxNumRefFrames && nalLengthSize == that.nalLengthSize
-                && Objects.equals(frameRate, that.frameRate) && color.equals(that.color);
+                && Objects.equals(frameRate, that.frameRate) && color.equals(that.color)
+                && Objects.equals(sampleAspectRatio, that.sampleAspectRatio);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(profileIdc, constraintFlags, levelIdc, codedWidth, codedHeight, width, height, chromaFormat,
-                bitDepthLuma, bitDepthChroma, transformBypass, frameMbsOnly, mbAdaptiveFrameField, maxNumRefFrames,
-                nalLengthSize, frameRate, color);
+                bitDepthLuma, bitDepthChroma, transformBypass, separateColorPlanes, frameMbsOnly, mbAdaptiveFrameField,
+                maxNumRefFrames, nalLengthSize, frameRate, color, sampleAspectRatio);
     }
 
     @Override
@@ -411,8 +436,10 @@ public final class H264StreamInfo {
         return "H264StreamInfo[profileIdc=" + profileIdc + ", constraintFlags=" + constraintFlags + ", levelIdc="
                 + levelIdc + ", coded=" + codedWidth + "x" + codedHeight + ", size=" + width + "x" + height
                 + ", chromaFormat=" + chromaFormat + ", bitDepth=" + bitDepthLuma + "/" + bitDepthChroma
-                + ", transformBypass=" + transformBypass + ", frameMbsOnly=" + frameMbsOnly
+                + ", transformBypass=" + transformBypass + ", separateColorPlanes=" + separateColorPlanes
+                + ", frameMbsOnly=" + frameMbsOnly
                 + ", mbAdaptiveFrameField=" + mbAdaptiveFrameField + ", maxNumRefFrames=" + maxNumRefFrames
-                + ", nalLengthSize=" + nalLengthSize + ", frameRate=" + frameRate + ", color=" + color + "]";
+                + ", nalLengthSize=" + nalLengthSize + ", frameRate=" + frameRate + ", color=" + color
+                + ", sampleAspectRatio=" + sampleAspectRatio + "]";
     }
 }

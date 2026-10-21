@@ -18,15 +18,15 @@ import java.util.Objects;
  * <p>ImageIO creates writers without telling them which format name was asked for, so each format
  * has its own provider: {@link WebpImageWriterSpi}, {@link AvifImageWriterSpi},
  * {@link HeicImageWriterSpi}, {@link IcoImageWriterSpi} and {@link Jp2ImageWriterSpi}, plus {@link ApngImageWriterSpi},
- * {@link GifImageWriterSpi} and {@link TiffImageWriterSpi}, which write formats the JDK also
- * writes under names of their own. Each deregisters itself when
+ * {@link GifImageWriterSpi}, {@link TiffImageWriterSpi} and {@link BmpImageWriterSpi}, which write formats the JDK
+ * also writes under names of their own. Each deregisters itself when
  * no codec artifact present at run time encodes its format
  * ({@link Images#isEncodable(ImageFormat)}), so the AVIF and HEIC writers appear as soon as an
  * artifact that encodes those formats is added.
  */
 public abstract sealed class SmaltImageWriterSpi extends ImageWriterSpi
         permits WebpImageWriterSpi, AvifImageWriterSpi, HeicImageWriterSpi, ApngImageWriterSpi, GifImageWriterSpi,
-        IcoImageWriterSpi, Jp2ImageWriterSpi, TiffImageWriterSpi {
+        IcoImageWriterSpi, Jp2ImageWriterSpi, TiffImageWriterSpi, BmpImageWriterSpi {
     /**
      * The format written.
      */

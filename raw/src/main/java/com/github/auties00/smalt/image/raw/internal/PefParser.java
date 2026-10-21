@@ -106,7 +106,7 @@ final class PefParser {
             sensor.reader = (plane, limits) -> {
                 var row = new byte[width * 2];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(offset + (long) y * row.length, row, 0, row.length);
+                    var read = reader.readAvailable(offset + (long) y * row.length, row, 0, row.length);
                     if (read <= 0) {
                         return;
                     }
@@ -126,7 +126,7 @@ final class PefParser {
                 LimitChecks.checkAllocation(limits, stride);
                 var row = new byte[stride];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(offset + (long) y * stride, row, 0, stride);
+                    var read = reader.readAvailable(offset + (long) y * stride, row, 0, stride);
                     if (read <= 0) {
                         return;
                     }

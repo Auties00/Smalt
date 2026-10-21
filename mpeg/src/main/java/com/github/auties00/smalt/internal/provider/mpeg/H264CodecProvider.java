@@ -20,15 +20,18 @@ import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
  * to {@link VideoEncoders}.
  *
  * @implNote This implementation decodes up to {@link VideoDecoderOptions#threads()} pictures at
- *           once when the thread count is above one, and one picture at a time otherwise; H.264
- *           has no high bit depth output, so {@link VideoDecoderOptions#highBitDepth()} changes
- *           nothing. It maps the codec-independent encoder options as follows:
+ *           once when the thread count is above one, and one picture at a time otherwise, and
+ *           passes {@link VideoDecoderOptions#highBitDepth()} on. It maps the codec-independent
+ *           encoder options as follows:
  *           <ul>
  *             <li>real-time: {@link H264EncoderOptions#forRealtime()} with the frame rate and
  *                 bitrate;</li>
  *             <li>otherwise: {@link H264EncoderOptions#forFile()} with the frame rate and
  *                 bitrate, an IDR picture every two seconds of the frame rate, and the time base
  *                 {@code 1/frameRate}, so a frame's timestamp is its index;</li>
+ *             <li>a key frame interval: {@link H264EncoderOptions.Builder#keyframeInterval(int)}, and
+ *                 no periodic key frames: {@link H264EncoderOptions.Builder#noPeriodicKeyframes()},
+ *                 in place of the preset's;</li>
  *             <li>a thread count above one: {@link H264EncoderOptions.Builder#threads(int)} capped at
  *                 64; {@code 0} and {@code 1} keep the single thread of the presets.</li>
  *           </ul>
@@ -55,6 +58,7 @@ public final class H264CodecProvider implements VideoCodecProvider {
         return new H264Decoder(track, H264DecoderOptions.builder()
                 .limits(options.limits())
                 .threads(options.threads())
+                .highBitDepth(options.highBitDepth())
                 .build());
     }
 
@@ -73,6 +77,11 @@ public final class H264CodecProvider implements VideoCodecProvider {
                         .keyframeInterval((int) Math.max(1,
                                 Math.min(Integer.MAX_VALUE, Math.round(2 * frameRate.toDouble()))));
         builder.frameRate(frameRate).bitrate(options.bitrate());
+        if (!options.periodicKeyframes()) {
+            builder.noPeriodicKeyframes();
+        } else {
+            options.keyframeInterval().ifPresent(builder::keyframeInterval);
+        }
         if (options.threads() > 1) {
             builder.threads(Math.min(MAX_ENCODER_THREADS, options.threads()));
         }

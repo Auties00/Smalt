@@ -6,3 +6,4 @@ com.github.auties00.smalt.desktop.imageio.GifImageWriterSpi
 com.github.auties00.smalt.desktop.imageio.IcoImageWriterSpi
 com.github.auties00.smalt.desktop.imageio.Jp2ImageWriterSpi
 com.github.auties00.smalt.desktop.imageio.TiffImageWriterSpi
+com.github.auties00.smalt.desktop.imageio.BmpImageWriterSpi

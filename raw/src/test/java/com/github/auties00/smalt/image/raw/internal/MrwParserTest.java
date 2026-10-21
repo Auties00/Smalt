@@ -7,8 +7,10 @@ import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
@@ -36,6 +38,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the maker note points to and letterboxes the image.
  */
 class MrwParserTest {
+    /** The fuzz test class whose seeds the synthetic files feed. */
+    private static final String FUZZ_TARGET = "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest";
+
     // a synthetic MRW file: the header blocks, then the sensor data
     private static final class Mrw {
         int sensorWidth = 16;
@@ -314,5 +319,13 @@ class MrwParserTest {
             assertEquals(640, hinted.width());
             assertEquals(425, hinted.height());
         }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
+            disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
+    @DisplayName("writes the seeds of the MRW fuzz target")
+    void fuzzSeeds() {
+        FuzzSeeds.write(FUZZ_TARGET, "mrw", "valid-synthetic.mrw", new Mrw().samples(1).write());
     }
 }

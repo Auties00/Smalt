@@ -50,8 +50,10 @@ import java.util.function.Consumer;
  * other than the base layer are ignored.
  *
  * <p>Frames reach the consumer in output order as {@link YuvPicture}s cropped by the sequence's
- * conformance window, in the stream's chroma format: {@link ChromaFormat#YUV420},
- * {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV444} or {@link ChromaFormat#MONOCHROME}.
+ * conformance window (and by the VUI's default display window inside it when
+ * {@link HevcDecoderOptions#defaultDisplayWindow()} is set), in the stream's chroma format:
+ * {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV444} or
+ * {@link ChromaFormat#MONOCHROME}.
  * Samples of streams deeper than 8 bits (up to 16 bits, the range extension profiles) are rounded
  * to 8 bits, {@code min((v + (1 << (d - 9))) >> (d - 8), 255)} for bit depth {@code d}, unless
  * {@link HevcDecoderOptions#highBitDepth()} is set, in which case they are handed out as
@@ -317,8 +319,17 @@ public final class HevcDecoder implements VideoDecoder {
      */
     private void emit(HevcFrame frame) {
         var sps = frame.sps;
+        var left = sps.cropLeft;
+        var top = sps.cropTop;
         var width = sps.width - sps.cropLeft - sps.cropRight;
         var height = sps.height - sps.cropTop - sps.cropBottom;
+        if (options.defaultDisplayWindow() && sps.displayLeft + sps.displayRight < width
+                && sps.displayTop + sps.displayBottom < height) {
+            left += sps.displayLeft;
+            top += sps.displayTop;
+            width -= sps.displayLeft + sps.displayRight;
+            height -= sps.displayTop + sps.displayBottom;
+        }
         var format = switch (sps.chromaFormatIdc) {
             case 0 -> ChromaFormat.MONOCHROME;
             case 2 -> ChromaFormat.YUV422;
@@ -328,7 +339,7 @@ public final class HevcDecoder implements VideoDecoder {
         var color = frame.color;
         var depth = sps.pictureBitDepth();
         Picture result;
-        var uncropped = sps.cropLeft == 0 && sps.cropTop == 0;
+        var uncropped = left == 0 && top == 0;
         if (uncropped && frame.eightBit()) {
             var builder = YuvPicture.builder().size(width, height).chromaFormat(format).color(color)
                     .luma(frame.y8, frame.width);
@@ -350,7 +361,7 @@ public final class HevcDecoder implements VideoDecoder {
                 target = Yuv16Picture.allocate(width, height, format, depth, false, color);
                 widePicture = target;
             }
-            copyWide(frame, sps, target, width, height);
+            copyWide(frame, sps, target, left, top, width, height);
             result = target;
         } else {
             var target = picture;
@@ -359,7 +370,7 @@ public final class HevcDecoder implements VideoDecoder {
                 target = YuvPicture.allocate(width, height, format, false, color);
                 picture = target;
             }
-            copyNarrow(frame, sps, target, width, height);
+            copyNarrow(frame, sps, target, left, top, width, height);
             result = target;
         }
         var duration = frame.duration > 0 ? frame.duration : frameDuration(sps);
@@ -380,15 +391,18 @@ public final class HevcDecoder implements VideoDecoder {
      * @param frame the decoded picture
      * @param sps its sequence parameter set
      * @param target the output picture
+     * @param left the first kept column, in luma samples, a multiple of the chroma subsampling
+     * @param top the first kept row, in luma samples, a multiple of the chroma subsampling
      * @param width the cropped width
      * @param height the cropped height
      */
-    private static void copyNarrow(HevcFrame frame, HevcSps sps, YuvPicture target, int width, int height) {
+    private static void copyNarrow(HevcFrame frame, HevcSps sps, YuvPicture target, int left, int top, int width,
+                                   int height) {
         if (frame.eightBit()) {
-            Planes.copy(frame.y8, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), 0,
+            Planes.copy(frame.y8, top * frame.width + left, frame.width, target.y(), 0,
                     target.yStride(), width, height);
             if (frame.cb8 != null) {
-                var offset = (sps.cropTop >> sps.chromaShiftY) * frame.chromaWidth + (sps.cropLeft >> sps.chromaShiftX);
+                var offset = (top >> sps.chromaShiftY) * frame.chromaWidth + (left >> sps.chromaShiftX);
                 var cw = target.chromaWidth();
                 var ch = target.chromaHeight();
                 Planes.copy(frame.cb8, offset, frame.chromaWidth, target.u(), 0, target.uvStride(), cw, ch);
@@ -397,14 +411,14 @@ public final class HevcDecoder implements VideoDecoder {
             return;
         }
         var narrow = Narrow.select();
-        narrow.narrow(frame.y, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), 0, target.yStride(), width,
+        narrow.narrow(frame.y, top * frame.width + left, frame.width, target.y(), 0, target.yStride(), width,
                 height, sps.bitDepthLuma - 8);
         if (frame.cb != null) {
             var sx = sps.chromaShiftX;
             var sy = sps.chromaShiftY;
             var cw = target.chromaWidth();
             var ch = target.chromaHeight();
-            var offset = (sps.cropTop >> sy) * frame.chromaWidth + (sps.cropLeft >> sx);
+            var offset = (top >> sy) * frame.chromaWidth + (left >> sx);
             narrow.narrow(frame.cb, offset, frame.chromaWidth, target.u(), 0, target.uvStride(), cw, ch,
                     sps.bitDepthChroma - 8);
             narrow.narrow(frame.cr, offset, frame.chromaWidth, target.v(), 0, target.uvStride(), cw, ch,
@@ -419,15 +433,18 @@ public final class HevcDecoder implements VideoDecoder {
      * @param frame the decoded picture
      * @param sps its sequence parameter set
      * @param target the output picture
+     * @param left the first kept column, in luma samples, a multiple of the chroma subsampling
+     * @param top the first kept row, in luma samples, a multiple of the chroma subsampling
      * @param width the cropped width
      * @param height the cropped height
      */
-    private static void copyWide(HevcFrame frame, HevcSps sps, Yuv16Picture target, int width, int height) {
+    private static void copyWide(HevcFrame frame, HevcSps sps, Yuv16Picture target, int left, int top, int width,
+                                 int height) {
         var depth = target.bitDepth();
-        copyShifted(frame.y, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), target.yStride(),
+        copyShifted(frame.y, top * frame.width + left, frame.width, target.y(), target.yStride(),
                 width, height, depth - sps.bitDepthLuma);
         if (frame.cb != null) {
-            var offset = (sps.cropTop >> sps.chromaShiftY) * frame.chromaWidth + (sps.cropLeft >> sps.chromaShiftX);
+            var offset = (top >> sps.chromaShiftY) * frame.chromaWidth + (left >> sps.chromaShiftX);
             var cw = target.chromaWidth();
             var ch = target.chromaHeight();
             var shift = depth - sps.bitDepthChroma;

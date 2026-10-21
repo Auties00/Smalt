@@ -61,6 +61,11 @@ final class EncodePulses {
     private final int[] shell4 = new int[1];
 
     /**
+     * The two-symbol inverse CDF of one sign.
+     */
+    private final short[] signIcdf = new short[2];
+
+    /**
      * Creates the encoder scratch.
      */
     EncodePulses() {
@@ -197,6 +202,6 @@ final class EncodePulses {
             }
         }
 
-        CodeSigns.encodeSigns(psRangeEnc, pulses, 0, frame_length, signalType, quantOffsetType, sum_pulses);
+        CodeSigns.encodeSigns(psRangeEnc, pulses, 0, frame_length, signalType, quantOffsetType, sum_pulses, signIcdf);
     }
 }

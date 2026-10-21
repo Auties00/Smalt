@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 
 import java.util.Map;
@@ -81,24 +82,30 @@ public final class VideoStreamInfo implements StreamInfo {
     private final ChromaFormat chromaFormat;
 
     /**
+     * The scan, or {@code null}.
+     */
+    private final Interlacing interlacing;
+
+    /**
      * Constructs a description.
      *
-     * @param fields            the shared fields
-     * @param codec             the codec of the stream
-     * @param profile           the profile name, or {@code null}
-     * @param level             the level code, or {@code -1}
-     * @param width             the stored width
-     * @param height            the stored height
-     * @param orientation       the display orientation
-     * @param frameRate         the frame rate, or {@code null}
+     * @param fields the shared fields
+     * @param codec the codec of the stream
+     * @param profile the profile name, or {@code null}
+     * @param level the level code, or {@code -1}
+     * @param width the stored width
+     * @param height the stored height
+     * @param orientation the display orientation
+     * @param frameRate the frame rate, or {@code null}
      * @param sampleAspectRatio the sample aspect ratio, or {@code null}
-     * @param color             the color description, or {@code null}
-     * @param bitDepth          the luma bit depth, or {@code 0}
-     * @param chromaFormat      the chroma subsampling, or {@code null}
+     * @param color the color description, or {@code null}
+     * @param bitDepth the luma bit depth, or {@code 0}
+     * @param chromaFormat the chroma subsampling, or {@code null}
+     * @param interlacing the scan, or {@code null}
      */
     VideoStreamInfo(StreamFields fields, Codec codec, String profile, int level, int width, int height,
                     Orientation orientation, Rational frameRate, Rational sampleAspectRatio, ColorInfo color, int bitDepth,
-                    ChromaFormat chromaFormat) {
+                    ChromaFormat chromaFormat, Interlacing interlacing) {
         this.fields = fields;
         this.codec = codec;
         this.profile = profile;
@@ -111,6 +118,7 @@ public final class VideoStreamInfo implements StreamInfo {
         this.color = color;
         this.bitDepth = bitDepth;
         this.chromaFormat = chromaFormat;
+        this.interlacing = interlacing;
     }
 
     @Override
@@ -250,9 +258,11 @@ public final class VideoStreamInfo implements StreamInfo {
     }
 
     /**
-     * Returns the shape of the stored pixels.
+     * Returns the shape of the stored pixels: the ratio the container declares, else the one the
+     * codec configuration record signals.
      *
-     * @return the width of a pixel relative to its height, or empty when square or undeclared
+     * @return the width of a pixel relative to its height in lowest terms, {@code 1/1} for declared
+     * square pixels, or empty when neither the container nor the configuration record declares one
      */
     public Optional<Rational> sampleAspectRatio() {
         return Optional.ofNullable(sampleAspectRatio);
@@ -287,12 +297,23 @@ public final class VideoStreamInfo implements StreamInfo {
         return Optional.ofNullable(chromaFormat);
     }
 
+    /**
+     * Returns the scan of the frames the container declares.
+     *
+     * @return the scan, or empty when the container does not declare whether the frames are
+     * interlaced
+     */
+    public Optional<Interlacing> interlacing() {
+        return Optional.ofNullable(interlacing);
+    }
+
     @Override
     public String toString() {
         return "VideoStreamInfo[" + fields.describe() + ", codec=" + codec + (profile != null ? ", profile=" + profile : "")
                 + (level >= 0 ? ", level=" + level : "") + ", size=" + width + "x" + height + ", orientation=" + orientation
                 + (frameRate != null ? ", frameRate=" + frameRate : "")
                 + (sampleAspectRatio != null ? ", sampleAspectRatio=" + sampleAspectRatio : "")
+                + (interlacing != null ? ", interlacing=" + interlacing : "")
                 + (bitDepth > 0 ? ", bitDepth=" + bitDepth : "") + (chromaFormat != null ? ", chroma=" + chromaFormat : "")
                 + (color != null ? ", color=" + color : "") + "]";
     }

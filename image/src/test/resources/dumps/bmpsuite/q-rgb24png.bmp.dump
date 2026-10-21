@@ -1,0 +1,13 @@
+# image dump of bmpsuite/q-rgb24png.bmp; regenerate with -Dsmalt.test.updateDumps=true
+format BMP
+info ImageInfo[format=BMP, width=127, height=64, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 127x64 rgba8 alpha=false crc=dc14976d
+  format=BMP orientation=NORMAL source=127x64
+  icc=none exif=none xmp=none
+  profile=none
+scaled 31x16
+picture 127x64 rgba8 alpha=false crc=dc14976d
+  format=BMP orientation=NORMAL source=127x64
+  icc=none exif=none xmp=none
+  profile=none

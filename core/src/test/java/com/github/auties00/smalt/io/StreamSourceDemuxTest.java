@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.io;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.Packet;
@@ -55,18 +56,20 @@ class StreamSourceDemuxTest {
      * under, or {@code 0} for a layout that must keep its media data until its index is read.
      */
     static Stream<Arguments> containers() {
-        var x264 = List.of("-c:v", "libx264", "-preset", "ultrafast", "-b:v", "1500k", "-g", "25", "-bf", "2");
-        var vp8 = List.of("-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "1500k", "-g", "25");
+        // The video fixtures stay well above twice their budget whatever encoder version made them, since rate
+        // control may undershoot.
+        var x264 = List.of("-c:v", "libx264", "-preset", "ultrafast", "-b:v", "2000k", "-g", "25", "-bf", "2");
+        var vp8 = List.of("-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", "2000k", "-g", "25");
         return Stream.of(
-                Arguments.of("mp4 fast start", concat(x264, "-c:a", "aac", "-movflags", "+faststart"), "mp4", 20.0, 1536),
+                Arguments.of("mp4 fast start", concat(x264, "-c:a", "aac", "-movflags", "+faststart"), "mp4", 30.0, 1536),
                 Arguments.of("mp4 moov after mdat", concat(x264, "-c:a", "aac"), "mp4", 6.0, 0),
                 Arguments.of("fragmented mp4", concat(x264, "-c:a", "aac", "-movflags",
-                        "frag_keyframe+empty_moov+default_base_moof"), "mp4", 20.0, 1536),
-                Arguments.of("mkv h264 + opus", concat(x264, "-c:a", "libopus"), "mkv", 20.0, 1536),
-                Arguments.of("webm vp8 + vorbis", concat(vp8, "-c:a", "libvorbis"), "webm", 20.0, 1536),
+                        "frag_keyframe+empty_moov+default_base_moof"), "mp4", 30.0, 1536),
+                Arguments.of("mkv h264 + opus", concat(x264, "-c:a", "libopus"), "mkv", 30.0, 1536),
+                Arguments.of("webm vp8 + vorbis", concat(vp8, "-c:a", "libvorbis"), "webm", 30.0, 1536),
                 Arguments.of("ivf vp8", concat(vp8, "-an"), "ivf", 20.0, 1024),
                 Arguments.of("avi h264 + mp3", concat(x264, "-c:a", "libmp3lame"), "avi", 20.0, 0),
-                Arguments.of("ts h264 + aac", concat(x264, "-c:a", "aac"), "ts", 20.0, 1536),
+                Arguments.of("ts h264 + aac", concat(x264, "-c:a", "aac"), "ts", 30.0, 1536),
                 Arguments.of("mp3", List.of("-c:a", "libmp3lame", "-b:a", "320k"), "mp3", 60.0, 512),
                 Arguments.of("adts aac", List.of("-c:a", "aac", "-b:a", "320k", "-f", "adts"), "aac", 60.0, 512),
                 Arguments.of("ogg vorbis", List.of("-c:a", "libvorbis", "-q:a", "8"), "ogg", 60.0, 512),
@@ -147,7 +150,7 @@ class StreamSourceDemuxTest {
     @MethodSource("containers")
     @DisplayName("memory-only stream source far smaller than the file: same packets for formats read front to back")
     void bounded(String name, List<String> options, String extension, double seconds, int boundKiB) throws IOException {
-        org.junit.jupiter.api.Assumptions.assumeTrue(boundKiB > 0, "the layout keeps its media data until the index");
+        Skip.unless(boundKiB > 0, "input:layout", "the layout keeps its media data until the index");
         var data = Files.readAllBytes(fixture(extension, options, seconds));
         assertTrue(data.length > 2L * boundKiB * 1024, "fixture of " + data.length + " bytes is too small");
         var expected = packets(MediaSource.of(data));

@@ -213,7 +213,11 @@ public final class ImageTranscodeOptions {
      * default}
      *
      * <p>A lossy encoding steps its quality down, then the picture is scaled down by a quarter at a
-     * time, until the output fits.
+     * time, until the output fits. An animated output steps the same way with every frame kept;
+     * when even its smallest size does not fit, the steps are repeated keeping every second frame,
+     * then every fourth and so on, each kept frame shown for the time of the frames it replaces, so
+     * the animation keeps its duration. A budget no encoding fits fails the transcode with a
+     * {@link com.github.auties00.smalt.MediaException.LimitExceeded}.
      */
     public OptionalLong maxBytes() {
         return maxBytes == 0 ? OptionalLong.empty() : OptionalLong.of(maxBytes);

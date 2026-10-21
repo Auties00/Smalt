@@ -10,7 +10,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.util.Map;
@@ -29,11 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * output is the reference, and the criterion is that of ISO/IEC 14496-26 for 16-bit output: an
  * RMS difference of at most {@code 2^-15 / sqrt(12)} and a peak difference of at most
  * {@code 2^-14} of full scale. Streams whose signaling is implicit are decoded with a track that
- * declares no rate, so the decoder detects the extension on the first packet as ffmpeg does.
- * Three parametric stereo streams use tools beyond the baseline decoder (mixing procedure B, the
- * phase parameters, 34 bands), which ffmpeg decodes and this decoder maps onto the baseline; they
- * are held to a loose bound instead. The 960-sample streams, which ffmpeg decodes without their
- * extension, are compared with this decoder's own Low Complexity core below the crossover.
+ * declares no rate, so the decoder detects the extension on the first packet as ffmpeg does. The
+ * parametric stereo streams cover every tool of the full decoder: mixing procedure B
+ * ({@code al_sbr_ps_03}), the phase parameters ({@code al_sbr_ps_04}) and the 34-band
+ * configuration with switches between band layouts ({@code al_sbr_ps_06}). The 960-sample
+ * streams, which ffmpeg decodes without their extension, are compared with this decoder's own Low
+ * Complexity core below the crossover.
  */
 class HeAacConformanceTest {
     private static final Map<String, String> VECTORS = Map.ofEntries(
@@ -123,7 +123,8 @@ class HeAacConformanceTest {
                 "al_sbr_gh_32_1, 32000, 2", "al_sbr_gh_44_2, 44100, 2", "al_sbr_gh_48_2, 48000, 2",
                 "al_sbr_i_32_2, 32000, 2", "al_sbr_i_44_1, 44100, 2", "al_sbr_i_48_1, 48000, 2",
                 "al_sbr_i_48_2, 48000, 2", "al_sbr_ps_00, 32000, 2", "al_sbr_ps_01, 32000, 2",
-                "al_sbr_ps_02, 32000, 2", "al_sbr_ps_05, 32000, 2", "al_sbr_qmf_32_1, 32000, 2",
+                "al_sbr_ps_02, 32000, 2", "al_sbr_ps_03, 32000, 2", "al_sbr_ps_04, 32000, 2",
+                "al_sbr_ps_05, 32000, 2", "al_sbr_ps_06, 32000, 2", "al_sbr_qmf_32_1, 32000, 2",
                 "al_sbr_qmf_44_1, 44100, 2", "al_sbr_qmf_48_1, 48000, 2", "al_sbr_s_32_2, 32000, 2",
                 "al_sbr_s_44_1, 44100, 2", "al_sbr_s_48_1, 48000, 2", "al_sbr_s_48_2, 48000, 2",
                 "al_sbr_sig_24_2_fsaac24_sig1, 24000, 2", "al_sbr_sig_48_2_sig0, 48000, 2",
@@ -157,29 +158,6 @@ class HeAacConformanceTest {
                 assertTrue(error[0] <= AacConformanceTest.RMS_LIMIT, name + " channel " + channel + ": RMS " + error[0]);
                 assertTrue(error[1] <= peakLimit, name + " channel " + channel + ": peak " + error[1]);
             }
-        }
-
-        @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"al_sbr_ps_03", "al_sbr_ps_04", "al_sbr_ps_06"})
-        @DisplayName("decodes parametric stereo beyond the baseline close to ffmpeg's full decoder")
-        void beyondBaseline(String name) {
-            var file = fetch(name);
-            var stream = AacTestSupport.parseMp4(Fixtures.read(file));
-            var decoded = AacTestSupport.decodeAll(new AacDecoder(detectingTrack(stream)), stream.frames());
-            assertEquals(32000, decoded.sampleRate());
-            assertEquals(2, decoded.planes().length);
-            Oracle.assume(Oracle.Tool.FFMPEG);
-            var reference = AacTestSupport.deinterleave(Oracle.decodeAudio(file), 2);
-            var mono = new float[1][reference[0].length];
-            var ours = new float[1][reference[0].length];
-            for (var i = 0; i < reference[0].length; i++) {
-                mono[0][i] = reference[0][i] + reference[1][i];
-                ours[0][i] = decoded.planes()[0][i] + decoded.planes()[1][i];
-            }
-            // the mixing procedures differ in how they spread the signal between the channels,
-            // not in what they spread
-            var snr = AacTestSupport.snr(mono, ours);
-            assertTrue(snr > 6, name + " downmix SNR " + snr);
         }
     }
 

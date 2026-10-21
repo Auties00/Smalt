@@ -5,8 +5,11 @@ import com.github.auties00.smalt.audio.process.AudioFifo;
 import com.github.auties00.smalt.audio.process.ChannelMixer;
 import com.github.auties00.smalt.audio.process.Resampler;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Rational;
 
 import java.util.ArrayDeque;
@@ -22,7 +25,16 @@ import java.util.Objects;
  * {@link #read(float[][], int, int)}. The decoder drops the leading samples the container marks
  * as encoder priming ({@link AudioTrack#skipSamples()}), drops the end padding a container marks
  * by shortening the declared duration of the track's last packet, stops after the track's
- * declared duration, mixes to the requested layout and resamples to the requested rate. Packets
+ * declared duration, mixes to the requested layout and resamples to the requested rate. A packet
+ * flagged {@link PacketFlag#DISCARD} is decoded and its output dropped; the
+ * {@link com.github.auties00.smalt.track.PacketSideData#discardStart() discard start} of a packet
+ * drops the start of its output, and a packet with a
+ * {@link com.github.auties00.smalt.track.PacketSideData#discardEnd() discard end} keeps no more
+ * output than its duration. A packet whose side data carries a
+ * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration}
+ * that differs from the one in use drains the codec and continues with a codec created from the
+ * new configuration; a change of sampling rate or channel layout is converted to the output's,
+ * which stays the one chosen at creation. Packets
  * are decoded one packet late, so the last one is known when it is decoded: the durations of
  * earlier packets can be rounded by a coarse container time base and never cut decoded audio. A
  * packet the codec rejects as corrupt is skipped, as players do; a run of
@@ -52,9 +64,30 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private final AudioTrack track;
 
     /**
-     * The codec decoder of {@link #track}.
+     * The codec decoder of {@link #track}, replaced when a packet changes the codec configuration.
      */
-    private final AudioDecoder decoder;
+    private AudioDecoder decoder;
+
+    /**
+     * The options the codec decoders are created with.
+     */
+    private final AudioDecoderOptions decoderOptions;
+
+    /**
+     * The codec configuration of {@link #decoder}, or {@code null} when it has none.
+     */
+    private byte[] config;
+
+    /**
+     * Whether the packet being decoded is decoded only so that later packets decode, its output
+     * dropped.
+     */
+    private boolean packetDiscarded;
+
+    /**
+     * The number of decoded samples to drop from the start of the packet being decoded.
+     */
+    private long packetSkip;
 
     /**
      * The sampling rate of the output.
@@ -256,11 +289,15 @@ public final class AudioStreamDecoder implements AutoCloseable {
      *
      * @param track   the track to decode
      * @param decoder the codec decoder of {@code track}, owned by this instance
+     * @param decoderOptions the options {@code decoder} was created with
      * @param options the output rate and layout
      */
-    private AudioStreamDecoder(AudioTrack track, AudioDecoder decoder, AudioStreamDecoderOptions options) {
+    private AudioStreamDecoder(AudioTrack track, AudioDecoder decoder, AudioDecoderOptions decoderOptions,
+                               AudioStreamDecoderOptions options) {
         this.track = track;
         this.decoder = decoder;
+        this.decoderOptions = decoderOptions;
+        this.config = track.codecConfig().orElse(null);
         this.outputRate = options.sampleRate().orElse(decoder.sampleRate());
         this.outputLayout = options.layout().orElse(decoder.layout());
         this.fifo = new AudioFifo(outputLayout.channels());
@@ -305,7 +342,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
         if (rate.isPresent()) {
             decoderOptions.preferredSampleRate(rate.getAsInt());
         }
-        return new AudioStreamDecoder(track, AudioDecoders.create(track, decoderOptions.build()), options);
+        var built = decoderOptions.build();
+        return new AudioStreamDecoder(track, AudioDecoders.create(track, built), built, options);
     }
 
     /**
@@ -664,6 +702,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
             decodeHeld(true);
         }
         packetLimit = Long.MAX_VALUE;
+        packetDiscarded = false;
+        packetSkip = 0;
         current = null;
         decoder.flush(this::accept);
         if (aligning) {
@@ -692,9 +732,19 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private void decodeHeld(boolean last) {
         var packet = pending;
         pending = null;
-        packetLimit = last && packet.duration() > 0
-                ? track.timeBase().rescale(packet.duration(), Rational.timeBaseOf(decoder.sampleRate()))
+        var newConfig = packet.sideData().newCodecConfig().orElse(null);
+        if (newConfig != null && !Arrays.equals(newConfig, config)) {
+            reconfigure(newConfig);
+        }
+        // TODO: fill a gap between the end of the previous packet and this one's timestamp (an MP4
+        // empty or dwell edit after the first media edit) with silence instead of joining the samples
+        var sideData = packet.sideData();
+        var codecRate = Rational.timeBaseOf(decoder.sampleRate());
+        packetLimit = (last && packet.duration() > 0) || (sideData.discardEnd() > 0 && packet.duration() >= 0)
+                ? track.timeBase().rescale(packet.duration(), codecRate)
                 : Long.MAX_VALUE;
+        packetDiscarded = packet.flags().contains(PacketFlag.DISCARD);
+        packetSkip = sideData.discardStart() > 0 ? track.timeBase().rescale(sideData.discardStart(), codecRate) : 0;
         packetProduced = 0;
         current = packet;
         currentProduced = false;
@@ -704,6 +754,49 @@ public final class AudioStreamDecoder implements AutoCloseable {
         } catch (MediaException.Malformed exception) {
             if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                 throw new MediaException.Malformed(consecutiveFailures + " consecutive corrupt audio packets", exception);
+            }
+        }
+    }
+
+    /**
+     * Drains the codec and replaces it with one created from a new codec configuration, keeping
+     * the remaining priming and duration counts in step with a change of sampling rate.
+     *
+     * @param newConfig the configuration of the packets from the one being decoded on
+     * @throws MediaException.Unsupported if the codec cannot be created for the configuration
+     * @throws MediaException.Malformed if the configuration is corrupt
+     */
+    private void reconfigure(byte[] newConfig) {
+        packetLimit = Long.MAX_VALUE;
+        packetDiscarded = false;
+        packetSkip = 0;
+        current = null;
+        decoder.flush(this::accept);
+        var builder = track.toBuilder().codecConfig(newConfig);
+        if (track.codec() == Codec.AAC) {
+            try {
+                var aac = AudioConfigs.parseAac(newConfig);
+                builder.sampleRate(aac.outputRate());
+                if (aac.layout() != null) {
+                    builder.layout(aac.layout());
+                } else if (aac.channels() > 0) {
+                    builder.layout(ChannelLayout.defaultFor(aac.channels()));
+                }
+            } catch (MediaException.Malformed ignored) {
+                // the codec rejects the configuration itself
+            }
+        }
+        var replacement = AudioDecoders.create(builder.build(), decoderOptions);
+        var oldRate = decoder.sampleRate();
+        decoder.close();
+        decoder = replacement;
+        config = newConfig;
+        var newRate = decoder.sampleRate();
+        if (newRate != oldRate) {
+            timestampsExact = false;
+            skipRemaining = Math.round((double) skipRemaining * newRate / oldRate);
+            if (keepRemaining != Long.MAX_VALUE) {
+                keepRemaining = Math.round((double) keepRemaining * newRate / oldRate);
             }
         }
     }
@@ -734,24 +827,39 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * Trims, mixes and resamples one decoded block into the queue, or holds a copy of it while
      * the output after a seek is not aligned yet.
      *
+     * <p>A block straight from the codec is first cut to the part of its packet's output that the
+     * packet presents: none for a discarded packet, then after the packet's discard start and up
+     * to the packet's declared duration where that limits it.
+     *
      * @param buffer  the decoded block, valid only during the call unless held
-     * @param decoded whether the block comes straight from the codec, so that the last packet's
-     *                declared duration applies to it
+     * @param decoded whether the block comes straight from the codec, so that its packet's
+     *                discards and declared duration apply to it
      */
     private void trim(AudioBuffer buffer, boolean decoded) {
         var offset = 0;
         var frames = buffer.frames();
-        if (decoded && packetLimit != Long.MAX_VALUE) {
-            var allowed = Math.max(0, packetLimit - packetProduced);
+        if (decoded) {
+            var before = packetProduced;
             packetProduced += frames;
-            if (frames > allowed) {
-                frames = (int) allowed;
+            if (packetLimit != Long.MAX_VALUE) {
+                frames = (int) Math.min(frames, Math.max(0, packetLimit - before));
+            }
+            if (packetDiscarded) {
+                return;
+            }
+            if (packetSkip > before) {
+                var skipped = (int) Math.min(frames, packetSkip - before);
+                offset = skipped;
+                frames -= skipped;
+            }
+            if (frames <= 0) {
+                return;
             }
         }
         if (aligning) {
             var copy = new AudioBuffer(buffer.layout(), buffer.sampleRate(), Math.max(1, frames));
             for (var channel = 0; channel < copy.channels(); channel++) {
-                System.arraycopy(buffer.plane(channel), 0, copy.plane(channel), 0, frames);
+                System.arraycopy(buffer.plane(channel), offset, copy.plane(channel), 0, frames);
             }
             copy.setFrames(frames);
             held.add(copy);
@@ -760,7 +868,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
         if (skipRemaining > 0) {
             var skipped = (int) Math.min(skipRemaining, frames);
             skipRemaining -= skipped;
-            offset = skipped;
+            offset += skipped;
             frames -= skipped;
         }
         if (frames > keepRemaining) {
@@ -921,6 +1029,12 @@ public final class AudioStreamDecoder implements AutoCloseable {
         private final boolean exact;
 
         /**
+         * Whether the codec's state never converges after a restart, so that every restart begins at
+         * the track's first packet.
+         */
+        private final boolean restartsAtStart;
+
+        /**
          * Constructs a timing.
          *
          * @param track the track the timing describes
@@ -936,6 +1050,31 @@ public final class AudioStreamDecoder implements AutoCloseable {
             this.origin = origin;
             this.originRate = originRate;
             this.exact = exact;
+            this.restartsAtStart = predictsFromStart(track);
+        }
+
+        /**
+         * Returns whether a track's codec keeps a prediction state that a restart never reproduces:
+         * AAC Main (backward-adaptive prediction), AAC LTP, ER AAC LTP and AAC-LD (long term prediction), and
+         * AAC-ELD with low delay spectral band replication, whose SBR state no pre-roll of a few frames
+         * reproduces.
+         *
+         * @param track the track to restart, whose codec configuration names the AAC object type
+         * @return {@code true} when every restart must begin at the track's first packet
+         */
+        private static boolean predictsFromStart(AudioTrack track) {
+            var config = track.codecConfig();
+            if (track.codec() != Codec.AAC || config.isEmpty()) {
+                return false;
+            }
+            try {
+                var aac = AudioConfigs.parseAac(config.get());
+                var objectType = aac.objectType();
+                return objectType == 1 || objectType == 4 || objectType == 19 || objectType == 23
+                        || (objectType == 39 && aac.sbr());
+            } catch (MediaException exception) {
+                return false;
+            }
         }
 
         /**
@@ -1000,8 +1139,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 case VORBIS -> 2L * 8192 * 1_000_000 / rate;
                 case AAC -> 4L * 2048 * 1_000_000 / rate;
                 case MP3, MP2 -> 16L * 1152 * 1_000_000 / rate;
-                case FLAC, ALAC, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE,
-                     PCM_F64LE, PCM_F64BE, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> 0;
+                case FLAC, ALAC, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_S64LE, PCM_S64BE,
+                     PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> 0;
                 default -> 100_000;
             };
         }
@@ -1015,6 +1154,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * the timestamps are not sample-accurate ({@link #isExact()} is {@code false}), it is a
          * time before every packet, so that the decoder restarts at the track's first packet and
          * counts the samples up to {@code micros} instead of placing them by rounded timestamps.
+         * It is that time too for codecs whose prediction state reaches back to the start of the
+         * stream, so that no pre-roll reproduces it: AAC Main and AAC LTP (and ER AAC LTP and AAC-LD), and AAC-ELD
+         * with low delay spectral band replication.
          * Every track of a demuxer restarts at its own key frame at or before the target, so a
          * caller decoding several tracks seeks to the earliest target any of them needs.
          *
@@ -1022,7 +1164,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * @return the seek target in microseconds
          */
         public long seekMicros(long micros) {
-            if (!exact) {
+            if (!exact || restartsAtStart) {
                 // TODO: restart near the target by summing packet durations read without decoding
                 return CALIBRATION_TIME;
             }

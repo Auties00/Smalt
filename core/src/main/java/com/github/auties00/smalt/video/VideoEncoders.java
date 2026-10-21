@@ -14,9 +14,10 @@ import java.util.Objects;
  *
  * <p>The encoder comes from the first {@link VideoCodecProvider} that encodes the codec, which
  * maps the codec-independent {@link VideoEncoderOptions} onto the codec's own configuration. The
- * Smalt artifacts encode H.264 ({@code smalt-mpeg}), VP8 ({@code smalt-image}) and VP9
- * ({@code smalt-video}); a codec no provider encodes raises {@link MediaException.Unsupported}
- * naming it and, when a Smalt artifact encodes it, the artifact to add.
+ * Smalt artifacts encode H.264 ({@code smalt-mpeg}), VP8 and Motion-JPEG ({@code smalt-image}),
+ * and VP9, AV1, ProRes and DNxHD ({@code smalt-video}); a codec no provider encodes raises
+ * {@link MediaException.Unsupported} naming it and, when a Smalt artifact encodes it, the artifact
+ * to add.
  *
  * @apiNote The registry suits callers that pick a codec at run time. A caller that needs a codec's own parameters
  * (profile, rate control, quantizer window, temporal layers) constructs that codec's encoder directly.

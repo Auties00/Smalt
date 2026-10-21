@@ -18,10 +18,12 @@ import com.github.auties00.smalt.metadata.TagWriteOptions;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 
@@ -29,18 +31,29 @@ import java.util.Set;
  * Edits the iTunes metadata of an MP4, M4A or MOV file.
  *
  * <p>Tags live in {@code moov/udta/meta/ilst}: one item per key, each holding {@code data} atoms
- * (UTF-8 text, or the binary forms of {@code trkn}, {@code disk}, {@code cpil} and {@code gnre}),
- * cover art in {@code covr} and free-form items in {@code ----} atoms named by {@code mean} and
- * {@code name}. Chapters are written as a Nero {@code chpl} box in {@code udta}, which stores
- * start times only. Items with a binary payload or a non-Apple {@code mean} are opaque and kept.
+ * (UTF-8 text, the binary forms of {@code trkn}, {@code disk}, {@code cpil} and {@code gnre}, or
+ * the big-endian integers of {@link #INTEGER_ATOMS} and of any other atom the file stores as a
+ * signed or unsigned integer, read and written as decimal text), cover art in {@code covr} and
+ * free-form items in {@code ----} atoms named by {@code mean} and {@code name}. Items with another
+ * binary payload or a non-Apple {@code mean} are opaque and kept.
+ *
+ * <p>Chapters are written twice: as a Nero {@code chpl} box in {@code udta}, which stores start
+ * times only, and as a QuickTime chapter track ({@link Mp4ChapterTrack}) that every audio and
+ * video track references through {@code tref/chap}, whose samples go in an {@code mdat} box of
+ * their own placed right before {@code moov}. Reading prefers {@code chpl}, unless the chapter
+ * track completes the chapters or titles a full {@code chpl} cut
+ * ({@link Mp4ChapterTrack#supersedes(List, List)}). Chapter tracks are
+ * kept while the chapters are unchanged and replaced otherwise; the {@code mdat} holding only
+ * the samples of a replaced chapter track is reused as free space.
  *
  * <p>The rewrite builds a new {@code moov}. When it fits the old {@code moov} plus the
  * {@code free} boxes that follow it, the remainder becomes a {@code free} box and nothing else
  * moves; when {@code moov} is the last box of the file it is rewritten in place at any size.
  * Otherwise the data after the old {@code moov} shifts, and every absolute offset that points
  * past it is corrected: the chunk offsets ({@code stco}, {@code co64}) inside the new
- * {@code moov}, the explicit base data offsets of movie fragments ({@code tfhd}) and the fragment
- * offsets of the random access index ({@code tfra}).
+ * {@code moov}, where a {@code stco} box whose offsets no longer fit 32 bits becomes a
+ * {@code co64} box, the explicit base data offsets of movie fragments ({@code tfhd}) and the
+ * fragment offsets of the random access index ({@code tfra}).
  */
 final class Mp4TagFile implements TagFile {
     /**
@@ -84,9 +97,38 @@ final class Mp4TagFile implements TagFile {
     private static final int TYPE_INTEGER = 21;
 
     /**
+     * The data type of unsigned big-endian integers.
+     */
+    private static final int TYPE_UNSIGNED = 22;
+
+    /**
      * The data type of BMP pictures.
      */
     private static final int TYPE_BMP = 27;
+
+    /**
+     * The largest value a 32-bit field holds.
+     */
+    private static final long U32_MAX = 0xFFFFFFFFL;
+
+    /**
+     * The width in bytes of the iTunes atoms that hold a signed integer: tempo ({@code tmpo}),
+     * content rating ({@code rtng}), media kind ({@code stik}), gapless playback ({@code pgap}),
+     * HD video ({@code hdvd}), TV season and episode ({@code tvsn}, {@code tves}), the store
+     * identifiers ({@code plID}, {@code cnID}, {@code atID}, {@code geID}, {@code sfID},
+     * {@code cmID}), account kind ({@code akID}) and show movement ({@code shwm}).
+     */
+    static final Map<String, Integer> INTEGER_ATOMS = Map.ofEntries(Map.entry("tmpo", 2), Map.entry("rtng", 1),
+            Map.entry("stik", 1), Map.entry("pgap", 1), Map.entry("hdvd", 1), Map.entry("tvsn", 4),
+            Map.entry("tves", 4), Map.entry("plID", 8), Map.entry("cnID", 4), Map.entry("atID", 4),
+            Map.entry("geID", 4), Map.entry("sfID", 4), Map.entry("cmID", 4), Map.entry("akID", 1),
+            Map.entry("shwm", 1));
+
+    /**
+     * The integer atoms that hold a flag, which also take {@code true}, {@code yes}, {@code false} and
+     * {@code no}.
+     */
+    private static final Set<String> FLAG_ATOMS = Set.of("pgap", "shwm");
 
     /**
      * The source.
@@ -132,6 +174,11 @@ final class Mp4TagFile implements TagFile {
      * The opaque {@code ilst} items, each a complete box.
      */
     private final List<byte[]> opaqueItems;
+
+    /**
+     * The integer form of the atoms the file stores as integers, by atom code.
+     */
+    private final Map<String, IntegerForm> integerForms;
 
     /**
      * Parses the top-level boxes and the metadata of {@code moov}.
@@ -188,8 +235,19 @@ final class Mp4TagFile implements TagFile {
         this.moov = TagIo.read(source, moovBox[0], moovBox[1], limits);
         this.chapterTracks = findChapterTracks();
         var opaque = new ArrayList<byte[]>();
+        this.integerForms = new HashMap<>();
         this.tags = decode(opaque);
         this.opaqueItems = List.copyOf(opaque);
+    }
+
+    /**
+     * The encoding of an integer atom.
+     *
+     * @param type the data type, {@value #TYPE_INTEGER} (signed) or {@value #TYPE_UNSIGNED}, or
+     * {@value #TYPE_UTF8} for an atom of {@link #INTEGER_ATOMS} the file also stores as text
+     * @param width the width in bytes: 1, 2, 3, 4 or 8
+     */
+    record IntegerForm(int type, int width) {
     }
 
     /**
@@ -237,7 +295,14 @@ final class Mp4TagFile implements TagFile {
         }
         var chpl = Mp4Boxes.find(udtaChildren, "chpl");
         if (chpl != null) {
-            builder.chapters(decodeChapters(chpl));
+            var nero = decodeChapters(chpl);
+            if (!chapterTracks.isEmpty() && Mp4ChapterTrack.mayBeCut(nero)) {
+                var track = trackChapters();
+                if (Mp4ChapterTrack.supersedes(track, nero)) {
+                    nero = track;
+                }
+            }
+            builder.chapters(nero);
         } else {
             builder.chapters(trackChapters());
         }
@@ -255,6 +320,8 @@ final class Mp4TagFile implements TagFile {
         }
         try (var demuxer = Containers.openDemuxer(source)) {
             return demuxer.chapters();
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             return List.of();
         }
@@ -269,6 +336,8 @@ final class Mp4TagFile implements TagFile {
     private long demuxedDuration() {
         try (var demuxer = Containers.openDemuxer(source)) {
             return demuxer.durationMicros();
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             return -1;
         }
@@ -475,11 +544,41 @@ final class Mp4TagFile implements TagFile {
             default -> {
             }
         }
+        var integer = length == 1 || length == 2 || length == 3 || length == 4 || length == 8;
+        var implicit = INTEGER_ATOMS.containsKey(code) && type == 0;
+        if (integer && (implicit || type == TYPE_INTEGER || type == TYPE_UNSIGNED) && !code.equals("----")) {
+            var form = new IntegerForm(type == TYPE_UNSIGNED ? TYPE_UNSIGNED : TYPE_INTEGER, length);
+            integerForms.putIfAbsent(code, form);
+            return integerText(start, length, type == TYPE_UNSIGNED);
+        }
+        if (INTEGER_ATOMS.containsKey(code) && (type == TYPE_UTF8 || type == TYPE_UTF16)) {
+            integerForms.put(code, new IntegerForm(TYPE_UTF8, INTEGER_ATOMS.get(code)));
+        }
         return switch (type) {
             case TYPE_UTF8 -> new String(moov, start, length, StandardCharsets.UTF_8);
             case TYPE_UTF16 -> new String(moov, start, length & ~1, StandardCharsets.UTF_16BE);
             default -> null;
         };
+    }
+
+    /**
+     * Decodes a big-endian integer of {@code moov} as decimal text.
+     *
+     * @param start the index of the first byte
+     * @param length the width in bytes, from 1 to 8
+     * @param unsigned whether the value is unsigned rather than two's complement
+     * @return the decimal text
+     */
+    private String integerText(int start, int length, boolean unsigned) {
+        var value = 0L;
+        for (var index = 0; index < length; index++) {
+            value = (value << 8) | (moov[start + index] & 0xFF);
+        }
+        if (unsigned) {
+            return Long.toUnsignedString(value);
+        }
+        var unused = 64 - 8 * length;
+        return Long.toString(value << unused >> unused);
     }
 
     /**
@@ -577,15 +676,20 @@ final class Mp4TagFile implements TagFile {
 
     @Override
     public EditPlan plan(MediaTags newTags, TagWriteOptions options) {
-        var base = buildMoov(newTags, options, 0, Long.MAX_VALUE);
+        var rewrite = new Rewrite(newTags, options);
         var moovBox = topLevel.get(moovIndex);
         var slotStart = moovBox[0];
         var slotEnd = moovBox[0] + moovBox[1];
+        if (rewrite.dropping && moovIndex > 0 && reclaimable(moovIndex - 1)) {
+            slotStart = topLevel.get(moovIndex - 1)[0];
+        }
         var next = moovIndex + 1;
-        while (next < topLevel.size() && isFree(topLevelTypes.get(next))) {
+        while (next < topLevel.size() && (isFree(topLevelTypes.get(next)) || rewrite.dropping && reclaimable(next))) {
             slotEnd = topLevel.get(next)[0] + topLevel.get(next)[1];
             next++;
         }
+        rewrite.place(slotStart);
+        var base = rewrite.build(0, Long.MAX_VALUE);
         var last = next == topLevel.size();
         var fileSize = source.size();
         var slot = slotEnd - slotStart;
@@ -597,7 +701,14 @@ final class Mp4TagFile implements TagFile {
         } else {
             var padded = options.padding() >= 8 ? options.padding() : 0;
             var delta = base.length + padded - slot;
-            var shifted = buildMoov(newTags, options, delta, slotEnd);
+            var shifted = rewrite.build(delta, slotEnd);
+            for (var attempt = 0; shifted.length + padded - slot != delta; attempt++) {
+                if (attempt > 64) {
+                    throw new IllegalStateException("chunk offset promotion did not converge");
+                }
+                delta = shifted.length + padded - slot;
+                shifted = rewrite.build(delta, slotEnd);
+            }
             plan.bytes(shifted);
             if (padded > 0) {
                 plan.bytes(Mp4Boxes.free(padded));
@@ -614,6 +725,66 @@ final class Mp4TagFile implements TagFile {
     }
 
     /**
+     * Returns whether a top-level box is an {@code mdat} that holds the samples of the chapter
+     * tracks and of no other track, so it can be reused when the chapter tracks are replaced.
+     *
+     * @param index the index of the box in {@link #topLevel}
+     * @return {@code true} for such a box
+     */
+    private boolean reclaimable(int index) {
+        if (!topLevelTypes.get(index).equals("mdat")) {
+            return false;
+        }
+        var start = topLevel.get(index)[0];
+        var end = start + topLevel.get(index)[1];
+        var holdsChapters = false;
+        for (var trak : Mp4Boxes.children(moov, moovPayload(), moov.length)) {
+            if (!trak.type().equals("trak")) {
+                continue;
+            }
+            var chapter = chapterTracks.contains(trackId(moov, trak));
+            for (var offset : chunkOffsets(trak)) {
+                var inside = offset >= start && offset < end;
+                if (chapter != inside) {
+                    return false;
+                }
+                holdsChapters |= inside;
+            }
+        }
+        return holdsChapters;
+    }
+
+    /**
+     * Collects the chunk offsets of a track.
+     *
+     * @param trak the {@code trak} box
+     * @return the offsets of every {@code stco} and {@code co64} box of its sample table
+     */
+    private List<Long> chunkOffsets(Mp4Boxes.Box trak) {
+        var result = new ArrayList<Long>();
+        var mdia = Mp4Boxes.find(Mp4Boxes.children(moov, trak.payload(), trak.end()), "mdia");
+        var minf = mdia == null ? null : Mp4Boxes.find(Mp4Boxes.children(moov, mdia.payload(), mdia.end()), "minf");
+        var stbl = minf == null ? null : Mp4Boxes.find(Mp4Boxes.children(moov, minf.payload(), minf.end()), "stbl");
+        if (stbl == null) {
+            return result;
+        }
+        for (var table : Mp4Boxes.children(moov, stbl.payload(), stbl.end())) {
+            var wide = table.type().equals("co64");
+            if (!wide && !table.type().equals("stco") || table.end() - table.payload() < 8) {
+                continue;
+            }
+            var count = ByteArrays.u32be(moov, table.payload() + 4);
+            var entry = wide ? 8 : 4;
+            var position = table.payload() + 8;
+            for (var i = 0L; i < count && table.end() - position >= entry; i++) {
+                result.add(wide ? ByteArrays.i64be(moov, position) : ByteArrays.u32be(moov, position));
+                position += entry;
+            }
+        }
+        return result;
+    }
+
+    /**
      * Returns whether a top-level box type is free space.
      *
      * @param type a four-character box type
@@ -624,45 +795,315 @@ final class Mp4TagFile implements TagFile {
     }
 
     /**
-     * Builds the new {@code moov}, shifting the chunk offsets that point at or after
-     * {@code threshold} by {@code delta}.
+     * Returns the handler type of a track.
      *
-     * @param newTags the tags
-     * @param options the write options
-     * @param delta the shift of the data after the old {@code moov}
-     * @param threshold the first old offset that moves
-     * @return the box
-     * @throws MediaException.Unsupported if a shifted 32-bit chunk offset overflows
+     * @param trak the {@code trak} box
+     * @return the four-character handler type, or an empty string when the track has no readable
+     * {@code hdlr}
      */
-    private byte[] buildMoov(MediaTags newTags, TagWriteOptions options, long delta, long threshold) {
-        var children = Mp4Boxes.children(moov, moovPayload(), moov.length);
-        var out = new ByteWriter(moov.length + 4096);
-        var udtaWritten = false;
-        var dropChapterTracks = !chapterTracks.isEmpty() && !newTags.chapters().equals(tags.chapters());
-        for (var child : children) {
-            if (child.type().equals("udta")) {
-                out.bytes(buildUdta(child, newTags, options));
-                udtaWritten = true;
-            } else if (child.type().equals("trak") && (delta != 0 || dropChapterTracks)) {
-                if (dropChapterTracks && chapterTracks.contains(trackId(moov, child))) {
+    private String handlerType(Mp4Boxes.Box trak) {
+        var mdia = Mp4Boxes.find(Mp4Boxes.children(moov, trak.payload(), trak.end()), "mdia");
+        var hdlr = mdia == null ? null : Mp4Boxes.find(Mp4Boxes.children(moov, mdia.payload(), mdia.end()), "hdlr");
+        return hdlr == null || hdlr.size() < 20 ? "" : Mp4Boxes.type(moov, hdlr.payload() + 8);
+    }
+
+    /**
+     * Builds the boxes that replace the old {@code moov} for one set of tags: the {@code mdat} of
+     * a new chapter track, when there is one, followed by the new {@code moov}.
+     */
+    private final class Rewrite {
+        /**
+         * The new {@code udta}.
+         */
+        private final byte[] udta;
+
+        /**
+         * Whether the chapter tracks of the file are removed.
+         */
+        private final boolean dropping;
+
+        /**
+         * The new chapter track, or {@code null} when none is written.
+         */
+        private final Mp4ChapterTrack chapterTrack;
+
+        /**
+         * The identifier of the new chapter track.
+         */
+        private final long chapterId;
+
+        /**
+         * The identifiers of the tracks that reference the new chapter track.
+         */
+        private final Set<Long> referencing;
+
+        /**
+         * The {@code mdat} holding the samples of the new chapter track, or an empty array.
+         */
+        private byte[] chapterData = new byte[0];
+
+        /**
+         * The file offset of the samples of the new chapter track.
+         */
+        private long chapterOffset;
+
+        /**
+         * Prepares the rewrite.
+         *
+         * @param newTags the tags
+         * @param options the write options
+         * @throws MediaException.Unsupported if an integer atom holds a value it cannot store
+         */
+        Rewrite(MediaTags newTags, TagWriteOptions options) {
+            var children = Mp4Boxes.children(moov, moovPayload(), moov.length);
+            this.udta = buildUdta(Mp4Boxes.find(children, "udta"), newTags, options);
+            var chapters = newTags.chapters();
+            var keep = !chapterTracks.isEmpty() && chapters.equals(tags.chapters());
+            this.dropping = !chapterTracks.isEmpty() && !keep;
+            var largest = 0L;
+            var largestAll = 0L;
+            var media = new ArrayList<Long>();
+            var first = -1L;
+            for (var child : children) {
+                if (!child.type().equals("trak")) {
                     continue;
                 }
-                var trak = Arrays.copyOfRange(moov, child.offset(), child.end());
-                if (delta != 0) {
-                    shiftChunkOffsets(trak, 8, trak.length, delta, threshold, 0);
+                var id = trackId(moov, child);
+                largestAll = Math.max(largestAll, id);
+                if (dropping && chapterTracks.contains(id)) {
+                    continue;
                 }
-                out.bytes(dropChapterTracks ? withoutChapterReference(trak) : trak);
+                largest = Math.max(largest, id);
+                if (first < 0) {
+                    first = id;
+                }
+                var handler = handlerType(child);
+                if (handler.equals("soun") || handler.equals("vide")) {
+                    media.add(id);
+                }
+            }
+            if (media.isEmpty() && first >= 0) {
+                media.add(first);
+            }
+            this.referencing = Set.copyOf(media);
+            if (Mp4Boxes.find(children, "mvex") != null) {
+                // fragments may still name the identifiers of removed tracks
+                var next = nextTrackId(Mp4Boxes.find(children, "mvhd"));
+                this.chapterId = Math.max(largestAll + 1, next == U32_MAX ? 0 : next);
             } else {
-                out.bytes(moov, child.offset(), child.size());
+                this.chapterId = largest + 1;
+            }
+            if (!chapters.isEmpty() && !keep && !referencing.isEmpty() && chapterId <= U32_MAX) {
+                var end = durationMicros();
+                if (end <= 0) {
+                    end = demuxedDuration();
+                }
+                this.chapterTrack = Mp4ChapterTrack.of(chapters, end);
+            } else {
+                this.chapterTrack = null;
             }
         }
-        if (!udtaWritten) {
-            var udta = buildUdta(null, newTags, options);
-            if (udta.length > 8) {
-                out.bytes(udta);
+
+        /**
+         * Places the new chapter samples at the start of the space the rewrite fills.
+         *
+         * @param slotStart the file offset where the rewritten boxes start
+         */
+        void place(long slotStart) {
+            if (chapterTrack != null) {
+                chapterData = Mp4Boxes.box("mdat", chapterTrack.data());
+                chapterOffset = slotStart + 8;
             }
         }
-        return Mp4Boxes.box("moov", out.toByteArray());
+
+        /**
+         * Builds the rewritten boxes, shifting the chunk offsets that point at or after
+         * {@code threshold} by {@code delta}.
+         *
+         * @param delta the shift of the data after the old {@code moov}
+         * @param threshold the first old offset that moves
+         * @return the chapter {@code mdat}, when there is one, and the new {@code moov}
+         */
+        byte[] build(long delta, long threshold) {
+            var children = Mp4Boxes.children(moov, moovPayload(), moov.length);
+            var lastTrak = -1;
+            for (var index = 0; index < children.size(); index++) {
+                if (children.get(index).type().equals("trak")) {
+                    lastTrak = index;
+                }
+            }
+            var out = new ByteWriter(moov.length + chapterData.length + 4096);
+            out.bytes(chapterData);
+            var body = new ByteWriter(moov.length + 4096);
+            var udtaWritten = false;
+            var timescale = movieTimescale();
+            for (var index = 0; index < children.size(); index++) {
+                var child = children.get(index);
+                switch (child.type()) {
+                    case "udta" -> {
+                        body.bytes(udta);
+                        udtaWritten = true;
+                    }
+                    case "trak" -> {
+                        var id = trackId(moov, child);
+                        if (!dropping || !chapterTracks.contains(id)) {
+                            body.bytes(rebuildTrack(child, delta, threshold,
+                                    chapterTrack != null && referencing.contains(id) ? chapterId : -1));
+                        }
+                    }
+                    case "mvhd" -> body.bytes(chapterTrack != null ? withNextTrackId(child) : copy(child));
+                    case "mvex" -> body.bytes(chapterTrack != null ? withChapterExtends(child) : copy(child));
+                    default -> body.bytes(moov, child.offset(), child.size());
+                }
+                if (index == lastTrak && chapterTrack != null) {
+                    body.bytes(chapterTrack.trak(chapterId, timescale, chapterOffset,
+                            chapterOffset + chapterTrack.dataLength() > U32_MAX));
+                }
+            }
+            if (!udtaWritten && udta.length > 8) {
+                body.bytes(udta);
+            }
+            Mp4Boxes.box(out, "moov", body.toByteArray());
+            return out.toByteArray();
+        }
+
+        /**
+         * {@return a copy of a child of {@code moov}}
+         *
+         * @param box the child
+         */
+        private byte[] copy(Mp4Boxes.Box box) {
+            return Arrays.copyOfRange(moov, box.offset(), box.end());
+        }
+
+        /**
+         * Copies {@code mvhd} with a {@code next_track_ID} past the new chapter track.
+         *
+         * @param mvhd the box
+         * @return the box
+         */
+        private byte[] withNextTrackId(Mp4Boxes.Box mvhd) {
+            var box = copy(mvhd);
+            var at = mvhd.header() + nextTrackIdIndex(box[mvhd.header()]);
+            if (at + 4 <= box.length) {
+                var nextId = ByteArrays.u32be(box, at);
+                if (nextId != U32_MAX && nextId <= chapterId) {
+                    ByteArrays.put32be(box, at, chapterId + 1);
+                }
+            }
+            return box;
+        }
+
+        /**
+         * Copies {@code mvex} with a track extends box for the new chapter track; those of removed
+         * tracks stay, since fragments may still name them.
+         *
+         * @param mvex the box
+         * @return the box
+         */
+        private byte[] withChapterExtends(Mp4Boxes.Box mvex) {
+            var out = new ByteWriter(mvex.size() + 32);
+            out.bytes(moov, mvex.payload(), mvex.end() - mvex.payload());
+            var trex = new ByteWriter(24);
+            trex.u32be(0);
+            trex.u32be(chapterId);
+            trex.u32be(1);
+            trex.u32be(0);
+            trex.u32be(0);
+            trex.u32be(0);
+            Mp4Boxes.box(out, "trex", trex.toByteArray());
+            return Mp4Boxes.box("mvex", out.toByteArray());
+        }
+
+        /**
+         * Rebuilds a track: its chunk offsets shifted, its references to removed chapter tracks
+         * dropped and a reference to the new chapter track added.
+         *
+         * @param trak the {@code trak} box
+         * @param delta the shift of the data after the old {@code moov}
+         * @param threshold the first old offset that moves
+         * @param reference the identifier of the chapter track to reference, or {@code -1}
+         * @return the box
+         */
+        private byte[] rebuildTrack(Mp4Boxes.Box trak, long delta, long threshold, long reference) {
+            if (delta == 0 && !dropping && reference < 0) {
+                return copy(trak);
+            }
+            var children = Mp4Boxes.children(moov, trak.payload(), trak.end());
+            var hasReferences = Mp4Boxes.find(children, "tref") != null;
+            var out = new ByteWriter(trak.size() + 64);
+            for (var child : children) {
+                switch (child.type()) {
+                    case "tref" -> out.bytes(references(child, reference));
+                    case "mdia" -> out.bytes(delta != 0
+                            ? Mp4Boxes.box("mdia", relocate(moov, child.payload(), child.end(), delta, threshold, 0))
+                            : copy(child));
+                    default -> out.bytes(moov, child.offset(), child.size());
+                }
+                if (child.type().equals("tkhd") && !hasReferences && reference >= 0) {
+                    out.bytes(Mp4ChapterTrack.trackReference(reference));
+                }
+            }
+            return Mp4Boxes.box("trak", out.toByteArray());
+        }
+
+        /**
+         * Rebuilds a {@code tref} box: its {@code chap} references are dropped with the chapter
+         * tracks or replaced by the reference to the new chapter track.
+         *
+         * @param tref the box
+         * @param reference the identifier of the chapter track to reference, or {@code -1}
+         * @return the box, or an empty array when no reference remains
+         */
+        private byte[] references(Mp4Boxes.Box tref, long reference) {
+            var out = new ByteWriter(tref.size() + 12);
+            for (var child : Mp4Boxes.children(moov, tref.payload(), tref.end())) {
+                if (!child.type().equals("chap") || !dropping && reference < 0) {
+                    out.bytes(moov, child.offset(), child.size());
+                }
+            }
+            if (reference >= 0) {
+                out.bytes(Mp4ChapterTrack.chapReference(reference));
+            }
+            return out.size() == 0 ? new byte[0] : Mp4Boxes.box("tref", out.toByteArray());
+        }
+    }
+
+    /**
+     * Returns the index of {@code next_track_ID} in the payload of {@code mvhd}.
+     *
+     * @param version the first byte of the payload, the box version
+     * @return the index
+     */
+    private static int nextTrackIdIndex(byte version) {
+        return (version & 0xFF) == 1 ? 108 : 96;
+    }
+
+    /**
+     * Reads {@code next_track_ID} from {@code mvhd}.
+     *
+     * @param mvhd the box, or {@code null}
+     * @return the identifier, or {@code 0} when the box is missing or too short
+     */
+    private long nextTrackId(Mp4Boxes.Box mvhd) {
+        if (mvhd == null || mvhd.size() < mvhd.header() + 4) {
+            return 0;
+        }
+        var at = mvhd.payload() + nextTrackIdIndex(moov[mvhd.payload()]);
+        return at + 4 <= mvhd.end() ? ByteArrays.u32be(moov, at) : 0;
+    }
+
+    /**
+     * {@return the movie timescale from {@code mvhd}, or 1000 when it has none}
+     */
+    private long movieTimescale() {
+        var mvhd = Mp4Boxes.find(Mp4Boxes.children(moov, moovPayload(), moov.length), "mvhd");
+        if (mvhd == null || mvhd.size() < 32) {
+            return 1000;
+        }
+        var position = mvhd.payload();
+        var timescale = ByteArrays.u32be(moov, position + ((moov[position] & 0xFF) == 1 ? 20 : 12));
+        return timescale == 0 ? 1000 : timescale;
     }
 
     /**
@@ -710,85 +1151,82 @@ final class Mp4TagFile implements TagFile {
     }
 
     /**
-     * Removes the {@code chap} references of a track, and its {@code tref} when nothing else
-     * remains in it.
+     * Rebuilds the children of a box of a track's media, shifting the chunk offsets of every
+     * {@code stco} and {@code co64} box below it; a {@code stco} box with an offset the shift takes
+     * past 32 bits becomes a {@code co64} box.
      *
-     * @param trak the bytes of the {@code trak} box
-     * @return the box without chapter references
-     */
-    private static byte[] withoutChapterReference(byte[] trak) {
-        var children = Mp4Boxes.children(trak, 8, trak.length);
-        var tref = Mp4Boxes.find(children, "tref");
-        if (tref == null) {
-            return trak;
-        }
-        var references = new ByteWriter(tref.size());
-        for (var reference : Mp4Boxes.children(trak, tref.payload(), tref.end())) {
-            if (!reference.type().equals("chap")) {
-                references.bytes(trak, reference.offset(), reference.size());
-            }
-        }
-        var out = new ByteWriter(trak.length);
-        for (var child : children) {
-            if (child == tref) {
-                if (references.size() > 0) {
-                    Mp4Boxes.box(out, "tref", references.toByteArray());
-                }
-            } else {
-                out.bytes(trak, child.offset(), child.size());
-            }
-        }
-        return Mp4Boxes.box("trak", out.toByteArray());
-    }
-
-    /**
-     * Shifts the chunk offsets of every {@code stco} and {@code co64} box under a box.
-     *
-     * @param box the bytes of the box tree
+     * @param data the bytes holding the boxes
      * @param start the index of the first child
      * @param end the end of the children
      * @param delta the shift
      * @param threshold the first old offset that moves
      * @param depth the nesting depth
-     * @throws MediaException.Unsupported if a 32-bit offset overflows
+     * @return the rebuilt children
+     * @throws MediaException.Malformed if a shifted offset is negative
      */
-    private static void shiftChunkOffsets(byte[] box, int start, int end, long delta, long threshold, int depth) {
-        if (depth > 8) {
-            return;
-        }
-        for (var child : Mp4Boxes.children(box, start, end)) {
+    static byte[] relocate(byte[] data, int start, int end, long delta, long threshold, int depth) {
+        var out = new ByteWriter(end - start + 64);
+        for (var child : Mp4Boxes.children(data, start, end)) {
             switch (child.type()) {
-                case "mdia", "minf", "stbl" -> shiftChunkOffsets(box, child.payload(), child.end(), delta, threshold, depth + 1);
-                case "stco", "co64" -> {
-                    var wide = child.type().equals("co64");
-                    var position = child.payload() + 4;
-                    if (child.end() - position < 4) {
-                        continue;
-                    }
-                    var count = ByteArrays.u32be(box, position);
-                    position += 4;
-                    var entry = wide ? 8 : 4;
-                    var available = (child.end() - position) / entry;
-                    for (var i = 0L; i < Math.min(count, available); i++) {
-                        var offset = wide ? ByteArrays.i64be(box, position) : ByteArrays.u32be(box, position);
-                        if (offset >= threshold) {
-                            offset += delta;
-                            if (wide) {
-                                ByteArrays.put64be(box, position, offset);
-                            } else if (offset > 0xFFFFFFFFL || offset < 0) {
-                                throw new MediaException.Unsupported("mp4",
-                                        "moving the media data past 4 GiB needs 64-bit chunk offsets");
-                            } else {
-                                ByteArrays.put32be(box, position, offset);
-                            }
-                        }
-                        position += entry;
+                case "minf", "stbl" -> {
+                    if (depth < 8) {
+                        Mp4Boxes.box(out, child.type(), relocate(data, child.payload(), child.end(), delta, threshold,
+                                depth + 1));
+                    } else {
+                        out.bytes(data, child.offset(), child.size());
                     }
                 }
-                default -> {
-                }
+                case "stco", "co64" -> out.bytes(relocateTable(data, child, delta, threshold));
+                default -> out.bytes(data, child.offset(), child.size());
             }
         }
+        return out.toByteArray();
+    }
+
+    /**
+     * Shifts the offsets of one {@code stco} or {@code co64} box.
+     *
+     * @param data the bytes holding the box
+     * @param table the box
+     * @param delta the shift
+     * @param threshold the first old offset that moves
+     * @return the shifted box, a {@code co64} box when a {@code stco} offset no longer fits 32 bits
+     * @throws MediaException.Malformed if a shifted offset is negative
+     */
+    private static byte[] relocateTable(byte[] data, Mp4Boxes.Box table, long delta, long threshold) {
+        var wide = table.type().equals("co64");
+        var position = table.payload() + 4;
+        if (table.end() - position < 4) {
+            return Arrays.copyOfRange(data, table.offset(), table.end());
+        }
+        var entry = wide ? 8 : 4;
+        var count = (int) Math.min(ByteArrays.u32be(data, position), (table.end() - position - 4) / entry);
+        position += 4;
+        var offsets = new long[count];
+        var promote = false;
+        for (var i = 0; i < count; i++) {
+            var offset = wide ? ByteArrays.i64be(data, position) : ByteArrays.u32be(data, position);
+            if (offset >= threshold) {
+                offset += delta;
+                if (offset < 0) {
+                    throw new MediaException.Malformed("chunk offset shifted before the start of the file");
+                }
+            }
+            offsets[i] = offset;
+            promote |= !wide && offset > U32_MAX;
+            position += entry;
+        }
+        var out = new ByteWriter(8 + count * (wide || promote ? 8 : 4));
+        out.bytes(data, table.payload(), 4);
+        out.u32be(count);
+        for (var offset : offsets) {
+            if (wide || promote) {
+                out.u64be(offset);
+            } else {
+                out.u32be(offset);
+            }
+        }
+        return Mp4Boxes.box(wide || promote ? "co64" : "stco", out.toByteArray());
     }
 
     /**
@@ -798,10 +1236,11 @@ final class Mp4TagFile implements TagFile {
      * @param newTags the tags
      * @param options the write options
      * @return the box
+     * @throws MediaException.Unsupported if an integer atom holds a value it cannot store
      */
     private byte[] buildUdta(Mp4Boxes.Box old, MediaTags newTags, TagWriteOptions options) {
         var written = new HashSet<String>();
-        var ilst = ilst(newTags, options.preserveUnknown() ? opaqueItems : List.of(), written);
+        var ilst = ilst(newTags, options.preserveUnknown() ? opaqueItems : List.of(), integerForms, written);
         var out = new ByteWriter(ilst.length + 256);
         var metaWritten = false;
         if (old != null) {
@@ -828,7 +1267,6 @@ final class Mp4TagFile implements TagFile {
         if (!metaWritten && ilst.length > 8) {
             out.bytes(buildMeta(null, ilst));
         }
-        // TODO: also write chapters as a QuickTime chapter text track, which Apple players read instead of chpl.
         if (!newTags.chapters().isEmpty()) {
             out.bytes(chapterBox(newTags.chapters()));
         }
@@ -890,12 +1328,21 @@ final class Mp4TagFile implements TagFile {
     /**
      * Builds an {@code ilst}.
      *
+     * <p>The atoms of {@code forms} are written in their form, widened to the width of
+     * {@link #INTEGER_ATOMS} when the value needs it, the other atoms of {@link #INTEGER_ATOMS} as
+     * signed integers of their width. A value that does not fit the form of an atom outside
+     * {@link #INTEGER_ATOMS}, or that is not an integer for an atom of {@link #INTEGER_ATOMS} the
+     * file stores as text, is written as UTF-8 text.
+     *
      * @param newTags the tags
      * @param opaque the opaque items to keep, each a complete box
+     * @param forms the integer form of other atoms, by atom code
      * @param written receives the lower-case keys written
      * @return the box
+     * @throws MediaException.Unsupported if a value of an atom of {@link #INTEGER_ATOMS} the file
+     * does not store as text is not an integer its form holds
      */
-    static byte[] ilst(MediaTags newTags, List<byte[]> opaque, Set<String> written) {
+    static byte[] ilst(MediaTags newTags, List<byte[]> opaque, Map<String, IntegerForm> forms, Set<String> written) {
         var grouped = new LinkedHashMap<String, List<String>>();
         for (var entry : newTags.entries()) {
             grouped.computeIfAbsent(entry.key(), _ -> new ArrayList<>()).add(entry.value());
@@ -924,8 +1371,29 @@ final class Mp4TagFile implements TagFile {
                     }
                     case "cpil" -> dataAtom(item, TYPE_INTEGER, new byte[]{(byte) (isTrue(values.getFirst()) ? 1 : 0)});
                     default -> {
+                        var known = INTEGER_ATOMS.get(code);
+                        var form = forms.get(code);
+                        var textual = form != null && form.type() == TYPE_UTF8;
+                        if ((form == null || textual) && known != null) {
+                            form = new IntegerForm(TYPE_INTEGER, known);
+                        }
                         for (var value : values) {
-                            dataAtom(item, TYPE_UTF8, value.getBytes(StandardCharsets.UTF_8));
+                            var used = form;
+                            var integer = used == null ? null : encodeInteger(code, value, used);
+                            if (integer == null && known != null && used.width() < known) {
+                                used = new IntegerForm(used.type(), known);
+                                integer = encodeInteger(code, value, used);
+                            }
+                            if (integer == null && known != null && !textual) {
+                                throw new MediaException.Unsupported("mp4", "the MP4 " + code + " atom holds "
+                                        + (used.type() == TYPE_UNSIGNED ? "an unsigned" : "a signed") + " "
+                                        + 8 * used.width() + "-bit integer, not \"" + value + "\"");
+                            }
+                            if (integer != null) {
+                                dataAtom(item, used.type(), integer);
+                            } else {
+                                dataAtom(item, TYPE_UTF8, value.getBytes(StandardCharsets.UTF_8));
+                            }
                         }
                     }
                 }
@@ -1004,6 +1472,45 @@ final class Mp4TagFile implements TagFile {
     }
 
     /**
+     * Encodes the value of an integer atom.
+     *
+     * @param code the atom code
+     * @param value the decimal text, or for the flags of {@link #FLAG_ATOMS} also {@code true},
+     * {@code yes}, {@code false} or {@code no}
+     * @param form the encoding
+     * @return the big-endian bytes, or {@code null} when the value is not an integer the form holds
+     */
+    private static byte[] encodeInteger(String code, String value, IntegerForm form) {
+        var text = value.trim().toLowerCase(Locale.ROOT);
+        long number;
+        if (FLAG_ATOMS.contains(code) && (text.equals("true") || text.equals("yes"))) {
+            number = 1;
+        } else if (FLAG_ATOMS.contains(code) && (text.equals("false") || text.equals("no"))) {
+            number = 0;
+        } else {
+            try {
+                number = form.type() == TYPE_UNSIGNED ? Long.parseUnsignedLong(text) : Long.parseLong(text);
+            } catch (NumberFormatException exception) {
+                return null;
+            }
+        }
+        var bits = 8 * form.width();
+        if (bits < 64) {
+            var fits = form.type() == TYPE_UNSIGNED ? number >>> bits == 0
+                    : number >= -1L << (bits - 1) && number <= ~(-1L << (bits - 1));
+            if (!fits) {
+                return null;
+            }
+        }
+        var bytes = new byte[form.width()];
+        for (var index = bytes.length - 1; index >= 0; index--) {
+            bytes[index] = (byte) number;
+            number >>>= 8;
+        }
+        return bytes;
+    }
+
+    /**
      * Returns whether a flag value is true.
      *
      * @param text the flag text, such as {@code "1"} or {@code "true"}
@@ -1044,7 +1551,7 @@ final class Mp4TagFile implements TagFile {
     /**
      * Builds a Nero chapter list.
      *
-     * @param chapters the chapters, at most 255 of which are kept
+     * @param chapters the chapters, at most {@value Mp4ChapterTrack#MAX_NERO_CHAPTERS} of which are kept
      * @return the box
      */
     static byte[] chapterBox(List<Chapter> chapters) {
@@ -1052,7 +1559,7 @@ final class Mp4TagFile implements TagFile {
         out.u8(1);
         out.u24be(0);
         out.u32be(0);
-        var count = Math.min(255, chapters.size());
+        var count = Math.min(Mp4ChapterTrack.MAX_NERO_CHAPTERS, chapters.size());
         out.u8(count);
         for (var index = 0; index < count; index++) {
             var chapter = chapters.get(index);

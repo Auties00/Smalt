@@ -17,14 +17,26 @@ import java.util.Objects;
  *
  * <p>The supported containers and the tag formats they carry:
  * <ul>
- *   <li>MP3 and ADTS AAC: ID3v2.2 (read), ID3v2.3 and ID3v2.4 at the start, ID3v1 at the end;
- *       pictures in {@code APIC} frames, chapters in {@code CHAP}/{@code CTOC} frames;</li>
+ *   <li>MP3, ADTS AAC and raw AC-3: ID3v2.2 (read), ID3v2.3 and ID3v2.4 at the start, an APEv1
+ *       (read) or APEv2 tag and an ID3v1 tag at the end; pictures in {@code APIC} frames and APE
+ *       {@code "Cover Art (...)"} items, chapters in {@code CHAP}/{@code CTOC} frames. ID3v2.4
+ *       tags found through a {@code SEEK} frame or appended after the audio with a footer are read
+ *       as ID3v2.4 section 5 says (each replaces the ID3v2 tags before it, or updates them when
+ *       its extended header flags it as an update) and merged into the leading tag on a rewrite;
+ *       Lyrics3 blocks are kept, a Lyrics3v1 block only while an ID3v1 tag follows it;</li>
  *   <li>FLAC: the {@code VORBIS_COMMENT} and {@code PICTURE} metadata blocks, reusing the
- *       {@code PADDING} block;</li>
+ *       {@code PADDING} block, and an APE and an ID3v1 tag after the frames;</li>
  *   <li>Ogg Vorbis, Opus and FLAC: the comment header, pictures as
  *       {@code METADATA_BLOCK_PICTURE}, chapters as {@code CHAPTERxxx} comments;</li>
- *   <li>MP4, M4A and MOV: the iTunes {@code ilst} list, cover art in {@code covr}, free-form
- *       {@code ----} atoms, chapters as a Nero {@code chpl} box;</li>
+ *   <li>MP4, M4A and MOV: the iTunes {@code ilst} list, with the integer atoms ({@code tmpo},
+ *       {@code rtng}, {@code stik}, {@code pgap}, {@code hdvd}, {@code tvsn}, {@code tves},
+ *       {@code plID}, the other store identifiers, and any atom the file stores as an integer) read
+ *       and written as decimal text, cover art in {@code covr}, free-form {@code ----} atoms, and
+ *       chapters as a Nero {@code chpl} box and a QuickTime chapter track (a disabled text track the
+ *       audio and video tracks reference through {@code tref/chap}), which is kept while the
+ *       chapters are unchanged and otherwise replaced in the space of the old one. A rewrite that
+ *       moves media data past 4 GiB turns the 32-bit chunk offset tables it overflows into 64-bit
+ *       ones;</li>
  *   <li>Matroska and WebM: global {@code Tags}, {@code Chapters} and picture
  *       {@code Attachments};</li>
  *   <li>WAV: the {@code LIST/INFO} chunk and an {@code id3 } chunk; AIFF: the text chunks and an
@@ -38,6 +50,13 @@ import java.util.Objects;
  * replaces it. Items {@link MediaTags} cannot represent, such as binary ID3v2 frames or
  * non-picture Matroska attachments, are kept unless
  * {@link TagWriteOptions#preserveUnknown()} is off.
+ *
+ * <p>When a file holds tags of several formats, a read takes each key from the first format that
+ * has it (in an MP3, ADTS or AC-3 file the ID3v2 tags, then the APE tag, then the ID3v1 tag; in a
+ * FLAC file the Vorbis comments, then the APE and the ID3v1 tag) and the pictures from the first
+ * that holds any. A write stores the new tags in every format the file keeps, as
+ * {@link TagWriteOptions#apeMode()} and {@link TagWriteOptions#id3v1Mode()} decide; the APE and
+ * ID3v1 tags store what their format can hold.
  *
  * <p>The class is stateless and thread-safe; editing the same file from several threads at once
  * is not.
@@ -60,8 +79,9 @@ public final class TagEditor {
      *
      * @param format the container format
      * @return {@code true} for {@link ContainerFormat#MPEG_AUDIO}, {@link ContainerFormat#ADTS},
-     * {@link ContainerFormat#FLAC}, {@link ContainerFormat#OGG}, {@link ContainerFormat#MP4},
-     * {@link ContainerFormat#MATROSKA}, {@link ContainerFormat#WAV} and {@link ContainerFormat#AIFF}
+     * {@link ContainerFormat#AC3}, {@link ContainerFormat#FLAC}, {@link ContainerFormat#OGG},
+     * {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA}, {@link ContainerFormat#WAV} and
+     * {@link ContainerFormat#AIFF}
      */
     public static boolean isSupported(ContainerFormat format) {
         Objects.requireNonNull(format, "format");

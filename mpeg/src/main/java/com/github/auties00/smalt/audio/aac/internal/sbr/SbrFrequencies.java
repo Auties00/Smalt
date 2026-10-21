@@ -11,8 +11,9 @@ import java.util.Arrays;
  * <p>All band borders are absolute QMF subband indices. {@link #update(SbrHeader, int)} returns
  * {@code false} for a header that violates the constraints of ISO/IEC 14496-3 (a stop frequency
  * below the start frequency, a range wider than the rate allows, a crossover above subband 32,
- * more than five noise bands or patches, empty bands); the decoder then leaves the high band
- * empty until a valid header arrives.
+ * more than five noise bands, empty bands); the decoder then leaves the high band empty until a
+ * valid header arrives. A header whose tables need more than the five patches the standard allows
+ * an encoder is decoded with every patch the derivation builds.
  *
  * @implNote This implementation follows the frequency band table and patch derivations of
  * ISO/IEC 14496-3, with the limiter band table built as the PacketVideo AAC decoder builds it. The
@@ -39,9 +40,9 @@ final class SbrFrequencies {
     private static final double[] LIMITER_BANDS_PER_OCTAVE = {1.2, 2.0, 3.0};
 
     /**
-     * The largest number of patches the standard allows.
+     * The largest number of patches the derivation can build, one per high subband.
      */
-    static final int MAX_PATCHES = 5;
+    private static final int PATCH_CAPACITY = 64;
 
     /**
      * The largest number of noise floor bands the standard allows.
@@ -111,17 +112,17 @@ final class SbrFrequencies {
     /**
      * The number of subbands of each patch.
      */
-    final int[] patchSubbands = new int[MAX_PATCHES + 1];
+    final int[] patchSubbands = new int[PATCH_CAPACITY];
 
     /**
      * The first source subband of each patch.
      */
-    final int[] patchStart = new int[MAX_PATCHES + 1];
+    final int[] patchStart = new int[PATCH_CAPACITY];
 
     /**
      * The limiter band table, {@link #limiterBands} + 1 borders.
      */
-    final int[] limiter = new int[64 + MAX_PATCHES + 1];
+    final int[] limiter = new int[64 + PATCH_CAPACITY + 1];
 
     /**
      * The number of limiter bands.
@@ -422,12 +423,12 @@ final class SbrFrequencies {
             } while (sb > k0 - 1 + msb - odd);
             var width = Math.max(sb - usb, 0);
             if (width > 0) {
-                if (count == MAX_PATCHES + 1) {
+                if (count == PATCH_CAPACITY) {
                     return false;
                 }
                 patchSubbands[count] = width;
                 patchStart[count] = k0 - odd - width;
-                if (patchStart[count] < 1) {
+                if (patchStart[count] < 0) {
                     return false;
                 }
                 usb = sb;
@@ -443,7 +444,7 @@ final class SbrFrequencies {
         if (count > 1 && patchSubbands[count - 1] < 3) {
             count--;
         }
-        if (count == 0 || count > MAX_PATCHES) {
+        if (count == 0) {
             return false;
         }
         patches = count;

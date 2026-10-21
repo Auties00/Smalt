@@ -1,0 +1,20 @@
+# demux dump of matroska/flac.mka; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 600000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 AUDIO FLAC timebase=1/22050 duration=13230 config=42:30b0c8d2
+  audio rate=22050 bits=0 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 6
+0 t1 pts=0 dts=0 dur=? flags=KEY size=5724 crc=c3a2ec42
+1 t1 pts=2293 dts=2293 dur=? flags=KEY size=5729 crc=c886ca98
+2 t1 pts=4608 dts=4608 dur=? flags=KEY size=5725 crc=1f496e8d
+3 t1 pts=6902 dts=6902 dur=? flags=KEY size=5722 crc=fd4df1ab
+4 t1 pts=9217 dts=9217 dur=? flags=KEY size=5719 crc=862edbd0
+5 t1 pts=11510 dts=11510 dur=? flags=KEY size=4257 crc=4ca4a668
+seek 0: t1@0
+seek 200000: t1@1
+seek 400000: t1@3
+seek 625987: end
+seek 600000: t1@5
+seek -1000000: t1@0

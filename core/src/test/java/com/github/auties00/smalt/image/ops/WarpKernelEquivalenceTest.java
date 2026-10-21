@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
@@ -8,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import java.util.SplittableRandom;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks that the Vector API implementation of {@link WarpKernel} produces exactly the output of
@@ -24,7 +24,7 @@ class WarpKernelEquivalenceTest {
 
     @BeforeAll
     static void requireVectors() {
-        assumeTrue(Simd.ENABLED, "the Vector API is not enabled");
+        Skip.unlessVector(Simd.ENABLED);
     }
 
     private static float[] weights(SplittableRandom random, int count) {

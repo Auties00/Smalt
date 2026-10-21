@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
+import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
@@ -111,6 +112,28 @@ class SharedCodecTest {
             assertEquals(48000, config.inputRate());
             assertArrayEquals(new byte[]{2, 1, 0, 2, 1}, config.mapping());
             assertArrayEquals(head, AudioConfigs.opusHeadFromDops(AudioConfigs.dopsFromOpusHead(head)));
+            // Family 3: the stream counts and a 2 x 3 demixing matrix of Q15 coefficients.
+            var projection = new byte[19 + 2 + 12];
+            System.arraycopy(head, 0, projection, 0, 19);
+            projection[9] = 2;
+            projection[18] = 3;
+            projection[19] = 2;
+            projection[20] = 1;
+            for (var i = 21; i < projection.length; i++) {
+                projection[i] = (byte) (i * 37);
+            }
+            var demixing = AudioConfigs.parseOpusHead(projection);
+            assertEquals(3, demixing.family());
+            assertArrayEquals(Arrays.copyOfRange(projection, 19, projection.length), demixing.mapping());
+            assertArrayEquals(projection, AudioConfigs.opusHeadFromDops(AudioConfigs.dopsFromOpusHead(projection)));
+            var dops = AudioConfigs.dopsFromOpusHead(projection);
+            // A table cut after one byte per channel (FFmpeg's dOps for family 3) is kept short, and the
+            // OpusHead it gives fails to parse as a projection header; a shorter one is malformed.
+            var shortTable = AudioConfigs.opusHeadFromDops(Arrays.copyOf(dops, dops.length - 1));
+            assertArrayEquals(Arrays.copyOf(projection, 19 + 2 + 2), shortTable);
+            assertThrows(MediaException.Malformed.class, () -> OpusHeader.parseLenient(shortTable));
+            assertThrows(MediaException.Malformed.class,
+                    () -> AudioConfigs.opusHeadFromDops(Arrays.copyOf(dops, 11 + 3)));
         }
 
         @Test
@@ -134,6 +157,22 @@ class SharedCodecTest {
             assertEquals(rate, parsed.sampleRate());
             assertEquals(output > 0, parsed.sbr());
             assertEquals(output > 0 ? output : rate, parsed.outputRate());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"b98900, 23, 48000, 512, 48000, false", "b98d20, 23, 48000, 480, 48000, false",
+                "f8e63000, 39, 48000, 480, 48000, false", "f8ec21b9209c00, 39, 24000, 512, 48000, true",
+                "f8ec2126808200, 39, 24000, 512, 24000, true", "898900, 17, 48000, 1024, 48000, false"})
+        @DisplayName("parses the frame length and low delay SBR of AAC-LD, AAC-ELD and ER AAC LC configurations")
+        void lowDelay(String hex, int type, int rate, int frameLength, int output, boolean sbr) {
+            // ISO/IEC 14496-26 er_ad1000, er_ad1111, er_eld1100np, er_eld_sbr_e_1 (dual rate), er_eld_sbr_twi_1
+            // (downsampled) and er_al10
+            var parsed = AudioConfigs.parseAac(java.util.HexFormat.of().parseHex(hex));
+            assertEquals(type, parsed.objectType());
+            assertEquals(rate, parsed.sampleRate());
+            assertEquals(frameLength, parsed.frameLength());
+            assertEquals(output, parsed.outputRate());
+            assertEquals(sbr, parsed.sbr());
         }
 
         @Test
@@ -182,6 +221,43 @@ class SharedCodecTest {
             var sampleRate = new int[]{44100, 48000, 32000}[frequency] >> (version == 3 ? 0 : version == 2 ? 1 : 2);
             var samples = layer == 1 ? 384 : layer == 2 ? 1152 : mpeg1 ? 1152 : 576;
             return new AudioConfigs.MpegHeader(layer, sampleRate, samples, mpeg1);
+        }
+    }
+
+    @Nested
+    @DisplayName("AAC and TrueHD layouts")
+    class Layouts {
+        @Test
+        @DisplayName("gives the AAC configurations their speakers, none to configuration 0 and the reserved ones")
+        void aac() {
+            for (var reserved : new int[]{0, 8, 9, 10, 15}) {
+                assertNull(AudioConfigs.aacLayout(reserved), "configuration " + reserved);
+            }
+            assertEquals(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY,
+                    Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.BACK_CENTER), AudioConfigs.aacLayout(11).speakers());
+            assertEquals(ChannelLayout.SURROUND_7_1, AudioConfigs.aacLayout(12));
+            assertEquals(24, AudioConfigs.aacLayout(13).channels());
+            assertEquals(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY,
+                    Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT),
+                    AudioConfigs.aacLayout(14).speakers());
+            // AAC LC, 48 kHz, configuration 13
+            var config = AudioConfigs.parseAac(new byte[]{0x11, (byte) 0xE8});
+            assertEquals(13, config.channelConfiguration());
+            assertEquals(24, config.channels());
+            assertEquals(AudioConfigs.aacLayout(13), config.layout());
+        }
+
+        @Test
+        @DisplayName("names the surround direct, wide and second LFE locations of a TrueHD presentation")
+        void trueHd() {
+            var unit = new byte[12];
+            // 8-channel assignment: L/R, C, LFE, Lsd/Rsd (bit 9), Lw/Rw (bit 10), LFE2 (bit 12)
+            var assignment = 1 | 2 | 4 | 1 << 9 | 1 << 10 | 1 << 12;
+            unit[10] = (byte) (assignment >>> 8);
+            unit[11] = (byte) assignment;
+            assertEquals(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY,
+                    Speaker.WIDE_LEFT, Speaker.WIDE_RIGHT, Speaker.SURROUND_DIRECT_LEFT, Speaker.SURROUND_DIRECT_RIGHT,
+                    Speaker.LOW_FREQUENCY_2), TrueHdConfigs.layout(unit, 0).speakers());
         }
     }
 

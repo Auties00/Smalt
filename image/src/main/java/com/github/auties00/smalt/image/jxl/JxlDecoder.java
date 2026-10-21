@@ -48,9 +48,16 @@ import java.util.function.Supplier;
  * straight alpha, and CMYK images are converted to sRGB through their profile. The picture is in
  * the color space {@link DecodedImage#iccProfile()} describes, the embedded profile or one
  * synthesized from the enumerated encoding, unless {@link ImageDecoderOptions#convertToSrgb()}
- * asks for sRGB. {@link #decodeFloat(MediaSource, ImageDecoderOptions)} returns every channel at
- * full precision. Pixels are not oriented: {@link DecodedImage#orientation()} is the codestream's
- * orientation. The EXIF block is the payload of the container's {@code Exif} box, decompressed
+ * asks for sRGB. With {@link ImageDecoderOptions#keepChannels()} set (and {@code convertToSrgb} not set), a
+ * CMYK image, an image of floating-point samples, or one with extra channels other than a single alpha
+ * channel decodes to a {@link com.github.auties00.smalt.image.ChannelPicture ChannelPicture} instead: gray,
+ * RGB or CMYK (ink amounts, 0 being no ink) followed by the other extra channels in file order, the alpha
+ * channel straight or premultiplied as stored, in the color space of the color planes
+ * {@link #decodeFloat(MediaSource, ImageDecoderOptions)} describes; floating-point images keep their values
+ * unclamped, sample for sample equal to the planes {@code decodeFloat} returns, and integer images are
+ * quantized as the RGBA output is. {@link #decodeFloat(MediaSource, ImageDecoderOptions)} returns every
+ * channel at full precision, as separate planes. Pixels are not oriented: {@link DecodedImage#orientation()} is
+ * the codestream's orientation. The EXIF block is the payload of the container's {@code Exif} box, decompressed
  * when the box is stored Brotli-compressed in a {@code brob} box; other compressed boxes are
  * ignored.
  *
@@ -121,7 +128,8 @@ public final class JxlDecoder {
      * @param source the file
      * @param options the limits, the bit depth choice and the sRGB conversion; the reduced-size
      * hint is ignored
-     * @return the decoded image with its orientation, color profile and EXIF block
+     * @return the decoded image with its orientation, color profile, EXIF block and XMP packet (the
+     * {@code xml } box of the container)
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported if a CMYK profile cannot be applied
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits or decoding runs
@@ -139,10 +147,19 @@ public final class JxlDecoder {
                 throw new MediaException.Malformed("JPEG XL file without a displayed frame");
             }
             var header = codestream.header();
+            if (options.keepChannels() && !options.convertToSrgb()) {
+                var channels = JxlOutput.toChannels(keyframe.canvas(), header, codestream.icc(), options.highBitDepth());
+                if (channels != null) {
+                    return new DecodedImage(channels.picture(), ImageFormat.JXL, Orientation.ofExif(header.orientation()),
+                            header.width(), header.height(), channels.icc(),
+                            Optional.ofNullable(codestream.container().exif()),
+                            Optional.ofNullable(codestream.container().xmp()), channels.profile());
+                }
+            }
             var output = JxlOutput.toPicture(keyframe.canvas(), header, codestream.icc(), options.highBitDepth());
             var image = new DecodedImage(output.picture(), ImageFormat.JXL, Orientation.ofExif(header.orientation()),
                     header.width(), header.height(), output.icc(), Optional.ofNullable(codestream.container().exif()),
-                    output.profile());
+                    Optional.ofNullable(codestream.container().xmp()), output.profile());
             return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
         });
     }

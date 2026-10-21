@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.vp9;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoFrame;
@@ -18,7 +19,6 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Pins the real-time VP9 encoder's bitstream: each configuration encodes a fixed input and the
@@ -145,9 +145,9 @@ class Vp9EncoderGoldenTest {
     @DisplayName("a natural clip encodes to the recorded bitstream")
     void natural(String name, String clip, Vp9Setup setup, String expected) throws IOException {
         var path = Vp9TestVideo.clip(clip);
-        assumeTrue(path != null, "clip " + clip + " is not cached");
+        Skip.unless(path != null, "data:clip", "clip " + clip + " is not cached");
         var frames = Vp9TestVideo.read(path, setup.width(), setup.height(), 0, 40);
-        assumeTrue(frames.size() == 40, "clip " + clip + " is too short");
+        Skip.unless(frames.size() == 40, "data:clip", "clip " + clip + " is too short");
         assertEquals(expected, digest(setup, frames, List.of()), name);
     }
 }

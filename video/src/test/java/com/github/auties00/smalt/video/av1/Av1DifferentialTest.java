@@ -12,7 +12,6 @@ import com.github.auties00.smalt.video.VideoReader;
 import com.github.auties00.smalt.video.av1.internal.Av1Context;
 import com.github.auties00.smalt.video.av1.internal.Av1Picture;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -280,16 +279,16 @@ class Av1DifferentialTest {
     }
 
     @Nested
-    @DisplayName("other encoders, when an ffmpeg with them is on the PATH")
+    @DisplayName("streams of the other AV1 encoders, rav1e and SVT-AV1")
     class OtherEncoders {
         @ParameterizedTest(name = "{0}")
         @MethodSource("com.github.auties00.smalt.video.av1.Av1DifferentialTest#otherEncoders")
         @DisplayName("streams decode exactly like ffmpeg")
         void stream(Case c) {
             var encoder = c.output().get(1);
-            var ffmpeg = findFfmpegWith(encoder);
-            Assumptions.assumeTrue(ffmpeg.isPresent(), "no ffmpeg with " + encoder + " on the PATH");
-            var file = encodeWith(ffmpeg.get(), c);
+            var ffmpeg = findFfmpegWith(encoder)
+                    .orElseThrow(() -> Oracle.missingFeature("no ffmpeg with " + encoder + " on the PATH"));
+            var file = encodeWith(ffmpeg, c);
             var tenBit = c.output().contains("yuv420p10le");
             var expected = Oracle.decodeVideo(file, tenBit ? "yuv420p10le" : "yuv420p", 0);
             assertSame(expected, tenBit ? decodeHighBitDepth(file) : decodePublic(file), c.name());

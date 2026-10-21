@@ -3,6 +3,7 @@ package com.github.auties00.smalt.image.tiff.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.jpeg.internal.JpegOutput;
+import com.github.auties00.smalt.image.jpeg.internal.JpegPlanes;
 import com.github.auties00.smalt.image.jpeg.internal.JpegReader;
 import com.github.auties00.smalt.image.jpeg.internal.Upsampler;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -10,7 +11,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 
 /**
- * Decodes the JPEG data of TIFF strips and tiles into interleaved 8-bit samples.
+ * Decodes the JPEG data of TIFF strips and tiles into interleaved 8-bit or 12-bit samples.
  *
  * <p>New-style JPEG (compression 7, TIFF Technical Note 2) stores each strip or tile as an
  * abbreviated JPEG stream whose tables may live in the {@code JPEGTables} tag; the two are joined
@@ -18,7 +19,10 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * from the complete stream its {@code JPEGInterchangeFormat} tag points to, or from a stream
  * rebuilt from its table tags and the strip or tile data. Each component is brought to full
  * resolution with libjpeg's fancy upsampling, and YCbCr is converted to RGB with libjpeg's tables
- * when asked, which is what libtiff does when it reads JPEG data as RGB.
+ * when asked, which is what libtiff does when it reads JPEG data as RGB. A 12-bit stream is
+ * upsampled and converted at 12 bits, with libjpeg's 12-bit tables, and its samples are packed as
+ * TIFF packs 12-bit samples: two in three bytes, most significant bits first, each row starting on
+ * a byte boundary.
  *
  * @implNote This implementation reuses Smalt's JPEG decoder ({@link JpegReader}), whose planes
  * are bit-exact with libjpeg-turbo's accurate integer IDCT, so the samples match libtiff linked
@@ -37,12 +41,20 @@ public final class TiffJpeg {
     /**
      * Holds decoded samples.
      *
-     * @param samples the interleaved samples, {@code width * components} per row
+     * @param samples the interleaved samples, {@link #rowBytes()} per row
      * @param width the decoded width
      * @param height the decoded height
      * @param components the number of samples per pixel
+     * @param bits the number of bits per sample, 8 or 12; 12-bit samples are packed most significant
+     * bits first
      */
-    public record Samples(byte[] samples, int width, int height, int components) {
+    public record Samples(byte[] samples, int width, int height, int components, int bits) {
+        /**
+         * {@return the number of bytes of one row of samples}
+         */
+        public int rowBytes() {
+            return (int) (((long) width * components * bits + 7) / 8);
+        }
     }
 
     /**
@@ -156,6 +168,9 @@ public final class TiffJpeg {
         var reader = new JpegReader(stream, offset, length, limits);
         var frame = reader.readHeaders();
         reader.checkSupported();
+        if (frame.precision() == 12) {
+            return decodeTwelveBit(reader.decodeWidePlanes(0), limits, ycbcrToRgb);
+        }
         var planes = reader.decodePlanes(0);
         var width = planes.width();
         var height = planes.height();
@@ -185,7 +200,7 @@ public final class TiffJpeg {
                     out += 3;
                 }
             }
-            return new Samples(samples, width, height, 3);
+            return new Samples(samples, width, height, 3, 8);
         }
         var full = new byte[components][];
         var strides = new int[components];
@@ -219,7 +234,7 @@ public final class TiffJpeg {
                     out += 3;
                 }
             }
-            return new Samples(samples, width, height, 3);
+            return new Samples(samples, width, height, 3, 8);
         }
         for (var c = 0; c < components; c++) {
             var plane = full[c];
@@ -233,7 +248,69 @@ public final class TiffJpeg {
                 }
             }
         }
-        return new Samples(samples, width, height, components);
+        return new Samples(samples, width, height, components, 8);
+    }
+
+    /**
+     * Turns the planes of a 12-bit stream into packed interleaved 12-bit samples.
+     *
+     * @param planes the {@linkplain JpegPlanes#wide() wide} planes
+     * @param limits the bounds of the decoded samples
+     * @param ycbcrToRgb whether three components are YCbCr to convert to RGB
+     * @return the samples
+     * @throws MediaException.LimitExceeded if the samples exceed the limits
+     */
+    private static Samples decodeTwelveBit(JpegPlanes planes, MediaLimits limits, boolean ycbcrToRgb) {
+        var frame = planes.frame();
+        var width = planes.width();
+        var height = planes.height();
+        var components = frame.components().size();
+        LimitChecks.checkAllocation(limits, (long) width * height * components * 2);
+        var full = new short[components][];
+        var strides = new int[components];
+        for (var c = 0; c < components; c++) {
+            var info = frame.components().get(c);
+            if (info.horizontalSampling() == frame.hMax() && info.verticalSampling() == frame.vMax()) {
+                full[c] = planes.widePlane(c);
+                strides[c] = planes.stride(c);
+            } else {
+                full[c] = JpegOutput.fullResolutionWide(planes, c);
+                strides[c] = width;
+            }
+        }
+        var convert = ycbcrToRgb && components == 3;
+        var rowBytes = (int) (((long) width * components * 12 + 7) / 8);
+        var samples = new byte[rowBytes * height];
+        var pixel = new int[components];
+        for (var row = 0; row < height; row++) {
+            var out = row * rowBytes;
+            var odd = false;
+            for (var x = 0; x < width; x++) {
+                for (var c = 0; c < components; c++) {
+                    pixel[c] = full[c][row * strides[c] + x];
+                }
+                if (convert) {
+                    var rgb = JpegOutput.yccToRgb12(pixel[0], pixel[1], pixel[2]);
+                    pixel[0] = (int) (rgb >>> 24);
+                    pixel[1] = (int) ((rgb >>> 12) & 0xFFF);
+                    pixel[2] = (int) (rgb & 0xFFF);
+                }
+                for (var c = 0; c < components; c++) {
+                    var value = pixel[c];
+                    if (odd) {
+                        samples[out] |= (byte) (value >>> 8);
+                        samples[out + 1] = (byte) value;
+                        out += 2;
+                    } else {
+                        samples[out] = (byte) (value >>> 4);
+                        samples[out + 1] = (byte) (value << 4);
+                        out++;
+                    }
+                    odd = !odd;
+                }
+            }
+        }
+        return new Samples(samples, width, height, components, 12);
     }
 
     /**

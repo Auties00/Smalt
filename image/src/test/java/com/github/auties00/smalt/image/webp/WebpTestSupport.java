@@ -1,12 +1,10 @@
 package com.github.auties00.smalt.image.webp;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
-import org.junit.jupiter.api.Assumptions;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -38,16 +36,9 @@ final class WebpTestSupport {
         throw new AssertionError();
     }
 
-    /** Runs an action that needs VP8 pixels, skipping the test while the VP8 codec is the stub. */
+    /** Runs an action that needs VP8 pixels. */
     static <T> T withVp8(Supplier<T> action) {
-        try {
-            return action.get();
-        } catch (MediaException.Unsupported exception) {
-            if ("vp8-stub".equals(exception.format())) {
-                Assumptions.abort("VP8 codec pending the VP8 workstream merge");
-            }
-            throw exception;
-        }
+        return action.get();
     }
 
     static void withVp8(Runnable action) {
@@ -64,7 +55,7 @@ final class WebpTestSupport {
             if (frame == null) {
                 throw new AssertionError("no frame");
             }
-            return frame.picture();
+            return (RgbaPicture) frame.picture();
         }
     }
 
@@ -189,33 +180,13 @@ final class WebpTestSupport {
 
     /** Locates one of libwebp's extra command-line tools (webpmux, img2webp, gif2webp, webpinfo). */
     static Optional<Path> tool(String name) {
-        var path = System.getenv("PATH");
-        if (path == null) {
-            return Optional.empty();
-        }
-        var windows = System.getProperty("os.name", "").toLowerCase().contains("win");
-        for (var directory : path.split(java.io.File.pathSeparator)) {
-            if (directory.isBlank()) {
-                continue;
-            }
-            for (var candidate : windows ? List.of(name + ".exe", name) : List.of(name)) {
-                try {
-                    var file = Path.of(directory.trim(), candidate);
-                    if (Files.isRegularFile(file) && Files.isExecutable(file)) {
-                        return Optional.of(file);
-                    }
-                } catch (RuntimeException ignored) {
-                    // malformed PATH entry
-                }
-            }
-        }
-        return Optional.empty();
+        return Oracle.find(name);
     }
 
     /** Runs an extra tool, skipping when it is absent, and returns stdout+stderr; fails on a non-zero exit. */
     static String runTool(String name, List<String> arguments) {
         var executable = tool(name);
-        Assumptions.assumeTrue(executable.isPresent(), name + " is not on PATH");
+        Oracle.assume(name);
         var command = new ArrayList<String>();
         command.add(executable.get().toString());
         command.addAll(arguments);

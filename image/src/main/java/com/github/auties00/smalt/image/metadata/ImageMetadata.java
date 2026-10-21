@@ -31,12 +31,15 @@ import java.util.Optional;
  *       chunk, and the {@code tEXt}, {@code zTXt} and {@code iTXt} text, the {@code Comment}
  *       keyword giving the comments;</li>
  *   <li>WebP: the {@code EXIF}, {@code XMP } and {@code ICCP} chunks;</li>
- *   <li>GIF: the comment extensions and the {@code XMP DataXMP} application extension;</li>
+ *   <li>GIF: the comment extensions, the {@code XMP DataXMP} application extension and the
+ *       {@code ICCRGBG1} application extension;</li>
  *   <li>HEIC and AVIF: the {@code Exif} and XMP items describing the primary item, and its ICC
  *       color property;</li>
- *   <li>TIFF: IFD0 as EXIF, with the XMP (tag 700), IPTC (tag 33723) and ICC (tag 34675)
- *       entries;</li>
- *   <li>BMP: nothing.</li>
+ *   <li>TIFF and BigTIFF: the descriptive entries of IFD0 and its Exif, GPS and interoperability
+ *       directories as EXIF (the entries that lay out the coded image are left out), with the XMP
+ *       (tag 700), IPTC (tag 33723, or else the IPTC resource of the Photoshop image resources in
+ *       tag 34377) and ICC (tag 34675) entries;</li>
+ *   <li>BMP: the ICC profile a V5 header embeds.</li>
  * </ul>
  *
  * <p>Instances are immutable and thread-safe; the byte-array accessors return copies.

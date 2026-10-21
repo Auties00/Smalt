@@ -7,6 +7,7 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Encodes tags in the forms the muxers write when a caller sets them with
@@ -27,6 +28,8 @@ public final class MuxerTags {
      *
      * @param tags the tags and chapters to store
      * @return the box, or an empty array for empty tags
+     * @throws com.github.auties00.smalt.MediaException.Unsupported if a value of an iTunes integer
+     * atom, such as {@code tmpo}, is not an integer the atom holds
      */
     public static byte[] mp4UserData(MediaTags tags) {
         if (tags.isEmpty()) {
@@ -37,7 +40,7 @@ public final class MuxerTags {
             var meta = new ByteWriter(4096);
             meta.u32be(0);
             meta.bytes(Mp4TagFile.handler());
-            meta.bytes(Mp4TagFile.ilst(tags, List.of(), new HashSet<>()));
+            meta.bytes(Mp4TagFile.ilst(tags, List.of(), Map.of(), new HashSet<>()));
             Mp4Boxes.box(out, "meta", meta.toByteArray());
         }
         if (!tags.chapters().isEmpty()) {

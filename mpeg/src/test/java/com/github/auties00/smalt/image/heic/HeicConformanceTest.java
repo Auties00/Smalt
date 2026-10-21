@@ -542,7 +542,8 @@ class HeicConformanceTest {
         @ValueSource(strings = {"multilayer004.heic"})
         @DisplayName("Nokia files")
         void nokia(String name) {
-            assertThrows(MediaException.Unsupported.class, () -> HeicDecoder.decode(source(HeicVectors.nokia(name))));
+            var vector = HeicVectors.nokia(name);
+            assertThrows(MediaException.Unsupported.class, () -> HeicDecoder.decode(source(vector)));
         }
 
     }

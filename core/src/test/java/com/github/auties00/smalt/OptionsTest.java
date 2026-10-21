@@ -175,7 +175,9 @@ class OptionsTest {
         assertFalse(picked.includesAudio());
         assertEquals(picked, RemuxOptions.builder().videoTrack(2).noAudio().build());
         assertEquals(remux, picked.toBuilder().firstVideoTrack().firstAudioTrack().build());
-        assertThrows(IllegalArgumentException.class, () -> remux.toBuilder().audioTrack(0).build());
+        assertThrows(IllegalArgumentException.class, () -> remux.toBuilder().audioTracks().build());
+        // Ogg serial numbers and AVI stream numbers are identifiers too, zero and negative ones included
+        assertEquals(OptionalInt.of(0), remux.toBuilder().audioTrack(0).build().audioTrackId());
         var comments = new LinkedHashMap<String, String>();
         comments.put("TITLE", "x");
         var ogg = OggMuxerOptions.builder().vendor("v").comments(comments).serial(7)

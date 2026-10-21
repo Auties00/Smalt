@@ -1,0 +1,26 @@
+# audio decode dump of vectors/vorbis-chain-test3.ogg; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 1346757
+seekable true
+track 0 VORBIS rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=e2f6a9ee
+1 frames=4096 crc16=06516fb8
+2 frames=4096 crc16=110a1934
+3 frames=4096 crc16=4347e624
+4 frames=4096 crc16=d8187572
+5 frames=4096 crc16=234328fe
+6 frames=4096 crc16=11a1061e
+7 frames=4096 crc16=9869cbde
+8 frames=4096 crc16=b6f62737
+9 frames=4096 crc16=1e3e2719
+10 frames=4096 crc16=a6f769a0
+11 frames=4096 crc16=af239c42
+12 frames=4096 crc16=60300f14
+13 frames=4096 crc16=ddc951b7
+14 frames=2048 crc16=43cc312f
+seek 0: @sample 0
+seek 448919: @sample 19797
+seek 897838: @sample 39595
+seek 1346757: end
+seek -1000000: @sample 0
+refused over READ_ONCE_UNKNOWN_LENGTH after 14 frames

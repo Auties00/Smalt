@@ -23,7 +23,7 @@ import com.github.auties00.smalt.video.dnxhd.DnxhdProfile;
  *           of the codec-independent decoder options to {@link DnxhdDecoderOptions}. It encodes
  *           {@link DnxhdProfile#DNXHR_HQ} at the requested frame rate and thread count; the
  *           bitrate does not apply, since every DNxHR frame has the size its compression ID
- *           assigns.
+ *           assigns, and neither do the key frame settings, since every frame is a key frame.
  */
 public final class DnxhdCodecProvider implements VideoCodecProvider {
     /**

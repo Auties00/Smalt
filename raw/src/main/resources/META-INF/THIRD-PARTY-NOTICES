@@ -27,6 +27,7 @@ Contents
   36. arw (Go package by Sjon Kosse)
   37. Adobe Digital Negative (DNG) specification
   38. rawtoaces-data (camera spectral sensitivities)
+  40. X3F tools
 
 
 ===============================================================================
@@ -45,6 +46,7 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (HuffmanTables; BandLayout, EncoderChannel,
   EncoderEngine, TnsEncoder, TransientDetector)
+  container.internal (AacHuffmanTables)
 
 Derivation: the AAC Huffman codeword and length values are taken from the
 tables of aacenc/src/aac_rom.c. The encoder's psychoacoustic model, block

@@ -219,6 +219,8 @@ final class PreviewBalance {
                 }
             }
             return sums;
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             return null;
         }

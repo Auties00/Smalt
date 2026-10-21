@@ -54,13 +54,15 @@ class ImageIoProvidersTest {
     void readerFormats() {
         var provider = new SmaltImageReaderSpi();
         assertEquals(List.of(ImageFormat.PNG, ImageFormat.WEBP, ImageFormat.HEIC, ImageFormat.AVIF, ImageFormat.ICO,
-                ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW), provider.formats());
+                ImageFormat.ANI, ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW), provider.formats());
         var names = Arrays.asList(provider.getFormatNames());
         assertTrue(names.contains("webp"));
         assertTrue(names.contains("avif"));
         assertTrue(names.contains("heic"));
         assertTrue(names.contains("apng"));
         assertTrue(names.contains("ico"));
+        assertTrue(names.contains("ani"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("ani"));
         assertTrue(names.contains("jpeg2000"));
         assertTrue(names.contains("jp2"));
         assertTrue(names.contains("dng"));

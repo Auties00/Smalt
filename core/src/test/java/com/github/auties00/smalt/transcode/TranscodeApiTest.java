@@ -144,10 +144,53 @@ class TranscodeApiTest {
         @ParameterizedTest(name = "{0}")
         @CsvSource({"clip.mp4, MP4", "a.M4A, M4A", "x.mkv, MATROSKA", "x.webm, WEBM", "voice.opus, OGG", "x.ogg, OGG",
                 "x.wav, WAV", "x.aiff, AIFF", "x.aac, ADTS", "x.ivf, IVF", "x.mp3, MP3", "x.flac, FLAC", "x.amr, AMR", "webm, WEBM",
-                "x.mov, MOV", "x.qt, MOV"})
+                "x.mov, MOV", "x.qt, MOV", "x.ac3, AC3", "x.ec3, EAC3", "x.eac3, EAC3", "x.h264, H264", "x.264, H264",
+                "x.h265, HEVC", "x.265, HEVC", "x.hevc, HEVC", "x.obu, AV1", "x.oga, OGG"})
         @DisplayName("are found by file extension")
         void extension(String name, OutputContainer container) {
             assertEquals(Optional.of(container), OutputContainer.forFileName(name));
+        }
+
+        @Test
+        @DisplayName("write elementary streams and Ogg FLAC restricted to their codecs")
+        void elementaryTargets() {
+            assertEquals(java.util.List.of(Codec.FLAC), OutputContainer.OGG_FLAC.audioCodecs());
+            assertTrue(OutputContainer.OGG_FLAC.supports(Codec.FLAC));
+            assertFalse(OutputContainer.OGG_FLAC.supports(Codec.OPUS));
+            assertTrue(OutputContainer.OGG_FLAC.needsConfig(Codec.FLAC));
+            assertTrue(OutputContainer.AC3.supports(Codec.AC3));
+            assertFalse(OutputContainer.AC3.supports(Codec.EAC3));
+            assertTrue(OutputContainer.EAC3.supports(Codec.EAC3));
+            assertEquals("audio/eac3", OutputContainer.EAC3.mimeType());
+            for (var container : java.util.List.of(OutputContainer.H264, OutputContainer.HEVC, OutputContainer.AV1)) {
+                var codec = container.videoCodecs().getFirst();
+                assertTrue(container.supports(codec), container.toString());
+                assertTrue(container.audioCodecs().isEmpty());
+                assertTrue(container.subtitleCodecs().isEmpty());
+                assertFalse(container.storesOrientation());
+                assertFalse(container.carriesSeveralTracks());
+                assertEquals(codec != Codec.AV1, container.needsConfig(codec));
+                assertTrue(com.github.auties00.smalt.container.Containers.isMuxable(container.format(), codec));
+                assertFalse(com.github.auties00.smalt.container.Containers.isMuxable(container.format(), Codec.VP9));
+            }
+            assertEquals(com.github.auties00.smalt.container.ContainerFormat.OGG, OutputContainer.OGG_FLAC.format());
+            assertEquals(com.github.auties00.smalt.container.ContainerFormat.AC3, OutputContainer.EAC3.format());
+            var opus = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.OPUS)
+                    .timeBase(new Rational(1, 48_000)).sampleRate(48_000).layout(ChannelLayout.STEREO).codecConfig(new byte[19]).build();
+            try (var muxer = com.github.auties00.smalt.container.Containers.openMuxer(OutputContainer.OGG_FLAC,
+                    com.github.auties00.smalt.io.MediaSink.memory())) {
+                assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(opus));
+            }
+            var ac3 = com.github.auties00.smalt.track.AudioTrack.builder().id(1).codec(Codec.AC3)
+                    .timeBase(new Rational(1, 48_000)).sampleRate(48_000).layout(ChannelLayout.STEREO).build();
+            try (var muxer = com.github.auties00.smalt.container.Containers.openMuxer(OutputContainer.EAC3,
+                    com.github.auties00.smalt.io.MediaSink.memory())) {
+                assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(ac3));
+            }
+            try (var muxer = com.github.auties00.smalt.container.Containers.openMuxer(OutputContainer.AC3,
+                    com.github.auties00.smalt.io.MediaSink.memory())) {
+                muxer.addTrack(ac3);
+            }
         }
 
         @Test
@@ -160,7 +203,11 @@ class TranscodeApiTest {
             assertTrue(OutputContainer.M4A.supports(Codec.AAC));
             assertTrue(OutputContainer.WAV.supports(Codec.PCM_F32LE));
             assertTrue(OutputContainer.OGG.supports(Codec.VORBIS));
-            assertFalse(OutputContainer.OGG.supports(Codec.FLAC));
+            assertTrue(OutputContainer.OGG.supports(Codec.FLAC));
+            assertFalse(OutputContainer.OGG.supports(Codec.AAC));
+            assertTrue(OutputContainer.OGG.needsConfig(Codec.FLAC));
+            assertTrue(OutputContainer.MATROSKA.needsConfig(Codec.ALAC));
+            assertFalse(OutputContainer.MATROSKA.needsConfig(Codec.MPEG4_PART2));
             assertTrue(OutputContainer.MP4.storesOrientation());
             assertTrue(OutputContainer.MOV.supports(Codec.PRORES));
             assertTrue(OutputContainer.MOV.supports(Codec.DNXHD));

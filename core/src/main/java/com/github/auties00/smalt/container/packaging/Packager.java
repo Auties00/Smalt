@@ -65,9 +65,9 @@ import java.util.Optional;
  *
  * @apiNote Packaging copies the coded streams; transcode first to change codecs, sizes or key
  * frame spacing. Transport stream segments take H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3 and
- * Opus; CMAF segments take H.264, HEVC, VP9, AV1, AAC, Opus, MP3, FLAC and ALAC, although HLS
- * players support only some of them in CMAF (Apple players: H.264, HEVC, AAC, AC-3, E-AC-3,
- * FLAC, ALAC, Opus).
+ * Opus; CMAF segments take the audio and video codecs {@link FragmentedMp4Muxer#supports} lists,
+ * although HLS players support only some of them in CMAF (Apple players: H.264, HEVC, AAC, AC-3,
+ * E-AC-3, FLAC, ALAC, Opus).
  */
 public final class Packager {
     /**

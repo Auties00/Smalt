@@ -1,0 +1,19 @@
+# image dump of png/animated.png; regenerate with -Dsmalt.test.updateDumps=true
+format PNG
+info ImageInfo[format=PNG, width=48, height=32, hasAlpha=false, animated=true, frameCount=5, orientation=NORMAL]
+decode
+picture 48x32 rgba8 alpha=false crc=d7400316
+  format=PNG orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+scaled 12x8
+picture 48x32 rgba8 alpha=false crc=d7400316
+  format=PNG orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none
+animation 48x32 loops=0 frames=5
+frame 0 ts=0 dur=200000 48x32 rgba8 alpha=true crc=d7400316
+frame 1 ts=200000 dur=200000 48x32 rgba8 alpha=true crc=ecbd3764
+frame 2 ts=400000 dur=200000 48x32 rgba8 alpha=true crc=8e31011a
+frame 3 ts=600000 dur=200000 48x32 rgba8 alpha=true crc=158416ed
+frame 4 ts=800000 dur=200000 48x32 rgba8 alpha=true crc=d1e2cb12

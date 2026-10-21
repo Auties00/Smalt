@@ -197,15 +197,16 @@ class Mp4RemuxerTest {
         @Test
         @DisplayName("rejects codecs MP4 cannot carry, naming them")
         void unsupported() {
-            var vp9 = Fixtures.ffmpeg("mp4", Mp4Fixtures.both(96, 64, 1, 48000),
-                    List.of("-c:v", "libvpx-vp9", "-b:v", "200k", "-deadline", "realtime", "-c:a", "libopus"));
-            var failure = assertThrows(MediaException.Unsupported.class, () -> remux(vp9, "vp9", RemuxOptions.video()));
-            assertEquals("vp9", failure.format());
-            var audioOnly = remux(vp9, "vp9-audio", RemuxOptions.video().toBuilder().noVideo().build());
-            assertEquals(Codec.OPUS, audioOnly.result().tracks().getFirst().codec());
+            var prores = Fixtures.ffmpeg("mov", Mp4Fixtures.both(96, 64, 1, 48000),
+                    List.of("-c:v", "prores_ks", "-c:a", "aac"));
+            var failure = assertThrows(MediaException.Unsupported.class, () -> remux(prores, "prores", RemuxOptions.video()));
+            assertEquals("prores", failure.format());
+            assertTrue(failure.getMessage().contains("QuickTime"), failure.getMessage());
+            var audioOnly = remux(prores, "prores-audio", RemuxOptions.video().toBuilder().noVideo().build());
+            assertEquals(Codec.AAC, audioOnly.result().tracks().getFirst().codec());
             Oracle.assertDecodesCleanly(audioOnly.file());
-            var pcm = Fixtures.ffmpeg("mov", Mp4Fixtures.audio(22050, 0.5), List.of("-c:a", "pcm_s16le"));
-            assertEquals("pcm_s16le", assertThrows(MediaException.Unsupported.class, () -> remux(pcm, "pcm", RemuxOptions.audio())).format());
+            var pcm = Fixtures.ffmpeg("mov", Mp4Fixtures.audio(22050, 0.5), List.of("-c:a", "pcm_u8"));
+            assertEquals("pcm_u8", assertThrows(MediaException.Unsupported.class, () -> remux(pcm, "pcm", RemuxOptions.audio())).format());
         }
     }
 
@@ -300,11 +301,11 @@ class Mp4RemuxerTest {
         }
 
         @Test
-        @DisplayName("rejects VP9 video in WebM and non-media input")
+        @DisplayName("rejects Vorbis audio in WebM and non-media input")
         void rejects() {
             var webm = Fixtures.ffmpeg("webm", Mp4Fixtures.both(96, 64, 1, 48000),
-                    List.of("-c:v", "libvpx-vp9", "-b:v", "200k", "-deadline", "realtime", "-c:a", "libopus"));
-            assertEquals("vp9", assertThrows(MediaException.Unsupported.class, () -> remux(webm, "webm-vp9", RemuxOptions.video())).format());
+                    List.of("-c:v", "libvpx-vp9", "-b:v", "200k", "-deadline", "realtime", "-c:a", "libvorbis"));
+            assertEquals("vorbis", assertThrows(MediaException.Unsupported.class, () -> remux(webm, "webm-vorbis", RemuxOptions.video())).format());
             assertFalse(fastStart(webm));
             try (var source = MediaSource.of("this is not a media file".getBytes())) {
                 assertFalse(Mp4Remuxer.isFastStart(source));

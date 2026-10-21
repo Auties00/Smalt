@@ -15,6 +15,7 @@ import com.github.auties00.smalt.spi.ImageCodecProvider;
 import com.github.auties00.smalt.image.avif.AvifDecoder;
 import com.github.auties00.smalt.image.avif.AvifEncoder;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
+import com.github.auties00.smalt.internal.check.LosslessDepth;
 
 import java.util.Optional;
 
@@ -59,6 +60,9 @@ public final class AvifCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        if (options.isLossless()) {
+            picture = LosslessDepth.fit(picture, 12, "avif");
+        }
         AvifEncoder.encode(picture, settings(options), sink);
     }
 

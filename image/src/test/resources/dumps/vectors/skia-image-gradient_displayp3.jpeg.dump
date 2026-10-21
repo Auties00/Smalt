@@ -1,0 +1,13 @@
+# image dump of vectors/skia-image-gradient_displayp3.jpeg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=50, height=50, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 50x50 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=dd706814 u=e23e4962 v=7873479f
+  format=JPEG orientation=NORMAL source=50x50
+  icc=536:9f658526 exif=none xmp=none
+  profile=ColorProfile[Google/Skia/3350511B908594F2A38FC6B3526068DD, RGB, DISPLAY, v4.3.0]
+scaled 12x12
+picture 13x13 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=9915cf86 u=85f2219a v=2f6188e8
+  format=JPEG orientation=NORMAL source=50x50
+  icc=536:9f658526 exif=none xmp=none
+  profile=ColorProfile[Google/Skia/3350511B908594F2A38FC6B3526068DD, RGB, DISPLAY, v4.3.0]

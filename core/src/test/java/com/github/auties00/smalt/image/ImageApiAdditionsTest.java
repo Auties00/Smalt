@@ -101,13 +101,17 @@ class ImageApiAdditionsTest {
             assertEquals(Optional.of(new Chromaticity(0.314, 0.351)), ColorPrimaries.SMPTE431.white());
             assertEquals(Optional.of(new Chromaticity(0.310, 0.316)), ColorPrimaries.BT470M.white());
             assertEquals(ColorPrimaries.SMPTE170M.green(), ColorPrimaries.SMPTE240M.green());
+            assertEquals(Optional.of(new Chromaticity(1, 0)), ColorPrimaries.SMPTE428.red());
+            assertEquals(Optional.of(new Chromaticity(0, 1)), ColorPrimaries.SMPTE428.green());
+            assertEquals(Optional.of(new Chromaticity(0, 0)), ColorPrimaries.SMPTE428.blue());
+            assertEquals(Optional.of(new Chromaticity(1.0 / 3, 1.0 / 3)), ColorPrimaries.SMPTE428.white());
         }
 
         @ParameterizedTest
         @EnumSource(ColorPrimaries.class)
         @DisplayName("ColorPrimaries define all four points or none")
         void chromaticityCompleteness(ColorPrimaries primaries) {
-            var defined = primaries != ColorPrimaries.UNSPECIFIED && primaries != ColorPrimaries.SMPTE428;
+            var defined = primaries != ColorPrimaries.UNSPECIFIED;
             assertEquals(defined, primaries.red().isPresent());
             assertEquals(defined, primaries.green().isPresent());
             assertEquals(defined, primaries.blue().isPresent());
@@ -128,7 +132,7 @@ class ImageApiAdditionsTest {
 
         @ParameterizedTest
         @EnumSource(value = MatrixCoefficients.class, names = {"IDENTITY", "UNSPECIFIED", "YCGCO", "BT2020_CL",
-                "SMPTE2085", "CHROMA_DERIVED_NCL", "CHROMA_DERIVED_CL", "ICTCP"})
+                "SMPTE2085", "CHROMA_DERIVED_NCL", "CHROMA_DERIVED_CL", "ICTCP", "IPT_C2", "YCGCO_RE", "YCGCO_RO"})
         @DisplayName("MatrixCoefficients without a weighted-sum luma report no weights")
         void noLumaWeights(MatrixCoefficients matrix) {
             assertEquals(OptionalDouble.empty(), matrix.kr());

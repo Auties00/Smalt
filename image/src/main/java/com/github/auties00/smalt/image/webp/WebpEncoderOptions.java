@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.webp;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
 
@@ -184,7 +183,8 @@ public final class WebpEncoderOptions {
      *
      * <p>The profile tells readers which color space the pixels are in; it does not convert them.
      * Without one, readers take the pixels as sRGB. It is written as an {@code ICCP} chunk. A
-     * high-dynamic-range profile, which has no ICC form, is rejected.
+     * high-dynamic-range profile is written in its ICC form, whose {@code cicp} tag carries its PQ
+     * or HLG code points.
      */
     public Optional<ColorProfile> colorProfile() {
         return Optional.ofNullable(colorProfile);
@@ -406,8 +406,6 @@ public final class WebpEncoderOptions {
          * @return the options
          * @throws IllegalArgumentException if the quality is not in [0, 100], the method is not in
          * [0, 6], the alpha quality is not in [0, 100] or the target size is not positive
-         * @throws MediaException.Unsupported if the color profile has no ICC form (a
-         * high-dynamic-range profile)
          */
         public WebpEncoderOptions build() {
             Checks.inRange("quality", quality, 0, 100);
@@ -415,9 +413,6 @@ public final class WebpEncoderOptions {
             Checks.inRange("alpha quality", alphaQuality, 0, 100);
             if (hasTargetSize) {
                 Checks.positive("target size", targetSize);
-            }
-            if (colorProfile != null && colorProfile.isHighDynamicRange()) {
-                throw new MediaException.Unsupported("icc", "a high-dynamic-range profile has no ICC form");
             }
             return new WebpEncoderOptions(this);
         }

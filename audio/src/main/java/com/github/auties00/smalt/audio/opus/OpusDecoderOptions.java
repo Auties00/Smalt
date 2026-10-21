@@ -93,9 +93,11 @@ public final class OpusDecoderOptions {
      * {@return the number of output channels, 1 or 2, or empty (the default) for the count the
      * track's {@code OpusHead} declares, which is stereo for a decoder created without a track}
      *
-     * <p>A count other than the stream's own is honored for mono and stereo streams (channel
-     * mapping family 0), which decode to it natively; a multichannel stream always decodes to its
-     * own layout.
+     * <p>A single mono or stereo stream decodes to another count natively; any other stream, a
+     * multichannel or ambisonic one included, is mixed down to {@link
+     * com.github.auties00.smalt.audio.ChannelLayout#MONO MONO} or {@link
+     * com.github.auties00.smalt.audio.ChannelLayout#STEREO STEREO} by the matrices the {@link OpusDecoder}
+     * class describes.
      */
     public OptionalInt channels() {
         return channels == 0 ? OptionalInt.empty() : OptionalInt.of(channels);

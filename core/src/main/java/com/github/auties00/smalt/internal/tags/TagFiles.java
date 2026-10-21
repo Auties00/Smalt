@@ -28,7 +28,7 @@ public final class TagFiles {
      * Returns whether tags of a container format can be read and written.
      *
      * @param format the container format
-     * @return {@code true} for MP3, ADTS, FLAC, Ogg, MP4, Matroska, WAV and AIFF
+     * @return {@code true} for MP3, ADTS, raw AC-3, FLAC, Ogg, MP4, Matroska, WAV and AIFF
      */
     public static boolean isSupported(ContainerFormat format) {
         return OPENERS.containsKey(format);
@@ -69,6 +69,7 @@ public final class TagFiles {
         var openers = new EnumMap<ContainerFormat, BiFunction<MediaSource, MediaLimits, TagFile>>(ContainerFormat.class);
         openers.put(ContainerFormat.MPEG_AUDIO, Id3StreamTagFile::new);
         openers.put(ContainerFormat.ADTS, Id3StreamTagFile::new);
+        openers.put(ContainerFormat.AC3, Id3StreamTagFile::new);
         openers.put(ContainerFormat.FLAC, FlacTagFile::new);
         openers.put(ContainerFormat.OGG, OggTagFile::new);
         openers.put(ContainerFormat.MP4, Mp4TagFile::new);

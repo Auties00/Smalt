@@ -131,9 +131,16 @@ public final class VopParser {
     private long trd;
 
     /**
-     * The frame period of interlaced direct mode, in ticks.
+     * The distance of the B-VOP from its forward reference in frame periods, for interlaced direct
+     * mode.
      */
-    private long framePeriod;
+    private int framesB;
+
+    /**
+     * The distance between the references of the B-VOP in frame periods, for interlaced direct
+     * mode.
+     */
+    private int framesD;
 
     /**
      * The B-VOP motion vector predictors: forward {@code x, y} and backward {@code x, y} of the
@@ -260,23 +267,28 @@ public final class VopParser {
      * @param backwardRef the backward reference of a B-VOP, or {@code null}
      * @param trb the temporal distance of a B-VOP from its forward reference
      * @param trd the temporal distance between the references of a B-VOP
-     * @param framePeriod the frame period for interlaced direct mode, or 0
+     * @param framesB the distance of a B-VOP from its forward reference in frame periods, for
+     *        interlaced direct mode
+     * @param framesD the distance between the references of a B-VOP in frame periods, for
+     *        interlaced direct mode
      * @return {@code true} when corrupt data was concealed
      */
     public boolean parse(BitReader reader, Vop vop, Frame current, Frame backwardRef, long trb, long trd,
-                         long framePeriod) {
+                         int framesB, int framesD) {
         this.reader = reader;
         this.vop = vop;
         this.current = current;
         this.backwardRef = backwardRef;
         this.trb = trb;
         this.trd = trd;
-        this.framePeriod = framePeriod;
+        this.framesB = framesB;
+        this.framesD = framesD;
         this.damaged = false;
         if (vop.codingType == Vop.S) {
             globalMotion.setup(layer, vop);
         }
         quant = vop.quant;
+        blocks.segmented = layer.shortVideoHeader && h263 != null && h263.slices;
         if (layer.shortVideoHeader) {
             parseShortHeader();
         } else if (layer.dataPartitioned && vop.codingType != Vop.B) {
@@ -517,6 +529,7 @@ public final class VopParser {
             Arrays.fill(blocks.coefficients, mb * 384, mb * 384 + 384, (short) 0);
             current.mbType[mb] = Frame.MB_SKIPPED;
             Arrays.fill(current.mv, mb * 8, mb * 8 + 8, 0);
+            blocks.segment[mb] = -1;
             resetIntraStore(mb);
         }
     }
@@ -1337,7 +1350,10 @@ public final class VopParser {
 
     /**
      * Returns the median predictor of one component of a block vector of a P- or S(GMC)-VOP
-     * (7.6.5, Figure 7-20).
+     * (7.6.5, Figure 7-20), or of an H.263 picture (ITU-T H.263 6.1.1 and F.2), whose rules for
+     * candidates outside the picture, group of blocks or slice differ: a candidate on the left is
+     * then zero, one above or above right is the candidate on the left, and one above right
+     * beyond the right edge is zero.
      *
      * @param mb the macroblock number
      * @param block the block index, 0 to 3
@@ -1381,6 +1397,15 @@ public final class VopParser {
                 b = mv[mb * 8 + component];
                 c = mv[mb * 8 + 2 + component];
             }
+        }
+        if (layer.shortVideoHeader) {
+            if (!validB) {
+                b = a;
+            }
+            if (!validC) {
+                c = mx == mbWidth - 1 && block <= 1 ? 0 : a;
+            }
+            return median(a, b, c);
         }
         var invalid = (validA ? 0 : 1) + (validB ? 0 : 1) + (validC ? 0 : 1);
         if (invalid == 3) {
@@ -1603,7 +1628,9 @@ public final class VopParser {
     }
 
     /**
-     * Decodes the field vectors of interlaced direct mode (7.7.2.2, Table 7-12).
+     * Decodes the field vectors of interlaced direct mode (7.7.2.2): each field of the macroblock
+     * is predicted forward from the field its co-located field referenced and backward from the
+     * same field of the backward reference.
      *
      * @param mb the macroblock number
      * @param deltaX the horizontal delta vector
@@ -1611,71 +1638,76 @@ public final class VopParser {
      */
     private void parseFieldDirect(int mb, int deltaX, int deltaY) {
         blocks.kind[mb] = Macroblocks.FIELD;
-        var at = mb * 4;
         var refs = backwardRef.fieldRef[mb];
-        var topRef = refs & 1;
-        var bottomRef = (refs >> 1) & 1;
-        var period = framePeriod > 0 ? framePeriod : 1;
-        var past = 0L;
-        var future = trd;
-        var now = trb;
-        var future2 = divRoundLong(future, period) - divRoundLong(past, period);
-        var now2 = divRoundLong(now, period) - divRoundLong(past, period);
+        fieldDirectVectors(backwardRef.fieldMv, mb * 4, refs, vop.topFieldFirst, framesB, framesD, deltaX, deltaY,
+                blocks.forwardField, blocks.backwardField);
+        blocks.fieldRefs[mb] = (byte) ((refs & 3) | 1 << 3);
+    }
+
+    /**
+     * Derives the forward and backward field vectors of an interlaced direct mode macroblock
+     * (7.7.2.2): for each field, with {@code MV} the co-located field vector and {@code MVD} the
+     * delta vector,
+     * {@snippet :
+     * TRD = 2 * framesD + delta    // delta from Table 7-12
+     * TRB = 2 * framesB + delta
+     * MVf = TRB * MV / TRD + MVD
+     * MVb = MVD == 0 ? (TRB - TRD) * MV / TRD : MVf - MV
+     * }
+     * component by component, with {@code /} truncating toward zero. Vectors are in frame
+     * coordinates (half samples; vertical components of field vectors are even), and the vertical
+     * components of the results are rounded down to even, that is to whole half field lines.
+     *
+     * @param colocated the field vectors of the backward reference: top x, top y, bottom x, bottom y
+     * @param at the index of the co-located macroblock's top field vector in {@code colocated} and of
+     *        the results in {@code forward} and {@code backward}
+     * @param refs the reference fields of the co-located macroblock: bit 0 for its top field, bit 1
+     *        for its bottom field, set for the bottom field of its reference
+     * @param topFieldFirst whether the top field is displayed first
+     * @param framesB the distance of the B-VOP from its forward reference in frame periods
+     * @param framesD the distance between the references in frame periods
+     * @param deltaX the horizontal delta vector
+     * @param deltaY the vertical delta vector
+     * @param forward the forward field vectors, written in the layout of {@code colocated}
+     * @param backward the backward field vectors, written in the layout of {@code colocated}
+     */
+    static void fieldDirectVectors(int[] colocated, int at, int refs, boolean topFieldFirst, int framesB,
+                                   int framesD, int deltaX, int deltaY, int[] forward, int[] backward) {
         for (var field = 0; field < 2; field++) {
-            var reference = field == 0 ? topRef : bottomRef;
-            var delta = fieldDelta(field, reference);
-            var td = 2 * future2 + delta;
-            var tb = 2 * now2 + delta;
+            var delta = fieldDelta(topFieldFirst, field, (refs >> field) & 1);
+            var td = 2L * framesD + delta;
+            var tb = 2L * framesB + delta;
             if (td == 0) {
                 td = 1;
             }
-            var mvx = backwardRef.fieldMv[at + 2 * field];
-            // Vertical field vectors are scaled in field lines.
-            var mvy = backwardRef.fieldMv[at + 2 * field + 1] >> 1;
+            var mvx = colocated[at + 2 * field];
+            var mvy = colocated[at + 2 * field + 1];
             var fx = (int) (tb * mvx / td) + deltaX;
             var fy = (int) (tb * mvy / td) + deltaY;
             var bx = deltaX == 0 ? (int) ((tb - td) * mvx / td) : fx - mvx;
             var by = deltaY == 0 ? (int) ((tb - td) * mvy / td) : fy - mvy;
-            fy *= 2;
-            by *= 2;
-            blocks.forwardField[at + 2 * field] = fx;
-            blocks.forwardField[at + 2 * field + 1] = fy;
-            blocks.backwardField[at + 2 * field] = bx;
-            blocks.backwardField[at + 2 * field + 1] = by;
+            forward[at + 2 * field] = fx;
+            forward[at + 2 * field + 1] = fy & ~1;
+            backward[at + 2 * field] = bx;
+            backward[at + 2 * field + 1] = by & ~1;
         }
-        // FIXME: macroblocks decoded this way differ from FFmpeg's decoding of FFmpeg-encoded
-        // interlaced streams by up to about 30 sample values (about 49 dB over such pictures),
-        // while every other interlaced tool matches; the field distance or vector scaling of
-        // 7.7.2.2 is likely read differently here than by encoders.
-        // Forward references follow the co-located macroblock; backward references are the same
-        // fields of the backward reference.
-        blocks.fieldRefs[mb] = (byte) (topRef | bottomRef << 1 | 1 << 3);
     }
 
     /**
-     * Returns the field distance correction of Table 7-12.
+     * Returns the correction {@code delta} of Table 7-12: how many field periods longer (positive)
+     * or shorter (negative) the distance from a field to the field it references is than the
+     * distance to the same field of the reference picture.
      *
+     * @param topFieldFirst whether the top field is displayed first
      * @param field the current field, 0 for top and 1 for bottom
-     * @param reference the reference field of the co-located macroblock for that field
-     * @return the correction in field periods
+     * @param reference the field the co-located field referenced, 0 for top and 1 for bottom
+     * @return the correction, from -1 to 1
      */
-    private int fieldDelta(int field, int reference) {
-        if (vop.topFieldFirst) {
-            return field == 0 ? (reference == 0 ? 0 : -1) : (reference == 0 ? 1 : 0);
+    static int fieldDelta(boolean topFieldFirst, int field, int reference) {
+        if (field == reference) {
+            return 0;
         }
-        return field == 0 ? (reference == 0 ? 0 : 1) : (reference == 0 ? -1 : 0);
-    }
-
-    /**
-     * Divides with rounding to nearest, halves away from zero.
-     *
-     * @param numerator the dividend
-     * @param denominator the denominator, positive
-     * @return the quotient
-     */
-    private static long divRoundLong(long numerator, long denominator) {
-        return numerator >= 0 ? (numerator + denominator / 2) / denominator
-                : -((-numerator + denominator / 2) / denominator);
+        return (field == 0) == topFieldFirst ? -1 : 1;
     }
 
     /**
@@ -2059,6 +2091,7 @@ public final class VopParser {
                     if (decoded[mb]) {
                         throw CORRUPT;
                     }
+                    blocks.segment[mb] = packetStart;
                     parseShortMacroblock(mb);
                     if (reader.overrun()) {
                         throw CORRUPT;

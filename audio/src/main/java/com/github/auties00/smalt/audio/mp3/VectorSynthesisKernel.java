@@ -1,6 +1,7 @@
 /* Ports minimp3 (minimp3.h). By lieff; CC0 1.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.mp3;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -40,11 +41,6 @@ final class VectorSynthesisKernel implements SynthesisKernel {
 
 
     /**
-     * Whether the platform's preferred vectors are wide enough for the eight-lane window path.
-     */
-    private static final boolean PREFER_WIDE = FloatVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
-
-    /**
      * Holds, for each of the seven output-position pairs {@code (13 - 2p, 14 - 2p)} and each of
      * the eight window steps, the coefficient {@code w0} broadcast over the four lanes of each
      * position followed by {@code w1} likewise: 16 floats per step.
@@ -52,7 +48,8 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private static final float[] PAIR_WEIGHTS = pairWeights();
 
     /**
-     * Whether this instance runs the eight-lane window path.
+     * Whether this instance runs the eight-lane window path, which it does only where
+     * {@link Simd#WIDE} holds.
      */
     private final boolean wide;
 
@@ -93,7 +90,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
      * @return the kernel
      */
     static SynthesisKernel create() {
-        return new VectorSynthesisKernel(PREFER_WIDE);
+        return new VectorSynthesisKernel(true);
     }
 
     /**
@@ -228,7 +225,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     public void imdct36(float[] grbuf, int base, float[] overlap, int ovl, float[] window, int bands) {
         var tw = Mp3Tables.TWIDDLE_36;
         var done = 0;
-        if (wide) {
+        if (Simd.WIDE && wide) {
             var lanes = laneRows;
             for (; done + 8 <= bands; done += 8, base += 8 * 18, ovl += 8 * 9) {
                 for (var l = 0; l < 8; l++) {
@@ -594,7 +591,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         ScalarSynthesisKernel.pair(outRight, outOffset + 32, lins, linsOffset + 4 * 15 + 64 + 1);
         ScalarSynthesisKernel.pair(outLeft, outOffset, lins, linsOffset + 4 * 15);
         ScalarSynthesisKernel.pair(outLeft, outOffset + 32, lins, linsOffset + 4 * 15 + 64);
-        if (wide) {
+        if (Simd.WIDE && wide) {
             windowWide(grbuf, left, right, outLeft, outRight, outOffset, lins, z);
             return;
         }

@@ -28,9 +28,18 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * <p>The engine is not thread-safe. Frames reach the {@link FrameSink} in output order; a frame
  * handed to the sink is recycled once the sink returns.
  *
+ * <p>A picture is a frame, an MBAFF frame or a field. The two fields of a frame coded as field
+ * pictures share one {@link DecoderFrame}: the first field is stored in the buffer as soon as it
+ * is decoded and is held back from output until the next picture shows whether it is the
+ * second field of the same frame (a complementary field pair, ITU-T H.264 3.30 and 3.31). A
+ * field that receives no second field is output with its missing field mid-gray. Reference
+ * marking, list construction and memory management address the fields of the buffered frames
+ * individually when the current picture is a field (ITU-T H.264 8.2.4 and 8.2.5).
+ *
  * <p>With several threads, each picture, once it has received all its slices, is decoded by a
  * {@link PictureJob} on the module's shared pool while the calling thread parses the following
- * NAL units; a job reading a reference picture waits only for the rows its motion vectors reach.
+ * NAL units; a job reading a reference picture waits only for the rows its motion vectors reach,
+ * or, for references coded as fields or MBAFF frames, for the fields it reads to be done.
  * Frames due for output wait in a queue until their job finishes, so output order never holds
  * back later pictures, and frame buffers return to the pool only once no unfinished job can read
  * them and they were output.
@@ -44,9 +53,17 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * does not exist. A loss is a packet declared incomplete, a {@link #noteLoss()}, or a gap in
  * {@code frame_num} in a sequence that does not allow gaps; a sequence that allows them may skip
  * {@code frame_num} values on purpose, so only the transport can tell that long-term references
- * went stale. The engine also tracks
- * whether a key frame is needed: from any damage, any slice it had to drop and any stream
- * failure, until a later picture in decoding order is output intact.
+ * went stale. A frame holding a single field is damaged when a loss was reported between the
+ * start of the picture before its field and the start of the picture after it, since the lost
+ * data may have held its other field; a reference field then stands in for both fields of its
+ * frame, so that later reference lists keep the positions the encoder gave them. After a loss,
+ * the frames of the fields that follow are damaged as long as consecutive fields share
+ * {@code frame_num} and reference status, since a lost field may have shifted which fields pair
+ * up. A B picture is damaged when its initial lists leave out a stand-in for a lost picture
+ * (with {@code pic_order_cnt_type} 0, ITU-T H.264 8.2.4.2.3), since the encoder's lists held
+ * the lost picture there. The engine also tracks whether a key frame is needed: from any damage,
+ * any slice it had to drop and any stream failure, until a later picture in decoding order is
+ * output intact.
  *
  * <p>In low-delay mode every packet is one complete access unit: its picture is finished when the
  * packet ends instead of when the next picture starts, and in Baseline profile sequences, which
@@ -73,11 +90,22 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Describes a decoded frame handed to a {@link FrameSink}.
+     * Describes a decoded frame handed to a {@link FrameSink}: its samples are in the 16-bit
+     * planes when the luma bit depth or, with chroma, the chroma bit depth exceeds 8, and in the
+     * 8-bit planes otherwise.
      *
-     * @param luma the luma plane including borders
-     * @param cb the Cb plane including borders, or {@code null} for monochrome
-     * @param cr the Cr plane including borders, or {@code null} for monochrome
+     * @param luma the 8-bit luma plane including borders, or {@code null} for a deeper frame
+     * @param cb the 8-bit Cb plane including borders, or {@code null} for monochrome or a deeper
+     * frame
+     * @param cr the 8-bit Cr plane including borders, or {@code null} for monochrome or a deeper
+     * frame
+     * @param luma16 the 16-bit luma plane including borders, or {@code null} for an 8-bit frame
+     * @param cb16 the 16-bit Cb plane including borders, or {@code null} for monochrome or an
+     * 8-bit frame
+     * @param cr16 the 16-bit Cr plane including borders, or {@code null} for monochrome or an
+     * 8-bit frame
+     * @param bitDepthLuma the luma bit depth, 8 to 14
+     * @param bitDepthChroma the chroma bit depth, 8 to 14
      * @param lumaStride the luma row stride
      * @param chromaStride the chroma row stride
      * @param lumaOrigin the index of luma sample {@code (0, 0)}
@@ -92,9 +120,23 @@ public final class H264DecoderEngine {
      * @param damaged whether the samples may differ from the encoder's reconstruction (see
      * {@link DecoderFrame#damaged})
      */
-    public record OutputFrame(byte[] luma, byte[] cb, byte[] cr, int lumaStride, int chromaStride, int lumaOrigin,
+    public record OutputFrame(byte[] luma, byte[] cb, byte[] cr, short[] luma16, short[] cb16, short[] cr16,
+                              int bitDepthLuma, int bitDepthChroma, int lumaStride, int chromaStride, int lumaOrigin,
                               int chromaOrigin, H264Sps sps, ColorInfo color, long pts, long duration, boolean keyframe,
                               int poc, boolean damaged) {
+        /**
+         * {@return whether the samples are in the 16-bit planes}
+         */
+        public boolean wide() {
+            return luma16 != null;
+        }
+
+        /**
+         * {@return whether the frame has chroma planes}
+         */
+        public boolean hasChroma() {
+            return cb != null || cb16 != null;
+        }
     }
 
     /**
@@ -158,9 +200,77 @@ public final class H264DecoderEngine {
     private int dpbSize;
 
     /**
-     * The picture being decoded, or {@code null} between pictures.
+     * The frame of the picture being decoded, or {@code null} between pictures.
      */
     private DecoderFrame current;
+
+    /**
+     * The structure of the picture being decoded: {@link DecoderFrame#FRAME},
+     * {@link DecoderFrame#TOP} or {@link DecoderFrame#BOTTOM}.
+     */
+    private int currentStructure = DecoderFrame.FRAME;
+
+    /**
+     * Whether the picture being decoded is the second field of {@link #current}, whose first
+     * field was the previous picture.
+     */
+    private boolean secondField;
+
+    /**
+     * Whether the picture being decoded is an MBAFF frame.
+     */
+    private boolean currentMbaff;
+
+    /**
+     * The picture order count of the picture being decoded: of the field for a field picture,
+     * {@code PicOrderCnt(CurrPic)} in ITU-T H.264 terms.
+     */
+    private int currentPoc;
+
+    /**
+     * The frame whose first field was the last picture decoded, held back from output until the
+     * next picture shows whether it is the second field of the same frame; {@code null} when the
+     * last picture was not a field or the pairing is decided.
+     */
+    private DecoderFrame pendingPair;
+
+    /**
+     * Whether the first field of {@link #pendingPair} is a reference field.
+     */
+    private boolean pendingPairReference;
+
+    /**
+     * The number of losses of stream data reported so far, by {@link #noteLoss()} or packets
+     * declared incomplete.
+     */
+    private long lossEvents;
+
+    /**
+     * The value of {@link #lossEvents} when the last picture started.
+     */
+    private long lossesAtLastPicture;
+
+    /**
+     * Whether the last picture was a field.
+     */
+    private boolean lastPictureField;
+
+    /**
+     * The {@code frame_num} of the last picture.
+     */
+    private int lastPictureFrameNum;
+
+    /**
+     * Whether the last picture was a reference picture.
+     */
+    private boolean lastPictureReference;
+
+    /**
+     * Whether the pairing of the fields being decoded is in doubt: a loss was reported since
+     * the picture before the run of fields that share {@code frame_num} and reference status with
+     * the current one, so a lost field may have shifted which fields pair up.
+     */
+    private boolean pairingSuspect;
 
     /**
      * The next unique picture identity.
@@ -213,6 +323,15 @@ public final class H264DecoderEngine {
      * The job of the picture being received, not started yet, or {@code null}.
      */
     private PictureJob currentJob;
+
+    /**
+     * The color planes (bit {@code colour_plane_id}, bit 0 when the planes are not coded
+     * separately) of which a slice given to {@link #currentJob} starts at each macroblock index,
+     * by {@link PictureState#mbIndex}; with several threads the slices are decoded later, so a
+     * slice that repeats one of the picture is recognized by its first macroblock instead of the
+     * decoded state the calling thread consults.
+     */
+    private byte[] sliceStarts = new byte[0];
 
     /**
      * The sequence number of the last created job.
@@ -353,14 +472,70 @@ public final class H264DecoderEngine {
     private boolean lastPictureValid;
 
     /**
-     * The reference picture lists of the current slice.
+     * The reference picture lists of the current slice: the frames holding the references.
      */
     private final DecoderFrame[][] lists = new DecoderFrame[2][33];
+
+    /**
+     * The structure of each entry of {@link #lists}: {@link DecoderFrame#FRAME} for frames and
+     * complementary field pairs, {@link DecoderFrame#TOP} or {@link DecoderFrame#BOTTOM} for
+     * fields.
+     */
+    private final byte[][] listStructures = new byte[2][33];
 
     /**
      * The initial list construction scratch.
      */
     private final List<DecoderFrame> scratchList = new ArrayList<>();
+
+    /**
+     * The fields of an initial field reference list: the frames, with their parities in
+     * {@link #fieldListParity}.
+     */
+    private final List<DecoderFrame> fieldListFrames = new ArrayList<>();
+
+    /**
+     * The parities of the entries of {@link #fieldListFrames}: 0 top, 1 bottom.
+     */
+    private final List<Integer> fieldListParity = new ArrayList<>();
+
+    /**
+     * The fields of the initial list 1 of a B field slice, with their parities in
+     * {@link #fieldListParity1}.
+     */
+    private final List<DecoderFrame> fieldListFrames1 = new ArrayList<>();
+
+    /**
+     * The parities of the entries of {@link #fieldListFrames1}: 0 top, 1 bottom.
+     */
+    private final List<Integer> fieldListParity1 = new ArrayList<>();
+
+    /**
+     * The frames holding a short-term reference field, scratch of the field list construction.
+     */
+    private final List<DecoderFrame> fieldShortTerm = new ArrayList<>();
+
+    /**
+     * The frames holding a long-term reference field, scratch of the field list construction.
+     */
+    private final List<DecoderFrame> fieldLongTerm = new ArrayList<>();
+
+    /**
+     * The short-term entries preceding the current field in output order, scratch of the field
+     * list construction.
+     */
+    private final List<DecoderFrame> fieldBefore = new ArrayList<>();
+
+    /**
+     * The short-term entries following the current field in output order, scratch of the field
+     * list construction.
+     */
+    private final List<DecoderFrame> fieldAfter = new ArrayList<>();
+
+    /**
+     * The ordered short-term entries of one list, scratch of the field list construction.
+     */
+    private final List<DecoderFrame> fieldOrdered = new ArrayList<>();
 
     /**
      * The presentation timestamp of the packet being decoded, consumed by the first picture that
@@ -372,6 +547,12 @@ public final class H264DecoderEngine {
      * The duration of the packet being decoded.
      */
     private long pendingDuration;
+
+    /**
+     * The number of packets begun so far, which tells whether the two fields of a frame arrived
+     * in different packets.
+     */
+    private long packetSerial;
 
     /**
      * The first failure of the current packet, rethrown once the packet is processed.
@@ -442,7 +623,7 @@ public final class H264DecoderEngine {
         this.parallel = threads > 1 && ParallelBands.enabled();
         this.threads = parallel ? threads : 1;
         this.queueDepth = parallel ? 2 * threads : 1;
-        this.inlineTask = new SliceTask(null, lists);
+        this.inlineTask = new SliceTask(null, lists, listStructures);
     }
 
     /**
@@ -484,6 +665,7 @@ public final class H264DecoderEngine {
     public void noteLoss() {
         noteDamage();
         markLongTermStale();
+        lossEvents++;
     }
 
     /**
@@ -492,7 +674,7 @@ public final class H264DecoderEngine {
      */
     private void markLongTermStale() {
         for (var frame : dpb) {
-            if (frame.isLongTerm()) {
+            if (frame.anyLongTerm()) {
                 frame.staleReference = true;
             }
         }
@@ -544,10 +726,12 @@ public final class H264DecoderEngine {
     public void beginPacket(long pts, long duration, boolean incomplete) {
         this.pendingPts = pts;
         this.pendingDuration = duration;
+        this.packetSerial++;
         this.packetError = null;
         this.packetIncomplete = incomplete;
         if (incomplete) {
             markLongTermStale();
+            lossEvents++;
         }
     }
 
@@ -848,17 +1032,14 @@ public final class H264DecoderEngine {
         var sps = pps.sps;
         checkSupported(sps, slice);
         slice.parseRest(reader, pps, nalType, nalRefIdc);
-        if (slice.fieldPic || sps.mbAdaptiveFrameField) {
-            throw new MediaException.Unsupported("h264 interlaced", "field pictures and MBAFF frames are not supported");
-        }
+
         if (slice.redundantPicCnt > 0) {
             return;
         }
         if (current != null) {
             if (isNewPicture(slice)) {
                 finishPicture();
-            } else if (!parallel && slice.firstMbInSlice < inlineDecoder.state().sliceNum.length
-                    && inlineDecoder.state().sliceNum[slice.firstMbInSlice] >= firstSliceNum) {
+            } else if (parallel ? repeatsSliceStart(slice) : repeatsDecodedMacroblock(slice)) {
                 if (slice.firstMbInSlice != 0) {
                     return;
                 }
@@ -895,18 +1076,6 @@ public final class H264DecoderEngine {
      * @throws MediaException.Unsupported if a tool is not supported
      */
     private static void checkSupported(H264Sps sps, H264SliceHeader slice) {
-        if (sps.chromaFormatIdc == 2) {
-            throw new MediaException.Unsupported("h264 4:2:2", "4:2:2 chroma is not supported");
-        }
-        if (sps.chromaFormatIdc == 3) {
-            throw new MediaException.Unsupported("h264 4:4:4", "4:4:4 chroma is not supported");
-        }
-        if (sps.bitDepthLuma != 8 || sps.bitDepthChroma != 8) {
-            throw new MediaException.Unsupported("h264 high bit depth", "bit depths above 8 are not supported");
-        }
-        if (sps.transformBypass) {
-            throw new MediaException.Unsupported("h264 lossless", "lossless transform bypass is not supported");
-        }
         if (slice.sliceType == H264SliceHeader.SP || slice.sliceType == H264SliceHeader.SI) {
             throw new MediaException.Unsupported("h264 sp/si slices", "SP and SI slices (Extended profile) are not supported");
         }
@@ -924,14 +1093,16 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Applies the first-VCL-NAL-unit detection of ITU-T H.264 7.4.1.2.4.
+     * Applies the first-VCL-NAL-unit detection of ITU-T H.264 7.4.1.2.4; a slice that refers to
+     * another sequence parameter set than the previous one also starts a new picture, since a
+     * sequence parameter set NAL unit can only start an access unit.
      *
      * @param slice the new slice header
      * @param previous the header of a slice of the previous picture
      * @return {@code true} when the slice belongs to a different picture
      */
     private static boolean isNewPicture(H264SliceHeader slice, H264SliceHeader previous) {
-        if (slice.frameNum != previous.frameNum || slice.ppsId != previous.ppsId
+        if (slice.sps != previous.sps || slice.frameNum != previous.frameNum || slice.ppsId != previous.ppsId
                 || slice.fieldPic != previous.fieldPic || slice.bottomField != previous.bottomField
                 || (slice.nalRefIdc == 0) != (previous.nalRefIdc == 0) || slice.idr != previous.idr) {
             return true;
@@ -946,82 +1117,238 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Begins decoding a new picture: activates the sequence, handles {@code frame_num} gaps,
-     * derives the picture order count and allocates the frame.
+     * Begins decoding a new picture: activates the sequence, decides whether a field completes
+     * the frame of the previous field, handles {@code frame_num} gaps, derives the picture order
+     * count and allocates the frame.
      *
      * @param slice the first slice header of the picture
      * @param sps the sequence parameter set
      */
     private void startPicture(H264SliceHeader slice, H264Sps sps) {
         activateSps(sps, slice.idr);
-        if (slice.idr) {
-            prevRefFrameNumValid = true;
-            prevRefFrameNum = 0;
-        } else if (prevRefFrameNumValid) {
-            handleFrameNumGap(slice, sps);
+        var structure = slice.fieldPic ? (slice.bottomField ? DecoderFrame.BOTTOM : DecoderFrame.TOP)
+                : DecoderFrame.FRAME;
+        var pair = pendingPair;
+        pendingPair = null;
+        var reference = slice.nalRefIdc != 0;
+        if (structure == DecoderFrame.FRAME || slice.idr) {
+            pairingSuspect = false;
+        } else {
+            var chained = lastPictureField && lastPictureFrameNum == slice.frameNum
+                    && lastPictureReference == reference;
+            pairingSuspect = (chained && pairingSuspect) || lossEvents != lossesAtLastPicture;
         }
-        var frame = obtainFrame();
-        frame.id = nextId++;
-        frame.frameNum = slice.frameNum;
-        frame.idr = slice.idr;
-        frame.reference = 0;
-        frame.outputNeeded = true;
-        frame.nonExisting = false;
-        frame.mmco5 = false;
-        frame.discard = false;
-        frame.damaged = packetIncomplete;
-        frame.staleReference = false;
-        frame.decodeIndex = ++decodeCount;
-        frame.decodedMbs = 0;
-        frame.sps = sps;
-        frame.color = colorInfo(sps);
-        frame.keyframe = slice.idr || (recoveryPointPending && slice.sliceType == H264SliceHeader.I);
-        recoveryPointPending = false;
-        frame.pts = pendingPts;
-        frame.duration = pendingDuration;
-        pendingPts = Packet.NO_TIMESTAMP;
-        if (slice.idr) {
-            sequence++;
-            joinedMidSequence = false;
+        lastPictureField = structure != DecoderFrame.FRAME;
+        lastPictureFrameNum = slice.frameNum;
+        lastPictureReference = reference;
+        var second = pair != null && structure != DecoderFrame.FRAME && pair.fields != DecoderFrame.FRAME
+                && (pair.fields & structure) == 0 && pair.frameNum == slice.frameNum && !slice.idr
+                && pendingPairReference == reference && !hasMmco5(slice) && dpb.contains(pair);
+        if (!second && pair != null) {
+            closeUnpaired(pair);
+            removeUnused();
         }
-        computePoc(frame, slice, sps);
-        frame.sequence = sequence;
-        if (slice.idr) {
-            startSequence = -1;
-            startPoc = Integer.MIN_VALUE;
-            startPending = false;
-        } else if (startPending) {
-            startPoc = frame.poc;
-            startSequence = sequence;
-            startPending = false;
-        }
-        if (startSequence == sequence && frame.poc < startPoc) {
-            frame.discard = true;
+        currentStructure = structure;
+        currentMbaff = structure == DecoderFrame.FRAME && sps.mbAdaptiveFrameField;
+        secondField = second;
+        DecoderFrame frame;
+        if (second) {
+            frame = pair;
+            frame.fields = DecoderFrame.FRAME;
+            if (packetIncomplete || pairingSuspect) {
+                frame.damaged = true;
+            }
+            computePoc(frame, slice, sps, structure);
+            frame.updatePoc();
+            currentPoc = frame.fieldPoc(structure == DecoderFrame.BOTTOM ? 1 : 0);
+            recoveryPointPending = false;
+            if (frame.packet != packetSerial && frame.duration > 0 && pendingDuration > 0) {
+                frame.duration += pendingDuration;
+            }
+            pendingPts = Packet.NO_TIMESTAMP;
+        } else {
+            if (slice.idr) {
+                prevRefFrameNumValid = true;
+                prevRefFrameNum = 0;
+            } else if (prevRefFrameNumValid) {
+                handleFrameNumGap(slice, sps);
+            }
+            frame = obtainFrame();
+            frame.id = nextId++;
+            frame.frameNum = slice.frameNum;
+            frame.idr = slice.idr;
+            frame.refTop = 0;
+            frame.refBottom = 0;
+            frame.fields = structure;
+            frame.codingStruct = structure != DecoderFrame.FRAME ? DecoderFrame.CODED_FIELDS
+                    : currentMbaff ? DecoderFrame.CODED_MBAFF : DecoderFrame.CODED_FRAME;
+            frame.outputNeeded = true;
+            frame.nonExisting = false;
+            frame.mmco5 = false;
+            frame.discard = false;
+            frame.damaged = packetIncomplete || (structure != DecoderFrame.FRAME && pairingSuspect);
+            frame.staleReference = false;
+            frame.lossMark = lossesAtLastPicture;
+            frame.missingFieldFilled = false;
+            frame.decodeIndex = ++decodeCount;
+            frame.sps = sps;
+            frame.color = colorInfo(sps);
+            frame.keyframe = slice.idr || (recoveryPointPending && slice.sliceType == H264SliceHeader.I);
+            recoveryPointPending = false;
+            frame.pts = pendingPts;
+            frame.duration = pendingDuration;
+            frame.packet = packetSerial;
+            pendingPts = Packet.NO_TIMESTAMP;
+            if (slice.idr) {
+                sequence++;
+                joinedMidSequence = false;
+            }
+            computePoc(frame, slice, sps, structure);
+            if (structure == DecoderFrame.TOP) {
+                frame.bottomPoc = frame.topPoc;
+            } else if (structure == DecoderFrame.BOTTOM) {
+                frame.topPoc = frame.bottomPoc;
+            }
+            frame.updatePoc();
+            currentPoc = frame.poc;
+            frame.sequence = sequence;
+            if (slice.idr) {
+                startSequence = -1;
+                startPoc = Integer.MIN_VALUE;
+                startPending = false;
+            } else if (startPending) {
+                startPoc = frame.poc;
+                startSequence = sequence;
+                startPending = false;
+            }
+            if (startSequence == sequence && frame.poc < startPoc) {
+                frame.discard = true;
+            }
         }
         current = frame;
+        lossesAtLastPicture = lossEvents;
         var concealSliceNum = nextSliceNum++;
         firstSliceNum = concealSliceNum;
         DecoderFrame concealSource = null;
         for (var other : dpb) {
-            if (!other.nonExisting && (concealSource == null || other.id > concealSource.id)) {
+            if (other != frame && !other.nonExisting && (concealSource == null || other.id > concealSource.id)) {
                 concealSource = other;
             }
         }
         var dsp = H264Dsp.INSTANCE;
         if (!parallel) {
-            inlineDecoder.start(frame, firstSliceNum, concealSliceNum, concealSource, dsp);
+            frame.beginDecoding(structure, !second);
+            inlineDecoder.start(frame, structure, currentMbaff, firstSliceNum, concealSliceNum, concealSource, dsp);
         } else {
             while (inFlight.size() >= queueDepth) {
                 joinOldest();
                 drainOutput(false);
             }
-            frame.beginDecoding();
-            var job = new PictureJob(frame, ++submittedJobs, firstSliceNum, concealSliceNum, concealSource, dsp,
-                    idleDecoders);
+            frame.beginDecoding(structure, !second);
+            var macroblocks = activeSps.widthInMbs * activeSps.frameHeightInMbs;
+            if (sliceStarts.length != macroblocks) {
+                sliceStarts = new byte[macroblocks];
+            } else {
+                Arrays.fill(sliceStarts, (byte) 0);
+            }
+            var job = new PictureJob(frame, structure, currentMbaff, ++submittedJobs, firstSliceNum, concealSliceNum,
+                    concealSource, dsp, idleDecoders);
+            job.previous = second ? frame.job : null;
             currentJob = job;
             inFlight.addLast(job);
             frame.job = job;
         }
+    }
+
+    /**
+     * Settles a frame whose field will not receive another: the missing field is filled with
+     * mid-gray samples before any later picture can read the frame, and the frame is damaged when
+     * data of the stream was lost since the picture before its field started, since the lost data
+     * may have held the other field.
+     *
+     * <p>A damaged reference field also marks its missing field as a reference, the partner of a
+     * reference field in a complementary reference field pair being a reference field as well
+     * (ITU-T H.264 3.30): later reference lists then hold the frame where the encoder's lists did,
+     * instead of shifting other pictures into its place, and the partitions predicting from it
+     * inherit its damage.
+     *
+     * @param frame the frame holding a single field
+     */
+    private void closeUnpaired(DecoderFrame frame) {
+        frame.completeMissingField();
+        if (lossEvents != frame.lossMark) {
+            frame.damaged = true;
+            var marking = frame.marking(frame.fields == DecoderFrame.TOP ? 0 : 1);
+            if (marking != 0) {
+                frame.mark(DecoderFrame.FRAME, marking);
+            }
+        }
+    }
+
+    /**
+     * Returns whether a slice header carries memory management control operation 5.
+     *
+     * @param slice the slice header
+     * @return {@code true} when one of its operations is 5
+     */
+    private static boolean hasMmco5(H264SliceHeader slice) {
+        if (slice.nalRefIdc == 0 || !slice.adaptiveRefPicMarking) {
+            return false;
+        }
+        for (var i = 0; i < slice.mmcoCount; i++) {
+            if (slice.mmcoOp[i] == 5) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether the first macroblock of a slice of the current picture was already decoded
+     * by an earlier slice, which makes the slice a repeat or the start of a new picture.
+     *
+     * @param slice the slice header, of the current picture
+     * @return {@code true} when its first macroblock already belongs to a slice of the picture
+     */
+    private boolean repeatsDecodedMacroblock(H264SliceHeader slice) {
+        var width = activeSps.widthInMbs;
+        var address = (long) slice.firstMbInSlice * (currentMbaff ? 2 : 1);
+        var slices = inlineDecoder.state(slice.colorPlaneId).sliceNum;
+        if (address >= slices.length) {
+            return false;
+        }
+        var index = PictureState.mbIndex((int) address, currentStructure, currentMbaff, width);
+        return index < slices.length && slices[index] >= firstSliceNum;
+    }
+    /**
+     * Returns the index of the first macroblock of a slice of the current picture.
+     *
+     * @param slice the slice header, of the current picture
+     * @return the index in the per-macroblock arrays, or -1 when the slice starts past the picture
+     */
+    private int sliceStartIndex(H264SliceHeader slice) {
+        var width = activeSps.widthInMbs;
+        var address = (long) slice.firstMbInSlice * (currentMbaff ? 2 : 1);
+        var count = (long) width * activeSps.frameHeightInMbs;
+        if (address >= count) {
+            return -1;
+        }
+        var index = PictureState.mbIndex((int) address, currentStructure, currentMbaff, width);
+        return index < count ? index : -1;
+    }
+
+    /**
+     * Returns whether a slice of the current picture starts at the first macroblock of a slice
+     * of the same color plane already given to the picture's job, which makes it a repeat or the
+     * start of a new picture.
+     *
+     * @param slice the slice header, of the current picture
+     * @return {@code true} when an earlier slice of the picture and color plane started at the
+     * same macroblock
+     */
+    private boolean repeatsSliceStart(H264SliceHeader slice) {
+        var index = sliceStartIndex(slice);
+        return index >= 0 && index < sliceStarts.length && (sliceStarts[index] & (1 << slice.colorPlaneId)) != 0;
     }
 
     /**
@@ -1073,7 +1400,7 @@ public final class H264DecoderEngine {
      * unfinished job to the pool.
      */
     private void retireFinishedJobs() {
-        while (!inFlight.isEmpty() && inFlight.peekFirst().frame.isDone()) {
+        while (!inFlight.isEmpty() && inFlight.peekFirst().isDone()) {
             finishedJobs = inFlight.pollFirst().sequence;
         }
         for (var i = pendingRelease.size() - 1; i >= 0; i--) {
@@ -1109,6 +1436,9 @@ public final class H264DecoderEngine {
         var formatChanged = activeSps == null || activeSps.widthInMbs != sps.widthInMbs
                 || activeSps.frameHeightInMbs != sps.frameHeightInMbs
                 || activeSps.chromaFormatIdc != sps.chromaFormatIdc
+                || activeSps.separateColorPlane != sps.separateColorPlane
+                || activeSps.bitDepthLuma != sps.bitDepthLuma
+                || activeSps.bitDepthChroma != sps.bitDepthChroma
                 || activeSps.dpbFrames() != sps.dpbFrames();
         if (!formatChanged) {
             activeSps = sps;
@@ -1116,15 +1446,21 @@ public final class H264DecoderEngine {
         }
         LimitChecks.checkPicture(limits, sps.codedWidth(), sps.codedHeight());
         var frames = sps.dpbFrames() + spareFrames();
-        var frameBytes = DecoderFrame.allocationSize(sps.widthInMbs, sps.frameHeightInMbs, sps.chromaFormatIdc != 0);
+        var frameBytes = DecoderFrame.allocationSize(sps.widthInMbs, sps.frameHeightInMbs, sps.chromaFormatIdc,
+                sps.separateColorPlane, sps.bitDepthLuma > 8
+                        || (sps.chromaArrayType() != 0 && sps.bitDepthChroma > 8));
         LimitChecks.checkAllocation(limits, frameBytes);
         LimitChecks.checkAllocation(limits, frameBytes * frames);
         if (activeSps != null) {
+            if (pendingPair != null) {
+                closeUnpaired(pendingPair);
+                pendingPair = null;
+            }
             awaitAllJobs();
             flushOutput(false);
             drainOutput(true);
             for (var frame : dpb) {
-                frame.reference = 0;
+                frame.mark(DecoderFrame.FRAME, 0);
             }
             dpb.clear();
             pool.clear();
@@ -1148,8 +1484,23 @@ public final class H264DecoderEngine {
         if (!pool.isEmpty()) {
             return pool.removeLast();
         }
-        var sps = activeSps;
-        return new DecoderFrame(sps.widthInMbs, sps.frameHeightInMbs, sps.chromaFormatIdc != 0);
+        return newFrame(activeSps);
+    }
+
+    /**
+     * Allocates a frame for the pictures of a sequence: one presenting three separately decoded
+     * monochrome color planes, at the luma bit depth, when the sequence codes its planes
+     * separately.
+     *
+     * @param sps the sequence parameter set
+     * @return the frame
+     */
+    private static DecoderFrame newFrame(H264Sps sps) {
+        if (sps.separateColorPlane) {
+            return DecoderFrame.separatePlanes(sps.widthInMbs, sps.frameHeightInMbs, sps.bitDepthLuma);
+        }
+        return new DecoderFrame(sps.widthInMbs, sps.frameHeightInMbs, sps.chromaFormatIdc, sps.bitDepthLuma,
+                sps.bitDepthChroma);
     }
 
     /**
@@ -1183,20 +1534,27 @@ public final class H264DecoderEngine {
      * @param frame the picture whose buffers become reusable
      */
     private void pool(DecoderFrame frame) {
-        if (frame != grayFrame && frame.mbWidth == activeSps.widthInMbs
-                && frame.mbHeight == activeSps.frameHeightInMbs && pool.size() < dpbSize + spareFrames()) {
+        var sps = activeSps;
+        if (frame != grayFrame && frame.mbWidth == sps.widthInMbs
+                && frame.mbHeight == sps.frameHeightInMbs && frame.chromaFormat == sps.chromaFormatIdc
+                && (frame.planes != null) == sps.separateColorPlane && frame.bitDepthLuma == sps.bitDepthLuma
+                && frame.bitDepthChroma == (sps.separateColorPlane ? sps.bitDepthLuma : sps.bitDepthChroma)
+                && pool.size() < dpbSize + spareFrames()) {
             pool.add(frame);
         }
     }
 
     /**
-     * Derives the picture order counts of a new picture (ITU-T H.264 8.2.1).
+     * Derives the picture order counts of a new picture (ITU-T H.264 8.2.1): both field counts
+     * of a frame, or the count of the field a field picture holds.
      *
      * @param frame the frame of the picture
      * @param slice the first slice header
      * @param sps the sequence parameter set
+     * @param structure the picture structure: {@link DecoderFrame#FRAME}, {@link DecoderFrame#TOP}
+     * or {@link DecoderFrame#BOTTOM}
      */
-    private void computePoc(DecoderFrame frame, H264SliceHeader slice, H264Sps sps) {
+    private void computePoc(DecoderFrame frame, H264SliceHeader slice, H264Sps sps, int structure) {
         var maxFrameNum = 1 << sps.log2MaxFrameNum;
         switch (sps.pocType) {
             case 0 -> {
@@ -1215,8 +1573,14 @@ public final class H264DecoderEngine {
                     msb = prevPocMsb;
                 }
                 currentPocMsb = msb;
-                frame.topPoc = msb + lsb;
-                frame.bottomPoc = frame.topPoc + slice.deltaPocBottom;
+                switch (structure) {
+                    case DecoderFrame.TOP -> frame.topPoc = msb + lsb;
+                    case DecoderFrame.BOTTOM -> frame.bottomPoc = msb + lsb;
+                    default -> {
+                        frame.topPoc = msb + lsb;
+                        frame.bottomPoc = frame.topPoc + slice.deltaPocBottom;
+                    }
+                }
             }
             case 1 -> {
                 var offset = frameNumOffset(slice, maxFrameNum);
@@ -1241,8 +1605,15 @@ public final class H264DecoderEngine {
                 if (slice.nalRefIdc == 0) {
                     expected += sps.offsetForNonRefPic;
                 }
-                frame.topPoc = expected + slice.deltaPoc0;
-                frame.bottomPoc = frame.topPoc + sps.offsetForTopToBottomField + slice.deltaPoc1;
+                switch (structure) {
+                    case DecoderFrame.TOP -> frame.topPoc = expected + slice.deltaPoc0;
+                    case DecoderFrame.BOTTOM ->
+                            frame.bottomPoc = expected + sps.offsetForTopToBottomField + slice.deltaPoc0;
+                    default -> {
+                        frame.topPoc = expected + slice.deltaPoc0;
+                        frame.bottomPoc = frame.topPoc + sps.offsetForTopToBottomField + slice.deltaPoc1;
+                    }
+                }
                 currentFrameNumOffset = offset;
             }
             default -> {
@@ -1255,12 +1626,18 @@ public final class H264DecoderEngine {
                 } else {
                     temp = 2 * (offset + slice.frameNum);
                 }
-                frame.topPoc = temp;
-                frame.bottomPoc = temp;
+                if (structure != DecoderFrame.BOTTOM) {
+                    frame.topPoc = temp;
+                }
+                if (structure != DecoderFrame.TOP) {
+                    frame.bottomPoc = temp;
+                }
                 currentFrameNumOffset = offset;
             }
         }
-        frame.poc = Math.min(frame.topPoc, frame.bottomPoc);
+        if (structure == DecoderFrame.FRAME) {
+            frame.poc = Math.min(frame.topPoc, frame.bottomPoc);
+        }
     }
 
     /**
@@ -1301,7 +1678,7 @@ public final class H264DecoderEngine {
         var frameNum = (prevRefFrameNum + 1 + skip) % maxFrameNum;
         DecoderFrame source = null;
         for (var frame : dpb) {
-            if (frame.isShortTerm() && !frame.nonExisting && (source == null || frame.frameNumWrap > source.frameNumWrap)) {
+            if (frame.anyShortTerm() && !frame.nonExisting && (source == null || frame.frameNumWrap > source.frameNumWrap)) {
                 source = frame;
             }
         }
@@ -1317,6 +1694,8 @@ public final class H264DecoderEngine {
             frame.decodeIndex = decodeCount;
             frame.idr = false;
             frame.mmco5 = false;
+            frame.fields = DecoderFrame.FRAME;
+            frame.codingStruct = DecoderFrame.CODED_FRAME;
             frame.sps = sps;
             frame.color = colorInfo(sps);
             if (source != null) {
@@ -1332,7 +1711,7 @@ public final class H264DecoderEngine {
             gapHeader.nalRefIdc = 1;
             gapHeader.sps = sps;
             if (sps.pocType != 0) {
-                computePoc(frame, gapHeader, sps);
+                computePoc(frame, gapHeader, sps, DecoderFrame.FRAME);
                 prevFrameNumOffset = currentFrameNumOffset;
                 prevFrameNum = frameNum;
                 prevMmco5 = false;
@@ -1341,8 +1720,8 @@ public final class H264DecoderEngine {
             }
             frame.sequence = sequence;
             updateFrameNumWrap(frameNum, maxFrameNum);
-            slidingWindow(sps);
-            frame.reference = DecoderFrame.SHORT_TERM;
+            slidingWindow(sps, null);
+            frame.mark(DecoderFrame.FRAME, DecoderFrame.SHORT_TERM);
             frame.frameNumWrap = frameNum;
             insertIntoDpb(frame);
             prevRefFrameNum = frameNum;
@@ -1368,7 +1747,8 @@ public final class H264DecoderEngine {
             if (sliceGroupMap == null || sliceGroupMap.length < mbCount) {
                 sliceGroupMap = new int[mbCount];
             }
-            SliceGroupMap.compute(pps, sps, slice.sliceGroupChangeCycle, sliceGroupMap);
+            SliceGroupMap.compute(pps, sps, slice.sliceGroupChangeCycle, currentStructure != DecoderFrame.FRAME,
+                    currentMbaff, sliceGroupMap);
         }
         if (!slice.isIntra()) {
             buildLists(slice);
@@ -1379,13 +1759,17 @@ public final class H264DecoderEngine {
         var sliceNum = nextSliceNum++;
         var map = pps.numSliceGroups > 1 ? sliceGroupMap : null;
         if (parallel) {
-            var copy = SliceTask.copyOf(slice, rbsp, size, lists, sliceNum, map);
-            copy.captureReferences(current.poc, slice.numRefIdxActive);
+            var start = sliceStartIndex(slice);
+            if (start >= 0) {
+                sliceStarts[start] |= (byte) (1 << slice.colorPlaneId);
+            }
+            var copy = SliceTask.copyOf(slice, rbsp, size, lists, listStructures, sliceNum, map);
+            copy.captureReferences(currentPoc, current.topPoc, current.bottomPoc, slice.numRefIdxActive);
             currentJob.add(copy);
             return;
         }
         var task = inlineTask;
-        task.captureReferences(current.poc, slice.numRefIdxActive);
+        task.captureReferences(currentPoc, current.topPoc, current.bottomPoc, slice.numRefIdxActive);
         task.rbsp = rbsp;
         task.size = size;
         task.sliceNum = sliceNum;
@@ -1411,9 +1795,11 @@ public final class H264DecoderEngine {
         }
         current = null;
         var slice = pictureHeader;
+        var structure = currentStructure;
+        var second = secondField;
         if (!parallel) {
             var failure = inlineDecoder.finish();
-            frame.publishDone();
+            frame.publishDone(structure);
             if (failure != null) {
                 recordError(failure);
             }
@@ -1439,43 +1825,61 @@ public final class H264DecoderEngine {
         if (slice.nalRefIdc != 0) {
             if (slice.idr) {
                 for (var other : dpb) {
-                    other.reference = 0;
+                    if (other != frame) {
+                        other.mark(DecoderFrame.FRAME, 0);
+                    }
                 }
                 if (slice.longTermReference) {
-                    frame.reference = DecoderFrame.LONG_TERM;
+                    frame.mark(structure, DecoderFrame.LONG_TERM);
                     frame.longTermFrameIdx = 0;
                     maxLongTermFrameIdx = 0;
                 } else {
-                    frame.reference = DecoderFrame.SHORT_TERM;
+                    frame.mark(structure, DecoderFrame.SHORT_TERM);
                     maxLongTermFrameIdx = -1;
                 }
             } else {
                 updateFrameNumWrap(slice.frameNum, maxFrameNum);
+                var firstFieldShortTerm = second
+                        && frame.marking(structure == DecoderFrame.BOTTOM ? 0 : 1) == DecoderFrame.SHORT_TERM;
                 if (slice.adaptiveRefPicMarking) {
-                    mmco5 = applyMmco(frame, slice);
-                } else {
-                    slidingWindow(sps);
+                    mmco5 = applyMmco(frame, slice, structure);
+                } else if (!firstFieldShortTerm) {
+                    slidingWindow(sps, frame);
                 }
-                if (frame.reference != DecoderFrame.LONG_TERM) {
-                    frame.reference = DecoderFrame.SHORT_TERM;
+                if ((structure & DecoderFrame.TOP) != 0 && frame.refTop != DecoderFrame.LONG_TERM) {
+                    frame.refTop = DecoderFrame.SHORT_TERM;
                 }
-                enforceReferenceLimit(sps);
+                if ((structure & DecoderFrame.BOTTOM) != 0 && frame.refBottom != DecoderFrame.LONG_TERM) {
+                    frame.refBottom = DecoderFrame.SHORT_TERM;
+                }
+                enforceReferenceLimit(sps, frame);
             }
             frame.frameNumWrap = mmco5 ? 0 : slice.frameNum;
         }
-        frame.mmco5 = mmco5;
         if (mmco5) {
-            var temp = frame.poc;
-            frame.topPoc -= temp;
-            frame.bottomPoc -= temp;
-            frame.poc = 0;
+            frame.mmco5 = true;
+            var temp = currentPoc;
+            if ((structure & DecoderFrame.TOP) != 0) {
+                frame.topPoc -= temp;
+            }
+            if ((structure & DecoderFrame.BOTTOM) != 0) {
+                frame.bottomPoc -= temp;
+            }
+            if (frame.fields == DecoderFrame.TOP) {
+                frame.bottomPoc = frame.topPoc;
+            } else if (frame.fields == DecoderFrame.BOTTOM) {
+                frame.topPoc = frame.bottomPoc;
+            }
+            frame.updatePoc();
             frame.frameNum = 0;
+        } else if (!second) {
+            frame.mmco5 = false;
         }
         if (sps.pocType == 0) {
             if (slice.nalRefIdc != 0) {
                 if (mmco5) {
                     prevPocMsb = 0;
-                    prevPocLsb = frame.topPoc;
+                    prevPocLsb = structure == DecoderFrame.BOTTOM ? 0 : frame.topPoc;
                 } else {
                     prevPocMsb = currentPocMsb;
                     prevPocLsb = slice.pocLsb;
@@ -1493,6 +1897,11 @@ public final class H264DecoderEngine {
             prevRefFrameNum = mmco5 ? 0 : slice.frameNum;
             prevRefFrameNumValid = true;
         }
+        if (second) {
+            removeUnused();
+            outputDue();
+            return;
+        }
         if (slice.idr || mmco5) {
             if (slice.idr && slice.noOutputOfPriorPics) {
                 for (var other : dpb) {
@@ -1507,45 +1916,57 @@ public final class H264DecoderEngine {
         } else {
             removeUnused();
         }
+        if (structure != DecoderFrame.FRAME) {
+            if (frame.discard) {
+                frame.outputNeeded = false;
+            }
+            insertIntoDpb(frame);
+            pendingPair = frame;
+            pendingPairReference = slice.nalRefIdc != 0;
+            outputDue();
+            return;
+        }
         storePicture(frame);
     }
 
     /**
-     * Recomputes {@code FrameNumWrap} of the short-term reference frames for a current
-     * {@code frame_num} (ITU-T H.264 8.2.4.1).
+     * Recomputes {@code FrameNumWrap} of the frames holding a short-term reference field for a
+     * current {@code frame_num} (ITU-T H.264 8.2.4.1).
      *
      * @param frameNum the current {@code frame_num}
      * @param maxFrameNum the {@code MaxFrameNum}
      */
     private void updateFrameNumWrap(int frameNum, int maxFrameNum) {
         for (var frame : dpb) {
-            if (frame.isShortTerm()) {
+            if (frame.anyShortTerm()) {
                 frame.frameNumWrap = frame.frameNum > frameNum ? frame.frameNum - maxFrameNum : frame.frameNum;
             }
         }
     }
 
     /**
-     * Applies the sliding window marking process (ITU-T H.264 8.2.5.3).
+     * Applies the sliding window marking process (ITU-T H.264 8.2.5.3): frames, complementary
+     * field pairs and non-paired fields count once each.
      *
      * @param sps the sequence parameter set
+     * @param currentFrame the frame of the current picture, which is never unmarked
      */
-    private void slidingWindow(H264Sps sps) {
+    private void slidingWindow(H264Sps sps, DecoderFrame currentFrame) {
         var shortTerm = 0;
         var longTerm = 0;
         DecoderFrame oldest = null;
         for (var frame : dpb) {
-            if (frame.isShortTerm()) {
+            if (frame.anyShortTerm()) {
                 shortTerm++;
-                if (oldest == null || frame.frameNumWrap < oldest.frameNumWrap) {
+                if (frame != currentFrame && (oldest == null || frame.frameNumWrap < oldest.frameNumWrap)) {
                     oldest = frame;
                 }
-            } else if (frame.isLongTerm()) {
+            } else if (frame.anyLongTerm()) {
                 longTerm++;
             }
         }
         if (shortTerm + longTerm >= Math.max(sps.maxNumRefFrames, 1) && oldest != null) {
-            oldest.reference = 0;
+            oldest.mark(DecoderFrame.FRAME, 0);
         }
     }
 
@@ -1554,20 +1975,24 @@ public final class H264DecoderEngine {
      * {@code max_num_ref_frames} allows, which only happens for non-conforming streams.
      *
      * @param sps the sequence parameter set
+     * @param currentFrame the frame of the current picture, counted once and never unmarked
      */
-    private void enforceReferenceLimit(H264Sps sps) {
+    private void enforceReferenceLimit(H264Sps sps, DecoderFrame currentFrame) {
         var limit = Math.max(sps.maxNumRefFrames, 1);
         while (true) {
             var count = 1;
             DecoderFrame oldest = null;
             DecoderFrame oldestLong = null;
             for (var frame : dpb) {
-                if (frame.isShortTerm()) {
+                if (frame == currentFrame) {
+                    continue;
+                }
+                if (frame.anyShortTerm()) {
                     count++;
                     if (oldest == null || frame.frameNumWrap < oldest.frameNumWrap) {
                         oldest = frame;
                     }
-                } else if (frame.isLongTerm()) {
+                } else if (frame.anyLongTerm()) {
                     count++;
                     if (oldestLong == null || frame.longTermFrameIdx < oldestLong.longTermFrameIdx) {
                         oldestLong = frame;
@@ -1578,9 +2003,9 @@ public final class H264DecoderEngine {
                 return;
             }
             if (oldest != null) {
-                oldest.reference = 0;
+                oldest.mark(DecoderFrame.FRAME, 0);
             } else if (oldestLong != null) {
-                oldestLong.reference = 0;
+                oldestLong.mark(DecoderFrame.FRAME, 0);
             } else {
                 return;
             }
@@ -1589,66 +2014,76 @@ public final class H264DecoderEngine {
 
     /**
      * Applies the memory management control operations of the current picture (ITU-T H.264
-     * 8.2.5.4).
+     * 8.2.5.4): to frames and complementary field pairs for a frame picture, to individual
+     * fields for a field picture.
      *
-     * @param frame the current picture
+     * @param frame the frame of the current picture
      * @param slice the header carrying the operations
+     * @param structure the structure of the current picture
      * @return whether operation 5 was present
      */
-    private boolean applyMmco(DecoderFrame frame, H264SliceHeader slice) {
+    private boolean applyMmco(DecoderFrame frame, H264SliceHeader slice, int structure) {
         var mmco5 = false;
-        var currentPicNum = slice.frameNum;
+        var field = structure != DecoderFrame.FRAME;
+        var parity = structure == DecoderFrame.BOTTOM ? 1 : 0;
+        var currentPicNum = field ? 2 * slice.frameNum + 1 : slice.frameNum;
         for (var i = 0; i < slice.mmcoCount; i++) {
             var op = slice.mmcoOp[i];
             switch (op) {
                 case 1 -> {
                     var picNum = currentPicNum - (slice.mmcoArg1[i] + 1);
-                    var target = findShortTerm(picNum);
+                    var target = field ? findShortTermField(picNum, parity) : findShortTerm(picNum);
                     if (target != null) {
-                        target.reference = 0;
+                        target.mark(field ? foundStructure : DecoderFrame.FRAME, 0);
                     }
                 }
                 case 2 -> {
-                    var target = findLongTerm(slice.mmcoArg1[i]);
+                    var target = field ? findLongTermField(slice.mmcoArg1[i], parity) : findLongTerm(slice.mmcoArg1[i]);
                     if (target != null) {
-                        target.reference = 0;
+                        target.mark(field ? foundStructure : DecoderFrame.FRAME, 0);
                     }
                 }
                 case 3 -> {
                     var picNum = currentPicNum - (slice.mmcoArg1[i] + 1);
                     var index = slice.mmcoArg2[i];
-                    var target = findShortTerm(picNum);
-                    var existing = findLongTerm(index);
-                    if (existing != null && existing != target) {
-                        existing.reference = 0;
+                    var target = field ? findShortTermField(picNum, parity) : findShortTerm(picNum);
+                    var targetStructure = field ? foundStructure : DecoderFrame.FRAME;
+                    for (var other : dpb) {
+                        if (other != target && other.anyLongTerm() && other.longTermFrameIdx == index) {
+                            unmarkLongTerm(other);
+                        }
                     }
                     if (target != null) {
-                        target.reference = DecoderFrame.LONG_TERM;
+                        if (!field && target.anyLongTerm() && target.longTermFrameIdx != index) {
+                            unmarkLongTerm(target);
+                        }
+                        target.mark(targetStructure, DecoderFrame.LONG_TERM);
                         target.longTermFrameIdx = index;
                     }
                 }
                 case 4 -> {
                     maxLongTermFrameIdx = slice.mmcoArg1[i] - 1;
                     for (var other : dpb) {
-                        if (other.isLongTerm() && other.longTermFrameIdx > maxLongTermFrameIdx) {
-                            other.reference = 0;
+                        if (other.anyLongTerm() && other.longTermFrameIdx > maxLongTermFrameIdx) {
+                            unmarkLongTerm(other);
                         }
                     }
                 }
                 case 5 -> {
                     for (var other : dpb) {
-                        other.reference = 0;
+                        other.mark(DecoderFrame.FRAME, 0);
                     }
                     maxLongTermFrameIdx = -1;
                     mmco5 = true;
                 }
                 case 6 -> {
                     var index = slice.mmcoArg2[i];
-                    var existing = findLongTerm(index);
-                    if (existing != null) {
-                        existing.reference = 0;
+                    for (var other : dpb) {
+                        if (other != frame && other.anyLongTerm() && other.longTermFrameIdx == index) {
+                            unmarkLongTerm(other);
+                        }
                     }
-                    frame.reference = DecoderFrame.LONG_TERM;
+                    frame.mark(structure, DecoderFrame.LONG_TERM);
                     frame.longTermFrameIdx = index;
                 }
                 default -> {
@@ -1659,7 +2094,27 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Finds the short-term reference frame with a {@code PicNum}.
+     * Marks the long-term reference fields of a frame as unused for reference.
+     *
+     * @param frame the frame whose long-term fields lose their marking; short-term fields keep it
+     */
+    private static void unmarkLongTerm(DecoderFrame frame) {
+        if (frame.refTop == DecoderFrame.LONG_TERM) {
+            frame.refTop = 0;
+        }
+        if (frame.refBottom == DecoderFrame.LONG_TERM) {
+            frame.refBottom = 0;
+        }
+    }
+
+    /**
+     * The structure of the field the last {@link #findShortTermField} or
+     * {@link #findLongTermField} found: {@link DecoderFrame#TOP} or {@link DecoderFrame#BOTTOM}.
+     */
+    private int foundStructure;
+
+    /**
+     * Finds the short-term reference frame or complementary field pair with a {@code PicNum}.
      *
      * @param picNum the picture number
      * @return the frame, or {@code null}
@@ -1674,7 +2129,8 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Finds the long-term reference frame with a {@code LongTermPicNum}.
+     * Finds the long-term reference frame or complementary field pair with a
+     * {@code LongTermPicNum}.
      *
      * @param longTermPicNum the long-term picture number
      * @return the frame, or {@code null}
@@ -1689,12 +2145,55 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Removes frames that are neither needed for output nor used for reference.
+     * Finds the short-term reference field with a field {@code PicNum} (ITU-T H.264 8.2.4.1) and
+     * records its structure in {@link #foundStructure}.
+     *
+     * @param picNum the picture number
+     * @param parity the parity of the current field: 0 top, 1 bottom
+     * @return the frame holding the field, or {@code null}
+     */
+    private DecoderFrame findShortTermField(int picNum, int parity) {
+        for (var frame : dpb) {
+            for (var q = 0; q < 2; q++) {
+                if (frame.marking(q) == DecoderFrame.SHORT_TERM
+                        && 2 * frame.frameNumWrap + (q == parity ? 1 : 0) == picNum) {
+                    foundStructure = q + 1;
+                    return frame;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds the long-term reference field with a field {@code LongTermPicNum} (ITU-T H.264
+     * 8.2.4.1) and records its structure in {@link #foundStructure}.
+     *
+     * @param longTermPicNum the long-term picture number
+     * @param parity the parity of the current field: 0 top, 1 bottom
+     * @return the frame holding the field, or {@code null}
+     */
+    private DecoderFrame findLongTermField(int longTermPicNum, int parity) {
+        for (var frame : dpb) {
+            for (var q = 0; q < 2; q++) {
+                if (frame.marking(q) == DecoderFrame.LONG_TERM
+                        && 2 * frame.longTermFrameIdx + (q == parity ? 1 : 0) == longTermPicNum) {
+                    foundStructure = q + 1;
+                    return frame;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Removes frames that are neither needed for output nor used for reference, except the frame
+     * whose first field may still receive its second field.
      */
     private void removeUnused() {
         for (var i = dpb.size() - 1; i >= 0; i--) {
             var frame = dpb.get(i);
-            if (!frame.outputNeeded && !frame.isReference()) {
+            if (!frame.outputNeeded && !frame.isReference() && frame != pendingPair) {
                 dpb.remove(i);
                 release(frame);
             }
@@ -1710,8 +2209,18 @@ public final class H264DecoderEngine {
         removeUnused();
         while (dpb.size() >= dpbSize) {
             if (!bump()) {
-                var victim = dpb.removeFirst();
-                victim.reference = 0;
+                DecoderFrame victim = null;
+                for (var candidate : dpb) {
+                    if (candidate != pendingPair) {
+                        victim = candidate;
+                        break;
+                    }
+                }
+                if (victim == null) {
+                    break;
+                }
+                dpb.remove(victim);
+                victim.mark(DecoderFrame.FRAME, 0);
                 release(victim);
             }
         }
@@ -1719,8 +2228,8 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Stores the finished current picture (ITU-T H.264 C.4.5) and outputs the frames that
-     * became due.
+     * Stores the finished current frame (ITU-T H.264 C.4.5) and outputs the frames that became
+     * due.
      *
      * @param frame the finished picture
      */
@@ -1737,7 +2246,8 @@ public final class H264DecoderEngine {
             if (dpb.size() >= dpbSize) {
                 var lowest = true;
                 for (var other : dpb) {
-                    if (other.outputNeeded && other.sequence == frame.sequence && other.poc < frame.poc) {
+                    if (other.outputNeeded && other != pendingPair && other.sequence == frame.sequence
+                            && other.poc < frame.poc) {
                         lowest = false;
                         break;
                     }
@@ -1750,6 +2260,13 @@ public final class H264DecoderEngine {
             }
         }
         insertIntoDpb(frame);
+        outputDue();
+    }
+
+    /**
+     * Outputs frames while more are waiting than the sequence's reordering allows.
+     */
+    private void outputDue() {
         var reorder = lowDelay && activeSps.profileIdc == 66 ? 0 : activeSps.reorderDepth();
         while (countOutputNeeded() > reorder) {
             if (!bump()) {
@@ -1759,14 +2276,15 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Returns the number of buffered frames waiting for output.
+     * Returns the number of buffered frames waiting for output, without the frame that may
+     * still receive its second field.
      *
      * @return the count
      */
     private int countOutputNeeded() {
         var count = 0;
         for (var frame : dpb) {
-            if (frame.outputNeeded) {
+            if (frame.outputNeeded && frame != pendingPair) {
                 count++;
             }
         }
@@ -1775,14 +2293,15 @@ public final class H264DecoderEngine {
 
     /**
      * Outputs the buffered frame that comes first in output order and removes it when it is no
-     * longer used for reference (ITU-T H.264 C.4.5.3).
+     * longer used for reference (ITU-T H.264 C.4.5.3); the frame that may still receive its
+     * second field is not output.
      *
      * @return whether a frame was output
      */
     private boolean bump() {
         DecoderFrame first = null;
         for (var frame : dpb) {
-            if (frame.outputNeeded && (first == null || frame.sequence < first.sequence
+            if (frame.outputNeeded && frame != pendingPair && (first == null || frame.sequence < first.sequence
                     || (frame.sequence == first.sequence && frame.poc < first.poc))) {
                 first = frame;
             }
@@ -1852,29 +2371,37 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Hands one decoded frame to the sink, reporting the failure of the job that decoded it.
+     * Hands one decoded frame to the sink, reporting the failures of the jobs that decoded it.
+     *
+     * <p>A frame holding a single field, whose other field was never decoded, is output with the
+     * missing field filled with mid-gray samples.
      *
      * @param frame the picture to hand to the sink
      */
     private void deliver(DecoderFrame frame) {
         awaitFrame(frame);
         var job = frame.job;
-        if (job != null) {
-            frame.job = null;
+        frame.job = null;
+        while (job != null) {
             var failure = job.error();
             if (failure != null) {
                 recordError(failure);
             }
+            var previous = job.previous;
+            job.previous = null;
+            job = previous;
         }
         if (frame.discard || frame.nonExisting) {
             return;
         }
+        frame.completeMissingField();
         if (frame.damaged) {
             damageKey = Math.max(damageKey, 2 * frame.decodeIndex);
         } else {
             intactKey = Math.max(intactKey, 2 * frame.decodeIndex);
         }
-        sink.output(new OutputFrame(frame.luma, frame.cb, frame.cr, frame.lumaStride, frame.chromaStride,
+        sink.output(new OutputFrame(frame.luma, frame.cb, frame.cr, frame.luma16, frame.cb16, frame.cr16,
+                frame.bitDepthLuma, frame.bitDepthChroma, frame.lumaStride, frame.chromaStride,
                 frame.lumaOrigin, frame.chromaOrigin, frame.sps, frame.color, frame.pts, frame.duration, frame.keyframe,
                 frame.poc, frame.damaged));
     }
@@ -1885,6 +2412,10 @@ public final class H264DecoderEngine {
      */
     public void flush() {
         finishPicture();
+        if (pendingPair != null) {
+            closeUnpaired(pendingPair);
+            pendingPair = null;
+        }
         if (parallel) {
             awaitAllJobs();
         }
@@ -1899,9 +2430,30 @@ public final class H264DecoderEngine {
      * @param slice the slice header
      */
     private void buildLists(H264SliceHeader slice) {
-        var frame = current;
         var maxFrameNum = 1 << activeSps.log2MaxFrameNum;
         updateFrameNumWrap(slice.frameNum, maxFrameNum);
+        Arrays.fill(listStructures[0], (byte) currentStructure);
+        Arrays.fill(listStructures[1], (byte) currentStructure);
+        if (currentStructure == DecoderFrame.FRAME) {
+            buildFrameLists(slice);
+        } else {
+            buildFieldLists(slice);
+        }
+        for (var list = 0; list < 2; list++) {
+            if (slice.refPicListModification[list]) {
+                modifyList(list, slice, maxFrameNum);
+            }
+        }
+        substituteMissing(slice);
+    }
+
+    /**
+     * Builds the initial reference picture lists of a slice of a frame (ITU-T H.264 8.2.4.2.1
+     * and 8.2.4.2.3): frames and complementary field pairs whose fields are both marked.
+     *
+     * @param slice the slice header
+     */
+    private void buildFrameLists(H264SliceHeader slice) {
         var shortTerm = new ArrayList<DecoderFrame>();
         var longTerm = new ArrayList<DecoderFrame>();
         for (var other : dpb) {
@@ -1920,10 +2472,15 @@ public final class H264DecoderEngine {
             initial.addAll(longTerm);
             fillList(0, initial, slice.numRefIdxActive[0]);
         } else {
+            var skipNonExisting = activeSps.pocType == 0;
             var before = new ArrayList<DecoderFrame>();
             var after = new ArrayList<DecoderFrame>();
             for (var other : shortTerm) {
-                if (other.poc <= frame.poc) {
+                if (skipNonExisting && other.nonExisting) {
+                    skippedLostPicture();
+                    continue;
+                }
+                if (other.poc <= currentPoc) {
                     before.add(other);
                 } else {
                     after.add(other);
@@ -1945,12 +2502,148 @@ public final class H264DecoderEngine {
             fillList(0, list0, slice.numRefIdxActive[0]);
             fillList(1, list1, slice.numRefIdxActive[1]);
         }
-        for (var list = 0; list < 2; list++) {
-            if (slice.refPicListModification[list]) {
-                modifyList(list, slice, maxFrameNum);
+    }
+
+    /**
+     * Builds the initial reference picture lists of a slice of a field (ITU-T H.264 8.2.4.2.2,
+     * 8.2.4.2.4 and 8.2.4.2.5): the fields of the frames holding a marked field, alternating
+     * between the parities.
+     *
+     * @param slice the slice header
+     */
+    private void buildFieldLists(H264SliceHeader slice) {
+        var parity = currentStructure == DecoderFrame.BOTTOM ? 1 : 0;
+        var shortTerm = fieldShortTerm;
+        var longTerm = fieldLongTerm;
+        shortTerm.clear();
+        longTerm.clear();
+        for (var other : dpb) {
+            if (other.anyShortTerm()) {
+                shortTerm.add(other);
+            }
+            if (other.anyLongTerm()) {
+                longTerm.add(other);
             }
         }
-        substituteMissing(slice);
+        longTerm.sort((a, b) -> Integer.compare(a.longTermFrameIdx, b.longTermFrameIdx));
+        var frames = fieldListFrames;
+        var parities = fieldListParity;
+        if (slice.sliceType == H264SliceHeader.P || slice.sliceType == H264SliceHeader.SP) {
+            shortTerm.sort((a, b) -> Integer.compare(b.frameNumWrap, a.frameNumWrap));
+            frames.clear();
+            parities.clear();
+            appendFields(shortTerm, parity, DecoderFrame.SHORT_TERM, frames, parities);
+            appendFields(longTerm, parity, DecoderFrame.LONG_TERM, frames, parities);
+            fillFieldList(0, frames, parities, slice.numRefIdxActive[0]);
+            return;
+        }
+        var skipNonExisting = activeSps.pocType == 0;
+        var before = fieldBefore;
+        var after = fieldAfter;
+        before.clear();
+        after.clear();
+        for (var other : shortTerm) {
+            if (skipNonExisting && other.nonExisting) {
+                skippedLostPicture();
+                continue;
+            }
+            if (entryPoc(other, parity) <= currentPoc) {
+                before.add(other);
+            } else {
+                after.add(other);
+            }
+        }
+        before.sort((a, b) -> Integer.compare(entryPoc(b, parity), entryPoc(a, parity)));
+        after.sort((a, b) -> Integer.compare(entryPoc(a, parity), entryPoc(b, parity)));
+        var frames1 = fieldListFrames1;
+        var parities1 = fieldListParity1;
+        frames1.clear();
+        parities1.clear();
+        var ordered = fieldOrdered;
+        ordered.clear();
+        ordered.addAll(before);
+        ordered.addAll(after);
+        frames.clear();
+        parities.clear();
+        appendFields(ordered, parity, DecoderFrame.SHORT_TERM, frames, parities);
+        appendFields(longTerm, parity, DecoderFrame.LONG_TERM, frames, parities);
+        ordered.clear();
+        ordered.addAll(after);
+        ordered.addAll(before);
+        appendFields(ordered, parity, DecoderFrame.SHORT_TERM, frames1, parities1);
+        appendFields(longTerm, parity, DecoderFrame.LONG_TERM, frames1, parities1);
+        if (frames1.size() > 1 && frames.equals(frames1) && parities.equals(parities1)) {
+            var frame = frames1.get(0);
+            frames1.set(0, frames1.get(1));
+            frames1.set(1, frame);
+            var first = parities1.get(0);
+            parities1.set(0, parities1.get(1));
+            parities1.set(1, first);
+        }
+        fillFieldList(0, frames, parities, slice.numRefIdxActive[0]);
+        fillFieldList(1, frames1, parities1, slice.numRefIdxActive[1]);
+    }
+
+    /**
+     * Notes that the initial reference lists of a B slice left out a "non-existing" frame, as
+     * ITU-T H.264 8.2.4.2.3 and 8.2.4.2.4 require when {@code pic_order_cnt_type} is 0: in a
+     * sequence that allows no gaps in {@code frame_num} the frame stands in for a lost picture
+     * the encoder's lists held, so the lists may name other pictures than the encoder's and the
+     * current picture is damaged.
+     */
+    private void skippedLostPicture() {
+        if (!activeSps.gapsInFrameNumAllowed) {
+            current.damaged = true;
+        }
+    }
+
+    /**
+     * Returns the picture order count by which a reference entry is ordered in the field
+     * reference lists of B slices: of the frame, complementary field pair or non-paired field,
+     * and for the frame of the current picture of its first field alone.
+     *
+     * @param frame the reference entry
+     * @param parity the parity of the current field
+     * @return the picture order count
+     */
+    private int entryPoc(DecoderFrame frame, int parity) {
+        return frame == current ? frame.fieldPoc(1 - parity) : frame.poc;
+    }
+
+    /**
+     * Appends the reference fields of an ordered list of frames to a field list, alternating
+     * between the parities and starting with the parity of the current field (ITU-T H.264
+     * 8.2.4.2.5).
+     *
+     * @param frames the ordered frames
+     * @param parity the parity of the current field
+     * @param marking the marking the fields must carry
+     * @param outFrames receives the frames of the fields
+     * @param outParity receives the parities of the fields
+     */
+    private static void appendFields(List<DecoderFrame> frames, int parity, int marking, List<DecoderFrame> outFrames,
+                                     List<Integer> outParity) {
+        var count = frames.size();
+        var same = 0;
+        var opposite = 0;
+        while (same < count || opposite < count) {
+            while (same < count) {
+                var frame = frames.get(same++);
+                if (frame.marking(parity) == marking) {
+                    outFrames.add(frame);
+                    outParity.add(parity);
+                    break;
+                }
+            }
+            while (opposite < count) {
+                var frame = frames.get(opposite++);
+                if (frame.marking(1 - parity) == marking) {
+                    outFrames.add(frame);
+                    outParity.add(1 - parity);
+                    break;
+                }
+            }
+        }
     }
 
     /**
@@ -1969,65 +2662,90 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Applies the reference picture list modification of a list (ITU-T H.264 8.2.4.3).
+     * Copies an initial field list into a reference list, truncated to the active count.
+     *
+     * @param list the list index
+     * @param frames the frames of the fields
+     * @param parities the parities of the fields
+     * @param active the number of active entries
+     */
+    private void fillFieldList(int list, List<DecoderFrame> frames, List<Integer> parities, int active) {
+        var target = lists[list];
+        var structures = listStructures[list];
+        Arrays.fill(target, null);
+        for (var i = 0; i < Math.min(frames.size(), active); i++) {
+            target[i] = frames.get(i);
+            structures[i] = (byte) (parities.get(i) + 1);
+        }
+    }
+
+    /**
+     * Applies the reference picture list modification of a list (ITU-T H.264 8.2.4.3), with the
+     * field picture numbers of 8.2.4.1 for a field.
      *
      * @param list the list index
      * @param slice the slice header
-     * @param maxFrameNum the {@code MaxPicNum} of frame coding
+     * @param maxFrameNum the {@code MaxFrameNum}
      */
     private void modifyList(int list, H264SliceHeader slice, int maxFrameNum) {
         var target = lists[list];
+        var structures = listStructures[list];
         var active = slice.numRefIdxActive[list];
-        var currentPicNum = slice.frameNum;
+        var field = currentStructure != DecoderFrame.FRAME;
+        var parity = currentStructure == DecoderFrame.BOTTOM ? 1 : 0;
+        var maxPicNum = field ? 2 * maxFrameNum : maxFrameNum;
+        var currentPicNum = field ? 2 * slice.frameNum + 1 : slice.frameNum;
         var picNumPred = currentPicNum;
         var refIdx = 0;
         for (var op = 0; op < slice.modificationCount[list] && refIdx < active; op++) {
             var idc = slice.modificationIdc[list][op];
             var value = slice.modificationValue[list][op];
             DecoderFrame picture;
-            boolean longTerm;
-            int number;
+            int structure;
             if (idc < 2) {
                 var diff = value + 1;
-                if (diff > maxFrameNum) {
+                if (diff > maxPicNum) {
                     throw new MediaException.Malformed("abs_diff_pic_num_minus1 out of range");
                 }
                 int noWrap;
                 if (idc == 0) {
                     noWrap = picNumPred - diff;
                     if (noWrap < 0) {
-                        noWrap += maxFrameNum;
+                        noWrap += maxPicNum;
                     }
                 } else {
                     noWrap = picNumPred + diff;
-                    if (noWrap >= maxFrameNum) {
-                        noWrap -= maxFrameNum;
+                    if (noWrap >= maxPicNum) {
+                        noWrap -= maxPicNum;
                     }
                 }
                 picNumPred = noWrap;
-                number = noWrap > currentPicNum ? noWrap - maxFrameNum : noWrap;
-                picture = findShortTerm(number);
-                longTerm = false;
+                var number = noWrap > currentPicNum ? noWrap - maxPicNum : noWrap;
+                picture = field ? findShortTermField(number, parity) : findShortTerm(number);
             } else {
-                number = value;
-                picture = findLongTerm(number);
-                longTerm = true;
+                picture = field ? findLongTermField(value, parity) : findLongTerm(value);
             }
+            structure = field ? foundStructure : DecoderFrame.FRAME;
             if (picture == null) {
                 current.damaged = true;
+                structure = currentStructure;
             }
             for (var c = active; c > refIdx; c--) {
                 target[c] = target[c - 1];
+                structures[c] = structures[c - 1];
             }
-            target[refIdx++] = picture;
+            target[refIdx] = picture;
+            structures[refIdx] = (byte) structure;
+            refIdx++;
             var n = refIdx;
             for (var c = refIdx; c <= active; c++) {
                 var entry = target[c];
-                var same = entry != null && (longTerm
-                        ? entry.isLongTerm() && entry.longTermFrameIdx == number
-                        : entry.isShortTerm() && entry.frameNumWrap == number);
-                if (!same || picture == null) {
-                    target[n++] = entry;
+                var same = picture != null && entry == picture && structures[c] == structure
+                        && entry.structureMarking(structure) == (idc < 2 ? DecoderFrame.SHORT_TERM : DecoderFrame.LONG_TERM);
+                if (!same) {
+                    target[n] = entry;
+                    structures[n] = structures[c];
+                    n++;
                 }
             }
             for (var c = n; c <= active; c++) {
@@ -2038,7 +2756,7 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Replaces missing list entries within the active range with a substitute frame so that
+     * Replaces missing list entries within the active range with a substitute picture so that
      * corrupt or truncated streams never dereference an absent picture.
      *
      * @param slice the slice header
@@ -2049,7 +2767,13 @@ public final class H264DecoderEngine {
             var active = slice.numRefIdxActive[list];
             for (var i = 0; i < active; i++) {
                 if (target[i] == null) {
-                    target[i] = substitute();
+                    var frame = substitute();
+                    target[i] = frame;
+                    var structure = currentStructure;
+                    if (structure != DecoderFrame.FRAME && (frame.fields & structure) == 0) {
+                        structure = DecoderFrame.FRAME - structure;
+                    }
+                    listStructures[list][i] = (byte) structure;
                     if (joinedMidSequence) {
                         current.damaged = true;
                     }
@@ -2060,14 +2784,14 @@ public final class H264DecoderEngine {
 
     /**
      * Returns the frame used in place of a missing reference: the most recently decoded frame of
-     * the buffer, or a gray frame.
+     * the buffer other than the current one, or a gray frame.
      *
      * @return the substitute frame
      */
     private DecoderFrame substitute() {
         DecoderFrame best = null;
         for (var frame : dpb) {
-            if (best == null || frame.id > best.id) {
+            if (frame != current && (best == null || frame.id > best.id)) {
                 best = frame;
             }
         }
@@ -2076,7 +2800,7 @@ public final class H264DecoderEngine {
         }
         if (grayFrame == null) {
             var sps = activeSps;
-            grayFrame = new DecoderFrame(sps.widthInMbs, sps.frameHeightInMbs, sps.chromaFormatIdc != 0);
+            grayFrame = newFrame(sps);
             grayFrame.fillGray();
             grayFrame.damaged = true;
             grayFrame.id = nextId++;

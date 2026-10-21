@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.IntVector;
@@ -10,9 +11,10 @@ import jdk.incubator.vector.VectorSpecies;
 /**
  * Implements {@link WarpKernel} with the Vector API; the output equals {@link ScalarWarpKernel} sample for sample.
  *
- * @implNote This implementation follows the kernel rules of {@link com.github.auties00.smalt.internal.simd.Simd}; it
- * gives each lane one output pixel, gathers its taps from the packed source and keeps the sums in arrays between calls,
- * so the taps of a pixel are spread over calls of small kernels.
+ * @implNote This implementation follows the kernel rules of {@link Simd}; it gives each lane one output pixel,
+ * gathers its taps from the packed source and keeps the sums in arrays between calls, so the taps of a pixel are spread
+ * over calls of small kernels. The gathers compile only where {@link Simd#WIDE} holds, so elsewhere the taps are
+ * summed by the scalar kernel.
  */
 final class VectorWarpKernel implements WarpKernel {
     /**
@@ -113,6 +115,10 @@ final class VectorWarpKernel implements WarpKernel {
     @Override
     public void accumulate2(int[] src, int offset, int[] base, float[] w0, float[] w1, float[] wy, float[] red,
                             float[] green, float[] blue, float[] alpha, int count) {
+        if (!Simd.WIDE) {
+            scalar.accumulate2Range(src, offset, base, w0, w1, wy, red, green, blue, alpha, 0, count);
+            return;
+        }
         var i = 0;
         for (; i + L <= count; i += L) {
             var row = FLOAT_VECTOR.cast(FloatVector.fromArray(F, wy, i));

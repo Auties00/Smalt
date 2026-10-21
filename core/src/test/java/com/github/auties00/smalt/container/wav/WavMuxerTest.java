@@ -43,6 +43,7 @@ class WavMuxerTest {
                 Arguments.of(Codec.PCM_S16LE, ChannelLayout.SURROUND_5_1, "pcm_s16le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_S24LE, ChannelLayout.STEREO, "pcm_s24le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_S32LE, ChannelLayout.MONO, "pcm_s32le", 0xFFFE, 40),
+                Arguments.of(Codec.PCM_S64LE, ChannelLayout.STEREO, "pcm_s64le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_F32LE, ChannelLayout.STEREO, "pcm_f32le", 3, 18),
                 Arguments.of(Codec.PCM_F64LE, ChannelLayout.SURROUND_7_1, "pcm_f64le", 0xFFFE, 40),
                 Arguments.of(Codec.PCM_ALAW, ChannelLayout.MONO, "pcm_alaw", 6, 18),
@@ -164,6 +165,13 @@ class WavMuxerTest {
         assertEquals(0x3F, com.github.auties00.smalt.container.internal.WaveFormat.channelMask(ChannelLayout.SURROUND_5_1));
         assertEquals(0, com.github.auties00.smalt.container.internal.WaveFormat.channelMask(new ChannelLayout(List.of(Speaker.FRONT_RIGHT, Speaker.FRONT_LEFT))));
         assertEquals(0, com.github.auties00.smalt.container.internal.WaveFormat.channelMask(ChannelLayout.defaultFor(12)));
+        // the positions after TOP_BACK_RIGHT have no mask bit
+        assertEquals(0x3FFFF, com.github.auties00.smalt.container.internal.WaveFormat.channelMask(new ChannelLayout(
+                List.of(Speaker.values()).subList(0, Speaker.TOP_BACK_RIGHT.ordinal() + 1))));
+        assertEquals(0, com.github.auties00.smalt.container.internal.WaveFormat.channelMask(new ChannelLayout(
+                List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.WIDE_LEFT, Speaker.WIDE_RIGHT))));
+        assertEquals(0, com.github.auties00.smalt.container.internal.WaveFormat.channelMask(new ChannelLayout(
+                List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.LOW_FREQUENCY_2))));
     }
 
     @Test

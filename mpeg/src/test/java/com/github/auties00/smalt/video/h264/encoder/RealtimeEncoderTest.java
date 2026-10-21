@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.h264.encoder;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -13,7 +14,6 @@ import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -442,7 +442,7 @@ class RealtimeEncoderTest {
             var root = Path.of(System.getProperty("smalt.test.clips",
                     Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()));
             var file = root.resolve(clip);
-            Assumptions.assumeTrue(Files.isRegularFile(file), "clip " + clip + " is not cached");
+            Skip.unless(Files.isRegularFile(file), "data:clip", "clip " + clip + " is not cached");
             var luma = width * height;
             var samples = new byte[luma * 3 / 2];
             try (var input = Files.newInputStream(file)) {

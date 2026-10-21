@@ -16,6 +16,9 @@ is absent skips, so any subset of the manifest is a valid cache.
 
 Commands:
   fetch [--tier smoke|full] [--no-clips]   downloads what the tier needs and is missing or corrupt
+        [--clips-only] [--host H]...      only the clips; only (or with --exclude-host, all but) the
+        [--exclude-host H]...             vectors downloaded from host H, so that CI can cache a part of
+                                          a tier in one entry and download the rest
   verify [--tier ...]                      checks the cached files against the manifest
   size                                     prints the size of each tier
   record FILE... [--check]                 merges the vectors that tests requested with
@@ -31,6 +34,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+import urllib.parse
 import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -102,14 +107,16 @@ def download(url, target, expected):
     os.close(handle)
     try:
         request = urllib.request.Request(url, headers={'User-Agent': USER_AGENT})
-        for attempt in range(3):
+        # Hosts of conformance vectors answer 5xx for minutes at a time: back off for about five minutes in all.
+        for pause in (10, 30, 60, 90, 120, None):
             try:
                 with urllib.request.urlopen(request, timeout=120) as response, open(temporary, 'wb') as sink:
                     shutil.copyfileobj(response, sink, 1 << 20)
                 break
             except OSError:
-                if attempt == 2:
+                if pause is None:
                     raise
+                time.sleep(pause)
         actual = sha256(temporary)
         if actual != expected:
             raise ValueError(f'SHA-256 mismatch for {url}: expected {expected}, got {actual}')
@@ -119,9 +126,14 @@ def download(url, target, expected):
             os.remove(temporary)
 
 
-def fetch_vectors(tier, jobs):
+def host(url):
+    return urllib.parse.urlparse(url).netloc.lower()
+
+
+def fetch_vectors(tier, jobs, hosts=(), excluded=()):
     directory = conformance_dir()
-    wanted = [row for row in read_tsv(VECTORS, VECTOR_COLUMNS) if in_tier(row, tier)]
+    wanted = [row for row in read_tsv(VECTORS, VECTOR_COLUMNS) if in_tier(row, tier)
+              and (not hosts or host(row['url']) in hosts) and host(row['url']) not in excluded]
     missing = [row for row in wanted if not valid(os.path.join(directory, row['name']), row['sha256'])]
     print(f'vectors: {len(wanted)} in the {tier} tier, {len(missing)} to download into {directory}')
     failures = []
@@ -141,7 +153,7 @@ def fetch_vectors(tier, jobs):
     return failures
 
 
-def fetch_clips(tier):
+def fetch_clips(tier, strict=False):
     directory = clips_dir()
     wanted = [row for row in read_tsv(CLIPS, CLIP_COLUMNS) if in_tier(row, tier)]
     missing = [row for row in wanted if not os.path.isfile(os.path.join(directory, row['name']))]
@@ -164,15 +176,20 @@ def fetch_clips(tier):
                         print('  downloading', row['source_url'])
                         download(row['source_url'], source, row['source_sha256'])
                     sources[row['source_url']] = source
-                derive(source, row, directory)
+                derive(source, row, directory, strict)
             except Exception as exception:
                 failures.append(f'{row["name"]}: {exception}')
                 print('  failed', failures[-1], file=sys.stderr)
     return failures
 
 
-def derive(source, row, directory):
-    """Writes a clip: frames [start, start + frames) of the source, through the filter, as raw yuv420p."""
+def derive(source, row, directory, strict=False):
+    """Writes a clip: frames [start, start + frames) of the source, through the filter, as raw yuv420p.
+
+    A clip whose SHA-256 differs from its pin is kept with a warning, or, when strict, deleted and reported as a
+    failure: the encoder golden tests pin the bitstreams of the pinned clips, and swscale's scaled output differs
+    between ffmpeg versions and between its x86 and arm64 kernels (CI derives the clips on Linux x64 once and shares
+    them with every runner through a cross-OS cache entry)."""
     os.makedirs(directory, exist_ok=True)
     target = os.path.join(directory, row['name'])
     temporary = target + '.part'
@@ -183,18 +200,23 @@ def derive(source, row, directory):
     subprocess.run(['ffmpeg', '-v', 'error', '-y', '-i', source, '-vf', ','.join(chain), '-fps_mode', 'passthrough',
                     '-frames:v', row['frames'], '-pix_fmt', 'yuv420p', '-f', 'rawvideo', temporary], check=True)
     actual = sha256(temporary)
+    if actual != row['sha256'] and strict:
+        os.remove(temporary)
+        raise ValueError(f'the derivation has SHA-256 {actual}, not the pinned {row["sha256"]} (ffmpeg version or '
+                         f'architecture?)')
     os.replace(temporary, target)
     if actual != row['sha256']:
-        # Only scaled clips depend on ffmpeg's swscale version; they feed quality reports and encoder
-        # tests that check self-consistency, so a slightly different scaler output is still usable.
         print(f'  warning: {row["name"]} differs from the reference derivation (ffmpeg version?): {actual}',
               file=sys.stderr)
 
 
 def command_fetch(arguments):
-    failures = fetch_vectors(arguments.tier, arguments.jobs)
+    failures = []
+    if not arguments.clips_only:
+        failures += fetch_vectors(arguments.tier, arguments.jobs, {h.lower() for h in arguments.host},
+                                  {h.lower() for h in arguments.exclude_host})
     if not arguments.no_clips:
-        failures += fetch_clips(arguments.tier)
+        failures += fetch_clips(arguments.tier, arguments.strict)
     if failures:
         print(f'{len(failures)} item(s) could not be fetched; the tests that need them will skip', file=sys.stderr)
         if arguments.strict:
@@ -268,6 +290,9 @@ def main():
     fetch = commands.add_parser('fetch')
     fetch.add_argument('--tier', choices=TIERS, default='smoke')
     fetch.add_argument('--no-clips', action='store_true')
+    fetch.add_argument('--clips-only', action='store_true')
+    fetch.add_argument('--host', action='append', default=[], help='only the vectors downloaded from this host')
+    fetch.add_argument('--exclude-host', action='append', default=[], help='not the vectors from this host')
     fetch.add_argument('--jobs', type=int, default=4)
     fetch.add_argument('--strict', action='store_true', help='fail when an item cannot be fetched')
     fetch.set_defaults(handler=command_fetch)

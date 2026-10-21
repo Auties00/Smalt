@@ -9,12 +9,16 @@ import com.github.auties00.smalt.io.MediaSource;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.zip.DataFormatException;
+import java.util.zip.Inflater;
 
 /**
  * Parses the structure of a HEIF file (ISO/IEC 23008-12, the container of AVIF and HEIC): the
@@ -47,6 +51,11 @@ import java.util.Set;
  * without a terminator end at their box.
  */
 public final class HeifFile {
+    /**
+     * The content type of {@code mime} items that hold an XMP packet.
+     */
+    public static final String XMP_TYPE = "application/rdf+xml";
+
     /**
      * The most top-level boxes walked before the parse gives up.
      */
@@ -427,10 +436,11 @@ public final class HeifFile {
             var type = FourCc.toString(infe.fourCc());
             infe.string();
             var contentType = type.equals("mime") ? infe.string() : "";
+            var contentEncoding = type.equals("mime") ? infe.string() : "";
             if (items.containsKey(id)) {
                 throw new MediaException.Malformed("heif: duplicate item " + id);
             }
-            items.put(id, new HeifItem(id, type, contentType));
+            items.put(id, new HeifItem(id, type, contentType, contentEncoding));
         }
     }
 
@@ -885,6 +895,146 @@ public final class HeifFile {
     }
 
     /**
+     * Reads the XMP packet that describes an image item, or the first input of a derived item
+     * when the item itself has none.
+     *
+     * <p>The packet is the data of the first located {@code mime} item of content type
+     * {@value #XMP_TYPE} that describes the item ({@code cdsc} reference), with its content
+     * encoding undone: none, {@code deflate} (zlib, or raw deflate without a zlib header) or
+     * {@code gzip}. Metadata is not needed to show the image, so a packet in another encoding, or
+     * one that is corrupt or larger than the limits allow, is left out.
+     *
+     * @param source the file
+     * @param item the image item
+     * @param limits the bounds of the item read and of the inflated packet
+     * @return the packet bytes, or {@code null} when there is none
+     * @throws MediaException.Io if reading the source fails
+     */
+    public byte[] xmpOf(MediaSource source, HeifItem item, MediaLimits limits) {
+        var current = item;
+        for (var depth = 0; current != null && depth <= MAX_ITEM_DEPTH; depth++) {
+            for (var description : descriptionsOf(current.id())) {
+                if (!description.type().equals("mime") || !description.isLocated()
+                        || !description.contentType().toLowerCase(Locale.ROOT).startsWith(XMP_TYPE)) {
+                    continue;
+                }
+                try {
+                    return decodeContent(readItem(source, description, limits), description.contentEncoding(), limits);
+                } catch (MediaException.Malformed | MediaException.Unsupported | MediaException.LimitExceeded exception) {
+                    return null;
+                }
+            }
+            var inputs = current.references("dimg");
+            current = inputs.length == 0 ? null : item(inputs[0]);
+        }
+        return null;
+    }
+
+    /**
+     * Undoes the content encoding of the data of a {@code mime} item.
+     *
+     * @param data the stored data
+     * @param encoding the {@code content_encoding}, the empty string for none
+     * @param limits the bound of the decoded size
+     * @return the decoded data
+     * @throws MediaException.Unsupported if the encoding is not none, {@code deflate} or {@code gzip}
+     * @throws MediaException.Malformed if the compressed data is corrupt or truncated
+     * @throws MediaException.LimitExceeded if the decoded data exceeds the limits
+     */
+    static byte[] decodeContent(byte[] data, String encoding, MediaLimits limits) {
+        return switch (encoding.trim().toLowerCase(Locale.ROOT)) {
+            case "", "identity" -> data;
+            case "deflate" -> {
+                // HTTP deflate is zlib (RFC 1950); some writers store raw deflate (RFC 1951)
+                var zlib = data.length >= 2 && (data[0] & 0x0F) == 8 && (((data[0] & 0xFF) << 8) | (data[1] & 0xFF)) % 31 == 0;
+                yield inflate(data, 0, data.length, !zlib, limits);
+            }
+            case "gzip", "x-gzip" -> inflate(data, gzipHeaderLength(data), data.length, true, limits);
+            default -> throw new MediaException.Unsupported("heif", "content encoding '" + encoding + "'");
+        };
+    }
+
+    /**
+     * Returns the length of the header of a gzip member (RFC 1952 section 2.3).
+     *
+     * @param data the gzip data
+     * @return the offset of the deflate stream
+     * @throws MediaException.Malformed if the header is invalid or truncated
+     */
+    private static int gzipHeaderLength(byte[] data) {
+        if (data.length < 10 || (data[0] & 0xFF) != 0x1F || (data[1] & 0xFF) != 0x8B || data[2] != 8) {
+            throw new MediaException.Malformed("heif: invalid gzip header");
+        }
+        var flags = data[3] & 0xFF;
+        var offset = 10;
+        if ((flags & 4) != 0) {
+            if (offset + 2 > data.length) {
+                throw new MediaException.Malformed("heif: truncated gzip header");
+            }
+            offset += 2 + ((data[offset] & 0xFF) | (data[offset + 1] & 0xFF) << 8);
+        }
+        for (var bit = 8; bit <= 16; bit <<= 1) {
+            if ((flags & bit) != 0) {
+                while (offset < data.length && data[offset] != 0) {
+                    offset++;
+                }
+                offset++;
+            }
+        }
+        if ((flags & 2) != 0) {
+            offset += 2;
+        }
+        if (offset > data.length) {
+            throw new MediaException.Malformed("heif: truncated gzip header");
+        }
+        return offset;
+    }
+
+    /**
+     * Inflates a deflate stream, bounded by the allocation limit.
+     *
+     * @param data the compressed data
+     * @param offset the first compressed byte
+     * @param end the end of the compressed bytes
+     * @param raw whether the stream is raw deflate rather than zlib
+     * @param limits the bound of the inflated size
+     * @return the inflated bytes
+     */
+    private static byte[] inflate(byte[] data, int offset, int end, boolean raw, MediaLimits limits) {
+        var inflater = new Inflater(raw);
+        try {
+            inflater.setInput(data, offset, end - offset);
+            var bound = Math.min(limits.maxBytes(), Integer.MAX_VALUE - 16L);
+            var output = new byte[(int) Math.min(bound, Math.max(64, Math.min((end - offset) * 4L, 1 << 20)))];
+            var size = 0;
+            while (!inflater.finished()) {
+                if (size == output.length) {
+                    var grown = Math.min((long) output.length * 2, bound);
+                    if (grown <= output.length) {
+                        // a full output is accepted only when the stream ends without another byte
+                        if (inflater.inflate(new byte[1]) == 0 && inflater.finished()) {
+                            break;
+                        }
+                        throw new MediaException.LimitExceeded("heif: the inflated item exceeds " + limits.maxBytes()
+                                + " bytes");
+                    }
+                    output = Arrays.copyOf(output, (int) grown);
+                }
+                var produced = inflater.inflate(output, size, output.length - size);
+                size += produced;
+                if (produced == 0 && (inflater.needsInput() || inflater.needsDictionary())) {
+                    throw new MediaException.Malformed("heif: the compressed item is truncated");
+                }
+            }
+            return Arrays.copyOf(output, size);
+        } catch (DataFormatException exception) {
+            throw new MediaException.Malformed("heif: the compressed item is corrupt", exception);
+        } finally {
+            inflater.end();
+        }
+    }
+
+    /**
      * Extracts the TIFF structure of an {@code Exif} item.
      *
      * <p>The item starts with the 32-bit offset of the TIFF header from the end of that field
@@ -902,14 +1052,14 @@ public final class HeifFile {
         }
         var declared = ByteArrays.u32be(payload, 0);
         if (declared <= payload.length - 8L && isTiffHeader(payload, 4 + (int) declared)) {
-            return java.util.Arrays.copyOfRange(payload, 4 + (int) declared, payload.length);
+            return Arrays.copyOfRange(payload, 4 + (int) declared, payload.length);
         }
         if (isTiffHeader(payload, 0)) {
             return payload.clone();
         }
         for (var offset = 4; offset + 4 <= payload.length; offset++) {
             if (isTiffHeader(payload, offset)) {
-                return java.util.Arrays.copyOfRange(payload, offset, payload.length);
+                return Arrays.copyOfRange(payload, offset, payload.length);
             }
         }
         return null;

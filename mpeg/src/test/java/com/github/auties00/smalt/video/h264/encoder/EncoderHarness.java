@@ -97,6 +97,16 @@ final class EncoderHarness {
         }
     }
 
+    /** Returns a file of the work directory, creating the directory. */
+    static Path workFile(String name) {
+        try {
+            Files.createDirectories(WORK);
+            return WORK.resolve(name);
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+    }
+
     static Path write(String name, byte[] data) {
         try {
             Files.createDirectories(WORK);

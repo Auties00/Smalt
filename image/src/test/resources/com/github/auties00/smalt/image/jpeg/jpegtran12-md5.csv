@@ -1,0 +1,46 @@
+# file;jpegtran switches;md5 of the jpegtran (libjpeg-turbo 3.1.3) output; made by tools/testdata/jpeg12/make-vectors.sh
+227x149-yuv420-baseline.jpg;-copy none;b439414e58f872502bc4a2641f74205f
+227x149-yuv420-baseline.jpg;-rotate 90;9fc5fcdde995a47c3848cd61135ef9d9
+227x149-yuv420-baseline.jpg;-rotate 270 -trim;a3cff76c8de73ce0131e578173088ae4
+227x149-yuv420-baseline.jpg;-flip horizontal -trim;772aa6acc8cebd626388b2cbfc204192
+227x149-yuv420-baseline.jpg;-transpose -optimize;d96f0533472f049aeacc6ccb75225b6b
+227x149-yuv420-baseline.jpg;-progressive;2c0b6fab61614ce0454f27c142e99980
+227x149-yuv420-baseline.jpg;-crop 20x18+9+5;5a2dae8edb50f75023d50cd22a49af49
+227x149-yuv420-baseline.jpg;-grayscale;627a355189d9c247cb44688372c77fa3
+227x149-yuv420-baseline.jpg;-transverse -progressive -restart 2B;e387644208fc62dcadf7b1c6a056c9f2
+227x149-yuv422-progressive.jpg;-copy none;8d2671d7cbdc710e849a15327ad73cf0
+227x149-yuv422-progressive.jpg;-rotate 90;e4ebd4838972a5de5a2f1112744418a1
+227x149-yuv422-progressive.jpg;-rotate 270 -trim;dd556cc0dae9a35fc256743e9e542ef8
+227x149-yuv422-progressive.jpg;-flip horizontal -trim;8eab3f5d77adc19e9736bd573ebd0d50
+227x149-yuv422-progressive.jpg;-transpose -optimize;6c9dd0a9701478fd3261fd8d277f451c
+227x149-yuv422-progressive.jpg;-progressive;05d11826b364fae789835cebcd7009fb
+227x149-yuv422-progressive.jpg;-crop 20x18+9+5;a7bdf29ab2ed6606aa7bde342b6e7497
+227x149-yuv422-progressive.jpg;-grayscale;627a355189d9c247cb44688372c77fa3
+227x149-yuv422-progressive.jpg;-transverse -progressive -restart 2B;c3bd37b1818620ea8e532bffe1c312e8
+33x65-yuv411-progressive-arithmetic.jpg;-copy none;d7f32d7b3f75a5bc0e5c32a31b1eef72
+33x65-yuv411-progressive-arithmetic.jpg;-rotate 90;7aa7027908254640bb35e64794bfc007
+33x65-yuv411-progressive-arithmetic.jpg;-rotate 270 -trim;5417567c5df85b96b09a872923532627
+33x65-yuv411-progressive-arithmetic.jpg;-flip horizontal -trim;efe3f49ba46b9d8acfbcf97343863617
+33x65-yuv411-progressive-arithmetic.jpg;-transpose -optimize;62b051e78f4f04eafd2afa7db61ea707
+33x65-yuv411-progressive-arithmetic.jpg;-progressive;a99e8903091206df5708b4cae2202222
+33x65-yuv411-progressive-arithmetic.jpg;-crop 20x18+9+5;f52ea0417218008adfac5d95c138219b
+33x65-yuv411-progressive-arithmetic.jpg;-grayscale;08a787d250acfa10641b2425ff9c3813
+33x65-yuv411-progressive-arithmetic.jpg;-transverse -progressive -restart 2B;aa1f525be9cb93d2a44967c0e5585a0b
+227x149-monochrome-arithmetic.jpg;-copy none;627a355189d9c247cb44688372c77fa3
+227x149-monochrome-arithmetic.jpg;-rotate 90;2b4b838ba83c47e65415550e48b93a41
+227x149-monochrome-arithmetic.jpg;-rotate 270 -trim;6e3a601830a54da75f2c191f5c46c1a2
+227x149-monochrome-arithmetic.jpg;-flip horizontal -trim;b74c785bd60fa986a8c29a13e19d3acb
+227x149-monochrome-arithmetic.jpg;-transpose -optimize;802df51ddd72af06d50fa2602d8b9da5
+227x149-monochrome-arithmetic.jpg;-progressive;6b4205e4b471c5a1389e41e66dd0eb34
+227x149-monochrome-arithmetic.jpg;-crop 20x18+9+5;9da4092befb9fa7bab11535bd1e37441
+227x149-monochrome-arithmetic.jpg;-grayscale;627a355189d9c247cb44688372c77fa3
+227x149-monochrome-arithmetic.jpg;-transverse -progressive -restart 2B;9f8f5105ec393a32d821409a5daa66f0
+64x48-rgb-baseline-q100.jpg;-copy none;09a939c32e3608148136571c001a4363
+64x48-rgb-baseline-q100.jpg;-rotate 90;d40081f6eb7835a555c3430d2972ee40
+64x48-rgb-baseline-q100.jpg;-rotate 270 -trim;39c7b080fc48bd2c4144b56a811873dd
+64x48-rgb-baseline-q100.jpg;-flip horizontal -trim;a2c275506a506b5c314ca0aaf1061325
+64x48-rgb-baseline-q100.jpg;-transpose -optimize;46ea2b7b902afd823c5d1b09165bf38f
+64x48-rgb-baseline-q100.jpg;-progressive;9866163ed79fc806a3101956c9d55cdc
+64x48-rgb-baseline-q100.jpg;-crop 20x18+9+5;54c9b4bcdff74372c2c17b8fb024283a
+64x48-rgb-baseline-q100.jpg;-grayscale;fails
+64x48-rgb-baseline-q100.jpg;-transverse -progressive -restart 2B;9efb530054011d13430f2ee063330aab

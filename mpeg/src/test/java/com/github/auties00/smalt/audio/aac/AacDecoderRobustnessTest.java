@@ -115,6 +115,123 @@ class AacDecoderRobustnessTest {
             });
         }
 
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"am02_48", "am07_48", "ap02_48", "as03_48", "as17_48", "er_ap10_48_ep0"})
+        @DisplayName("decode or raise MediaException for mutations of AAC Main, LTP, SSR and ER LTP streams")
+        void objectTypes(String name) {
+            var stream = AacTestSupport.parseMp4(Fixtures.read(AacObjectTypesConformanceTest.fetch(name + ".mp4")));
+            assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+                var random = new Random(name.hashCode());
+                for (var round = 0; round < 150; round++) {
+                    var frames = new ArrayList<byte[]>();
+                    for (var frame : stream.frames().subList(20, 32)) {
+                        var mutated = frame.clone();
+                        switch (random.nextInt(4)) {
+                            case 0 -> {
+                                for (var flips = 1 + random.nextInt(8); flips > 0; flips--) {
+                                    var position = random.nextInt(mutated.length);
+                                    mutated[position] ^= (byte) (1 << random.nextInt(8));
+                                }
+                            }
+                            case 1 -> mutated = Arrays.copyOf(mutated, random.nextInt(mutated.length + 1));
+                            case 2 -> random.nextBytes(mutated);
+                            default -> {
+                            }
+                        }
+                        frames.add(mutated);
+                    }
+                    decodeTolerantly(new AacDecoder(stream.track()), frames);
+                }
+            });
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"er_al26_48_ep0", "er_al23_48_ep0", "er_ap14_48_ep0", "er_ap27_48_ep0", "er_ad1111_48_ep0",
+                "er_ad2160_48_ep0", "er_ad2170_48_ep0", "er_eld2150np_48_ep0", "er_eld2100np_32_ep0", "er_eld_sbr_e_2_48",
+                "er_eld_sbr_gh_1_44", "er_eld_sbr_i_2_32"})
+        @DisplayName("decode or raise MediaException for mutations of ER LC, ER LTP, LD and ELD streams")
+        void errorResilient(String name) {
+            // virtual codebooks, RVLC and codeword reordering read lengths and offsets from the stream, and the
+            // low delay SBR payload fills the rest of the block, so mutations reach every bounds check
+            var stream = AacTestSupport.parseMp4(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+            assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+                var random = new Random(name.hashCode());
+                for (var round = 0; round < 150; round++) {
+                    var frames = new ArrayList<byte[]>();
+                    for (var frame : stream.frames().subList(40, 52)) {
+                        var mutated = frame.clone();
+                        switch (random.nextInt(5)) {
+                            case 0 -> {
+                                for (var flips = 1 + random.nextInt(8); flips > 0; flips--) {
+                                    var position = random.nextInt(mutated.length);
+                                    mutated[position] ^= (byte) (1 << random.nextInt(8));
+                                }
+                            }
+                            case 1 -> mutated = Arrays.copyOf(mutated, random.nextInt(mutated.length + 1));
+                            case 2 -> random.nextBytes(mutated);
+                            case 3 -> mutated = Arrays.copyOf(mutated, mutated.length + 1 + random.nextInt(16));
+                            default -> {
+                            }
+                        }
+                        frames.add(mutated);
+                    }
+                    decodeTolerantly(new AacDecoder(stream.track()), frames);
+                }
+            });
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"er_al21_48_ep1", "er_al23_48_ep1", "er_ad2160np_48_ep1"})
+        @DisplayName("decode or raise MediaException for mutated, dropped and reordered category instances")
+        void separateCategories(String name) {
+            var tracks = AacTestSupport.parseMp4Tracks(Fixtures.read(ErrorResilientVectors.fetch(name + ".mp4")));
+            assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+                var random = new Random(name.hashCode());
+                var decoder = new AacDecoder(tracks.getFirst().track());
+                for (var round = 0; round < 1500; round++) {
+                    var block = 40 + random.nextInt(20);
+                    var instances = new ArrayList<Packet>();
+                    for (var track : tracks) {
+                        var data = track.frames().get(block).clone();
+                        switch (random.nextInt(6)) {
+                            case 0 -> {
+                                if (data.length > 0) {
+                                    data[random.nextInt(data.length)] ^= (byte) (1 << random.nextInt(8));
+                                }
+                            }
+                            case 1 -> data = Arrays.copyOf(data, random.nextInt(data.length + 1));
+                            case 2 -> random.nextBytes(data);
+                            case 3 -> {
+                                continue;
+                            }
+                            default -> {
+                            }
+                        }
+                        instances.add(new Packet(1, data, 0, 0, 0, true));
+                    }
+                    if (random.nextBoolean() && instances.size() > 1) {
+                        java.util.Collections.swap(instances, random.nextInt(instances.size()),
+                                random.nextInt(instances.size()));
+                    }
+                    try {
+                        decoder.decode(instances, buffer -> {
+                            for (var c = 0; c < buffer.channels(); c++) {
+                                for (var i = 0; i < buffer.frames(); i++) {
+                                    if (Float.isNaN(buffer.plane(c)[i])) {
+                                        fail("NaN output");
+                                    }
+                                }
+                            }
+                        });
+                    } catch (MediaException expected) {
+                        if (expected.getCause() != null) {
+                            throw new AssertionError("the safety net caught " + expected.getCause(), expected.getCause());
+                        }
+                    }
+                }
+            });
+        }
+
         @Test
         @DisplayName("rejects an empty packet and decodes an end-only block to silence")
         void degenerate() {
@@ -148,7 +265,7 @@ class AacDecoderRobustnessTest {
         @DisplayName("construct or raise MediaException for any bytes")
         void randomConfigurations() {
             var valid = List.of("1190", "1210", "2b118800", "131056e598", "140006040000000056e5a8", "1300058c01000108800056e598",
-                    "11b0", "1188", "f8ee2000", "0000");
+                    "11b0", "1188", "f8ee2000", "0000", "0988", "1988", "2190", "998900", "999100");
             var random = new Random(42);
             var frames = corpus().getFirst().frames().subList(0, 4);
             assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {

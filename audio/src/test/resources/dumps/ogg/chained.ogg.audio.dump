@@ -1,0 +1,22 @@
+# audio decode dump of ogg/chained.ogg; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 1000000
+seekable true
+track 0 VORBIS rate=44100 layout=[FRONT_CENTER]
+0 frames=4096 crc16=2339a0bc
+1 frames=4096 crc16=6fe44c87
+2 frames=4096 crc16=ef337487
+3 frames=4096 crc16=e46e2412
+4 frames=4096 crc16=d3ac29e7
+5 frames=4096 crc16=295ac168
+6 frames=4096 crc16=b540dfd6
+7 frames=4096 crc16=abd29757
+8 frames=4096 crc16=03c1ed3a
+9 frames=4096 crc16=1e248977
+10 frames=3140 crc16=a8febad0
+seek 0: @sample 0
+seek 333333: @sample 14700
+seek 666666: @sample 29400
+seek 1000000: end
+seek -1000000: @sample 0
+refused over READ_ONCE_UNKNOWN_LENGTH after 10 frames

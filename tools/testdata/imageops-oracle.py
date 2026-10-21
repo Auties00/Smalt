@@ -24,9 +24,14 @@ Mapping (Pillow -> Smalt):
                                   counter-clockwise; it truncates and replicates edges, so
                                   bilinear/bicubic are compared away from the edges)
   ImageEnhance.*, autocontrast, convert("L"), colorize, invert -> ImageAdjustments
+  resize(size, BOX/BILINEAR/HAMMING/BICUBIC/LANCZOS) -> ImageOps.resize(p, w, h, ResizeFilter.<name>)
+                                  (Pillow clips and renormalizes the taps at the edges and rounds
+                                  to 8 bits between its passes: compared inside a border, within
+                                  1; the output size is in the parameters)
 
-Usage: python tools/testdata/imageops-oracle.py   (checked with Pillow 12.3.0)
+Usage: python tools/testdata/imageops-oracle.py   (checked with Pillow 12.0.0 and 12.3.0)
 """
+import math
 from pathlib import Path
 
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
@@ -115,6 +120,21 @@ def cases(rgb, rgba):
     yield "colorize", "rgb", "colorize", "141450 fae6c8", "exact", \
         ImageOps.colorize(rgb.convert("L"), (0x14, 0x14, 0x50), (0xFA, 0xE6, 0xC8))
     yield "invert", "rgb", "invert", "", "exact", ImageOps.invert(rgb)
+    for name, flt, support in (("BOX", Image.Resampling.BOX, 0.5), ("BILINEAR", Image.Resampling.BILINEAR, 1),
+                               ("HAMMING", Image.Resampling.HAMMING, 1), ("BICUBIC", Image.Resampling.BICUBIC, 2),
+                               ("LANCZOS3", Image.Resampling.LANCZOS, 3)):
+        # odd output sizes keep every box edge off the source sample centers, where Pillow's box
+        # weights one side fully and Smalt's both sides by half
+        for width, height in ((29, 21), (39, 31), (122, 94), (101, 79)):
+            # Pillow renormalizes the taps its edges clip where Smalt replicates the edge samples, so
+            # the samples whose taps reach past the edges are not compared; the low-contrast input
+            # keeps the ringing of the sharper filters inside 0..255, which Pillow clips between its
+            # passes
+            border = math.ceil(support * max(1.0, width / WIDTH, height / HEIGHT)) + 2
+            # Pillow rounds to 8 bits between its passes; enlarging with the box copies pixels exactly
+            tolerance = 0 if name == "BOX" and width > WIDTH else 1
+            yield f"resize-{name.lower()}-{width}x{height}", "low", "resize", f"{name} {width} {height}", \
+                f"interior:{border}:{tolerance}", low.resize((width, height), flt)
 
 
 def main():

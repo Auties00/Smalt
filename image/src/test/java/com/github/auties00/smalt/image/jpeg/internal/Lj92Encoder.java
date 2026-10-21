@@ -117,6 +117,139 @@ final class Lj92Encoder {
         return out.toByteArray();
     }
 
+    // A block-interleaved scan (T.81 H.1.2 with A.2.3 MCUs): each component's plane is extended to whole MCUs by
+    // replicating its last column and row, and samples are predicted within their own component. The restart
+    // interval counts MCUs and must span whole MCU rows.
+    static byte[] encodeSampled(int[][] planes, int width, int height, int[][] factors, int precision, int predictor,
+                                int restart, int transform) {
+        var components = planes.length;
+        var hMax = 1;
+        var vMax = 1;
+        for (var factor : factors) {
+            hMax = Math.max(hMax, factor[0]);
+            vMax = Math.max(vMax, factor[1]);
+        }
+        var out = new ByteArrayOutputStream();
+        marker(out, 0xD8);
+        marker(out, 0xC3);
+        u16(out, 8 + 3 * components);
+        out.write(precision);
+        u16(out, height);
+        u16(out, width);
+        out.write(components);
+        for (var c = 0; c < components; c++) {
+            out.write(c + 1);
+            out.write((factors[c][0] << 4) | factors[c][1]);
+            out.write(0);
+        }
+        marker(out, 0xC4);
+        u16(out, 2 + 17 + 17);
+        out.write(0);
+        for (var length = 1; length <= 16; length++) {
+            out.write(length == 5 ? 17 : 0);
+        }
+        for (var value = 0; value <= 16; value++) {
+            out.write(value);
+        }
+        var unitsWide = (width + hMax - 1) / hMax;
+        var unitsHigh = (height + vMax - 1) / vMax;
+        if (restart > 0) {
+            marker(out, 0xDD);
+            u16(out, 4);
+            u16(out, restart);
+        }
+        marker(out, 0xDA);
+        u16(out, 6 + 2 * components);
+        out.write(components);
+        for (var c = 0; c < components; c++) {
+            out.write(c + 1);
+            out.write(0);
+        }
+        out.write(predictor);
+        out.write(0);
+        out.write(transform);
+        var padded = new int[components][];
+        var paddedWidth = new int[components];
+        for (var c = 0; c < components; c++) {
+            var cw = (int) Math.ceil((double) width * factors[c][0] / hMax);
+            var ch = (int) Math.ceil((double) height * factors[c][1] / vMax);
+            paddedWidth[c] = unitsWide * factors[c][0];
+            var ph = unitsHigh * factors[c][1];
+            padded[c] = new int[paddedWidth[c] * ph];
+            for (var y = 0; y < ph; y++) {
+                for (var x = 0; x < paddedWidth[c]; x++) {
+                    padded[c][y * paddedWidth[c] + x] = planes[c][Math.min(y, ch - 1) * cw + Math.min(x, cw - 1)] >> transform;
+                }
+            }
+        }
+        var bits = new Bits(out);
+        var initial = 1 << (precision - transform - 1);
+        var restartIndex = 0;
+        var rowsPerRestart = restart / Math.max(1, unitsWide);
+        for (var unitRow = 0; unitRow < unitsHigh; unitRow++) {
+            var reset = unitRow == 0;
+            if (restart > 0 && unitRow > 0 && unitRow % rowsPerRestart == 0) {
+                bits.flush();
+                marker(out, 0xD0 + (restartIndex++ & 7));
+                reset = true;
+            }
+            for (var unit = 0; unit < unitsWide; unit++) {
+                for (var c = 0; c < components; c++) {
+                    var stride = paddedWidth[c];
+                    var plane = padded[c];
+                    for (var by = 0; by < factors[c][1]; by++) {
+                        for (var bx = 0; bx < factors[c][0]; bx++) {
+                            var x = unit * factors[c][0] + bx;
+                            var y = unitRow * factors[c][1] + by;
+                            var index = y * stride + x;
+                            int prediction;
+                            if (reset && by == 0) {
+                                prediction = x == 0 ? initial : plane[index - 1];
+                            } else if (x == 0) {
+                                prediction = plane[index - stride];
+                            } else {
+                                var a = plane[index - 1];
+                                var b = plane[index - stride];
+                                var cc = plane[index - stride - 1];
+                                prediction = switch (predictor) {
+                                    case 1 -> a;
+                                    case 2 -> b;
+                                    case 3 -> cc;
+                                    case 4 -> a + b - cc;
+                                    case 5 -> a + ((b - cc) >> 1);
+                                    case 6 -> b + ((a - cc) >> 1);
+                                    default -> (a + b) >> 1;
+                                };
+                            }
+                            writeDifference(bits, plane[index] - prediction);
+                        }
+                    }
+                }
+            }
+        }
+        bits.flush();
+        marker(out, 0xD9);
+        return out.toByteArray();
+    }
+
+    private static void writeDifference(Bits bits, int raw) {
+        var difference = raw & 0xFFFF;
+        if (difference >= 32768) {
+            difference -= 65536;
+        }
+        if (difference == -32768) {
+            bits.write(16, 5);
+            return;
+        }
+        var magnitude = Math.abs(difference);
+        var category = magnitude == 0 ? 0 : 32 - Integer.numberOfLeadingZeros(magnitude);
+        bits.write(category, 5);
+        if (category > 0) {
+            var value = difference >= 0 ? difference : difference + (1 << category) - 1;
+            bits.write(value, category);
+        }
+    }
+
     private static void marker(ByteArrayOutputStream out, int marker) {
         out.write(0xFF);
         out.write(marker);

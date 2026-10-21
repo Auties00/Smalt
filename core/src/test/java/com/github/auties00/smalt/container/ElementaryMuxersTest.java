@@ -271,7 +271,8 @@ class ElementaryMuxersTest {
             assertFalse(Containers.isMuxable(ContainerFormat.WAV, Codec.PCM_S16BE));
             assertTrue(Containers.isMuxable(ContainerFormat.AIFF, Codec.PCM_S16BE));
             assertTrue(Containers.isMuxable(ContainerFormat.OGG, Codec.VORBIS));
-            assertFalse(Containers.isMuxable(ContainerFormat.OGG, Codec.FLAC));
+            assertTrue(Containers.isMuxable(ContainerFormat.OGG, Codec.FLAC));
+            assertFalse(Containers.isMuxable(ContainerFormat.OGG, Codec.AAC));
             assertFalse(Containers.isMuxable(ContainerFormat.FLAC, Codec.MP3));
             assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer(ContainerFormat.FLAC,
                     MediaSink.memory())

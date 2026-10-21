@@ -185,7 +185,9 @@ public final class ExifWriter {
                     continue;
                 }
                 var before = previous != null ? previous.entries().get(entry.tag()) : null;
-                if (before != null && before.valueOffset() >= 0 && before.type() == entry.value().type()
+                // a value kept in place is written back there, so it must not overlap the new header
+                if (before != null && before.valueOffset() >= ExifReader.HEADER_SIZE
+                        && before.type() == entry.value().type()
                         && before.count() == entry.count() && before.valueOffset() + bytes.length <= original.length
                         && Arrays.equals(original, (int) before.valueOffset(), (int) before.valueOffset() + bytes.length,
                         bytes, 0, bytes.length)) {

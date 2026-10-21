@@ -15,7 +15,9 @@ import java.util.Map;
  * are supported, with namespace declarations, the five predefined entities and numeric character
  * references. Document type declarations are rejected, so no external entity is ever resolved
  * and no entity can expand; nesting is bounded, so hostile input raises
- * {@link MediaException.Malformed} only.
+ * {@link MediaException.Malformed} only. Control characters XML 1.0 cannot hold (C0 controls
+ * other than tab, line feed and carriage return) are dropped from character data and attribute
+ * values, as {@link #escape} drops them, so that a parsed value survives being written back.
  */
 final class XmlReader {
     /**
@@ -214,7 +216,7 @@ final class XmlReader {
                 if (end < 0) {
                     throw new MediaException.Malformed("unterminated XML CDATA section");
                 }
-                content.append(text, position + 9, end);
+                appendChars(content, text, position + 9, end);
                 position = end + 3;
             } else if (text.startsWith("<?", position)) {
                 skipPast("?>");
@@ -333,7 +335,7 @@ final class XmlReader {
      * @throws MediaException.Malformed if a reference is unknown or invalid
      */
     static String unescape(String raw) {
-        if (raw.indexOf('&') < 0) {
+        if (raw.indexOf('&') < 0 && !hasControl(raw)) {
             return raw;
         }
         var result = new StringBuilder(raw.length());
@@ -341,7 +343,9 @@ final class XmlReader {
         while (index < raw.length()) {
             var c = raw.charAt(index);
             if (c != '&') {
-                result.append(c);
+                if (!isControl(c)) {
+                    result.append(c);
+                }
                 index++;
                 continue;
             }
@@ -363,7 +367,8 @@ final class XmlReader {
                     try {
                         var code = name.startsWith("#x") || name.startsWith("#X")
                                 ? Integer.parseInt(name.substring(2), 16) : Integer.parseInt(name.substring(1));
-                        if (!Character.isValidCodePoint(code) || code == 0) {
+                        if (!Character.isValidCodePoint(code) || code < 0x20 && isControl((char) code)
+                                || code >= 0xD800 && code <= 0xDFFF || code == 0xFFFE || code == 0xFFFF) {
                             throw new MediaException.Malformed("invalid XML character reference &" + name + ";");
                         }
                         result.appendCodePoint(code);
@@ -375,6 +380,31 @@ final class XmlReader {
             index = end + 1;
         }
         return result.toString();
+    }
+
+    /** Appends {@code text[start, end)} to {@code out} without the control characters XML 1.0 cannot hold. */
+    private static void appendChars(StringBuilder out, String text, int start, int end) {
+        for (var i = start; i < end; i++) {
+            var c = text.charAt(i);
+            if (!isControl(c)) {
+                out.append(c);
+            }
+        }
+    }
+
+    /** Returns whether {@link #unescape} would drop a character of {@code text}. */
+    private static boolean hasControl(String text) {
+        for (var i = 0; i < text.length(); i++) {
+            if (isControl(text.charAt(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Returns whether {@code c} is a C0 control other than tab, line feed and carriage return. */
+    private static boolean isControl(char c) {
+        return c < 0x20 && c != 0x09 && c != 0x0A && c != 0x0D;
     }
 
     /**

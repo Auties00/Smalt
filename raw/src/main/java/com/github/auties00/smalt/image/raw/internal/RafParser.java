@@ -172,7 +172,7 @@ final class RafParser {
             sensor.reader = (plane, limits) -> {
                 var row = new byte[width * 2];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(dataOffset + (long) y * row.length, row, 0, row.length);
+                    var read = reader.readAvailable(dataOffset + (long) y * row.length, row, 0, row.length);
                     if (read <= 0) {
                         return;
                     }
@@ -183,7 +183,7 @@ final class RafParser {
             sensor.reader = (plane, limits) -> {
                 var row = new byte[width * 3 / 2];
                 for (var y = 0; y < plane.height; y++) {
-                    var read = source.read(dataOffset + (long) y * row.length, row, 0, row.length);
+                    var read = reader.readAvailable(dataOffset + (long) y * row.length, row, 0, row.length);
                     if (read <= 0) {
                         return;
                     }

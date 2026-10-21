@@ -101,10 +101,7 @@ public final class H264EncoderOptions {
 
     private final int quality;
 
-    /**
-     * The most frames between two IDR pictures, or 0 for no periodic IDR.
-     */
-    private final int keyframeInterval;
+    private final OptionalInt keyframeInterval;
 
     private final H264EncoderSpeed speed;
 
@@ -328,7 +325,7 @@ public final class H264EncoderOptions {
      * {@link H264Encoder#requestKeyframe()} still produce one.
      */
     public OptionalInt keyframeInterval() {
-        return keyframeInterval == 0 ? OptionalInt.empty() : OptionalInt.of(keyframeInterval);
+        return keyframeInterval;
     }
 
     /**
@@ -342,10 +339,11 @@ public final class H264EncoderOptions {
      * {@return the color description written to the stream and used to convert RGB input;
      * {@link ColorInfo#BT709_LIMITED} by default}
      *
-     * <p>Its matrix is one of {@link MatrixCoefficients#BT709}, {@link MatrixCoefficients#BT601},
-     * {@link MatrixCoefficients#BT470BG}, {@link MatrixCoefficients#SMPTE240M},
-     * {@link MatrixCoefficients#FCC}, {@link MatrixCoefficients#BT2020_NCL} or
-     * {@link MatrixCoefficients#UNSPECIFIED} (converted as BT.709).
+     * <p>RGB input converts with the luma weights of a weighted matrix, {@link MatrixCoefficients#UNSPECIFIED}
+     * as BT.709, and with every other matrix as
+     * {@link com.github.auties00.smalt.image.ops.ImageOps#toYuv(com.github.auties00.smalt.image.Picture,
+     * com.github.auties00.smalt.image.ChromaFormat, ColorInfo) ImageOps.toYuv} converts it. The matrix is never
+     * {@link MatrixCoefficients#IDENTITY}, which H.264 allows only for 4:4:4 streams.
      */
     public ColorInfo color() {
         return color;
@@ -458,7 +456,7 @@ public final class H264EncoderOptions {
                 && timeBase.equals(that.timeBase) && profile == that.profile && level == that.level
                 && rateControl == that.rateControl && bitrate == that.bitrate && maxBitrate == that.maxBitrate
                 && Objects.equals(bufferSize, that.bufferSize) && quality == that.quality
-                && keyframeInterval == that.keyframeInterval && speed == that.speed && color.equals(that.color)
+                && keyframeInterval.equals(that.keyframeInterval) && speed == that.speed && color.equals(that.color)
                 && threads == that.threads && packetFormat == that.packetFormat && minQuantizer == that.minQuantizer
                 && maxQuantizer == that.maxQuantizer && realtime == that.realtime && lookahead == that.lookahead
                 && bFrames == that.bFrames && limits.equals(that.limits);
@@ -477,7 +475,7 @@ public final class H264EncoderOptions {
                 + ", level=" + (level == null ? "auto" : level) + ", rateControl=" + rateControl + ", bitrate="
                 + bitrate + ", maxBitrate=" + (maxBitrate == 0 ? "default" : maxBitrate) + ", bufferSize="
                 + (bufferSize == null ? "default" : bufferSize) + ", quality=" + quality + ", keyframeInterval="
-                + keyframeInterval() + ", speed=" + speed + ", color=" + color + ", threads=" + threads
+                + keyframeInterval + ", speed=" + speed + ", color=" + color + ", threads=" + threads
                 + ", packetFormat=" + packetFormat + ", quantizers=" + minQuantizer + ".." + maxQuantizer
                 + ", realtime=" + realtime + ", lookahead=" + lookahead + ", bFrames=" + bFrames + ", limits=" + limits
                 + "]";
@@ -510,9 +508,7 @@ public final class H264EncoderOptions {
 
         private int quality;
 
-        private int keyframeInterval;
-
-        private boolean periodicKeyframes;
+        private OptionalInt keyframeInterval;
 
         private H264EncoderSpeed speed;
 
@@ -542,8 +538,7 @@ public final class H264EncoderOptions {
             bitrate = 1_000_000;
             bufferSize = Duration.ofSeconds(1);
             quality = 23;
-            keyframeInterval = 60;
-            periodicKeyframes = true;
+            keyframeInterval = OptionalInt.of(60);
             speed = H264EncoderSpeed.BALANCED;
             color = ColorInfo.BT709_LIMITED;
             threads = 1;
@@ -567,7 +562,6 @@ public final class H264EncoderOptions {
             bufferSize = from.bufferSize;
             quality = from.quality;
             keyframeInterval = from.keyframeInterval;
-            periodicKeyframes = from.keyframeInterval != 0;
             speed = from.speed;
             color = from.color;
             threads = from.threads;
@@ -723,8 +717,7 @@ public final class H264EncoderOptions {
          * @return this builder
          */
         public Builder keyframeInterval(int frames) {
-            this.keyframeInterval = frames;
-            this.periodicKeyframes = true;
+            this.keyframeInterval = OptionalInt.of(frames);
             return this;
         }
 
@@ -735,8 +728,7 @@ public final class H264EncoderOptions {
          * @return this builder
          */
         public Builder noPeriodicKeyframes() {
-            this.keyframeInterval = 0;
-            this.periodicKeyframes = false;
+            this.keyframeInterval = OptionalInt.empty();
             return this;
         }
 
@@ -854,7 +846,7 @@ public final class H264EncoderOptions {
          * {@code Integer.MAX_VALUE} milliseconds, the quality is not in [0, 51], the key frame
          * interval is not positive, the thread count is not in [1, 64], the look-ahead is not in
          * [0, 120], the B picture count is not in [0, 8], the quantizer window is not inside [0, 51]
-         * or is empty, or the color matrix is not one {@link H264EncoderOptions#color()} accepts
+         * or is empty, or the color matrix is {@link MatrixCoefficients#IDENTITY}
          */
         public H264EncoderOptions build() {
             var rate = frameRate.toDouble();
@@ -881,18 +873,17 @@ public final class H264EncoderOptions {
                 Checks.inRange("buffer size", bufferSize, Duration.ZERO, Duration.ofMillis(Integer.MAX_VALUE));
             }
             Checks.inRange("quality", quality, MIN_QUANTIZER, MAX_QUANTIZER);
-            if (periodicKeyframes) {
-                Checks.positive("keyframe interval", keyframeInterval);
+            if (keyframeInterval.isPresent()) {
+                Checks.positive("keyframe interval", keyframeInterval.getAsInt());
             }
             Checks.inRange("thread count", threads, 1, MAX_THREADS);
             Checks.inRange("look-ahead", lookahead, 0, MAX_LOOKAHEAD);
             Checks.inRange("B picture count", bFrames, 0, MAX_B_FRAMES);
             Checks.inRange("minimum quantizer", minQuantizer, MIN_QUANTIZER, MAX_QUANTIZER);
             Checks.inRange("maximum quantizer", maxQuantizer, minQuantizer, MAX_QUANTIZER);
-            switch (color.matrix()) {
-                case BT709, BT601, BT470BG, SMPTE240M, FCC, BT2020_NCL, UNSPECIFIED -> {
-                }
-                default -> throw new IllegalArgumentException("color matrix " + color.matrix() + " is not supported");
+            if (color.matrix() == MatrixCoefficients.IDENTITY) {
+                throw new IllegalArgumentException(
+                        "the identity color matrix needs 4:4:4, which the encoder does not code");
             }
             return new H264EncoderOptions(this);
         }

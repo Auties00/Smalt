@@ -251,7 +251,7 @@ public final class DnxhdEncoder implements VideoEncoder {
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not follow the previous one
      * @throws MediaException.Unsupported if the picture is RGB, the encoder codes Y'CbCr and the
-     * matrix of {@link DnxhdEncoderOptions#color()} is not defined by two luma weights
+     * matrix of {@link DnxhdEncoderOptions#color()} is the identity matrix
      */
     @Override
     public void encode(VideoFrame frame, Consumer<Packet> output) {
@@ -268,7 +268,7 @@ public final class DnxhdEncoder implements VideoEncoder {
      * @throws IllegalArgumentException if the picture size differs from the encoder's or the
      * timestamp does not follow the previous one
      * @throws MediaException.Unsupported if the picture is RGB, the encoder codes Y'CbCr and the
-     * matrix of {@link DnxhdEncoderOptions#color()} is not defined by two luma weights
+     * matrix of {@link DnxhdEncoderOptions#color()} is the identity matrix
      */
     public Packet encodeFrame(VideoFrame frame) {
         return core.encode(frame);

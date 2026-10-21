@@ -14,22 +14,40 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
   `smalt-parent` and `smalt-bom`), `bom`, `core`, `image`, `audio`, `video`, `mpeg`, `capture`, `raw`,
   `desktop`, `aot`, `it` (JIT guard and cross-artifact tests, not published). Parent of the code modules:
   `smalt-parent` (the root `pom.xml`), which also gives every module JUnit and JMH for its tests.
-- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Quality`, `HeifBuilder`, `Bytes`, `Packets`, and the helpers
-  in `testkit.audio`, `testkit.image` and `testkit.container`) lives in core's `src/test/java` under `testkit` and
-  reaches the other modules through core's test jar (`smalt-core` with `<type>test-jar</type>`, test scope),
-  which holds only `testkit/**`.
+- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Skip`, `Quality`, `Dumps`, `HeifBuilder`, `Bytes`, `Packets`,
+  and the helpers in `testkit.audio`, `testkit.image`, `testkit.container`, `testkit.io` and `testkit.fuzz`) lives in
+  core's `src/test/java` under `testkit` and reaches the other modules through core's test jar (`smalt-core` with
+  `<type>test-jar</type>`, test scope), which holds only `testkit/**`.
+- Every demuxer, reader and image decoder runs through the I/O behavior harnesses (`DemuxerAsserts`,
+  `ReaderAsserts`, `ImageDecoderAsserts`) with golden dumps under each module's `src/test/resources/dumps`
+  (`-Dsmalt.test.updateDumps=true` rewrites them); a new container or codec adds its inputs as the `testkit.io`
+  package documentation describes, over samples made by `tools/testdata/behavior` and pinned in its
+  `samples.tsv`.
 - `tools/codegen`: the generators of the VP9, AV1 and transposition vector kernels and of the Vorbis setup data
   (edit the generator or its template, never the generated file; `python tools/codegen/check.py` fails when a
   generated file differs from its generator's output); `tools/lint`: the comment lint (section 11 of
   Documentation); `tools/notices`: the third-party notices; `tools/testdata`: the test vector manifests and
-  oracle scripts.
+  oracle scripts; `tools/fuzz`: the fuzzing runner. Every decoder, demuxer and parser has a Jazzer `@FuzzTest`
+  target in its module's `fuzz` test package (the contract and the workflow are in `tools/fuzz/README.md`); a new
+  one gets a target with `valid-*` seeds, and a crash a fuzzer finds gets its input saved under
+  `src/test/resources/fuzz-regressions`, which every build replays.
+- Tests run at the JVM's default thread stack size (no `-Xss`): a parser bounds its recursion instead. The `it`
+  module's `hostile` package checks decompression bombs (allocation metered), cyclic offsets and deep nesting
+  (on a 256 KiB stack) through every entry point, and its `property` package lossless round trips, mux/demux
+  packet identity, tag edits, seek against linear decode and thread-count invariance; a new codec or container
+  joins their tables. CI runs the fuzz replays and these tests in a 256 MiB heap (`-Dsmalt.test.jvmArgs=-Xmx256m`).
+  `-Pcoverage` (JaCoCo, `tools/coverage`), the weekly soak test and `-Pjcstress` (`it/src/jcstress`) complete it.
+- Tests skip only through the test kit's `Skip`, with a stable reason id (`[family:name] detail`; core's `SkipTest`
+  enforces it). CI installs the oracle tools pinned in `tools/testdata/oracles.tsv` (`oracles.py install`), makes a
+  missing oracle fail (`SMALT_TEST_REQUIRE_ORACLES`, `-Dsmalt.test.requireOracles=true` locally) and gates the
+  skips of every job with `tools/testdata/skip-baseline.tsv` (`skips.py`); see `tools/testdata/README.md`.
 
 The README's Install table is the single source of these descriptions; the pom `<description>`s copy it.
 
 | Artifact | JPMS module | Contents |
 |---|---|---|
 | `smalt-core` | `com.github.auties00.smalt` | The media model, the codec registries, every container, image and audio processing, loudness, subtitles, PCM, tag editing and XMP (`MediaSource`/`MediaSink`, the codec SPI in `spi`, `MediaRuntime`, `metadata`, `audio.loudness`, `subtitle`) |
-| `smalt-image` | `...smalt.image` | JPEG (and its lossless transforms), JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8) |
+| `smalt-image` | `...smalt.image` | JPEG (and its lossless transforms), JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, ANI, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8) |
 | `smalt-audio` | `...smalt.audio` | Opus, Vorbis, FLAC, ALAC, MP3, and voice processing |
 | `smalt-video` | `...smalt.video` | VP9, AV1, AVIF, ProRes and DNxHD/DNxHR |
 | `smalt-mpeg` | `...smalt.mpeg` | H.264, HEVC, HEIC, AAC, AMR, MPEG-4 Part 2, H.263, AC-3 and E-AC-3, the codecs licensed through patent pools or by Dolby |
@@ -55,7 +73,10 @@ packages (`internal.*`) are exported only to the artifacts that need them.
   `TrainingFamily` (`aot.internal.<Artifact>Workloads`), on synthetic content, in the coding modes, thread
   counts and options that select different kernels; workloads never model a particular application.
   Follow the JIT-robustness rules enforced by `it`'s `JitRobustnessTest` (no vectors across loop back edges
-  or branch merges, kernels under about 2000 bytecodes, per-shape `lanewise`).
+  or branch merges, kernels under about 2000 bytecodes, per-shape `lanewise`, and 256-bit or wider species,
+  gathers and scatters only behind `Simd.WIDE`: ARM NEON has 128-bit vectors and no gathers, so prefer
+  species that adapt to the width, `Simd.WIDE ? SPECIES_256 : SPECIES_128`). On x86,
+  `-Djit.childArgs=-XX:MaxVectorSize=16` runs the guard's children with NEON's vector width.
 - **Correctness first.** Normative decoders stay bit-exact (conformance suites); encoders keep their output
   byte-identical unless a change is measured to be quality-neutral or better.
 - **Performance claims need JMH A/B** in the same session (3+ forks) against a frozen baseline.

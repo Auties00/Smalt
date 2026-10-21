@@ -25,6 +25,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -38,7 +39,8 @@ import static org.junit.jupiter.api.Assertions.*;
 class WavDemuxerTest {
     static Stream<Arguments> formats() {
         var arguments = new ArrayList<Arguments>();
-        var codecs = List.of("pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_f32le", "pcm_f64le", "pcm_alaw", "pcm_mulaw");
+        var codecs = List.of("pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_s64le", "pcm_f32le", "pcm_f64le", "pcm_alaw",
+                "pcm_mulaw");
         for (var codec : codecs) {
             for (var channels : List.of(1, 2, 6)) {
                 arguments.add(Arguments.of(codec, channels, 44100));
@@ -302,9 +304,15 @@ class WavDemuxerTest {
             var unsupported = assertThrows(MediaException.Unsupported.class,
                     () -> new WavDemuxer(MediaSource.of(imaBytes)));
             assertEquals("wav format 0x0011", unsupported.format());
+            var s40 = new WavBuilder();
+            var s40Bytes = s40.chunk("fmt ", s40.format(1, 1, 8000, 5, 40)).chunk("data", new byte[10]).build();
+            assertEquals("pcm_s40", assertThrows(MediaException.Unsupported.class,
+                    () -> new WavDemuxer(MediaSource.of(s40Bytes))).format());
             var s64 = new WavBuilder();
             var s64Bytes = s64.chunk("fmt ", s64.format(1, 1, 8000, 8, 64)).chunk("data", new byte[16]).build();
-            assertThrows(MediaException.Unsupported.class, () -> new WavDemuxer(MediaSource.of(s64Bytes)));
+            try (var demuxer = new WavDemuxer(MediaSource.of(s64Bytes))) {
+                assertEquals(Codec.PCM_S64LE, demuxer.tracks().getFirst().codec());
+            }
             var noFormat = new WavBuilder().chunk("data", new byte[16]).build();
             assertThrows(MediaException.Malformed.class, () -> new WavDemuxer(MediaSource.of(noFormat)));
             var zeroChannels = new WavBuilder();
@@ -361,6 +369,270 @@ class WavDemuxerTest {
                 Fixtures.read(Fixtures.tone("wav", 440, 8000, 1, 0.1, List.of("-c:a", "pcm_f64le", "-rf64", "always"))));
         var stats = AudioMutations.assertRobust(inputs, 150, 0x7A7L, Duration.ofSeconds(5), bytes -> decode(bytes));
         System.out.println("WavDemuxer mutation outcomes: " + stats);
+    }
+
+    static AudioPipeline.Decoded decodeAny(byte[] data, java.util.function.Function<MediaSource, com.github.auties00.smalt.container.Demuxer> factory) {
+        try (var demuxer = factory.apply(MediaSource.of(data))) {
+            return AudioPipeline.decode(demuxer, com.github.auties00.smalt.audio.AudioDecoders::create);
+        }
+    }
+
+    static byte[] spdifWav(Path raw, int rate) {
+        var bursts = Fixtures.read(Fixtures.ffmpeg("spdif", List.of("-i", raw.toString()), List.of("-c", "copy", "-f", "spdif")));
+        var builder = new WavBuilder();
+        return builder.chunk("fmt ", builder.format(1, 2, rate, 4, 16)).chunk("data", bursts).build();
+    }
+
+    @Nested
+    @DisplayName("coded payloads")
+    class Coded {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"ac3, 48000", "eac3, 192000"})
+        @DisplayName("decodes IEC 61937 bursts to the samples of the raw stream")
+        void iec61937(String codec, int rate) {
+            var raw = Fixtures.tone(codec, 440, 48000, 2, 0.9, List.of("-c:a", codec));
+            var expected = decodeAny(Fixtures.read(raw), com.github.auties00.smalt.container.ac3.Ac3Demuxer::new);
+            var actual = decodeAny(spdifWav(raw, rate), WavDemuxer::new);
+            assertEquals(expected.sampleRate(), actual.sampleRate());
+            assertEquals(expected.channels(), actual.channels());
+            assertTrue(expected.interleaved().length > 40_000);
+            assertArrayEquals(expected.interleaved(), actual.interleaved());
+        }
+
+        @ParameterizedTest(name = "{0} at {1} Hz")
+        @org.junit.jupiter.params.provider.CsvSource({"mp2, mp2, 48000", "mp2, mp2, 24000", "mp3, libmp3lame, 44100",
+                "mp3, libmp3lame, 22050", "aac, aac, 48000"})
+        @DisplayName("decodes IEC 61937 bursts of MPEG audio and AAC to the samples of the raw stream")
+        void iec61937Mpeg(String extension, String encoder, int rate) {
+            var raw = Fixtures.tone(extension, 440, rate, 2, 0.9, List.of("-c:a", encoder));
+            var expected = extension.equals("aac")
+                    ? decodeAny(Fixtures.read(raw), com.github.auties00.smalt.container.adts.AdtsDemuxer::new)
+                    : decodeAny(Fixtures.read(raw), com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer::new);
+            var actual = decodeAny(spdifWav(raw, 48000), WavDemuxer::new);
+            assertEquals(expected.sampleRate(), actual.sampleRate());
+            assertEquals(expected.channels(), actual.channels());
+            assertTrue(actual.interleaved().length > 20_000);
+            assertArrayEquals(expected.interleaved(), actual.interleaved());
+        }
+
+        @Test
+        @DisplayName("decodes ffmpeg's FLAC in WAVE bit-exactly like ffmpeg")
+        void flac() {
+            var file = Fixtures.tone("wav", 997, 44100, 2, 0.7, List.of("-c:a", "flac", "-sample_fmt", "s16"));
+            var decoded = decodeAny(Fixtures.read(file), WavDemuxer::new);
+            assertArrayEquals(Oracle.decodeAudio(file), decoded.interleaved());
+        }
+
+        @Test
+        @DisplayName("decodes ffmpeg's AC-3 and AMR-NB in WAVE like the raw streams")
+        void rawStreams() {
+            var ac3 = decodeAny(Fixtures.read(Fixtures.tone("wav", 440, 48000, 2, 0.5, List.of("-c:a", "ac3"))), WavDemuxer::new);
+            var ac3Raw = decodeAny(Fixtures.read(Fixtures.tone("ac3", 440, 48000, 2, 0.5, List.of("-c:a", "ac3"))),
+                    com.github.auties00.smalt.container.ac3.Ac3Demuxer::new);
+            assertArrayEquals(ac3Raw.interleaved(), ac3.interleaved());
+            var amr = decodeAny(Fixtures.read(Fixtures.tone("wav", 440, 8000, 1, 0.5, List.of("-c:a", "libopencore_amrnb"))),
+                    WavDemuxer::new);
+            var amrRaw = decodeAny(Fixtures.read(Fixtures.tone("amr", 440, 8000, 1, 0.5, List.of("-c:a", "libopencore_amrnb"))),
+                    com.github.auties00.smalt.container.amr.AmrDemuxer::new);
+            assertTrue(amr.interleaved().length >= 3840);
+            assertArrayEquals(amrRaw.interleaved(), amr.interleaved());
+        }
+
+        @Test
+        @DisplayName("decodes AAC in LOAS framing like the ADTS stream of the same encode")
+        void loas() {
+            var latm = Fixtures.read(Fixtures.tone("latm", 440, 44100, 2, 0.8, List.of("-c:a", "aac", "-b:a", "96k")));
+            var adts = Fixtures.read(Fixtures.tone("aac", 440, 44100, 2, 0.8, List.of("-c:a", "aac", "-b:a", "96k")));
+            var builder = new WavBuilder();
+            var wav = builder.chunk("fmt ", builder.format(0x1602, 2, 44100, 1, 0)).chunk("data", latm).build();
+            var expected = decodeAny(adts, com.github.auties00.smalt.container.adts.AdtsDemuxer::new);
+            var actual = decodeAny(wav, WavDemuxer::new);
+            assertTrue(expected.interleaved().length > 60_000);
+            assertArrayEquals(expected.interleaved(), actual.interleaved());
+        }
+
+        /** Returns a WAVE file of one format chunk with extra bytes and one data chunk. */
+        static byte[] codedWav(int tag, int channels, int rate, int blockAlign, int bits, byte[] extra, byte[] data) {
+            var fmt = ByteBuffer.allocate(18 + extra.length).order(ByteOrder.LITTLE_ENDIAN).putShort((short) tag)
+                    .putShort((short) channels).putInt(rate).putInt(rate * blockAlign).putShort((short) blockAlign)
+                    .putShort((short) bits).putShort((short) extra.length).put(extra).array();
+            return new WavBuilder().chunk("fmt ", fmt).chunk("data", data).build();
+        }
+
+        @Test
+        @DisplayName("seeks implicit HE-AAC v2 as raw blocks, ADTS and IEC 61937 bursts in the time base of the core rate")
+        void heAacSeek() {
+            // implicit signaling: a 22.05 kHz mono Low Complexity configuration that decodes to 44.1 kHz stereo
+            var mp4 = com.github.auties00.smalt.testkit.Conformance.fetch("mpeg4audio-al_sbr_i_44_1.mp4",
+                    "https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD1/"
+                            + "mpeg4audio-conformance/compressedMp4/al_sbr_i_44_1.mp4",
+                    "93f9a8e33ca65f529139ed4827bf37214fe28a17aa786f3a23ba6cfd571cf36c");
+            byte[] config;
+            List<com.github.auties00.smalt.track.Packet> blocks;
+            try (var demuxer = new com.github.auties00.smalt.container.mp4.Mp4Demuxer(MediaSource.of(Fixtures.read(mp4)))) {
+                config = demuxer.tracks().getFirst().codecConfig().orElseThrow();
+                blocks = AudioPipeline.packets(demuxer, demuxer.tracks().getFirst().id());
+            }
+            var index = (config[0] & 0x07) << 1 | (config[1] & 0xFF) >> 7;
+            var channels = (config[1] >> 3) & 0x0F;
+            assertEquals(2, (config[0] & 0xFF) >> 3);
+            assertEquals(7, index);
+            var raw = new ByteArrayOutputStream();
+            var adts = new ByteArrayOutputStream();
+            var bursts = new ByteArrayOutputStream();
+            for (var block : blocks) {
+                raw.writeBytes(block.data());
+                var length = block.size() + 7;
+                var frame = new byte[length];
+                frame[0] = (byte) 0xFF;
+                frame[1] = (byte) 0xF1;
+                frame[2] = (byte) (1 << 6 | index << 2 | channels >> 2);
+                frame[3] = (byte) ((channels & 3) << 6 | length >> 11);
+                frame[4] = (byte) (length >> 3);
+                frame[5] = (byte) ((length & 7) << 5 | 0x1F);
+                frame[6] = (byte) 0xFC;
+                System.arraycopy(block.data(), 0, frame, 7, block.size());
+                adts.writeBytes(frame);
+                var burst = ByteBuffer.allocate(1024 * 4).order(ByteOrder.LITTLE_ENDIAN).putShort((short) 0xF872)
+                        .putShort((short) 0x4E1F).putShort((short) 7).putShort((short) (length * 8));
+                for (var at = 0; at < length; at += 2) {
+                    burst.put(at + 1 < length ? frame[at + 1] : 0).put(frame[at]);
+                }
+                bursts.writeBytes(burst.array());
+            }
+            var files = List.of(codedWav(0x00FF, channels, 22050, 1, 0, config, raw.toByteArray()),
+                    codedWav(0x1600, channels, 22050, 1, 0, new byte[0], adts.toByteArray()),
+                    codedWav(1, 2, 22050, 4, 16, new byte[0], bursts.toByteArray()));
+            for (var file : files) {
+                try (var demuxer = new WavDemuxer(MediaSource.of(file))) {
+                    var track = (AudioTrack) demuxer.tracks().getFirst();
+                    assertEquals(Codec.AAC, track.codec());
+                    assertEquals(44100, track.sampleRate());
+                    assertEquals(com.github.auties00.smalt.track.Rational.timeBaseOf(22050), track.timeBase());
+                    assertEquals(18_575_964, demuxer.durationMicros(), 50_000);
+                    for (var micros : new long[]{0, 3_000_000, 9_250_000, 17_000_000}) {
+                        demuxer.seek(micros);
+                        var packet = demuxer.read();
+                        var target = micros * 22050 / 1_000_000;
+                        assertTrue(packet.pts() <= target && target < packet.pts() + packet.duration(),
+                                "seek to " + micros + " us returned the block at " + packet.pts());
+                    }
+                }
+            }
+        }
+
+        @ParameterizedTest(name = "{0} Hz, {1} channels")
+        @org.junit.jupiter.params.provider.CsvSource({"44100, 2, 128k", "22050, 1, 32k", "48000, 6, 320k"})
+        @DisplayName("decodes ffmpeg's raw AAC in WAVE like the ADTS stream of the same encode")
+        void rawAac(int rate, int channels, String bitrate) {
+            var options = List.of("-c:a", "aac", "-b:a", bitrate);
+            var wav = Fixtures.read(Fixtures.tone("wav", 440, rate, channels, 0.8, options));
+            var adts = Fixtures.read(Fixtures.tone("aac", 440, rate, channels, 0.8, options));
+            var expected = decodeAny(adts, com.github.auties00.smalt.container.adts.AdtsDemuxer::new);
+            var actual = decodeAny(wav, WavDemuxer::new);
+            assertEquals(expected.sampleRate(), actual.sampleRate());
+            assertEquals(expected.channels(), actual.channels());
+            assertTrue(expected.interleaved().length > 15_000);
+            assertArrayEquals(expected.interleaved(), actual.interleaved());
+        }
+
+        /** Packs fields of {@code {value, bits}} most significant bit first, padded with zeros to whole bytes. */
+        static byte[] pack(int[]... fields) {
+            var out = new ByteArrayOutputStream();
+            var accumulator = 0L;
+            var count = 0;
+            for (var field : fields) {
+                accumulator = accumulator << field[1] | (field[0] & ((1L << field[1]) - 1));
+                count += field[1];
+                while (count >= 8) {
+                    out.write((int) (accumulator >>> (count - 8)));
+                    count -= 8;
+                }
+            }
+            if (count > 0) {
+                out.write((int) (accumulator << (8 - count)));
+            }
+            return out.toByteArray();
+        }
+
+        @Test
+        @DisplayName("decodes an ADIF stream through the program configuration of its header")
+        void adif() {
+            var options = List.of("-c:a", "aac", "-b:a", "128k");
+            var adts = Fixtures.read(Fixtures.tone("aac", 440, 44100, 2, 0.8, options));
+            var wav = Fixtures.read(Fixtures.tone("wav", 440, 44100, 2, 0.8, options));
+            // ADIF, no copyright, variable rate, one program: tag 0, Low Complexity, 44.1 kHz, one front channel pair
+            var header = pack(new int[]{0x41444946, 32}, new int[]{0, 3}, new int[]{1, 1}, new int[]{128000, 23},
+                    new int[]{0, 4}, new int[]{0, 4}, new int[]{1, 2}, new int[]{4, 4}, new int[]{1, 4}, new int[]{0, 17},
+                    new int[]{0, 3}, new int[]{1, 1}, new int[]{0, 4}, new int[]{0, 2}, new int[]{0, 8});
+            var data = java.nio.ByteBuffer.wrap(wav);
+            var payload = new ByteArrayOutputStream();
+            payload.writeBytes(header);
+            var position = 12;
+            while (true) {
+                var size = data.order(ByteOrder.LITTLE_ENDIAN).getInt(position + 4);
+                if (data.getInt(position) == 0x61746164) {
+                    payload.write(wav, position + 8, size);
+                    break;
+                }
+                position += 8 + size + (size & 1);
+            }
+            var builder = new WavBuilder();
+            var file = builder.chunk("fmt ", builder.format(0x00FF, 2, 44100, 1, 0)).chunk("data", payload.toByteArray())
+                    .build();
+            var expected = decodeAny(adts, com.github.auties00.smalt.container.adts.AdtsDemuxer::new);
+            var actual = decodeAny(file, WavDemuxer::new);
+            assertEquals(2, actual.channels());
+            assertTrue(expected.interleaved().length > 60_000);
+            assertArrayEquals(expected.interleaved(), actual.interleaved());
+        }
+
+        @Test
+        @DisplayName("decodes self-delimited Opus like the Ogg stream its packets come from")
+        void opus() {
+            var ogg = Fixtures.read(Fixtures.tone("opus", 440, 48000, 2, 0.8, List.of("-c:a", "libopus", "-b:a", "64k")));
+            var data = new ByteArrayOutputStream();
+            byte[] head;
+            try (var demuxer = new com.github.auties00.smalt.container.ogg.OggDemuxer(MediaSource.of(ogg))) {
+                head = demuxer.tracks().getFirst().codecConfig().orElseThrow();
+                for (var packet : AudioPipeline.packets(demuxer, demuxer.tracks().getFirst().id())) {
+                    data.writeBytes(selfDelimited(packet.data()));
+                }
+            }
+            var builder = new WavBuilder();
+            var fmt = ByteBuffer.allocate(18 + head.length).order(ByteOrder.LITTLE_ENDIAN).putShort((short) 0x704F)
+                    .putShort((short) 2).putInt(48000).putInt(8000).putShort((short) 1).putShort((short) 0)
+                    .putShort((short) head.length).put(head).array();
+            var wav = builder.chunk("fmt ", fmt).chunk("data", data.toByteArray()).build();
+            var expected = decodeAny(ogg, com.github.auties00.smalt.container.ogg.OggDemuxer::new);
+            var actual = decodeAny(wav, WavDemuxer::new);
+            var keep = Math.min(expected.interleaved().length, actual.interleaved().length);
+            assertTrue(keep > 70_000);
+            assertArrayEquals(Arrays.copyOf(expected.interleaved(), keep), Arrays.copyOf(actual.interleaved(), keep));
+        }
+
+        /** Converts a code 0 to 3 Opus packet of up to 251-byte lengths into the self-delimiting framing. */
+        static byte[] selfDelimited(byte[] packet) {
+            var out = new ByteArrayOutputStream();
+            var code = packet[0] & 3;
+            if (code == 0) {
+                out.write(packet[0]);
+                writeLength(out, packet.length - 1);
+                out.write(packet, 1, packet.length - 1);
+                return out.toByteArray();
+            }
+            throw com.github.auties00.smalt.testkit.Skip.now("input:opus-code", "libopus emitted a code " + code + " packet");
+        }
+
+        static void writeLength(ByteArrayOutputStream out, int length) {
+            if (length < 252) {
+                out.write(length);
+            } else {
+                var first = 252 + (length & 3);
+                out.write(first);
+                out.write((length - first) / 4);
+            }
+        }
     }
 
     @Test

@@ -20,9 +20,10 @@ import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
  * @implNote This implementation passes the codec-independent decoder options to the decoder
  * unchanged. It maps the codec-independent encoder options onto
  * {@link Vp9EncoderOptions#forRealtime()} when they are real-time and onto
- * {@link Vp9EncoderOptions#defaults()} otherwise, with their frame rate and bitrate, and a thread
- * count above one onto {@link Vp9EncoderOptions#threads()}, which caps it at 64; {@code 0} and
- * {@code 1} keep the single thread of the presets.
+ * {@link Vp9EncoderOptions#defaults()} otherwise, with their frame rate and bitrate, their key frame
+ * interval or the absence of periodic key frames in place of the preset's, and a thread count above
+ * one onto {@link Vp9EncoderOptions#threads()}, which caps it at 64; {@code 0} and {@code 1} keep the
+ * single thread of the presets.
  */
 public final class Vp9CodecProvider implements VideoCodecProvider {
     /**
@@ -52,6 +53,11 @@ public final class Vp9CodecProvider implements VideoCodecProvider {
                 .toBuilder()
                 .frameRate(options.frameRate())
                 .bitrate(options.bitrate());
+        if (!options.periodicKeyframes()) {
+            builder.noPeriodicKeyframes();
+        } else {
+            options.keyframeInterval().ifPresent(builder::keyframeInterval);
+        }
         if (options.threads() > 1) {
             builder.threads(options.threads());
         }

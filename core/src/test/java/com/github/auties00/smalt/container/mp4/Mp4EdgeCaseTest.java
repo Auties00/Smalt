@@ -4,8 +4,11 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.ContainerProbe;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.ContentLightLevel;
+import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -121,9 +124,17 @@ class Mp4EdgeCaseTest {
         }
 
         @Test
-        @DisplayName("declares no color without a colr box and ignores truncated metadata")
+        @DisplayName("declares an unspecified color carrying mdcv without a colr box and ignores truncated metadata")
         void withoutColr() {
-            assertTrue(((VideoTrack) demux(fileWith(mdcv())).tracks().getFirst()).color().isEmpty());
+            var unspecified = ((VideoTrack) demux(fileWith(mdcv())).tracks().getFirst()).color().orElseThrow();
+            assertEquals(MatrixCoefficients.UNSPECIFIED, unspecified.matrix());
+            assertEquals(ColorPrimaries.UNSPECIFIED, unspecified.primaries());
+            assertEquals(TransferCharacteristics.UNSPECIFIED, unspecified.transfer());
+            assertEquals(ColorRange.LIMITED, unspecified.range());
+            assertEquals(1000, unspecified.masteringDisplay().orElseThrow().maxLuminance(), 1e-9);
+            assertTrue(unspecified.contentLightLevel().isEmpty());
+            assertTrue(((VideoTrack) demux(fileWith(box("mdcv", u16(1)), box("clli", u16(1)))).tracks().getFirst())
+                    .color().isEmpty());
             var truncated = fileWith(box("colr", fourCc("nclx"), u16(1), u16(1), u16(1), u8(0)), box("mdcv", u16(1)),
                     box("clli", u16(1)));
             var color = ((VideoTrack) demux(truncated).tracks().getFirst()).color().orElseThrow();

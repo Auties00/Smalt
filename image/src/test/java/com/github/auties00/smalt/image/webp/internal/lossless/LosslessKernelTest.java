@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.image.webp.internal.lossless;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -29,7 +29,7 @@ class LosslessKernelTest {
 
         @BeforeEach
         void setUp() {
-            Assumptions.assumeTrue(Simd.ENABLED, "Vector API disabled");
+            Skip.unlessVector(Simd.ENABLED);
             vector = VectorLosslessDsp.create();
         }
 

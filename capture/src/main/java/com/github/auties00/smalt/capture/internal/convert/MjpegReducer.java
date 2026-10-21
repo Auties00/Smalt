@@ -47,7 +47,7 @@ public final class MjpegReducer {
      * @throws MediaException.LimitExceeded if the frame exceeds the default limits
      */
     public YuvPicture decode(byte[] data, int offset, int length) {
-        var decoded = decoder.decodeFrame(data, offset, length);
+        var decoded = (YuvPicture) decoder.decodeFrame(data, offset, length);
         var width = decoded.width() & ~1;
         var height = decoded.height() & ~1;
         if (width == 0 || height == 0) {

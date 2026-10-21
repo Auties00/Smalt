@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.jp2;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.Assumptions;
@@ -48,9 +49,9 @@ class Jp2OracleTest {
         }
         var image = Jp2Decoder.decodeChannels(MediaSource.of(data), options);
         var channels = image.channels();
-        Assumptions.assumeFalse(channels.size() == 3 && channels.get(1).subsamplingX() != 1
+        Skip.when(channels.size() == 3 && channels.get(1).subsamplingX() != 1
                 && channels.get(0).subsamplingX() == channels.get(0).subsamplingY(),
-                "opj_decompress converts this image to RGB");
+                "input:opj-rgb", "opj_decompress converts this image to RGB");
         var extension = name.endsWith(".jp2") ? "jp2" : "j2k";
         var expected = OpenJpeg.decode(data, extension, image.reduction(), layers);
         assertNotNull(expected, "opj_decompress rejected " + name);

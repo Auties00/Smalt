@@ -9,7 +9,8 @@ import java.util.List;
 /**
  * Writes a JPEG file from quantized DCT coefficients: the file header and copied marker segments,
  * the frame header, and one sequential scan or a progressive scan script, Huffman coded with the
- * tables of T.81 Annex K or with tables optimized for the coefficients.
+ * tables of T.81 Annex K or with tables optimized for the coefficients. A 12-bit file always gets
+ * optimized tables, since the tables of Annex K cover only the magnitudes of 8-bit coefficients.
  *
  * @implNote This implementation is a port of the parts of libjpeg-turbo that
  * {@code jpeg_write_coefficients} drives: the marker writer (jcmarker.c), the coefficient
@@ -25,11 +26,6 @@ final class CoefficientWriter {
      * The size of the buffer of correction bits held back by an AC refinement scan.
      */
     private static final int MAX_CORRECTION_BITS = 1000;
-
-    /**
-     * The largest magnitude category of an AC coefficient at 8-bit precision.
-     */
-    private static final int MAX_COEFFICIENT_BITS = 10;
 
     /**
      * The largest number of blocks in one MCU.
@@ -85,6 +81,16 @@ final class CoefficientWriter {
      * The image width.
      */
     private final int width;
+
+    /**
+     * The sample precision in bits, 8 or 12.
+     */
+    private final int precision;
+
+    /**
+     * The largest magnitude category of an AC coefficient, {@code precision + 2}.
+     */
+    private final int maxCoefficientBits;
 
     /**
      * The image height.
@@ -234,10 +240,14 @@ final class CoefficientWriter {
      * @param components the components, at most four
      * @param quantTables the natural-order quantization table of each slot the components use
      * @param restartInterval the number of MCUs between restart markers, or {@code 0}
+     * @param precision the sample precision in bits, 8 or 12
      */
-    CoefficientWriter(int width, int height, Component[] components, int[][] quantTables, int restartInterval) {
+    CoefficientWriter(int width, int height, Component[] components, int[][] quantTables, int restartInterval,
+                      int precision) {
         this.width = width;
         this.height = height;
+        this.precision = precision;
+        this.maxCoefficientBits = precision + 2;
         this.components = components;
         this.quantTables = quantTables;
         this.restartInterval = restartInterval;
@@ -259,14 +269,14 @@ final class CoefficientWriter {
      * @param markers the marker segments to copy after the file header
      * @param progressive whether to write the progressive scan script instead of one sequential
      * scan
-     * @param optimize whether to optimize the Huffman tables; always the case for a progressive
-     * file
+     * @param optimize whether to optimize the Huffman tables; always the case for a progressive or
+     * 12-bit file
      * @param ycbcr whether the components are YCbCr, which selects the progressive script
      * @return the file
-     * @throws MediaException.Malformed if a coefficient is too large for 8-bit JPEG
+     * @throws MediaException.Malformed if a coefficient is too large for the precision
      */
     byte[] write(Header header, List<MarkerSegment> markers, boolean progressive, boolean optimize, boolean ycbcr) {
-        var optimized = optimize || progressive;
+        var optimized = optimize || progressive || precision != 8;
         out.writeMarker(0xD8);
         if (header.jfif()) {
             out.writeMarker(0xE0);
@@ -433,7 +443,7 @@ final class CoefficientWriter {
             }
             wide |= precision != 0;
         }
-        var baseline = !progressive && !wide;
+        var baseline = !progressive && !wide && precision == 8;
         for (var component : components) {
             if (component.dcTable > 1 || component.acTable > 1) {
                 baseline = false;
@@ -441,7 +451,7 @@ final class CoefficientWriter {
         }
         out.writeMarker(progressive ? 0xC2 : baseline ? 0xC0 : 0xC1);
         out.writeShort(3 * components.length + 2 + 5 + 1);
-        out.writeByte(8);
+        out.writeByte(precision);
         out.writeShort(height);
         out.writeShort(width);
         out.writeByte(components.length);
@@ -745,8 +755,8 @@ final class CoefficientWriter {
         lastDc[member] = data[base];
         var magnitude = Math.abs(difference);
         var bits = bitLength(magnitude);
-        if (bits > MAX_COEFFICIENT_BITS + 1) {
-            throw new MediaException.Malformed("DC difference " + difference + " is too large for 8-bit JPEG");
+        if (bits > maxCoefficientBits + 1) {
+            throw new MediaException.Malformed("DC difference " + difference + " is too large for " + precision + "-bit JPEG");
         }
         emitDc(component.dcTable, bits);
         if (bits != 0) {
@@ -765,8 +775,8 @@ final class CoefficientWriter {
             }
             magnitude = Math.abs(value);
             bits = bitLength(magnitude);
-            if (bits > MAX_COEFFICIENT_BITS) {
-                throw new MediaException.Malformed("AC coefficient " + value + " is too large for 8-bit JPEG");
+            if (bits > maxCoefficientBits) {
+                throw new MediaException.Malformed("AC coefficient " + value + " is too large for " + precision + "-bit JPEG");
             }
             emitAc(component.acTable, (run << 4) + bits);
             emitBits((value < 0 ? value - 1 : value) & ((1 << bits) - 1), bits);
@@ -791,8 +801,8 @@ final class CoefficientWriter {
         var difference = shifted - lastDc[member];
         lastDc[member] = shifted;
         var bits = bitLength(Math.abs(difference));
-        if (bits > MAX_COEFFICIENT_BITS + 1) {
-            throw new MediaException.Malformed("DC difference " + difference + " is too large for 8-bit JPEG");
+        if (bits > maxCoefficientBits + 1) {
+            throw new MediaException.Malformed("DC difference " + difference + " is too large for " + precision + "-bit JPEG");
         }
         emitDc(component.dcTable, bits);
         if (bits != 0) {
@@ -830,8 +840,8 @@ final class CoefficientWriter {
                 run -= 16;
             }
             var bits = bitLength(magnitude);
-            if (bits > MAX_COEFFICIENT_BITS) {
-                throw new MediaException.Malformed("AC coefficient " + value + " is too large for 8-bit JPEG");
+            if (bits > maxCoefficientBits) {
+                throw new MediaException.Malformed("AC coefficient " + value + " is too large for " + precision + "-bit JPEG");
             }
             emitAc(table, (run << 4) + bits);
             emitBits((value < 0 ? ~magnitude : magnitude) & ((1 << bits) - 1), bits);

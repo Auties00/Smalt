@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.process;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorOperators;
@@ -85,11 +86,6 @@ final class VectorProcessKernels {
         private static final Class<FloatVector> NARROW_VECTOR = (Class<FloatVector>) NARROW.vectorType();
 
         /**
-         * Whether the platform's preferred vectors are at least 256 bits wide.
-         */
-        private static final boolean USE_WIDE = FloatVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
-
-        /**
          * Swaps adjacent lanes of an eight-lane vector.
          */
         private static final VectorShuffle<Float> SWAP_1 = VectorShuffle.fromValues(WIDE, 1, 0, 3, 2, 5, 4, 7, 6);
@@ -127,7 +123,7 @@ final class VectorProcessKernels {
 
         @Override
         public float dot(float[] x, int xOffset, float[] h, int hOffset, int taps) {
-            return USE_WIDE ? dotWide(x, xOffset, h, hOffset, taps) : dotNarrow(x, xOffset, h, hOffset, taps);
+            return Simd.WIDE ? dotWide(x, xOffset, h, hOffset, taps) : dotNarrow(x, xOffset, h, hOffset, taps);
         }
 
         /**
@@ -194,7 +190,7 @@ final class VectorProcessKernels {
         @Override
         public void run(float[] x, int base, int phase, int step, int remainder, int up, float[] table, int taps,
                         float[] out, int offset, int count) {
-            if (USE_WIDE) {
+            if (Simd.WIDE) {
                 runWide(x, base, phase, step, remainder, up, table, taps, out, offset, count);
             } else {
                 runNarrow(x, base, phase, step, remainder, up, table, taps, out, offset, count);
@@ -204,7 +200,7 @@ final class VectorProcessKernels {
         @Override
         public void runPair(float[] x0, float[] x1, int base, int phase, int step, int remainder, int up, float[] table,
                             int taps, float[] out0, float[] out1, int offset, int count) {
-            if (USE_WIDE) {
+            if (Simd.WIDE) {
                 runWidePair(x0, x1, base, phase, step, remainder, up, table, taps, out0, out1, offset, count);
             } else {
                 runNarrow(x0, base, phase, step, remainder, up, table, taps, out0, offset, count);

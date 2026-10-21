@@ -26,16 +26,19 @@ public final class HevcDecoderOptions {
 
     private final boolean hashVerification;
 
+    private final boolean defaultDisplayWindow;
+
     private HevcDecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.threads = builder.threads;
         this.highBitDepth = builder.highBitDepth;
         this.hashVerification = builder.hashVerification;
+        this.defaultDisplayWindow = builder.defaultDisplayWindow;
     }
 
     /**
-     * Returns the default options: {@link MediaLimits#defaults()}, the shared pool, 8-bit output and
-     * no hash verification.
+     * Returns the default options: {@link MediaLimits#defaults()}, the shared pool, 8-bit output, no
+     * hash verification and output cropped by the conformance window only.
      *
      * @return the default options
      */
@@ -97,21 +100,34 @@ public final class HevcDecoderOptions {
         return hashVerification;
     }
 
+    /**
+     * {@return whether the pictures are also cropped by the default display window the VUI
+     * signals, inside the conformance window; {@code false} by default}
+     *
+     * <p>The default display window is a display hint (ITU-T H.265 E.3.1): the conformance window
+     * alone gives the decoded pictures. A default display window that would leave no picture is
+     * ignored.
+     */
+    public boolean defaultDisplayWindow() {
+        return defaultDisplayWindow;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof HevcDecoderOptions that && limits.equals(that.limits) && threads == that.threads
-                && highBitDepth == that.highBitDepth && hashVerification == that.hashVerification;
+                && highBitDepth == that.highBitDepth && hashVerification == that.hashVerification
+                && defaultDisplayWindow == that.defaultDisplayWindow;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, threads, highBitDepth, hashVerification);
+        return Objects.hash(limits, threads, highBitDepth, hashVerification, defaultDisplayWindow);
     }
 
     @Override
     public String toString() {
         return "HevcDecoderOptions[limits=" + limits + ", threads=" + threads + ", highBitDepth=" + highBitDepth
-                + ", hashVerification=" + hashVerification + "]";
+                + ", hashVerification=" + hashVerification + ", defaultDisplayWindow=" + defaultDisplayWindow + "]";
     }
 
     /**
@@ -129,6 +145,8 @@ public final class HevcDecoderOptions {
 
         private boolean hashVerification;
 
+        private boolean defaultDisplayWindow;
+
         private Builder() {
             this.limits = MediaLimits.DEFAULT;
         }
@@ -138,6 +156,7 @@ public final class HevcDecoderOptions {
             this.threads = options.threads;
             this.highBitDepth = options.highBitDepth;
             this.hashVerification = options.hashVerification;
+            this.defaultDisplayWindow = options.defaultDisplayWindow;
         }
 
         /**
@@ -183,6 +202,18 @@ public final class HevcDecoderOptions {
          */
         public Builder hashVerification(boolean hashVerification) {
             this.hashVerification = hashVerification;
+            return this;
+        }
+
+        /**
+         * Sets whether the pictures are also cropped by the default display window; see
+         * {@link HevcDecoderOptions#defaultDisplayWindow()}.
+         *
+         * @param defaultDisplayWindow the value
+         * @return this builder
+         */
+        public Builder defaultDisplayWindow(boolean defaultDisplayWindow) {
+            this.defaultDisplayWindow = defaultDisplayWindow;
             return this;
         }
 

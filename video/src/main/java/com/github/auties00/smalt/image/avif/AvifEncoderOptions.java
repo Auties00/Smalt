@@ -171,7 +171,8 @@ public final class AvifEncoderOptions {
 
     /**
      * Returns lossless coding: quality 100 for color and alpha, and RGB pictures stored as 4:4:4
-     * in the identity matrix (GBR) so every pixel is restored exactly.
+     * in the identity matrix (GBR), or in full range when the color's matrix is YCgCo-Re or YCgCo-Ro,
+     * so every pixel is restored exactly (for YCgCo-Re and YCgCo-Ro, at the automatic bit depth).
      *
      * @return the options
      */
@@ -245,7 +246,9 @@ public final class AvifEncoderOptions {
      * default}
      *
      * <p>Automatic is 8 for 8-bit pictures, 10 for deeper pictures of at most 10 bits and 12 for
-     * the others.
+     * the others. RGB pictures converted with the YCgCo-Re or YCgCo-Ro matrix, whose R'G'B' samples
+     * are two or one bits shallower than the coded ones, code 8-bit pictures at 10 bits and deeper ones
+     * at 12.
      */
     public OptionalInt bitDepth() {
         return bitDepth;

@@ -1,8 +1,10 @@
 package com.github.auties00.smalt.image.webp;
 
+import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Holds the settings of a {@link WebpAnimationEncoder}. Instances are immutable and thread-safe;
@@ -65,6 +67,8 @@ public final class WebpAnimationEncoderOptions {
 
     private final boolean minimize;
 
+    private final ColorProfile colorProfile;
+
     private WebpAnimationEncoderOptions(Builder builder) {
         this.loopCount = builder.loopCount;
         this.lossless = builder.lossless;
@@ -75,6 +79,7 @@ public final class WebpAnimationEncoderOptions {
         this.maxKeyframeDistance = builder.keyframesSet ? builder.maxKeyframeDistance : 0;
         this.allowMixed = builder.allowMixed;
         this.minimize = builder.minimize;
+        this.colorProfile = builder.colorProfile;
     }
 
     /**
@@ -208,6 +213,20 @@ public final class WebpAnimationEncoderOptions {
     }
 
     /**
+     * {@return the ICC profile embedded in the output, or empty when none is embedded; empty by
+     * default}
+     *
+     * <p>The profile tells readers which color space the frames are in; it does not convert them.
+     * Without one, readers take the pixels as sRGB. It is written as an {@code ICCP} chunk right
+     * after {@code VP8X}, whose ICC flag is set, also when the animation collapses into a still
+     * image. A high-dynamic-range profile is written in its ICC form, whose {@code cicp} tag
+     * carries its PQ or HLG code points.
+     */
+    public Optional<ColorProfile> colorProfile() {
+        return Optional.ofNullable(colorProfile);
+    }
+
+    /**
      * {@inheritDoc}
      *
      * <p>Options whose key frame distances follow the coding mode differ from options with the same
@@ -224,27 +243,29 @@ public final class WebpAnimationEncoderOptions {
                 && minKeyframeDistance == that.minKeyframeDistance
                 && maxKeyframeDistance == that.maxKeyframeDistance
                 && allowMixed == that.allowMixed
-                && minimize == that.minimize;
+                && minimize == that.minimize
+                && Objects.equals(colorProfile, that.colorProfile);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(loopCount, lossless, quality, method, keyframesSet, minKeyframeDistance,
-                maxKeyframeDistance, allowMixed, minimize);
+                maxKeyframeDistance, allowMixed, minimize, colorProfile);
     }
 
     @Override
     public String toString() {
         return "WebpAnimationEncoderOptions[loopCount=" + loopCount + ", lossless=" + lossless + ", quality=" + quality
                 + ", method=" + method + ", keyframes=" + (keyframesSet ? "" : "automatic ") + minKeyframeDistance()
-                + ".." + maxKeyframeDistance() + ", allowMixed=" + allowMixed + ", minimize=" + minimize + "]";
+                + ".." + maxKeyframeDistance() + ", allowMixed=" + allowMixed + ", minimize=" + minimize
+                + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed")) + "]";
     }
 
     /**
      * A builder of {@link WebpAnimationEncoderOptions}.
      *
-     * <p>Setters reject only {@code null}; {@link #build()} checks the ranges. Instances are not
-     * thread-safe.
+     * <p>Setters reject only {@code null}; {@link #build()} checks the ranges and the color profile.
+     * Instances are not thread-safe.
      */
     public static final class Builder {
         private int loopCount;
@@ -265,6 +286,8 @@ public final class WebpAnimationEncoderOptions {
 
         private boolean minimize;
 
+        private ColorProfile colorProfile;
+
         private Builder() {
         }
 
@@ -278,6 +301,7 @@ public final class WebpAnimationEncoderOptions {
             this.maxKeyframeDistance = options.maxKeyframeDistance;
             this.allowMixed = options.allowMixed;
             this.minimize = options.minimize;
+            this.colorProfile = options.colorProfile;
         }
 
         /**
@@ -387,6 +411,28 @@ public final class WebpAnimationEncoderOptions {
          */
         public Builder minimize(boolean minimize) {
             this.minimize = minimize;
+            return this;
+        }
+
+        /**
+         * Sets the ICC profile embedded in the output; see
+         * {@link WebpAnimationEncoderOptions#colorProfile()}.
+         *
+         * @param colorProfile the value
+         * @return this builder
+         */
+        public Builder colorProfile(ColorProfile colorProfile) {
+            this.colorProfile = Objects.requireNonNull(colorProfile, "colorProfile");
+            return this;
+        }
+
+        /**
+         * Removes the ICC profile; see {@link WebpAnimationEncoderOptions#colorProfile()}.
+         *
+         * @return this builder
+         */
+        public Builder noColorProfile() {
+            this.colorProfile = null;
             return this;
         }
 

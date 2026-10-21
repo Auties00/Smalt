@@ -33,7 +33,9 @@ import java.util.Arrays;
  *
  * <p>Nothing is written before the first frame is final. A datastream of a single frame is a
  * still image: no looping extension, and a graphic control extension only when the image has
- * transparent pixels. An instance is single-use and not thread-safe.
+ * transparent pixels. The ICC profile of {@link GifEncoderOptions#colorProfile()} follows the
+ * global color table and the looping extension, in a {@link GifIccExtension}. An instance is
+ * single-use and not thread-safe.
  *
  * @implNote This implementation keeps three canvas-sized arrays of packed colors: the frame
  * waiting for its disposal decision, the canvas under it, and the incoming frame. Choosing the
@@ -640,8 +642,8 @@ public final class GifEncoderCore {
     }
 
     /**
-     * Writes the signature, the logical screen descriptor with the global color table, and the
-     * looping extension of an animation.
+     * Writes the signature, the logical screen descriptor with the global color table, the
+     * looping extension of an animation, and the ICC profile extension.
      */
     private void writeHeader() {
         started = true;
@@ -671,6 +673,7 @@ public final class GifEncoderCore {
             out.write16(plays == 0 ? 0 : plays - 1);
             out.write(0);
         }
+        options.colorProfile().ifPresent(profile -> GifIccExtension.write(out, profile.toByteArray()));
     }
 
     /**

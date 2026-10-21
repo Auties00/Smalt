@@ -229,6 +229,19 @@ abstract sealed class YccRows permits YccRows.FromRgba, YccRows.FromYuv, YccRows
         }
 
         /**
+         * Returns whether these rows convert a matrix.
+         *
+         * @param matrix the matrix coefficients of a picture
+         * @return {@code true} for the matrices of two fixed luma weights (unspecified included), identity and YCgCo
+         */
+        static boolean converts(MatrixCoefficients matrix) {
+            return switch (matrix) {
+                case BT601, BT470BG, UNSPECIFIED, BT709, FCC, SMPTE240M, BT2020_NCL, IDENTITY, YCGCO -> true;
+                default -> false;
+            };
+        }
+
+        /**
          * Returns whether a matrix needs no conversion to JPEG's BT.601.
          *
          * @param matrix the matrix coefficients of a picture

@@ -1,11 +1,10 @@
 package com.github.auties00.smalt.image.tiff;
 
+import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.image.RasterTesting;
-import org.junit.jupiter.api.Assumptions;
 
 import java.io.ByteArrayOutputStream;
-import java.io.File;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -14,7 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -31,7 +29,6 @@ public final class LibTiff {
     static final String SOURCE_URL = "https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz";
     static final String SOURCE_SHA256 = "f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69";
 
-    private static final Map<String, Optional<Path>> RESOLVED = new ConcurrentHashMap<>();
     private static final AtomicInteger COUNTER = new AtomicInteger();
     private static volatile Map<String, byte[]> pics;
     private static volatile Map<String, byte[]> sources;
@@ -41,36 +38,12 @@ public final class LibTiff {
     }
 
     static Optional<Path> find(String tool) {
-        return RESOLVED.computeIfAbsent(tool, LibTiff::lookup);
-    }
-
-    private static Optional<Path> lookup(String tool) {
-        var path = System.getenv("PATH");
-        if (path == null) {
-            return Optional.empty();
-        }
-        var windows = System.getProperty("os.name", "").toLowerCase().contains("win");
-        for (var directory : path.split(File.pathSeparator)) {
-            if (directory.isBlank()) {
-                continue;
-            }
-            for (var candidate : windows ? List.of(tool + ".exe", tool) : List.of(tool)) {
-                try {
-                    var file = Path.of(directory.trim(), candidate);
-                    if (Files.isRegularFile(file) && Files.isExecutable(file)) {
-                        return Optional.of(file);
-                    }
-                } catch (RuntimeException ignored) {
-                    // malformed PATH entry
-                }
-            }
-        }
-        return Optional.empty();
+        return Oracle.find(tool);
     }
 
     static void assume(String... tools) {
         for (var tool : tools) {
-            Assumptions.assumeTrue(find(tool).isPresent(), tool + " is not on PATH");
+            Oracle.assume(tool);
         }
     }
 

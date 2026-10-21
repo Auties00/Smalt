@@ -133,4 +133,24 @@ class AvifEncoderApiTest {
                             AvifEncoderOptions.defaults(), sink));
         }
     }
+
+    @Test
+    @DisplayName("channel pictures are coded as their RGBA conversion of their own depth")
+    void channelPictures() {
+        var cmyk = com.github.auties00.smalt.image.Channel8Picture.allocate(24, 16,
+                com.github.auties00.smalt.image.PixelLayout.CMYK);
+        var deep = com.github.auties00.smalt.image.Channel16Picture.allocate(24, 16,
+                com.github.auties00.smalt.image.PixelLayout.CMYKA);
+        for (var i = 0; i < cmyk.pixels().length; i++) {
+            cmyk.pixels()[i] = (byte) (i * 7);
+        }
+        for (var i = 0; i < deep.pixels().length; i++) {
+            deep.pixels()[i] = (short) (i * 977);
+        }
+        var options = AvifEncoderOptions.lossless();
+        assertArrayEquals(AvifEncoder.encode(com.github.auties00.smalt.image.ops.ImageOps.toRgba(cmyk), options),
+                AvifEncoder.encode(cmyk, options));
+        assertArrayEquals(AvifEncoder.encode(com.github.auties00.smalt.image.ops.ImageOps.toRgba16(deep), options),
+                AvifEncoder.encode(deep, options));
+    }
 }

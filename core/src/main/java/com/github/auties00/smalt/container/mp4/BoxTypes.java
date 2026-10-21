@@ -597,6 +597,16 @@ final class BoxTypes {
     static final int SBTL = 0x7362746C;
 
     /**
+     * The ISO subtitle handler type ({@code subt}).
+     */
+    static final int SUBT = 0x73756274;
+
+    /**
+     * The subtitle media header box ({@code sthd}).
+     */
+    static final int STHD = 0x73746864;
+
+    /**
      * The video media header box ({@code vmhd}).
      */
     static final int VMHD = 0x766D6864;

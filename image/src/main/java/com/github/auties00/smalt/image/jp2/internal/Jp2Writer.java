@@ -102,9 +102,11 @@ public final class Jp2Writer {
      * @param colorSpace the enumerated color space, used when {@code icc} is {@code null}
      * @param icc the ICC profile to embed, or {@code null}
      * @param alpha the index of the opacity channel, or {@code -1}
+     * @param premultiplied whether the opacity channel is premultiplied opacity
      * @return the JP2 file
      */
-    public static byte[] jp2(byte[] codestream, EncoderConfig config, int colorSpace, byte[] icc, int alpha) {
+    public static byte[] jp2(byte[] codestream, EncoderConfig config, int colorSpace, byte[] icc, int alpha,
+                             boolean premultiplied) {
         var out = new ByteWriter(codestream.length + 256);
         out.bytes(Jp2Boxes.SIGNATURE);
         out.begin(FourCc.of("ftyp"));
@@ -154,7 +156,7 @@ public final class Jp2Writer {
             for (var c = 0; c < components; c++) {
                 out.u16be(c);
                 if (c == alpha) {
-                    out.u16be(1);
+                    out.u16be(premultiplied ? 2 : 1);
                     out.u16be(0);
                 } else {
                     out.u16be(0);

@@ -16,13 +16,14 @@ import java.util.function.Consumer;
  * Decodes uncompressed PCM packets into planar float samples.
  *
  * <p>Every {@code PCM_*} {@link Codec} is supported: unsigned and signed 8-bit, signed 16, 24
- * (three packed bytes) and 32-bit integers, 32 and 64-bit IEEE floats, each in the byte order the
- * codec names, and ITU-T G.711 A-law and mu-law. A packet holds whole interleaved frames of
+ * (three packed bytes), 32 and 64-bit integers, 32 and 64-bit IEEE floats, each in the byte order
+ * the codec names, and ITU-T G.711 A-law and mu-law. A packet holds whole interleaved frames of
  * {@code channels * bytesPerSample} bytes; trailing bytes that do not complete a frame are
  * ignored.
  *
  * <p>Integers of {@code n} bits are scaled by {@code 2^-(n-1)}, so the most negative value maps
- * to exactly {@code -1.0}; unsigned 8-bit samples are first offset by 128. G.711 codes are
+ * to exactly {@code -1.0}; unsigned 8-bit samples are first offset by 128, and 64-bit samples are
+ * rounded to the nearest float before they are scaled. G.711 codes are
  * expanded to the 16-bit linear values of the standard and scaled like 16-bit samples. Finite
  * float samples pass through unchanged; NaN decodes to zero and infinities to {@code +-1}, so a
  * hostile file cannot poison later processing.
@@ -52,6 +53,11 @@ public final class PcmDecoder implements AudioDecoder {
      * The scale applied to 32-bit integers.
      */
     private static final float SCALE_32 = 0x1p-31f;
+
+    /**
+     * The scale applied to 64-bit integers.
+     */
+    private static final float SCALE_64 = 0x1p-63f;
 
     /**
      * The float value of every A-law code, from the G.711 expansion.
@@ -229,6 +235,16 @@ public final class PcmDecoder implements AudioDecoder {
             case PCM_S32BE -> {
                 for (var i = 0; i < frames; i++, position += stride) {
                     target[i] = ByteArrays.i32be(data, position) * SCALE_32;
+                }
+            }
+            case PCM_S64LE -> {
+                for (var i = 0; i < frames; i++, position += stride) {
+                    target[i] = ByteArrays.i64le(data, position) * SCALE_64;
+                }
+            }
+            case PCM_S64BE -> {
+                for (var i = 0; i < frames; i++, position += stride) {
+                    target[i] = ByteArrays.i64be(data, position) * SCALE_64;
                 }
             }
             case PCM_F32LE -> {

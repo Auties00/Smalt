@@ -246,19 +246,20 @@ class ColorConversionTest {
         }
 
         @Test
-        @DisplayName("unspecified matrices convert as BT.601 and unsupported ones are rejected")
-        void unsupported() {
-            var picture = pixel(10, 200, 30);
+        @DisplayName("unspecified matrices convert as BT.601 and every other matrix converts")
+        void everyMatrix() {
+            var picture = pixel(90, 160, 120);
             var bt601 = ImageOps.toYuv(picture, ChromaFormat.YUV444, color(MatrixCoefficients.BT601, ColorRange.LIMITED));
             var unspecified = ImageOps.toYuv(picture, ChromaFormat.YUV444, color(MatrixCoefficients.UNSPECIFIED, ColorRange.LIMITED));
             assertArrayEquals(Pictures.raw(bt601), Pictures.raw(unspecified));
-            for (var matrix : List.of(MatrixCoefficients.BT2020_CL, MatrixCoefficients.ICTCP, MatrixCoefficients.SMPTE2085,
-                    MatrixCoefficients.CHROMA_DERIVED_CL, MatrixCoefficients.CHROMA_DERIVED_NCL)) {
-                var exception = assertThrows(MediaException.Unsupported.class,
-                        () -> ImageOps.toYuv(picture, ChromaFormat.YUV420, color(matrix, ColorRange.FULL)));
-                assertTrue(exception.format().startsWith("matrix"));
-                var yuv = YuvPicture.allocate(2, 2, ChromaFormat.YUV420, false, color(matrix, ColorRange.FULL));
-                assertThrows(MediaException.Unsupported.class, () -> ImageOps.toRgba(yuv));
+            for (var matrix : MatrixCoefficients.values()) {
+                var yuv = ImageOps.toYuv(picture, ChromaFormat.YUV420, color(matrix, ColorRange.FULL));
+                assertEquals(matrix, yuv.color().matrix());
+                var back = ImageOps.toRgba(yuv);
+                assertEquals(1, back.width());
+                assertEquals(160, back.pixels()[1] & 0xFF, 4, matrix.toString());
+                var empty = YuvPicture.allocate(2, 2, ChromaFormat.YUV420, false, color(matrix, ColorRange.FULL));
+                assertEquals(2, ImageOps.toRgba(empty).width());
             }
         }
     }

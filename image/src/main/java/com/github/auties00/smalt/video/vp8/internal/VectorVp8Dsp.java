@@ -2,6 +2,7 @@
    WebM project authors; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.video.vp8.internal;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
@@ -17,6 +18,8 @@ import java.nio.ByteOrder;
 
 /**
  * Implements {@link Vp8Dsp} with the Vector API; the output equals {@link ScalarVp8Dsp}'s.
+ *
+ * <p>The methods written for 256-bit vectors run the scalar kernels unless {@link Simd#WIDE} holds.
  *
  * @implNote This implementation follows the structure of libvpx's SSE2 kernels, whose saturating
  * arithmetic is exact: repeated saturating additions of same-signed terms clamp like one clamped
@@ -381,6 +384,10 @@ public final class VectorVp8Dsp extends Vp8Dsp {
 
     @Override
     public void idctAdd(short[] coef, int coefOff, byte[] dst, int dstOff, int stride) {
+        if (!Simd.WIDE) {
+            SCALAR.idctAdd(coef, coefOff, dst, dstOff, stride);
+            return;
+        }
         var v01 = INTS_8.cast(SHORTS_8.cast(ShortVector.fromArray(S128, coef, coefOff)).convertShape(VectorOperators.S2I, I256, 0));
         var v23 = INTS_8.cast(SHORTS_8.cast(ShortVector.fromArray(S128, coef, coefOff + 8)).convertShape(VectorOperators.S2I, I256, 0));
         var zero = ShortVector.zero(S128).lanewise(VectorOperators.OR, ShortVector.zero(S128));
@@ -476,6 +483,10 @@ public final class VectorVp8Dsp extends Vp8Dsp {
     @Override
     public void sixtap(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
                        int width, int height, int mx, int my, byte[] scratch) {
+        if (!Simd.WIDE) {
+            SCALAR.sixtap(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
+            return;
+        }
         if (width == 4) {
             scalar.sixtap(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
             return;
@@ -713,6 +724,10 @@ public final class VectorVp8Dsp extends Vp8Dsp {
     @Override
     public void bilinear(byte[] src, int srcOff, int srcStride, byte[] dst, int dstOff, int dstStride,
                          int width, int height, int mx, int my, byte[] scratch) {
+        if (!Simd.WIDE) {
+            SCALAR.bilinear(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
+            return;
+        }
         if (width == 4) {
             scalar.bilinear(src, srcOff, srcStride, dst, dstOff, dstStride, width, height, mx, my, scratch);
             return;
@@ -1254,6 +1269,11 @@ public final class VectorVp8Dsp extends Vp8Dsp {
     public void filterNormal(byte[] y, int yOff, int yStride, byte[] u, byte[] v, int uvOff, int uvStride,
                              int mbLimit, int subLimit, int interiorLimit, int hevThreshold, int edges,
                              byte[] scratch) {
+        if (!Simd.WIDE) {
+            SCALAR.filterNormal(y, yOff, yStride, u, v, uvOff, uvStride, mbLimit, subLimit, interiorLimit,
+                    hevThreshold, edges, scratch);
+            return;
+        }
         if ((edges & (EDGE_LEFT | EDGE_INNER)) == EDGE_INNER) {
             scalar.filterNormal(y, yOff, yStride, u, v, uvOff, uvStride, mbLimit, subLimit, interiorLimit, hevThreshold,
                     edges, scratch);

@@ -29,7 +29,10 @@ import java.util.Optional;
  * 64-bit timestamp) and the frame data. FourCC {@code VP80}, {@code VP90} and {@code AV01} map to
  * {@link Codec#VP8}, {@link Codec#VP9} and {@link Codec#AV1}; any other FourCC yields
  * {@link Codec#UNKNOWN_VIDEO}. Packets carry the stored timestamps, in the header's time base, and
- * {@link Packet#UNKNOWN_DURATION} (IVF does not record durations). A packet is flagged as a keyframe
+ * {@link Packet#UNKNOWN_DURATION} (IVF does not record durations). The track's frame rate is the
+ * header's time base inverted, as the reference tools count frames in it; a time base finer than a
+ * millisecond is a clock rate instead, and the frame rate is then that rate divided by the step between
+ * the first two frame timestamps. A packet is flagged as a keyframe
  * when its data starts a VP8 or VP9 key frame or, for AV1, carries a sequence header OBU. A truncated
  * last frame ends the stream.
  *
@@ -160,7 +163,11 @@ public final class IvfDemuxer implements Demuxer {
                 codec = Codec.UNKNOWN_VIDEO;
             }
             var timeBase = rate > 0 && scale > 0 ? new Rational(scale, rate) : new Rational(1, 1000);
-            Optional<Rational> frameRate = rate > 0 && scale > 0 ? Optional.of(new Rational(rate, scale))
+            var firstFrame = reader.position();
+            var step = rate > 1000L * scale ? firstStep() : 1;
+            reader.seek(firstFrame);
+            Optional<Rational> frameRate = rate > 0 && scale > 0
+                    ? Optional.of(new Rational(rate, (long) scale * step))
                     : Optional.empty();
             this.track = VideoTrack.builder().codec(codec).timeBase(timeBase).width(width).height(height)
                     .frameRate(frameRate.orElse(null))
@@ -169,13 +176,36 @@ public final class IvfDemuxer implements Demuxer {
             if (frames < 0) {
                 throw new MediaException.Malformed("invalid IVF frame count");
             }
-            this.firstFrame = reader.position();
+            this.firstFrame = firstFrame;
             this.declaredFrames = frames;
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("invalid IVF file", exception);
         }
+    }
+
+    /**
+     * Reads the timestamps of the first two frame headers from the reader's position and returns
+     * their difference.
+     *
+     * @return the step, in time base units, or 1 when the file has fewer than two frames or their
+     * timestamps do not increase
+     */
+    private long firstStep() {
+        if (reader.remaining(FRAME_HEADER_SIZE) < FRAME_HEADER_SIZE) {
+            return 1;
+        }
+        var size = reader.u32le();
+        var first = reader.u64le();
+        if (reader.remaining(size + FRAME_HEADER_SIZE) < size + FRAME_HEADER_SIZE) {
+            return 1;
+        }
+        reader.skip(size);
+        reader.u32le();
+        var second = reader.u64le();
+        var step = second - first;
+        return step > 0 && step <= Integer.MAX_VALUE ? step : 1;
     }
 
     /**

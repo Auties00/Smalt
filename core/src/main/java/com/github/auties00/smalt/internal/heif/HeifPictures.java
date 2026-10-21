@@ -5,11 +5,13 @@ import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.ResizeFilter;
 
 import java.util.Optional;
 
@@ -178,20 +180,121 @@ public final class HeifPictures {
     }
 
     /**
-     * Converts a picture whose color is premultiplied by its alpha into straight-alpha RGBA.
-     *
-     * <p>The planes are converted to 8-bit RGBA as they are, and each color component is then
-     * divided by its alpha, {@code min(255, round(c * 255 / a))}, with fully transparent pixels
-     * becoming black.
-     *
-     * @param picture the picture with premultiplied color and an alpha plane
-     * @return the straight-alpha picture
-     * @implNote This implementation divides as libavif's {@code avifRGBImageUnpremultiplyAlpha}
-     * ({@code src/alpha.c}, BSD 2-clause) does for 8-bit RGBA, in integers.
+     * The filter that resamples an alpha plane whose size differs from the color: its weights are
+     * never negative, so the resampled alpha neither rings nor leaves the range of its source.
      */
-    public static RgbaPicture unpremultiply(Picture picture) {
-        // TODO: keep premultiplied high-bit-depth images at their depth instead of reducing them to 8 bits
-        var rgba = ImageOps.toRgba(picture);
+    public static final ResizeFilter ALPHA_FILTER = ResizeFilter.BILINEAR;
+
+    /**
+     * Resamples the luma plane of a planar alpha picture to the size of its color image, since an
+     * auxiliary image may differ in size from its master image.
+     *
+     * <p>The luma plane is filtered with {@link #ALPHA_FILTER} by
+     * {@link ImageOps#resize(Picture, int, int, ResizeFilter)}, at its depth and in its range; the
+     * result is a monochrome picture of the same type, depth and color description. A picture
+     * that already has the size is returned as it is.
+     *
+     * @param alpha the alpha picture, a {@link YuvPicture} or a {@link Yuv16Picture}
+     * @param width the color width, positive
+     * @param height the color height, positive
+     * @return the resampled picture, whose luma is the alpha plane
+     * @throws MediaException.Malformed if the picture is not planar
+     */
+    public static Picture resampleAlpha(Picture alpha, int width, int height) {
+        if (alpha.width() == width && alpha.height() == height) {
+            return alpha;
+        }
+        var luma = switch (alpha) {
+            case YuvPicture yuv -> YuvPicture.builder().size(yuv.width(), yuv.height())
+                    .chromaFormat(ChromaFormat.MONOCHROME).color(yuv.color()).luma(yuv.y(), yuv.yStride()).build();
+            case Yuv16Picture yuv -> Yuv16Picture.builder().size(yuv.width(), yuv.height())
+                    .chromaFormat(ChromaFormat.MONOCHROME).bitDepth(yuv.bitDepth()).color(yuv.color())
+                    .luma(yuv.y(), yuv.yStride()).build();
+            default -> throw new MediaException.Malformed("heif: the alpha image is not a planar picture");
+        };
+        return ImageOps.resize(luma, width, height, ALPHA_FILTER);
+    }
+
+    /**
+     * Copies the visible luma samples of a decoded plane into a monochrome picture, the form
+     * {@link #resampleAlpha} takes.
+     *
+     * @param plane the samples
+     * @param offset the index of the first visible sample
+     * @param stride the row stride, in samples
+     * @param width the visible width
+     * @param height the visible height
+     * @param depth the bit depth of the samples, from 8 to 16
+     * @return a {@link YuvPicture} for 8-bit samples, a {@link Yuv16Picture} otherwise; its color
+     * description is {@link ColorInfo#JPEG}, so the caller passes the range of the samples
+     * separately
+     */
+    public static Picture lumaPicture(short[] plane, int offset, int stride, int width, int height, int depth) {
+        if (depth == 8) {
+            var luma = new byte[width * height];
+            for (var row = 0; row < height; row++) {
+                var in = offset + row * stride;
+                for (var col = 0; col < width; col++) {
+                    luma[row * width + col] = (byte) plane[in + col];
+                }
+            }
+            return YuvPicture.builder().size(width, height).chromaFormat(ChromaFormat.MONOCHROME).color(ColorInfo.JPEG)
+                    .luma(luma, width).build();
+        }
+        var luma = new short[width * height];
+        copyRows(plane, offset, stride, luma, width, width, height);
+        return Yuv16Picture.builder().size(width, height).chromaFormat(ChromaFormat.MONOCHROME).bitDepth(depth)
+                .color(ColorInfo.JPEG).luma(luma, width).build();
+    }
+
+    /**
+     * Copies the visible luma samples of an 8-bit decoded plane into a monochrome picture.
+     *
+     * @param plane the samples
+     * @param offset the index of the first visible sample
+     * @param stride the row stride, in samples
+     * @param width the visible width
+     * @param height the visible height
+     * @return the {@link YuvPicture}, with the color description {@link ColorInfo#JPEG}
+     */
+    public static YuvPicture lumaPicture(byte[] plane, int offset, int stride, int width, int height) {
+        var luma = new byte[width * height];
+        copyRows(plane, offset, stride, luma, width, width, height);
+        return YuvPicture.builder().size(width, height).chromaFormat(ChromaFormat.MONOCHROME).color(ColorInfo.JPEG)
+                .luma(luma, width).build();
+    }
+
+    /**
+     * Converts a picture whose color is premultiplied by its alpha into straight-alpha RGBA at its
+     * depth.
+     *
+     * <p>An 8-bit picture is converted to 8-bit RGBA as it is, and each color component is then
+     * divided by its alpha, {@code min(255, round(c * 255 / a))}. A 16-bit picture is converted to
+     * 16-bit RGBA at full precision with {@link ImageOps#toRgba16(Picture)} and divided the same way,
+     * {@code min(65535, round(c * 65535 / a))}. Fully transparent pixels become black; rounding is
+     * half up. A packed input is divided in place.
+     *
+     * @implNote This implementation divides as libavif's {@code avifRGBImageUnpremultiplyAlpha}
+     * ({@code src/alpha.c}, BSD 2-clause) does for 8-bit RGBA, in integers, and with the same exact
+     * integer rounding at 16 bits.
+     * @param picture the picture with premultiplied color and an alpha plane
+     * @return the straight-alpha picture: an {@link RgbaPicture} for an 8-bit picture, an
+     * {@link Rgba16Picture} for a 16-bit one
+     */
+    public static Picture unpremultiply(Picture picture) {
+        return switch (picture) {
+            case Yuv16Picture _, Rgba16Picture _ -> unpremultiply(ImageOps.toRgba16(picture));
+            default -> unpremultiply(ImageOps.toRgba(picture));
+        };
+    }
+
+    /**
+     * Divides the colors of an 8-bit packed picture by their alpha, in place.
+     *
+     * @param rgba the picture with premultiplied color
+     * @return {@code rgba}
+     */
+    private static RgbaPicture unpremultiply(RgbaPicture rgba) {
         var pixels = rgba.pixels();
         for (var row = 0; row < rgba.height(); row++) {
             var offset = row * rgba.stride();
@@ -203,6 +306,31 @@ public final class HeifPictures {
                 for (var c = 0; c < 3; c++) {
                     var value = alpha == 0 ? 0 : Math.min(255, ((pixels[offset + c] & 0xFF) * 510 + alpha) / (2 * alpha));
                     pixels[offset + c] = (byte) value;
+                }
+            }
+        }
+        return rgba;
+    }
+
+    /**
+     * Divides the colors of a 16-bit packed picture by their alpha, in place.
+     *
+     * @param rgba the picture with premultiplied color
+     * @return {@code rgba}
+     */
+    private static Rgba16Picture unpremultiply(Rgba16Picture rgba) {
+        var pixels = rgba.pixels();
+        for (var row = 0; row < rgba.height(); row++) {
+            var offset = row * rgba.stride();
+            for (var col = 0; col < rgba.width(); col++, offset += 4) {
+                long alpha = pixels[offset + 3] & 0xFFFF;
+                if (alpha == 0xFFFF) {
+                    continue;
+                }
+                for (var c = 0; c < 3; c++) {
+                    var value = alpha == 0 ? 0
+                            : Math.min(0xFFFF, ((pixels[offset + c] & 0xFFFF) * 0x1FFFEL + alpha) / (2 * alpha));
+                    pixels[offset + c] = (short) value;
                 }
             }
         }

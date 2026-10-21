@@ -1,11 +1,13 @@
 package com.github.auties00.smalt.audio.aac.internal;
 
+import java.util.Arrays;
+
 /**
  * Computes the AAC transform windows: the sine window and the Kaiser-Bessel-derived (KBD)
- * window of ISO/IEC 14496-3 subclause 4.6.11.3.
+ * window of ISO/IEC 14496-3 subclause 4.6.11.3, and the low overlap window of AAC-LD.
  *
  * <p>Every window is returned whole, {@code n} samples for a transform of {@code n / 2} lines;
- * both windows are symmetric and satisfy the Princen-Bradley condition
+ * the windows are symmetric and satisfy the Princen-Bradley condition
  * {@code w[i]^2 + w[i + n/2]^2 = 1}.
  */
 public final class Windows {
@@ -75,6 +77,27 @@ public final class Windows {
             window[i] = value;
             window[n - 1 - i] = value;
         }
+        return window;
+    }
+
+    /**
+     * Computes the low overlap window of AAC-LD (window shape 1 of the low delay object types): zero over
+     * the first {@code 3n/16} samples, a sine slope over the next {@code n/8}, and one up to the middle,
+     * mirrored in the second half.
+     *
+     * @param n the window length, twice the frame length
+     * @return the window
+     */
+    public static float[] lowOverlap(int n) {
+        var window = new float[n];
+        var zeros = 3 * n / 16;
+        var slope = n / 8;
+        for (var i = 0; i < slope; i++) {
+            var value = (float) Math.sin(Math.PI * (i + 0.5) / (2 * slope));
+            window[zeros + i] = value;
+            window[n - 1 - zeros - i] = value;
+        }
+        Arrays.fill(window, zeros + slope, n - zeros - slope, 1);
         return window;
     }
 

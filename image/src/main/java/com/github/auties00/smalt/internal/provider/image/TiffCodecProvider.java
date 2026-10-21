@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.PageReader;
+import com.github.auties00.smalt.image.PageWriter;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.tiff.TiffDecoder;
 import com.github.auties00.smalt.image.tiff.TiffEncoder;
@@ -22,7 +23,7 @@ import java.util.Optional;
  *
  * <p>Every TIFF opens as pages; an encoded picture is written with
  * {@link TiffEncoderOptions#defaults()} (LZW with the horizontal predictor), the quality being
- * irrelevant to a lossless format.
+ * irrelevant to a lossless format, and the pages of a page writer likewise, one directory each.
  */
 public final class TiffCodecProvider implements ImageCodecProvider {
     /**
@@ -59,5 +60,15 @@ public final class TiffCodecProvider implements ImageCodecProvider {
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
         TiffEncoder.encode(picture, TiffEncoderOptions.defaults(), sink);
+    }
+
+    @Override
+    public boolean encodesPages(ImageFormat format) {
+        return format == ImageFormat.TIFF;
+    }
+
+    @Override
+    public PageWriter openPageWriter(ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        return new TiffPageWriter(sink);
     }
 }

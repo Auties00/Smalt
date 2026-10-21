@@ -1,0 +1,37 @@
+# audio decode dump of ac3/eac3.eac3; regenerate with -Dsmalt.test.updateDumps=true
+format AC3
+duration 2020136
+seekable true
+track 0 EAC3 rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=96518935
+1 frames=4096 crc16=7c84abae
+2 frames=4096 crc16=b4e41f22
+3 frames=4096 crc16=58c62fa0
+4 frames=4096 crc16=de648504
+5 frames=4096 crc16=98a8b210
+6 frames=4096 crc16=9d00874d
+7 frames=4096 crc16=93c8cd29
+8 frames=4096 crc16=aa4526b5
+9 frames=4096 crc16=92608a17
+10 frames=4096 crc16=8324d13e
+11 frames=4096 crc16=7421734c
+12 frames=4096 crc16=f164a010
+13 frames=4096 crc16=133ae048
+14 frames=4096 crc16=12f1fb6d
+15 frames=4096 crc16=f47282d9
+16 frames=4096 crc16=dd69669f
+17 frames=4096 crc16=4553402b
+18 frames=4096 crc16=f7e22886
+19 frames=4096 crc16=fbb7279e
+20 frames=4096 crc16=c2e2c29d
+21 frames=3072 crc16=de4da09a
+seek 0: @sample 0
+seek 673378: @sample 29696
+seek 1346757: @sample 59392
+seek 2020136: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AC3
+  duration -1
+  seekable false
+  track 0 EAC3 rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

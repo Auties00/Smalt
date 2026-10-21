@@ -13,7 +13,7 @@ package com.github.auties00.smalt.image.color;
  * <p>Implementations are immutable and thread-safe; each call allocates its own scratch space.
  */
 sealed interface ColorEngine permits IdentityEngine, CurvesEngine, MatShaperEngine, PrelinEngine, ClutEngine,
-        FloatShaperEngine, HdrEngine {
+        FloatShaperEngine, HdrEngine, HdrTargetEngine {
     /**
      * Transforms 8-bit pixels.
      *

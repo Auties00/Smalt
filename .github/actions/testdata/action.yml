@@ -1,0 +1,97 @@
+# Fills the test data caches of tools/testdata: the smoke tier of vectors.tsv and the clips of clips.tsv, each from
+# the Actions cache when present, downloaded or derived otherwise. An entry is saved only when every item of it was
+# fetched (and every clip matched its checksum), so that a host that is down does not leave an incomplete entry
+# behind; the tests then skip what is missing, and the skip baseline fails the job. A clip that does not match its
+# checksum fails the step. Every runner restores the same entry of each, written by Linux or macOS, which carries
+# the clips derived on Linux x64 to the arm64 and Windows runners. The cache stores paths relative to the workspace:
+# ~ lies three levels above it on Linux and macOS, while on Windows those three levels lead to the root of the
+# workspace's drive, so Windows moves what it restores from there into ~ and never saves an entry. The full tier is
+# the nightly's (nightly.yml), which caches part of it.
+name: Test data
+description: Restores or fetches the smoke vectors and the clips
+inputs:
+  vectors:
+    description: Restore or fetch the smoke vectors (the nightly restores its own entry of the full tier instead)
+    default: 'true'
+  clips:
+    description: Also restore or derive the clips (they need ffmpeg on PATH, so run the oracle action first)
+    default: 'true'
+runs:
+  using: composite
+  steps:
+    # The smoke entry is keyed by the smoke rows alone, so that a vector added to the full tier keeps it.
+    - name: Key the test data
+      id: key
+      shell: bash
+      run: |
+        echo "smoke=$(grep '^smoke' tools/testdata/vectors.tsv | tr -d '\r' | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
+        echo "clips=$(tr -d '\r' < tools/testdata/clips.tsv | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the smoke vectors
+      id: smoke
+      if: inputs.vectors == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.smalt/cache/conformance
+        key: testdata-smoke-${{ steps.key.outputs.smoke }}
+        # an older entry supplies every vector that did not change; the fetch below checks each one
+        restore-keys: testdata-smoke-
+        enableCrossOsArchive: true
+
+    - name: Restore the clips
+      id: clips
+      if: inputs.clips == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.smalt/cache/clips
+        key: testdata-clips-${{ steps.key.outputs.clips }}
+        enableCrossOsArchive: true
+
+    - name: Move the restored entries into the home directory (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        restored="$(cd "$GITHUB_WORKSPACE/../../.." && pwd)/.smalt/cache"
+        mkdir -p ~/.smalt/cache
+        for directory in conformance clips; do
+          if [ -d "$restored/$directory" ]; then
+            rm -rf ~/.smalt/cache/"$directory"
+            mv "$restored/$directory" ~/.smalt/cache/"$directory"
+            echo "$directory: $(ls ~/.smalt/cache/"$directory" | wc -l) files"
+          fi
+        done
+
+    - name: Fetch the smoke vectors
+      id: fetch
+      if: inputs.vectors == 'true' && steps.smoke.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if python tools/testdata/testdata.py fetch --tier smoke --no-clips --strict; then
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::some smoke vectors could not be fetched; their tests skip and the entry is not saved"
+        fi
+
+    - name: Save the smoke vectors
+      if: runner.os != 'Windows' && steps.fetch.outputs.complete == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/cache/conformance
+        key: testdata-smoke-${{ steps.key.outputs.smoke }}
+        enableCrossOsArchive: true
+
+    - name: Derive the clips
+      id: derive
+      if: inputs.clips == 'true' && steps.clips.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python tools/testdata/testdata.py fetch --tier full --clips-only --strict
+        echo "complete=true" >> "$GITHUB_OUTPUT"
+
+    - name: Save the clips
+      if: runner.os != 'Windows' && steps.derive.outputs.complete == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/cache/clips
+        key: testdata-clips-${{ steps.key.outputs.clips }}
+        enableCrossOsArchive: true

@@ -114,7 +114,8 @@ final class Mpeg4TestStreams {
     static byte[] ffmpeg(Path file, String idct) {
         var arguments = new ArrayList<String>(List.of("-v", "error"));
         if (idct != null) {
-            arguments.addAll(List.of("-idct", idct));
+            // -cpuflags 0: the reference is ffmpeg's C inverse DCT, which its arm64 NEON kernels do not reproduce.
+            arguments.addAll(List.of("-cpuflags", "0", "-idct", idct));
         }
         arguments.addAll(List.of("-i", file.toString(), "-map", "0:v:0", "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"));
         return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), arguments);

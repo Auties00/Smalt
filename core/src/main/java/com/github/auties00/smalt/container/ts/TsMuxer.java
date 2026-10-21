@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -56,6 +57,9 @@ import java.util.PriorityQueue;
  *       metadata ({@code 0x15} with the metadata pointer and metadata descriptors of the HLS
  *       timed metadata convention), any other a private PES stream ({@code 0x06}).</li>
  * </ul>
+ * A packet that changes the codec configuration of an H.264 or HEVC track replaces the parameter
+ * sets key frames get from then on, and one that changes the {@code AudioSpecificConfig} of an AAC
+ * track the ADTS header of the following packets; a change on any other track is rejected.
  * Every track gets the language descriptor of its language. Audio frames are gathered into PES
  * packets of up to 2930 payload bytes and 400 ms (100 ms for the stream that carries the clock
  * reference); video and data packets each make a PES packet of their own.
@@ -552,8 +556,11 @@ public final class TsMuxer implements Muxer {
      * {@inheritDoc}
      *
      * @throws IllegalArgumentException if the packet's track was not declared, it has no timestamp,
-     * or an H.264 or HEVC packet is not made of length-prefixed NAL units
+     * an H.264 or HEVC packet is not made of length-prefixed NAL units, or a new codec
+     * configuration cannot be parsed
      * @throws IllegalStateException if no track was declared or the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a track
+     * that is not H.264, HEVC or AAC
      */
     @Override
     public void writePacket(Packet packet) {
@@ -571,6 +578,20 @@ public final class TsMuxer implements Muxer {
         var time = packet.dts() != Packet.NO_TIMESTAMP ? packet.dts() : packet.pts();
         if (time == Packet.NO_TIMESTAMP) {
             throw new IllegalArgumentException("a transport stream packet needs a timestamp");
+        }
+        var newConfig = ConfigChanges.changed(packet, stream.acceptedConfig);
+        if (newConfig != null) {
+            switch (stream.track.codec()) {
+                case H264, HEVC -> {
+                    if ((stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig)) == null) {
+                        throw new IllegalArgumentException("the new " + stream.track.codec().displayName()
+                                + " configuration of track " + packet.trackId() + " cannot be parsed");
+                    }
+                }
+                case AAC -> configureAac(new Stream(stream.track, stream.pid), newConfig);
+                default -> throw ConfigChanges.unsupported("MPEG-TS", packet.trackId());
+            }
+            stream.acceptedConfig = newConfig;
         }
         started = true;
         if (stream.track.kind() == TrackKind.VIDEO && packet.dts() == Packet.NO_TIMESTAMP) {
@@ -816,6 +837,11 @@ public final class TsMuxer implements Muxer {
      * @return the bytes the PES packet carries for it
      */
     private byte[] audioFrame(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null && stream.track.codec() == Codec.AAC) {
+            configureAac(stream, newConfig);
+            stream.appliedConfig = newConfig;
+        }
         var data = packet.data();
         return switch (stream.track.codec()) {
             case AAC -> {
@@ -885,6 +911,13 @@ public final class TsMuxer implements Muxer {
      * @throws IllegalArgumentException if a NAL unit length overruns the packet
      */
     private static byte[] annexB(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null) {
+            var parsed = stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig);
+            stream.lengthSize = parsed.lengthSize();
+            stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+            stream.appliedConfig = newConfig;
+        }
         return NalUnits.toAnnexB(packet.data(), stream.lengthSize, stream.hevc,
                 packet.keyframe() ? stream.parameterSets : null, stream.hevc ? HEVC_DELIMITER : AVC_DELIMITER);
     }
@@ -1287,6 +1320,17 @@ public final class TsMuxer implements Muxer {
         AdtsHeader adts;
 
         /**
+         * The codec configuration of the last packet accepted by {@code writePacket}, initially
+         * the track's.
+         */
+        byte[] acceptedConfig;
+
+        /**
+         * The codec configuration the packets being converted use, initially the track's.
+         */
+        byte[] appliedConfig;
+
+        /**
          * The {@code channel_config_code} of an Opus track.
          */
         int opusCode;
@@ -1341,6 +1385,8 @@ public final class TsMuxer implements Muxer {
         Stream(Track track, int pid) {
             this.track = track;
             this.pid = pid;
+            this.acceptedConfig = track.codecConfig().orElse(null);
+            this.appliedConfig = acceptedConfig;
         }
     }
 }

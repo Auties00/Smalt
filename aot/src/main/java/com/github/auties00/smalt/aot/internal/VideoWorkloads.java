@@ -5,6 +5,9 @@ import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.ResizeFilter;
+import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -306,21 +309,44 @@ final class VideoWorkloads {
     }
 
     /**
-     * Returns a workload that probes and decodes AVIF images: a lossy picture with alpha, and a
-     * 10-bit 4:4:4 picture at its full depth.
+     * Returns a workload that probes and decodes AVIF images: a lossy picture with alpha, a 10-bit
+     * 4:4:4 picture at its full depth, a 10-bit animation with alpha played as 16-bit frames, and
+     * the triangle-filter resampling of 8-bit and 10-bit alpha planes that alpha images of another
+     * size than their color take.
      *
      * @return the workload
      */
     private static TrainingWorkload avifDecode() {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), true);
         var lossy = AvifEncoder.encode(picture, AvifEncoderOptions.lossy(60));
-        var deep = AvifEncoder.encode(picture, AvifEncoderOptions.lossy(70).toBuilder()
-                .chromaFormat(ChromaFormat.YUV444).bitDepth(10).speed(8).build());
+        var deepOptions = AvifEncoderOptions.lossy(70).toBuilder().chromaFormat(ChromaFormat.YUV444).bitDepth(10).speed(8)
+                .build();
+        var deep = AvifEncoder.encode(picture, deepOptions);
+        var frames = SyntheticVideo.natural(128, 96, 3);
+        var animation = new java.io.ByteArrayOutputStream();
+        try (var writer = AvifEncoder.openAnimationWriter(128, 96, deepOptions, MediaSink.of(animation))) {
+            for (var frame : frames) {
+                writer.write(SyntheticImages.rgba(frame, true), 40_000);
+            }
+            writer.finish();
+        }
+        var animated = animation.toByteArray();
+        var luma = SyntheticVideo.natural(96, 64, 1).getFirst();
+        var alpha8 = YuvPicture.builder().size(luma.width(), luma.height()).chromaFormat(ChromaFormat.MONOCHROME)
+                .color(luma.color()).luma(luma.y(), luma.yStride()).build();
+        var alpha10 = ImageOps.toBitDepth(alpha8, 10);
         var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
         return TrainingWorkload.of("avif-decode", () -> {
             Blackhole.consume(AvifDecoder.probe(MediaSource.of(lossy)).hashCode());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(lossy), ImageDecoderOptions.defaults()).picture().width());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(deep), highBitDepth).picture().width());
+            try (var reader = AvifDecoder.openAnimation(MediaSource.of(animated), highBitDepth)) {
+                for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                    Blackhole.consume(frame.picture().width());
+                }
+            }
+            Blackhole.consume(ImageOps.resize(alpha8, 192, 128, ResizeFilter.BILINEAR).width());
+            Blackhole.consume(ImageOps.resize(alpha10, 48, 32, ResizeFilter.BILINEAR).width());
         });
     }
 

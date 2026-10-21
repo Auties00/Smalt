@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.voice.internal.aec3;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -10,7 +11,6 @@ import java.util.SplittableRandom;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Equivalence of the AEC3 kernels: both widths of the Vector API matched filter against its
@@ -36,7 +36,7 @@ class Aec3KernelsTest {
         @ValueSource(booleans = {true, false})
         @DisplayName("the vector kernels equal the scalar twin bit for bit in both modes")
         void vectorEqualsTwin(boolean wide) {
-            assumeTrue(Simd.ENABLED, "Vector API not enabled");
+            Skip.unlessVector(Simd.ENABLED);
             var vector = VectorAec3Kernels.matchedFilter(wide);
             var twin = new LaneMatchedFilterKernel();
             var random = new SplittableRandom(wide ? 7 : 11);
@@ -100,7 +100,7 @@ class Aec3KernelsTest {
         @ValueSource(booleans = {true, false})
         @DisplayName("the vector kernels equal the scalar reference bit for bit")
         void vectorEqualsScalar(boolean wide) {
-            assumeTrue(Simd.ENABLED, "Vector API not enabled");
+            Skip.unlessVector(Simd.ENABLED);
             var vector = VectorAec3Kernels.adaptiveFilter(wide);
             var scalar = new ScalarAdaptiveFilterKernel();
             var random = new SplittableRandom(wide ? 13 : 17);

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.h264.encoder;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -26,7 +27,6 @@ import java.util.function.IntFunction;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Pins the H.264 encoder's bitstream: each configuration encodes a fixed input and the SHA-256 of
@@ -163,7 +163,7 @@ class H264EncoderGoldenTest {
         var root = Path.of(System.getProperty("smalt.test.clips",
                 Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()));
         var file = root.resolve(clip);
-        assumeTrue(Files.isRegularFile(file), "clip " + clip + " is not cached");
+        Skip.unless(Files.isRegularFile(file), "data:clip", "clip " + clip + " is not cached");
         var luma = width * height;
         var frameSize = luma * 3 / 2;
         var pictures = new ArrayList<YuvPicture>(frames);
@@ -180,7 +180,7 @@ class H264EncoderGoldenTest {
                         .build());
             }
         }
-        assumeTrue(pictures.size() == frames, "clip " + clip + " is shorter than " + frames + " frames");
+        Skip.unless(pictures.size() == frames, "data:clip", "clip " + clip + " is shorter than " + frames + " frames");
         return pictures;
     }
 }

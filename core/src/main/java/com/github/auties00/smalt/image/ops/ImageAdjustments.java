@@ -61,7 +61,6 @@ public final class ImageAdjustments {
      * @param factor the factor: {@code 0} gives black, {@code 1} the original; from {@code 0} to {@code 100}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code factor} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture brightness(Picture picture, double factor) {
@@ -85,7 +84,6 @@ public final class ImageAdjustments {
      * @param factor the factor: {@code 0} gives a uniform gray, {@code 1} the original; from {@code 0} to {@code 100}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code factor} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture contrast(Picture picture, double factor) {
@@ -117,7 +115,6 @@ public final class ImageAdjustments {
      * @param factor the factor: {@code 0} gives grayscale, {@code 1} the original; from {@code 0} to {@code 100}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code factor} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture saturation(Picture picture, double factor) {
@@ -144,7 +141,6 @@ public final class ImageAdjustments {
      * @param gamma the gamma: above 1 brightens the mid-tones, below 1 darkens them; positive and finite
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code gamma} is not positive and finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture gamma(Picture picture, double gamma) {
@@ -167,7 +163,6 @@ public final class ImageAdjustments {
      * @param outWhite the output level of white, {@code 0..255}; may be below {@code outBlack}, which inverts
      * @return the adjusted picture
      * @throws IllegalArgumentException if a level is out of range or the gamma is invalid
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture levels(Picture picture, int inBlack, int inWhite, double gamma, int outBlack, int outWhite) {
@@ -195,7 +190,6 @@ public final class ImageAdjustments {
      * @param picture the picture to adjust
      * @param curve the curve applied to red, green and blue
      * @return the adjusted picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture curves(Picture picture, ToneCurve curve) {
@@ -212,7 +206,6 @@ public final class ImageAdjustments {
      * @param green the curve of the green channel
      * @param blue the curve of the blue channel
      * @return the adjusted picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture curves(Picture picture, ToneCurve red, ToneCurve green, ToneCurve blue) {
@@ -244,7 +237,6 @@ public final class ImageAdjustments {
      * @param cutoff the percentage of samples to ignore at each end, {@code 0} to {@code 50}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code cutoff} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture autoLevels(Picture picture, double cutoff) {
@@ -270,7 +262,6 @@ public final class ImageAdjustments {
      * @param cutoff the percentage of pixels to ignore at each end, {@code 0} to {@code 50}
      * @return the adjusted picture
      * @throws IllegalArgumentException if {@code cutoff} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture autoContrast(Picture picture, double cutoff) {
@@ -289,7 +280,6 @@ public final class ImageAdjustments {
      * @param picture the picture to convert
      * @param mode the weighting of the color channels
      * @return the gray picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture grayscale(Picture picture, GrayscaleMode mode) {
@@ -329,7 +319,6 @@ public final class ImageAdjustments {
      *
      * @param picture the picture to tone
      * @return the toned picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture sepia(Picture picture) {
@@ -349,7 +338,6 @@ public final class ImageAdjustments {
      * @param rgbBlack the color of black as {@code 0xRRGGBB}; the top byte is ignored
      * @param rgbWhite the color of white as {@code 0xRRGGBB}; the top byte is ignored
      * @return the colorized picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture colorize(Picture picture, int rgbBlack, int rgbWhite) {
@@ -391,7 +379,6 @@ public final class ImageAdjustments {
      * @param amount the strength, from {@code 0} to {@code 1}
      * @return the tinted picture
      * @throws IllegalArgumentException if {@code amount} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture tint(Picture picture, int rgbTint, double amount) {
@@ -407,7 +394,6 @@ public final class ImageAdjustments {
      *
      * @param picture the picture to invert
      * @return the inverted picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture invert(Picture picture) {
@@ -432,7 +418,6 @@ public final class ImageAdjustments {
      * pixel black); scaled by 257 for 16-bit pictures
      * @return the black and white picture
      * @throws IllegalArgumentException if {@code level} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture threshold(Picture picture, int level) {

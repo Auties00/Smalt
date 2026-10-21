@@ -139,6 +139,13 @@ public final class JpegFrame {
     }
 
     /**
+     * {@return the sample precision in bits}
+     */
+    public int precision() {
+        return precision;
+    }
+
+    /**
      * Returns the width.
      *
      * @return the width in pixels

@@ -33,6 +33,9 @@ import com.github.auties00.smalt.video.av1.Av1EncoderSpeed;
  *                 bits than the real-time engine for the same PSNR and SSIM, at about nine times
  *                 its encoding time, and the slower good-quality speeds save a further 1 to 2% for
  *                 a third more time;</li>
+ *             <li>a key frame interval: {@link Av1EncoderOptions.Builder#keyframeInterval(int)}, and
+ *                 no periodic key frames: {@link Av1EncoderOptions.Builder#noPeriodicKeyframes()},
+ *                 in place of the preset's;</li>
  *             <li>a thread count above one: {@link Av1EncoderOptions#threads()}, which caps it
  *                 at 64; {@code 0} and {@code 1} keep the single thread of the presets.</li>
  *           </ul>
@@ -69,6 +72,11 @@ public final class Av1CodecProvider implements VideoCodecProvider {
                 : Av1EncoderOptions.ofBitrate(options.bitrate()).toBuilder().speed(Av1EncoderSpeed.FAST))
                 .frameRate(options.frameRate())
                 .bitrate(options.bitrate());
+        if (!options.periodicKeyframes()) {
+            builder.noPeriodicKeyframes();
+        } else {
+            options.keyframeInterval().ifPresent(builder::keyframeInterval);
+        }
         if (options.threads() > 1) {
             builder.threads(options.threads());
         }

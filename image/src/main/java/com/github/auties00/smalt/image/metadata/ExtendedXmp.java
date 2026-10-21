@@ -2,8 +2,8 @@ package com.github.auties00.smalt.image.metadata;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.jpeg.internal.JpegXmp;
 import com.github.auties00.smalt.internal.io.ByteArrays;
-import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.metadata.XmpPacket;
 import com.github.auties00.smalt.metadata.XmpProperty;
 
@@ -68,74 +68,7 @@ final class ExtendedXmp {
      * @return the merged packet, or {@code null}
      */
     static XmpPacket merge(byte[] main, List<byte[]> chunks, MediaLimits limits) {
-        XmpPacket packet;
-        try {
-            packet = XmpPacket.parse(main);
-        } catch (MediaException exception) {
-            return null;
-        }
-        var guid = packet.text(XmpPacket.XMP_NOTE, HAS_EXTENDED).orElse(null);
-        if (guid == null || chunks.isEmpty()) {
-            return packet;
-        }
-        byte[] extended = null;
-        var ranges = new ArrayList<long[]>();
-        for (var chunk : chunks) {
-            var at = JpegFile.EXTENDED_XMP_ID.length;
-            if (chunk.length < at + CHUNK_HEADER) {
-                continue;
-            }
-            var id = new String(chunk, at, 32, StandardCharsets.ISO_8859_1);
-            if (!id.equalsIgnoreCase(guid)) {
-                continue;
-            }
-            var total = ByteArrays.u32be(chunk, at + 32);
-            var offset = ByteArrays.u32be(chunk, at + 36);
-            var length = chunk.length - at - CHUNK_HEADER;
-            if (extended == null) {
-                LimitChecks.checkAllocation(limits, total);
-                extended = new byte[(int) total];
-            }
-            if (total != extended.length || offset + length > extended.length) {
-                continue;
-            }
-            System.arraycopy(chunk, at + CHUNK_HEADER, extended, (int) offset, length);
-            ranges.add(new long[]{offset, offset + length});
-        }
-        if (extended == null || !covers(ranges, extended.length)) {
-            return packet;
-        }
-        try {
-            var properties = XmpPacket.parse(extended);
-            var merged = packet.without(XmpPacket.XMP_NOTE, HAS_EXTENDED);
-            for (var property : properties.properties()) {
-                if (merged.get(property.namespace(), property.name()).isEmpty()) {
-                    merged = merged.with(property.namespace(), property.name(), property.value());
-                }
-            }
-            return merged;
-        } catch (MediaException exception) {
-            return packet;
-        }
-    }
-
-    /**
-     * Returns whether byte ranges together cover a whole array.
-     *
-     * @param ranges the half-open ranges, as start and end; sorted in place
-     * @param length the array length
-     * @return whether every index below {@code length} lies in a range
-     */
-    private static boolean covers(List<long[]> ranges, long length) {
-        ranges.sort(Comparator.comparingLong(range -> range[0]));
-        var reach = 0L;
-        for (var range : ranges) {
-            if (range[0] > reach) {
-                return false;
-            }
-            reach = Math.max(reach, range[1]);
-        }
-        return reach >= length;
+        return JpegXmp.merge(main, chunks, limits);
     }
 
     /**

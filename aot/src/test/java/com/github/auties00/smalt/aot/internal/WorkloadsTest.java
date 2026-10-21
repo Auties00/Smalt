@@ -2,9 +2,11 @@ package com.github.auties00.smalt.aot.internal;
 
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingMode;
+import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawFormat;
+import com.github.auties00.smalt.image.tiff.TiffDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -48,6 +50,22 @@ class WorkloadsTest {
             var hasRealtime = Workloads.of(family).stream().anyMatch(factory -> factory.mode() == TrainingMode.REALTIME);
             assertEquals(realtime.contains(family), hasRealtime, family.name());
         }
+    }
+
+    @Test
+    @DisplayName("the synthetic TIFF variants decode, the masked page with alpha")
+    void tiffVariants() {
+        var files = SyntheticImages.tiffVariants(SyntheticImages.rgba(SyntheticVideo.natural(32, 16, 1).getFirst(),
+                true));
+        assertEquals(7, files.size());
+        for (var file : files) {
+            var picture = TiffDecoder.decode(MediaSource.of(file)).picture();
+            assertEquals(32, picture.width());
+            assertEquals(16, picture.height());
+        }
+        var masked = (RgbaPicture) TiffDecoder.decode(MediaSource.of(files.getLast())).picture();
+        assertTrue(masked.hasAlpha());
+        assertEquals(0, masked.pixels()[3]);
     }
 
     @Test

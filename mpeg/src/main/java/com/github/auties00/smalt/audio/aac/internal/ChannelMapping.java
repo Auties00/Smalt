@@ -38,7 +38,9 @@ public final class ChannelMapping {
             null, null, null,
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.LFE},
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.LFE},
-            null,
+            {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.LFE,
+                    ElementId.LFE, ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.SCE, ElementId.CPE,
+                    ElementId.SCE, ElementId.SCE, ElementId.CPE},
             {ElementId.SCE, ElementId.CPE, ElementId.CPE, ElementId.LFE, ElementId.CPE}
     };
 
@@ -61,7 +63,12 @@ public final class ChannelMapping {
                     Speaker.BACK_CENTER, Speaker.LOW_FREQUENCY},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT,
                     Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.LOW_FREQUENCY},
-            null,
+            {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER, Speaker.FRONT_LEFT,
+                    Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
+                    Speaker.BACK_CENTER, Speaker.LOW_FREQUENCY, Speaker.LOW_FREQUENCY_2, Speaker.TOP_FRONT_CENTER,
+                    Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT, Speaker.TOP_SIDE_LEFT, Speaker.TOP_SIDE_RIGHT,
+                    Speaker.TOP_CENTER, Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT, Speaker.TOP_BACK_CENTER,
+                    Speaker.BOTTOM_FRONT_CENTER, Speaker.BOTTOM_FRONT_LEFT, Speaker.BOTTOM_FRONT_RIGHT},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
                     Speaker.LOW_FREQUENCY, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT}
     };

@@ -111,7 +111,8 @@ public final class WebpDecoder {
      *
      * @param source the file
      * @param options the limits; the reduced-size hint is ignored
-     * @return the decoded image with its orientation, ICC profile and EXIF block
+     * @return the decoded image with its orientation, ICC profile, EXIF block and XMP packet (the
+     * first {@code ICCP}, {@code EXIF} and {@code XMP } chunks)
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits, or decoding runs
      * out of memory
@@ -144,8 +145,10 @@ public final class WebpDecoder {
                 var icc = layout.iccp == null ? null : FrameDecoder.read(in, layout.iccp, limits);
                 var exif = layout.exif == null ? null : TiffExif.stripExifPrefix(FrameDecoder.read(in, layout.exif, limits));
                 var orientation = exif == null ? Orientation.NORMAL : ExifReader.orientation(exif);
+                var xmp = layout.xmp == null ? null : FrameDecoder.read(in, layout.xmp, limits);
                 var image = new DecodedImage(picture, ImageFormat.WEBP, orientation, layout.canvasWidth,
-                        layout.canvasHeight, Optional.ofNullable(icc), Optional.ofNullable(exif));
+                        layout.canvasHeight, Optional.ofNullable(icc), Optional.ofNullable(exif))
+                        .withXmp(Optional.ofNullable(xmp));
                 return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             });
         }

@@ -1040,7 +1040,7 @@ public final class Vp8KeyFrameEncoder {
      */
     private static double qualityToCompression(double c) {
         var linear = c < 0.75 ? c * (2.0 / 3.0) : 2.0 * c - 1.0;
-        return Math.pow(linear, 1 / 3.0);
+        return StrictMath.pow(linear, 1 / 3.0);
     }
 
     /**
@@ -1066,7 +1066,7 @@ public final class Vp8KeyFrameEncoder {
         var cBase = qualityToCompression(q / 100.0);
         for (var i = 0; i < numSegments; i++) {
             var expn = 1.0 - amp * dqm[i].alpha;
-            var c = Math.pow(cBase, expn);
+            var c = StrictMath.pow(cBase, expn);
             var qi = (int) (127.0 * (1.0 - c));
             dqm[i].quant = Math.clamp(qi, 0, 127);
         }

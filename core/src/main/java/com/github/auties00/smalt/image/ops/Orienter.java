@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
@@ -49,6 +50,7 @@ final class Orienter {
             case YuvPicture yuv -> orientYuv(yuv, orientation);
             case Rgba16Picture rgba -> HighDepth.orient(rgba, orientation);
             case Yuv16Picture yuv -> HighDepth.orient(yuv, orientation);
+            case ChannelPicture channels -> ChannelOps.orient(channels, orientation);
         };
     }
 

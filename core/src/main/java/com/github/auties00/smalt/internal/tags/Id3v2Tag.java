@@ -32,7 +32,8 @@ import java.util.zip.Inflater;
  * frame can be written back without them. Text, comment, lyrics, URL, picture and chapter frames
  * are then decoded into {@link MediaTags}; every other frame (binary frames such as {@code PRIV},
  * {@code GEOB}, {@code POPM}, comments with a description) is kept as an opaque {@link Frame}
- * that a rewrite can carry over.
+ * that a rewrite can carry over, except a {@code SEEK} frame, whose offset no longer holds once
+ * the tag is rewritten ({@link #seekOffset()} reads it).
  *
  * <p>Writing produces a tag without unsynchronization, extended header or footer: text in
  * ISO-8859-1 when it fits and otherwise UTF-16 (version 2.3) or UTF-8 (version 2.4); several
@@ -104,14 +105,21 @@ public final class Id3v2Tag {
     private final List<Frame> frames;
 
     /**
+     * Whether the version 2.4 extended header flags the tag as an update of an earlier one.
+     */
+    private final boolean update;
+
+    /**
      * Constructs a tag.
      *
      * @param major the tag version
      * @param frames the frames in tag order, copied
+     * @param update whether the tag is flagged as an update
      */
-    private Id3v2Tag(int major, List<Frame> frames) {
+    private Id3v2Tag(int major, List<Frame> frames, boolean update) {
         this.major = major;
         this.frames = List.copyOf(frames);
+        this.update = update;
     }
 
     /**
@@ -126,6 +134,30 @@ public final class Id3v2Tag {
      */
     public List<Frame> frames() {
         return frames;
+    }
+
+    /**
+     * {@return whether the extended header of a version 2.4 tag flags it as an update, whose unique frames override
+     * those of a tag found earlier in the file}
+     */
+    public boolean isUpdate() {
+        return update;
+    }
+
+    /**
+     * Returns the offset of the next tag that a {@code SEEK} frame declares.
+     *
+     * @return the number of bytes from the end of this tag to the start of the next, or {@code -1} when the tag has no
+     * well-formed {@code SEEK} frame
+     */
+    public long seekOffset() {
+        for (var frame : frames) {
+            if (frame.id().equals("SEEK") && (frame.flags() & ENCRYPTED) == 0) {
+                var data = frame.data();
+                return data.length >= 4 ? ByteArrays.u32be(data, 0) : -1;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -197,19 +229,21 @@ public final class Id3v2Tag {
             length = removeUnsynchronization(body, 0, length);
         }
         var offset = 0;
+        var update = false;
         if ((flags & 0x40) != 0 && major >= 3) {
             if (length < 4) {
-                return new Id3v2Tag(major, List.of());
+                return new Id3v2Tag(major, List.of(), false);
             }
             var extended = major == 4 ? syncsafe(body, 0) : (int) Math.min(Integer.MAX_VALUE, ByteArrays.u32be(body, 0) + 4);
             if (extended < 0 || extended > length) {
-                return new Id3v2Tag(major, List.of());
+                return new Id3v2Tag(major, List.of(), false);
             }
+            update = major == 4 && extended >= 6 && body[4] >= 1 && (body[5] & 0x40) != 0;
             offset = extended;
         }
         var frames = new ArrayList<Frame>();
         readFrames(body, offset, length, major, major == 4 && tagUnsync, limits, keep, frames);
-        return new Id3v2Tag(major, frames);
+        return new Id3v2Tag(major, frames, update);
     }
 
     /**
@@ -454,6 +488,8 @@ public final class Id3v2Tag {
                         }
                     }
                     case "CHAP", "CTOC" -> chapterFrames.add(frame);
+                    case "SEEK" -> {
+                    }
                     default -> {
                         if (id.length() == 4 && id.charAt(0) == 'T') {
                             for (var value : text(data)) {

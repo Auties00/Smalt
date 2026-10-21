@@ -18,9 +18,10 @@ import com.github.auties00.smalt.internal.simd.Simd;
  */
 abstract sealed class Vp9EncDsp permits ScalarVp9EncDsp, VectorVp9EncDsp {
     /**
-     * The implementation selected by {@link Simd#ENABLED}.
+     * The implementation selected by {@link Simd#WIDE}: the Vector API kernels, written for 256-bit
+     * vectors, or the scalar ones.
      */
-    static final Vp9EncDsp INSTANCE = Simd.ENABLED ? new VectorVp9EncDsp() : new ScalarVp9EncDsp();
+    static final Vp9EncDsp INSTANCE = Simd.WIDE ? new VectorVp9EncDsp() : new ScalarVp9EncDsp();
 
     /**
      * The taps of the bilinear filters of the sub-pixel variance, two per eighth-pixel phase

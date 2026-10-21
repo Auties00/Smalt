@@ -42,6 +42,11 @@ public final class TiffPage {
     private final int bitsPerSample;
 
     /**
+     * The bits per sample of each sample.
+     */
+    private final int[] sampleBits;
+
+    /**
      * The samples per pixel.
      */
     private final int samplesPerPixel;
@@ -170,6 +175,12 @@ public final class TiffPage {
         this.bitsPerSample = (int) Math.clamp(directory.longValue(TiffTags.BITS_PER_SAMPLE, 1), 0, 0xFFFF);
         var layout = TiffLayout.of(directory);
         this.samplesPerPixel = layout.samples();
+        var declared = directory.longs(TiffTags.BITS_PER_SAMPLE);
+        this.sampleBits = new int[samplesPerPixel];
+        for (var i = 0; i < samplesPerPixel; i++) {
+            var value = declared == null || declared.length == 0 ? 1 : declared[i < declared.length ? i : 0];
+            sampleBits[i] = (int) Math.clamp(value, 0, 0xFFFF);
+        }
         this.sampleFormat = TiffSampleFormat.of((int) directory.longValue(TiffTags.SAMPLE_FORMAT, 1));
         this.photometric = TiffPhotometric.of(layout.photometric());
         this.compression = TiffCompression.of((int) directory.longValue(TiffTags.COMPRESSION, 1));
@@ -243,6 +254,19 @@ public final class TiffPage {
      */
     public int bitsPerSample() {
         return bitsPerSample;
+    }
+
+    /**
+     * Returns the bits per sample of one sample, which may differ between the samples of a pixel.
+     *
+     * @param sample the sample index, from zero to {@link #samplesPerPixel()} minus one
+     * @return the {@code BitsPerSample} value of the sample; a sample the tag does not list takes its first
+     * value, and every sample 1 when the tag is absent
+     * @throws IndexOutOfBoundsException if {@code sample} is out of range
+     */
+    public int bitsPerSample(int sample) {
+        Objects.checkIndex(sample, sampleBits.length);
+        return sampleBits[sample];
     }
 
     /**
@@ -477,7 +501,8 @@ public final class TiffPage {
     public boolean equals(Object other) {
         return other instanceof TiffPage that
                 && index == that.index && width == that.width && height == that.height
-                && bitsPerSample == that.bitsPerSample && samplesPerPixel == that.samplesPerPixel
+                && bitsPerSample == that.bitsPerSample && java.util.Arrays.equals(sampleBits, that.sampleBits)
+                && samplesPerPixel == that.samplesPerPixel
                 && sampleFormat == that.sampleFormat && photometric == that.photometric
                 && compression == that.compression && predictor == that.predictor && planar == that.planar
                 && tileWidth == that.tileWidth && tileHeight == that.tileHeight && rowsPerStrip == that.rowsPerStrip
