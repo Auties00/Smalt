@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.h264.internal;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.ByteVector;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.LongVector;
@@ -17,7 +18,8 @@ import java.util.Arrays;
 /**
  * Implements {@link H264Dsp} with the Vector API; the output equals {@link ScalarH264Dsp} sample for sample.
  *
- * <p>Block widths where SIMD does not pay off fall back to the scalar kernels.
+ * <p>Block widths where SIMD does not pay off fall back to the scalar kernels, and so do the methods written for
+ * 256-bit vectors unless {@link Simd#WIDE} holds.
  *
  * @implNote This implementation follows the kernel rules of {@link com.github.auties00.smalt.internal.simd.Simd Simd};
  * vertical edge filters transpose, filter and write back in separate methods to stay under the JIT node budget, and the
@@ -363,6 +365,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
     @Override
     public void lumaMc(byte[] src, int srcOffset, int srcStride, byte[] dst, int dstOffset, int dstStride,
                        int width, int height, int fracX, int fracY, short[] sums, byte[] scratch) {
+        if (!Simd.WIDE) {
+            super.lumaMc(src, srcOffset, srcStride, dst, dstOffset, dstStride, width, height, fracX, fracY, sums, scratch);
+            return;
+        }
         if (width == 16) {
             luma16(src, srcOffset, srcStride, dst, dstOffset, dstStride, height, fracX, fracY, sums, scratch);
         } else if (width == 8) {
@@ -1374,6 +1380,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
     @Override
     public void biWeight(byte[] dst, int dstOffset, int dstStride, byte[] src, int srcOffset, int srcStride,
                          int width, int height, int logWd, int weight0, int weight1, int offset) {
+        if (!Simd.WIDE) {
+            super.biWeight(dst, dstOffset, dstStride, src, srcOffset, srcStride, width, height, logWd, weight0, weight1, offset);
+            return;
+        }
         if (width != 16 && width != 8) {
             super.biWeight(dst, dstOffset, dstStride, src, srcOffset, srcStride, width, height, logWd, weight0, weight1, offset);
             return;
@@ -1397,6 +1407,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
     @Override
     public void weight(byte[] dst, int dstOffset, int dstStride, int width, int height,
                        int logWd, int weight, int offset) {
+        if (!Simd.WIDE) {
+            super.weight(dst, dstOffset, dstStride, width, height, logWd, weight, offset);
+            return;
+        }
         if (width != 16 && width != 8) {
             super.weight(dst, dstOffset, dstStride, width, height, logWd, weight, offset);
             return;
@@ -1486,6 +1500,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
      */
     @Override
     public void idct8x8Add(int[] c, int o, byte[] dst, int dstOffset, int dstStride) {
+        if (!Simd.WIDE) {
+            super.idct8x8Add(c, o, dst, dstOffset, dstStride);
+            return;
+        }
         for (var i = 0; i < 8; i++) {
             transform8(c, o + i * 8, 1);
         }
@@ -1581,6 +1599,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
      */
     @Override
     public void idct4x4DcAdd(int[] c, int o, byte[] dst, int dstOffset, int dstStride) {
+        if (!Simd.WIDE) {
+            super.idct4x4DcAdd(c, o, dst, dstOffset, dstStride);
+            return;
+        }
         var dc = (short) Math.clamp((c[o] + 32) >> 6, -255, 255);
         c[o] = 0;
         var row1 = dstOffset + dstStride;
@@ -1703,11 +1725,19 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
 
     @Override
     public void lumaEdgeHorizontal(byte[] pix, int offset, int stride, int alpha, int beta, int tc0) {
+        if (!Simd.WIDE) {
+            super.lumaEdgeHorizontal(pix, offset, stride, alpha, beta, tc0);
+            return;
+        }
         lumaNormal16(pix, offset, stride, alpha, beta, tc0);
     }
 
     @Override
     public void lumaEdgeHorizontalStrong(byte[] pix, int offset, int stride, int alpha, int beta) {
+        if (!Simd.WIDE) {
+            super.lumaEdgeHorizontalStrong(pix, offset, stride, alpha, beta);
+            return;
+        }
         lumaStrong16(pix, offset, stride, alpha, beta);
     }
 
@@ -1723,6 +1753,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
      */
     @Override
     public void lumaEdgeVertical(byte[] pix, int offset, int stride, int alpha, int beta, int tc0, byte[] scratch) {
+        if (!Simd.WIDE) {
+            super.lumaEdgeVertical(pix, offset, stride, alpha, beta, tc0, scratch);
+            return;
+        }
         transposeRows(pix, offset - 4, pix, offset - 4 + 8 * stride, stride, scratch);
         lumaNormalRows(pix, offset - 2, stride, alpha, beta, tc0, scratch);
     }
@@ -1736,6 +1770,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
      */
     @Override
     public void lumaEdgeVerticalStrong(byte[] pix, int offset, int stride, int alpha, int beta, byte[] scratch) {
+        if (!Simd.WIDE) {
+            super.lumaEdgeVerticalStrong(pix, offset, stride, alpha, beta, scratch);
+            return;
+        }
         transposeRows(pix, offset - 4, pix, offset - 4 + 8 * stride, stride, scratch);
         if (lumaStrongRows(alpha, beta, scratch)) {
             lumaStrongOut(pix, offset - 4, stride, scratch);
@@ -1995,6 +2033,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
     @Override
     public void chromaEdgesVertical(byte[] cb, byte[] cr, int offset, int stride, int edges, int[] params,
                                     byte[] scratch) {
+        if (!Simd.WIDE) {
+            super.chromaEdgesVertical(cb, cr, offset, stride, edges, params, scratch);
+            return;
+        }
         transposeRows(cb, offset - 2, cr, offset - 2, stride, scratch);
         if ((edges & 1) != 0) {
             chromaEdgeRows(cb, cr, offset - 1, stride, params, 0, scratch, 0);
@@ -2076,6 +2118,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
      */
     @Override
     public void chromaEdgeHorizontal(byte[] cb, byte[] cr, int offset, int stride, int[] params, int at) {
+        if (!Simd.WIDE) {
+            super.chromaEdgeHorizontal(cb, cr, offset, stride, params, at);
+            return;
+        }
         var p1 = SHORTS_16.cast(BYTES_16.cast(LongVector.zero(L128).withLane(0, (long) LONG_LE.get(cb, offset - 2 * stride))
                 .withLane(1, (long) LONG_LE.get(cr, offset - 2 * stride)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));

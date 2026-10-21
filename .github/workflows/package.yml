@@ -1,6 +1,7 @@
 # Manual: builds the given modules with what they depend on, then runs only their own test suites on the chosen
-# runners with the smoke data tier. Development tooling dispatches it on snapshot branches to test one change
-# without the whole matrix.
+# runners with the oracle tools, the smoke data tier and the clips, and checks their skips against the CI jobs' rows
+# of the skip baseline. Development tooling dispatches it on snapshot branches to test one change without the
+# whole matrix.
 name: Package tests
 
 on:
@@ -18,6 +19,9 @@ on:
       simd:
         description: vector or scalar
         default: vector
+      properties:
+        description: Optional extra system properties for the test JVMs, for example -Dsmalt.threads=1
+        default: ''
 
 permissions:
   contents: read
@@ -27,8 +31,15 @@ env:
   SMALT_CONFORMANCE_DOWNLOAD: 'false'
 
 jobs:
+  oracles:
+    uses: ./.github/workflows/oracle-tools.yml
+    with:
+      os: ${{ inputs.os }}
+
   test:
     name: test (${{ matrix.os }})
+    needs: oracles
+    if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
     strategy:
@@ -48,32 +59,33 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install the oracle tools
-        if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+      - name: Name the job in the skip baseline
+        shell: bash
+        run: echo "SMALT_SKIP_JOB=$(echo '${{ runner.os }}-${{ runner.arch }}-${{ inputs.simd }}-smoke' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
-      - name: Restore the smoke test data
-        id: smoke-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.smalt/cache/conformance
-          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
-          enableCrossOsArchive: true
+      - uses: ./.github/actions/oracles
 
-      - name: Fetch the smoke test data
-        if: steps.smoke-cache.outputs.cache-hit != 'true'
-        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+      - uses: ./.github/actions/testdata
 
       - name: Build the modules they depend on
         shell: bash
         run: mvn -B -ntp -q -pl "${{ inputs.modules }}" -am install -DskipTests
 
       - name: Test
+        id: test
         shell: bash
         run: >
           mvn -B -ntp -fae -pl "${{ inputs.modules }}" verify
-          -Dsmalt.test.simd=${{ inputs.simd == 'vector' }}
+          -Dsmalt.test.simd=${{ inputs.simd == 'vector' }} ${{ inputs.properties }}
           ${{ inputs.tests != '' && format('-Dtest={0} -Dsurefire.failIfNoSpecifiedTests=false', inputs.tests) || '' }}
+
+      # The suites of these modules may skip no more than the full CI job of the same runner does.
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
 
       - name: Upload the test reports
         if: always()
@@ -83,4 +95,7 @@ jobs:
           path: |
             **/target/surefire-reports/
             it/target/jit-guard/
+            */target/media-fixtures/
+            target/skips-*.tsv
+            oracle-versions.tsv
           retention-days: 7

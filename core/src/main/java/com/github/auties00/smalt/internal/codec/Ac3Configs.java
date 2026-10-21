@@ -197,6 +197,20 @@ public final class Ac3Configs {
     }
 
     /**
+     * Returns whether the sync frame whose header starts at an offset starts an access unit.
+     *
+     * @param data the bytes, holding at least six from {@code offset}
+     * @param offset the offset of the sync word
+     * @return {@code true} for an AC-3 frame or an independent E-AC-3 frame of substream 0
+     */
+    public static boolean startsAccessUnit(byte[] data, int offset) {
+        if ((data[offset + 5] & 0xFF) >> 3 <= 10) {
+            return true;
+        }
+        return ((data[offset + 2] & 0xFF) >> 6) != 1 && ((data[offset + 2] >> 3) & 0x07) == 0;
+    }
+
+    /**
      * Parses the header of the sync frame starting at an offset.
      *
      * @param data the bytes

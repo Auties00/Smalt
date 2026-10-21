@@ -14,15 +14,24 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
   `smalt-parent` and `smalt-bom`), `bom`, `core`, `image`, `audio`, `video`, `mpeg`, `capture`, `raw`,
   `desktop`, `aot`, `it` (JIT guard and cross-artifact tests, not published). Parent of the code modules:
   `smalt-parent` (the root `pom.xml`), which also gives every module JUnit and JMH for its tests.
-- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Quality`, `HeifBuilder`, `Bytes`, `Packets`, and the helpers
-  in `testkit.audio`, `testkit.image` and `testkit.container`) lives in core's `src/test/java` under `testkit` and
-  reaches the other modules through core's test jar (`smalt-core` with `<type>test-jar</type>`, test scope),
-  which holds only `testkit/**`.
+- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Skip`, `Quality`, `Dumps`, `HeifBuilder`, `Bytes`, `Packets`,
+  and the helpers in `testkit.audio`, `testkit.image`, `testkit.container` and `testkit.io`) lives in core's
+  `src/test/java` under `testkit` and reaches the other modules through core's test jar (`smalt-core` with
+  `<type>test-jar</type>`, test scope), which holds only `testkit/**`.
+- Every demuxer, reader and image decoder runs through the I/O behavior harnesses (`DemuxerAsserts`,
+  `ReaderAsserts`, `ImageDecoderAsserts`) with golden dumps under each module's `src/test/resources/dumps`
+  (`-Dsmalt.test.updateDumps=true` rewrites them); a new container or codec adds its inputs as the `testkit.io`
+  package documentation describes, over samples made by `tools/testdata/behavior` and pinned in its
+  `samples.tsv`.
 - `tools/codegen`: the generators of the VP9, AV1 and transposition vector kernels and of the Vorbis setup data
   (edit the generator or its template, never the generated file; `python tools/codegen/check.py` fails when a
   generated file differs from its generator's output); `tools/lint`: the comment lint (section 11 of
   Documentation); `tools/notices`: the third-party notices; `tools/testdata`: the test vector manifests and
   oracle scripts.
+- Tests skip only through the test kit's `Skip`, with a stable reason id (`[family:name] detail`; core's `SkipTest`
+  enforces it). CI installs the oracle tools pinned in `tools/testdata/oracles.tsv` (`oracles.py install`), makes a
+  missing oracle fail (`SMALT_TEST_REQUIRE_ORACLES`, `-Dsmalt.test.requireOracles=true` locally) and gates the
+  skips of every job with `tools/testdata/skip-baseline.tsv` (`skips.py`); see `tools/testdata/README.md`.
 
 The README's Install table is the single source of these descriptions; the pom `<description>`s copy it.
 

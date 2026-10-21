@@ -1,0 +1,20 @@
+# video decode dump of vectors/vp90-2-02-size-64x64.webm; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 333000
+seekable true
+track 1 VP9 64x64 timebase=1/1000
+0 pts=0 dur=-1 key=true 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e43c1d36 u=b459f4e7 v=2f775cfc
+1 pts=33 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f376f363 u=2dee4822 v=608d1422
+2 pts=66 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=ccf29ae1 u=04ca9eb8 v=5f388cdf
+3 pts=100 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=61cf6652 u=f6db5c4d v=54cd8309
+4 pts=133 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=35e83fb5 u=c0818b99 v=a2810843
+5 pts=166 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=b5c130da u=4fad55e2 v=d3bf48a4
+6 pts=200 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=1dbad264 u=47c2764e v=09ce6496
+7 pts=233 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=abdbc506 u=3ba32bb1 v=44852f47
+8 pts=266 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=04736e92 u=18b938b6 v=c80cc224
+9 pts=300 dur=-1 key=false 64x64 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=05619301 u=6331fded v=eeafd32c
+seek 0: @0
+seek 111000: @3
+seek 222000: @6
+seek 333000: end
+seek -1000000: @0

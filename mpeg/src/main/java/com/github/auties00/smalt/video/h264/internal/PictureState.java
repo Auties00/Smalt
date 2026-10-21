@@ -95,6 +95,28 @@ final class PictureState {
     final byte[] chromaMode;
 
     /**
+     * Returns the index in the per-macroblock arrays (see {@link DecoderFrame#mv}) of a
+     * macroblock address of a picture.
+     *
+     * @param address the macroblock address in the picture's own numbering
+     * @param structure the picture structure: {@link DecoderFrame#FRAME}, {@link DecoderFrame#TOP}
+     * or {@link DecoderFrame#BOTTOM}
+     * @param mbaff whether the picture is an MBAFF frame, whose addresses number macroblock pairs
+     * @param mbWidth the picture width in macroblocks
+     * @return the index
+     */
+    static int mbIndex(int address, int structure, boolean mbaff, int mbWidth) {
+        if (mbaff) {
+            var pair = address >> 1;
+            return (2 * (pair / mbWidth) + (address & 1)) * mbWidth + pair % mbWidth;
+        }
+        if (structure == DecoderFrame.FRAME) {
+            return address;
+        }
+        return (2 * (address / mbWidth) + (structure == DecoderFrame.BOTTOM ? 1 : 0)) * mbWidth + address % mbWidth;
+    }
+
+    /**
      * Allocates the state of a picture size.
      *
      * @param mbWidth the width in macroblocks

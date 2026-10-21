@@ -11,6 +11,17 @@ package com.github.auties00.smalt.internal.simd;
  * wide (so the API is backed by real SIMD registers rather than its slow Java fallback), and the
  * {@code smalt.simd} system property is not {@code false}.
  *
+ * <p>Some kernels are written for 256-bit vectors: they process, for example, sixteen 16-bit samples
+ * per vector. On hardware whose vectors are narrower (ARM NEON and SVE at 128 bits, x86 without
+ * AVX2) the JIT compilers cannot intrinsify their operations, which then run on the allocating Java
+ * fallback, so such a kernel is selected only when {@link #WIDE} is {@code true}: either the whole
+ * kernel ({@code Simd.WIDE ? VectorX.create() : new ScalarX()}), or each of its methods that uses
+ * 256-bit vectors, which then starts by delegating to the scalar kernel when {@link #WIDE} is
+ * {@code false}. Gathers and scatters (loads and stores through an index map) follow the same rule:
+ * they compile only on hardware with gather instructions, which every platform with 256-bit vectors
+ * has (AVX2, SVE) and ARM NEON lacks. {@code JitRobustnessTest} checks that every method using a
+ * 256-bit or wider species, a gather or a scatter is guarded one way or the other.
+ *
  * <p>Kernels select their implementation in a {@code static final} field, which the JIT treats as
  * a constant: the choice costs nothing after class initialization. The field calls the vector class
  * directly, {@code Simd.ENABLED ? VectorX.create() : new ScalarX()}, with no holder class in between:
@@ -49,6 +60,13 @@ public final class Simd {
      * {@code false}.
      */
     private static final int PREFERRED_BITS = ENABLED ? VectorProbe.preferredBits() : 0;
+
+    // TODO: 128-bit paths for the kernels gated on WIDE, which run scalar on NEON, SVE-128 and SSE-only x86
+    /**
+     * Whether kernels written for 256-bit vectors use their Vector API implementation: {@link #ENABLED}
+     * is {@code true} and the preferred vectors are at least 256 bits wide.
+     */
+    public static final boolean WIDE = PREFERRED_BITS >= 256;
 
     /**
      * Prevents instantiation.

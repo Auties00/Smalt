@@ -45,7 +45,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * vector-typed helpers, no {@code reinterpretAs} methods, an exact receiver for every
  * {@code intoArray} and scalar-operand {@code lanewise} (see {@link Receivers}), in the packages
  * that comply an exact receiver for every call on a vector or mask carried into or around a loop,
- * and no kernel over 2000 bytecodes. {@link Runtime} runs representative
+ * no kernel over 2000 bytecodes, and no use of 256-bit or wider vectors outside code that runs only
+ * where {@code Simd.WIDE} holds (see {@link Widths}). {@link Runtime} runs representative
  * workloads in fresh JVMs ({@link JitWorkload}), several at once so that the compilers are busy as
  * in a real application, and requires every workload's steady-state allocation per frame to
  * settle under its bound and no {@code COMPILE SKIPPED} line for a method of this module. The
@@ -61,12 +62,15 @@ import static org.junit.jupiter.api.Assertions.fail;
  * compilation tier, so a workload settles only once its kernels are compiled by C2. A child JVM
  * that fails is run once more and fails the test only if the second one fails too, since the
  * compilers' decisions vary from JVM to JVM. The workloads decoding streams made by ffmpeg (x264
- * with B-frames, x265 HEVC, libvpx VP8 and VP9 with inter frames, libaom AV1 with tiles, LAME MP3) run only when
- * ffmpeg is installed. The AV1 decoder runs in the decoders' child and the VP9 encoder in the
+ * with B-frames, progressive, MBAFF and 10-bit, x265 HEVC, libvpx VP8 and VP9 with inter frames, libaom
+ * AV1 with tiles, LAME MP3) run only when ffmpeg is installed. The AV1 decoder runs in the
+ * decoders' child and the VP9 encoder in the
  * encoders' child, but neither runs in the child mixing every workload, whose compile queue their
  * kernels would overload; the AV1 encoder, whose seldom-called decoder kernels compile late, runs
  * in a child of its own, and the real-time configurations of a call (the H.264 real-time encoder
- * and single-threaded decoder, VP8, AV1 and HEVC) in another.
+ * and single-threaded decoder, VP8, AV1 and HEVC) in another. On x86 the children run with 256-bit
+ * vectors; {@code -Djit.childArgs=-XX:MaxVectorSize=16} gives them the 128-bit vectors of ARM NEON,
+ * where the aarch64 CI jobs run the guard natively.
  */
 @DisplayName("JIT robustness of the Vector API kernels")
 class JitRobustnessTest {
@@ -162,6 +166,22 @@ class JitRobustnessTest {
                     + "video.h264.encoder.internal.VectorPixelKernels)");
         }
 
+        @Test
+        @DisplayName("kernels use 256-bit or wider vectors only where Simd.WIDE holds")
+        void wideSpecies() throws IOException {
+            var models = new ArrayList<ClassModel>();
+            try (Stream<Path> files = walk(CLASSES)) {
+                for (var file : files.filter(path -> path.toString().endsWith(".class")).toList()) {
+                    models.add(ClassFile.of().parse(Files.readAllBytes(file)));
+                }
+            }
+            var widths = new Widths(models);
+            assertTrue(widths.wideMethods() >= 50, "found only " + widths.wideMethods()
+                    + " methods using 256-bit species under " + CLASSES);
+            assertEquals(List.of(), widths.unguarded(), "methods using 256-bit or wider vectors that can run where "
+                    + "the platform's vectors are narrower (see Simd.WIDE)");
+        }
+
         private static List<ClassModel> vectorClasses() throws IOException {
             var models = new ArrayList<ClassModel>();
             try (Stream<Path> files = walk(CLASSES)) {
@@ -253,6 +273,294 @@ class JitRobustnessTest {
                 }
             }
             return violations;
+        }
+    }
+
+    /**
+     * Finds the methods that use a 256-bit or wider species and can run where the platform's vectors
+     * are narrower, where the JIT compilers leave every operation of that species on its allocating
+     * Java fallback.
+     *
+     * <p>Gathers and scatters (loads and stores through an index map) count as wide too: they compile only
+     * on hardware with gather instructions, and every platform with 256-bit vectors has them (AVX2,
+     * SVE), while ARM NEON does not.
+     *
+     * <p>A method uses a wide species when it reads {@code SPECIES_256}, {@code SPECIES_512},
+     * {@code S_256_BIT} or {@code S_512_BIT}, or a static field initialized from one of them; a field
+     * whose initializer also depends on the platform's width (it reads {@code SPECIES_PREFERRED},
+     * {@code Simd.WIDE}, {@code vectorBitSize}, {@code length} or {@code preferredBits}, or another
+     * such field) adapts to the platform and does not count. Such a method is guarded when it reads
+     * {@code Simd.WIDE} (or a static boolean initialized from it) itself, when every method calling
+     * it is guarded, or when it is an instance method of a class that only guarded methods create; a
+     * class initializer counts as guarded, since the constants it builds cost nothing per call. A
+     * method creating a class counts as guarded the same way; a static method that nothing in the
+     * library calls is a factory for tests and does not count as a creator.
+     */
+    private static final class Widths {
+        private static final Set<String> WIDE_CONSTANTS = Set.of("SPECIES_256", "SPECIES_512", "S_256_BIT",
+                "S_512_BIT");
+        private static final String SIMD = "com/github/auties00/smalt/internal/simd/Simd";
+        private static final String LIBRARY = "com/github/auties00/smalt/";
+
+        private final java.util.Map<String, ClassModel> classes = new java.util.HashMap<>();
+        private final java.util.Map<String, MethodModel> methods = new java.util.HashMap<>();
+        private final java.util.Map<String, String> owners = new java.util.HashMap<>();
+        private final Set<String> wideFields = new java.util.HashSet<>();
+        private final Set<String> adaptiveFields = new java.util.HashSet<>();
+        private final Set<String> guardFields = new java.util.HashSet<>();
+        private final java.util.Map<String, Set<String>> callers = new java.util.HashMap<>();
+        private final java.util.Map<String, Set<String>> creators = new java.util.HashMap<>();
+        private final java.util.Map<String, Set<String>> wideUses = new java.util.TreeMap<>();
+        private final Set<String> guards = new java.util.HashSet<>();
+        private final java.util.Map<String, Boolean> safe = new java.util.HashMap<>();
+        private final java.util.Map<String, Boolean> selecting = new java.util.HashMap<>();
+        private final java.util.Map<String, Boolean> gated = new java.util.HashMap<>();
+
+        Widths(List<ClassModel> models) {
+            for (var model : models) {
+                var owner = model.thisClass().asInternalName();
+                classes.put(owner, model);
+                for (var method : model.methods()) {
+                    var key = key(owner, method.methodName().stringValue(), method.methodType().stringValue());
+                    methods.put(key, method);
+                    owners.put(key, owner);
+                }
+            }
+            // A field can be initialized from a field of a class initialized later: repeat until stable.
+            for (var round = 0; round < 4; round++) {
+                for (var model : models) {
+                    classifyFields(model);
+                }
+            }
+            for (var model : models) {
+                var owner = model.thisClass().asInternalName();
+                for (var method : model.methods()) {
+                    scan(owner, method);
+                }
+            }
+        }
+
+        /** Classifies the static fields a class initializer assigns, one assignment at a time. */
+        private void classifyFields(ClassModel model) {
+            for (var method : model.methods()) {
+                if (!method.methodName().equalsString("<clinit>") || method.code().isEmpty()) {
+                    continue;
+                }
+                boolean wide = false, adaptive = false, guard = false;
+                for (var element : method.code().get()) {
+                    if (element instanceof FieldInstruction field
+                            && field.opcode() == java.lang.classfile.Opcode.GETSTATIC) {
+                        var name = key(field);
+                        if (wideConstant(field) || wideFields.contains(name)) {
+                            wide = true;
+                        }
+                        if (field.name().equalsString("SPECIES_PREFERRED") || adaptiveFields.contains(name)) {
+                            adaptive = true;
+                        }
+                        if (simdWide(field) || guardFields.contains(name)) {
+                            adaptive = true;
+                            guard = true;
+                        }
+                    } else if (element instanceof InvokeInstruction invoke) {
+                        var name = invoke.name().stringValue();
+                        if (name.equals("vectorBitSize") || name.equals("length") || name.equals("preferredBits")) {
+                            adaptive = true;
+                        }
+                    } else if (element instanceof FieldInstruction field
+                            && field.opcode() == java.lang.classfile.Opcode.PUTSTATIC) {
+                        var name = key(field);
+                        if (guard && field.typeSymbol().descriptorString().equals("Z")) {
+                            guardFields.add(name);
+                        }
+                        if (adaptive) {
+                            adaptiveFields.add(name);
+                            wideFields.remove(name);
+                        } else if (wide && !adaptiveFields.contains(name)) {
+                            wideFields.add(name);
+                        }
+                        wide = false;
+                        adaptive = false;
+                        guard = false;
+                    }
+                }
+            }
+        }
+
+        /** Records a method's wide species, guard, calls and object creations. */
+        private void scan(String owner, MethodModel method) {
+            var self = key(owner, method.methodName().stringValue(), method.methodType().stringValue());
+            if (method.code().isEmpty()) {
+                return;
+            }
+            var uses = new java.util.TreeSet<String>();
+            for (var element : method.code().get()) {
+                switch (element) {
+                    case FieldInstruction field when field.opcode() == java.lang.classfile.Opcode.GETSTATIC -> {
+                        if (wideConstant(field)) {
+                            uses.add(simple(field.owner().asInternalName()) + "." + field.name().stringValue());
+                        } else if (wideFields.contains(key(field))) {
+                            uses.add(field.name().stringValue());
+                        }
+                        if (simdWide(field) || guardFields.contains(key(field))) {
+                            guards.add(self);
+                        }
+                    }
+                    case InvokeInstruction invoke when gathers(invoke) ->
+                            uses.add(simple(invoke.owner().asInternalName()) + "." + invoke.name().stringValue()
+                                    + " with an index map");
+                    case InvokeInstruction invoke when invoke.owner().asInternalName().startsWith(LIBRARY) -> {
+                        var callee = resolve(invoke.owner().asInternalName(), invoke.name().stringValue(),
+                                invoke.typeSymbol().descriptorString());
+                        if (callee != null) {
+                            callers.computeIfAbsent(callee, ignored -> new java.util.HashSet<>()).add(self);
+                        }
+                    }
+                    case java.lang.classfile.instruction.InvokeDynamicInstruction indy -> {
+                        for (var argument : indy.bootstrapArgs()) {
+                            if (argument instanceof java.lang.constant.DirectMethodHandleDesc handle
+                                    && handle.owner().descriptorString().startsWith("L" + LIBRARY)) {
+                                var target = handle.owner().descriptorString();
+                                var callee = resolve(target.substring(1, target.length() - 1), handle.methodName(),
+                                        handle.lookupDescriptor());
+                                if (callee != null) {
+                                    callers.computeIfAbsent(callee, ignored -> new java.util.HashSet<>()).add(self);
+                                }
+                            }
+                        }
+                    }
+                    case java.lang.classfile.instruction.NewObjectInstruction created
+                            when created.className().asInternalName().startsWith(LIBRARY) ->
+                            creators.computeIfAbsent(created.className().asInternalName(),
+                                    ignored -> new java.util.HashSet<>()).add(self);
+                    default -> {
+                    }
+                }
+            }
+            if (!uses.isEmpty() && !method.methodName().equalsString("<clinit>")) {
+                wideUses.put(self, uses);
+            }
+        }
+
+        /** Returns the number of methods using a wide species. */
+        int wideMethods() {
+            return wideUses.size();
+        }
+
+        /** Returns the unguarded methods using a wide species, with the species they use. */
+        List<String> unguarded() {
+            var found = new ArrayList<String>();
+            wideUses.forEach((method, uses) -> {
+                if (!safe(method)) {
+                    found.add(simple(owners.get(method)) + "." + method.substring(method.indexOf('.') + 1,
+                            method.indexOf('(')) + " uses " + uses);
+                }
+            });
+            return found;
+        }
+
+        /** Returns whether a method using a wide species runs only where {@code Simd.WIDE} holds. */
+        private boolean safe(String method) {
+            return guarded(method, true);
+        }
+
+        /**
+         * Returns whether a method runs only where {@code Simd.WIDE} holds: it reads the guard, every
+         * caller is guarded, or it is an instance method of a gated class; with {@code initializers},
+         * a class initializer counts as guarded too.
+         */
+        private boolean guarded(String method, boolean initializers) {
+            var memo = initializers ? safe : selecting;
+            var known = memo.get(method);
+            if (known != null) {
+                return known;
+            }
+            // Optimistic for recursion: a cycle of callers is guarded when its other callers are.
+            memo.put(method, true);
+            var result = guards.contains(method) || (initializers && method.contains(".<clinit>("));
+            if (!result) {
+                var calling = callers.getOrDefault(method, Set.of());
+                result = !calling.isEmpty() && calling.stream().allMatch(caller -> guarded(caller, initializers));
+            }
+            if (!result) {
+                var model = methods.get(method);
+                result = model != null && !model.flags().has(java.lang.reflect.AccessFlag.STATIC)
+                        && gated(owners.get(method));
+            }
+            memo.put(method, result);
+            return result;
+        }
+
+        /** Returns whether a class is created only where {@code Simd.WIDE} holds. */
+        private boolean gated(String owner) {
+            var known = gated.get(owner);
+            if (known != null) {
+                return known;
+            }
+            gated.put(owner, false);
+            var result = true;
+            var sites = creators.getOrDefault(owner, Set.of());
+            for (var site : sites) {
+                var model = methods.get(site);
+                var testFactory = model != null && model.flags().has(java.lang.reflect.AccessFlag.STATIC)
+                        && !model.methodName().equalsString("<clinit>") && !callers.containsKey(site);
+                if (!testFactory && !guarded(site, false)) {
+                    result = false;
+                    break;
+                }
+            }
+            gated.put(owner, result);
+            return result;
+        }
+
+        /** Returns the key of the method a call reaches, looking up the superclasses, or {@code null}. */
+        private String resolve(String owner, String name, String descriptor) {
+            var type = owner;
+            while (type != null && classes.containsKey(type)) {
+                var candidate = key(type, name, descriptor);
+                if (methods.containsKey(candidate)) {
+                    return candidate;
+                }
+                type = classes.get(type).superclass().map(entry -> entry.asInternalName()).orElse(null);
+            }
+            return null;
+        }
+
+        /** Returns whether a call is a gather or scatter: a load or store through an {@code int[]} index map. */
+        private static boolean gathers(InvokeInstruction invoke) {
+            var name = invoke.name().stringValue();
+            if (!invoke.owner().asInternalName().startsWith("jdk/incubator/vector/")
+                    || !(name.equals("fromArray") || name.equals("intoArray"))) {
+                return false;
+            }
+            var parameters = invoke.typeSymbol().parameterList();
+            for (var i = 2; i < parameters.size(); i++) {
+                if (parameters.get(i).descriptorString().equals("[I")
+                        && parameters.get(i - 1).descriptorString().equals("I")) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static boolean wideConstant(FieldInstruction field) {
+            return field.owner().asInternalName().startsWith("jdk/incubator/vector/")
+                    && WIDE_CONSTANTS.contains(field.name().stringValue());
+        }
+
+        private static boolean simdWide(FieldInstruction field) {
+            return field.owner().asInternalName().equals(SIMD) && field.name().equalsString("WIDE");
+        }
+
+        private static String key(FieldInstruction field) {
+            return field.owner().asInternalName() + "." + field.name().stringValue();
+        }
+
+        private static String key(String owner, String name, String descriptor) {
+            return owner + "." + name + descriptor;
+        }
+
+        private static String simple(String owner) {
+            return owner.substring(owner.lastIndexOf('/') + 1);
         }
     }
 
@@ -606,6 +914,8 @@ class JitRobustnessTest {
             var ffmpeg = Oracle.find(Oracle.Tool.FFMPEG).isPresent();
             if (ffmpeg) {
                 decode.add("h264dec:threads=2:bound=65536:input=" + x264Stream());
+                decode.add("h264dec:threads=1:bound=65536:input=" + x264InterlacedStream());
+                decode.add("h264dec:threads=1:bound=65536:input=" + x264HighBitDepthStream());
                 decode.add("vp8dec:bound=32768:input=" + libvpxStream());
                 decode.add("vp9dec:bound=16384:input=" + libvpxVp9Stream());
                 decode.add("hevcdec:threads=2:bound=65536:input=" + x265Stream());
@@ -703,6 +1013,23 @@ class JitRobustnessTest {
                     .toAbsolutePath().toString();
         }
 
+        private static String x264InterlacedStream() {
+            return Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
+                            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"),
+                    List.of("-filter_complex", "[0][1]blend=all_mode=average,format=yuv420p", "-t", "2",
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-profile:v", "high",
+                            "-x264-params", "interlaced=1:tff=1", "-f", "h264"))
+                    .toAbsolutePath().toString();
+        }
+
+        private static String x264HighBitDepthStream() {
+            return Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
+                            "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"),
+                    List.of("-filter_complex", "[0][1]blend=all_mode=average,format=yuv420p10le", "-t", "2",
+                            "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-f", "h264"))
+                    .toAbsolutePath().toString();
+        }
+
         private static String x265Stream() {
             return Fixtures.ffmpeg("hevc", List.of("-f", "lavfi", "-i", "mandelbrot=size=640x360:rate=30",
                             "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=30"),
@@ -754,12 +1081,24 @@ class JitRobustnessTest {
             Files.createDirectories(log.getParent());
             var deadline = DEADLINE.compareTo(PER_WORKLOAD.multipliedBy(workloads.size())) >= 0
                     ? DEADLINE : PER_WORKLOAD.multipliedBy(workloads.size());
+            // The deadlines are measured on 8 cores: fewer cores leave fewer compiler threads for the same queue
+            var cores = java.lang.Runtime.getRuntime().availableProcessors();
+            if (cores < 8) {
+                deadline = deadline.multipliedBy(8).dividedBy(cores);
+            }
             // The compilation log goes to its own file: written to the same stream, the VM's lines
             // can land in the middle of the workload's result lines.
             var command = new ArrayList<>(List.of(Path.of(System.getProperty("java.home"), "bin", "java").toString(),
                     "--add-modules", "jdk.incubator.vector", "-Xmx256m", "-XX:+UseSerialGC", "-XX:+PrintCompilation",
-                    "-XX:+DisplayVMOutputToStderr",
-                    "-cp", childClassPath(),
+                    "-XX:+DisplayVMOutputToStderr"));
+            // jit.childArgs, comma separated, adds JVM options to the children, for example
+            // -XX:+UnlockDiagnosticVMOptions,-XX:+PrintIntrinsics to see which intrinsics fail
+            for (var option : System.getProperty("jit.childArgs", "").split(",")) {
+                if (!option.isBlank()) {
+                    command.add(option.strip());
+                }
+            }
+            command.addAll(List.of("-cp", childClassPath(),
                     JitWorkload.class.getName(), "seconds=" + deadline.toSeconds()));
             command.addAll(workloads);
             var process = new ProcessBuilder(command).redirectOutput(log.toFile()).redirectError(compilations.toFile())
