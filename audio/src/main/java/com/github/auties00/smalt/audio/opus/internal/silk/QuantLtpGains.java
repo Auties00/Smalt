@@ -27,14 +27,15 @@ final class QuantLtpGains {
      * @param xX_Q17            the correlation vectors, {@code LTP_ORDER} per subframe
      * @param subfr_len         the subframe length
      * @param nb_subfr          the number of subframes
+     * @param temp_idx          a work array of {@code MAX_NB_SUBFR} codebook indices, overwritten
+     * @param out               a work array of four values, overwritten
      */
     static void quantLtpGains(short[] B_Q14, byte[] cbk_index, byte[] periodicity_index, int[] sum_log_gain_Q7,
-                              int[] pred_gain_dB_Q7, int[] XX_Q17, int[] xX_Q17, int subfr_len, int nb_subfr) {
+                              int[] pred_gain_dB_Q7, int[] XX_Q17, int[] xX_Q17, int subfr_len, int nb_subfr,
+                              byte[] temp_idx, int[] out) {
         int j, k, cbk_size;
-        var temp_idx = new byte[MAX_NB_SUBFR];
         int res_nrg_Q15 = 0, rate_dist_Q7, min_rate_dist_Q7;
         int sum_log_gain_tmp_Q7, best_sum_log_gain_Q7, max_gain_Q7;
-        var out = new int[4];
 
         min_rate_dist_Q7 = Integer.MAX_VALUE;
         best_sum_log_gain_Q7 = 0;

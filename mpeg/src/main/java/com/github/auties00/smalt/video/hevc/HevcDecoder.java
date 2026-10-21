@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.hevc;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -22,6 +23,7 @@ import com.github.auties00.smalt.video.hevc.internal.HevcDecoderEngine;
 import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
 import com.github.auties00.smalt.video.hevc.internal.HevcSps;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -50,8 +52,10 @@ import java.util.function.Consumer;
  * other than the base layer are ignored.
  *
  * <p>Frames reach the consumer in output order as {@link YuvPicture}s cropped by the sequence's
- * conformance window, in the stream's chroma format: {@link ChromaFormat#YUV420},
- * {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV444} or {@link ChromaFormat#MONOCHROME}.
+ * conformance window (and by the VUI's default display window inside it when
+ * {@link HevcDecoderOptions#defaultDisplayWindow()} is set), in the stream's chroma format:
+ * {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV444} or
+ * {@link ChromaFormat#MONOCHROME}.
  * Samples of streams deeper than 8 bits (up to 16 bits, the range extension profiles) are rounded
  * to 8 bits, {@code min((v + (1 << (d - 9))) >> (d - 8), 255)} for bit depth {@code d}, unless
  * {@link HevcDecoderOptions#highBitDepth()} is set, in which case they are handed out as
@@ -60,16 +64,37 @@ import java.util.function.Consumer;
  * samples of the shallower component are scaled to that depth by a left shift.
  * Each frame carries the timestamp of the packet in which its picture's first slice arrived. When
  * that packet had no timestamp and a frame duration is known (from the packet, the track's frame
- * rate or the stream's VUI timing), the timestamp continues from the previous frame. The color
+ * rate or the stream's VUI timing), the timestamp continues from the end of the previous frame. A
+ * duration taken from the track or the VUI is scaled by the picture timing SEI message's
+ * {@code pic_struct}: one and a half times for the three-field structures (5 and 6), twice for frame
+ * doubling (7) and three times for frame tripling (8). The color
  * description comes from the VUI; components the VUI leaves unspecified default to BT.709 for
  * pictures wider than 1024 or taller than 576 samples and to BT.601 otherwise. The chroma siting
  * is the VUI's {@code chroma_sample_loc_type_top_field} when signaled, the transfer function the
  * one an alternative transfer characteristics SEI message prefers when present, and the mastering
  * display and content light level come from the last SEI messages that carried them. A frame is a
- * keyframe when its picture is an IRAP picture.
+ * keyframe when its picture is an IRAP picture or an I picture carrying a recovery point SEI message.
  *
- * <p>Decoding starts at the first IRAP picture; the RASL pictures of a CRA picture that starts the
- * stream are skipped. Unsupported but valid streams raise {@link MediaException.Unsupported} naming
+ * <p>The fields of a field coded sequence ({@code field_seq_flag}), and the pictures that their
+ * picture timing SEI message's {@code pic_struct} marks as fields (1, 2 and 9 to 12), are woven into
+ * frames twice as tall as a field: in output order, two consecutive fields of opposite parity form a frame, the top
+ * field in its even rows, unless the picture timing {@code pic_struct} of the first asks to pair it
+ * with its previous field (9 or 10) or that of the second with its next field (11 or 12). The parity
+ * is the {@code pic_struct}'s (top for 1, 9 and 11, bottom for 2, 10 and 12); without one, fields
+ * alternate, the first field of each frame taken as the top field. A field left without a pair is
+ * output as a frame whose other field is mid-gray ({@code 1 << (d - 1)} at bit depth {@code d}).
+ * A woven frame carries the timestamp of its first field and, when both durations are known, the
+ * sum of the durations of its fields; the conformance and display windows crop each field.
+ *
+ * <p>Decoding starts at the first IRAP picture or at the first picture carrying a recovery point SEI
+ * message, whichever comes first; the RASL pictures of a CRA picture that starts the stream are
+ * skipped. After a start at a recovery point, the references the stream lacks are mid-gray
+ * stand-ins, and the pictures before the recovery point in output order are decoded but not output
+ * (nor their picture hashes checked), until an IRAP picture starts a new coded video sequence;
+ * the hashes of the later pictures are checked only when the message promises an exact match. A
+ * recovery point message that is truncated, or whose {@code recovery_poc_cnt} lies outside
+ * {@code -MaxPicOrderCntLsb / 2} to {@code MaxPicOrderCntLsb / 2 - 1}, is ignored.
+ * Unsupported but valid streams raise {@link MediaException.Unsupported} naming
  * the feature: {@code "hevc separate color planes"} and {@code "hevc screen content coding"}.
  * Every profile of version 1 and of the range extensions is decoded: Main, Main 10, Main Still
  * Picture, Main 12, Main 4:2:2 10 and 12, Main 4:4:4 (8, 10, 12 and 16 Intra, with their Intra and
@@ -129,9 +154,80 @@ public final class HevcDecoder implements VideoDecoder {
     private Yuv16Picture widePicture;
 
     /**
-     * The timestamp of the last frame output, or {@link Packet#NO_TIMESTAMP}.
+     * The timestamp of the last frame or field output, or {@link Packet#NO_TIMESTAMP}.
      */
     private long lastPts = Packet.NO_TIMESTAMP;
+
+    /**
+     * The duration of the last frame or field output, or 0 when unknown.
+     */
+    private long lastDuration;
+
+    /**
+     * The parity of a top field, whose rows are the even rows of its frame.
+     */
+    private static final int TOP = 0;
+
+    /**
+     * The parity of a bottom field, whose rows are the odd rows of its frame.
+     */
+    private static final int BOTTOM = 1;
+
+    /**
+     * The woven frame holding the field that waits for its pair, or {@code null} when no field
+     * waits.
+     */
+    private Picture held;
+
+    /**
+     * The parity of the waiting field, {@link #TOP} or {@link #BOTTOM}.
+     */
+    private int heldParity;
+
+    /**
+     * The timestamp of the waiting field.
+     */
+    private long heldPts;
+
+    /**
+     * The duration of the waiting field, or 0 when unknown.
+     */
+    private long heldDuration;
+
+    /**
+     * Whether the waiting field is a keyframe.
+     */
+    private boolean heldKeyframe;
+
+    /**
+     * The recycled 8-bit woven frame.
+     */
+    private YuvPicture wovenPicture;
+
+    /**
+     * The recycled high bit depth woven frame.
+     */
+    private Yuv16Picture wovenWidePicture;
+
+    /**
+     * The left edge of the window {@link #window(HevcSps)} computed last, in luma samples.
+     */
+    private int windowLeft;
+
+    /**
+     * The top edge of the window {@link #window(HevcSps)} computed last, in luma samples.
+     */
+    private int windowTop;
+
+    /**
+     * The width of the window {@link #window(HevcSps)} computed last.
+     */
+    private int windowWidth;
+
+    /**
+     * The height of the window {@link #window(HevcSps)} computed last.
+     */
+    private int windowHeight;
 
     /**
      * The operation the calls of this decoder form, whose computing time decides how long a call
@@ -255,7 +351,11 @@ public final class HevcDecoder implements VideoDecoder {
             var handoff = ConsumerFailure.wrap(output);
             this.output = handoff;
             try {
-                engine.flush();
+                try {
+                    engine.flush();
+                } finally {
+                    releaseHeldField();
+                }
             } catch (RuntimeException exception) {
                 throw handoff.translate("HEVC stream", exception);
             } finally {
@@ -270,6 +370,7 @@ public final class HevcDecoder implements VideoDecoder {
             return;
         }
         closed = true;
+        held = null;
         try (var _ = ParallelBands.operation(operation)) {
             engine.close();
         }
@@ -304,31 +405,36 @@ public final class HevcDecoder implements VideoDecoder {
     }
 
     /**
-     * Converts a decoded picture into a {@link VideoFrame} and hands it to the consumer.
+     * Converts a decoded picture into a {@link VideoFrame} and hands it to the consumer, or, for a
+     * field of a sequence of fields, weaves it into the frame of its pair.
      *
-     * <p>When the conformance window crops nothing on the left or top, a picture whose samples are
-     * already in the requested sample size and depth (8-bit planes, or 16-bit planes of one bit
-     * depth with {@link HevcDecoderOptions#highBitDepth()}) is handed out as a view of the engine's
-     * planes, with the coded width as its row stride; the engine writes those planes again only
-     * after the consumer returns. Other pictures are copied into a recycled picture, narrowed when
-     * deeper than 8 bits or with the shallower component shifted up when the depths differ.
+     * <p>When the conformance window crops nothing on the left or top, a frame picture whose
+     * samples are already in the requested sample size and depth (8-bit planes, or 16-bit planes of
+     * one bit depth with {@link HevcDecoderOptions#highBitDepth()}) is handed out as a view of the
+     * engine's planes, with the coded width as its row stride; the engine writes those planes again
+     * only after the consumer returns. Other pictures are copied into a recycled picture, narrowed
+     * when deeper than 8 bits or with the shallower component shifted up when the depths differ.
      *
      * @param frame the engine's picture
      */
     private void emit(HevcFrame frame) {
         var sps = frame.sps;
-        var width = sps.width - sps.cropLeft - sps.cropRight;
-        var height = sps.height - sps.cropTop - sps.cropBottom;
-        var format = switch (sps.chromaFormatIdc) {
-            case 0 -> ChromaFormat.MONOCHROME;
-            case 2 -> ChromaFormat.YUV422;
-            case 3 -> ChromaFormat.YUV444;
-            default -> ChromaFormat.YUV420;
-        };
+        window(sps);
+        var keyframe = frame.irap || frame.recoveryPoint && frame.intraOnly;
+        if (sps.fieldSeq || isField(frame.picStruct)) {
+            emitField(frame, keyframe);
+            return;
+        }
+        releaseHeldField();
+        var left = windowLeft;
+        var top = windowTop;
+        var width = windowWidth;
+        var height = windowHeight;
+        var format = chromaFormat(sps);
         var color = frame.color;
         var depth = sps.pictureBitDepth();
         Picture result;
-        var uncropped = sps.cropLeft == 0 && sps.cropTop == 0;
+        var uncropped = left == 0 && top == 0;
         if (uncropped && frame.eightBit()) {
             var builder = YuvPicture.builder().size(width, height).chromaFormat(format).color(color)
                     .luma(frame.y8, frame.width);
@@ -345,119 +451,389 @@ public final class HevcDecoder implements VideoDecoder {
             result = builder.build();
         } else if (depth > 8 && options.highBitDepth()) {
             var target = widePicture;
-            if (target == null || target.width() != width || target.height() != height || target.chromaFormat() != format
-                    || target.bitDepth() != depth || !target.color().equals(color)) {
+            if (!matches(target, width, height, format, depth, color)) {
                 target = Yuv16Picture.allocate(width, height, format, depth, false, color);
                 widePicture = target;
             }
-            copyWide(frame, sps, target, width, height);
+            copyWide(frame, sps, target, left, top, width, height, 0, 1);
             result = target;
         } else {
             var target = picture;
-            if (target == null || target.width() != width || target.height() != height || target.chromaFormat() != format
-                    || !target.color().equals(color)) {
+            if (!matches(target, width, height, format, 0, color)) {
                 target = YuvPicture.allocate(width, height, format, false, color);
                 picture = target;
             }
-            copyNarrow(frame, sps, target, width, height);
+            copyNarrow(frame, sps, target, left, top, width, height, 0, 1);
             result = target;
         }
-        var duration = frame.duration > 0 ? frame.duration : frameDuration(sps);
-        var pts = frame.pts;
-        if (pts == Packet.NO_TIMESTAMP && duration > 0) {
-            pts = lastPts == Packet.NO_TIMESTAMP ? 0 : lastPts + duration;
-        }
-        if (pts != Packet.NO_TIMESTAMP) {
-            lastPts = pts;
-        }
-        output.accept(new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.irap));
+        var duration = frame.duration > 0 ? frame.duration : repeated(frameDuration(sps), frame.picStruct);
+        var pts = resolvePts(frame.pts, duration);
+        output.accept(new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe));
     }
 
     /**
-     * Copies the cropped samples of a picture into an 8-bit picture, rounding deeper samples to
-     * nearest.
+     * Weaves a field into a frame: the field waits for the next field in output order when the two
+     * pair up, and a field without a pair is output alone, its missing field mid-gray.
+     *
+     * <p>The parity of a field is the {@code pic_struct} of its picture timing SEI message: top for
+     * 1, 9 and 11, bottom for 2, 10 and 12. Without one, the field takes the parity opposite to
+     * the waiting field, or top when no field waits. Two consecutive fields pair up when their
+     * parities differ, their sequences describe frames of the same size, format and color, and
+     * neither the waiting field is to pair with its previous field ({@code pic_struct} 9 or 10) nor
+     * the new one with its next field (11 or 12).
+     *
+     * @param frame the engine's picture of the field
+     * @param keyframe whether the field is a keyframe, which makes its frame one when it comes
+     * first
+     */
+    private void emitField(HevcFrame frame, boolean keyframe) {
+        var sps = frame.sps;
+        var picStruct = frame.picStruct;
+        var parity = switch (picStruct) {
+            case 1, 9, 11 -> TOP;
+            case 2, 10, 12 -> BOTTOM;
+            default -> held != null ? 1 - heldParity : TOP;
+        };
+        var pairedWithPrevious = picStruct == 9 || picStruct == 10;
+        var pairedWithNext = picStruct == 11 || picStruct == 12;
+        var duration = frame.duration > 0 ? frame.duration : frameDuration(sps);
+        var pts = resolvePts(frame.pts, duration);
+        var width = windowWidth;
+        var height = windowHeight * 2;
+        var format = chromaFormat(sps);
+        var depth = options.highBitDepth() && sps.pictureBitDepth() > 8 ? sps.pictureBitDepth() : 0;
+        var color = frame.color;
+        if (held != null) {
+            if (!pairedWithNext && parity != heldParity && matches(held, width, height, format, depth, color)) {
+                writeField(frame, held, parity);
+                var frameDuration = heldDuration > 0 && duration > 0 ? heldDuration + duration : Track.UNKNOWN_DURATION;
+                var result = held;
+                held = null;
+                output.accept(new VideoFrame(result, heldPts, frameDuration, heldKeyframe));
+                return;
+            }
+            releaseHeldField();
+        }
+        Picture target;
+        if (depth > 0) {
+            if (!matches(wovenWidePicture, width, height, format, depth, color)) {
+                wovenWidePicture = Yuv16Picture.allocate(width, height, format, depth, false, color);
+            }
+            target = wovenWidePicture;
+        } else {
+            if (!matches(wovenPicture, width, height, format, 0, color)) {
+                wovenPicture = YuvPicture.allocate(width, height, format, false, color);
+            }
+            target = wovenPicture;
+        }
+        writeField(frame, target, parity);
+        if (pairedWithPrevious) {
+            fillField(target, 1 - parity);
+            output.accept(new VideoFrame(target, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe));
+            return;
+        }
+        held = target;
+        heldParity = parity;
+        heldPts = pts;
+        heldDuration = duration;
+        heldKeyframe = keyframe;
+    }
+
+    /**
+     * Returns whether a {@code pic_struct} marks its picture as a field: 1, 2 and 9 to 12.
+     *
+     * @param picStruct the {@code pic_struct}, or -1
+     * @return {@code true} for a field
+     */
+    private static boolean isField(int picStruct) {
+        return picStruct == 1 || picStruct == 2 || picStruct >= 9 && picStruct <= 12;
+    }
+
+    /**
+     * Outputs the field waiting for its pair, if any, as a frame whose other field is mid-gray.
+     */
+    private void releaseHeldField() {
+        var frame = held;
+        if (frame == null) {
+            return;
+        }
+        held = null;
+        fillField(frame, 1 - heldParity);
+        output.accept(new VideoFrame(frame, heldPts, heldDuration > 0 ? heldDuration : Track.UNKNOWN_DURATION,
+                heldKeyframe));
+    }
+
+    /**
+     * Copies the cropped samples of a field into the rows of one parity of a woven frame.
+     *
+     * @param frame the decoded field
+     * @param target the woven frame, a {@link YuvPicture} or a {@link Yuv16Picture}
+     * @param parity {@link #TOP} for the even rows, {@link #BOTTOM} for the odd rows
+     */
+    private void writeField(HevcFrame frame, Picture target, int parity) {
+        var sps = frame.sps;
+        window(sps);
+        if (target instanceof Yuv16Picture wide) {
+            copyWide(frame, sps, wide, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
+        } else {
+            copyNarrow(frame, sps, (YuvPicture) target, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
+        }
+    }
+
+    /**
+     * Fills the rows of one parity of a woven frame with mid-gray: {@code 1 << (d - 1)} at bit
+     * depth {@code d}.
+     *
+     * @param target the woven frame, a {@link YuvPicture} or a {@link Yuv16Picture}
+     * @param parity {@link #TOP} for the even rows, {@link #BOTTOM} for the odd rows
+     */
+    private static void fillField(Picture target, int parity) {
+        if (target instanceof Yuv16Picture wide) {
+            var gray = (short) (1 << (wide.bitDepth() - 1));
+            fillRows(wide.y(), wide.yStride(), wide.width(), wide.height(), parity, gray);
+            if (wide.u() != null) {
+                fillRows(wide.u(), wide.uvStride(), wide.chromaWidth(), wide.chromaHeight(), parity, gray);
+                fillRows(wide.v(), wide.uvStride(), wide.chromaWidth(), wide.chromaHeight(), parity, gray);
+            }
+            return;
+        }
+        var narrow = (YuvPicture) target;
+        fillRows(narrow.y(), narrow.yStride(), narrow.width(), narrow.height(), parity, (byte) 128);
+        if (narrow.u() != null) {
+            fillRows(narrow.u(), narrow.uvStride(), narrow.chromaWidth(), narrow.chromaHeight(), parity, (byte) 128);
+            fillRows(narrow.v(), narrow.uvStride(), narrow.chromaWidth(), narrow.chromaHeight(), parity, (byte) 128);
+        }
+    }
+
+    /**
+     * Fills every second row of an 8-bit plane, starting at a given row.
+     *
+     * @param plane the samples to fill
+     * @param stride the row stride
+     * @param width the row width
+     * @param height the number of rows
+     * @param first the first row to fill, 0 or 1
+     * @param value the sample value
+     */
+    private static void fillRows(byte[] plane, int stride, int width, int height, int first, byte value) {
+        for (var row = first; row < height; row += 2) {
+            Arrays.fill(plane, row * stride, row * stride + width, value);
+        }
+    }
+
+    /**
+     * Fills every second row of a 16-bit plane, starting at a given row.
+     *
+     * @param plane the samples to fill
+     * @param stride the row stride
+     * @param width the row width
+     * @param height the number of rows
+     * @param first the first row to fill, 0 or 1
+     * @param value the sample value
+     */
+    private static void fillRows(short[] plane, int stride, int width, int height, int first, short value) {
+        for (var row = first; row < height; row += 2) {
+            Arrays.fill(plane, row * stride, row * stride + width, value);
+        }
+    }
+
+    /**
+     * Returns whether a recycled picture has the given size, format, sample depth and color.
+     *
+     * @param picture the recycled picture, or {@code null}
+     * @param width the required width
+     * @param height the required height
+     * @param format the chroma format
+     * @param depth the bit depth of a {@link Yuv16Picture}, or 0 for a {@link YuvPicture}
+     * @param color the color description
+     * @return {@code true} when the picture can be reused
+     */
+    private static boolean matches(Picture picture, int width, int height, ChromaFormat format, int depth,
+                                   ColorInfo color) {
+        if (picture == null || picture.width() != width || picture.height() != height) {
+            return false;
+        }
+        return switch (picture) {
+            case Yuv16Picture wide -> depth > 0 && wide.bitDepth() == depth && wide.chromaFormat() == format
+                    && wide.color().equals(color);
+            case YuvPicture narrow -> depth == 0 && narrow.chromaFormat() == format && narrow.color().equals(color);
+            default -> false;
+        };
+    }
+
+    /**
+     * Computes the window of a picture that frames show: the conformance window, narrowed to the
+     * VUI's default display window when {@link HevcDecoderOptions#defaultDisplayWindow()} is set and
+     * the display window fits inside it.
+     *
+     * @param sps the sequence parameter set of the picture
+     */
+    private void window(HevcSps sps) {
+        var left = sps.cropLeft;
+        var top = sps.cropTop;
+        var width = sps.width - sps.cropLeft - sps.cropRight;
+        var height = sps.height - sps.cropTop - sps.cropBottom;
+        if (options.defaultDisplayWindow() && sps.displayLeft + sps.displayRight < width
+                && sps.displayTop + sps.displayBottom < height) {
+            left += sps.displayLeft;
+            top += sps.displayTop;
+            width -= sps.displayLeft + sps.displayRight;
+            height -= sps.displayTop + sps.displayBottom;
+        }
+        windowLeft = left;
+        windowTop = top;
+        windowWidth = width;
+        windowHeight = height;
+    }
+
+    /**
+     * Returns the chroma format of the pictures of a sequence.
+     *
+     * @param sps the sequence parameter set
+     * @return the chroma format
+     */
+    private static ChromaFormat chromaFormat(HevcSps sps) {
+        return switch (sps.chromaFormatIdc) {
+            case 0 -> ChromaFormat.MONOCHROME;
+            case 2 -> ChromaFormat.YUV422;
+            case 3 -> ChromaFormat.YUV444;
+            default -> ChromaFormat.YUV420;
+        };
+    }
+
+    /**
+     * Returns the timestamp of the next frame or field: its packet's, or, when the packet had none
+     * and the duration is known, the end of the previous frame or field (0 for the first), where a
+     * previous one of unknown duration lasts as long as this one.
+     *
+     * @param pts the timestamp of the picture's packet, or {@link Packet#NO_TIMESTAMP}
+     * @param duration the duration of the picture, or 0 when unknown
+     * @return the timestamp, or {@link Packet#NO_TIMESTAMP}
+     */
+    private long resolvePts(long pts, long duration) {
+        if (pts == Packet.NO_TIMESTAMP && duration > 0) {
+            pts = lastPts == Packet.NO_TIMESTAMP ? 0 : lastPts + (lastDuration > 0 ? lastDuration : duration);
+        }
+        if (pts != Packet.NO_TIMESTAMP) {
+            lastPts = pts;
+            lastDuration = duration;
+        }
+        return pts;
+    }
+
+    /**
+     * Returns the display duration of a frame picture from the nominal picture duration and its
+     * {@code pic_struct} (ITU-T H.265 Table D.2): one and a half periods for the three-field
+     * structures 5 and 6, two for frame doubling (7), three for frame tripling (8), one otherwise.
+     *
+     * @param duration the nominal duration, or 0 when unknown
+     * @param picStruct the {@code pic_struct}, or -1
+     * @return the duration, or 0 when unknown
+     */
+    private static long repeated(long duration, int picStruct) {
+        return switch (picStruct) {
+            case 5, 6 -> duration * 3 / 2;
+            case 7 -> duration * 2;
+            case 8 -> duration * 3;
+            default -> duration;
+        };
+    }
+
+    /**
+     * Copies the cropped samples of a picture into rows of an 8-bit picture, rounding deeper
+     * samples to nearest.
      *
      * @param frame the decoded picture
      * @param sps its sequence parameter set
      * @param target the output picture
+     * @param left the first kept column, in luma samples, a multiple of the chroma subsampling
+     * @param top the first kept row, in luma samples, a multiple of the chroma subsampling
      * @param width the cropped width
      * @param height the cropped height
+     * @param firstRow the output row receiving the first kept row, 0 or 1
+     * @param rowStep the output rows per picture row: 1, or 2 to write the rows of a field
      */
-    private static void copyNarrow(HevcFrame frame, HevcSps sps, YuvPicture target, int width, int height) {
+    private static void copyNarrow(HevcFrame frame, HevcSps sps, YuvPicture target, int left, int top, int width,
+                                   int height, int firstRow, int rowStep) {
+        var yOffset = firstRow * target.yStride();
+        var yStride = target.yStride() * rowStep;
+        var uvOffset = firstRow * target.uvStride();
+        var uvStride = target.uvStride() * rowStep;
+        var cw = target.chromaWidth();
+        var ch = (height + (1 << sps.chromaShiftY) - 1) >> sps.chromaShiftY;
+        var chromaOffset = (top >> sps.chromaShiftY) * frame.chromaWidth + (left >> sps.chromaShiftX);
         if (frame.eightBit()) {
-            Planes.copy(frame.y8, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), 0,
-                    target.yStride(), width, height);
+            Planes.copy(frame.y8, top * frame.width + left, frame.width, target.y(), yOffset, yStride, width, height);
             if (frame.cb8 != null) {
-                var offset = (sps.cropTop >> sps.chromaShiftY) * frame.chromaWidth + (sps.cropLeft >> sps.chromaShiftX);
-                var cw = target.chromaWidth();
-                var ch = target.chromaHeight();
-                Planes.copy(frame.cb8, offset, frame.chromaWidth, target.u(), 0, target.uvStride(), cw, ch);
-                Planes.copy(frame.cr8, offset, frame.chromaWidth, target.v(), 0, target.uvStride(), cw, ch);
+                Planes.copy(frame.cb8, chromaOffset, frame.chromaWidth, target.u(), uvOffset, uvStride, cw, ch);
+                Planes.copy(frame.cr8, chromaOffset, frame.chromaWidth, target.v(), uvOffset, uvStride, cw, ch);
             }
             return;
         }
         var narrow = Narrow.select();
-        narrow.narrow(frame.y, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), 0, target.yStride(), width,
+        narrow.narrow(frame.y, top * frame.width + left, frame.width, target.y(), yOffset, yStride, width,
                 height, sps.bitDepthLuma - 8);
         if (frame.cb != null) {
-            var sx = sps.chromaShiftX;
-            var sy = sps.chromaShiftY;
-            var cw = target.chromaWidth();
-            var ch = target.chromaHeight();
-            var offset = (sps.cropTop >> sy) * frame.chromaWidth + (sps.cropLeft >> sx);
-            narrow.narrow(frame.cb, offset, frame.chromaWidth, target.u(), 0, target.uvStride(), cw, ch,
+            narrow.narrow(frame.cb, chromaOffset, frame.chromaWidth, target.u(), uvOffset, uvStride, cw, ch,
                     sps.bitDepthChroma - 8);
-            narrow.narrow(frame.cr, offset, frame.chromaWidth, target.v(), 0, target.uvStride(), cw, ch,
+            narrow.narrow(frame.cr, chromaOffset, frame.chromaWidth, target.v(), uvOffset, uvStride, cw, ch,
                     sps.bitDepthChroma - 8);
         }
     }
 
     /**
-     * Copies the cropped samples of a picture into a high bit depth picture of the picture's bit
-     * depth, shifting the samples of a shallower component up to it.
+     * Copies the cropped samples of a picture into rows of a high bit depth picture of the
+     * picture's bit depth, shifting the samples of a shallower component up to it.
      *
      * @param frame the decoded picture
      * @param sps its sequence parameter set
      * @param target the output picture
+     * @param left the first kept column, in luma samples, a multiple of the chroma subsampling
+     * @param top the first kept row, in luma samples, a multiple of the chroma subsampling
      * @param width the cropped width
      * @param height the cropped height
+     * @param firstRow the output row receiving the first kept row, 0 or 1
+     * @param rowStep the output rows per picture row: 1, or 2 to write the rows of a field
      */
-    private static void copyWide(HevcFrame frame, HevcSps sps, Yuv16Picture target, int width, int height) {
+    private static void copyWide(HevcFrame frame, HevcSps sps, Yuv16Picture target, int left, int top, int width,
+                                 int height, int firstRow, int rowStep) {
         var depth = target.bitDepth();
-        copyShifted(frame.y, sps.cropTop * frame.width + sps.cropLeft, frame.width, target.y(), target.yStride(),
-                width, height, depth - sps.bitDepthLuma);
+        copyShifted(frame.y, top * frame.width + left, frame.width, target.y(), firstRow * target.yStride(),
+                target.yStride() * rowStep, width, height, depth - sps.bitDepthLuma);
         if (frame.cb != null) {
-            var offset = (sps.cropTop >> sps.chromaShiftY) * frame.chromaWidth + (sps.cropLeft >> sps.chromaShiftX);
+            var offset = (top >> sps.chromaShiftY) * frame.chromaWidth + (left >> sps.chromaShiftX);
             var cw = target.chromaWidth();
-            var ch = target.chromaHeight();
+            var ch = (height + (1 << sps.chromaShiftY) - 1) >> sps.chromaShiftY;
             var shift = depth - sps.bitDepthChroma;
-            copyShifted(frame.cb, offset, frame.chromaWidth, target.u(), target.uvStride(), cw, ch, shift);
-            copyShifted(frame.cr, offset, frame.chromaWidth, target.v(), target.uvStride(), cw, ch, shift);
+            var uvOffset = firstRow * target.uvStride();
+            var uvStride = target.uvStride() * rowStep;
+            copyShifted(frame.cb, offset, frame.chromaWidth, target.u(), uvOffset, uvStride, cw, ch, shift);
+            copyShifted(frame.cr, offset, frame.chromaWidth, target.v(), uvOffset, uvStride, cw, ch, shift);
         }
     }
 
     /**
-     * Copies a region of a 16-bit plane to the top-left corner of an output plane, shifting every
-     * sample left.
+     * Copies a region of a 16-bit plane into an output plane, shifting every sample left.
      *
      * @param src the source plane
      * @param srcOffset the index of the region's top-left sample
      * @param srcStride the source row stride
      * @param dst the output plane
+     * @param dstOffset the index of the first output sample
      * @param dstStride the output row stride
      * @param width the region width
      * @param height the region height
      * @param shift the left shift, from 0 to 8
      */
-    private static void copyShifted(short[] src, int srcOffset, int srcStride, short[] dst, int dstStride, int width,
-                                    int height, int shift) {
+    private static void copyShifted(short[] src, int srcOffset, int srcStride, short[] dst, int dstOffset,
+                                    int dstStride, int width, int height, int shift) {
         if (shift == 0) {
-            Planes.copy(src, srcOffset, srcStride, dst, 0, dstStride, width, height);
+            Planes.copy(src, srcOffset, srcStride, dst, dstOffset, dstStride, width, height);
             return;
         }
         for (var y = 0; y < height; y++) {
             var from = srcOffset + y * srcStride;
-            var to = y * dstStride;
+            var to = dstOffset + y * dstStride;
             for (var x = 0; x < width; x++) {
                 dst[to + x] = (short) (src[from + x] << shift);
             }

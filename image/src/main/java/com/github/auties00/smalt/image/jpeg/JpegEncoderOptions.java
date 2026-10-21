@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.jpeg;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
@@ -120,8 +119,8 @@ public final class JpegEncoderOptions {
      *
      * <p>The profile tells readers which color space the pixels are in; it does not convert them.
      * Without one, readers take the pixels as sRGB. It is written as {@code APP2 ICC_PROFILE}
-     * segments after the JFIF header. A high-dynamic-range profile, which has no ICC form, is
-     * rejected.
+     * segments after the JFIF header. A high-dynamic-range profile is written in its ICC form,
+     * whose {@code cicp} tag carries its PQ or HLG code points.
      */
     public Optional<ColorProfile> colorProfile() {
         return Optional.ofNullable(colorProfile);
@@ -241,15 +240,10 @@ public final class JpegEncoderOptions {
          * @return the options
          * @throws IllegalArgumentException if the quality is not in [0, 100] or the restart interval
          * is not in [0, 65535]
-         * @throws MediaException.Unsupported if the color profile has no ICC form (a
-         * high-dynamic-range profile)
          */
         public JpegEncoderOptions build() {
             Checks.inRange("quality", quality, 0, 100);
             Checks.inRange("restart interval", restartInterval, 0, 0xFFFF);
-            if (colorProfile != null && colorProfile.isHighDynamicRange()) {
-                throw new MediaException.Unsupported("icc", "a high-dynamic-range profile has no ICC form");
-            }
             return new JpegEncoderOptions(this);
         }
     }

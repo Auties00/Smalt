@@ -92,7 +92,7 @@ public class H264ReconBenchmark {
             work[32] = source[2];
             work[48] = source[3];
             var offset = offsets[i];
-            dsp.chromaDcAdd(work, plane, offset, STRIDE);
+            dsp.chromaDcAdd(work, 0, plane, offset, STRIDE);
         }
     }
 }
