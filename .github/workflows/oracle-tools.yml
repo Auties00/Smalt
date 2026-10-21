@@ -1,10 +1,11 @@
 # Fills the Actions caches of the oracle tools (.github/actions/oracles) on the given runners before the test jobs
 # start, so that the one-time builds (ffmpeg and its libraries from source take most of an hour) never count
 # against a test job's time limit, and checks that every runner has every pinned tool and every ffmpeg component
-# of tools/testdata/ffmpeg-oracle/features.tsv; and derives the clips of tools/testdata/clips.tsv on Linux x64 into
-# their cross-OS cache entry, whatever the runners, because swscale's arm64 kernels scale differently and the
-# encoder golden tests pin the x86-64 clips. ci.yml, nightly.yml and package.yml call it; it can also be run by hand
-# to warm the caches of a branch.
+# of tools/testdata/ffmpeg-oracle/features.tsv; and makes sure that the cache holds the clips of
+# tools/testdata/clips.tsv, derived on Linux x64 into their cross-OS entry, whatever the runners, because swscale's
+# arm64 kernels scale differently and the encoder golden tests pin the x86-64 clips. ci.yml, nightly.yml and
+# warm-caches.yml call it; it can also be run by hand to warm the caches of a branch (the pkg/* branches only
+# restore them, see .github/scripts/cache-policy.sh).
 name: Oracle tools
 
 on:
@@ -22,6 +23,8 @@ on:
 
 permissions:
   contents: read
+  # the cache listing of .github/scripts/cache-policy.sh
+  actions: read
 
 jobs:
   install:
@@ -60,8 +63,7 @@ jobs:
         with:
           python-version: '3.x'
 
-      - uses: ./.github/actions/oracles
-
       - uses: ./.github/actions/testdata
         with:
           vectors: 'false'
+          clips: fill

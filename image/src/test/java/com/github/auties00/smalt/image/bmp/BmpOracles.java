@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.bmp;
 
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.testkit.image.RasterTesting;
 
 import java.io.IOException;
@@ -82,7 +83,7 @@ final class BmpOracles {
             command.add(path.toString());
         }
         try {
-            var log = Path.of("target", "raster-tests", reader + ".log");
+            var log = Scratch.directory("raster-tests").resolve(reader + ".log");
             var process = new ProcessBuilder(command).redirectErrorStream(true).redirectOutput(log.toFile()).start();
             if (!process.waitFor(5, TimeUnit.MINUTES)) {
                 process.destroyForcibly();

@@ -62,7 +62,16 @@
         <!-- jdk.management: the allocation tests read the per-thread allocation counter reflectively;
              EnableDynamicAgentLoading: the fuzz tests' Jazzer attaches its agent at run time. Tests run at the
              JVM's default thread stack size, as applications do. -->
-        <smalt.test.argLine>${smalt.test.agent} --add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Dsmalt.simd=${smalt.test.simd} ${smalt.test.jvmArgs}</smalt.test.argLine>
+        <!--
+            Test JVMs per module, side by side (surefire's forkCount: a number, or a multiple of the cores such as
+            1C), each reused for many test classes: mvn verify -Dsmalt.test.forks=1C. The JIT guard (it) and the
+            capture tests always run in one. Helpers that several test classes share write under the fork's own
+            target directory (the test kit's Scratch); smalt.test.heap caps each fork's heap when several share a
+            machine, for example -XX:MaxRAMPercentage=18 with four.
+        -->
+        <smalt.test.forks>1</smalt.test.forks>
+        <smalt.test.heap></smalt.test.heap>
+        <smalt.test.argLine>${smalt.test.agent} --add-modules jdk.incubator.vector,jdk.management --enable-native-access=ALL-UNNAMED -XX:+EnableDynamicAgentLoading -Dsmalt.simd=${smalt.test.simd} ${smalt.test.heap} ${smalt.test.jvmArgs}</smalt.test.argLine>
         <!-- The release profile sets it: these test jars feed only the unpublished it module, so they are not published
              (core's test jar, the test kit every module's tests compile against, is built in every profile) -->
         <smalt.skipTestJar>false</smalt.skipTestJar>
@@ -258,8 +267,12 @@
                     <artifactId>maven-surefire-plugin</artifactId>
                     <configuration>
                         <argLine>${smalt.test.argLine}</argLine>
+                        <forkCount>${smalt.test.forks}</forkCount>
+                        <reuseForks>true</reuseForks>
                         <systemPropertyVariables>
                             <jazzer.hooks>${jazzer.hooks}</jazzer.hooks>
+                            <!-- The test kit's Scratch directories: one per fork -->
+                            <smalt.test.fork>fork-${surefire.forkNumber}</smalt.test.fork>
                         </systemPropertyVariables>
                     </configuration>
                 </plugin>

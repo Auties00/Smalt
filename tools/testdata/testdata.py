@@ -113,8 +113,11 @@ def download(url, target, expected):
                 with urllib.request.urlopen(request, timeout=120) as response, open(temporary, 'wb') as sink:
                     shutil.copyfileobj(response, sink, 1 << 20)
                 break
-            except OSError:
-                if pause is None:
+            except OSError as exception:
+                # a client error (a dead link, a redirect loop) does not heal with time: only 5xx, 429 and network
+                # errors are retried
+                status = getattr(exception, 'code', None)
+                if pause is None or (isinstance(status, int) and status < 500 and status != 429):
                     raise
                 time.sleep(pause)
         actual = sha256(temporary)

@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoFrame;
@@ -28,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.fail;
  * Annex B conversion and strict ffmpeg decoding.
  */
 final class EncoderHarness {
-    private static final Path WORK = Path.of("target", "h264enc-work");
+    private static final Path WORK = Scratch.directory("h264enc-work");
 
     private EncoderHarness() {
         throw new AssertionError();

@@ -9,15 +9,18 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
 
 - Maven, Java 26 only (the incubating Vector API is not binary compatible across JDK feature releases).
 - `mvn install -DskipTests` from the root; tests per module, one at a time (memory):
-  `mvn -f <module>/pom.xml test`.
+  `mvn -f <module>/pom.xml test`. `-Dsmalt.test.forks=N` (or `0.5C`) runs a module's suite in N test JVMs side
+  by side, as CI does with two (`it` and `capture` always use one), so a test helper that several test classes
+  share writes its files under the test kit's `Scratch.directory` (one per fork) or through `Scratch.share`,
+  never into a fixed path of `target` that another fork writes too.
 - Modules: `build` (`smalt-build`: metadata, plugin versions and the release profiles, inherited by
   `smalt-parent` and `smalt-bom`), `bom`, `core`, `image`, `audio`, `video`, `mpeg`, `capture`, `raw`,
   `desktop`, `aot`, `it` (JIT guard and cross-artifact tests, not published). Parent of the code modules:
   `smalt-parent` (the root `pom.xml`), which also gives every module JUnit and JMH for its tests.
-- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Skip`, `Quality`, `Dumps`, `HeifBuilder`, `Bytes`, `Packets`,
-  and the helpers in `testkit.audio`, `testkit.image`, `testkit.container`, `testkit.io` and `testkit.fuzz`) lives in
-  core's `src/test/java` under `testkit` and reaches the other modules through core's test jar (`smalt-core` with
-  `<type>test-jar</type>`, test scope), which holds only `testkit/**`.
+- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Skip`, `Quality`, `Dumps`, `Scratch`, `HeifBuilder`, `Bytes`,
+  `Packets`, and the helpers in `testkit.audio`, `testkit.image`, `testkit.container`, `testkit.io` and
+  `testkit.fuzz`) lives in core's `src/test/java` under `testkit` and reaches the other modules through core's test
+  jar (`smalt-core` with `<type>test-jar</type>`, test scope), which holds only `testkit/**`.
 - Every demuxer, reader and image decoder runs through the I/O behavior harnesses (`DemuxerAsserts`,
   `ReaderAsserts`, `ImageDecoderAsserts`) with golden dumps under each module's `src/test/resources/dumps`
   (`-Dsmalt.test.updateDumps=true` rewrites them); a new container or codec adds its inputs as the `testkit.io`

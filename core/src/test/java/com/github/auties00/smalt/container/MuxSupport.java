@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
 
@@ -24,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * stream or a file, and validating the output with ffmpeg.
  */
 public final class MuxSupport {
-    private static final Path DIRECTORY = Path.of("target", "mux-output");
+    private static final Path DIRECTORY = Scratch.directory("mux-output");
 
     private MuxSupport() {
         throw new AssertionError();

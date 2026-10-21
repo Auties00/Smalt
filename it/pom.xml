@@ -103,6 +103,22 @@
         </dependency>
     </dependencies>
 
+    <build>
+        <plugins>
+            <!--
+                One JVM, whatever smalt.test.forks says: the JIT guard measures its child JVMs' compilation and
+                allocation, which other test JVMs on the same cores would disturb.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <forkCount>1</forkCount>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+
     <profiles>
         <!--
             The coverage of every artifact's tests and of these tests, together: target/site/jacoco-aggregate. The

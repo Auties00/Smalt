@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.jp2;
 
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -59,13 +60,7 @@ final class OpenJpeg {
 
     /** Returns a fresh path under target/jp2-tests. */
     static Path temp(String name) {
-        try {
-            var directory = Path.of("target", "jp2-tests");
-            Files.createDirectories(directory);
-            return directory.resolve(COUNTER.incrementAndGet() + "-" + name).toAbsolutePath();
-        } catch (IOException exception) {
-            throw new UncheckedIOException(exception);
-        }
+        return Scratch.directory("jp2-tests").resolve(COUNTER.incrementAndGet() + "-" + name).toAbsolutePath();
     }
 
     /**

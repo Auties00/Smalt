@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -132,9 +133,7 @@ public final class RasterTesting {
     /** Writes bytes to a file under target/raster-tests and returns the path. */
     public static Path write(String name, byte[] data) {
         try {
-            var directory = Path.of("target", "raster-tests");
-            Files.createDirectories(directory);
-            var file = directory.resolve(name);
+            var file = Scratch.directory("raster-tests").resolve(name);
             Files.write(file, data);
             return file;
         } catch (IOException exception) {

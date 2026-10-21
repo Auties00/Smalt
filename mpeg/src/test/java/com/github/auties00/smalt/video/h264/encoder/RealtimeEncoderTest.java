@@ -282,7 +282,7 @@ class RealtimeEncoderTest {
             var starts = new long[frames];
             var ends = new long[frames];
             var idr = new boolean[frames];
-            var requests = new ConcurrentLinkedQueue<Long>();
+            var requests = new ConcurrentLinkedQueue<long[]>();
             var running = new AtomicBoolean(true);
             try (var encoder = config.encoder()) {
                 var requester = Thread.ofPlatform().start(() -> {
@@ -292,8 +292,9 @@ class RealtimeEncoderTest {
                         while (System.nanoTime() < until) {
                             Thread.onSpinWait();
                         }
-                        requests.add(System.nanoTime());
+                        var before = System.nanoTime();
                         encoder.requestKeyframe();
+                        requests.add(new long[] {before, System.nanoTime()});
                     }
                 });
                 for (var i = 0; i < frames; i++) {
@@ -308,16 +309,28 @@ class RealtimeEncoderTest {
             }
             var total = 0;
             var lost = 0;
+            // A request made while frame k is encoded is taken by frame k or k + 1. The request happened between
+            // the two times recorded around the call, which differ when the requester was preempted (other test
+            // JVMs on the same cores): its frames run from the first one ending after the first time to the one
+            // after the first one ending after the second.
             for (var request : requests) {
-                var k = 0;
-                while (k < frames && ends[k] < request) {
-                    k++;
+                var first = 0;
+                while (first < frames && ends[first] < request[0]) {
+                    first++;
                 }
-                if (k + 1 >= frames) {
+                var last = first;
+                while (last < frames && ends[last] < request[1]) {
+                    last++;
+                }
+                if (last + 1 >= frames) {
                     continue;
                 }
                 total++;
-                if (!idr[k] && !idr[k + 1]) {
+                var taken = false;
+                for (var k = first; k <= last + 1; k++) {
+                    taken |= idr[k];
+                }
+                if (!taken) {
                     lost++;
                 }
             }

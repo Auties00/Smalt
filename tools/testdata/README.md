@@ -19,6 +19,12 @@ Smalt's tests read two kinds of external data, both listed here with SHA-256 che
 Each entry belongs to a tier. `smoke` is small enough for the GitHub Actions cache and runs on every pull
 request; `full` (which includes `smoke`) runs nightly. A test whose data is absent is skipped.
 
+CI keeps the smoke tier, the clips, the oracle tools and the ffmpeg builds in Actions cache entries of the default
+branch, which `.github/workflows/warm-caches.yml` fills (when these files change there, and daily) and every other
+branch restores; the `pkg/*` snapshot branches never save copies of their own, except of an entry whose inputs they
+changed (`.github/scripts/cache-policy.sh`). The full tier does not fit in the 10 GB repository cache next to them,
+so the nightly downloads it every night.
+
 ```
 python tools/testdata/testdata.py fetch --tier smoke    # the vectors CI's pull request jobs use
 python tools/testdata/testdata.py fetch --tier full --clips-only   # and the clips they derive (needs ffmpeg)

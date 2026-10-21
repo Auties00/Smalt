@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.png;
 
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.testkit.image.RasterTesting;
 
 import java.io.IOException;
@@ -77,14 +78,14 @@ final class PngOracles {
         }
         try {
             var process = new ProcessBuilder(command).redirectErrorStream(true)
-                    .redirectOutput(Path.of("target", "raster-tests", "imageio.log").toFile()).start();
+                    .redirectOutput(Scratch.directory("raster-tests").resolve("imageio.log").toFile()).start();
             if (!process.waitFor(5, TimeUnit.MINUTES)) {
                 process.destroyForcibly();
                 throw new IllegalStateException("ImageIoPngDump timed out");
             }
             if (process.exitValue() != 0) {
                 throw new IllegalStateException("ImageIoPngDump failed: "
-                        + Files.readString(Path.of("target", "raster-tests", "imageio.log")));
+                        + Files.readString(Scratch.directory("raster-tests").resolve("imageio.log")));
             }
             var results = new ArrayList<ImageIoResult>();
             for (var path : paths) {

@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -27,7 +28,7 @@ import java.util.function.Supplier;
  * dwebp, digests, libwebp's extra command-line tools, and scratch files.
  */
 final class WebpTestSupport {
-    static final Path SCRATCH = Path.of("target", "webp-scratch");
+    static final Path SCRATCH = Scratch.directory("webp-scratch");
 
     /** Numbers the oracle outputs, keeping their paths short for tools without long-path support. */
     static final java.util.concurrent.atomic.AtomicInteger SCRATCH_COUNTER = new java.util.concurrent.atomic.AtomicInteger();

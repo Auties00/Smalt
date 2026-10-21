@@ -19,6 +19,8 @@ concurrency:
 
 permissions:
   contents: read
+  # the cache listing of .github/scripts/cache-policy.sh
+  actions: read
 
 env:
   JAVA_VERSION: '26'
@@ -71,6 +73,10 @@ jobs:
         shell: bash
         run: echo "SMALT_SKIP_JOB=$(echo '${{ runner.os }}-${{ runner.arch }}-${{ matrix.simd }}-${{ matrix.set }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
+      # Each module's suite in several test JVMs (two on the hosted runners); the JIT guard (it) runs alone in
+      # one, after the others.
+      - uses: ./.github/actions/test-jvms
+
       - uses: ./.github/actions/oracles
 
       - uses: ./.github/actions/testdata
@@ -79,7 +85,7 @@ jobs:
         id: test
         shell: bash
         run: >
-          mvn -B -ntp -fae ${{ matrix.modules }} verify -Dsmalt.test.simd=${{ matrix.simd == 'vector' }}
+          mvn -B -ntp -fae ${{ matrix.modules }} verify $SMALT_TEST_FORKS -Dsmalt.test.simd=${{ matrix.simd == 'vector' }}
           ${{ matrix.tests != '' && format('-Dtest={0} -Dsurefire.failIfNoSpecifiedTests=false', matrix.tests) || '' }}
 
       # Every skip carries a reason id, and no count may grow over tools/testdata/skip-baseline.tsv.

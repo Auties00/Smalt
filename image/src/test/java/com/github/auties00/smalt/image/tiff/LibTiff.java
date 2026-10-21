@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.tiff;
 
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.image.RasterTesting;
 
@@ -82,13 +83,7 @@ public final class LibTiff {
 
     /** Returns a fresh file path under target/tiff-tests. */
     static Path temp(String name) {
-        try {
-            var directory = Path.of("target", "tiff-tests");
-            Files.createDirectories(directory);
-            return directory.resolve(COUNTER.incrementAndGet() + "-" + name).toAbsolutePath();
-        } catch (IOException exception) {
-            throw new UncheckedIOException(exception);
-        }
+        return Scratch.directory("tiff-tests").resolve(COUNTER.incrementAndGet() + "-" + name).toAbsolutePath();
     }
 
     static Path write(String name, byte[] data) {

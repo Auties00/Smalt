@@ -18,6 +18,8 @@ concurrency:
 
 permissions:
   contents: read
+  # the cache listing of .github/scripts/cache-policy.sh
+  actions: read
 
 env:
   JAVA_VERSION: '26'
@@ -31,10 +33,10 @@ jobs:
       os: '["ubuntu-latest","ubuntu-24.04-arm"]'
 
   # The full tier is about 14 GB of vectors plus 1.3 GB of clips, more than the hosted runners' 10 GB repository
-  # cache holds next to everything else. The nightly caches the vectors of every host but the two largest
-  # (raw.pixls.us camera samples and media.xiph.org sequences, about 6.8 GB, fast to download) in one entry and
-  # downloads those two every night; the clips come from the CI's cache entry. When the repository variable
-  # SMALT_NIGHTLY_RUNNER names a self-hosted runner, its home keeps everything and the cache steps are skipped.
+  # cache holds next to the oracle tools and the smoke tier every branch restores, so the nightly downloads the
+  # vectors outside the smoke tier every night instead of caching them; the smoke vectors and the clips come from
+  # the cache entries of the default branch. When the repository variable SMALT_NIGHTLY_RUNNER names a self-hosted
+  # runner, its home keeps everything.
   full-conformance:
     name: full conformance tier
     needs: oracles
@@ -44,7 +46,6 @@ jobs:
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
       SMALT_SKIP_JOB: linux-x64-vector-full
-      UNCACHED_HOSTS: --exclude-host raw.pixls.us --exclude-host media.xiph.org
     steps:
       - uses: actions/checkout@v4
 
@@ -64,29 +65,7 @@ jobs:
 
       - uses: ./.github/actions/oracles
 
-      - name: Restore the cached part of the full tier
-        id: full
-        if: runner.environment == 'github-hosted'
-        uses: actions/cache/restore@v4
-        with:
-          path: ~/.smalt/cache/conformance
-          key: testdata-full-cached-${{ hashFiles('tools/testdata/vectors.tsv') }}
-
-      # Saved before the uncached hosts are downloaded, so that the entry holds only the cached part.
-      - name: Fetch and cache that part
-        if: runner.environment == 'github-hosted' && steps.full.outputs.cache-hit != 'true'
-        run: python tools/testdata/testdata.py fetch --tier full --no-clips $UNCACHED_HOSTS
-
-      - name: Save the cached part of the full tier
-        if: runner.environment == 'github-hosted' && steps.full.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
-        with:
-          path: ~/.smalt/cache/conformance
-          key: testdata-full-cached-${{ hashFiles('tools/testdata/vectors.tsv') }}
-
       - uses: ./.github/actions/testdata
-        with:
-          vectors: 'false'
 
       - name: Fetch the rest of the full tier
         run: python tools/testdata/testdata.py fetch --tier full
@@ -194,17 +173,9 @@ jobs:
 
       - uses: ./.github/actions/oracles
 
-      - name: Restore the smoke test data
-        id: smoke-cache
-        uses: actions/cache@v4
+      - uses: ./.github/actions/testdata
         with:
-          path: ~/.smalt/cache/conformance
-          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
-          enableCrossOsArchive: true
-
-      - name: Fetch the smoke test data
-        if: steps.smoke-cache.outputs.cache-hit != 'true'
-        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+          clips: 'false'
 
       - name: Test with the coverage agent
         run: mvn -B -ntp -fae -Pcoverage verify -Dmaven.test.failure.ignore=true
