@@ -11,7 +11,7 @@
     <artifactId>smalt-image</artifactId>
     <packaging>jar</packaging>
     <name>${project.groupId}:${project.artifactId}</name>
-    <description>Smalt image codecs: JPEG (and its lossless transforms), JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8)</description>
+    <description>Smalt image codecs: JPEG (and its lossless transforms), JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, ANI, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8)</description>
 
     <dependencies>
         <dependency>
@@ -22,6 +22,16 @@
             <groupId>${project.groupId}</groupId>
             <artifactId>smalt-core</artifactId>
             <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

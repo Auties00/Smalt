@@ -79,8 +79,8 @@ public final class JpegTranscoder {
      * @return the transformed file
      */
     private static byte[] transcode(byte[] data, JpegTransformOptions options, boolean autoOrient) {
-        // TODO: arithmetic-coded output, 12-bit frames (rejected by the decoder), restart intervals in MCU
-        //  rows, and jpegtran's -wipe, -drop and crop extension
+        // TODO: arithmetic-coded output, restart intervals in MCU rows, and jpegtran's -wipe, -drop and crop
+        //  extension
         var reader = new JpegReader(data, 0, data.length, options.limits());
         var coefficients = reader.decodeCoefficients();
         if (autoOrient) {
@@ -227,7 +227,7 @@ public final class JpegTranscoder {
         var header = new CoefficientWriter.Header(jfif, outputMajor, outputMinor, outputUnit, outputX, outputY, adobe,
                 adobeTransform);
         var writer = new CoefficientWriter(plan.outputWidth(), plan.outputHeight(), components, quantTables,
-                options.restartInterval());
+                options.restartInterval(), frame.precision);
         return writer.write(header, markers, options.progressive(), options.optimizeHuffman(),
                 outputSpace == JpegColorSpace.YCBCR);
     }
