@@ -295,6 +295,17 @@ class H264DamageTest {
                     name, loss * 100, requireMarker, 100.0 * shown / slots, unflagged));
             assertTrue(shown > 0);
         }
+
+        // MR4_TANDBERG_C holds long-term references, whose staleness must be judged in stream
+        // order; CAPM3_Sony_D, CABA3_SVA_B and CVBS3_Sony_C have B pictures whose lists skip the
+        // stand-ins of lost reference pictures.
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"MR4_TANDBERG_C", "CAPM3_Sony_D", "CABA3_SVA_B",
+                "CVBS3_Sony_C"})
+        @DisplayName("conformance streams missing whole pictures show only exact frames as intact, the same with four threads")
+        void droppedPictures(String name) throws IOException {
+            H264InterlacedTest.assertDroppedPictures(name);
+        }
     }
 
     @Nested

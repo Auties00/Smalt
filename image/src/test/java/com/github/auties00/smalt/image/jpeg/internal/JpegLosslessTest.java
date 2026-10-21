@@ -11,7 +11,6 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
-import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -271,11 +270,19 @@ class JpegLosslessTest {
     @DisplayName("unsupported and invalid")
     class Rejected {
         @Test
-        @DisplayName("subsampled components are unsupported")
+        @DisplayName("subsampled components whose restart interval splits a row of units are unsupported")
         void subsampled() {
-            var jpeg = resource("61x43-rgb-p8-psv1.jpg");
-            jpeg[indexOf(jpeg, 0xC3) + 11] = 0x21;
-            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(jpeg, WIDE));
+            var luma = LosslessJpegTest.noise(16 * 8, 8, 1);
+            var chroma = LosslessJpegTest.noise(8 * 4, 8, 2);
+            var jpeg = Lj92Encoder.encodeSampled(new int[][]{luma, chroma, chroma}, 16, 8,
+                    new int[][]{{2, 2}, {1, 1}, {1, 1}}, 8, 1, 0, 0);
+            var dri = new byte[]{(byte) 0xFF, (byte) 0xDD, 0, 4, 0, 3};
+            var sos = indexOf(jpeg, 0xDA);
+            var out = new ByteArrayOutputStream();
+            out.write(jpeg, 0, sos);
+            out.writeBytes(dri);
+            out.write(jpeg, sos, jpeg.length - sos);
+            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(out.toByteArray(), WIDE));
             assertEquals("jpeg lossless", exception.format());
         }
 
@@ -303,12 +310,9 @@ class JpegLosslessTest {
         }
 
         @Test
-        @DisplayName("Motion-JPEG and the DCT paths reject lossless frames")
+        @DisplayName("the coefficient path rejects lossless frames")
         void dctOnly() {
             var jpeg = resource("61x43-gray-p8-psv1.jpg");
-            var mjpeg = new MjpegDecoder();
-            var exception = assertThrows(MediaException.Unsupported.class, () -> mjpeg.decodeFrame(jpeg, 0, jpeg.length));
-            assertEquals("jpeg lossless", exception.format());
             var reader = new JpegReader(jpeg, 0, jpeg.length, com.github.auties00.smalt.MediaLimits.DEFAULT);
             assertEquals("jpeg lossless", assertThrows(MediaException.Unsupported.class,
                     reader::decodeCoefficients).format());
