@@ -36,6 +36,11 @@ final class CavlcReader {
     private static final int[] TOKEN_CHROMA_DC;
 
     /**
+     * The {@code coeff_token} table for 4:2:2 chroma DC.
+     */
+    private static final int[] TOKEN_CHROMA_DC_422;
+
+    /**
      * The {@code total_zeros} tables for 4x4 blocks, indexed by {@code totalCoeff - 1}.
      */
     private static final int[][] TOTAL_ZEROS = new int[15][];
@@ -44,6 +49,11 @@ final class CavlcReader {
      * The {@code total_zeros} tables for 4:2:0 chroma DC, indexed by {@code totalCoeff - 1}.
      */
     private static final int[][] TOTAL_ZEROS_CHROMA_DC = new int[3][];
+
+    /**
+     * The {@code total_zeros} tables for 4:2:2 chroma DC, indexed by {@code totalCoeff - 1}.
+     */
+    private static final int[][] TOTAL_ZEROS_CHROMA_DC_422 = new int[7][];
 
     /**
      * The {@code run_before} tables, indexed by {@code min(zerosLeft, 7) - 1}.
@@ -92,12 +102,24 @@ final class CavlcReader {
             }
         }
         TOKEN_CHROMA_DC = build(TOKEN_ROOT, CavlcTables.CHROMA_DC_TOKEN_LENGTH, CavlcTables.CHROMA_DC_TOKEN_CODE, chromaSymbols);
+        var chroma422Symbols = new int[4 * 9];
+        for (var ones = 0; ones < 4; ones++) {
+            for (var total = 0; total < 9; total++) {
+                chroma422Symbols[ones * 9 + total] = (total << 2) | ones;
+            }
+        }
+        TOKEN_CHROMA_DC_422 = build(TOKEN_ROOT, CavlcTables.CHROMA_DC_422_TOKEN_LENGTH,
+                CavlcTables.CHROMA_DC_422_TOKEN_CODE, chroma422Symbols);
         for (var i = 0; i < 15; i++) {
             TOTAL_ZEROS[i] = build(SMALL_ROOT, CavlcTables.TOTAL_ZEROS_LENGTH[i], CavlcTables.TOTAL_ZEROS_CODE[i], null);
         }
         for (var i = 0; i < 3; i++) {
             TOTAL_ZEROS_CHROMA_DC[i] = build(SMALL_ROOT, CavlcTables.CHROMA_DC_TOTAL_ZEROS_LENGTH[i],
                     CavlcTables.CHROMA_DC_TOTAL_ZEROS_CODE[i], null);
+        }
+        for (var i = 0; i < 7; i++) {
+            TOTAL_ZEROS_CHROMA_DC_422[i] = build(SMALL_ROOT, CavlcTables.CHROMA_DC_422_TOTAL_ZEROS_LENGTH[i],
+                    CavlcTables.CHROMA_DC_422_TOTAL_ZEROS_CODE[i], null);
         }
         for (var i = 0; i < 7; i++) {
             RUN_BEFORE[i] = build(SMALL_ROOT, CavlcTables.RUN_BEFORE_LENGTH[i], CavlcTables.RUN_BEFORE_CODE[i], null);
@@ -185,8 +207,8 @@ final class CavlcReader {
      * in {@link #LEVEL}.
      * @param reader the bit reader
      * @param nC the {@code nC} context: 0 and above for luma and chroma AC blocks,
-     * {@code -1} for 4:2:0 chroma DC
-     * @param maxCoeff the {@code maxNumCoeff}: 4, 15 or 16
+     * {@code -1} for 4:2:0 chroma DC, {@code -2} for 4:2:2 chroma DC
+     * @param maxCoeff the {@code maxNumCoeff}: 4 (4:2:0 chroma DC), 8 (4:2:2 chroma DC), 15 or 16
      * @param coeffs receives the coefficients
      * @param coeffOffset the index of the block in {@code coeffs}
      * @param scan maps coefficient index {@code startIdx + k} to its position within the
@@ -225,7 +247,7 @@ final class CavlcReader {
             count -= 6;
             symbol = code == 3 ? 0 : (((code >> 2) + 1) << 2) | (code & 3);
         } else {
-            var table = nC < 0 ? TOKEN_CHROMA_DC : TOKEN[TOKEN_TABLE_OF_NC[nC]];
+            var table = nC < 0 ? (nC == -1 ? TOKEN_CHROMA_DC : TOKEN_CHROMA_DC_422) : TOKEN[TOKEN_TABLE_OF_NC[nC]];
             var entry = table[(int) (cache >>> (64 - TOKEN_ROOT))];
             if (entry <= 0) {
                 if (entry == 0) {
@@ -336,7 +358,8 @@ final class CavlcReader {
         }
         int zerosLeft;
         if (totalCoeff < maxCoeff) {
-            var table = maxCoeff == 4 ? TOTAL_ZEROS_CHROMA_DC[totalCoeff - 1] : TOTAL_ZEROS[totalCoeff - 1];
+            var table = maxCoeff == 4 ? TOTAL_ZEROS_CHROMA_DC[totalCoeff - 1]
+                    : maxCoeff == 8 ? TOTAL_ZEROS_CHROMA_DC_422[totalCoeff - 1] : TOTAL_ZEROS[totalCoeff - 1];
             var entry = table[(int) (cache >>> (64 - SMALL_ROOT))];
             if (entry <= 0) {
                 if (entry == 0) {

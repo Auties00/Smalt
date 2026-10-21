@@ -4,6 +4,7 @@ import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.track.Rational;
 
 import java.util.Objects;
+import java.util.OptionalInt;
 
 /**
  * Holds the codec-independent settings of a video encoder created by {@link VideoEncoders}.
@@ -23,15 +24,18 @@ public final class VideoEncoderOptions {
     private final long bitrate;
     private final boolean realtime;
     private final int threads;
+    private final OptionalInt keyframeInterval;
+    private final boolean periodicKeyframes;
 
-    private VideoEncoderOptions(int width, int height, Rational frameRate, long bitrate, boolean realtime,
-                                int threads) {
-        this.width = width;
-        this.height = height;
-        this.frameRate = frameRate;
-        this.bitrate = bitrate;
-        this.realtime = realtime;
-        this.threads = threads;
+    private VideoEncoderOptions(Builder builder) {
+        this.width = builder.width;
+        this.height = builder.height;
+        this.frameRate = builder.frameRate;
+        this.bitrate = builder.bitrate;
+        this.realtime = builder.realtime;
+        this.threads = builder.threads;
+        this.keyframeInterval = builder.keyframeInterval;
+        this.periodicKeyframes = builder.periodicKeyframes;
     }
 
     /**
@@ -134,6 +138,31 @@ public final class VideoEncoderOptions {
         return threads;
     }
 
+    /**
+     * {@return the most frames from one key frame to the next, positive, or empty when the codec
+     * chooses the distance or {@link #periodicKeyframes()} is {@code false}; empty by default}
+     *
+     * <p>With an interval of {@code n} and no key frame the codec adds at a scene cut or on
+     * {@link VideoEncoder#requestKeyframe()}, frame {@code k * n} is a key frame for every
+     * {@code k}; an added key frame restarts the count. An intra-only codec makes every frame a key
+     * frame whatever the setting.
+     */
+    public OptionalInt keyframeInterval() {
+        return keyframeInterval;
+    }
+
+    /**
+     * {@return whether the stream may have periodic key frames; {@code true} by default}
+     *
+     * <p>When {@code false}, key frames come only at the first frame, at scene cuts a codec
+     * detects and on {@link VideoEncoder#requestKeyframe()}. When {@code true}, their distance is
+     * {@link #keyframeInterval()}, or, when that is empty, the codec's default for its tuning
+     * (which may be none for {@link #realtime()} tuning).
+     */
+    public boolean periodicKeyframes() {
+        return periodicKeyframes;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof VideoEncoderOptions that
@@ -142,18 +171,21 @@ public final class VideoEncoderOptions {
                 && frameRate.equals(that.frameRate)
                 && bitrate == that.bitrate
                 && realtime == that.realtime
-                && threads == that.threads;
+                && threads == that.threads
+                && keyframeInterval.equals(that.keyframeInterval)
+                && periodicKeyframes == that.periodicKeyframes;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(width, height, frameRate, bitrate, realtime, threads);
+        return Objects.hash(width, height, frameRate, bitrate, realtime, threads, keyframeInterval, periodicKeyframes);
     }
 
     @Override
     public String toString() {
         return "VideoEncoderOptions[width=" + width + ", height=" + height + ", frameRate=" + frameRate
-                + ", bitrate=" + bitrate + ", realtime=" + realtime + ", threads=" + threads + "]";
+                + ", bitrate=" + bitrate + ", realtime=" + realtime + ", threads=" + threads + ", keyframeInterval="
+                + keyframeInterval + ", periodicKeyframes=" + periodicKeyframes + "]";
     }
 
     /**
@@ -171,6 +203,8 @@ public final class VideoEncoderOptions {
         private long bitrate;
         private boolean realtime;
         private int threads;
+        private OptionalInt keyframeInterval = OptionalInt.empty();
+        private boolean periodicKeyframes = true;
         private boolean sizeSet;
         private boolean bitrateSet;
 
@@ -184,6 +218,8 @@ public final class VideoEncoderOptions {
             this.bitrate = options.bitrate;
             this.realtime = options.realtime;
             this.threads = options.threads;
+            this.keyframeInterval = options.keyframeInterval;
+            this.periodicKeyframes = options.periodicKeyframes;
             this.sizeSet = true;
             this.bitrateSet = true;
         }
@@ -250,11 +286,48 @@ public final class VideoEncoderOptions {
         }
 
         /**
+         * Sets the most frames from one key frame to the next, turning periodic key frames on; see
+         * {@link VideoEncoderOptions#keyframeInterval()}.
+         *
+         * @param frames the distance in frames
+         * @return this builder
+         */
+        public Builder keyframeInterval(int frames) {
+            this.keyframeInterval = OptionalInt.of(frames);
+            this.periodicKeyframes = true;
+            return this;
+        }
+
+        /**
+         * Codes key frames only at the first frame, at scene cuts and on request; see
+         * {@link VideoEncoderOptions#periodicKeyframes()}.
+         *
+         * @return this builder
+         */
+        public Builder noPeriodicKeyframes() {
+            this.keyframeInterval = OptionalInt.empty();
+            this.periodicKeyframes = false;
+            return this;
+        }
+
+        /**
+         * Lets the codec choose the key frame distance for its tuning; see
+         * {@link VideoEncoderOptions#keyframeInterval()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticKeyframeInterval() {
+            this.keyframeInterval = OptionalInt.empty();
+            this.periodicKeyframes = true;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the width, the height, the frame rate or the bitrate is
-         * not positive, or the thread count is negative
+         * @throws IllegalArgumentException if the width, the height, the frame rate, the bitrate or
+         * the key frame interval is not positive, or the thread count is negative
          * @throws IllegalStateException if the picture size, the frame rate or the bitrate was never
          * set
          */
@@ -267,7 +340,10 @@ public final class VideoEncoderOptions {
             Checks.positive("frame rate", frameRate.toDouble());
             Checks.positive("bitrate", bitrate);
             Checks.nonNegative("thread count", threads);
-            return new VideoEncoderOptions(width, height, frameRate, bitrate, realtime, threads);
+            if (keyframeInterval.isPresent()) {
+                Checks.positive("key frame interval", keyframeInterval.getAsInt());
+            }
+            return new VideoEncoderOptions(this);
         }
     }
 }

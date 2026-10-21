@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.image.gif.internal;
 
-import org.junit.jupiter.api.Assumptions;
+import com.github.auties00.smalt.testkit.Skip;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -204,7 +204,7 @@ class GifLzwEncoderTest {
         @DisplayName("hundreds of random inputs match giflib live")
         void live() {
             var driver = System.getProperty("smalt.test.giflib");
-            Assumptions.assumeTrue(driver != null, "smalt.test.giflib is not set");
+            Skip.unless(driver != null, "opt-in:giflib", "smalt.test.giflib is not set");
             var random = new Random(7);
             for (var i = 0; i < 300; i++) {
                 var width = 1 + random.nextInt(400);

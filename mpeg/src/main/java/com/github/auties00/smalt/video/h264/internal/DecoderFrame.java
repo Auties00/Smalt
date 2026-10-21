@@ -90,6 +90,59 @@ final class DecoderFrame {
     static final int MB_UNIFORM8 = 1 << 13;
 
     /**
+     * The macroblock is a field macroblock: it belongs to a field picture or to a field
+     * macroblock pair of an MBAFF frame.
+     */
+    static final int MB_FIELD = 1 << 14;
+
+    /**
+     * The top field, as a bit of a field set and as a picture structure.
+     */
+    static final int TOP = 1;
+
+    /**
+     * The bottom field, as a bit of a field set and as a picture structure.
+     */
+    static final int BOTTOM = 2;
+
+    /**
+     * Both fields: the structure of a frame picture.
+     */
+    static final int FRAME = 3;
+
+    /**
+     * The coding of a frame decoded from a frame picture without macroblock-adaptive frame/field
+     * decoding ({@code PicCodingStruct} FRM).
+     */
+    static final int CODED_FRAME = 0;
+
+    /**
+     * The coding of a frame decoded from an MBAFF frame picture ({@code PicCodingStruct} AFRM).
+     */
+    static final int CODED_MBAFF = 1;
+
+    /**
+     * The coding of a frame decoded from one or two field pictures ({@code PicCodingStruct}
+     * FLD).
+     */
+    static final int CODED_FIELDS = 2;
+
+    /**
+     * The reference kind of a frame or complementary field pair in a {@link #refId} entry.
+     */
+    static final int REF_FRAME = 0;
+
+    /**
+     * The reference kind of a top field in a {@link #refId} entry.
+     */
+    static final int REF_TOP = 1;
+
+    /**
+     * The reference kind of a bottom field in a {@link #refId} entry.
+     */
+    static final int REF_BOTTOM = 2;
+
+    /**
      * The macroblock width of the frame.
      */
     final int mbWidth;
@@ -105,19 +158,71 @@ final class DecoderFrame {
     final boolean hasChroma;
 
     /**
-     * The luma plane including borders.
+     * The {@code chroma_format_idc} of the planes: 0 for monochrome, 1 for 4:2:0, 2 for 4:2:2.
+     */
+    final int chromaFormat;
+
+    /**
+     * The chroma height of a macroblock, {@code MbHeightC}: 16 for 4:2:2, 8 otherwise.
+     */
+    final int chromaMbHeight;
+
+    /**
+     * The chroma height of the frame in samples, {@code mbHeight * chromaMbHeight}.
+     */
+    final int chromaHeight;
+
+    /**
+     * The bit depth of the luma samples, 8 to 14.
+     */
+    final int bitDepthLuma;
+
+    /**
+     * The bit depth of the chroma samples, 8 to 14.
+     */
+    final int bitDepthChroma;
+
+    /**
+     * Whether the samples are held in the 16-bit planes ({@link #luma16}, {@link #cb16} and
+     * {@link #cr16}) because the luma bit depth or, in a frame with chroma, the chroma bit
+     * depth exceeds 8, rather than in the 8-bit planes.
+     */
+    final boolean wide;
+
+    /**
+     * The 8-bit luma plane including borders, or {@code null} for a {@link #wide} frame.
      */
     final byte[] luma;
 
     /**
-     * The Cb plane including borders, or {@code null} without chroma.
+     * The 8-bit Cb plane including borders, or {@code null} without chroma or for a
+     * {@link #wide} frame.
      */
     final byte[] cb;
 
     /**
-     * The Cr plane including borders, or {@code null} without chroma.
+     * The 8-bit Cr plane including borders, or {@code null} without chroma or for a
+     * {@link #wide} frame.
      */
     final byte[] cr;
+
+    /**
+     * The 16-bit luma plane including borders, or {@code null} for a frame that is not
+     * {@link #wide}.
+     */
+    final short[] luma16;
+
+    /**
+     * The 16-bit Cb plane including borders, or {@code null} without chroma or for a frame
+     * that is not {@link #wide}.
+     */
+    final short[] cb16;
+
+    /**
+     * The 16-bit Cr plane including borders, or {@code null} without chroma or for a frame
+     * that is not {@link #wide}.
+     */
+    final short[] cr16;
 
     /**
      * The luma row stride.
@@ -140,20 +245,27 @@ final class DecoderFrame {
     final int chromaOrigin;
 
     /**
-     * The motion vectors of each list per 4x4 block, indexed {@code [list][mbAddr * 16 + y * 4 + x]}
-     * and packed as {@code (mvy << 16) | (mvx & 0xFFFF)}.
+     * The motion vectors of each list per 4x4 block, indexed {@code [list][mbIndex * 16 + y * 4 + x]}
+     * and packed as {@code (mvy << 16) | (mvx & 0xFFFF)}; field macroblocks hold field vectors.
+     *
+     * <p>Per-macroblock arrays are indexed by the macroblock's position in the frame grid,
+     * {@code mbIndex = row * mbWidth + column}: a frame macroblock at frame macroblock row
+     * {@code R} has row {@code R}, and the field macroblock at field macroblock row {@code r} of
+     * parity {@code p} (of a field picture or an MBAFF field macroblock pair) has row
+     * {@code 2 * r + p}.
      */
     final int[][] mv;
 
     /**
      * The reference indices of each list per 8x8 partition, indexed
-     * {@code [list][mbAddr * 4 + partition]}; {@code -1} when the list is unused.
+     * {@code [list][mbIndex * 4 + partition]}; {@code -1} when the list is unused.
      */
     final byte[][] ref;
 
     /**
-     * The identity ({@link #id}) of the reference picture of each list per 8x8 partition, or
-     * {@code -1} when the list is unused.
+     * The reference picture of each list per 8x8 partition, {@code (id << 2) | kind} with the
+     * {@link #id} of the reference frame and a {@code REF_*} kind, or {@code -1} when the list is
+     * unused.
      */
     final int[][] refId;
 
@@ -198,9 +310,27 @@ final class DecoderFrame {
     int longTermFrameIdx;
 
     /**
-     * The reference marking: 0 unused, {@link #SHORT_TERM} or {@link #LONG_TERM}.
+     * The reference marking of the top field: 0 unused, {@link #SHORT_TERM} or
+     * {@link #LONG_TERM}.
      */
-    int reference;
+    int refTop;
+
+    /**
+     * The reference marking of the bottom field, with the values of {@link #refTop}.
+     */
+    int refBottom;
+
+    /**
+     * The fields the frame holds or is receiving: {@link #FRAME} for a frame picture, the
+     * parity bits of its coded fields otherwise.
+     */
+    volatile int fields;
+
+    /**
+     * How the frame was coded: {@link #CODED_FRAME}, {@link #CODED_MBAFF} or
+     * {@link #CODED_FIELDS}.
+     */
+    int codingStruct;
 
     /**
      * The marking of a short-term reference frame.
@@ -266,9 +396,27 @@ final class DecoderFrame {
     boolean staleReference;
 
     /**
+     * The number of losses of stream data the engine had counted when the picture before the
+     * frame's first picture started, which tells whether data was lost next to a field that
+     * receives no other field.
+     */
+    long lossMark;
+
+    /**
+     * Whether the field a frame holding a single field lacks was filled by
+     * {@link #completeMissingField()}.
+     */
+    boolean missingFieldFilled;
+
+    /**
      * The presentation timestamp, or {@link com.github.auties00.smalt.track.Packet#NO_TIMESTAMP}.
      */
     long pts;
+
+    /**
+     * The number of the packet the frame's first picture started in, counted by the engine.
+     */
+    long packet;
 
     /**
      * The presentation duration, or
@@ -286,10 +434,6 @@ final class DecoderFrame {
      */
     H264Sps sps;
 
-    /**
-     * The number of macroblocks decoded so far.
-     */
-    int decodedMbs;
 
     /**
      * The number of the coded video sequence (between IDR pictures or memory management
@@ -336,28 +480,44 @@ final class DecoderFrame {
     private volatile int decodedRows;
 
     /**
-     * Whether decoding of the frame finished, successfully or not.
+     * The fields whose decoding finished, successfully or not, as {@link #TOP} and
+     * {@link #BOTTOM} bits.
      */
-    private volatile boolean done;
+    private volatile int doneFields;
 
     /**
-     * Guards the waiting on the progress counters and {@link #done}.
+     * Guards the waiting on the progress counters and {@link #doneFields}.
      */
     private final ReentrantLock progressLock = new ReentrantLock();
 
     /**
-     * Signals changes of the progress counters and {@link #done}.
+     * Signals changes of the progress counters and {@link #doneFields}.
      */
     private final Condition progressChanged = progressLock.newCondition();
 
     /**
-     * Marks the frame as being decoded: no row is final yet.
+     * Marks a picture of the frame as being decoded: no row of the frame is final any more, and
+     * the fields of {@code structure} are not done.
+     *
+     * <p>Only a frame picture, which the frame was coded as when {@link #codingStruct} is
+     * {@link #CODED_FRAME} or {@link #CODED_MBAFF}, publishes its rows while it is decoded; the
+     * rows of a frame coded as two fields become final together, once both fields are done.
+     *
+     * @param structure the structure of the picture: {@link #FRAME}, {@link #TOP} or
+     * {@link #BOTTOM}
+     * @param newFrame whether the picture starts a new frame, rather than being the second field
+     * of a frame whose first field was decoded
      */
-    void beginDecoding() {
-        readyLumaRows = 0;
-        readyChromaRows = 0;
-        decodedRows = 0;
-        done = false;
+    void beginDecoding(int structure, boolean newFrame) {
+        progressLock.lock();
+        try {
+            readyLumaRows = 0;
+            readyChromaRows = 0;
+            decodedRows = 0;
+            doneFields = newFrame ? 0 : doneFields & ~structure;
+        } finally {
+            progressLock.unlock();
+        }
     }
 
     /**
@@ -399,15 +559,23 @@ final class DecoderFrame {
     }
 
     /**
-     * Publishes that decoding of the frame finished: every row is final.
+     * Publishes that decoding of a picture of the frame finished; once every field the frame
+     * holds is done, every row is final.
+     *
+     * @param structure the fields the finished picture covers: {@link #FRAME}, {@link #TOP} or
+     * {@link #BOTTOM}
      */
-    void publishDone() {
+    void publishDone(int structure) {
         progressLock.lock();
         try {
-            readyLumaRows = mbHeight * 16;
-            readyChromaRows = mbHeight * 8;
-            decodedRows = mbHeight;
-            done = true;
+            var done = doneFields | structure;
+            doneFields = done;
+            var held = fields;
+            if ((done & held) == held) {
+                readyLumaRows = mbHeight * 16;
+                readyChromaRows = chromaHeight;
+                decodedRows = mbHeight;
+            }
             progressChanged.signalAll();
         } finally {
             progressLock.unlock();
@@ -415,12 +583,30 @@ final class DecoderFrame {
     }
 
     /**
-     * Returns whether decoding of the frame finished.
+     * Publishes that decoding of every field of the frame finished.
+     */
+    void publishDone() {
+        publishDone(FRAME);
+    }
+
+    /**
+     * Returns whether decoding of every field the frame holds finished.
      *
-     * @return {@code true} once {@link #publishDone()} was called
+     * @return {@code true} once {@link #publishDone(int)} covered every field of {@link #fields}
      */
     boolean isDone() {
-        return done;
+        var held = fields;
+        return (doneFields & held) == held;
+    }
+
+    /**
+     * Returns whether decoding of some fields finished.
+     *
+     * @param structure the fields: {@link #FRAME}, {@link #TOP} or {@link #BOTTOM}
+     * @return {@code true} once every field of {@code structure} is done
+     */
+    boolean isDone(int structure) {
+        return (doneFields & structure) == structure;
     }
 
     /**
@@ -466,6 +652,35 @@ final class DecoderFrame {
     }
 
     /**
+     * Waits until at least the given number of leading luma sample rows of one field are final.
+     *
+     * @param parity 0 for the top field, 1 for the bottom field
+     * @param rows the number of field rows needed, at most the field height
+     */
+    void awaitFieldLumaRows(int parity, int rows) {
+        if (codingStruct != CODED_FIELDS) {
+            awaitLumaRows(Math.min(2 * rows, mbHeight * 16));
+        } else {
+            awaitDone(parity + 1);
+        }
+    }
+
+    /**
+     * Waits until at least the given number of leading chroma sample rows of one field are
+     * final.
+     *
+     * @param parity 0 for the top field, 1 for the bottom field
+     * @param rows the number of field rows needed, at most the chroma field height
+     */
+    void awaitFieldChromaRows(int parity, int rows) {
+        if (codingStruct != CODED_FIELDS) {
+            awaitChromaRows(Math.min(2 * rows, chromaHeight));
+        } else {
+            awaitDone(parity + 1);
+        }
+    }
+
+    /**
      * Waits until the motion of at least the given number of leading rows is final.
      *
      * @param rows the number of rows needed, clamped to the frame height
@@ -488,16 +703,16 @@ final class DecoderFrame {
     }
 
     /**
-     * Waits until decoding of the frame finished.
+     * Waits until decoding of every field the frame holds finished.
      */
     void awaitDone() {
-        if (done) {
+        if (isDone()) {
             return;
         }
         ParallelBands.beginBlocking();
         progressLock.lock();
         try {
-            while (!done) {
+            while (!isDone()) {
                 progressChanged.awaitUninterruptibly();
             }
         } finally {
@@ -507,34 +722,86 @@ final class DecoderFrame {
     }
 
     /**
-     * Allocates a frame.
+     * Waits until decoding of some fields finished.
+     *
+     * @param structure the fields: {@link #FRAME}, {@link #TOP} or {@link #BOTTOM}
+     */
+    void awaitDone(int structure) {
+        if (isDone(structure)) {
+            return;
+        }
+        ParallelBands.beginBlocking();
+        progressLock.lock();
+        try {
+            while (!isDone(structure)) {
+                progressChanged.awaitUninterruptibly();
+            }
+        } finally {
+            progressLock.unlock();
+            ParallelBands.endBlocking();
+        }
+    }
+
+    /**
+     * Allocates a frame of 8-bit samples.
      *
      * @param mbWidth the width in macroblocks
      * @param mbHeight the height in macroblocks
-     * @param hasChroma whether to allocate 4:2:0 chroma planes
+     * @param chromaFormat the {@code chroma_format_idc} of the planes: 0 monochrome, 1 4:2:0 or
+     * 2 4:2:2
      */
-    DecoderFrame(int mbWidth, int mbHeight, boolean hasChroma) {
+    DecoderFrame(int mbWidth, int mbHeight, int chromaFormat) {
+        this(mbWidth, mbHeight, chromaFormat, 8, 8);
+    }
+
+    /**
+     * Allocates a frame, with 16-bit planes when the luma bit depth or, with chroma planes, the
+     * chroma bit depth exceeds 8.
+     *
+     * @param mbWidth the width in macroblocks
+     * @param mbHeight the height in macroblocks
+     * @param chromaFormat the {@code chroma_format_idc} of the planes: 0 monochrome, 1 4:2:0 or
+     * 2 4:2:2
+     * @param bitDepthLuma the luma bit depth, 8 to 14
+     * @param bitDepthChroma the chroma bit depth, 8 to 14
+     */
+    DecoderFrame(int mbWidth, int mbHeight, int chromaFormat, int bitDepthLuma, int bitDepthChroma) {
         this.mbWidth = mbWidth;
         this.mbHeight = mbHeight;
-        this.hasChroma = hasChroma;
+        this.hasChroma = chromaFormat != 0;
+        this.chromaFormat = chromaFormat;
+        this.chromaMbHeight = chromaMbHeight(chromaFormat);
+        this.chromaHeight = mbHeight * chromaMbHeight;
+        this.bitDepthLuma = bitDepthLuma;
+        this.bitDepthChroma = bitDepthChroma;
+        this.wide = bitDepthLuma > 8 || (hasChroma && bitDepthChroma > 8);
         var mbCount = mbWidth * mbHeight;
         this.lumaStride = mbWidth * 16 + 2 * LUMA_PAD;
-        this.luma = new byte[lumaStride * (mbHeight * 16 + 2 * LUMA_PAD)];
+        var lumaSize = lumaStride * (mbHeight * 16 + 2 * LUMA_PAD);
         this.lumaOrigin = LUMA_PAD * lumaStride + LUMA_PAD;
         this.chromaStride = mbWidth * 8 + 2 * CHROMA_PAD;
-        if (hasChroma) {
-            var size = chromaStride * (mbHeight * 8 + 2 * CHROMA_PAD);
-            this.cb = new byte[size];
-            this.cr = new byte[size];
-        } else {
+        var chromaSize = hasChroma ? chromaStride * (chromaHeight + 2 * CHROMA_PAD) : 0;
+        if (wide) {
+            this.luma = null;
             this.cb = null;
             this.cr = null;
+            this.luma16 = new short[lumaSize];
+            this.cb16 = hasChroma ? new short[chromaSize] : null;
+            this.cr16 = hasChroma ? new short[chromaSize] : null;
+        } else {
+            this.luma = new byte[lumaSize];
+            this.cb = hasChroma ? new byte[chromaSize] : null;
+            this.cr = hasChroma ? new byte[chromaSize] : null;
+            this.luma16 = null;
+            this.cb16 = null;
+            this.cr16 = null;
         }
         this.chromaOrigin = CHROMA_PAD * chromaStride + CHROMA_PAD;
         this.mv = new int[2][mbCount * 16];
         this.ref = new byte[2][mbCount * 4];
         this.refId = new int[2][mbCount * 4];
         this.mbType = new int[mbCount];
+        this.fields = FRAME;
     }
 
     /**
@@ -543,41 +810,157 @@ final class DecoderFrame {
      *
      * @param mbWidth the width in macroblocks
      * @param mbHeight the height in macroblocks
-     * @param hasChroma whether chroma planes are allocated
+     * @param chromaFormat the {@code chroma_format_idc} of the planes: 0 monochrome, 1 4:2:0 or
+     * 2 4:2:2
+     * @param wide whether the planes hold 16-bit samples
      * @return the approximate allocation size in bytes
      */
-    static long allocationSize(int mbWidth, int mbHeight, boolean hasChroma) {
+    static long allocationSize(int mbWidth, int mbHeight, int chromaFormat, boolean wide) {
         long luma = (mbWidth * 16L + 2 * LUMA_PAD) * (mbHeight * 16L + 2 * LUMA_PAD);
-        long chroma = hasChroma ? 2 * (mbWidth * 8L + 2 * CHROMA_PAD) * (mbHeight * 8L + 2 * CHROMA_PAD) : 0;
+        long chromaRows = (long) mbHeight * chromaMbHeight(chromaFormat) + 2 * CHROMA_PAD;
+        long chroma = chromaFormat != 0 ? 2 * (mbWidth * 8L + 2 * CHROMA_PAD) * chromaRows : 0;
         long motion = (long) mbWidth * mbHeight * (2 * 16 * 4 + 2 * 4 + 2 * 4 * 4 + 4);
-        return luma + chroma + motion;
+        return (luma + chroma) * (wide ? 2 : 1) + motion;
     }
 
     /**
-     * Returns whether the frame is marked as used for reference.
+     * Returns the chroma height of a macroblock, {@code MbHeightC}.
      *
-     * @return {@code true} for short-term and long-term reference frames
+     * @param chromaFormat the {@code chroma_format_idc}: 0 monochrome, 1 4:2:0 or 2 4:2:2
+     * @return 16 for 4:2:2, 8 otherwise
+     */
+    static int chromaMbHeight(int chromaFormat) {
+        return chromaFormat == 2 ? 16 : 8;
+    }
+
+    /**
+     * Returns the value of a mid-gray sample.
+     *
+     * @param bitDepth the bit depth of the samples
+     * @return {@code 1 << (bitDepth - 1)}
+     */
+    static int gray(int bitDepth) {
+        return 1 << (bitDepth - 1);
+    }
+
+    /**
+     * Returns whether a field of the frame is marked as used for reference.
+     *
+     * @return {@code true} when either field is a short-term or long-term reference
      */
     boolean isReference() {
-        return reference != 0;
+        return refTop != 0 || refBottom != 0;
     }
 
     /**
-     * Returns whether the frame is a long-term reference frame.
+     * Returns whether the frame or complementary field pair is a long-term reference: both its
+     * fields are marked long-term.
      *
-     * @return {@code true} when marked long-term
+     * @return {@code true} when both fields are marked long-term
      */
     boolean isLongTerm() {
-        return reference == LONG_TERM;
+        return refTop == LONG_TERM && refBottom == LONG_TERM;
     }
 
     /**
-     * Returns whether the frame is a short-term reference frame.
+     * Returns whether the frame or complementary field pair is a short-term reference: both its
+     * fields are marked short-term.
      *
-     * @return {@code true} when marked short-term
+     * @return {@code true} when both fields are marked short-term
      */
     boolean isShortTerm() {
-        return reference == SHORT_TERM;
+        return refTop == SHORT_TERM && refBottom == SHORT_TERM;
+    }
+
+    /**
+     * Returns whether at least one field of the frame is marked short-term.
+     *
+     * @return {@code true} when a field is a short-term reference
+     */
+    boolean anyShortTerm() {
+        return refTop == SHORT_TERM || refBottom == SHORT_TERM;
+    }
+
+    /**
+     * Returns whether at least one field of the frame is marked long-term.
+     *
+     * @return {@code true} when a field is a long-term reference
+     */
+    boolean anyLongTerm() {
+        return refTop == LONG_TERM || refBottom == LONG_TERM;
+    }
+
+    /**
+     * Returns the reference marking of one field.
+     *
+     * @param parity 0 for the top field, 1 for the bottom field
+     * @return 0, {@link #SHORT_TERM} or {@link #LONG_TERM}
+     */
+    int marking(int parity) {
+        return parity == 0 ? refTop : refBottom;
+    }
+
+    /**
+     * Returns the reference marking of a picture structure of the frame: of the frame when
+     * {@code structure} is {@link #FRAME}, which is a marking only when both fields share it.
+     *
+     * @param structure {@link #TOP}, {@link #BOTTOM} or {@link #FRAME}
+     * @return 0, {@link #SHORT_TERM} or {@link #LONG_TERM}
+     */
+    int structureMarking(int structure) {
+        return switch (structure) {
+            case TOP -> refTop;
+            case BOTTOM -> refBottom;
+            default -> refTop == refBottom ? refTop : 0;
+        };
+    }
+
+    /**
+     * Sets the reference marking of the fields of a picture structure.
+     *
+     * @param structure {@link #TOP}, {@link #BOTTOM} or {@link #FRAME}
+     * @param marking 0, {@link #SHORT_TERM} or {@link #LONG_TERM}
+     */
+    void mark(int structure, int marking) {
+        if ((structure & TOP) != 0) {
+            refTop = marking;
+        }
+        if ((structure & BOTTOM) != 0) {
+            refBottom = marking;
+        }
+    }
+
+    /**
+     * Returns the picture order count of one field.
+     *
+     * @param parity 0 for the top field, 1 for the bottom field
+     * @return the field order count
+     */
+    int fieldPoc(int parity) {
+        return parity == 0 ? topPoc : bottomPoc;
+    }
+
+    /**
+     * Returns the picture order count of a picture structure of the frame: a field's count, or
+     * for {@link #FRAME} the smaller of the counts of the fields the frame holds.
+     *
+     * @param structure {@link #TOP}, {@link #BOTTOM} or {@link #FRAME}
+     * @return the picture order count
+     */
+    int structurePoc(int structure) {
+        return switch (structure) {
+            case TOP -> topPoc;
+            case BOTTOM -> bottomPoc;
+            default -> poc;
+        };
+    }
+
+    /**
+     * Recomputes {@link #poc} from the field counts of the fields the frame holds.
+     */
+    void updatePoc() {
+        var held = fields;
+        poc = held == TOP ? topPoc : held == BOTTOM ? bottomPoc : Math.min(topPoc, bottomPoc);
     }
 
     /**
@@ -585,10 +968,18 @@ final class DecoderFrame {
      * that must exist but carry no decoded content.
      */
     void fillGray() {
-        Arrays.fill(luma, (byte) 128);
-        if (hasChroma) {
-            Arrays.fill(cb, (byte) 128);
-            Arrays.fill(cr, (byte) 128);
+        if (wide) {
+            Arrays.fill(luma16, (short) gray(bitDepthLuma));
+            if (hasChroma) {
+                Arrays.fill(cb16, (short) gray(bitDepthChroma));
+                Arrays.fill(cr16, (short) gray(bitDepthChroma));
+            }
+        } else {
+            Arrays.fill(luma, (byte) 128);
+            if (hasChroma) {
+                Arrays.fill(cb, (byte) 128);
+                Arrays.fill(cr, (byte) 128);
+            }
         }
         clearMotion();
     }
@@ -607,13 +998,22 @@ final class DecoderFrame {
     }
 
     /**
-     * Copies the samples of another frame of the same size into this one.
+     * Copies the samples of another frame of the same size, chroma format and bit depths into
+     * this one.
      *
      * @param source the frame to copy
      */
     void copySamplesFrom(DecoderFrame source) {
+        if (wide) {
+            System.arraycopy(source.luma16, 0, luma16, 0, luma16.length);
+            if (hasChroma && source.chromaFormat == chromaFormat) {
+                System.arraycopy(source.cb16, 0, cb16, 0, cb16.length);
+                System.arraycopy(source.cr16, 0, cr16, 0, cr16.length);
+            }
+            return;
+        }
         System.arraycopy(source.luma, 0, luma, 0, luma.length);
-        if (hasChroma && source.hasChroma) {
+        if (hasChroma && source.chromaFormat == chromaFormat) {
             System.arraycopy(source.cb, 0, cb, 0, cb.length);
             System.arraycopy(source.cr, 0, cr, 0, cr.length);
         }
@@ -629,10 +1029,180 @@ final class DecoderFrame {
      * @param endChromaRow one past the last chroma sample row of the band
      */
     void extendBorders(int firstLumaRow, int endLumaRow, int firstChromaRow, int endChromaRow) {
+        if (wide) {
+            extendPlane(luma16, lumaStride, lumaOrigin, mbWidth * 16, mbHeight * 16, LUMA_PAD, firstLumaRow,
+                    endLumaRow);
+            if (hasChroma) {
+                extendPlane(cb16, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, firstChromaRow,
+                        endChromaRow);
+                extendPlane(cr16, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, firstChromaRow,
+                        endChromaRow);
+            }
+            return;
+        }
         extendPlane(luma, lumaStride, lumaOrigin, mbWidth * 16, mbHeight * 16, LUMA_PAD, firstLumaRow, endLumaRow);
         if (hasChroma) {
-            extendPlane(cb, chromaStride, chromaOrigin, mbWidth * 8, mbHeight * 8, CHROMA_PAD, firstChromaRow, endChromaRow);
-            extendPlane(cr, chromaStride, chromaOrigin, mbWidth * 8, mbHeight * 8, CHROMA_PAD, firstChromaRow, endChromaRow);
+            extendPlane(cb, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, firstChromaRow,
+                    endChromaRow);
+            extendPlane(cr, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, firstChromaRow,
+                    endChromaRow);
+        }
+    }
+
+    /**
+     * Replicates the edge samples of every row of one field into the left and right borders,
+     * and the frame's first row into the top border (for the top field) or its last row into the
+     * bottom border (for the bottom field).
+     *
+     * @param parity 0 for the top field, 1 for the bottom field
+     */
+    void extendFieldBorders(int parity) {
+        if (wide) {
+            extendFieldPlane(luma16, lumaStride, lumaOrigin, mbWidth * 16, mbHeight * 16, LUMA_PAD, parity);
+            if (hasChroma) {
+                extendFieldPlane(cb16, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, parity);
+                extendFieldPlane(cr16, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, parity);
+            }
+            return;
+        }
+        extendFieldPlane(luma, lumaStride, lumaOrigin, mbWidth * 16, mbHeight * 16, LUMA_PAD, parity);
+        if (hasChroma) {
+            extendFieldPlane(cb, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, parity);
+            extendFieldPlane(cr, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, CHROMA_PAD, parity);
+        }
+    }
+
+    /**
+     * Replicates the edge samples of the rows of one field of a plane into its borders.
+     *
+     * @param plane the samples, edited in place
+     * @param stride the row stride
+     * @param origin the index of sample {@code (0, 0)}
+     * @param width the plane width without borders
+     * @param height the plane height without borders, even
+     * @param pad the border width
+     * @param parity 0 for the top field, 1 for the bottom field
+     */
+    private static void extendFieldPlane(byte[] plane, int stride, int origin, int width, int height, int pad,
+                                         int parity) {
+        Planes.extendSides(plane, origin + parity * stride, 2 * stride, width, height / 2, pad, pad);
+        if (parity == 0) {
+            Planes.extendTop(plane, origin - pad, stride, width + 2 * pad, pad);
+        } else {
+            Planes.extendBottom(plane, origin - pad + (height - 1) * stride, stride, width + 2 * pad, pad);
+        }
+    }
+
+    /**
+     * Replicates the edge samples of the rows of one field of a 16-bit plane into its borders.
+     *
+     * @param plane the samples, edited in place
+     * @param stride the row stride
+     * @param origin the index of sample {@code (0, 0)}
+     * @param width the plane width without borders
+     * @param height the plane height without borders, even
+     * @param pad the border width
+     * @param parity 0 for the top field, 1 for the bottom field
+     */
+    private static void extendFieldPlane(short[] plane, int stride, int origin, int width, int height, int pad,
+                                         int parity) {
+        Planes.extendSides(plane, origin + parity * stride, 2 * stride, width, height / 2, pad, pad);
+        if (parity == 0) {
+            Planes.extendTop(plane, origin - pad, stride, width + 2 * pad, pad);
+        } else {
+            Planes.extendBottom(plane, origin - pad + (height - 1) * stride, stride, width + 2 * pad, pad);
+        }
+    }
+
+    /**
+     * Completes a frame that holds a single field and will receive no other: fills the missing
+     * field with mid-gray samples, replicates them into the borders, gives its macroblocks the
+     * motion of intra macroblocks and publishes that field as done, so that output, pictures
+     * predicting from the frame and co-located motion lookups see a gray intra field where no
+     * field was decoded, and waits on the missing field end. Does nothing for a frame holding
+     * both fields or one already completed.
+     *
+     * <p>The decoded field may still be in progress on another thread: the missing field's rows
+     * and borders are disjoint from what decoding the other field writes.
+     */
+    void completeMissingField() {
+        var held = fields;
+        if (held == FRAME || missingFieldFilled) {
+            return;
+        }
+        missingFieldFilled = true;
+        var parity = held == TOP ? 1 : 0;
+        fillFieldGray(parity);
+        extendFieldBorders(parity);
+        for (var row = parity; row < mbHeight; row += 2) {
+            var first = row * mbWidth;
+            var last = first + mbWidth;
+            Arrays.fill(mbType, first, last, MB_INTRA | MB_FIELD);
+            for (var list = 0; list < 2; list++) {
+                Arrays.fill(mv[list], first * 16, last * 16, 0);
+                Arrays.fill(ref[list], first * 4, last * 4, (byte) -1);
+                Arrays.fill(refId[list], first * 4, last * 4, -1);
+            }
+        }
+        publishDone(FRAME - held);
+    }
+
+    /**
+     * Fills one field with mid-gray samples, for the missing field of a frame whose other field
+     * was decoded alone.
+     *
+     * @param parity 0 for the top field, 1 for the bottom field
+     */
+    void fillFieldGray(int parity) {
+        if (wide) {
+            fillFieldPlane(luma16, lumaStride, lumaOrigin, mbWidth * 16, mbHeight * 16, parity, gray(bitDepthLuma));
+            if (hasChroma) {
+                var value = gray(bitDepthChroma);
+                fillFieldPlane(cb16, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, parity, value);
+                fillFieldPlane(cr16, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, parity, value);
+            }
+            return;
+        }
+        fillFieldPlane(luma, lumaStride, lumaOrigin, mbWidth * 16, mbHeight * 16, parity);
+        if (hasChroma) {
+            fillFieldPlane(cb, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, parity);
+            fillFieldPlane(cr, chromaStride, chromaOrigin, mbWidth * 8, chromaHeight, parity);
+        }
+    }
+
+    /**
+     * Fills the rows of one field of a plane with mid-gray samples.
+     *
+     * @param plane the samples, edited in place
+     * @param stride the row stride
+     * @param origin the index of sample {@code (0, 0)}
+     * @param width the plane width without borders
+     * @param height the plane height without borders, even
+     * @param parity 0 for the top field, 1 for the bottom field
+     */
+    private static void fillFieldPlane(byte[] plane, int stride, int origin, int width, int height, int parity) {
+        for (var y = parity; y < height; y += 2) {
+            var at = origin + y * stride;
+            Arrays.fill(plane, at, at + width, (byte) 128);
+        }
+    }
+
+    /**
+     * Fills the rows of one field of a 16-bit plane with one sample value.
+     *
+     * @param plane the samples, edited in place
+     * @param stride the row stride
+     * @param origin the index of sample {@code (0, 0)}
+     * @param width the plane width without borders
+     * @param height the plane height without borders, even
+     * @param parity 0 for the top field, 1 for the bottom field
+     * @param value the sample value
+     */
+    private static void fillFieldPlane(short[] plane, int stride, int origin, int width, int height, int parity,
+                                       int value) {
+        for (var y = parity; y < height; y += 2) {
+            var at = origin + y * stride;
+            Arrays.fill(plane, at, at + width, (short) value);
         }
     }
 
@@ -649,6 +1219,29 @@ final class DecoderFrame {
      * @param endRow one past the last row of the band
      */
     private static void extendPlane(byte[] plane, int stride, int origin, int width, int height, int pad,
+                                    int firstRow, int endRow) {
+        Planes.extendSides(plane, origin + firstRow * stride, stride, width, endRow - firstRow, pad, pad);
+        if (firstRow == 0) {
+            Planes.extendTop(plane, origin - pad, stride, width + 2 * pad, pad);
+        }
+        if (endRow == height) {
+            Planes.extendBottom(plane, origin - pad + (height - 1) * stride, stride, width + 2 * pad, pad);
+        }
+    }
+
+    /**
+     * Replicates the edge samples of a band of rows of one 16-bit plane into its borders.
+     *
+     * @param plane the samples, edited in place
+     * @param stride the row stride
+     * @param origin the index of sample {@code (0, 0)}
+     * @param width the plane width without borders
+     * @param height the plane height without borders
+     * @param pad the border width
+     * @param firstRow the first row of the band
+     * @param endRow one past the last row of the band
+     */
+    private static void extendPlane(short[] plane, int stride, int origin, int width, int height, int pad,
                                     int firstRow, int endRow) {
         Planes.extendSides(plane, origin + firstRow * stride, stride, width, endRow - firstRow, pad, pad);
         if (firstRow == 0) {

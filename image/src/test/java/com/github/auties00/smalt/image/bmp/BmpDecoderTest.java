@@ -60,11 +60,8 @@ class BmpDecoderTest {
         if (bits == 0) {
             return 0;
         }
-        if (bits > 8) {
-            return value >>> (bits - 8);
-        }
-        var maximum = (1 << bits) - 1;
-        return (int) Math.round(value * 255.0 / maximum);
+        var maximum = (1L << bits) - 1;
+        return (int) Math.round((value & 0xFFFFFFFFL) * 255.0 / maximum);
     }
 
     static byte[] expectPalette(int[] indices, int[] colors, int size) {
@@ -318,9 +315,8 @@ class BmpDecoderTest {
     @DisplayName("rejection")
     class Rejection {
         @ParameterizedTest(name = "compression {0} header {1} depth {2} -> {3}")
-        @CsvSource({"4, 40, 0, bmp embedded jpeg", "5, 124, 0, bmp embedded png", "11, 40, 32, bmp cmyk",
-                "3, 64, 1, bmp os/2 huffman", "4, 64, 24, bmp rle24", "0, 40, 64, bmp 64-bit", "99, 40, 24, bmp compression 99"})
-        @DisplayName("reports unsupported features by name")
+        @CsvSource({"99, 40, 24, bmp compression 99", "7, 40, 24, bmp compression 7", "14, 124, 32, bmp compression 14"})
+        @DisplayName("reports unknown compressions by name")
         void unsupported(int compression, int header, int depth, String format) {
             var data = BmpFiles.of(2, 2, depth).header(header).compression(compression).pixels(new byte[64]).bytes();
             var exception = assertThrows(MediaException.Unsupported.class, () -> decode(data));
