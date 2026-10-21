@@ -1,0 +1,31 @@
+# Sizes the test JVMs of a job: sets SMALT_TEST_FORKS to the Maven arguments that run each module's suite in the
+# given number of surefire forks (smalt.test.forks; the it and capture modules always use one) and, with more than
+# one, caps each fork's heap at an equal part of about 70% of the runner's memory instead of the JVM's default
+# quarter (smalt.test.heap), since the forks share it.
+name: Test JVMs
+description: Sets SMALT_TEST_FORKS to the surefire fork arguments of the test step
+inputs:
+  forks:
+    description: Test JVMs per module, a number or a multiple of the runner's cores such as 1C
+    default: 1C
+runs:
+  using: composite
+  steps:
+    - name: Size the test JVMs
+      shell: bash
+      run: |
+        forks='${{ inputs.forks }}'
+        if ! printf '%s' "$forks" | grep -qE '^([0-9]+|[0-9]*\.?[0-9]+C)$'; then
+          echo "::error::forks must be a number or a multiple of the cores such as 1C, not '$forks'"; exit 1
+        fi
+        cores=$(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null || echo "${NUMBER_OF_PROCESSORS:-1}")
+        case "$forks" in
+          *C) count=$(awk -v f="${forks%C}" -v c="$cores" 'BEGIN { n = int(f * c); print (n < 1 ? 1 : n) }') ;;
+          *) count="$forks" ;;
+        esac
+        arguments="-Dsmalt.test.forks=$count"
+        if [ "$count" -gt 1 ]; then arguments="$arguments -Dsmalt.test.heap=-XX:MaxRAMPercentage=$((72 / count))"; fi
+        cpu=$( { lscpu | sed -n 's/^Model name: *//p'; sysctl -n machdep.cpu.brand_string
+          powershell -NoProfile -Command '(Get-CimInstance Win32_Processor).Name'; } 2>/dev/null | head -n 1) || true
+        echo "$cores cores ($cpu): $arguments"
+        echo "SMALT_TEST_FORKS=$arguments" >> "$GITHUB_ENV"
