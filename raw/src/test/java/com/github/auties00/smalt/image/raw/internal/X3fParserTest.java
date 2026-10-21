@@ -9,8 +9,10 @@ import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.image.raw.RawSamples;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -48,6 +50,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * hold.
  */
 class X3fParserTest {
+    /** The fuzz test class whose seeds the synthetic files feed. */
+    private static final String FUZZ_TARGET = "com.github.auties00.smalt.image.raw.fuzz.RawFuzzTest";
+
     // the TRUE code table of the DP1 sample: (length, code) per difference bit count
     private static final int[][] TRUE_TABLE = {{3, 0b100}, {3, 0b010}, {3, 0b001}, {4, 0b1100}, {4, 0b0110},
             {4, 0b1110}, {4, 0b0111}, {4, 0b1111}, {4, 0b0001}, {4, 0b1010}, {5, 0b11010}, {6, 0b110110},
@@ -807,5 +812,18 @@ class X3fParserTest {
             var hinted = RawDecoder.decode(source, RawDecoderOptions.builder().minSize(1000, 600).build());
             assertTrue(hinted.picture().width() >= 1000 && hinted.picture().width() <= 5424);
         }
+    }
+
+    @Test
+    @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true")
+    @DisplayName("writes the seeds of the X3F fuzz target")
+    void fuzzSeeds() {
+        var truePlanes = new X3f();
+        truePlanes.layers(330, 0, 4000);
+        FuzzSeeds.write(FUZZ_TARGET, "x3f", "valid-true.x3f", truePlanes.write());
+        var huffman = new X3f();
+        huffman.format = 6;
+        huffman.layers(306, -60, 450);
+        FuzzSeeds.write(FUZZ_TARGET, "x3f", "valid-huffman.x3f", huffman.write());
     }
 }

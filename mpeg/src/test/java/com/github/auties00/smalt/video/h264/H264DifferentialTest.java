@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.time.Duration;
@@ -72,6 +73,17 @@ class H264DifferentialTest {
                 new Case("crf 40", "352x288", 30, "yuv420p", List.of("-profile:v", "high", "-crf", "40", "-bf", "4")),
                 new Case("monochrome", "176x144", 20, "gray", List.of("-profile:v", "high", "-bf", "2")),
                 new Case("fake interlaced frame pictures", "352x288", 20, "yuv420p", List.of("-profile:v", "high", "-bf", "2", "-x264-params", "fake-interlaced=1:pic-struct=1")),
+                new Case("interlaced mbaff tff cabac bframes", "352x288", 30, "yuv420p", List.of("-profile:v", "high", "-bf", "3", "-x264-params", "interlaced=1:tff=1:b-pyramid=normal")),
+                new Case("interlaced mbaff bff cavlc", "352x288", 30, "yuv420p", List.of("-profile:v", "main", "-bf", "2", "-x264-params", "interlaced=1:bff=1:cabac=0")),
+                new Case("interlaced ildct ilme flags", "352x288", 20, "yuv420p", List.of("-profile:v", "high", "-bf", "2", "-flags", "+ildct+ilme")),
+                new Case("interlaced temporal direct weightp", "352x288", 30, "yuv420p", List.of("-profile:v", "high", "-bf", "3", "-refs", "4", "-x264-params", "interlaced=1:direct=temporal:weightp=2:weightb=1")),
+                new Case("interlaced spatial direct all partitions", "176x144", 30, "yuv420p", List.of("-profile:v", "high", "-bf", "4", "-refs", "3", "-x264-params", "interlaced=1:direct=spatial:partitions=all:8x8dct=1:me=umh:subme=9")),
+                new Case("interlaced implicit weights", "176x144", 30, "yuv420p", List.of("-profile:v", "main", "-bf", "3", "-x264-params", "interlaced=1:weightb=1:weightp=0")),
+                new Case("interlaced constrained intra slices", "352x288", 20, "yuv420p", List.of("-profile:v", "main", "-bf", "2", "-x264-params", "interlaced=1:constrained-intra=1:slices=4")),
+                new Case("interlaced deblocking strong", "176x144", 20, "yuv420p", List.of("-profile:v", "high", "-bf", "2", "-x264-params", "interlaced=1:deblock=6,6")),
+                new Case("interlaced 1920x1080 cropped", "1920x1080", 6, "yuv420p", List.of("-profile:v", "high", "-bf", "2", "-x264-params", "interlaced=1")),
+                new Case("interlaced monochrome", "176x144", 20, "gray", List.of("-profile:v", "high", "-bf", "2", "-x264-params", "interlaced=1")),
+                new Case("interlaced qp 1", "176x144", 10, "yuv420p", List.of("-profile:v", "high", "-qp", "1", "-x264-params", "interlaced=1")),
                 new Case("fast decode tune", "352x288", 30, "yuv420p", List.of("-profile:v", "high", "-tune", "fastdecode")),
                 new Case("zero latency tune", "352x288", 30, "yuv420p", List.of("-profile:v", "high", "-tune", "zerolatency")),
                 new Case("deblocking disabled", "176x144", 20, "yuv420p", List.of("-profile:v", "main", "-x264-params", "no-deblock=1")),
@@ -94,9 +106,15 @@ class H264DifferentialTest {
     }
 
     static byte[] reference(Path stream, String pixelFormat) {
-        var format = pixelFormat.equals("gray") ? "gray" : "yuv420p";
-        return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-i", stream.toString(),
-                "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", format, "-"));
+        // the decoder's own planar 4:2:0 format, so no range conversion applies to a full-range stream (ffmpeg
+        // releases before 7 decode it as yuvj420p)
+        var arguments = new ArrayList<>(List.of("-v", "error", "-i", stream.toString(), "-fps_mode", "passthrough",
+                "-f", "rawvideo"));
+        if (pixelFormat.equals("gray")) {
+            arguments.addAll(List.of("-pix_fmt", "gray"));
+        }
+        arguments.add("-");
+        return Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(5), arguments);
     }
 
     static void assertMatches(Case c, byte[] reference, List<H264TestStreams.Decoded> frames) {
@@ -186,10 +204,12 @@ class H264DifferentialTest {
             assertMatches(c, reference(stream, c.pixelFormat()), H264TestStreams.decode(track, H264TestStreams.packets(payloads), 1));
         }
 
-        @Test
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"high 16 bframes", "interlaced mbaff tff cabac bframes", "interlaced mbaff bff cavlc",
+                "interlaced temporal direct weightp", "interlaced 1920x1080 cropped"})
         @DisplayName("frame threads produce the same frames as one thread")
-        void threads() {
-            var c = cases().filter(x -> x.name().startsWith("high 16 bframes")).findFirst().orElseThrow();
+        void threads(String name) {
+            var c = cases().filter(x -> x.name().startsWith(name)).findFirst().orElseThrow();
             var stream = Fixtures.read(encode(c));
             var single = H264TestStreams.decode(H264TestStreams.track(Optional.empty(), Optional.empty()), annexBPackets(stream), 1);
             for (var threads : new int[]{2, 4, 8}) {

@@ -13,8 +13,8 @@ package com.github.auties00.smalt.video.h264.internal;
  * is shared and must be treated as read-only.
  *
  * @implNote This implementation holds the context initialization values of ITU-T H.264 Tables
- * 9-12 to 9-33 for context indices 0 to 459, which cover every syntax element of 4:2:0 and 4:0:0
- * frame and field coding.
+ * 9-12 to 9-33 for context indices 0 to 459, which cover every syntax element of 4:2:0, 4:2:2 and
+ * 4:0:0 frame and field coding.
  */
 public final class CabacTables {
     /**
@@ -323,6 +323,18 @@ public final class CabacTables {
     public static final int[] LAST_OFFSET = {166, 181, 195, 210, 213, 417};
 
     /**
+     * The {@code significant_coeff_flag} context index offset of each {@code ctxBlockCat} from 0
+     * to 5, field coded (ITU-T H.264 Table 9-40).
+     */
+    public static final int[] SIG_OFFSET_FIELD = {277, 292, 306, 321, 324, 436};
+
+    /**
+     * The {@code last_significant_coeff_flag} context index offset of each {@code ctxBlockCat}
+     * from 0 to 5, field coded (ITU-T H.264 Table 9-40).
+     */
+    public static final int[] LAST_OFFSET_FIELD = {338, 353, 367, 382, 385, 451};
+
+    /**
      * The {@code coeff_abs_level_minus1} context index offset of each {@code ctxBlockCat} from 0
      * to 5 (ITU-T H.264 Table 9-40).
      */
@@ -337,6 +349,17 @@ public final class CabacTables {
             4, 4, 4, 4, 3, 3, 6, 7, 7, 7, 8, 9, 10, 9, 8, 7,
             7, 6, 11, 12, 13, 11, 6, 7, 8, 9, 14, 10, 9, 8, 6, 11,
             12, 13, 11, 6, 9, 14, 10, 9, 11, 12, 13, 11, 14, 10, 12, 14
+    };
+
+    /**
+     * The {@code significant_coeff_flag} context index increments of field-coded 8x8 blocks by
+     * scan position (ITU-T H.264 Table 9-43).
+     */
+    public static final byte[] SIG_8X8_FIELD = {
+            0, 1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 7, 7, 8, 4, 5,
+            6, 9, 10, 10, 8, 11, 12, 11, 9, 9, 10, 10, 8, 11, 12, 11,
+            9, 9, 10, 10, 8, 11, 12, 11, 9, 9, 10, 10, 8, 13, 13, 9,
+            9, 10, 10, 8, 13, 13, 9, 9, 10, 10, 14, 14, 14, 14, 14
     };
 
     /**

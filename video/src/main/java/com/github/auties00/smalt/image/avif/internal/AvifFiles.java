@@ -8,7 +8,9 @@ import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Orientation;
-import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
@@ -100,7 +102,7 @@ public final class AvifFiles {
                 throw new MediaException.Malformed("avif: the color track has no size");
             }
             Orientation orientation;
-            try (var reader = new SequenceReader(source, file, limits)) {
+            try (var reader = new SequenceReader(source, file, limits, false)) {
                 orientation = reader.orientation();
             }
             return new ImageInfo(ImageFormat.AVIF, width, height, SequenceReader.alphaTrack(movie, color.id()) != null,
@@ -139,7 +141,7 @@ public final class AvifFiles {
     public static DecodedImage decode(MediaSource source, MediaLimits limits, boolean highBitDepth) {
         var file = parse(source, limits);
         if (showsSequence(file)) {
-            try (var reader = new SequenceReader(source, file, limits)) {
+            try (var reader = new SequenceReader(source, file, limits, highBitDepth)) {
                 var picture = reader.readFirstPicture(highBitDepth);
                 return new DecodedImage(picture, ImageFormat.AVIF, reader.orientation(), picture.width(),
                         picture.height(), Optional.empty(), Optional.empty(), HeifPictures.colorProfile(null, picture));
@@ -163,6 +165,7 @@ public final class AvifFiles {
         return new DecodedImage(picture, ImageFormat.AVIF, result.geometry().orientation(), picture.width(),
                 picture.height(), Optional.ofNullable(embedded == null ? null : embedded.clone()),
                 Optional.ofNullable(exif(source, file, plan, limits)),
+                Optional.ofNullable(file.xmpOf(source, plan.primary(), limits)),
                 embeddedProfile == null ? HeifPictures.colorProfile(null, picture) : embeddedProfile.join());
     }
 
@@ -179,7 +182,6 @@ public final class AvifFiles {
      * @return the TIFF structure, or {@code null} when there is none
      */
     private static byte[] exif(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits) {
-        // TODO: expose the XMP item (a 'mime' item of type application/rdf+xml) once DecodedImage has a place for it
         for (var item : file.descriptionsOf(plan.primary().id())) {
             if (!item.type().equals("Exif") || !item.isLocated()) {
                 continue;
@@ -201,19 +203,21 @@ public final class AvifFiles {
      *
      * @param source the file
      * @param limits the bounds
+     * @param highBitDepth whether frames of a source deeper than 8 bits are 16-bit RGBA
      * @return the reader: the sequence when the file has one, otherwise the primary image as one
      * frame shown for zero microseconds and played once
      */
-    public static AnimationReader openAnimation(MediaSource source, MediaLimits limits) {
+    public static AnimationReader openAnimation(MediaSource source, MediaLimits limits, boolean highBitDepth) {
         var file = parse(source, limits);
         if (file.hasMovie() && (showsSequence(file) || hasColorTrack(source, file, limits))) {
-            return new SequenceReader(source, file, limits);
+            return new SequenceReader(source, file, limits, highBitDepth);
         }
         var plan = StillPlan.of(source, file, limits);
         var info = probe(source, limits);
         return new StillReader(info.width(), info.height(), () -> {
-            var result = StillDecoder.decode(source, file, plan, limits, false);
-            return ImageOps.toRgba(result.picture());
+            var picture = StillDecoder.decode(source, file, plan, limits, highBitDepth).picture();
+            return picture instanceof Yuv16Picture || picture instanceof Rgba16Picture ? ImageOps.toRgba16(picture)
+                    : ImageOps.toRgba(picture);
         });
     }
 
@@ -250,7 +254,7 @@ public final class AvifFiles {
         /**
          * Decodes the image.
          */
-        private final java.util.function.Supplier<RgbaPicture> decoder;
+        private final java.util.function.Supplier<Picture> decoder;
 
         /**
          * Whether the frame was read.
@@ -264,7 +268,7 @@ public final class AvifFiles {
          * @param height the image height
          * @param decoder decodes the image
          */
-        private StillReader(int width, int height, java.util.function.Supplier<RgbaPicture> decoder) {
+        private StillReader(int width, int height, java.util.function.Supplier<Picture> decoder) {
             this.width = width;
             this.height = height;
             this.decoder = decoder;

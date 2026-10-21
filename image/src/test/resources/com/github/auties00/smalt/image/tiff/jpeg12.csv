@@ -1,0 +1,7 @@
+# file;width;height;md5 of the samples libtiff 4.7.1 decodes (tiffcp -c none -s); made by tools/testdata/jpeg12/make-vectors.sh
+226x149-ycbcr420-strips32.tif;226;149;666ec096522938b05644e90b5b203099
+226x149-ycbcr422-tiles64-tables.tif;226;149;9b181314b644e005372eee77c64f3a74
+226x149-ycbcr444-strips48-progressive.tif;226;149;8a88bf89196cd7f06b273a05c6e61425
+226x149-gray-strips16-tables.tif;226;149;ccc329bd4f293e63faa7d03dd5a1027e
+226x149-rgb-tiles32-arithmetic.tif;226;149;7e257d4b30fa90445bcc91c23e419f9b
+227x149-ycbcr420-strips32-tables.tif;227;149;skip

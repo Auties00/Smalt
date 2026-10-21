@@ -89,4 +89,66 @@ final class Srgb {
     static int encode16(double linear) {
         return (int) Math.round(65535 * encode(Math.clamp(linear, 0, 1)));
     }
+
+    /**
+     * Returns the linear value of a 16-bit sample from a table.
+     *
+     * @param sample the sample, {@code 0..65535}
+     * @return the linear value
+     */
+    static float decode16(int sample) {
+        return Wide.DECODE16[sample];
+    }
+
+    /**
+     * Encodes a linear value to the 16-bit sample nearest its encoded value, by a search of the
+     * midpoints between consecutive samples.
+     *
+     * @param linear the linear value; clamped to {@code 0..1}, NaN gives {@code 0}
+     * @return the sample, {@code 0..65535}
+     */
+    static int encode16(float linear) {
+        var thresholds = Wide.THRESHOLDS16;
+        var low = 0;
+        var high = 65535;
+        while (low < high) {
+            var mid = (low + high + 1) >>> 1;
+            if (thresholds[mid] <= linear) {
+                low = mid;
+            } else {
+                high = mid - 1;
+            }
+        }
+        return low;
+    }
+
+    /**
+     * Holds the 16-bit tables, built on first use.
+     */
+    private static final class Wide {
+        /**
+         * The linear value of every 16-bit sample.
+         */
+        static final float[] DECODE16 = new float[65536];
+
+        /**
+         * The linear values at the midpoints between consecutive 16-bit samples, as
+         * {@link Srgb#THRESHOLDS8} for 8 bits.
+         */
+        static final float[] THRESHOLDS16 = new float[65536];
+
+        static {
+            for (var i = 0; i < 65536; i++) {
+                DECODE16[i] = (float) decode(i / 65535.0);
+                THRESHOLDS16[i] = i == 0 ? Float.NEGATIVE_INFINITY : (float) decode((i - 0.5) / 65535);
+            }
+        }
+
+        /**
+         * Prevents instantiation.
+         */
+        private Wide() {
+            throw new AssertionError();
+        }
+    }
 }

@@ -46,7 +46,7 @@ final class ImageFiles {
             case GIF -> new GifFile(source, limits);
             case HEIC, AVIF -> new HeifImageFile(source, limits, format);
             case TIFF -> new TiffFile(source, limits);
-            case BMP -> new BmpFile(source);
+            case BMP -> new BmpFile(source, limits);
             case JXL -> new JxlFile(source, limits);
             default -> throw new MediaException.Unsupported(format.name().toLowerCase(Locale.ROOT),
                     "metadata of " + format.name().toLowerCase(Locale.ROOT) + " files cannot be read");

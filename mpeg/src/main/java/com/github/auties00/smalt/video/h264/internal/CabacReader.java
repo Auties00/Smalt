@@ -276,48 +276,70 @@ public final class CabacReader {
     private static final byte[] LEVEL_REST_CTX = {5, 5, 5, 5, 6, 7, 8, 9};
 
     /**
-     * The significance map contexts of each block category 0 to 5, one entry per coefficient
-     * position of the block list: the {@code ctxIdx} of {@code significant_coeff_flag} in the low
-     * 16 bits and of {@code last_significant_coeff_flag} in the high 16 bits (ITU-T H.264
-     * 9.3.3.1.3; 4:2:0 chroma DC blocks use {@code min(i, 2)} for both).
+     * The block category of 4:2:2 chroma DC blocks: {@code ctxBlockCat} 3 with
+     * {@code NumC8x8 = 2}, eight coefficients whose significance map contexts advance every
+     * second position.
      */
-    private static final int[][] SIGNIFICANCE = new int[6][];
+    static final int CHROMA_DC_422 = 6;
 
     /**
-     * The level contexts of each block category 0 to 5, one entry per coding state: the
-     * {@code ctxIdx} of the first {@code coeff_abs_level_minus1} bin in the low 16 bits and of
-     * the other bins in the high 16 bits (ITU-T H.264 9.3.3.1.3; the increment of the other bins
-     * is capped at 8 for chroma DC blocks and at 9 otherwise).
+     * The significance map contexts of each block category 0 to 5 and {@link #CHROMA_DC_422},
+     * one entry per coefficient position of the block list: the {@code ctxIdx} of
+     * {@code significant_coeff_flag} in the low 16 bits and of {@code last_significant_coeff_flag}
+     * in the high 16 bits (ITU-T H.264 9.3.3.1.3; chroma DC blocks use
+     * {@code min(i / NumC8x8, 2)} for both).
      */
-    private static final int[][] LEVEL_CONTEXTS = new int[6][];
+    private static final int[][] SIGNIFICANCE = new int[7][];
+
+    /**
+     * The significance map contexts of field-coded blocks, laid out as {@link #SIGNIFICANCE}.
+     */
+    private static final int[][] SIGNIFICANCE_FIELD = new int[7][];
+
+    /**
+     * The level contexts of each block category, indexed as {@link #SIGNIFICANCE}, one entry per
+     * coding state: the {@code ctxIdx} of the first {@code coeff_abs_level_minus1} bin in the low
+     * 16 bits and of the other bins in the high 16 bits (ITU-T H.264 9.3.3.1.3; the increment of
+     * the other bins is capped at 8 for chroma DC blocks and at 9 otherwise).
+     */
+    private static final int[][] LEVEL_CONTEXTS = new int[7][];
 
     static {
-        for (var category = 0; category < 6; category++) {
-            var significance = new int[category == 5 ? 63 : 15];
+        for (var index = 0; index < 7; index++) {
+            var category = index == CHROMA_DC_422 ? 3 : index;
+            var significance = new int[category == 5 ? 63 : index == CHROMA_DC_422 ? 7 : 15];
+            var fieldSignificance = new int[significance.length];
             for (var i = 0; i < significance.length; i++) {
                 int sigInc;
+                int fieldSigInc;
                 int lastInc;
                 if (category == 5) {
                     sigInc = CabacTables.SIG_8X8[i];
+                    fieldSigInc = CabacTables.SIG_8X8_FIELD[i];
                     lastInc = CabacTables.LAST_8X8[i];
                 } else if (category == 3) {
-                    sigInc = Math.min(i, 2);
+                    sigInc = Math.min(index == CHROMA_DC_422 ? i >> 1 : i, 2);
+                    fieldSigInc = sigInc;
                     lastInc = sigInc;
                 } else {
                     sigInc = i;
+                    fieldSigInc = i;
                     lastInc = i;
                 }
                 significance[i] = (CabacTables.SIG_OFFSET[category] + sigInc)
                         | ((CabacTables.LAST_OFFSET[category] + lastInc) << 16);
+                fieldSignificance[i] = (CabacTables.SIG_OFFSET_FIELD[category] + fieldSigInc)
+                        | ((CabacTables.LAST_OFFSET_FIELD[category] + lastInc) << 16);
             }
-            SIGNIFICANCE[category] = significance;
+            SIGNIFICANCE[index] = significance;
+            SIGNIFICANCE_FIELD[index] = fieldSignificance;
             var levels = new int[8];
             var restCap = category == 3 ? 8 : 9;
             for (var state = 0; state < 8; state++) {
                 levels[state] = (CabacTables.ABS_OFFSET[category] + LEVEL_FIRST_CTX[state])
                         | ((CabacTables.ABS_OFFSET[category] + Math.min(LEVEL_REST_CTX[state], restCap)) << 16);
             }
-            LEVEL_CONTEXTS[category] = levels;
+            LEVEL_CONTEXTS[index] = levels;
         }
     }
 
@@ -336,16 +358,18 @@ public final class CabacReader {
      * data-dependent branch (see {@link #decision(int)}); only the loop exits depend on the
      * decoded values.
      *
-     * @param category the {@code ctxBlockCat}, 0 to 5
+     * @param category the {@code ctxBlockCat}, 0 to 5, or {@link #CHROMA_DC_422}
      * @param maxCoeff the {@code maxNumCoeff} of the block, from 4 to 64
+     * @param field whether the block belongs to a field macroblock, whose significance map uses
+     * the field-coded contexts
      * @param indices receives the coefficient positions
      * @param levels receives the signed levels
      * @return the number of non-zero coefficients, at least 1
      * @throws com.github.auties00.smalt.MediaException.Malformed if a level is out of
      * range
      */
-    public int residualBlock(int category, int maxCoeff, int[] indices, int[] levels) {
-        var count = significanceMap(SIGNIFICANCE[category], maxCoeff - 1, indices);
+    public int residualBlock(int category, int maxCoeff, boolean field, int[] indices, int[] levels) {
+        var count = significanceMap((field ? SIGNIFICANCE_FIELD : SIGNIFICANCE)[category], maxCoeff - 1, indices);
         decodeLevels(LEVEL_CONTEXTS[category], count, levels);
         return count;
     }
