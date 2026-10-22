@@ -19,7 +19,9 @@ import java.util.Set;
  * the file or after a seek, and a PES time within half a frame of where the previous frame ends
  * is taken as that end, so the jitter of 90 kHz rounding does not reach the packets; a farther
  * one (lost frames, a splice) moves the timeline. Frames before the first timestamp of the
- * stream are dropped. Instances are not thread-safe.
+ * stream are dropped. A parser that meets a new stream configuration announces it on the next
+ * packet as its {@link PacketSideData#newCodecConfig() new codec configuration}, and converts the
+ * durations of frames at another sampling rate to the track's. Instances are not thread-safe.
  */
 abstract class FrameParser extends ElementaryParser {
     /**
@@ -101,6 +103,17 @@ abstract class FrameParser extends ElementaryParser {
     private final FrameOutput output = this::unit;
 
     /**
+     * The codec configuration the next emitted packet establishes, or {@code null}.
+     */
+    private byte[] announced;
+
+    /**
+     * The remainder of converting durations at a rate other than {@link #timestampRate}, in
+     * units of one over that rate times the timestamp rate.
+     */
+    private long rateRemainder;
+
+    /**
      * Constructs a parser.
      *
      * @param entry the program map entry of the stream
@@ -153,6 +166,34 @@ abstract class FrameParser extends ElementaryParser {
      * @param output receives the units
      */
     abstract void frame(byte[] data, int offset, int length, boolean first, FrameOutput output);
+
+    /**
+     * Makes the next packet emitted carry a new codec configuration, which replaces the track's
+     * from that packet on.
+     *
+     * @param config the configuration
+     */
+    final void announce(byte[] config) {
+        announced = config;
+    }
+
+    /**
+     * Converts a duration in samples of a stream rate to samples of the timestamp rate, carrying
+     * the rounding remainder over to the next conversion so that durations add up exactly.
+     *
+     * @param samples the duration at {@code rate}
+     * @param rate the sampling rate of the frame, after a configuration change the stream's new
+     * rate
+     * @return the duration at the timestamp rate
+     */
+    final int toTimestampRate(int samples, int rate) {
+        if (rate == timestampRate || rate <= 0 || timestampRate <= 0) {
+            return samples;
+        }
+        var scaled = (long) samples * timestampRate + rateRemainder;
+        rateRemainder = scaled % rate;
+        return (int) (scaled / rate);
+    }
 
     /**
      * Returns whether the input ended, so that a frame whose length depends on what follows it
@@ -310,8 +351,11 @@ abstract class FrameParser extends ElementaryParser {
         }
         next = timestamp + samples;
         if (track != null && currentSink != null) {
+            var sideData = announced == null ? PacketSideData.NONE
+                    : PacketSideData.builder().newCodecConfig(announced).build();
+            announced = null;
             currentSink.accept(new Packet(pid(), payload, timestamp, timestamp, Math.max(0, Math.min(samples, duration)),
-                    currentCorrupt ? KEY_CORRUPT : KEY, PacketSideData.NONE), currentOffset);
+                    currentCorrupt ? KEY_CORRUPT : KEY, sideData), currentOffset);
         }
     }
 }

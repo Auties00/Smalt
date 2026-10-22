@@ -1,0 +1,13 @@
+# image dump of resources/jpeg/lossless/variants/37x29-ycbcr420-p8-sof11-psv4-r19.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=37, height=29, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 37x29 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=95b142fe u=98971cf5 v=40383094
+  format=JPEG orientation=NORMAL source=37x29
+  icc=none exif=none xmp=none
+  profile=none
+scaled 9x7
+picture 37x29 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=95b142fe u=98971cf5 v=40383094
+  format=JPEG orientation=NORMAL source=37x29
+  icc=none exif=none xmp=none
+  profile=none
