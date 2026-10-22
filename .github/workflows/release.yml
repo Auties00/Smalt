@@ -52,23 +52,17 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install the oracle tools
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
+      - uses: ./.github/actions/oracles
 
-      - name: Restore the smoke test data
-        id: smoke-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.smalt/cache/conformance
-          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
-          enableCrossOsArchive: true
-
-      - name: Fetch the smoke test data
-        if: steps.smoke-cache.outputs.cache-hit != 'true'
-        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+      - uses: ./.github/actions/testdata
 
       - name: Build and test
+        id: test
         run: mvn -B -ntp -fae verify
+
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        run: python tools/testdata/skips.py check --job linux-x64-vector-smoke
 
   publish:
     name: publish

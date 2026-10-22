@@ -236,6 +236,31 @@ public final class H264Sps {
     public long timeScale;
 
     /**
+     * Whether the VUI carried NAL or VCL HRD parameters ({@code CpbDpbDelaysPresentFlag}), which
+     * put the {@code cpb_removal_delay} and {@code dpb_output_delay} in picture timing SEI
+     * messages.
+     */
+    public boolean cpbDpbDelaysPresent;
+
+    /**
+     * The length in bits of {@code cpb_removal_delay}, from 1 to 32, when
+     * {@link #cpbDpbDelaysPresent} is set.
+     */
+    public int cpbRemovalDelayLength;
+
+    /**
+     * The length in bits of {@code dpb_output_delay}, from 1 to 32, when
+     * {@link #cpbDpbDelaysPresent} is set.
+     */
+    public int dpbOutputDelayLength;
+
+    /**
+     * The VUI {@code pic_struct_present_flag}: whether picture timing SEI messages carry
+     * {@code pic_struct}.
+     */
+    public boolean picStructPresent;
+
+    /**
      * Whether the VUI carried a {@code bitstream_restriction_flag} equal to 1.
      */
     public boolean bitstreamRestriction;
@@ -294,7 +319,7 @@ public final class H264Sps {
             }
             sps.bitDepthLuma = 8 + reader.readUe();
             sps.bitDepthChroma = 8 + reader.readUe();
-            if (sps.bitDepthLuma > 14 || sps.bitDepthChroma > 14) {
+            if (sps.bitDepthLuma < 8 || sps.bitDepthLuma > 14 || sps.bitDepthChroma < 8 || sps.bitDepthChroma > 14) {
                 throw new MediaException.Malformed("bit depth out of range");
             }
             sps.transformBypass = reader.readFlag();
@@ -375,9 +400,13 @@ public final class H264Sps {
             } catch (MediaException.Malformed ignored) {
                 sps.bitstreamRestriction = false;
                 sps.timingInfoPresent = false;
+                sps.cpbDpbDelaysPresent = false;
+                sps.picStructPresent = false;
             }
             if (reader.overrun()) {
                 sps.bitstreamRestriction = false;
+                sps.cpbDpbDelaysPresent = false;
+                sps.picStructPresent = false;
                 sps.timingInfoPresent = sps.timingInfoPresent && sps.timeScale > 0 && sps.numUnitsInTick > 0;
             }
         }
@@ -441,16 +470,17 @@ public final class H264Sps {
         }
         var nalHrd = reader.readFlag();
         if (nalHrd) {
-            skipHrd(reader);
+            parseHrd(reader, sps);
         }
         var vclHrd = reader.readFlag();
         if (vclHrd) {
-            skipHrd(reader);
+            parseHrd(reader, sps);
         }
         if (nalHrd || vclHrd) {
+            sps.cpbDpbDelaysPresent = true;
             reader.readFlag();
         }
-        reader.readFlag();
+        sps.picStructPresent = reader.readFlag();
         if (reader.readFlag()) {
             reader.readFlag();
             reader.readUe();
@@ -468,11 +498,13 @@ public final class H264Sps {
     }
 
     /**
-     * Skips an {@code hrd_parameters()} structure (ITU-T H.264 E.1.2).
+     * Parses an {@code hrd_parameters()} structure (ITU-T H.264 E.1.2), keeping the lengths of the
+     * delays that picture timing SEI messages carry.
      *
      * @param reader the reader positioned at the start of the structure
+     * @param sps the set being filled
      */
-    private static void skipHrd(H264BitReader reader) {
+    private static void parseHrd(H264BitReader reader, H264Sps sps) {
         var count = reader.readUe() + 1;
         if (count > 32) {
             throw new MediaException.Malformed("cpb_cnt_minus1 out of range");
@@ -484,7 +516,10 @@ public final class H264Sps {
             reader.readUe();
             reader.readFlag();
         }
-        reader.readBits(20);
+        reader.readBits(5);
+        sps.cpbRemovalDelayLength = reader.readBits(5) + 1;
+        sps.dpbOutputDelayLength = reader.readBits(5) + 1;
+        reader.readBits(5);
     }
 
     /**
@@ -495,6 +530,28 @@ public final class H264Sps {
             1, 1, 12, 11, 10, 11, 16, 11, 40, 33, 24, 11, 20, 11, 32, 11, 80, 33, 18, 11, 15, 11, 64, 33,
             160, 99, 4, 3, 3, 2, 2, 1
     };
+
+    /**
+     * Returns the width term of the sample aspect ratio of an {@code aspect_ratio_idc} of H.264
+     * Table E-1, which H.265 Table E.1 repeats.
+     *
+     * @param idc the {@code aspect_ratio_idc}
+     * @return the width term, or 0 for 0 (unspecified), 255 ({@code Extended_SAR}) and the reserved values
+     */
+    public static int aspectWidthOf(int idc) {
+        return idc > 0 && idc <= SAR.length / 2 ? SAR[(idc - 1) * 2] : 0;
+    }
+
+    /**
+     * Returns the height term of the sample aspect ratio of an {@code aspect_ratio_idc}; see
+     * {@link #aspectWidthOf(int)}.
+     *
+     * @param idc the {@code aspect_ratio_idc}
+     * @return the height term, or 0 when {@link #aspectWidthOf(int)} is 0
+     */
+    public static int aspectHeightOf(int idc) {
+        return idc > 0 && idc <= SAR.length / 2 ? SAR[(idc - 1) * 2 + 1] : 0;
+    }
 
     /**
      * Returns {@code ChromaArrayType}: the chroma format, or 0 when color planes are coded
