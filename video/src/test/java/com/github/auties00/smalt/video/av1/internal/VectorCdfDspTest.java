@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.video.av1.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -22,7 +22,7 @@ class VectorCdfDspTest {
     @ValueSource(ints = {1, 2, 3, 4, 7, 8, 9, 12, 15})
     @DisplayName("matches the scalar adaptation for every symbol, rate and counter")
     void update(int nSymbols) {
-        Assumptions.assumeTrue(Simd.ENABLED && Simd.preferredBits() >= 256, "no 256-bit vectors");
+        Skip.unless(Simd.ENABLED && Simd.preferredBits() >= 256, "simd:narrow", "no 256-bit vectors");
         var random = new Random(31 + nSymbols);
         for (var round = 0; round < 20000; round++) {
             var expected = new char[48];
@@ -52,7 +52,7 @@ class VectorCdfDspTest {
     @ValueSource(ints = {1, 2, 3, 4, 7, 8, 9, 12, 15})
     @DisplayName("finds the symbol and adapts like the scalar decoder for every range and coded value")
     void symbol(int nSymbols) {
-        Assumptions.assumeTrue(Simd.ENABLED && Simd.preferredBits() >= 256, "no 256-bit vectors");
+        Skip.unless(Simd.ENABLED && Simd.preferredBits() >= 256, "simd:narrow", "no 256-bit vectors");
         var random = new Random(77 + nSymbols);
         var scratch = new char[17];
         for (var round = 0; round < 20000; round++) {

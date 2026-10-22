@@ -127,6 +127,19 @@ public final class Macroblocks {
     public final short[] coefficients;
 
     /**
+     * The first macroblock of the slice of every macroblock, or -1 for a lost macroblock; valid when
+     * {@link #segmented}.
+     */
+    public final int[] segment;
+
+    /**
+     * Whether the picture is coded in slices (ITU-T H.263 Annex K), across whose boundaries
+     * neither vectors nor coefficients are predicted and overlapped motion compensation takes no
+     * remote vector.
+     */
+    public boolean segmented;
+
+    /**
      * Allocates the arrays of a picture size.
      *
      * @param count the number of macroblocks
@@ -144,6 +157,7 @@ public final class Macroblocks {
         this.backwardField = new int[count * 4];
         this.fieldRefs = new byte[count];
         this.coefficients = new short[count * 384];
+        this.segment = new int[count];
     }
 
     /**
@@ -153,6 +167,6 @@ public final class Macroblocks {
      * @return the size in bytes
      */
     public static long bytes(int count) {
-        return count * (6L + 16 * 4 + 8 * 4 + 384 * 2);
+        return count * (6L + 17 * 4 + 8 * 4 + 384 * 2);
     }
 }

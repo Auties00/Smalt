@@ -204,6 +204,15 @@ class TiffStructureTest {
             var limited = Ifd.read(TiffInput.of(large), 0, header, 8, tiny);
             assertThrows(MediaException.LimitExceeded.class, () -> limited.value(0, MediaLimits.DEFAULT));
             assertThrows(IllegalArgumentException.class, () -> new Ifd.Policy(16, true, 2, 32));
+            // a count that runs past the end of the input invalidates the first value too, although its bytes exist
+            var counted = new Builder(true).entry(262, TiffTypes.SHORT, 0x7FFF0001L, 4).build(1);
+            var countedInput = TiffInput.of(counted);
+            var countedIfd = Ifd.read(countedInput, 0, TiffHeader.read(countedInput, 0), 8, Ifd.Policy.STRICT);
+            assertThrows(MediaException.Malformed.class, () -> countedIfd.firstInteger(0, -1));
+            var listed = new Builder(true).entry(262, TiffTypes.SHORT, 3, new byte[]{2, 0, 0, 0, 0, 0}).build(1);
+            var listedInput = TiffInput.of(listed);
+            assertEquals(2, Ifd.read(listedInput, 0, TiffHeader.read(listedInput, 0), 8, Ifd.Policy.STRICT)
+                    .firstInteger(0, -1));
         }
 
         @Test
