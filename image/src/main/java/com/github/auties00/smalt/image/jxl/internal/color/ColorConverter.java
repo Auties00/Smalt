@@ -69,7 +69,7 @@ public final class ColorConverter {
         var oim = image.opsinInverse();
         var itScale = 255.0f / image.toneMapping().intensityTarget();
         var bias = oim.opsinBias();
-        var cbrt = new float[]{(float) Math.cbrt(bias[0]), (float) Math.cbrt(bias[1]), (float) Math.cbrt(bias[2])};
+        var cbrt = new float[]{(float) StrictMath.cbrt(bias[0]), (float) StrictMath.cbrt(bias[1]), (float) StrictMath.cbrt(bias[2])};
         var m = oim.matrix();
         var toTarget = (double[]) null;
         var gray = target.colorSpace() == ColorEncoding.GRAY;
@@ -217,11 +217,11 @@ public final class ColorConverter {
         if (intensityTarget >= 295 && intensityTarget <= 305) {
             return;
         }
-        var gamma = 1.2 * Math.pow(1.111, Math.log(intensityTarget / 1e3) / Math.log(2));
+        var gamma = 1.2 * StrictMath.pow(1.111, StrictMath.log(intensityTarget / 1e3) / StrictMath.log(2));
         var exponent = (1 - gamma) / gamma;
         for (var i = 0; i < length; i++) {
             var mixed = planes[0][i] * lr + planes[1][i] * lg + planes[2][i] * lb;
-            var mult = (float) Math.pow(mixed, exponent);
+            var mult = (float) StrictMath.pow(mixed, exponent);
             planes[0][i] *= mult;
             planes[1][i] *= mult;
             planes[2][i] *= mult;
@@ -317,11 +317,11 @@ public final class ColorConverter {
                 return v <= 0.018f ? 4.5f * v : 1.099f * fastPow(v, 0.45f) - 0.099f;
             }
             case ColorEncoding.TF_PQ -> {
-                var y = Math.pow(a * intensityTarget / 10000.0, 2610.0 / 16384.0);
-                e = Math.pow((0.8359375 + 18.8515625 * y) / (1 + 18.6875 * y), 2523.0 / 4096.0 * 128.0);
+                var y = StrictMath.pow(a * intensityTarget / 10000.0, 2610.0 / 16384.0);
+                e = StrictMath.pow((0.8359375 + 18.8515625 * y) / (1 + 18.6875 * y), 2523.0 / 4096.0 * 128.0);
             }
             case ColorEncoding.TF_HLG -> e = a <= 1.0 / 12.0 ? Math.sqrt(3 * a)
-                    : 0.17883277 * Math.log(12 * a - 0.28466892) + 0.55991073;
+                    : 0.17883277 * StrictMath.log(12 * a - 0.28466892) + 0.55991073;
             case ColorEncoding.TF_DCI -> {
                 return v <= 1e-5f ? 0.0f : fastPow(v, 1 / 2.6f);
             }

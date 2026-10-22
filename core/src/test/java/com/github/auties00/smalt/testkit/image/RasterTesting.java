@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.testkit.image;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
@@ -38,6 +39,11 @@ public final class RasterTesting {
             System.arraycopy(picture.pixels(), y * picture.stride(), out, y * picture.width() * 4, picture.width() * 4);
         }
         return out;
+    }
+
+    /** Returns the tightly packed RGBA bytes of a picture that must be an 8-bit {@link RgbaPicture}. */
+    public static byte[] tight(Picture picture) {
+        return tight(org.junit.jupiter.api.Assertions.assertInstanceOf(RgbaPicture.class, picture));
     }
 
     /** Asserts two RGBA buffers are identical, reporting the first differing pixel. */

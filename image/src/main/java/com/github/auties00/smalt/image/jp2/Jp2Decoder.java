@@ -52,7 +52,13 @@ import java.util.Optional;
  * or to 16 bits when {@link ImageDecoderOptions#highBitDepth()} is set and a channel is wider than
  * 8 bits. An enumerated sRGB, sYCC or ROMM-RGB color space, or an ICC profile, is reported through
  * {@link DecodedImage#colorProfile()} and applied when {@link ImageDecoderOptions#convertToSrgb()}
- * is set.
+ * is set. With {@link ImageDecoderOptions#keepChannels()} set (and {@code convertToSrgb} not set),
+ * a CMYK image decodes to a {@link com.github.auties00.smalt.image.ChannelPicture ChannelPicture}
+ * of the {@link com.github.auties00.smalt.image.PixelLayout#CMYK CMYK} layout instead, followed by
+ * an alpha channel (straight or premultiplied as the channel definitions declare) when it has an
+ * opacity channel: the inks keep their stored meaning, 0 being no ink, and are scaled to 8 bits,
+ * or to 16 bits as for the RGBA output; its color profile is the embedded profile when that is a
+ * four-channel one.
  *
  * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: the
  * high-throughput block coder of Part 15 (HTJ2K), Part 2 coding extensions (arbitrary wavelets,
@@ -64,7 +70,8 @@ import java.util.Optional;
  * <p>Damaged codestreams decode as far as their data goes: a truncated tile leaves its missing
  * code-block data at zero, and a missing tile is uniformly mid-gray. An invalid main header is
  * {@link MediaException.Malformed}. The decoded samples are bit-identical to OpenJPEG's
- * {@code opj_decompress} for both wavelets.
+ * {@code opj_decompress} for both wavelets, as built without fast floating-point optimizations: the irreversible
+ * wavelet is float arithmetic, which {@code -ffast-math} and fused multiply-adds reorder.
  *
  * <p>This class is thread-safe.
  *
@@ -140,7 +147,9 @@ public final class Jp2Decoder {
      * @param source the input
      * @param options the limits, the size hint, the bit depth choice and the sRGB conversion
      * @return the decoded image: an {@link RgbaPicture}, or an {@link Rgba16Picture} when
-     * {@link ImageDecoderOptions#highBitDepth()} is set and a channel is wider than 8 bits
+     * {@link ImageDecoderOptions#highBitDepth()} is set and a channel is wider than 8 bits, or for a
+     * CMYK image decoded with {@link ImageDecoderOptions#keepChannels()} a channel picture, as the
+     * class description states
      * @throws MediaException.Malformed if the file is invalid
      * @throws MediaException.Unsupported if the file uses a feature listed on the class as
      * unsupported
@@ -158,11 +167,19 @@ public final class Jp2Decoder {
                 var reduction = reduction(codestream.width(), codestream.height(), options.minWidth(),
                         options.minHeight());
                 var image = Jp2Reader.decode(headers, reduction, 0, options.limits());
-                var picture = Jp2Pictures.toPicture(image, options.highBitDepth(), options.limits());
                 var exif = image.exif();
                 var orientation = exif.isEmpty() ? Orientation.NORMAL : ExifReader.orientation(exif.get());
+                if (options.keepChannels() && !options.convertToSrgb()) {
+                    var channels = Jp2Pictures.toChannels(image, options.highBitDepth(), options.limits());
+                    if (channels != null) {
+                        return new DecodedImage(channels, ImageFormat.JP2, orientation, image.fullWidth(),
+                                image.fullHeight(), image.iccProfile(), exif, image.xmp(),
+                                profile(image).filter(profile -> profile.channels() == 4));
+                    }
+                }
+                var picture = Jp2Pictures.toPicture(image, options.highBitDepth(), options.limits());
                 var decoded = new DecodedImage(picture, ImageFormat.JP2, orientation, image.fullWidth(),
-                        image.fullHeight(), image.iccProfile(), exif, profile(image));
+                        image.fullHeight(), image.iccProfile(), exif, image.xmp(), profile(image));
                 return options.convertToSrgb() ? ImageOps.toSrgb(decoded) : decoded;
             });
         }

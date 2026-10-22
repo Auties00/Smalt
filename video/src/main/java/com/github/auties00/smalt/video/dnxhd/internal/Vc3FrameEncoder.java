@@ -349,7 +349,8 @@ public final class Vc3FrameEncoder {
         var version = alpha && !compression.resolutionIndependent() ? 4 : compression.headerVersion();
         var subsampling = chroma == ChromaFormat.YUV444 ? 2 : chroma == ChromaFormat.YUV420 ? 1 : 0;
         var header = new Vc3Header(headerSize, version, fieldCount, false, compression.cid() == 1260, alpha,
-                losslessPart != null, false, height / units, width, depth, interlaced, compression, subsampling, 0,
+                losslessPart != null, false, height / units, width, depth, interlaced, compression, subsampling,
+                rgb ? 0 : colorVolume(planes.color()),
                 compression.chroma444() && rgb ? 1 : 0, 0, 0, heightInMb, offsets);
         header.write(out, offset);
         var payload = offset + headerSize;
@@ -357,6 +358,22 @@ public final class Vc3FrameEncoder {
             System.arraycopy(rows[row], 0, out, payload + offsets[row], rows[row].length);
         }
         ByteArrays.put32be(out, offset + size - 4, Vc3Header.SIGNATURE);
+    }
+
+    /**
+     * Returns the color volume code {@code CLV} of a Y'CbCr color description.
+     *
+     * @param color the description of the coded samples
+     * @return 0 for BT.709 and an unspecified matrix, 1 for BT.2020 non-constant luminance, 2 for BT.2020 constant
+     * luminance, otherwise {@link Vc3Header#OUT_OF_BAND_VOLUME}, which leaves the description to the container
+     */
+    private static int colorVolume(ColorInfo color) {
+        return switch (color.matrix()) {
+            case BT709, UNSPECIFIED -> 0;
+            case BT2020_NCL -> 1;
+            case BT2020_CL -> 2;
+            default -> Vc3Header.OUT_OF_BAND_VOLUME;
+        };
     }
 
     /**

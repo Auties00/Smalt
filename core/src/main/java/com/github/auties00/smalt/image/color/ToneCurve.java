@@ -320,12 +320,12 @@ final class ToneCurve {
         var p = parameters;
         double e;
         return switch (type) {
-            case 1 -> r < 0 ? (Math.abs(p[0] - 1.0) < ColorMath.DETERMINANT_TOLERANCE ? r : 0) : Math.pow(r, p[0]);
+            case 1 -> r < 0 ? (Math.abs(p[0] - 1.0) < ColorMath.DETERMINANT_TOLERANCE ? r : 0) : StrictMath.pow(r, p[0]);
             case -1 -> {
                 if (r < 0) {
                     yield Math.abs(p[0] - 1.0) < ColorMath.DETERMINANT_TOLERANCE ? r : 0;
                 }
-                yield Math.abs(p[0]) < ColorMath.DETERMINANT_TOLERANCE ? 1e22 : Math.pow(r, 1 / p[0]);
+                yield Math.abs(p[0]) < ColorMath.DETERMINANT_TOLERANCE ? 1e22 : StrictMath.pow(r, 1 / p[0]);
             }
             case 2 -> {
                 if (Math.abs(p[1]) < ColorMath.DETERMINANT_TOLERANCE) {
@@ -334,7 +334,7 @@ final class ToneCurve {
                 var disc = -p[2] / p[1];
                 if (r >= disc) {
                     e = p[1] * r + p[2];
-                    yield e > 0 ? Math.pow(e, p[0]) : 0;
+                    yield e > 0 ? StrictMath.pow(e, p[0]) : 0;
                 }
                 yield 0;
             }
@@ -342,7 +342,7 @@ final class ToneCurve {
                 if (Math.abs(p[0]) < ColorMath.DETERMINANT_TOLERANCE || Math.abs(p[1]) < ColorMath.DETERMINANT_TOLERANCE) {
                     yield 0;
                 }
-                var value = r < 0 ? 0 : (Math.pow(r, 1.0 / p[0]) - p[2]) / p[1];
+                var value = r < 0 ? 0 : (StrictMath.pow(r, 1.0 / p[0]) - p[2]) / p[1];
                 yield Math.max(value, 0);
             }
             case 3 -> {
@@ -352,7 +352,7 @@ final class ToneCurve {
                 var disc = Math.max(-p[2] / p[1], 0);
                 if (r >= disc) {
                     e = p[1] * r + p[2];
-                    yield e > 0 ? Math.pow(e, p[0]) + p[3] : 0;
+                    yield e > 0 ? StrictMath.pow(e, p[0]) + p[3] : 0;
                 }
                 yield p[3];
             }
@@ -362,32 +362,32 @@ final class ToneCurve {
                 }
                 if (r >= p[3]) {
                     e = r - p[3];
-                    yield e > 0 ? (Math.pow(e, 1 / p[0]) - p[2]) / p[1] : 0;
+                    yield e > 0 ? (StrictMath.pow(e, 1 / p[0]) - p[2]) / p[1] : 0;
                 }
                 yield -p[2] / p[1];
             }
             case 4 -> {
                 if (r >= p[4]) {
                     e = p[1] * r + p[2];
-                    yield e > 0 ? Math.pow(e, p[0]) : 0;
+                    yield e > 0 ? StrictMath.pow(e, p[0]) : 0;
                 }
                 yield r * p[3];
             }
             case -4 -> {
                 e = p[1] * p[4] + p[2];
-                var disc = e < 0 ? 0 : Math.pow(e, p[0]);
+                var disc = e < 0 ? 0 : StrictMath.pow(e, p[0]);
                 if (r >= disc) {
                     if (Math.abs(p[0]) < ColorMath.DETERMINANT_TOLERANCE || Math.abs(p[1]) < ColorMath.DETERMINANT_TOLERANCE) {
                         yield 0;
                     }
-                    yield (Math.pow(r, 1.0 / p[0]) - p[2]) / p[1];
+                    yield (StrictMath.pow(r, 1.0 / p[0]) - p[2]) / p[1];
                 }
                 yield Math.abs(p[3]) < ColorMath.DETERMINANT_TOLERANCE ? 0 : r / p[3];
             }
             case 5 -> {
                 if (r >= p[4]) {
                     e = p[1] * r + p[2];
-                    yield e > 0 ? Math.pow(e, p[0]) + p[5] : p[5];
+                    yield e > 0 ? StrictMath.pow(e, p[0]) + p[5] : p[5];
                 }
                 yield r * p[3] + p[6];
             }
@@ -401,7 +401,7 @@ final class ToneCurve {
                     if (Math.abs(p[0]) < ColorMath.DETERMINANT_TOLERANCE || Math.abs(p[1]) < ColorMath.DETERMINANT_TOLERANCE) {
                         yield 0;
                     }
-                    yield (Math.pow(e, 1.0 / p[0]) - p[2]) / p[1];
+                    yield (StrictMath.pow(e, 1.0 / p[0]) - p[2]) / p[1];
                 }
                 yield Math.abs(p[3]) < ColorMath.DETERMINANT_TOLERANCE ? 0 : (r - p[6]) / p[3];
             }

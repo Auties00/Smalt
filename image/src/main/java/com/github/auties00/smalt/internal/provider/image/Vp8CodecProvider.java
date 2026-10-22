@@ -26,6 +26,9 @@ import com.github.auties00.smalt.video.vp8.Vp8EncoderOptions;
  *                 {@code 600 * frameRate / 20} percent;</li>
  *             <li>otherwise: {@link Vp8EncoderOptions#defaults()} with the frame rate and
  *                 bitrate;</li>
+ *             <li>a key frame interval: {@link Vp8EncoderOptions.Builder#keyframeInterval(int)}, and
+ *                 no periodic key frames: {@link Vp8EncoderOptions.Builder#noPeriodicKeyframes()},
+ *                 in place of the preset's;</li>
  *             <li>a thread count above one: {@link Vp8EncoderOptions.Builder#threads(int)}, which
  *                 caps it at 64; {@code 0} and {@code 1} keep the single thread of the presets.</li>
  *           </ul>
@@ -60,6 +63,11 @@ public final class Vp8CodecProvider implements VideoCodecProvider {
                         Math.clamp(Math.round(600 * frameRate.toDouble() / 20), 100, Integer.MAX_VALUE))
                 : Vp8EncoderOptions.defaults().toBuilder();
         builder.frameRate(frameRate).bitrate(options.bitrate());
+        if (!options.periodicKeyframes()) {
+            builder.noPeriodicKeyframes();
+        } else {
+            options.keyframeInterval().ifPresent(builder::keyframeInterval);
+        }
         if (options.threads() > 1) {
             builder.threads(options.threads());
         }

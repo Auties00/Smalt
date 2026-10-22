@@ -13,8 +13,43 @@
     <name>${project.groupId}:${project.artifactId}</name>
     <description>Smalt core: the media model, the codec registries, every container, image and audio processing, loudness, subtitles, PCM, tag editing and XMP</description>
 
+    <dependencies>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
     <build>
         <plugins>
+            <!--
+                The kernel guard of the test kit (testkit.jit) runs in its child JVMs on the class path, where it
+                reads flight recordings, the thread allocation counters and the instrumentation API; core's tests
+                compile inside the module, which reads none of those modules.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules</arg>
+                                <arg>jdk.jfr,java.instrument,java.management,jdk.management</arg>
+                                <arg>--add-reads</arg>
+                                <arg>com.github.auties00.smalt=jdk.jfr,java.instrument,java.management,jdk.management</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
             <!--
                 The test jar carries the test kit (oracles, fixtures, conformance vectors, quality metrics and
                 the shared test helpers) that the other modules' tests use; core's own tests stay out of it.
