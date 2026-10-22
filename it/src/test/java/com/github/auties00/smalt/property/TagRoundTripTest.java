@@ -163,7 +163,10 @@ class TagRoundTripTest {
             stream.packets().forEach(muxer::writePacket);
             muxer.finish();
         }
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("tags-" + base.container().name().toLowerCase(java.util.Locale.ROOT) + "."
+                + base.container().extension(), data);
+        return data;
     }
 
     static List<byte[]> packets(byte[] file) {

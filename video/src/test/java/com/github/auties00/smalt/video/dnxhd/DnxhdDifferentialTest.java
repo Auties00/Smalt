@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.video.intra.IntraTesting;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,18 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("DNxHD decoder differential against ffmpeg")
 class DnxhdDifferentialTest {
+    /**
+     * ffmpeg reconstructs AC levels a quarter step further from zero than ST 2019-1 equation 8.1 and uses other
+     * weights for ID 1271, hence the margin on coarsely quantized streams: at least 45 dB against ffmpeg's decode.
+     */
+    static final Tolerance FFMPEG = Tolerance.psnr(45);
+
+    /** Pictures whose ffmpeg decode is relabeled (see the class documentation) against the coded source: 50 dB. */
+    static final Tolerance SOURCE = Tolerance.psnr(50);
+
+    /** 8-bit pictures computed directly against ffmpeg's narrowing of its deep decode. */
+    static final Tolerance EIGHT_BIT = Tolerance.psnr(40);
+
     static final List<String> INPUTS = List.of("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
             "-f", "lavfi", "-i", "mandelbrot=size=320x240:rate=25");
 
@@ -165,22 +178,17 @@ class DnxhdDifferentialTest {
             var width = stream.track().width();
             var height = stream.track().height();
             var source = source(width, height, pixelFormat);
-            var ffmpegToSource = IntraTesting.psnr(source, expected, wide, peak);
-            var oursToSource = IntraTesting.psnr(source, actual, wide, peak);
-            System.out.printf("%s: psnr against the source %.2f, ffmpeg's %.2f%n", label, oursToSource, ffmpegToSource);
-            assertTrue(oursToSource >= 50, label + " PSNR against the source " + oursToSource);
-            if (ffmpegToSource < 50) {
+            var ffmpegToSource = IntraTesting.difference(source, expected, wide, peak);
+            System.out.printf("%s: ffmpeg against the source: %s%n", label, ffmpegToSource);
+            IntraTesting.assertWithin(SOURCE, label + " against the source", source, actual, wide, peak);
+            if (!SOURCE.violations(ffmpegToSource).isEmpty()) {
                 // the C decode described in the class documentation: there is no ffmpeg decode to compare with
                 return;
             }
         }
-        var psnr = IntraTesting.psnr(expected, actual, wide, peak);
-        var max = IntraTesting.maxDifference(expected, actual, wide);
-        System.out.printf("%s: psnr=%.2f max=%d mismatch=%.5f%n", label, psnr, max,
-                IntraTesting.mismatchRate(expected, actual, wide));
-        // ffmpeg reconstructs AC levels a quarter step further from zero than ST 2019-1 equation
-        // 8.1 and uses other weights for ID 1271, hence the margin on coarsely quantized streams
-        assertTrue(psnr >= 45, label + " PSNR " + psnr);
+        var difference = IntraTesting.difference(expected, actual, wide, peak);
+        System.out.printf("%s: %s%n", label, difference);
+        FFMPEG.check(label, difference);
     }
 
     @Test
@@ -203,9 +211,8 @@ class DnxhdDifferentialTest {
             });
         }
         var expected = bt709ToRgb(IntraTesting.ffmpegDecode(file, "yuv444p10le", 0), 1920, 839);
-        var psnr = IntraTesting.psnr(expected, ours.toByteArray(), true, 65535);
-        System.out.printf("FATE dnxhr444_cid1270: psnr=%.2f against ffmpeg's Y'CbCr converted by BT.709%n", psnr);
-        assertTrue(psnr >= 50, "PSNR " + psnr);
+        IntraTesting.assertWithin(SOURCE, "FATE dnxhr444_cid1270 against ffmpeg's Y'CbCr converted by BT.709",
+                expected, ours.toByteArray(), true, 65535);
     }
 
     @Test
@@ -218,7 +225,7 @@ class DnxhdDifferentialTest {
         for (var packet : stream.packets()) {
             decoder.decode(packet, frame -> ours.writeBytes(IntraTesting.raw(frame.picture(), false)));
         }
-        var psnr = IntraTesting.psnr(IntraTesting.ffmpegDecode(file, "yuv422p", 0), ours.toByteArray(), false, 255);
-        assertTrue(psnr >= 40, "8-bit PSNR " + psnr);
+        IntraTesting.assertWithin(EIGHT_BIT, "8-bit", IntraTesting.ffmpegDecode(file, "yuv422p", 0),
+                ours.toByteArray(), false, 255);
     }
 }

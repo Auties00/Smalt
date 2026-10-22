@@ -3,6 +3,7 @@ package com.github.auties00.smalt.video.vp8;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.Packet;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,6 +34,9 @@ import static org.junit.jupiter.api.Assertions.fail;
  */
 @DisplayName("VP8 decoder differential against ffmpeg")
 class Vp8DifferentialTest {
+    /** VP8 reconstruction is normative (RFC 6386), so every shown frame equals the reference decoders'. */
+    static final Tolerance TOLERANCE = Tolerance.exact();
+
     static final String TESTSRC = "testsrc2=size=%dx%d:rate=30:duration=%s";
 
     static Path encode(int width, int height, String seconds, String source, List<String> options) {
@@ -102,11 +106,7 @@ class Vp8DifferentialTest {
                     + " (" + actual.size() + " frames)");
         }
         var frameSize = actual.isEmpty() ? 1 : actual.getFirst().length;
-        for (var i = 0; i < bytes.length; i++) {
-            if (expected[i] != bytes[i]) {
-                fail(label + ": first difference in frame " + (i / frameSize) + " at byte " + (i % frameSize));
-            }
-        }
+        TOLERANCE.assertFrames(label, expected, bytes, frameSize);
     }
 
     static Stream<Arguments> streams() {
@@ -175,6 +175,6 @@ class Vp8DifferentialTest {
         expected.writeBytes(ffmpegDecode(second, "libvpx"));
         var out = new ByteArrayOutputStream();
         ours.forEach(out::writeBytes);
-        org.junit.jupiter.api.Assertions.assertArrayEquals(expected.toByteArray(), out.toByteArray());
+        TOLERANCE.assertWithin("resolution change", expected.toByteArray(), out.toByteArray());
     }
 }

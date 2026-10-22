@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -31,6 +32,15 @@ import static org.junit.jupiter.api.Assertions.*;
  * byte for byte. The tests skip when cjxl or djxl is not on the PATH.
  */
 class JxlDifferentialTest {
+    /** Lossless coding reconstructs the samples exactly, whatever the decoder's float arithmetic. */
+    static final Tolerance LOSSLESS = Tolerance.exact();
+
+    /**
+     * Lossy files go through float transforms that libjxl evaluates with its own approximations, which may round an
+     * 8-bit output one level differently.
+     */
+    static final Tolerance LOSSY = Tolerance.offByOne();
+
     static final Path SCRATCH = Path.of("target", "jxl-scratch");
 
     static Path scratch(String name) {
@@ -83,7 +93,7 @@ class JxlDifferentialTest {
         @ValueSource(strings = {"-d 0 -e 1", "-d 0 -e 3", "-d 0 -e 7", "-d 0 -e 9", "-d 0 -e 7 --progressive"})
         @DisplayName("lossless files decode exactly like djxl")
         void lossless(String flags) {
-            compare(flags, 0);
+            compare(flags, LOSSLESS);
         }
 
         @ParameterizedTest(name = "cjxl {0}")
@@ -93,10 +103,10 @@ class JxlDifferentialTest {
                 "-d 1 -m 1", "-d 2 -m 1 -e 7"})
         @DisplayName("lossy VarDCT and modular files decode within one level of djxl")
         void lossy(String flags) {
-            compare(flags, 1);
+            compare(flags, LOSSY);
         }
 
-        void compare(String flags, int tolerance) {
+        void compare(String flags, Tolerance tolerance) {
             Oracle.assume(Oracle.Tool.CJXL);
             Oracle.assume(Oracle.Tool.DJXL);
             for (var alpha : List.of(false, true)) {
@@ -121,12 +131,7 @@ class JxlDifferentialTest {
                 } catch (IOException exception) {
                     throw new UncheckedIOException(exception);
                 }
-                assertEquals(expected.length, actual.length, "size");
-                var worst = 0;
-                for (var i = 0; i < expected.length; i++) {
-                    worst = Math.max(worst, Math.abs((expected[i] & 0xFF) - (actual[i] & 0xFF)));
-                }
-                assertTrue(worst <= tolerance, flags + (alpha ? " with alpha" : "") + ": difference " + worst);
+                tolerance.assertWithin(flags + (alpha ? " with alpha" : ""), expected, actual);
             }
         }
     }
@@ -153,6 +158,6 @@ class JxlDifferentialTest {
             return;
         }
         var rebuilt = JxlDecoder.reconstructJpeg(MediaSource.of(Files.readAllBytes(jxl))).orElseThrow();
-        assertArrayEquals(Files.readAllBytes(jpeg), rebuilt);
+        LOSSLESS.assertWithin("rebuilt " + jpeg.getFileName(), Files.readAllBytes(jpeg), rebuilt);
     }
 }

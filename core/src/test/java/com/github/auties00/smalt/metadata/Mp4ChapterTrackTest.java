@@ -176,7 +176,11 @@ class Mp4ChapterTrackTest {
             assertChapters(CHAPTERS, TagEditor.read(MediaSource.of(trackOnly)).chapters());
             try (var demuxer = Containers.openDemuxer(MediaSource.of(trackOnly))) {
                 assertChapters(CHAPTERS, demuxer.chapters());
-                assertEquals(1, demuxer.tracks().stream().filter(track -> track.kind() == TrackKind.DATA).count());
+                // a fragmented file keeps ffmpeg's chapter track, whose samples its fragments carry, as a text track
+                // no chapter reference names, since a track fragment must name a track of the movie
+                var dataTracks = container.name().startsWith("fragmented") ? 2 : 1;
+                assertEquals(dataTracks, demuxer.tracks().stream().filter(track -> track.kind() == TrackKind.DATA)
+                        .count());
             }
             var probeFile = write(directory, "track-only-" + file.getFileName(), trackOnly);
             assertFfprobeChapters(CHAPTERS, probeFile);

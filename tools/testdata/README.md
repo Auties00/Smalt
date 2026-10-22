@@ -39,9 +39,12 @@ python tools/testdata/testdata.py verify --tier full    # check the cache agains
 `linux-arm64`, `windows-x64`, `macos-arm64`): an archive or package downloaded by URL and SHA-256 where an
 official build exists, pinned sources built by `oracles.py` otherwise (OpenJPEG 2.5.3 on Linux and macOS, libtiff
 4.7.1, FLAC 1.5.0, libjxl 0.11.2 on Linux arm64 and macOS, libjpeg-turbo 3.1.3 on Windows, libopus's
-`opus_compare`, mkvalidator and the small programs of this directory), so that every runner has the same version of
-every tool a test runs. The package managers provide the build dependencies and the tools no test runs (sox,
-opus-tools, GPAC, mkvtoolnix on Linux and macOS, TSDuck on macOS); their versions are recorded, not pinned.
+`opus_compare`, mkvalidator on Windows and the small programs of this directory), so that every runner has the same
+version of every tool a test runs. The package managers provide the build dependencies, GPAC's MP4Box and
+mkvtoolnix on Linux and macOS and TSDuck on macOS, which the container validators of the test kit run where they are
+installed, and sox and opus-tools, which no test runs; their versions are recorded, not pinned. mkvalidator is
+provisioned on Windows only, where its project builds it: its GCC build of the pinned revision misreads the Seek
+elements of every file and crashes; core's `ValidatorsTest` checks the provisioned build against mkvmerge's output.
 
 ```
 python tools/testdata/oracles.py install            # installs this platform's set into ~/.smalt/oracles

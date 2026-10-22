@@ -3,7 +3,7 @@ package com.github.auties00.smalt.video.mpeg4;
 import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -43,6 +43,12 @@ class Mpeg4InterlacedDirectTest {
     private static final int HEIGHT = 144;
     private static final int RESOLUTION = 25;
     private static final int FRAME = WIDTH * HEIGHT * 3 / 2;
+
+    /** I- and P-VOPs against ffmpeg's decode with its C inverse DCT: the IEEE 1180 noise floor, 60 dB. */
+    private static final Tolerance ANCHORS = Tolerance.psnr(60);
+
+    /** The Windows decoder deblocks its output, which moves samples by up to about 4. */
+    private static final Tolerance MEDIA_FOUNDATION = Tolerance.maxAbs(6);
 
     record Case(String name, long seed, boolean topFieldFirst, int[][] gops, boolean frameTicks) {
         @Override
@@ -107,8 +113,8 @@ class Mpeg4InterlacedDirectTest {
             var display = times.indexOf(picture.time());
             if (!picture.b()) {
                 anchors.add(picture.time());
-                var psnr = Quality.psnr(frame(expected, display), frame(raw, display));
-                assertTrue(psnr >= 60, "P-VOP at " + picture.time() + ": " + psnr + " dB against ffmpeg");
+                ANCHORS.assertWithin(c.name() + ", P-VOP at " + picture.time() + " against ffmpeg",
+                        frame(expected, display), frame(raw, display));
                 continue;
             }
             var past = anchors.get(anchors.size() - 2);
@@ -147,11 +153,7 @@ class Mpeg4InterlacedDirectTest {
         }
         var reference = Fixtures.read(output);
         assertEquals(raw.length, reference.length);
-        for (var i = 0; i < raw.length / FRAME; i++) {
-            // The Windows decoder deblocks its output, which moves samples by up to about 4.
-            var difference = Quality.maxDifference(frame(reference, i), frame(raw, i));
-            assertTrue(difference <= 6, "picture " + i + " differs from Media Foundation by " + difference);
-        }
+        MEDIA_FOUNDATION.assertFrames("against Media Foundation", reference, raw, FRAME);
     }
 
     static int framesBetween(int earlier, int later, int period) {

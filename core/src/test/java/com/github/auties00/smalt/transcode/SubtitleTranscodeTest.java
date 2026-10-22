@@ -58,7 +58,9 @@ class SubtitleTranscodeTest {
     private static byte[] transcode(byte[] input, TranscodeOptions options) {
         var sink = MediaSink.memory();
         Transcoder.transcode(MediaSource.of(input), sink, options);
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("subtitle-transcode.bin", data);
+        return data;
     }
 
     private static byte[] ffmpegSrt(Path input) {
@@ -104,7 +106,9 @@ class SubtitleTranscodeTest {
             packets.forEach(muxer::writePacket);
             muxer.finish();
         }
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("subtitle-source.mkv", data);
+        return data;
     }
 
     @Nested

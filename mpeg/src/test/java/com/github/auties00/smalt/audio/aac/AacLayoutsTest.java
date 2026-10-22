@@ -199,6 +199,7 @@ class AacLayoutsTest {
         var directory = Files.createDirectories(Path.of("target", "aac-layouts"));
         var file = directory.resolve("22.2.m4a");
         Files.write(file, sink.toByteArray());
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid(file);
         var probe = Oracle.probe(file);
         assertTrue(probe.contains("\"channels\": 24"), probe);
         var reference = AacTestSupport.deinterleave(Oracle.decodeAudio(file), 24);

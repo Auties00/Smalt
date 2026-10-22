@@ -96,7 +96,8 @@ def smoke_runs(work):
     wrote; a row without a recipe here has None instead of the list. A read-back must print no warning."""
     runs = []
     decoders = {'libdav1d': ('libaom-av1', 'ivf'), 'libopencore_amrnb': ('libopencore_amrnb', 'amr'),
-                'libopencore_amrwb': ('libvo_amrwbenc', 'amr')}
+                'libopencore_amrwb': ('libvo_amrwbenc', 'amr'), 'libvpx': ('libvpx', 'webm'),
+                'libvpx-vp9': ('libvpx-vp9', 'webm'), 'libopus': ('libopus', 'ogg')}
     for kind, name in ffmpeg_features():
         feature = '%s %s' % (kind, name)
         if kind == 'encoder':

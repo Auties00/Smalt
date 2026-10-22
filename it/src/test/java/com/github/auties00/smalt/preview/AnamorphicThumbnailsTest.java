@@ -56,6 +56,7 @@ class AnamorphicThumbnailsTest {
             }
             muxer.finish();
         }
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid(output);
         return output;
     }
 

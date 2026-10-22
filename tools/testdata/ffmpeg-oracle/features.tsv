@@ -25,6 +25,9 @@ encoder	libopenjpeg	JPEG 2000 fixtures
 decoder	libopencore_amrnb	AMR-NB reference decoding
 decoder	libopencore_amrwb	AMR-WB reference decoding
 decoder	libdav1d	AV1 reference decoding
+decoder	libvpx	VP8 reference decoding (libvpx)
+decoder	libvpx-vp9	VP9 reference decoding (libvpx)
+decoder	libopus	Opus reference decoding (libopus)
 filter	zscale	zimg color conversion oracle
 muxer	avif	AVIF fixtures
 demuxer	dash	DASH manifests read back by ffmpeg (libxml2)

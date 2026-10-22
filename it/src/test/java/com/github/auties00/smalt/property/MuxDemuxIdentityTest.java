@@ -7,6 +7,7 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.validate.Validators;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -34,7 +35,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  * Muxing then demuxing preserves every packet, for every container Smalt writes and every codec it can carry: the
  * demuxer returns, per track, the packets the muxer was given, in the same order, with the same bytes, key frame
  * flags and timestamps (to the precision of the container's clock), behind a track of the same codec, size, rate
- * and channel count. Multi-track containers are also checked with a video and an audio track interleaved.
+ * and channel count. Multi-track containers are also checked with a video and an audio track interleaved. Every
+ * output also passes the test kit's container validators (and the reference validators CI provisions) for the
+ * containers they cover.
  */
 @DisplayName("Mux then demux")
 class MuxDemuxIdentityTest {
@@ -103,6 +106,9 @@ class MuxDemuxIdentityTest {
             muxer.finish();
         }
         var data = sink.toByteArray();
+        var name = new StringBuilder("identity-").append(container.name().toLowerCase(java.util.Locale.ROOT));
+        streams.forEach(stream -> name.append('-').append(stream.track().codec().name().toLowerCase(java.util.Locale.ROOT)));
+        Validators.assertValid(name.append('.').append(container.extension()).toString(), data);
         try (var demuxer = Containers.openDemuxer(MediaSource.of(data))) {
             var tracks = demuxer.tracks();
             assertEquals(streams.size(), tracks.size(), container + " track count");

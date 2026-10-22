@@ -166,7 +166,7 @@ class Mp4SampleDescriptionTest {
             }
             muxer.finish();
         }
-        return sink.toByteArray();
+        return com.github.auties00.smalt.container.MuxSupport.validated("descriptions", sink.toByteArray());
     }
 
     @Test
@@ -205,7 +205,7 @@ class Mp4SampleDescriptionTest {
             }
             muxer.finish();
         }
-        var output = sink.toByteArray();
+        var output = com.github.auties00.smalt.container.MuxSupport.validated("descriptions", sink.toByteArray());
         assertEquals(2, countDescriptions(output));
         var channels = new ArrayList<Integer>();
         for (var index = 0; index + 22 < output.length; index++) {

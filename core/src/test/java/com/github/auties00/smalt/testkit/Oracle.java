@@ -593,10 +593,20 @@ public final class Oracle {
     }
 
     /**
-     * Fully decodes every stream of a file with ffmpeg, failing if ffmpeg reports any error;
-     * the conformance check for muxer and encoder output.
+     * Validates a file with the container validators of {@link com.github.auties00.smalt.testkit.validate.Validators}
+     * and fully decodes every stream of it with ffmpeg, failing if a validator finds a problem or ffmpeg reports any
+     * error; the conformance check for muxer and encoder output.
      */
     public static void assertDecodesCleanly(Path input) {
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid(input);
+        assertFfmpegDecodes(input);
+    }
+
+    /**
+     * Fully decodes every stream of a file with ffmpeg, failing if ffmpeg reports any error, without the container
+     * validators of {@link #assertDecodesCleanly(Path)}.
+     */
+    public static void assertFfmpegDecodes(Path input) {
         run(Tool.FFMPEG, Duration.ofMinutes(5), List.of("-v", "error", "-xerror", "-i", input.toString(), "-f", "null", "-"));
     }
 

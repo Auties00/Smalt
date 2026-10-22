@@ -722,6 +722,7 @@ class MatroskaDemuxerTest {
                     com.github.auties00.smalt.container.mp4.RemuxOptions.audio());
             assertEquals(frames.size(), result.packets());
         }
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("matroska-remux.mp4", output.toByteArray());
         try (var source = MediaSource.of(output.toByteArray());
              var demuxer = new com.github.auties00.smalt.container.mp4.Mp4Demuxer(source)) {
             var packets = ContainerProbe.demuxAll(demuxer).order();

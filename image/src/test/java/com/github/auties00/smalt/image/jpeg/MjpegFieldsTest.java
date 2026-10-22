@@ -153,6 +153,7 @@ class MjpegFieldsTest {
             muxer.finish();
         }
         var file = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("mjpeg-fields.mov", file);
         assertTrue(new String(file, StandardCharsets.ISO_8859_1).contains("mjpa"));
         var stream = MotionJpegTesting.demux(file);
         assertEquals(Interlacing.TOP_FIELD_FIRST_SEPARATED, stream.track().interlacing().orElseThrow());

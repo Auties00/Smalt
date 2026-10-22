@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.hevc;
 
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.video.VideoFrame;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -12,7 +13,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -24,6 +24,9 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 @DisplayName("HEVC decoder against ffmpeg on x265 streams")
 class HevcDifferentialTest {
+    /** HEVC reconstruction is normative (ITU-T H.265 clause 8), so every picture equals ffmpeg's decode. */
+    static final Tolerance TOLERANCE = Tolerance.exact();
+
     record Case(String name, String size, String pixelFormat, String params, double seconds, String scene,
                 boolean ffmpegExact) {
         Case(String name, String size, String pixelFormat, String params, double seconds, String scene) {
@@ -147,7 +150,7 @@ class HevcDifferentialTest {
         }
         assertEquals(expected.length, raw.size(), "decoded size of " + c.name() + " after " + count[0] + " frames");
         if (c.ffmpegExact()) {
-            assertArrayEquals(expected, raw.toByteArray(), c.name());
+            TOLERANCE.assertWithin(c.name(), expected, raw.toByteArray());
         }
     }
 }

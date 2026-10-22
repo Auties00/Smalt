@@ -218,6 +218,7 @@ class Mp4EditListTest {
             assertEquals(expected, Mp4EdgeCaseTest.demux(input).order().stream().map(Mp4EditListTest::describe).toList());
             var sink = com.github.auties00.smalt.io.MediaSink.memory();
             Mp4Remuxer.remux(MediaSource.of(input), sink);
+            com.github.auties00.smalt.testkit.validate.Validators.assertValid("edit-list-remux.mp4", sink.toByteArray());
             assertEquals(expected, Mp4EdgeCaseTest.demux(sink.toByteArray()).order().stream()
                     .map(Mp4EditListTest::describe).toList());
         }

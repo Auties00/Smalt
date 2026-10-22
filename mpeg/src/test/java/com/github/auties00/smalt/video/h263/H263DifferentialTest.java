@@ -5,7 +5,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoFrame;
@@ -51,6 +51,17 @@ class H263DifferentialTest {
 
     private static final int ZOOM_PICTURES = 30;
 
+    /** The rounding of ffmpeg's -vstats luma PSNR (0.005 dB) and up to 0.01 dB of IDCT noise, in decibels. */
+    private static final double ENCODER_PSNR_MARGIN = 0.015;
+
+    /**
+     * Returns the rule of a stream decoded against ffmpeg's decoder: at least the PSNR against the {@code -idct int}
+     * decode that ffmpeg's {@code -idct simple} decode reaches (the IDCT noise floor, capped at 60 dB) less 1 dB.
+     */
+    static Tolerance idctNoiseFloor(byte[] expected, byte[] simple) {
+        return Tolerance.psnr(Math.min(Tolerance.Difference.of(expected, simple).psnr(), 60) - 1);
+    }
+
     enum Reference {
         DECODER,
         ENCODER
@@ -95,10 +106,8 @@ class H263DifferentialTest {
             var pictures = decode(file);
             var raw = concat(pictures);
             assertEquals(expected.length, raw.length, c.name() + " after " + pictures.size() + " frames");
-            var ours = Quality.psnr(expected, raw);
-            var floor = Quality.psnr(expected, ffmpeg(file, "simple"));
-            assertTrue(ours >= Math.min(floor, 60) - 1, c.name() + ": PSNR " + ours + " dB, ffmpeg -idct simple "
-                    + floor + " dB");
+            idctNoiseFloor(expected, ffmpeg(file, "simple")).assertWithin(c.name() + " against ffmpeg -idct int",
+                    expected, raw);
             return;
         }
         var source = List.of("-f", "lavfi", "-i", zoom(c.size()));
@@ -133,9 +142,8 @@ class H263DifferentialTest {
         assertEquals(frameSize * ZOOM_PICTURES, sources.length, "source pictures");
         for (var i = 0; i < ZOOM_PICTURES; i++) {
             var sourceLuma = Arrays.copyOfRange(sources, i * frameSize, i * frameSize + lumaSize);
-            var ours = Quality.psnr(sourceLuma, Arrays.copyOf(pictures.get(i), lumaSize));
-            // 0.005 dB of rounding in the report and up to 0.01 dB of IDCT noise.
-            assertEquals(encoderPsnr.get(i), ours, 0.015, c.name() + ", picture " + i
+            var ours = Tolerance.Difference.of(sourceLuma, Arrays.copyOf(pictures.get(i), lumaSize)).psnr();
+            assertEquals(encoderPsnr.get(i), ours, ENCODER_PSNR_MARGIN, c.name() + ", picture " + i
                     + ": luma PSNR against the source differs from the encoder's reconstruction");
         }
     }

@@ -4,7 +4,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4ElementaryStream;
@@ -74,6 +74,12 @@ class H263ConformanceTest {
     private static final int LUMA = 176 * 144;
     private static final int FRAME = LUMA * 3 / 2;
 
+    /**
+     * With ffmpeg's C inverse DCT, the only differences left are its rounding ties, which the Deblocking Filter mode
+     * carries on from picture to picture: at least 65 dB per picture.
+     */
+    private static final Tolerance SAME_IDCT = Tolerance.psnr(65);
+
     @ParameterizedTest(name = "{0}")
     @CsvSource({
             // No optional mode.
@@ -96,11 +102,9 @@ class H263ConformanceTest {
             Files.write(file, bitstream);
             var decoded = decode(file);
             assertEquals(reference.length, decoded.length, "decoded size");
-            for (var i = 0; i < reference.length / FRAME; i++) {
-                var psnr = Quality.psnr(Arrays.copyOfRange(reference, i * FRAME, (i + 1) * FRAME),
-                        Arrays.copyOfRange(decoded, i * FRAME, (i + 1) * FRAME));
-                assertTrue(psnr >= minimumPsnr, stream + ", picture " + i + ": " + psnr + " dB");
-            }
+            // the IDCT noise floor of the stream: both decoders meet IEEE 1180
+            Tolerance.psnr(minimumPsnr).assertFrames(stream + " against the reference decode", reference, decoded,
+                    FRAME);
             if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
                 // With the same inverse DCT the only differences left are its rounding ties; -cpuflags 0 makes the
                 // reference ffmpeg's C inverse DCT, which its arm64 NEON kernels do not reproduce.
@@ -108,11 +112,7 @@ class H263ConformanceTest {
                         "0", "-idct", "int", "-f", "h263", "-i", file.toString(), "-f", "rawvideo", "-pix_fmt", "yuv420p",
                         "-"));
                 assertEquals(ffmpeg.length, decoded.length, "pictures decoded by ffmpeg");
-                for (var i = 0; i < ffmpeg.length / FRAME; i++) {
-                    var psnr = Quality.psnr(Arrays.copyOfRange(ffmpeg, i * FRAME, (i + 1) * FRAME),
-                            Arrays.copyOfRange(decoded, i * FRAME, (i + 1) * FRAME));
-                    assertTrue(psnr >= 65, stream + ", picture " + i + ": " + psnr + " dB against ffmpeg -idct int");
-                }
+                SAME_IDCT.assertFrames(stream + " against ffmpeg -idct int", ffmpeg, decoded, FRAME);
             }
         } finally {
             Files.delete(file);
@@ -158,8 +158,8 @@ class H263ConformanceTest {
             assertEquals(images.size() * FRAME, decoded.length, "decoded size");
             for (var i = 0; i < images.size(); i++) {
                 // The log numbers the source pictures from 1.
-                var ours = Quality.psnr(sources.get(images.get(i) - 1), Arrays.copyOfRange(decoded, i * FRAME,
-                        i * FRAME + LUMA));
+                var ours = Tolerance.Difference.of(sources.get(images.get(i) - 1), Arrays.copyOfRange(decoded,
+                        i * FRAME, i * FRAME + LUMA)).psnr();
                 // 0.005 dB of rounding in the log, the rest IEEE 1180 mismatches.
                 var bound = i < tightPictures ? tightBound : 0.2;
                 assertEquals(encoderPsnr.get(i), ours, bound, name + ", picture " + i

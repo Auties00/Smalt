@@ -254,7 +254,10 @@ class LosslessAudioTest {
             stream.packets().forEach(muxer::writePacket);
             muxer.finish();
         }
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("lossless-" + container.name().toLowerCase(java.util.Locale.ROOT) + "."
+                + container.extension(), data);
+        return data;
     }
 
     static float[][] decode(Streams.Encoded stream) {

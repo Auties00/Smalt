@@ -181,6 +181,7 @@ class MjpegFormatBTest {
             muxer.finish();
         }
         var file = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("mjpeg-format-b.mov", file);
         var text = new String(file, StandardCharsets.ISO_8859_1);
         assertTrue(text.contains("mjpb"));
         var stream = MotionJpegTesting.demux(file);

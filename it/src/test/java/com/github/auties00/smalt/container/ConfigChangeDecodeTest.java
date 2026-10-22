@@ -325,7 +325,7 @@ class ConfigChangeDecodeTest {
             Transcoder.transcode(source, sink, TranscodeOptions.of(OutputContainer.MP4));
         }
         var output = sink.toByteArray();
-        save("copied.mp4", output);
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid(save("copied.mp4", output));
         assertEquals(expectedFrames("ts"), frames(output));
         var descriptions = new ArrayList<Integer>();
         var text = new String(output, StandardCharsets.ISO_8859_1);

@@ -166,6 +166,7 @@ class OpusProjectionApiTest {
                 muxer.finish();
             }
             var file = sink.toByteArray();
+            com.github.auties00.smalt.testkit.validate.Validators.assertValid("projection-" + container + ".bin", file);
             try (Demuxer demuxer = switch (container) {
                 case "ogg" -> new OggDemuxer(MediaSource.of(file));
                 case "matroska" -> new MatroskaDemuxer(MediaSource.of(file));

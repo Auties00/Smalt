@@ -1,30 +1,47 @@
-package com.github.auties00.smalt.audio.opus;
+/* Ports libopus 1.5.2 (src/opus_compare.c). Copyright (c) 2011-2012 Xiph.Org Foundation, Mozilla Corporation;
+   BSD 3-Clause License. Modified for Smalt. */
+package com.github.auties00.smalt.testkit.audio;
 
 /**
- * Port of libopus's {@code opus_compare} test tool (RFC 6716 section 6.2, RFC 8251): the
- * perceptually weighted comparison that decides whether a decoder's output of an official test
- * vector conforms.
+ * Compares a decoded Opus signal with its reference by the criterion of libopus' {@code opus_compare} test tool
+ * (RFC 6716 section 6.2, RFC 8251): the perceptually weighted comparison that decides whether a decoder's output of an
+ * official test vector conforms, and the rule of {@link com.github.auties00.smalt.testkit.Tolerance#opusCompare}.
  *
- * <p>The only change from the C tool is how the per-bin spectra are computed: the tool evaluates
- * the 480-point DFT naively, this port uses a mixed-radix FFT in double precision, which changes
- * rounding by far less than the metric resolves.
+ * <p>The only change from the C tool is how the per-bin spectra are computed: the tool evaluates the 480-point DFT
+ * naively, this port uses a mixed-radix FFT in double precision, which changes rounding by far less than the metric
+ * resolves; the core test kit's {@code ToleranceTest} checks the port against the tool where CI provisions it.
  */
-final class OpusCompare {
+public final class OpusCompare {
     private static final int NBANDS = 21;
     private static final int NFREQS = 240;
     private static final int[] BANDS = {0, 2, 4, 6, 8, 10, 12, 14, 16, 20, 24, 28, 32, 40, 48, 56, 68, 80, 96, 120, 156, 200};
     private static final int TEST_WIN_SIZE = 480;
     private static final int TEST_WIN_STEP = 120;
 
-    /** The outcome of a comparison. */
-    record Result(boolean passes, double quality, double error) {
+    /**
+     * The outcome of a comparison.
+     *
+     * @param passes whether the decode conforms, that is the quality is not negative
+     * @param quality the quality metric in percent, as the tool prints it
+     * @param error the internal weighted error
+     */
+    public record Result(boolean passes, double quality, double error) {
     }
 
     private OpusCompare() {
+        throw new AssertionError();
     }
 
-    /** The rate-independent analysis of a reference: masked band energies and bin spectra. */
-    record Reference(int channels, int xlength, int nframes, float[] xb, float[] X) {
+    /**
+     * The rate-independent analysis of a reference: masked band energies and bin spectra.
+     *
+     * @param channels the channel count of the comparison, 1 or 2
+     * @param xlength the number of reference frames
+     * @param nframes the number of analysis windows
+     * @param xb the masked band energies
+     * @param X the masked bin spectra
+     */
+    public record Reference(int channels, int xlength, int nframes, float[] xb, float[] X) {
     }
 
     /**
@@ -33,7 +50,7 @@ final class OpusCompare {
      * @param reference the reference {@code .dec} samples: interleaved stereo 16-bit at 48 kHz
      * @param channels  1 or 2 (the {@code -s} flag)
      */
-    static Reference prepare(short[] reference, int channels) {
+    public static Reference prepare(short[] reference, int channels) {
         var xlength = reference.length / 2;
         var x = new float[xlength * channels];
         if (channels == 1) {
@@ -109,7 +126,7 @@ final class OpusCompare {
      * @param channels  1 or 2 (the {@code -s} flag)
      * @param rate      the rate of {@code decoded} (the {@code -r} flag)
      */
-    static Result compare(short[] reference, short[] decoded, int channels, int rate) {
+    public static Result compare(short[] reference, short[] decoded, int channels, int rate) {
         return compare(prepare(reference, channels), decoded, rate);
     }
 
@@ -120,7 +137,7 @@ final class OpusCompare {
      * @param decoded   the decoded samples, interleaved, as 16-bit values
      * @param rate      the rate of {@code decoded}
      */
-    static Result compare(Reference reference, short[] decoded, int rate) {
+    public static Result compare(Reference reference, short[] decoded, int rate) {
         var channels = reference.channels();
         var downsample = 48000 / rate;
         var ybands = switch (rate) {
@@ -201,6 +218,53 @@ final class OpusCompare {
         err = Math.pow(err / nframes, 1.0 / 16);
         var q = 100 * (1 - 0.5 * Math.log(1 + err) / Math.log(1.13));
         return new Result(q >= 0, q, err);
+    }
+
+    /**
+     * Compares a decode of any channel count with a reference of the same channel count: a mono or stereo signal as
+     * {@code opus_compare} compares it ({@code -s} for stereo), a signal of more channels channel by channel, each as
+     * a mono signal.
+     *
+     * @param reference the reference samples, interleaved, at 48 kHz
+     * @param decoded the decoded samples, interleaved, at {@code rate}
+     * @param channels the channel count of both signals
+     * @param rate the rate of {@code decoded}
+     * @return the result of each comparison: one for a mono or stereo signal, one per channel otherwise
+     * @throws IllegalArgumentException if the lengths do not match or the signals are shorter than one window
+     */
+    public static java.util.List<Result> compareChannels(short[] reference, short[] decoded, int channels, int rate) {
+        if (channels == 2) {
+            return java.util.List.of(compare(reference, decoded, 2, rate));
+        }
+        var frames = reference.length / channels;
+        var results = new java.util.ArrayList<Result>();
+        for (var channel = 0; channel < channels; channel++) {
+            var stereo = new short[frames * 2];
+            for (var frame = 0; frame < frames; frame++) {
+                stereo[2 * frame] = reference[frame * channels + channel];
+                stereo[2 * frame + 1] = reference[frame * channels + channel];
+            }
+            var mono = new short[decoded.length / channels];
+            for (var frame = 0; frame < mono.length; frame++) {
+                mono[frame] = decoded[frame * channels + channel];
+            }
+            results.add(compare(stereo, mono, 1, rate));
+        }
+        return results;
+    }
+
+    /**
+     * Converts full-scale float samples to 16-bit values, rounding to nearest and saturating, the input of the tool.
+     *
+     * @param samples the samples, full scale 1.0
+     * @return the 16-bit samples
+     */
+    public static short[] toPcm16(float[] samples) {
+        var out = new short[samples.length];
+        for (var index = 0; index < samples.length; index++) {
+            out[index] = (short) Math.max(-32768, Math.min(32767, Math.round(samples[index] * 32768.0)));
+        }
+        return out;
     }
 
     private static void bandEnergy(float[] out, float[] ps, int nbands, float[] in, int channels, int nframes,

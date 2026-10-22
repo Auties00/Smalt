@@ -63,6 +63,8 @@ class ProbeConsistencyTest {
             muxer.finish();
         }
         var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("probe-" + container.name().toLowerCase(java.util.Locale.ROOT) + "."
+                + container.extension(), data);
         var info = Media.probe(MediaSource.of(data), ProbeOptions.builder().readFirstFrames(firstFrames).build());
         var what = container + " " + codec;
         assertEquals(container.format(), info.container().orElseThrow(), what + " container");

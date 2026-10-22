@@ -823,6 +823,13 @@ final class Mp4TagFile implements TagFile {
         private final boolean dropping;
 
         /**
+         * The identifiers of the chapter tracks whose {@code trak} and {@code trex} boxes the rewrite removes: those no
+         * movie fragment names. A chapter track whose samples are in fragments stays, without the chapter references
+         * that made it one, since a track fragment must name a track of the movie (ISO/IEC 14496-12 clause 8.8.7).
+         */
+        private final Set<Long> removed;
+
+        /**
          * The new chapter track, or {@code null} when none is written.
          */
         private final Mp4ChapterTrack chapterTrack;
@@ -860,6 +867,14 @@ final class Mp4TagFile implements TagFile {
             var chapters = newTags.chapters();
             var keep = !chapterTracks.isEmpty() && chapters.equals(tags.chapters());
             this.dropping = !chapterTracks.isEmpty() && !keep;
+            if (dropping && Mp4Boxes.find(children, "mvex") != null) {
+                var fragmented = fragmentTracks();
+                var dropped = new HashSet<>(chapterTracks);
+                dropped.removeAll(fragmented);
+                this.removed = Set.copyOf(dropped);
+            } else {
+                this.removed = dropping ? Set.copyOf(chapterTracks) : Set.of();
+            }
             var largest = 0L;
             var largestAll = 0L;
             var media = new ArrayList<Long>();
@@ -870,7 +885,7 @@ final class Mp4TagFile implements TagFile {
                 }
                 var id = trackId(moov, child);
                 largestAll = Math.max(largestAll, id);
-                if (dropping && chapterTracks.contains(id)) {
+                if (removed.contains(id)) {
                     continue;
                 }
                 largest = Math.max(largest, id);
@@ -946,13 +961,14 @@ final class Mp4TagFile implements TagFile {
                     }
                     case "trak" -> {
                         var id = trackId(moov, child);
-                        if (!dropping || !chapterTracks.contains(id)) {
+                        if (!removed.contains(id)) {
                             body.bytes(rebuildTrack(child, delta, threshold,
                                     chapterTrack != null && referencing.contains(id) ? chapterId : -1));
                         }
                     }
                     case "mvhd" -> body.bytes(chapterTrack != null ? withNextTrackId(child) : copy(child));
-                    case "mvex" -> body.bytes(chapterTrack != null ? withChapterExtends(child) : copy(child));
+                    case "mvex" -> body.bytes(chapterTrack != null || !removed.isEmpty() ? withChapterExtends(child)
+                            : copy(child));
                     default -> body.bytes(moov, child.offset(), child.size());
                 }
                 if (index == lastTrak && chapterTrack != null) {
@@ -995,23 +1011,31 @@ final class Mp4TagFile implements TagFile {
         }
 
         /**
-         * Copies {@code mvex} with a track extends box for the new chapter track; those of removed
-         * tracks stay, since fragments may still name them.
+         * Copies {@code mvex} without the track extends boxes of the removed tracks and, when a chapter track is
+         * written, with one for it.
          *
          * @param mvex the box
          * @return the box
          */
         private byte[] withChapterExtends(Mp4Boxes.Box mvex) {
             var out = new ByteWriter(mvex.size() + 32);
-            out.bytes(moov, mvex.payload(), mvex.end() - mvex.payload());
-            var trex = new ByteWriter(24);
-            trex.u32be(0);
-            trex.u32be(chapterId);
-            trex.u32be(1);
-            trex.u32be(0);
-            trex.u32be(0);
-            trex.u32be(0);
-            Mp4Boxes.box(out, "trex", trex.toByteArray());
+            for (var child : Mp4Boxes.children(moov, mvex.payload(), mvex.end())) {
+                if (child.type().equals("trex") && child.payload() + 8 <= child.end()
+                        && removed.contains(ByteArrays.u32be(moov, child.payload() + 4))) {
+                    continue;
+                }
+                out.bytes(moov, child.offset(), child.size());
+            }
+            if (chapterTrack != null) {
+                var trex = new ByteWriter(24);
+                trex.u32be(0);
+                trex.u32be(chapterId);
+                trex.u32be(1);
+                trex.u32be(0);
+                trex.u32be(0);
+                trex.u32be(0);
+                Mp4Boxes.box(out, "trex", trex.toByteArray());
+            }
             return Mp4Boxes.box("mvex", out.toByteArray());
         }
 
@@ -1121,6 +1145,32 @@ final class Mp4TagFile implements TagFile {
         var version = data[tkhd.payload()] & 0xFF;
         var at = tkhd.payload() + (version == 1 ? 20 : 12);
         return at + 4 <= tkhd.end() ? ByteArrays.u32be(data, at) : -1;
+    }
+
+    /**
+     * Returns the track identifiers the track fragment headers of the top-level movie fragments name.
+     *
+     * @return the identifiers
+     */
+    private Set<Long> fragmentTracks() {
+        var ids = new HashSet<Long>();
+        for (var index = 0; index < topLevel.size(); index++) {
+            if (!topLevelTypes.get(index).equals("moof")) {
+                continue;
+            }
+            var moof = TagIo.read(source, topLevel.get(index)[0], topLevel.get(index)[1], limits);
+            var header = ByteArrays.u32be(moof, 0) == 1 ? 16 : 8;
+            for (var traf : Mp4Boxes.children(moof, header, moof.length)) {
+                if (!traf.type().equals("traf")) {
+                    continue;
+                }
+                var tfhd = Mp4Boxes.find(Mp4Boxes.children(moof, traf.payload(), traf.end()), "tfhd");
+                if (tfhd != null && tfhd.payload() + 8 <= tfhd.end()) {
+                    ids.add(ByteArrays.u32be(moof, tfhd.payload() + 4));
+                }
+            }
+        }
+        return ids;
     }
 
     /**

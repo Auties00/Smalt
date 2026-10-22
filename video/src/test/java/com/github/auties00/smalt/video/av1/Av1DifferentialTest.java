@@ -7,6 +7,7 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoReader;
 import com.github.auties00.smalt.video.av1.internal.Av1Context;
@@ -45,6 +46,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("AV1 decoder differential against ffmpeg")
 class Av1DifferentialTest {
+    /** AV1 reconstruction is normative, so every frame equals ffmpeg's decode. */
+    static final Tolerance TOLERANCE = Tolerance.exact();
+
     private static final String FOREMAN_URL = "https://media.xiph.org/video/derf/y4m/foreman_cif.y4m";
     private static final String FOREMAN_SHA256 = "b0e3c35eff9fe1da91521a02eb9f0e3ef4bc5aec341ecef1567cd87f1711267b";
 
@@ -215,10 +219,7 @@ class Av1DifferentialTest {
     private static void assertSame(byte[] expected, byte[] actual, String label) {
         assertTrue(expected.length > 0, "ffmpeg produced no frames");
         assertEquals(expected.length, actual.length, label + ": decoded size");
-        if (!java.util.Arrays.equals(expected, actual)) {
-            var first = java.util.Arrays.mismatch(expected, actual);
-            assertArrayEquals(expected, actual, label + ": first difference at byte " + first);
-        }
+        TOLERANCE.assertWithin(label, expected, actual);
     }
 
     @ParameterizedTest(name = "{0}")

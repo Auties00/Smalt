@@ -89,6 +89,36 @@ what is installed). A test whose tool is missing skips; CI sets `SMALT_TEST_REQU
 `tools/testdata/skip-baseline.tsv`: CI fails when a count grows, and the counts of the oracle, device and
 environment families may only shrink.
 
+### Tolerances and validators
+
+A differential or conformance test declares how far Smalt may differ from the reference, once per codec, with the
+test kit's `Tolerance`, in the comparison modes of FFmpeg's FATE and the criteria the standards define: exact for the
+normative decoders (H.264, HEVC, VP8, VP9, AV1, FLAC, lossless WebP and JPEG XL, JPEG luma against libjpeg-turbo's
+`djpeg -dct int`), off by one, maximum and mean absolute difference, RMS, PSNR, SNR and the fraction of differing
+samples for the float decoders and the inverse DCTs the standards leave free, the ISO/IEC 11172-4 full accuracy
+limits for MPEG audio (the compliance streams and every ffmpeg comparison), and libopus' `opus_compare` criterion
+for Opus (ported, and checked against the tool where it is installed); a violation names the rule, every
+statistic and the first differing sample and frame. `Ieee1180` runs the IEEE 1180-1990 accuracy test that
+ISO/IEC 14496-2 and ITU-T H.263 require of the MPEG-4 Part 2 and H.263 inverse DCT.
+
+Files Smalt writes are checked by validators that share no code with its demuxers, written from the
+specifications in the test kit's `testkit.validate` package: ISO base media files, fragmented MP4 and CMAF
+(ISO/IEC 14496-12, 14496-14 and 14496-15, 23000-19: box layout, sample tables, durations, codec configurations,
+fragment sequence, data offsets and timelines, `sidx` and `mfra`), Matroska and WebM (RFC 8794 and RFC 9559),
+MPEG-2 transport streams (ISO/IEC 13818-1: packets, continuity, PSI with CRCs, PES headers, PCR intervals), HLS
+(RFC 8216, with the checks of Apple's `mediastreamvalidator`: versions, durations, `BANDWIDTH`, `CODECS`,
+`RESOLUTION`, rendition groups, every segment) and MPEG-DASH (the MPD schema of ISO/IEC 23009-1, segment
+addressing, timelines against `tfdt`, `codecs`, and `bandwidth` with `minBufferTime`). Where they are installed,
+GPAC's `MP4Box -info`, the Matroska foundation's `mkvalidator` and TSDuck's `analyze` plugin read the same files;
+`mkvalidator` 0.6 predates AV1, the block addition mapping of WebM and several registered codec IDs, so the reports
+those draw are accepted, each with its reason in `testkit.validate.Validators`.
+Every output of the container tests' muxing helpers, every container and codec pair of the `it` module's
+mux/demux property, every HLS and DASH presentation of the packager tests and every file a test hands to
+`Oracle.assertDecodesCleanly` goes through them. The output of every encoder is also decoded by a reference
+decoder (ffmpeg with libvpx, dav1d, libopus and opencore-amr, the `flac` tool, libpng, libjpeg-turbo, libwebp,
+OpenJPEG, libjxl and libtiff for images and metadata edits) and compared with Smalt's own decode under the
+codec's declared tolerance (`it`'s `ReferenceDecodeTest` and `ReferenceImageDecodeTest`).
+
 ### I/O behavior and golden dumps
 
 Every demuxer, reader and image decoder runs through the test kit's I/O behavior harnesses
@@ -692,10 +722,11 @@ file on a seekable output, its final `STREAMINFO` (length, MD5) and seek table.
 ### Known limits
 
 - MP4 tags: `FragmentedMp4Muxer` stores chapters in the Nero `chpl` box only, without a QuickTime chapter track
-  (`TagEditor` adds one to its output). When `TagEditor` replaces the chapter track of a fragmented file, the fragment
-  runs of the old track stay in the fragments, unused. The iTunes integer atoms `TagEditor` and `Mp4Muxer` know take
-  decimal integers their width holds; other values are rejected, except by `TagEditor` for an atom the file already
-  stores as text, which stays text.
+  (`TagEditor` adds one to its output). When `TagEditor` replaces the chapter track of a fragmented file whose
+  fragments carry that track's samples, the old track stays as a `text` track that no chapter reference names,
+  since a track fragment must name a track of the movie; the fragments are not rewritten. The iTunes integer atoms
+  `TagEditor` and `Mp4Muxer` know take decimal integers their width holds; other values are rejected, except by
+  `TagEditor` for an atom the file already stores as text, which stays text.
 - Tag editing: the APE and ID3v1 tags `TagEditor` writes mirror what their formats hold (APE keys of printable ASCII,
   one picture per role), the ID3v2 tag holding everything. APE tags without a footer (a header-only tag at the start
   of a file) are not recognized. In FLAC files `TagEditor` keeps ID3v2 tags, leading or appended, without reading

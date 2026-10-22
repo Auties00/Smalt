@@ -128,7 +128,7 @@ class ConfigChangeMuxingTest {
         void transportStream() {
             var sink = MediaSink.memory();
             write(new TsMuxer(sink), video(), videoPackets());
-            var packets = read(new TsDemuxer(MediaSource.of(sink.toByteArray())));
+            var packets = read(new TsDemuxer(MediaSource.of(MuxSupport.validated("config-change", sink.toByteArray()))));
             assertEquals(6, packets.size());
             var track = packets.getFirst().trackId();
             assertTrue(packets.stream().allMatch(packet -> packet.trackId() == track));
@@ -149,7 +149,7 @@ class ConfigChangeMuxingTest {
         void matroska() {
             var sink = MediaSink.memory();
             write(new MatroskaMuxer(sink), video(), videoPackets());
-            var packets = read(new MatroskaDemuxer(MediaSource.of(sink.toByteArray())));
+            var packets = read(new MatroskaDemuxer(MediaSource.of(MuxSupport.validated("config-change", sink.toByteArray()))));
             assertEquals(6, packets.size());
             assertArrayEquals(unit(slice(true, 0)), packets.get(0).data());
             assertArrayEquals(unit(SPS2, PPS, slice(true, 3)), packets.get(3).data());
@@ -185,7 +185,7 @@ class ConfigChangeMuxingTest {
             }
             var sink = MediaSink.memory();
             write(new MatroskaMuxer(sink), video(), packets);
-            var read = read(new MatroskaDemuxer(MediaSource.of(sink.toByteArray())));
+            var read = read(new MatroskaDemuxer(MediaSource.of(MuxSupport.validated("config-change", sink.toByteArray()))));
             assertEquals(List.of(true, true, false, false, false, false),
                     read.stream().map(packet -> packet.flags().contains(PacketFlag.DISCARD)).toList());
             assertTrue(read.getFirst().keyframe());
@@ -226,7 +226,7 @@ class ConfigChangeMuxingTest {
         void adts() {
             var sink = MediaSink.memory();
             write(new AdtsMuxer(sink), track(), packets());
-            var data = sink.toByteArray();
+            var data = MuxSupport.validated("config-change", sink.toByteArray());
             var configs = new ArrayList<String>();
             for (var position = 0; position < data.length; ) {
                 var header = AdtsHeader.parse(data, position);
@@ -241,7 +241,7 @@ class ConfigChangeMuxingTest {
         void transportStream() {
             var sink = MediaSink.memory();
             write(new TsMuxer(sink), track(), packets());
-            var packets = read(new TsDemuxer(MediaSource.of(sink.toByteArray())));
+            var packets = read(new TsDemuxer(MediaSource.of(MuxSupport.validated("config-change", sink.toByteArray()))));
             assertEquals(8, packets.size());
             for (var index = 0; index < 8; index++) {
                 var change = packets.get(index).sideData().newCodecConfig().orElse(null);
@@ -275,7 +275,7 @@ class ConfigChangeMuxingTest {
                 }
                 muxer.finish();
             }
-            var data = sink.toByteArray();
+            var data = MuxSupport.validated("config-change", sink.toByteArray());
             try (var demuxer = new TsDemuxer(MediaSource.of(data))) {
                 var audioId = demuxer.tracks().stream().filter(candidate -> candidate instanceof AudioTrack).findFirst()
                         .orElseThrow().id();

@@ -9,6 +9,7 @@ import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.validate.Validators;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
@@ -43,9 +44,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Packages two aligned encodes into HLS and DASH in every layout and checks the result with
- * ffmpeg reading the master playlist or manifest (clean decode, every frame), with the playlist
- * rules of RFC 8216, and with the segments themselves (key frame starts, byte ranges on box
- * boundaries).
+ * ffmpeg reading the master playlist or manifest (clean decode, every frame), with the test kit's
+ * HLS and DASH validators (RFC 8216, the ISO/IEC 23009-1 schema and segment timelines, every
+ * segment validated as a transport stream or ISOBMFF segment), with the playlist rules of
+ * RFC 8216, and with the segments themselves (key frame starts, byte ranges on box boundaries).
  */
 @DisplayName("HLS and DASH packager")
 class PackagerTest {
@@ -198,6 +200,7 @@ class PackagerTest {
             var directory = OUTPUT.resolve(mode);
             var result = pack(mode, directory, high(), low());
             var master = directory.resolve(result.masterPlaylist().orElseThrow());
+            Validators.assertValidHls(master);
             var warnings = ffmpeg(master);
             assertTrue(warnings.isBlank(), warnings);
             var counts = frames(master);
@@ -224,6 +227,7 @@ class PackagerTest {
             var directory = OUTPUT.resolve(mode + "-mpd");
             var result = pack(mode, directory, high(), low());
             var manifest = directory.resolve(result.manifest().orElseThrow());
+            Validators.assertValidDash(manifest);
             var warnings = ffmpeg(manifest);
             assertTrue(warnings.isBlank(), warnings);
             var mpd = text(manifest);
@@ -246,6 +250,7 @@ class PackagerTest {
             var directory = OUTPUT.resolve("audio-only");
             var input = Fixtures.tone("m4a", 440, 44_100, 2, 5, List.of("-c:a", "aac"));
             var result = pack("hls", directory, input);
+            Validators.assertValidHls(directory.resolve("master.m3u8"));
             var master = text(directory.resolve("master.m3u8"));
             assertFalse(master.contains("RESOLUTION"));
             assertTrue(master.contains("CODECS=\"mp4a.40.2\""), master);
@@ -259,6 +264,8 @@ class PackagerTest {
             var directory = OUTPUT.resolve("cmaf-pcm");
             var input = Fixtures.tone("wav", 440, 48_000, 2, 5, List.of("-c:a", "pcm_s16le"));
             var result = pack("cmaf", directory, input);
+            Validators.assertValidHls(directory.resolve("master.m3u8"));
+            Validators.assertValidDash(directory.resolve("manifest.mpd"));
             assertEquals(List.of(Codec.PCM_S16LE), result.streams().getFirst().codecs());
             assertEquals("ipcm", result.streams().getFirst().codecString());
             assertTrue(text(directory.resolve("master.m3u8")).contains("CODECS=\"ipcm\""));
@@ -274,6 +281,7 @@ class PackagerTest {
         void keyFrames() {
             var directory = OUTPUT.resolve("hls-keys");
             var result = pack("hls", directory, high());
+            Validators.assertValidHls(directory.resolve(result.masterPlaylist().orElseThrow()));
             assertEquals(4, result.streams().getFirst().segments());
             for (var name : result.files()) {
                 if (!name.endsWith(".ts")) {
@@ -297,6 +305,8 @@ class PackagerTest {
         void ranges() {
             var directory = OUTPUT.resolve("cmaf-ranges");
             pack("cmaf-byte-ranges", directory, high());
+            Validators.assertValidDash(directory.resolve("manifest.mpd"));
+            Validators.assertValidHls(directory.resolve("master.m3u8"));
             var mpd = text(directory.resolve("manifest.mpd"));
             var file = bytes(directory.resolve("r0_video.mp4"));
             var init = Pattern.compile("<Initialization sourceURL=\"r0_video.mp4\" range=\"0-(\\d+)\"/>").matcher(mpd);
@@ -326,6 +336,7 @@ class PackagerTest {
             var directory = OUTPUT.resolve("dash-on-demand");
             var result = pack("dash-on-demand", directory, high(), low());
             var manifest = directory.resolve(result.manifest().orElseThrow());
+            Validators.assertValidDash(manifest);
             var mpd = text(manifest);
             assertTrue(mpd.contains("profiles=\"urn:mpeg:dash:profile:isoff-on-demand:2011\""), mpd);
             assertTrue(mpd.contains("subsegmentAlignment=\"true\" subsegmentStartsWithSAP=\"1\""), mpd);

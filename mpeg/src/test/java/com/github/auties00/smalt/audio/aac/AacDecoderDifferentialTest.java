@@ -5,6 +5,7 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,6 +31,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * the ADTS profile.
  */
 class AacDecoderDifferentialTest {
+    /** Both decoders run the same float synthesis, so each channel differs only by rounding: 80 dB of SNR. */
+    static final Tolerance TOLERANCE = Tolerance.snr(80);
+
+    /**
+     * ffmpeg evaluates the AAC Main predictor in single precision and this decoder in double, as the ISO/IEC 14496-26
+     * reference waveforms require, so the two drift apart below 80 dB.
+     */
+    static final Tolerance MAIN = Tolerance.snr(70);
+
     private static final String TONES = "0.3*sin(2*PI*440*t)+0.2*sin(2*PI*1234*t)+0.1*sin(2*PI*5000*t)+0.02*sin(2*PI*11000*t)";
 
     private static final String CLICKS = "0.7*exp(-mod(t\\,0.25)*200)*sin(2*PI*3000*t)+0.1*sin(2*PI*300*t)";
@@ -69,18 +78,17 @@ class AacDecoderDifferentialTest {
      * list, which ffmpeg applies) and at least 80 dB SNR per channel.
      */
     static void assertMatchesFfmpeg(Path file) {
-        assertMatchesFfmpeg(file, 80);
+        assertMatchesFfmpeg(file, TOLERANCE);
     }
 
-    /** Decodes with both decoders and asserts equal sample counts and a minimum SNR per channel. */
-    static void assertMatchesFfmpeg(Path file, double minimumSnr) {
+    /** Decodes with both decoders and asserts equal sample counts and a tolerance per channel. */
+    static void assertMatchesFfmpeg(Path file, Tolerance tolerance) {
         var stream = parse(file);
         var planes = trimmed(stream, AacTestSupport.decodeAll(stream).planes());
         var reference = AacTestSupport.deinterleave(Oracle.decodeAudio(file), planes.length);
         assertEquals(reference[0].length, planes[0].length, "sample count");
         for (var channel = 0; channel < reference.length; channel++) {
-            var snr = AacTestSupport.snr(new float[][]{reference[channel]}, new float[][]{planes[channel]});
-            assertTrue(snr >= minimumSnr, "channel " + channel + " SNR " + snr + " dB");
+            tolerance.assertPcm("channel " + channel, reference[channel], planes[channel]);
         }
     }
 
@@ -114,7 +122,7 @@ class AacDecoderDifferentialTest {
         for (var plane : planes) {
             var matched = false;
             for (var channel = 0; channel < reference.length && !matched; channel++) {
-                if (!used[channel] && AacTestSupport.snr(new float[][]{reference[channel]}, new float[][]{plane}) >= 80) {
+                if (!used[channel] && TOLERANCE.violations(Tolerance.Difference.ofPcm(reference[channel], plane)).isEmpty()) {
                     used[channel] = true;
                     matched = true;
                 }
@@ -225,8 +233,7 @@ class AacDecoderDifferentialTest {
             var reference = AacTestSupport.deinterleave(Oracle.decodeAudio(file), 6);
             assertEquals(reference[0].length, mine.frames());
             for (var channel = 0; channel < 6; channel++) {
-                var snr = AacTestSupport.snr(new float[][]{reference[channel]}, new float[][]{mine.planes()[channel]});
-                assertTrue(snr >= 80, "channel " + channel + " SNR " + snr);
+                TOLERANCE.assertPcm("channel " + channel, reference[channel], mine.planes()[channel]);
             }
         }
 
@@ -289,13 +296,10 @@ class AacDecoderDifferentialTest {
                 "aac_ltp, -aac_ltp, 1, tones", "aac_ltp, -aac_ltp, 2, tones", "aac_ltp, -aac_ltp, 2, clicks"})
         @DisplayName("match ffmpeg on streams its encoder predicts")
         void profiles(String profile, String option, int channels, String kind) {
-            // ffmpeg evaluates the AAC Main predictor in single precision and this decoder in double, as the
-            // ISO/IEC 14496-26 reference waveforms require, so the two drift apart below 80 dB; ffmpeg's LTP
-            // encoder emits no LTP data, which leaves the LTP syntax and predictor state to this comparison
-            // and the prediction itself to the conformance streams
-            var minimum = profile.equals("aac_main") ? 70 : 80;
+            // ffmpeg's LTP encoder emits no LTP data, which leaves the LTP syntax and predictor state to this
+            // comparison and the prediction itself to the conformance streams
             assertMatchesFfmpeg(fixture(kind, channels, 48000, 2, "aac", "-strict", "-2", "-profile:a", profile, option, "1",
-                    "-aac_is", "0", "-b:a", Integer.toString(48000 * channels)), minimum);
+                    "-aac_is", "0", "-b:a", Integer.toString(48000 * channels)), profile.equals("aac_main") ? MAIN : TOLERANCE);
         }
 
         @Test
@@ -316,8 +320,8 @@ class AacDecoderDifferentialTest {
                     var tail = AacObjectTypesConformanceTest.Seeking.readAll(reader);
                     var start = (int) (micros * rate / 1_000_000);
                     for (var channel = 0; channel < linear.length; channel++) {
-                        assertArrayEquals(Arrays.copyOfRange(linear[channel], start, linear[channel].length),
-                                tail[channel], "channel " + channel + " after a seek to " + micros);
+                        Tolerance.exact().assertPcm("channel " + channel + " after a seek to " + micros,
+                                Arrays.copyOfRange(linear[channel], start, linear[channel].length), tail[channel]);
                     }
                 }
             }

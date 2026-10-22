@@ -60,6 +60,8 @@ class VideoSeekTest {
             muxer.finish();
         }
         var file = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("seek-" + container.name().toLowerCase(java.util.Locale.ROOT) + "."
+                + container.extension(), file);
         var linear = new ArrayList<Frame>();
         try (var reader = VideoReader.open(MediaSource.of(file))) {
             for (var frame = reader.read(); frame != null; frame = reader.read()) {

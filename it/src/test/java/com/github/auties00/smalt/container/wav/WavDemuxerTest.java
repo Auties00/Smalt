@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.pcm.PcmDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.testkit.audio.AudioMutations;
 import com.github.auties00.smalt.testkit.audio.AudioPipeline;
 import com.github.auties00.smalt.testkit.audio.ProbedPacket;
@@ -37,6 +38,13 @@ import static org.junit.jupiter.api.Assertions.*;
  * padding, metadata, unsupported formats, and mutation robustness.
  */
 class WavDemuxerTest {
+    /**
+     * MPEG audio in WAV against ffmpeg's float decode: two float decoders of the same normative synthesis, within
+     * 90 dB of SNR and the ISO/IEC 11172-4 full accuracy limits.
+     */
+    private static final Tolerance MPEG_AUDIO = Tolerance.snr(90)
+            .and(Tolerance.iso11172(Tolerance.Iso11172Accuracy.FULL));
+
     static Stream<Arguments> formats() {
         var arguments = new ArrayList<Arguments>();
         var codecs = List.of("pcm_u8", "pcm_s16le", "pcm_s24le", "pcm_s32le", "pcm_s64le", "pcm_f32le", "pcm_f64le", "pcm_alaw",
@@ -106,9 +114,7 @@ class WavDemuxerTest {
                     "-c:a", codec == Codec.MP3 ? "mp3float" : "mp2float", "-i", file.toString(), "-f", "f32le", "-"));
             var expected = new float[raw.length / 4];
             ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(expected);
-            assertEquals(expected.length, decoded.interleaved().length);
-            var snr = com.github.auties00.smalt.testkit.Quality.snr(expected, decoded.interleaved());
-            assertTrue(snr > 90, "SNR " + snr);
+            MPEG_AUDIO.assertPcm(codec + " in WAV against ffmpeg", expected, decoded.interleaved());
         }
     }
 

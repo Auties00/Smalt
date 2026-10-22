@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.video.mpeg4;
 
 import com.github.auties00.smalt.testkit.Fixtures;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -25,6 +25,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("MPEG-4 Part 2 decoder against ffmpeg")
 class Mpeg4DifferentialTest {
+    /** Intra VOPs carry no prediction for rounding differences to drift through: one level, in under 0.1% of samples. */
+    static final Tolerance INTRA = Tolerance.offByOne().and(Tolerance.differing(0.001));
+
+    /**
+     * Returns the rule of a stream with predictions: at least the PSNR against the {@code -idct int} decode that
+     * ffmpeg's {@code -idct simple} decode reaches (the IDCT noise floor, capped at 60 dB) less 1 dB, and at least
+     * 50 dB.
+     */
+    static Tolerance idctNoiseFloor(byte[] expected, byte[] simple) {
+        var floor = Tolerance.Difference.of(expected, simple).psnr();
+        return Tolerance.psnr(Math.max(50, Math.min(floor, 60) - 1));
+    }
+
     record Case(String name, String size, String container, String codec, String options, double seconds) {
         @Override
         public String toString() {
@@ -75,10 +88,7 @@ class Mpeg4DifferentialTest {
         }
         assertEquals(expected.length, decoded.raw().length, "decoded size of " + c.name() + " after "
                 + decoded.frames() + " frames");
-        var ours = Quality.psnr(expected, decoded.raw());
-        var floor = Quality.psnr(expected, simple);
-        assertTrue(ours >= Math.min(floor, 60) - 1 && ours >= 50, c.name() + ": PSNR " + ours
-                + " dB against ffmpeg -idct int, ffmpeg -idct simple reaches " + floor + " dB");
+        idctNoiseFloor(expected, simple).assertWithin(c.name() + " against ffmpeg -idct int", expected, decoded.raw());
         for (var i = 1; i < decoded.timestamps().size(); i++) {
             assertTrue(decoded.timestamps().get(i) > decoded.timestamps().get(i - 1), "timestamps of " + c.name()
                     + " increase: " + decoded.timestamps());
@@ -101,14 +111,6 @@ class Mpeg4DifferentialTest {
                 List.of("-t", "0.4", "-c:v", "mpeg4", "-g", "1", "-q:v", "2"));
         var expected = Mpeg4TestStreams.ffmpeg(file, "int");
         var decoded = Mpeg4TestStreams.decode(file, Mpeg4Decoder::new);
-        assertEquals(expected.length, decoded.raw().length);
-        assertTrue(Quality.maxDifference(expected, decoded.raw()) <= 1);
-        var differing = 0;
-        for (var i = 0; i < expected.length; i++) {
-            if (expected[i] != decoded.raw()[i]) {
-                differing++;
-            }
-        }
-        assertTrue(differing < expected.length / 1000, differing + " of " + expected.length + " samples differ");
+        INTRA.assertWithin("intra only", expected, decoded.raw());
     }
 }

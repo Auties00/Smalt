@@ -4,6 +4,7 @@ import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import org.junit.jupiter.api.DisplayName;
@@ -36,6 +37,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("H.264 differential decoding against ffmpeg")
 class H264DifferentialTest {
+    /** H.264 reconstruction is normative (ITU-T H.264 clause 8), so every frame equals ffmpeg's decode. */
+    static final Tolerance TOLERANCE = Tolerance.exact();
+
     record Case(String name, String size, int frames, String pixelFormat, List<String> options) {
         @Override
         public String toString() {
@@ -127,7 +131,7 @@ class H264DifferentialTest {
         for (var i = 0; i < frames.size(); i++) {
             var expected = Arrays.copyOfRange(reference, i * frameSize, (i + 1) * frameSize);
             var actual = gray ? Arrays.copyOf(frames.get(i).samples(), lumaSize) : frames.get(i).samples();
-            assertArrayEquals(expected, actual, c.name() + " frame " + i);
+            TOLERANCE.assertWithin(c.name() + " frame " + i, expected, actual);
         }
     }
 

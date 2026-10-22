@@ -17,10 +17,18 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
   `smalt-parent` and `smalt-bom`), `bom`, `core`, `image`, `audio`, `video`, `mpeg`, `capture`, `raw`,
   `desktop`, `aot`, `it` (JIT guard and cross-artifact tests, not published). Parent of the code modules:
   `smalt-parent` (the root `pom.xml`), which also gives every module JUnit and JMH for its tests.
-- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Skip`, `Quality`, `Dumps`, `Scratch`, `HeifBuilder`, `Bytes`,
-  `Packets`, and the helpers in `testkit.audio`, `testkit.image`, `testkit.container`, `testkit.io` and
-  `testkit.fuzz`) lives in core's `src/test/java` under `testkit` and reaches the other modules through core's test
-  jar (`smalt-core` with `<type>test-jar</type>`, test scope), which holds only `testkit/**`.
+- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Skip`, `Quality`, `Tolerance`, `Ieee1180`, `Dumps`,
+  `Scratch`, `HeifBuilder`, `Bytes`, `Packets`, and the helpers in `testkit.audio`, `testkit.image`, `testkit.container`,
+  `testkit.io`, `testkit.fuzz` and `testkit.validate`) lives in core's `src/test/java` under `testkit` and reaches the
+  other modules through core's test jar (`smalt-core` with `<type>test-jar</type>`, test scope), which holds only
+  `testkit/**`; core's own tests read `java.xml` (the DASH validator's schema) through `--add-reads` in its pom.
+- Every differential or conformance comparison declares its tolerance with `Tolerance` (exact, off by one, absolute,
+  RMS, PSNR, SNR, ISO/IEC 11172-4, `opus_compare`; core's `ToleranceTest` enforces it for the `*DifferentialTest` and
+  `*ConformanceTest` classes), and written files go through the container
+  validators of `testkit.validate` (ISOBMFF, CMAF, Matroska, MPEG-TS, HLS, DASH, plus MP4Box, mkvalidator and TSDuck
+  where installed): `Oracle.assertDecodesCleanly` and core's `MuxSupport` run them, and a new muxer's tests do too.
+  `it`'s `ReferenceDecodeTest` and `ReferenceImageDecodeTest` decode every encoder's output with a reference decoder;
+  a new encoder declares its reference there.
 - Every demuxer, reader and image decoder runs through the I/O behavior harnesses (`DemuxerAsserts`,
   `ReaderAsserts`, `ImageDecoderAsserts`) with golden dumps under each module's `src/test/resources/dumps`
   (`-Dsmalt.test.updateDumps=true` rewrites them); a new container or codec adds its inputs as the `testkit.io`

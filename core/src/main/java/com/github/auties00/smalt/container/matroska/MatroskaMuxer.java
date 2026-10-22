@@ -898,7 +898,7 @@ public final class MatroskaMuxer implements Muxer {
         duration.writeSize(end - segmentStart, 8);
         output.position(segmentSizeOffset);
         duration.writeTo(output);
-        if (durationOffset >= 0) {
+        if (durationOffset >= 0 && endTicks > 0) {
             var bits = Double.doubleToLongBits(endTicks);
             var value = new byte[8];
             for (var index = 0; index < 8; index++) {
@@ -906,6 +906,15 @@ public final class MatroskaMuxer implements Muxer {
             }
             output.position(durationOffset);
             output.write(ByteBuffer.wrap(value));
+        } else if (durationOffset >= 0) {
+            // a Duration must be positive: an output without a timed frame turns the 11-byte element (2-byte id,
+            // 1-byte size, 8-byte value) into a Void element of the same size (1-byte id, 2-byte size)
+            var placeholder = new byte[11];
+            placeholder[0] = (byte) 0xEC;
+            placeholder[1] = 0x40;
+            placeholder[2] = 0x08;
+            output.position(durationOffset - 3);
+            output.write(ByteBuffer.wrap(placeholder));
         }
         output.position(end);
     }
