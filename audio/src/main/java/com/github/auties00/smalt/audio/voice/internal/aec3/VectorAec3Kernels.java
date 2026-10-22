@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.voice.internal.aec3;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorShuffle;
@@ -36,11 +37,6 @@ final class VectorAec3Kernels {
      * The four-lane species.
      */
     private static final VectorSpecies<Float> NARROW = FloatVector.SPECIES_128;
-
-    /**
-     * Whether the platform's preferred vectors are at least 256 bits wide.
-     */
-    private static final boolean USE_WIDE = FloatVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
 
     /**
      * The exact class of the eight-lane vectors.
@@ -130,7 +126,7 @@ final class VectorAec3Kernels {
      * @return a new kernel
      */
     static MatchedFilterKernel matchedFilter() {
-        return USE_WIDE ? new WideMatchedFilterKernel() : new NarrowMatchedFilterKernel();
+        return Simd.WIDE ? new WideMatchedFilterKernel() : new NarrowMatchedFilterKernel();
     }
 
     /**
@@ -149,7 +145,7 @@ final class VectorAec3Kernels {
      * @return a new kernel
      */
     static AdaptiveFilterKernel adaptiveFilter() {
-        return USE_WIDE ? new WideAdaptiveFilterKernel() : new NarrowAdaptiveFilterKernel();
+        return Simd.WIDE ? new WideAdaptiveFilterKernel() : new NarrowAdaptiveFilterKernel();
     }
 
     /**

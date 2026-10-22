@@ -29,7 +29,9 @@ import java.util.function.Supplier;
  * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Yuv16Picture)} reduces to
  * exactly the default 8-bit picture. An image overlay, and an image whose color is
  * premultiplied by its alpha ({@code prem} reference), decode to a straight-alpha
- * {@link RgbaPicture} instead.
+ * {@link RgbaPicture} instead, or, with {@link ImageDecoderOptions#highBitDepth()} and a source
+ * of more than 8 bits, to a straight-alpha {@link com.github.auties00.smalt.image.Rgba16Picture}
+ * (an overlay composed at 16 bits).
  *
  * <p>The file structure follows ISO/IEC 23008-12 (HEIF) and MIAF (ISO/IEC 23000-22):
  * <ul>
@@ -41,8 +43,11 @@ import java.util.function.Supplier;
  *   <li>the alpha plane comes from an auxiliary item ({@code auxl} reference) whose {@code auxC}
  *       property carries {@code urn:mpeg:hevc:2015:auxid:1} or
  *       {@code urn:mpeg:mpegB:cicp:systems:auxiliary:alpha}: one item, a grid, or one item per
- *       grid tile; limited-range alpha is expanded to full range. Depth maps, HDR gain maps and
- *       the other auxiliary images are ignored;</li>
+ *       grid tile; limited-range alpha is expanded to full range, alpha of another bit depth is
+ *       rescaled to the color depth, and an alpha image of another size than its color image is
+ *       resampled to it with the triangle filter
+ *       ({@link com.github.auties00.smalt.image.ops.ResizeFilter#BILINEAR}). Depth maps, HDR gain
+ *       maps and the other auxiliary images are ignored;</li>
  *   <li>the clean aperture ({@code clap}) is applied to the pixels; the rotation ({@code irot})
  *       and mirroring ({@code imir}) are reported as {@link DecodedImage#orientation()}, which
  *       the caller applies (for example with
@@ -57,8 +62,8 @@ import java.util.function.Supplier;
  *       with the {@code clli} and {@code mdcv} properties (or the HEVC SEI messages); an ICC
  *       profile ({@code colr} of type {@code prof} or {@code rICC}) is returned with the picture
  *       and as its {@link DecodedImage#colorProfile()}, which otherwise describes the
- *       {@code nclx} color when it is not sRGB; the EXIF item of the primary image is returned
- *       too.</li>
+ *       {@code nclx} color when it is not sRGB; the EXIF item and the XMP item ({@code mime} item
+ *       of type {@code application/rdf+xml}) of the primary image are returned too.</li>
  * </ul>
  * The EXIF orientation is not used: HEIF orients images with {@code irot} and {@code imir}.
  *
@@ -70,7 +75,9 @@ import java.util.function.Supplier;
  * {@link ImageDecoderOptions#convertToSrgb()} the pixels are converted to sRGB.
  *
  * <p>An image sequence ({@code msf1}) plays through {@link #openAnimation}: its color track and
- * its alpha track, every frame converted to RGBA, with the loop count of the edit list (a track
+ * its alpha track, every frame converted to RGBA (16-bit RGBA when
+ * {@link ImageDecoderOptions#highBitDepth()} is set and the sequence has more than 8 bits), with
+ * the loop count of the edit list (a track
  * without an edit list loops forever); a picture the edit list does not show is skipped.
  * {@link #decode} returns the primary image, or the first frame of the sequence of a file without
  * a primary item.
@@ -79,9 +86,12 @@ import java.util.function.Supplier;
  * before the corresponding allocation, and the pictures decoded for one image total at most four
  * times the pixel limit. Malformed input raises {@link MediaException.Malformed}, never an
  * unchecked runtime exception; a valid file using a feature this decoder lacks (an essential
- * property it does not know, an image coded with another codec, an alpha plane of another size
- * than the color) raises {@link MediaException.Unsupported}. HEVC items of every range extension
- * format decode, such as the 10-bit 4:2:2 grids of camera {@code .hif} files and 4:4:4 images.
+ * property it does not know, an image coded with another codec) raises
+ * {@link MediaException.Unsupported}. HEVC items of every range extension
+ * format decode, such as the 10-bit 4:2:2 grids of camera {@code .hif} files and 4:4:4 images; a
+ * picture whose luma and chroma depths differ keeps the larger depth under
+ * {@link ImageDecoderOptions#highBitDepth()}, the shallower planes shifted left to it, as
+ * {@link com.github.auties00.smalt.video.hevc.HevcDecoder} outputs it.
  *
  * <p>This class is thread-safe.
  *
@@ -141,7 +151,8 @@ public final class HeicDecoder {
      * @param source the file
      * @param options the limits, the bit depth choice, the reduced-size hint and the color
      * conversion
-     * @return the decoded image with its orientation, ICC profile, color profile and EXIF block
+     * @return the decoded image with its orientation, ICC profile, color profile, EXIF block and XMP
+     * packet
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported if the file uses a feature this decoder lacks
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits
@@ -174,10 +185,12 @@ public final class HeicDecoder {
      *
      * <p>A file without a sequence is presented as an animation of its primary image: one frame
      * shown for zero microseconds that plays once. Frames are RGBA pictures in the stored
-     * orientation.
+     * orientation: {@link com.github.auties00.smalt.image.Rgba16Picture} pictures when
+     * {@link ImageDecoderOptions#highBitDepth()} is set and the source has more than 8 bits,
+     * {@link RgbaPicture} pictures otherwise.
      *
      * @param source the file
-     * @param options the limits; the reduced-size hint, the bit depth choice and the color
+     * @param options the limits and the bit depth choice; the reduced-size hint and the color
      * conversion are ignored
      * @return the reader; closing it does not close {@code source}
      * @throws MediaException.Malformed if the file structure is invalid or truncated
@@ -188,7 +201,8 @@ public final class HeicDecoder {
     public static AnimationReader openAnimation(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        return guarded("opening a HEIC animation", () -> HeicFiles.openAnimation(source, options.limits()));
+        return guarded("opening a HEIC animation", () -> HeicFiles.openAnimation(source, options.limits(),
+                options.highBitDepth()));
     }
 
     /**

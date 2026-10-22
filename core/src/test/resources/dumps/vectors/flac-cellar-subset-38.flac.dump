@@ -1,0 +1,62 @@
+# demux dump of vectors/flac-cellar-subset-38.flac; regenerate with -Dsmalt.test.updateDumps=true
+format FLAC
+duration 3814286
+seekable true
+track 0 AUDIO FLAC timebase=1/44100 duration=168210 config=86:d32b7ae0
+  audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER]
+packets 42
+0 t0 pts=0 dts=0 dur=4096 flags=KEY size=1003 crc=df48df5f
+1 t0 pts=4096 dts=4096 dur=4096 flags=KEY size=2297 crc=7496ef45
+2 t0 pts=8192 dts=8192 dur=4096 flags=KEY size=3596 crc=1097a21b
+3 t0 pts=12288 dts=12288 dur=4096 flags=KEY size=3828 crc=088f21d9
+4 t0 pts=16384 dts=16384 dur=4096 flags=KEY size=3421 crc=2443f2d0
+5 t0 pts=20480 dts=20480 dur=4096 flags=KEY size=2896 crc=0744e1bb
+6 t0 pts=24576 dts=24576 dur=4096 flags=KEY size=2911 crc=2fb96cf4
+7 t0 pts=28672 dts=28672 dur=4096 flags=KEY size=1613 crc=46c874d6
+8 t0 pts=32768 dts=32768 dur=4096 flags=KEY size=1083 crc=3f6acb71
+9 t0 pts=36864 dts=36864 dur=4096 flags=KEY size=17 crc=9348f928
+10 t0 pts=40960 dts=40960 dur=4096 flags=KEY size=17 crc=39b5b2d7
+11 t0 pts=45056 dts=45056 dur=4096 flags=KEY size=985 crc=051beaeb
+12 t0 pts=49152 dts=49152 dur=4096 flags=KEY size=1648 crc=881f14cb
+13 t0 pts=53248 dts=53248 dur=4096 flags=KEY size=2543 crc=0f0d4647
+14 t0 pts=57344 dts=57344 dur=4096 flags=KEY size=3822 crc=4101e9a0
+15 t0 pts=61440 dts=61440 dur=4096 flags=KEY size=3532 crc=cbce494b
+16 t0 pts=65536 dts=65536 dur=4096 flags=KEY size=1905 crc=f45ae930
+17 t0 pts=69632 dts=69632 dur=4096 flags=KEY size=3025 crc=cc215230
+18 t0 pts=73728 dts=73728 dur=4096 flags=KEY size=1036 crc=5a938383
+19 t0 pts=77824 dts=77824 dur=4096 flags=KEY size=17 crc=7219bb45
+20 t0 pts=81920 dts=81920 dur=4096 flags=KEY size=17 crc=8e9cd861
+21 t0 pts=86016 dts=86016 dur=4096 flags=KEY size=17 crc=fc922afa
+22 t0 pts=90112 dts=90112 dur=4096 flags=KEY size=2011 crc=3bcd66b2
+23 t0 pts=94208 dts=94208 dur=4096 flags=KEY size=4184 crc=0f44b4df
+24 t0 pts=98304 dts=98304 dur=4096 flags=KEY size=3756 crc=72d33f4c
+25 t0 pts=102400 dts=102400 dur=4096 flags=KEY size=3030 crc=fd8288c3
+26 t0 pts=106496 dts=106496 dur=4096 flags=KEY size=3390 crc=eb9f5bda
+27 t0 pts=110592 dts=110592 dur=4096 flags=KEY size=3218 crc=cd82cfb2
+28 t0 pts=114688 dts=114688 dur=4096 flags=KEY size=1733 crc=31f23ae4
+29 t0 pts=118784 dts=118784 dur=4096 flags=KEY size=1050 crc=616c2135
+30 t0 pts=122880 dts=122880 dur=4096 flags=KEY size=17 crc=e38401f3
+31 t0 pts=126976 dts=126976 dur=4096 flags=KEY size=17 crc=918af368
+32 t0 pts=131072 dts=131072 dur=4096 flags=KEY size=17 crc=b2ba37e8
+33 t0 pts=135168 dts=135168 dur=4096 flags=KEY size=17 crc=c0b4c573
+34 t0 pts=139264 dts=139264 dur=4096 flags=KEY size=17 crc=6a498e8c
+35 t0 pts=143360 dts=143360 dur=4096 flags=KEY size=17 crc=18477c17
+36 t0 pts=147456 dts=147456 dur=4096 flags=KEY size=17 crc=e4c21f33
+37 t0 pts=151552 dts=151552 dur=4096 flags=KEY size=17 crc=96cceda8
+38 t0 pts=155648 dts=155648 dur=4096 flags=KEY size=17 crc=3c31a657
+39 t0 pts=159744 dts=159744 dur=4096 flags=KEY size=17 crc=4e3f54cc
+40 t0 pts=163840 dts=163840 dur=4096 flags=KEY size=17 crc=0751571e
+41 t0 pts=167936 dts=167936 dur=274 flags=KEY size=19 crc=79cb821c
+seek 0: t0@0
+seek 1271428: t0@13
+seek 2542857: t0@27
+seek 3814286: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format FLAC
+  duration 3814286
+  seekable false
+  track 0 AUDIO FLAC timebase=1/44100 duration=168210 config=86:d32b7ae0
+    audio rate=44100 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

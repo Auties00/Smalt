@@ -28,6 +28,7 @@ public final class HeifBuilder {
         int id;
         String type;
         String contentType;
+        String contentEncoding;
         byte[] data;
         int method;
         List<Property> properties = new ArrayList<>();
@@ -66,6 +67,13 @@ public final class HeifBuilder {
     public int mimeItem(String contentType, byte[] data) {
         var id = add("mime", data, 0);
         items.get(id - 1).contentType = contentType;
+        return id;
+    }
+
+    /** Adds a {@code mime} item whose {@code infe} entry names a content encoding. */
+    public int mimeItem(String contentType, String contentEncoding, byte[] data) {
+        var id = mimeItem(contentType, data);
+        items.get(id - 1).contentEncoding = contentEncoding;
         return id;
     }
 
@@ -193,6 +201,10 @@ public final class HeifBuilder {
             if (item.contentType != null) {
                 infe.writeBytes(item.contentType.getBytes(StandardCharsets.UTF_8));
                 infe.write(0);
+                if (item.contentEncoding != null) {
+                    infe.writeBytes(item.contentEncoding.getBytes(StandardCharsets.UTF_8));
+                    infe.write(0);
+                }
             }
             iinf.writeBytes(fullBox("infe", 2, item.hidden ? 1 : 0, infe.toByteArray()));
         }
