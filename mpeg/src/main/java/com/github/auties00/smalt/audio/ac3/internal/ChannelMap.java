@@ -14,8 +14,9 @@ import java.util.List;
  * <p>Surround channels map the way the 5.1 layouts of other formats do: the two surrounds of 2/2
  * and 3/2 to the side speakers, the single surround of 2/1 and 3/1 to the back center; the rear
  * surround pair of a channel extension maps to the back speakers, so a 7.1 program comes out as
- * front, center, LFE, back and side pairs. Locations without a {@link Speaker} counterpart (the
- * surround direct and wide pairs, the second LFE) map to {@link Speaker#UNKNOWN}.
+ * front, center, LFE, back and side pairs. The surround direct pair, the wide pair and the second
+ * LFE map to {@link Speaker#SURROUND_DIRECT_LEFT} and {@link Speaker#SURROUND_DIRECT_RIGHT},
+ * {@link Speaker#WIDE_LEFT} and {@link Speaker#WIDE_RIGHT}, and {@link Speaker#LOW_FREQUENCY_2}.
  */
 public final class ChannelMap {
     /**

@@ -9,19 +9,21 @@ import com.github.auties00.smalt.image.exif.ExifWriter;
 import com.github.auties00.smalt.image.jpeg.JpegMarkerCopy;
 import com.github.auties00.smalt.image.jpeg.JpegTransformOptions;
 import com.github.auties00.smalt.internal.io.ByteArrays;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
 /**
- * Transforms a JPEG file losslessly: decodes its quantized DCT coefficients, rotates, flips,
- * crops or drops them, and writes a new file from them with the source's quantization tables.
+ * Transforms a JPEG file losslessly: decodes its quantized DCT coefficients, rotates, flips, crops,
+ * extends, wipes, replaces or drops them, and writes a new file from them with the source's
+ * quantization tables (or, for a drop, tables that also fit the dropped image).
  *
  * @implNote This implementation follows the sequence of jpegtran: the marker segments of
  * {@code jcopy_markers_setup}, the parameters of {@code jpeg_copy_critical_parameters} and
  * {@code jtransform_adjust_parameters} (with its update of the EXIF image size), the transform of
- * {@link LosslessTransform}, and the output of {@link CoefficientWriter}.
+ * {@link LosslessTransform} and {@link LosslessEdit}, and the output of {@link CoefficientWriter}.
  */
 public final class JpegTranscoder {
     /**
@@ -42,11 +44,11 @@ public final class JpegTranscoder {
      * @param data the file
      * @param options the transformation
      * @return the transformed file
-     * @throws IllegalArgumentException if the crop region does not fit the image
-     * @throws MediaException.Malformed if the file is not a valid JPEG stream
-     * @throws MediaException.Unsupported if the file uses a coding feature the decoder does not
-     * support, or the transformation is impossible for it
-     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     * @throws IllegalArgumentException if the crop, wipe or drop region does not fit the image
+     * @throws MediaException.Malformed if the file or the dropped image is not a valid JPEG stream
+     * @throws MediaException.Unsupported if the file or the dropped image uses a coding feature the
+     * decoder does not support, or the transformation is impossible for it
+     * @throws MediaException.LimitExceeded if the image or the dropped image exceeds the limits
      */
     public static byte[] transcode(byte[] data, JpegTransformOptions options) {
         return transcode(data, options, false);
@@ -60,11 +62,13 @@ public final class JpegTranscoder {
      * @param data the file
      * @param options the other settings of the transformation
      * @return the upright file
-     * @throws IllegalArgumentException if the crop region does not fit the upright image
-     * @throws MediaException.Malformed if the file is not a valid JPEG stream
-     * @throws MediaException.Unsupported if the file uses a coding feature the decoder does not
-     * support, or the transformation is impossible for it
-     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     * @throws IllegalArgumentException if the crop region neither fits nor extends the upright image,
+     * the wipe region or the dropped image does not fit it, or a wipe or a drop is asked of an image
+     * that is not upright
+     * @throws MediaException.Malformed if the file or the dropped image is not a valid JPEG stream
+     * @throws MediaException.Unsupported if the file or the dropped image uses a coding feature the
+     * decoder does not support, or the transformation is impossible for it
+     * @throws MediaException.LimitExceeded if the image or the dropped image exceeds the limits
      */
     public static byte[] autoOrient(byte[] data, JpegTransformOptions options) {
         return transcode(data, options, true);
@@ -79,8 +83,6 @@ public final class JpegTranscoder {
      * @return the transformed file
      */
     private static byte[] transcode(byte[] data, JpegTransformOptions options, boolean autoOrient) {
-        // TODO: arithmetic-coded output, 12-bit frames (rejected by the decoder), restart intervals in MCU
-        //  rows, and jpegtran's -wipe, -drop and crop extension
         var reader = new JpegReader(data, 0, data.length, options.limits());
         var coefficients = reader.decodeCoefficients();
         if (autoOrient) {
@@ -91,6 +93,11 @@ public final class JpegTranscoder {
         var colorSpace = reader.colorSpace();
         var frameComponents = frame.components;
         var count = frameComponents.length;
+        if (colorSpace == JpegColorSpace.UNKNOWN) {
+            // TODO: transform frames of two or more than four components, which jpegtran passes through
+            throw new MediaException.Unsupported("jpeg with " + count + " components",
+                    "lossless transforms of JPEG frames with " + count + " components are not supported");
+        }
         var transform = options.transform();
         var grayscale = options.grayscale();
         var outputCount = grayscale && colorSpace == JpegColorSpace.YCBCR && count == 3 ? 1 : count;
@@ -117,10 +124,28 @@ public final class JpegTranscoder {
                 .map(region -> new int[]{region.x(), region.y(), region.width(), region.height()})
                 .orElse(null);
         var plan = new LosslessTransform(transform, frame.width, frame.height, samplingX, samplingY, outputCount,
-                crop, options.perfect(), options.trim());
+                crop, options.exactCropWidth(), options.exactCropHeight(), options.fill(), options.perfect(),
+                options.trim());
+        var dropBytes = options.dropImage();
+        JpegCoefficients drop = null;
+        if (dropBytes.isPresent()) {
+            var image = dropBytes.get();
+            LimitChecks.checkAllocation(options.limits(), image.length);
+            drop = new JpegReader(image, 0, image.length, options.limits()).decodeCoefficients();
+            if (drop.frame().precision != frame.precision) {
+                throw new MediaException.Unsupported("jpeg drop precision", "a " + drop.frame().precision
+                        + "-bit image cannot be dropped into a " + frame.precision + "-bit one");
+            }
+        }
         var quantTables = new int[4][];
         var components = new CoefficientWriter.Component[outputCount];
         var planes = plan.execute(source, options.limits());
+        var wipe = options.wipe();
+        if (wipe.isPresent()) {
+            var region = wipe.get();
+            LosslessEdit.wipe(planes, plan, new int[]{region.x(), region.y(), region.width(), region.height()},
+                    options.fill());
+        }
         var transposed = transform.swapsDimensions();
         for (var i = 0; i < outputCount; i++) {
             var component = frameComponents[i];
@@ -162,6 +187,24 @@ public final class JpegTranscoder {
             var huffman = chroma ? 1 : 0;
             components[i] = new CoefficientWriter.Component(id, h, v, slot, huffman, huffman, planes[i],
                     plan.blocksWide(i), plan.blocksHigh(i));
+        }
+        if (drop != null) {
+            var sourceTables = new int[count][];
+            for (var i = 0; i < count; i++) {
+                sourceTables[i] = coefficients.quantization(i);
+            }
+            var dropFrame = drop.frame();
+            var dropPlanes = new CoefficientPlane[dropFrame.components.length];
+            var dropTables = new int[dropPlanes.length][];
+            for (var i = 0; i < dropPlanes.length; i++) {
+                var component = dropFrame.components[i];
+                dropPlanes[i] = new CoefficientPlane(component.paddedBlocksWide, component.paddedBlocksHigh,
+                        drop.coefficients(i));
+                dropTables[i] = drop.quantization(i);
+            }
+            LosslessEdit.drop(new LosslessEdit.Image(frame, planes, sourceTables),
+                    new LosslessEdit.Image(dropFrame, dropPlanes, dropTables), plan, quantTables, options.dropX(),
+                    options.dropY(), options.requantizeDrop());
         }
         var outputSpace = grayscale ? JpegColorSpace.GRAY : colorSpace;
         var segments = segments(data);
@@ -227,8 +270,8 @@ public final class JpegTranscoder {
         var header = new CoefficientWriter.Header(jfif, outputMajor, outputMinor, outputUnit, outputX, outputY, adobe,
                 adobeTransform);
         var writer = new CoefficientWriter(plan.outputWidth(), plan.outputHeight(), components, quantTables,
-                options.restartInterval());
-        return writer.write(header, markers, options.progressive(), options.optimizeHuffman(),
+                options.restartInterval(), options.restartRows(), frame.precision);
+        return writer.write(header, markers, options.progressive(), options.arithmetic(), options.optimizeHuffman(),
                 outputSpace == JpegColorSpace.YCBCR);
     }
 
@@ -263,6 +306,9 @@ public final class JpegTranscoder {
                 if (thumbnail.isPresent()) {
                     var thumbnailOptions = options.toBuilder()
                             .noCrop()
+                            .noWipe()
+                            .noDrop()
+                            .arithmetic(false)
                             .markerCopy(JpegMarkerCopy.NONE)
                             .trim(true)
                             .perfect(false)

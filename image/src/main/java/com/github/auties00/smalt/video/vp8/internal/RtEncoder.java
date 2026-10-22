@@ -888,7 +888,7 @@ public final class RtEncoder {
         Arrays.fill(rdThreshMult, 128);
         mvSadCost[MVFP_MAX] = 300;
         for (var i = 1; i <= MVFP_MAX; i++) {
-            var z = (int) (256 * (2 * (Math.log(8.0 * i) / Math.log(2) + 0.6)));
+            var z = (int) (256 * (2 * (StrictMath.log(8.0 * i) / StrictMath.log(2) + 0.6)));
             mvSadCost[MVFP_MAX + i] = z;
             mvSadCost[MVFP_MAX - i] = z;
         }
@@ -1792,7 +1792,7 @@ public final class RtEncoder {
         }
         errorPerBit = Math.max(1, mult / 110);
         setSpeedFeatures();
-        var q = Math.max(8, (int) Math.pow(qValue, 1.25));
+        var q = Math.max(8, (int) StrictMath.pow(qValue, 1.25));
         if (mult > 1000) {
             rdDiv = 1;
             rdMult = mult / 100;
