@@ -105,7 +105,8 @@ import java.util.function.Supplier;
  * property it does not know, an image coded with another codec) raises
  * {@link MediaException.Unsupported}; the README lists the unsupported features of JPEG 2000 and
  * uncompressed items. HEVC items of every range extension
- * format decode, such as the 10-bit 4:2:2 grids of camera {@code .hif} files and 4:4:4 images; a
+ * format decode, such as the 10-bit 4:2:2 grids of camera {@code .hif} files and 4:4:4 images,
+ * those coded as separate color planes and with the screen content coding tools included; a
  * picture whose luma and chroma depths differ keeps the larger depth under
  * {@link ImageDecoderOptions#highBitDepth()}, the shallower planes shifted left to it, as
  * {@link com.github.auties00.smalt.video.hevc.HevcDecoder} outputs it.

@@ -1144,12 +1144,15 @@ Derived Smalt packages:
   video.h264.encoder.internal (CabacEncoder: the binary arithmetic encoder
   engine of source/Lib/TLibEncoder/TEncBinCoderCABAC.cpp)
   video.hevc.internal (CabacDecoder: the binary arithmetic decoder engine
-  of source/Lib/TLibDecoder/TDecBinCoderCABAC.cpp)
+  of source/Lib/TLibDecoder/TDecBinCoderCABAC.cpp; PaletteCoding: the
+  palette mode parsing and reconstruction of the HM-16.21+SCM-8.8 screen
+  content coding branch, source/Lib/TLibDecoder/TDecSbac.cpp and
+  TDecCu.cpp)
 
 Derivation: algorithm structure followed; H.264 and HEVC share the CABAC
 engine. The rest of the HEVC decoder is written from the ITU-T H.265
-specification; HM served as the reference decoder its output is compared
-with.
+specification; HM and HM-SCM served as the reference decoders its output
+is compared with.
 
 Copyright:
   Copyright (c) 2010-2026, ITU/ISO/IEC

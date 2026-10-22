@@ -123,6 +123,15 @@ public final class HevcFrame {
     public final byte[] ref1;
 
     /**
+     * The three monochrome pictures the color planes of a picture coded with separate color planes
+     * are decoded into, indexed by {@code colour_plane_id}, or {@code null}. Their sample planes are
+     * this picture's {@link #y}, {@link #cb} and {@link #cr} (or the 8-bit ones); each holds the
+     * motion field, slice tables and decoding progress of its plane, while this picture keeps the
+     * reference and output state and is done once all three are.
+     */
+    public final HevcFrame[] planes;
+
+    /**
      * The index into {@link #sliceRefPoc} of the slice of each coding tree block, by raster address.
      */
     public int[] ctbSlice;
@@ -300,11 +309,41 @@ public final class HevcFrame {
      *                     planes
      */
     public HevcFrame(int width, int height, int chromaFormat, boolean eightBit) {
+        this(width, height, chromaFormat, eightBit, false);
+    }
+
+    /**
+     * Allocates a picture, possibly coded with separate color planes.
+     *
+     * @param width          the coded width in luma samples
+     * @param height         the coded height in luma samples
+     * @param chromaFormat   the chroma format, {@code chroma_format_idc}
+     * @param eightBit       whether the samples have 8 bits, selecting 8-bit planes
+     * @param separatePlanes whether the 4:4:4 picture is coded as three monochrome color planes,
+     *                       which then get {@link #planes}
+     */
+    public HevcFrame(int width, int height, int chromaFormat, boolean eightBit, boolean separatePlanes) {
+        this(width, height, chromaFormat, eightBit ? null : new short[width * height],
+                eightBit ? new byte[width * height + PADDING] : null, separatePlanes);
+    }
+
+    /**
+     * Allocates a picture around a luma plane, allocating the chroma planes and the motion field.
+     *
+     * @param width        the coded width in luma samples
+     * @param height       the coded height in luma samples
+     * @param chromaFormat the chroma format, {@code chroma_format_idc}
+     * @param luma         the 16-bit luma plane, or {@code null} for 8-bit planes
+     * @param luma8        the 8-bit luma plane with its padding, or {@code null} for 16-bit planes
+     * @param separatePlanes whether to create {@link #planes} over the three sample planes
+     */
+    private HevcFrame(int width, int height, int chromaFormat, short[] luma, byte[] luma8, boolean separatePlanes) {
+        var eightBit = luma8 != null;
         this.width = width;
         this.height = height;
         this.chromaFormat = chromaFormat;
-        this.y = eightBit ? null : new short[width * height];
-        this.y8 = eightBit ? new byte[width * height + PADDING] : null;
+        this.y = luma;
+        this.y8 = luma8;
         if (chromaFormat == 0) {
             this.chromaWidth = 0;
             this.chromaHeight = 0;
@@ -328,6 +367,22 @@ public final class HevcFrame {
         this.mv1 = new int[blocks];
         this.ref0 = new byte[blocks];
         this.ref1 = new byte[blocks];
+        this.planes = !separatePlanes ? null : new HevcFrame[]{
+                new HevcFrame(width, height, 0, y, y8, false),
+                new HevcFrame(width, height, 0, cb, cb8, false),
+                new HevcFrame(width, height, 0, cr, cr8, false)
+        };
+    }
+
+    /**
+     * Returns the picture a color plane of this picture is decoded into: the plane's monochrome
+     * picture with separate color planes, this picture otherwise.
+     *
+     * @param colorPlaneId the {@code colour_plane_id} of the plane, 0 without separate planes
+     * @return the picture
+     */
+    public HevcFrame plane(int colorPlaneId) {
+        return planes == null ? this : planes[colorPlaneId];
     }
 
     /**
@@ -338,7 +393,7 @@ public final class HevcFrame {
      */
     public boolean fits(HevcSps sps) {
         return width == sps.width && height == sps.height && chromaFormat == sps.chromaFormatIdc
-                && (y8 != null) == eightBit(sps);
+                && (y8 != null) == eightBit(sps) && (planes != null) == sps.separateColorPlane;
     }
 
     /**
@@ -387,6 +442,29 @@ public final class HevcFrame {
         Arrays.fill(ref1, (byte) -1);
         if (ctbSlice == null || ctbSlice.length != sizeInCtbs) {
             ctbSlice = new int[sizeInCtbs];
+        }
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.reset(sizeInCtbs);
+            }
+        }
+    }
+
+    /**
+     * Copies the identity of this picture to the pictures of its color planes, which the decoding
+     * of each plane reads: {@link #id}, {@link #poc}, {@link #sps}, {@link #generated} and
+     * {@link #damaged}; does nothing without separate color planes.
+     */
+    public void syncPlanes() {
+        if (planes == null) {
+            return;
+        }
+        for (var plane : planes) {
+            plane.id = id;
+            plane.poc = poc;
+            plane.sps = sps;
+            plane.generated = generated;
+            plane.damaged = damaged;
         }
     }
 
@@ -454,6 +532,11 @@ public final class HevcFrame {
         readyRows = 0;
         decodedRows = 0;
         done = false;
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.beginDecoding();
+            }
+        }
     }
 
     /**
@@ -498,6 +581,11 @@ public final class HevcFrame {
      * Publishes that decoding of the picture finished: every row is final.
      */
     public void publishDone() {
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.publishDone();
+            }
+        }
         progressLock.lock();
         try {
             readyRows = height;

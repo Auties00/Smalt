@@ -5,6 +5,7 @@ import com.github.auties00.smalt.testkit.container.ReaderAsserts;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
@@ -15,8 +16,8 @@ import java.nio.file.Path;
  * Runs the H.264, HEVC, MPEG-4 Part 2 and H.263 video decoders and the AAC, AC-3, E-AC-3 and AMR audio decoders
  * ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
  * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
- * vectors and the HEIF fuzz seeds of AVC and uncompressed items, comparing each with its golden dump under
- * {@code src/test/resources/dumps}.
+ * vectors, the HEIF fuzz seeds of AVC and uncompressed items and the HEVC screen content coding and separate color
+ * plane vectors ({@link HevcSamples}), comparing each with its golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("MPEG and Dolby decoder I/O behaviors")
 class MpegDecoderBehaviorTest {
@@ -24,6 +25,9 @@ class MpegDecoderBehaviorTest {
 
     private static final Path HEIF_SEEDS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
             "mpeg", "fuzz", "MpegFuzzTestInputs", "heic");
+
+    private static final Path HEVC_VECTORS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
+            "video", "hevc");
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mp4/faststart.mp4", "mp4/fragmented.mp4", "mp4/hevc.mp4", "mp4/h264-422-10.mov",
@@ -63,5 +67,24 @@ class MpegDecoderBehaviorTest {
     @DisplayName("HEIF items of other codecs (the HEIC fuzz seeds): identical pictures under every source behavior")
     void heifItems(String name) throws IOException {
         ImageDecoderAsserts.of("heif-items/" + name, Files.readAllBytes(HEIF_SEEDS.resolve(name))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"scc/scc-intra-444-8.hevc, 192, 128, 3, 8", "scc/scc-ld-444-8.hevc, 192, 128, 3, 8",
+            "scc/scc-ra-420-10.hevc, 192, 128, 1, 10", "planes/planes-intra-8.bit, 128, 96, 3, 8",
+            "planes/planes-ld-8.bit, 128, 96, 3, 8", "planes/planes-ra-10.bit, 128, 96, 3, 10"})
+    @DisplayName("HEVC screen content and separate color plane vectors in MP4: identical frames under every source behavior")
+    void hevcExtensions(String vector, int width, int height, int chromaFormatIdc, int bitDepth) throws IOException {
+        var stream = Files.readAllBytes(HEVC_VECTORS.resolve(vector));
+        ReaderAsserts.video("hevc/" + vector + ".mp4", HevcSamples.mp4(stream, width, height, chromaFormatIdc,
+                bitDepth)).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"planes/planes-intra-8.bit"})
+    @DisplayName("HEIC item coded with separate color planes: identical pictures under every source behavior")
+    void heicSeparatePlanes(String vector) throws IOException {
+        var stream = Files.readAllBytes(HEVC_VECTORS.resolve(vector));
+        ImageDecoderAsserts.of("heif-items/" + vector + ".heic", HevcSamples.heic(stream, 128, 96, 3, 8)).run();
     }
 }

@@ -406,6 +406,36 @@ same frames as HM's output, and records in `vectors.tsv` the SHA-256 of each str
 picture order counts in decoding order and the MD5 of every output frame. HM's encoder output is deterministic;
 x265's depends on its version.
 
+## HEVC screen content coding and separate color plane vectors
+
+`HevcSccConformanceTest` of `smalt-mpeg` decodes, next to the JCT-VC screen content coding conformance streams
+(`hevc-scc-*.zip` in `vectors.tsv`, fetched because their licence is unstated), short streams the HM-SCM reference
+encoder coded from ffmpeg's `testsrc` pattern (`mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/scc/`):
+all intra and low delay 4:4:4 at 8 bits with palette mode (predictor initializers in the SPS and the PPS), intra
+block copy, the adaptive color transform, adaptive motion vector resolution, wavefronts and tiles; random access
+4:2:0 at 10 bits; low delay monochrome at 8 bits and 4:2:2 at 10 bits with palettes small enough to need escape
+samples; lossless 4:4:4, lossless and lossy coding units mixed, and 8-bit luma with 10-bit chroma.
+`python -I tools/testdata/hevc-scc/make-vectors.py <HM bin> <HM cfg> <that directory>` codes them
+with HM-16.21+SCM-8.8 (the `HM-SCC-extensions` branch of HM, BSD-3-Clause, built with CMake as a black box), fails
+unless HM's decoder verifies every MD5 picture hash, and records the SHA-256 of each stream and of HM's output and
+the MD5 of every output frame in `scc.tsv`.
+
+`HevcSeparatePlanesTest` decodes 4:4:4 streams coded with `separate_colour_plane_flag`
+(`mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/planes/`), which no encoder writes:
+`python -I tools/testdata/hevc-separate-planes/make-vectors.py <HM bin> <HM cfg> <that directory>` codes each plane
+of a `testsrc2` clip as a monochrome stream with one HM configuration (low delay B with wavefronts, random access at
+10 bits with temporal motion vector prediction, one intra picture), checks that HM's decoder verifies their picture
+hashes, and splices the three streams into one: the SPS rewritten to 4:4:4 with separate planes, each slice segment
+header given its `colour_plane_id` (the planes one after the other or interleaved, later planes starting with or
+without `first_slice_segment_in_pic_flag`), the slice data copied, and an MD5 picture hash SEI message of the three
+planes as HM decodes them appended to each access unit. The monochrome streams are kept too, and `vectors.tsv`
+there records the SHA-256 of each stream and of the expected output and the MD5 of every frame.
+
+`MpegDecoderBehaviorTest` runs both sets through the I/O behavior harness: its `HevcSamples` packs each stream into
+an MP4 file in memory (one `hvc1` sample per access unit, cut after each picture hash SEI message, presentation
+times in output order) and the intra separate-plane picture into an HEIC item, and compares the decodes with the
+golden dumps under `mpeg/src/test/resources/dumps/hevc/` and `dumps/heif-items/planes/`.
+
 ## Aperio slide oracle files
 
 The same test decodes a pyramid level of two Aperio slides of the OpenSlide test data

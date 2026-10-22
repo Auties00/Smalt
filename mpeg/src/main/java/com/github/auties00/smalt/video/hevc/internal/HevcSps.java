@@ -99,7 +99,8 @@ public final class HevcSps {
     public int bitDepthLuma;
 
     /**
-     * {@code BitDepthC}.
+     * {@code BitDepthC}; {@link #bitDepthLuma} with separate color planes, whose planes are all
+     * decoded as monochrome pictures.
      */
     public int bitDepthChroma;
 
@@ -385,10 +386,46 @@ public final class HevcSps {
     public int log2TransformRangeChroma = 15;
 
     /**
-     * Whether the set carries a screen content coding or 3D extension, which this decoder does not
-     * parse.
+     * Whether the set carries a 3D extension, which this decoder does not parse.
      */
-    public boolean sccTools;
+    public boolean extension3d;
+
+    /**
+     * {@code sps_curr_pic_ref_enabled_flag}.
+     */
+    public boolean currPicRefEnabled;
+
+    /**
+     * {@code palette_mode_enabled_flag}.
+     */
+    public boolean paletteModeEnabled;
+
+    /**
+     * {@code palette_max_size}.
+     */
+    public int paletteMaxSize;
+
+    /**
+     * {@code PaletteMaxPredictorSize}: {@code palette_max_size + delta_palette_max_predictor_size}.
+     */
+    public int paletteMaxPredictorSize;
+
+    /**
+     * {@code sps_palette_predictor_initializer}, indexed {@code [comp][i]}, or {@code null} when
+     * {@code sps_palette_predictor_initializers_present_flag} is clear.
+     */
+    public int[][] paletteInitializers;
+
+    /**
+     * {@code motion_vector_resolution_control_idc}: 0 for quarter-sample motion vectors, 1 for
+     * integer ones, 2 for a choice per slice.
+     */
+    public int mvResolutionControl;
+
+    /**
+     * {@code intra_boundary_filtering_disabled_flag}.
+     */
+    public boolean intraBoundaryFilteringDisabled;
 
     /**
      * {@code CtbSizeY}.
@@ -555,7 +592,10 @@ public final class HevcSps {
             if (multilayerExtension) {
                 reader.readBit();
             }
-            sps.sccTools = sccExtension || extension3d;
+            sps.extension3d = extension3d;
+            if (sccExtension && !extension3d) {
+                parseSccExtension(reader, sps);
+            }
         }
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated sequence parameter set");
@@ -579,8 +619,49 @@ public final class HevcSps {
         widthInCtbs = (width + ctbSize - 1) >> log2CtbSize;
         heightInCtbs = (height + ctbSize - 1) >> log2CtbSize;
         sizeInCtbs = widthInCtbs * heightInCtbs;
+        if (separateColorPlane) {
+            // every plane is decoded as a monochrome picture, whose processes use BitDepthY only
+            bitDepthChroma = bitDepthLuma;
+        }
         log2TransformRangeLuma = extendedPrecision ? Math.max(15, bitDepthLuma + 6) : 15;
         log2TransformRangeChroma = extendedPrecision ? Math.max(15, bitDepthChroma + 6) : 15;
+    }
+
+    /**
+     * Parses a {@code sps_scc_extension()} structure (ITU-T H.265 7.3.2.2.3).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @param sps the sequence parameter set being parsed, with its chroma format and bit depths known
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private static void parseSccExtension(H264BitReader reader, HevcSps sps) {
+        sps.currPicRefEnabled = reader.readFlag();
+        sps.paletteModeEnabled = reader.readFlag();
+        if (sps.paletteModeEnabled) {
+            sps.paletteMaxSize = reader.readUe(64, "palette_max_size");
+            sps.paletteMaxPredictorSize = sps.paletteMaxSize
+                    + reader.readUe(128 - sps.paletteMaxSize, "delta_palette_max_predictor_size");
+            if (reader.readFlag()) {
+                var count = reader.readUe(Math.max(0, sps.paletteMaxPredictorSize - 1),
+                        "sps_num_palette_predictor_initializers_minus1") + 1;
+                if (count > sps.paletteMaxPredictorSize) {
+                    throw new MediaException.Malformed("more palette predictor initializers than predictor entries");
+                }
+                var components = sps.chromaFormatIdc == 0 ? 1 : 3;
+                sps.paletteInitializers = new int[components][count];
+                for (var c = 0; c < components; c++) {
+                    var bits = c == 0 ? sps.bitDepthLuma : sps.bitDepthChroma;
+                    for (var i = 0; i < count; i++) {
+                        sps.paletteInitializers[c][i] = reader.readBits(bits);
+                    }
+                }
+            }
+        }
+        sps.mvResolutionControl = reader.readBits(2);
+        if (sps.mvResolutionControl == 3) {
+            throw new MediaException.Malformed("motion_vector_resolution_control_idc is 3");
+        }
+        sps.intraBoundaryFilteringDisabled = reader.readFlag();
     }
 
     /**
@@ -592,6 +673,7 @@ public final class HevcSps {
      */
     public boolean sameLayout(HevcSps other) {
         return width == other.width && height == other.height && chromaFormatIdc == other.chromaFormatIdc
+                && separateColorPlane == other.separateColorPlane
                 && bitDepthLuma == other.bitDepthLuma && bitDepthChroma == other.bitDepthChroma
                 && log2CtbSize == other.log2CtbSize && log2MinCbSize == other.log2MinCbSize
                 && log2MinTbSize == other.log2MinTbSize;
@@ -604,12 +686,9 @@ public final class HevcSps {
      * @return the feature name for {@link MediaException.Unsupported}, or {@code null}
      */
     public String unsupportedFeature() {
-        if (separateColorPlane) {
-            // TODO: separate color planes (4:4:4 coded as three monochrome pictures)
-            return "hevc separate color planes";
-        }
-        if (sccTools) {
-            return "hevc screen content coding";
+        if (extension3d) {
+            // TODO: the 3D-HEVC extension of a base layer sequence parameter set (Annex I)
+            return "hevc 3D extension";
         }
         return null;
     }

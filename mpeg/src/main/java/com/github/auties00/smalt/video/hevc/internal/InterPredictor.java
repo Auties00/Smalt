@@ -81,6 +81,25 @@ public final class InterPredictor {
     private HevcDsp dsp = HevcDsp.SCALAR;
 
     /**
+     * The picture being predicted, which may be one of its own references (intra block copy).
+     */
+    private HevcFrame target;
+
+    /**
+     * Waits until the samples of the leading luma rows of a reference picture are final, unless
+     * the reference is the picture being decoded: intra block copy reads its samples before the
+     * in-loop filters, and only from blocks decoded before the current one.
+     *
+     * @param ref the reference picture
+     * @param rows the number of luma rows needed
+     */
+    private void await(HevcFrame ref, int rows) {
+        if (ref != target) {
+            ref.awaitRows(rows);
+        }
+    }
+
+    /**
      * Constructs a predictor.
      */
     public InterPredictor() {
@@ -111,6 +130,7 @@ public final class InterPredictor {
      * @param m the motion of the prediction unit
      */
     public void predict(HevcFrame frame, int xPb, int yPb, int width, int height, MotionPredictor.PuMotion m) {
+        target = frame;
         if (frame.y8 != null) {
             predict8(frame, xPb, yPb, width, height, m);
             return;
@@ -122,7 +142,7 @@ public final class InterPredictor {
             var ref = refList[copyList][m.refIdx[copyList]];
             var xInt = xPb + (m.mvX[copyList] >> 2);
             var yInt = yPb + (m.mvY[copyList] >> 2);
-            ref.awaitRows(Math.max(1, yInt + height));
+            await(ref, Math.max(1, yInt + height));
             copyBlock(ref.y, ref.width, ref.height, xInt, yInt, frame.y, frame.width, xPb, yPb, width, height);
         } else {
             lumaPrediction(frame, xPb, yPb, width, height, m, sps.bitDepthLuma);
@@ -143,7 +163,7 @@ public final class InterPredictor {
                 var ref = refList[copyList][m.refIdx[copyList]];
                 var xInt = cx + (mvcX >> 3);
                 var yInt = cy + (mvcY >> 3);
-                ref.awaitRows(Math.max(1, yInt + ch) << sy);
+                await(ref, Math.max(1, yInt + ch) << sy);
                 copyBlock(ref.cb, ref.chromaWidth, ref.chromaHeight, xInt, yInt, frame.cb, frame.chromaWidth, cx, cy, cw,
                         ch);
                 copyBlock(ref.cr, ref.chromaWidth, ref.chromaHeight, xInt, yInt, frame.cr, frame.chromaWidth, cx, cy, cw,
@@ -218,7 +238,7 @@ public final class InterPredictor {
                     var ref = refList[x][m.refIdx[x]];
                     var mvcX = m.mvX[x] * 2 >> sx;
                     var mvcY = m.mvY[x] * 2 >> sy;
-                    ref.awaitRows(Math.max(1, cy + (mvcY >> 3) + ch + 2) << sy);
+                    await(ref, Math.max(1, cy + (mvcY >> 3) + ch + 2) << sy);
                     fits &= chroma(c == 1 ? ref.cb : ref.cr, ref.chromaWidth, ref.chromaHeight, cx, cy, cw, ch, mvcX,
                             mvcY, bitDepth, prediction[x]);
                 }
@@ -234,7 +254,7 @@ public final class InterPredictor {
                 var ref = refList[x][m.refIdx[x]];
                 var mvcX = m.mvX[x] * 2 >> sx;
                 var mvcY = m.mvY[x] * 2 >> sy;
-                ref.awaitRows(Math.max(1, cy + (mvcY >> 3) + ch + 2) << sy);
+                await(ref, Math.max(1, cy + (mvcY >> 3) + ch + 2) << sy);
                 wideChroma(c == 1 ? ref.cb : ref.cr, ref.chromaWidth, ref.chromaHeight, cx, cy, cw, ch, mvcX, mvcY,
                         bitDepth, wide[x]);
             }
@@ -273,7 +293,7 @@ public final class InterPredictor {
                          short[] out) {
         var xInt = xPb + (mvX >> 2);
         var yInt = yPb + (mvY >> 2);
-        ref.awaitRows(Math.max(1, yInt + height + 4));
+        await(ref, Math.max(1, yInt + height + 4));
         var stride = ref.width;
         if (xInt >= 3 && yInt >= 3 && xInt + width + 4 <= stride && yInt + height + 4 <= ref.height) {
             return dsp.lumaMc(ref.y, yInt * stride + xInt, stride, out, width, height, mvX & 3, mvY & 3, bitDepth,
@@ -301,7 +321,7 @@ public final class InterPredictor {
                           int[] out) {
         var xInt = xPb + (mvX >> 2);
         var yInt = yPb + (mvY >> 2);
-        ref.awaitRows(Math.max(1, yInt + height + 4));
+        await(ref, Math.max(1, yInt + height + 4));
         var stride = ref.width;
         if (xInt >= 3 && yInt >= 3 && xInt + width + 4 <= stride && yInt + height + 4 <= ref.height) {
             ScalarHevcDsp.wideLumaMc(ref.y, yInt * stride + xInt, stride, out, width, height, mvX & 3, mvY & 3,
@@ -455,7 +475,7 @@ public final class InterPredictor {
             var ref = refList[copyList][m.refIdx[copyList]];
             var xInt = xPb + (m.mvX[copyList] >> 2);
             var yInt = yPb + (m.mvY[copyList] >> 2);
-            ref.awaitRows(Math.max(1, yInt + height));
+            await(ref, Math.max(1, yInt + height));
             copyBlock8(ref.y8, ref.width, ref.height, xInt, yInt, frame.y8, frame.width, xPb, yPb, width, height);
         } else {
             lumaPrediction8(frame, xPb, yPb, width, height, m);
@@ -476,7 +496,7 @@ public final class InterPredictor {
                 var ref = refList[copyList][m.refIdx[copyList]];
                 var xInt = cx + (mvcX >> 3);
                 var yInt = cy + (mvcY >> 3);
-                ref.awaitRows(Math.max(1, yInt + ch) << sy);
+                await(ref, Math.max(1, yInt + ch) << sy);
                 copyBlock8(ref.cb8, ref.chromaWidth, ref.chromaHeight, xInt, yInt, frame.cb8, frame.chromaWidth, cx,
                         cy, cw, ch);
                 copyBlock8(ref.cr8, ref.chromaWidth, ref.chromaHeight, xInt, yInt, frame.cr8, frame.chromaWidth, cx,
@@ -491,7 +511,7 @@ public final class InterPredictor {
                     var ref = refList[x][m.refIdx[x]];
                     var mvcX = m.mvX[x] * 2 >> sx;
                     var mvcY = m.mvY[x] * 2 >> sy;
-                    ref.awaitRows(Math.max(1, cy + (mvcY >> 3) + ch + 2) << sy);
+                    await(ref, Math.max(1, cy + (mvcY >> 3) + ch + 2) << sy);
                     chroma8(c == 1 ? ref.cb8 : ref.cr8, ref.chromaWidth, ref.chromaHeight, cx, cy, cw, ch, mvcX, mvcY,
                             prediction[x]);
                 }
@@ -565,7 +585,7 @@ public final class InterPredictor {
     private boolean luma8(HevcFrame ref, int xPb, int yPb, int width, int height, int mvX, int mvY, short[] out) {
         var xInt = xPb + (mvX >> 2);
         var yInt = yPb + (mvY >> 2);
-        ref.awaitRows(Math.max(1, yInt + height + 4));
+        await(ref, Math.max(1, yInt + height + 4));
         var stride = ref.width;
         if (xInt >= 3 && yInt >= 3 && xInt + width + 4 <= stride && yInt + height + 4 <= ref.height) {
             return dsp.lumaMc(ref.y8, yInt * stride + xInt, stride, out, width, height, mvX & 3, mvY & 3, scratch);

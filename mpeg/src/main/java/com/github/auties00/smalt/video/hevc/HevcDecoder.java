@@ -47,8 +47,13 @@ import java.util.function.Consumer;
  * and the range extension coding tools (cross-component prediction, implicit and explicit residual
  * DPCM, transform skip rotation, contexts and blocks up to 32x32, extended precision processing,
  * persistent Rice adaptation, CABAC bypass alignment, chroma QP offset lists, SAO offset scaling,
- * disabled intra smoothing and high precision weighted prediction offsets). Output is bit-exact with
- * the normative decoding process.
+ * disabled intra smoothing and high precision weighted prediction offsets), 4:4:4 pictures coded as
+ * three separate color planes ({@code separate_colour_plane_flag}, each plane decoded as a monochrome
+ * picture at the luma bit depth) and the screen content coding extensions: palette mode with
+ * predictor initializers in the sequence and picture parameter sets, intra block copy through
+ * references to the current picture, the adaptive color transform with its QP offsets, adaptive
+ * motion vector resolution and disabled intra boundary filtering. Output is bit-exact with the
+ * normative decoding process.
  *
  * <p>Packet format follows the track: when {@link VideoTrack#codecConfig()} holds an
  * {@code HEVCDecoderConfigurationRecord} ({@code hvcC}), packets are NAL units prefixed by their
@@ -111,19 +116,23 @@ import java.util.function.Consumer;
  * the hashes of the later pictures are checked only when the message promises an exact match. A
  * recovery point message that is truncated, or whose {@code recovery_poc_cnt} lies outside
  * {@code -MaxPicOrderCntLsb / 2} to {@code MaxPicOrderCntLsb / 2 - 1}, is ignored.
- * Unsupported but valid streams raise {@link MediaException.Unsupported} naming
- * the feature: {@code "hevc separate color planes"} and {@code "hevc screen content coding"}.
- * Every profile of version 1 and of the range extensions is decoded: Main, Main 10, Main Still
- * Picture, Main 12, Main 4:2:2 10 and 12, Main 4:4:4 (8, 10, 12 and 16 Intra, with their Intra and
- * Still Picture variants), Monochrome (8, 12 and 16) and High Throughput 4:4:4 16 Intra, with every
- * range extension coding tool. A corrupt slice raises {@link MediaException.Malformed} once
- * its picture is finished; the rest of the picture is still decoded and decoding continues with the
- * next picture. With several threads ({@link HevcDecoderOptions#threads()}), a picture is decoded
- * while later ones are parsed, so the failure of a corrupt picture is raised by the call that
- * outputs it or by {@link #flush(Consumer)}. An exception thrown by the frame consumer reaches the
- * caller unchanged.
+ * A base layer whose parameter sets carry the 3D-HEVC extension raises
+ * {@link MediaException.Unsupported} naming the feature {@code "hevc 3D extension"}.
+ * Every profile of version 1, of the range extensions and of the screen content coding extensions
+ * is decoded: Main, Main 10, Main Still Picture, Main 12, Main 4:2:2 10 and 12, Main 4:4:4 (8, 10,
+ * 12 and 16 Intra, with their Intra and Still Picture variants), Monochrome (8, 12 and 16), High
+ * Throughput 4:4:4 16 Intra, Screen-Extended Main, Main 10, Main 4:4:4 and Main 4:4:4 10, and
+ * Screen-Extended High Throughput 4:4:4, 4:4:4 10 and 4:4:4 14, with every coding tool of those
+ * extensions. A picture coded with separate color planes that lacks the slices of a plane raises
+ * {@link MediaException.Malformed}, its missing plane mid-gray. A corrupt slice raises
+ * {@link MediaException.Malformed} once its picture is finished; the rest of the picture is still
+ * decoded and decoding continues with the next picture. With several threads
+ * ({@link HevcDecoderOptions#threads()}), a picture is decoded while later ones are parsed, so the
+ * failure of a corrupt picture is raised by the call that outputs it or by {@link #flush(Consumer)}.
+ * An exception thrown by the frame consumer reaches the caller unchanged.
  *
- * <p>With several threads, pictures and the wavefront rows of a slice segment are decoded
+ * <p>With several threads, pictures, the wavefront rows of a slice segment and the color planes of
+ * a picture coded with separate color planes are decoded
  * concurrently on the shared pool that {@link com.github.auties00.smalt.MediaRuntime MediaRuntime}
  * describes. The output never depends on the thread count.
  *

@@ -484,6 +484,21 @@ class FuzzSeedWriter {
                 FuzzPackets.video(0, 128, 96, null, accessUnits(stream, 6)));
     }
 
+    @Test
+    @DisplayName("writes the HEVC seeds of screen content coding and of separate color planes")
+    void hevcSccAndPlanes() {
+        var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "hevc");
+        write(MpegFuzzTest.class, "hevc", "valid-scc-annexb.bin", FuzzPackets.video(0, 192, 128, null,
+                accessUnits(Fixtures.read(vectors.resolve("scc").resolve("scc-ld-444-8.hevc")), 6)));
+        write(MpegFuzzTest.class, "hevc", "valid-scc-lossless-annexb.bin", FuzzPackets.video(0, 192, 128, null,
+                accessUnits(Fixtures.read(vectors.resolve("scc").resolve("scc-ld-444-8-lossless.hevc")), 3)));
+        write(MpegFuzzTest.class, "hevc", "valid-scc-422-annexb.bin", FuzzPackets.video(0, 192, 128, null,
+                accessUnits(Fixtures.read(vectors.resolve("scc").resolve("scc-ld-422-10.hevc")), 3)));
+        // the first slice segment of every plane starts a part, so 18 parts hold six pictures
+        write(MpegFuzzTest.class, "hevc", "valid-separate-planes-annexb.bin", FuzzPackets.video(1, 128, 96, null,
+                accessUnits(Fixtures.read(vectors.resolve("planes").resolve("planes-ra-10.bit")), 18)));
+    }
+
     /**
      * Splits an Annex B HEVC stream into its first access units, each from the start code (with its leading zero
      * byte) of its first NAL unit; a new access unit starts at a parameter set, prefix SEI or access unit delimiter

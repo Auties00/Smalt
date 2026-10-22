@@ -442,7 +442,7 @@ public final class HevcDecoderEngine {
     private void slice(int type, int temporalId, int size) {
         var header = HevcSliceHeader.parse(reader, type, temporalId, ppsTable, spsTable,
                 independent != null && current != null ? independent : null);
-        if (header.firstSliceSegmentInPic) {
+        if (header.firstSliceSegmentInPic && !continuesPlanes(header)) {
             finishPictureDeferred();
             startPicture(header);
         } else if (current == null || skipping) {
@@ -450,6 +450,14 @@ public final class HevcDecoderEngine {
         }
         if (skipping) {
             return;
+        }
+        if (header.sps.separateColorPlane) {
+            if (current.planes == null) {
+                throw new MediaException.Malformed("separate color plane slice in a picture coded without them");
+            }
+            planesSeen |= 1 << header.colorPlaneId;
+        } else if (current.planes != null) {
+            throw new MediaException.Malformed("slice without color planes in a picture coded with them");
         }
         if (header.sps != current.sps && !header.sps.sameLayout(current.sps)) {
             throw new MediaException.Malformed("slice of a picture refers to another sequence parameter set");
@@ -472,7 +480,13 @@ public final class HevcDecoderEngine {
         }
         var sliceIndex = recordSlice(header);
         if (lists != null) {
-            lists = new HevcFrame[][]{lists[0].clone(), lists[1].clone()};
+            var plane = header.colorPlaneId;
+            lists = new HevcFrame[2][16];
+            for (var list = 0; list < 2; list++) {
+                for (var i = 0; i < header.numRefIdx[list]; i++) {
+                    lists[list][i] = refList[list][i].plane(plane);
+                }
+            }
         }
         currentJob.add(new PictureJob.Slice(header, lists, sliceIndex, Arrays.copyOf(rbsp, size + H264BitReader.PADDING),
                 size, parallel ? substreams(header, size) : null));
@@ -561,13 +575,45 @@ public final class HevcDecoderEngine {
                 for (var i = 0; i < header.numRefIdx[list]; i++) {
                     var ref = refList[list][i];
                     poc[list * 16 + i] = ref.poc;
-                    longTerm[list * 16 + i] = ref.longTerm;
+                    // the current picture is marked as a long-term reference while it is decoded (8.1.3)
+                    longTerm[list * 16 + i] = ref == current || ref.longTerm;
                     ids[list * 16 + i] = ref.id;
                 }
             }
         }
-        return current.addSlice(poc, longTerm, ids);
+        return current.plane(header.colorPlaneId).addSlice(poc, longTerm, ids);
     }
+
+    /**
+     * Returns whether a slice segment flagged as the first of its picture continues the current
+     * picture instead: a picture coded with separate color planes whose first slice segment of a
+     * plane not seen yet carries the picture order count and NAL unit type of the current picture.
+     *
+     * @param header the slice segment header
+     * @return {@code true} when the slice segment belongs to the current picture
+     */
+    private boolean continuesPlanes(HevcSliceHeader header) {
+        return current != null && !skipping && current.planes != null && header.sps.separateColorPlane
+                && (planesSeen & (1 << header.colorPlaneId)) == 0 && header.nalType == currentNalType
+                && header.pocLsb == currentPocLsb
+                && (header.sps == current.sps || header.sps.sameLayout(current.sps));
+    }
+
+    /**
+     * The color planes of the current picture that received a slice segment, bit
+     * {@code colour_plane_id}.
+     */
+    private int planesSeen;
+
+    /**
+     * The NAL unit type of the first slice segment of the current picture.
+     */
+    private int currentNalType;
+
+    /**
+     * {@code slice_pic_order_cnt_lsb} of the current picture.
+     */
+    private int currentPocLsb;
 
     /**
      * Starts decoding a picture: activates its parameter sets, derives its picture order count,
@@ -701,11 +747,18 @@ public final class HevcDecoderEngine {
         frame.pts = packetPts;
         frame.duration = packetDuration;
         frame.color = colorInfo(sps);
+        frame.syncPlanes();
         current = frame;
-        var state = obtainState(sps);
-        state.reset();
+        currentNalType = type;
+        currentPocLsb = header.pocLsb;
+        planesSeen = 0;
+        var states = new PictureState[sps.separateColorPlane ? 3 : 1];
+        for (var k = 0; k < states.length; k++) {
+            states[k] = obtainState(sps);
+            states[k].reset();
+        }
         frame.beginDecoding();
-        currentJob = new PictureJob(frame, state, ++submittedJobs, idleDecoders);
+        currentJob = new PictureJob(frame, states, ++submittedJobs, idleDecoders, parallel);
         independent = null;
         pendingHash = -1;
         sei.hashType = -1;
@@ -868,6 +921,12 @@ public final class HevcDecoderEngine {
         frame.generated = true;
         frame.damaged = true;
         frame.shortTerm = true;
+        frame.syncPlanes();
+        if (frame.planes != null) {
+            for (var plane : frame.planes) {
+                Arrays.fill(plane.ctbSlice, -1);
+            }
+        }
         if (frame.eightBit()) {
             Arrays.fill(frame.y8, (byte) 128);
             if (frame.cb8 != null) {
@@ -893,7 +952,8 @@ public final class HevcDecoderEngine {
      * @throws MediaException.Malformed if the picture has no reference pictures
      */
     private void buildRefLists(HevcSliceHeader header) {
-        var total = rpsCount[0] + rpsCount[1] + rpsCount[2];
+        var self = header.pps.currPicRefEnabled;
+        var total = rpsCount[0] + rpsCount[1] + rpsCount[2] + (self ? 1 : 0);
         if (total == 0) {
             throw new MediaException.Malformed("inter slice without reference pictures");
         }
@@ -913,9 +973,20 @@ public final class HevcDecoderEngine {
                 for (var i = 0; i < rpsCount[2] && r < count; i++) {
                     temp[r++] = rps[2][i];
                 }
+                if (self && r < count) {
+                    temp[r++] = current;
+                }
             }
             for (var i = 0; i < header.numRefIdx[list]; i++) {
                 refList[list][i] = header.listModification[list] ? temp[header.listEntry[list][i]] : temp[i];
+            }
+            if (self && list == 0 && !header.listModification[0] && count > header.numRefIdx[0]) {
+                refList[0][header.numRefIdx[0] - 1] = current;
+            }
+            for (var i = 0; i < header.numRefIdx[list]; i++) {
+                if ((refList[list][i] == current) != header.currentPictureEntry[list][i]) {
+                    throw new MediaException.Malformed("reference picture lists do not match the slice header");
+                }
             }
         }
     }
@@ -934,7 +1005,8 @@ public final class HevcDecoderEngine {
             }
         }
         LimitChecks.checkAllocation(limits, (long) sps.width * sps.height * 2 * 2);
-        return new HevcFrame(sps.width, sps.height, sps.chromaFormatIdc, HevcFrame.eightBit(sps));
+        return new HevcFrame(sps.width, sps.height, sps.chromaFormatIdc, HevcFrame.eightBit(sps),
+                sps.separateColorPlane);
     }
 
     /**
@@ -1029,7 +1101,7 @@ public final class HevcDecoderEngine {
         while (!inFlight.isEmpty() && inFlight.peekFirst().frame.isDone()) {
             var job = inFlight.pollFirst();
             finishedJobs = job.sequence;
-            statePool.add(job.pic);
+            statePool.addAll(Arrays.asList(job.states));
             var failure = job.error();
             if (failure != null && deferred == null) {
                 deferred = failure;
@@ -1214,7 +1286,7 @@ public final class HevcDecoderEngine {
         } else {
             job.run();
             failure = job.error();
-            statePool.add(job.pic);
+            statePool.addAll(Arrays.asList(job.states));
         }
         pendingHash = -1;
         sei.hashType = -1;
