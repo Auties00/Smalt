@@ -103,8 +103,12 @@ runs:
           echo "::warning::some smoke vectors could not be fetched; their tests skip and the entry is not saved"
         fi
 
+    # A pkg/* branch that restored an older entry fetched only the vectors it adds; it does not save a copy of the
+    # whole tier for them, since every later run restores the default branch's entry and fetches them again.
     - name: Save the smoke vectors
-      if: runner.os != 'Windows' && steps.fetch.outputs.complete == 'true' && steps.policy.outputs.smoke == 'true'
+      if: >
+        runner.os != 'Windows' && steps.fetch.outputs.complete == 'true' && steps.policy.outputs.smoke == 'true'
+        && !(startsWith(github.ref, 'refs/heads/pkg/') && steps.smoke.outputs.cache-matched-key != '')
       uses: actions/cache/save@v4
       with:
         path: ~/.smalt/cache/conformance
@@ -116,6 +120,7 @@ runs:
         runner.os != 'Windows' && steps.fetch.outcome == 'success' && steps.fetch.outputs.complete != 'true'
         && steps.policy.outputs.smoke == 'true'
         && steps.smoke.outputs.cache-matched-key != format('testdata-smoke-{0}-partial', steps.key.outputs.smoke)
+        && !(startsWith(github.ref, 'refs/heads/pkg/') && steps.smoke.outputs.cache-matched-key != '')
       uses: actions/cache/save@v4
       with:
         path: ~/.smalt/cache/conformance

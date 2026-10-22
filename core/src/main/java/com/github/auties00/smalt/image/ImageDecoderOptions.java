@@ -148,7 +148,9 @@ public final class ImageDecoderOptions {
      * these decoders return them in their stored color model instead:
      * <ul>
      *   <li>JPEG stored as CMYK or YCCK decodes to a CMYK {@link Channel8Picture}, and lossless CMYK of more
-     *       than 8 bits to a {@link Channel16Picture} when {@link #highBitDepth()} is also set;</li>
+     *       than 8 bits to a {@link Channel16Picture} when {@link #highBitDepth()} is also set; JPEG of two or
+     *       more than four components decodes to a channel picture of one channel per component, of 8 or 16
+     *       bits likewise;</li>
      *   <li>TIFF decodes CMYK and multi-ink separations, floating-point samples, and pages with extra samples
      *       other than one alpha channel to a channel picture, of 8 or 16 bits as {@link #highBitDepth()}
      *       selects for integer samples, and a {@link ChannelFloatPicture} for floating-point ones;</li>

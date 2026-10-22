@@ -249,6 +249,20 @@ class LosslessImageTest {
             assertIdentity("lossless JPEG predictor " + predictor + " " + test, picture, jpeg, true);
         }
 
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessImageTest#cjpegScanCases")
+        @DisplayName("lossless RGB JPEG encoded by libjpeg-turbo in a scan per component decodes to every sample")
+        void cjpegScans(Case test) {
+            OracleEncoders.assumeCjpegLossless();
+            var picture = picture(test);
+            var predictor = 1 + (int) (test.seed() % 7);
+            var script = "2: " + predictor + " 0 0 0;\n0: " + (8 - predictor) + " 0 0 0;\n1: " + predictor
+                    + " 0 0 0;\n";
+            var jpeg = OracleEncoders.cjpegLossless(netpbm(picture), test.depth(), predictor, "ljpeg-scans-" + test.seed(),
+                    script);
+            assertIdentity("lossless JPEG scans, predictor " + predictor + " " + test, picture, jpeg, true);
+        }
+
         @ParameterizedTest(name = "{0} {1}x{2}")
         @MethodSource("com.github.auties00.smalt.property.LosslessImageTest#ffmpegLjpegCases")
         @DisplayName("lossless YCbCr JPEG encoded by ffmpeg decodes to every plane sample")
@@ -281,6 +295,10 @@ class LosslessImageTest {
     static Stream<Case> cjpegCases() {
         return cases(8, 16).filter(test -> (test.layout() == PixelLayout.RGB || test.layout() == PixelLayout.GRAY)
                 && test.width() * test.height() > 1);
+    }
+
+    static Stream<Case> cjpegScanCases() {
+        return cjpegCases().filter(test -> test.layout() == PixelLayout.RGB);
     }
 
     static Stream<Arguments> ffmpegLjpegCases() {

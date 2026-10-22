@@ -19,7 +19,9 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * them like the planes of a DCT frame. {@link #decodePicture} keeps the coded precision of a gray,
  * YCbCr or RGB frame of more than 8 bits: gray and YCbCr frames become a {@link Yuv16Picture} of
  * that bit depth holding the samples as coded, and RGB frames an {@link Rgba16Picture} with every
- * sample rescaled as {@code round(v * 65535 / (2^P - 1))}.
+ * sample rescaled as {@code round(v * 65535 / (2^P - 1))}; {@link #decodeCmyk} and
+ * {@link #decodeChannels} do the same for CMYK frames and for frames without a color space.
+ * Subsampled components reach the frame size by replication.
  */
 public final class LosslessOutput {
     /**
@@ -139,12 +141,17 @@ public final class LosslessOutput {
         var width = frame.width;
         var max = (1 << frame.precision) - 1;
         var exact = frame.precision == 8;
-        if (jpeg.blockInterleaved()) {
+        if (!jpeg.streamsRows()) {
             var columns = new int[count];
+            var rows = new int[count];
             for (var c = 0; c < count; c++) {
-                columns[c] = Math.min(strides[c], jpeg.paddedComponentWidth(c));
+                columns[c] = Math.min(strides[c], jpeg.componentWidth(c));
+                rows[c] = components[c].paddedBlocksHigh * 8;
             }
             jpeg.decodeComponents((c, row, samples) -> {
+                if (row >= rows[c]) {
+                    return;
+                }
                 var plane = planes[c];
                 var at = row * strides[c];
                 for (var x = 0; x < columns[c]; x++) {
@@ -241,7 +248,7 @@ public final class LosslessOutput {
             });
             return picture;
         }
-        if (colorSpace == JpegColorSpace.YCBCR && jpeg.blockInterleaved()) {
+        if (colorSpace == JpegColorSpace.YCBCR && !jpeg.fullResolution()) {
             var direct = JpegOutput.directFormat(frame, frame.components[0], frame.components[1], frame.components[2]);
             if (direct != null) {
                 return decodeSubsampled(jpeg, direct, width, height, precision, limits);
@@ -301,9 +308,43 @@ public final class LosslessOutput {
     }
 
     /**
+     * Decodes a lossless frame of two or more than four components, of more than 8 bits, to a
+     * 16-bit channel picture: every component at the frame resolution, subsampled ones replicated,
+     * each sample {@code v} of precision {@code P} rescaled as {@code round(v * 65535 / (2^P - 1))}.
+     *
+     * @param reader the reader of a lossless frame
+     * @param layout the layout of the result, with one channel per component
+     * @param limits the resource bounds checked before every allocation
+     * @return the picture
+     * @throws com.github.auties00.smalt.MediaException.Malformed if a header is invalid
+     * @throws com.github.auties00.smalt.MediaException.Unsupported if the frame uses an unsupported feature
+     * @throws com.github.auties00.smalt.MediaException.LimitExceeded if the frame exceeds the limits
+     */
+    public static Channel16Picture decodeChannels(JpegReader reader, PixelLayout layout, MediaLimits limits) {
+        var jpeg = reader.openLossless();
+        var frame = reader.frame();
+        var width = frame.width;
+        var height = frame.height;
+        var count = frame.components.length;
+        var max = (1 << frame.precision) - 1;
+        LimitChecks.checkAllocation(limits, 2L * count * width * height);
+        var picture = Channel16Picture.allocate(width, height, layout);
+        var pixels = picture.pixels();
+        var stride = picture.stride();
+        var twiceMax = 2L * max;
+        decodeRows(jpeg, frame, limits, (row, samples) -> {
+            var at = row * stride;
+            for (var i = 0; i < count * width; i++) {
+                pixels[at + i] = (short) (((samples[i] & max) * 131070L + max) / twiceMax);
+            }
+        });
+        return picture;
+    }
+
+    /**
      * Decodes the rows of a lossless frame at full resolution, the components of each column
-     * interleaved; the components of a block-interleaved scan are first decoded whole and replicated
-     * up to the frame resolution.
+     * interleaved; unless the frame streams its rows, the components are first decoded whole and
+     * subsampled ones replicated up to the frame resolution.
      *
      * @param jpeg the scan
      * @param frame the frame header
@@ -311,7 +352,7 @@ public final class LosslessOutput {
      * @param sink receives the rows
      */
     private static void decodeRows(LosslessJpeg jpeg, JpegFrame frame, MediaLimits limits, LosslessJpeg.RowSink sink) {
-        if (!jpeg.blockInterleaved()) {
+        if (jpeg.streamsRows()) {
             jpeg.decode(sink);
             return;
         }

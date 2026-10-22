@@ -746,6 +746,7 @@ smoke	ijg6b-testimg.jpg	5756	ff6133bb58d3dae4f13ecbe05256dc4aaa05b17786b2c67f172
 smoke	ijg6b-testimg.ppm	101484	b64a47d529e289e5570648db9f0385d9b240448724cdde7716fa0139b121d491	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testimg.ppm
 smoke	ijg6b-testimgp.jpg	5645	e9486e697b7082a324fe2812310303e13b0ddf67b073eacb4b9d8a53e50b7ea7	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testimgp.jpg
 smoke	ijg6b-testprog.jpg	5655	24770f706b81b40a71944af3b39aad8a3f7ffb21c4f2725447022e518222d823	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testprog.jpg
+smoke	itu-t83-data-files.zip	3924283	9f5ed0a74a3087c6c93f4cbb0bd5128c2a87b128e4f59f5b6649e32941da7069	https://www.itu.int/wftp3/Public/t/testsignal/SpeImage/T83/v1994_11/T83_data_files.zip
 smoke	librivox-art_of_war_03-04_64kb.mp3	3723859	57e879fe7822578fd22010f1280185799a119a3482e025d9a71f49878ff45ba7	https://archive.org/download/art_of_war_librivox/art_of_war_03-04_sun_tzu_64kb.mp3
 smoke	libwebp-test-data-alpha_color_cache.webp	1838	c4b9e2459858e6f6a1d919c2adeb73d7e2ad251d6bfbfb99303a6b4508ca757a	https://raw.githubusercontent.com/webmproject/libwebp-test-data/06ddd96e276c2c638a72d39d3c0f340afd61978c/alpha_color_cache.webp
 smoke	libwebp-test-data-alpha_filter_0_method_0.webp	22038	150ff79f16e254281153d7e75e5968663c7f83ae58217b36c12d11088045eb07	https://raw.githubusercontent.com/webmproject/libwebp-test-data/06ddd96e276c2c638a72d39d3c0f340afd61978c/alpha_filter_0_method_0.webp

@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Yuv16Picture;
@@ -14,10 +15,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Random;
 import java.util.stream.Stream;
 
@@ -75,8 +78,8 @@ class LosslessSubsampledTest {
     }
 
     static int[][] decodeComponents(byte[] jpeg, int width, int height, int[][] factors) {
-        var scan = new LosslessJpeg(jpeg, 0, jpeg.length, 4, 0);
-        assertTrue(scan.blockInterleaved());
+        var scan = new LosslessJpeg(jpeg, 0, jpeg.length, 4, 0, MediaLimits.DEFAULT);
+        assertFalse(scan.streamsRows());
         var out = new int[factors.length][];
         for (var c = 0; c < factors.length; c++) {
             out[c] = new int[componentWidth(width, factors, c) * componentHeight(height, factors, c)];
@@ -265,31 +268,26 @@ class LosslessSubsampledTest {
             var jpeg = Lj92Encoder.encodeSampled(source, 40, 30, factors, 8, 1, 0, 0);
             var cut = Arrays.copyOf(jpeg, jpeg.length / 2);
             var rows = new int[3];
-            new LosslessJpeg(cut, 0, cut.length, 4, 0).decodeComponents((c, row, samples) -> rows[c]++);
+            new LosslessJpeg(cut, 0, cut.length, 4, 0, MediaLimits.DEFAULT).decodeComponents((c, row, samples) -> rows[c]++);
             assertArrayEquals(new int[]{30, 15, 15}, rows);
         }
 
-        @Test
-        @DisplayName("a restart interval that does not span whole rows of units is unsupported")
-        void partialRowRestart() {
+        @ParameterizedTest(name = "restart every {0} units")
+        @ValueSource(ints = {1, 3, 7, 19, 21, 33})
+        @DisplayName("a restart interval that splits rows of units restarts the first line at the interval's first unit")
+        void partialRowRestart(int interval) {
             var factors = new int[][]{{2, 2}, {1, 1}, {1, 1}};
             var source = planes(40, 30, factors, 8, 13);
-            var jpeg = withJfif(Lj92Encoder.encodeSampled(source, 40, 30, factors, 8, 1, 20, 0));
-            var dri = -1;
-            for (var i = 0; i + 5 < jpeg.length; i++) {
-                if (jpeg[i] == (byte) 0xFF && jpeg[i + 1] == (byte) 0xDD) {
-                    dri = i;
-                    break;
+            for (var predictor = 1; predictor <= 7; predictor++) {
+                var jpeg = withJfif(Lj92Encoder.encodeFrame(source, 40, 30, factors, 8, false,
+                        List.of(Lj92Encoder.ScanSpec.of(new int[]{0, 1, 2}, predictor, 0, interval))));
+                var decoded = decodeComponents(jpeg, 40, 30, factors);
+                for (var c = 0; c < 3; c++) {
+                    assertArrayEquals(source[c], decoded[c], "predictor " + predictor + ", component " + c);
                 }
+                var picture = assertInstanceOf(YuvPicture.class, JpegDecoder.decode(MediaSource.of(jpeg)).picture());
+                assertPlane(source[1], picture.chromaWidth(), picture.chromaHeight(), picture.u(), picture.uvStride());
             }
-            assertTrue(dri > 0);
-            jpeg[dri + 4] = 0;
-            jpeg[dri + 5] = 7;
-            var scan = new LosslessJpeg(jpeg, 0, jpeg.length, 4, 0);
-            assertEquals("jpeg lossless", assertThrows(MediaException.Unsupported.class,
-                    () -> scan.decodeComponents((c, row, samples) -> { })).format());
-            assertEquals("jpeg lossless", assertThrows(MediaException.Unsupported.class,
-                    () -> JpegDecoder.decode(MediaSource.of(jpeg))).format());
         }
 
         @Test

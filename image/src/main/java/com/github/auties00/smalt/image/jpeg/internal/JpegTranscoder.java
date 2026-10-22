@@ -91,6 +91,11 @@ public final class JpegTranscoder {
         var colorSpace = reader.colorSpace();
         var frameComponents = frame.components;
         var count = frameComponents.length;
+        if (colorSpace == JpegColorSpace.UNKNOWN) {
+            // TODO: transform frames of two or more than four components, which jpegtran passes through
+            throw new MediaException.Unsupported("jpeg with " + count + " components",
+                    "lossless transforms of JPEG frames with " + count + " components are not supported");
+        }
         var transform = options.transform();
         var grayscale = options.grayscale();
         var outputCount = grayscale && colorSpace == JpegColorSpace.YCBCR && count == 3 ? 1 : count;

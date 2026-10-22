@@ -392,7 +392,7 @@ class JpegStreamTest {
     @DisplayName("unsupported and invalid")
     class Unsupported {
         @ParameterizedTest(name = "SOF 0x{0}")
-        @CsvSource({"C7, jpeg lossless", "CB, jpeg lossless", "CF, jpeg lossless",
+        @CsvSource({"C7, jpeg lossless", "CF, jpeg lossless",
                 "C5, jpeg hierarchical", "C6, jpeg hierarchical", "CD, jpeg hierarchical", "CE, jpeg hierarchical",
                 "F7, jpeg-ls"})
         @DisplayName("names the unsupported coding process")
@@ -448,27 +448,6 @@ class JpegStreamTest {
             }
             // the 8-bit-coded content sits near 2048 + (v - 128) at 12 bits
             assertTrue(Math.abs(wide.y()[0] - 2048 - (plane(8, 8, 0)[0] & 0xFF) + 128) < 32);
-        }
-
-        @ParameterizedTest(name = "{0} components")
-        @ValueSource(ints = {2, 5})
-        @DisplayName("names frames without a color space")
-        void componentCount(int count) {
-            var ids = new int[count];
-            var ones = new int[count];
-            var planes = new byte[count][];
-            for (var c = 0; c < count; c++) {
-                ids[c] = c + 1;
-                ones[c] = 1;
-                planes[c] = plane(8, 8, c);
-            }
-            var writer = TestJpegWriter.fromPlanes(8, 8, ids, ones, ones, planes, 90);
-            var scan = new int[Math.min(count, 4)];
-            for (var i = 0; i < scan.length; i++) {
-                scan[i] = i;
-            }
-            var jpeg = count > 4 ? writer.sequential(scan, new int[]{4}) : writer.sequential(scan);
-            assertEquals("jpeg with " + count + " components", assertThrows(MediaException.Unsupported.class, () -> decode(jpeg)).format());
         }
 
         @Test

@@ -4,9 +4,14 @@ package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
@@ -24,7 +29,12 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * applications, so a pixel is {@code R = C * K / 255} (rounded) and likewise for G and B; YCCK is
  * first converted to that CMYK form. The {@linkplain JpegPlanes#wide() wide} planes of a 12-bit
  * gray, YCbCr or RGB frame become a {@link Yuv16Picture} of bit depth 12 or an
- * {@link Rgba16Picture} through {@link #toWidePicture}.
+ * {@link Rgba16Picture} through {@link #toWidePicture}. Frames of two or more than four components
+ * become channel pictures through {@link #toChannels} and {@link #toWideChannels}.
+ *
+ * <p>Subsampled components are upsampled as libjpeg-turbo upsamples them: with the triangle filter
+ * where it applies, and by replication at 1/8 size and for lossless frames, whose samples are thus
+ * kept exactly.
  *
  * @implNote This implementation follows libjpeg-turbo's {@code ycc_rgb_convert} tables,
  * {@code ycck_cmyk_convert} and {@code cmyk_to_rgb} for the color conversions.
@@ -144,7 +154,96 @@ public final class JpegOutput {
             case RGB -> toRgba(planes, false, limits);
             case CMYK -> toRgba(planes, true, limits);
             case YCCK -> ycckToRgba(planes, limits);
+            case UNKNOWN -> toChannels(planes, rawLayout(planes.frame().components.length), limits);
         };
+    }
+
+    /**
+     * Returns the layout of the channel picture of a frame whose components have no known meaning:
+     * gray for the first component, then unspecified extra channels.
+     *
+     * @param count the number of components, positive
+     * @return the layout
+     */
+    public static PixelLayout rawLayout(int count) {
+        var layout = PixelLayout.GRAY;
+        for (var c = 1; c < count; c++) {
+            layout = layout.withChannel(Channel.of(ChannelType.UNSPECIFIED));
+        }
+        return layout;
+    }
+
+    /**
+     * Builds the channel picture of a frame from its 8-bit planes: every component at the picture
+     * resolution, in frame order, one channel each, with a tight stride.
+     *
+     * @param planes the decoded 8-bit planes
+     * @param layout the layout of the result, with one channel per component
+     * @param limits the resource bounds checked before every allocation
+     * @return the picture
+     * @throws IllegalArgumentException if the layout's channel count is not the component count
+     */
+    public static Channel8Picture toChannels(JpegPlanes planes, PixelLayout layout, MediaLimits limits) {
+        var count = planes.frame().components.length;
+        if (layout.count() != count) {
+            throw new IllegalArgumentException(layout + " does not have " + count + " channels");
+        }
+        var width = planes.width();
+        var height = planes.height();
+        LimitChecks.checkAllocation(limits, (long) width * height * count);
+        var picture = Channel8Picture.allocate(width, height, layout);
+        var pixels = picture.pixels();
+        for (var c = 0; c < count; c++) {
+            var plane = fullPlane(planes, c);
+            var stride = fullStride(planes, c);
+            for (var y = 0; y < height; y++) {
+                var in = y * stride;
+                var out = y * width * count + c;
+                for (var x = 0; x < width; x++) {
+                    pixels[out + x * count] = plane[in + x];
+                }
+            }
+        }
+        return picture;
+    }
+
+    /**
+     * Builds the 16-bit channel picture of a 12-bit frame from its wide planes, as
+     * {@link #toChannels} builds the 8-bit one, every sample rescaled as
+     * {@code round(v * 65535 / 4095)}.
+     *
+     * @param planes the {@linkplain JpegPlanes#wide() wide} planes
+     * @param layout the layout of the result, with one channel per component
+     * @param limits the resource bounds checked before every allocation
+     * @return the picture
+     * @throws IllegalArgumentException if the layout's channel count is not the component count
+     */
+    public static Channel16Picture toWideChannels(JpegPlanes planes, PixelLayout layout, MediaLimits limits) {
+        var frame = planes.frame();
+        var count = frame.components.length;
+        if (layout.count() != count) {
+            throw new IllegalArgumentException(layout + " does not have " + count + " channels");
+        }
+        var width = planes.width();
+        var height = planes.height();
+        LimitChecks.checkAllocation(limits, 2L * width * height * count);
+        var picture = Channel16Picture.allocate(width, height, layout);
+        var pixels = picture.pixels();
+        var sixteen = Idct12.SIXTEEN_BIT;
+        for (var c = 0; c < count; c++) {
+            var info = frame.components[c];
+            var direct = info.h == frame.hMax && info.v == frame.vMax;
+            var plane = direct ? planes.widePlane(c) : fullResolutionWide(planes, c);
+            var stride = direct ? planes.stride(c) : width;
+            for (var y = 0; y < height; y++) {
+                var in = y * stride;
+                var out = y * width * count + c;
+                for (var x = 0; x < width; x++) {
+                    pixels[out + x * count] = sixteen[plane[in + x]];
+                }
+            }
+        }
+        return picture;
     }
 
     /**
@@ -236,7 +335,7 @@ public final class JpegOutput {
         var info = frame.components[component];
         return Upsampler.upsample(planes.widePlane(component), planes.stride(component),
                 planes.componentWidth(component), planes.componentHeight(component), info.h, info.v,
-                frame.hMax, frame.vMax, planes.width(), planes.height(), planes.scaleShift() < 3);
+                frame.hMax, frame.vMax, planes.width(), planes.height(), fancy(planes));
     }
 
     /**
@@ -331,7 +430,18 @@ public final class JpegOutput {
         var info = frame.components[component];
         return Upsampler.upsample(planes.plane(component), planes.stride(component),
                 planes.componentWidth(component), planes.componentHeight(component), info.h, info.v,
-                frame.hMax, frame.vMax, planes.width(), planes.height(), planes.scaleShift() < 3);
+                frame.hMax, frame.vMax, planes.width(), planes.height(), fancy(planes));
+    }
+
+    /**
+     * Returns whether the planes may be upsampled with the triangle filter: not at 1/8 size and not
+     * for a lossless frame.
+     *
+     * @param planes the decoded planes
+     * @return whether the triangle filter may be used
+     */
+    private static boolean fancy(JpegPlanes planes) {
+        return planes.scaleShift() < 3 && !planes.frame().lossless();
     }
 
     /**

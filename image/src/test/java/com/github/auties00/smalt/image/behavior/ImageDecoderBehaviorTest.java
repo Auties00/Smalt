@@ -8,6 +8,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.junit.jupiter.params.provider.ValueSource;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -15,13 +16,15 @@ import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.List;
 import java.util.stream.Stream;
+import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
 /**
  * Runs every image decoder of this artifact through the I/O behavior harness ({@link ImageDecoderAsserts}):
  * the samples of {@code src/test/resources/samples} (made by {@code tools/testdata/behavior/make-image-samples.sh}
  * and pinned in {@code samples.tsv} there), a selection of the committed codec vectors, PngSuite and BMP Suite
- * images and smoke-tier vectors, each compared with its golden dump under {@code src/test/resources/dumps}.
+ * images, the lossless streams of the ITU-T T.83 compliance data and smoke-tier vectors, each compared with its
+ * golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("image decoder I/O behaviors")
 class ImageDecoderBehaviorTest {
@@ -33,6 +36,11 @@ class ImageDecoderBehaviorTest {
     /** Committed codec vectors, relative to the image resource directory. */
     private static final List<String> RESOURCE_FILES = List.of(
             "jpeg/lossless/61x43-gray-p12-psv6.jpg",
+            "jpeg/lossless/variants/37x29-ycbcr420-p8-sof11-psv4-r19.jpg",
+            "jpeg/lossless/variants/37x29-ycbcr422-p12-3scans.jpg",
+            "jpeg/lossless/variants/23x17-5ch-p8-sof11-2scans.jpg",
+            "jpeg/lossless/variants/23x17-5ch-baseline.jpg",
+            "jpeg/lossless/variants/45x31-rgb-p12-psv5-cjpeg-scans.jpg",
             "jpeg/cjpeg12/17x1-yuv411-progressive-arithmetic.jpg",
             "tiff/jpeg12/226x149-ycbcr422-tiles64-tables.tif",
             "tiff/codecs/webp-rgba8-strips.tif",
@@ -145,6 +153,17 @@ class ImageDecoderBehaviorTest {
             }
         }
         ImageDecoderAsserts.of("bmpsuite/" + name.replace('/', '-'), files.get(name)).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"T83_process14/O1.JPG", "T83_process14/O2.JPG", "T83_process15/P1.JPG",
+            "T83_process15/P2.JPG"})
+    @DisplayName("ITU-T T.83 lossless streams: identical pictures under every source behavior and clean faults")
+    void t83(String entry) throws IOException {
+        try (var zip = new ZipFile(Conformance.fetchListed("itu-t83-data-files.zip").toFile());
+             var input = zip.getInputStream(zip.getEntry(entry))) {
+            ImageDecoderAsserts.of("t83/" + entry.substring(entry.indexOf('/') + 1), input.readAllBytes()).run();
+        }
     }
 
     @ParameterizedTest(name = "{0}")

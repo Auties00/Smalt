@@ -269,37 +269,6 @@ class JpegLosslessTest {
     @Nested
     @DisplayName("unsupported and invalid")
     class Rejected {
-        @Test
-        @DisplayName("subsampled components whose restart interval splits a row of units are unsupported")
-        void subsampled() {
-            var luma = LosslessJpegTest.noise(16 * 8, 8, 1);
-            var chroma = LosslessJpegTest.noise(8 * 4, 8, 2);
-            var jpeg = Lj92Encoder.encodeSampled(new int[][]{luma, chroma, chroma}, 16, 8,
-                    new int[][]{{2, 2}, {1, 1}, {1, 1}}, 8, 1, 0, 0);
-            var dri = new byte[]{(byte) 0xFF, (byte) 0xDD, 0, 4, 0, 3};
-            var sos = indexOf(jpeg, 0xDA);
-            var out = new ByteArrayOutputStream();
-            out.write(jpeg, 0, sos);
-            out.writeBytes(dri);
-            out.write(jpeg, sos, jpeg.length - sos);
-            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(out.toByteArray(), WIDE));
-            assertEquals("jpeg lossless", exception.format());
-        }
-
-        @Test
-        @DisplayName("a scan of fewer components than the frame is unsupported")
-        void nonInterleaved() {
-            var samples = LosslessJpegTest.noise(9 * 5 * 3, 8, 3);
-            var jpeg = Lj92Encoder.encode(samples, 9, 5, 3, 8, 1, 0, 0);
-            var sos = indexOf(jpeg, 0xDA);
-            var out = new ByteArrayOutputStream();
-            out.write(jpeg, 0, sos);
-            out.writeBytes(new byte[]{(byte) 0xFF, (byte) 0xDA, 0, 8, 1, 1, 0});
-            out.write(jpeg, sos + 11, jpeg.length - sos - 11);
-            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(out.toByteArray(), WIDE));
-            assertEquals("jpeg lossless", exception.format());
-        }
-
         @ParameterizedTest(name = "precision {0}")
         @ValueSource(ints = {0, 1, 17})
         @DisplayName("a precision outside 2 to 16 is malformed")

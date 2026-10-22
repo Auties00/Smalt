@@ -98,6 +98,15 @@ public final class JpegFrame {
     }
 
     /**
+     * Returns whether the frame uses a lossless coding process.
+     *
+     * @return {@code true} for SOF3 and SOF11
+     */
+    public boolean lossless() {
+        return marker == 0xC3 || marker == 0xCB;
+    }
+
+    /**
      * Defines the frame height from a DNL segment.
      *
      * @param height the number of lines, positive

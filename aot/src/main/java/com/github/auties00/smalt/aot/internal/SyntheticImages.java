@@ -9,6 +9,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.TreeMap;
@@ -396,6 +397,100 @@ final class SyntheticImages {
     }
 
     /**
+     * Writes a lossless JPEG of components of sampling factors one in several scans, Huffman coded
+     * (SOF3) with the table of {@link #losslessJpeg} or arithmetic coded (SOF11) with the default
+     * conditioning bounds, without point transform or restart intervals; every scan uses table 0.
+     *
+     * @param samples the samples, row-major and component-interleaved, each below
+     * {@code 1 << precision}
+     * @param width the width in pixels
+     * @param height the height in pixels
+     * @param components the number of components, from 1 to 255, identified 1, 2, 3 and so on
+     * @param precision the sample precision, from 2 to 16
+     * @param predictor the predictor, from 1 to 7
+     * @param arithmetic whether the scans are arithmetic coded
+     * @param scans the components of each scan, at most four each, every component in one scan
+     * @return the JPEG file
+     */
+    static byte[] losslessScansJpeg(int[] samples, int width, int height, int components, int precision,
+                                    int predictor, boolean arithmetic, int[][] scans) {
+        var out = new ByteArrayOutputStream();
+        marker(out, 0xD8);
+        marker(out, arithmetic ? 0xCB : 0xC3);
+        u16be(out, 8 + 3 * components);
+        out.write(precision);
+        u16be(out, height);
+        u16be(out, width);
+        out.write(components);
+        for (var c = 0; c < components; c++) {
+            out.write(c + 1);
+            out.write(0x11);
+            out.write(0);
+        }
+        if (!arithmetic) {
+            marker(out, 0xC4);
+            u16be(out, 2 + 17 + 17);
+            out.write(0);
+            for (var length = 1; length <= 16; length++) {
+                out.write(length == 5 ? 17 : 0);
+            }
+            for (var category = 0; category <= 16; category++) {
+                out.write(category);
+            }
+        }
+        var stride = width * components;
+        var initial = 1 << (precision - 1);
+        var classes = new int[samples.length];
+        for (var scan : scans) {
+            marker(out, 0xDA);
+            u16be(out, 6 + 2 * scan.length);
+            out.write(scan.length);
+            for (var c : scan) {
+                out.write(c + 1);
+                out.write(0);
+            }
+            out.write(predictor);
+            out.write(0);
+            out.write(0);
+            var bits = arithmetic ? null : new HuffmanBits(out);
+            var coder = arithmetic ? new ArithmeticBits(out) : null;
+            for (var row = 0; row < height; row++) {
+                for (var column = 0; column < width; column++) {
+                    for (var c : scan) {
+                        var index = row * stride + column * components + c;
+                        var difference = (samples[index] - prediction(samples, index, row == 0, column, components,
+                                stride, predictor, initial)) & 0xFFFF;
+                        if (difference >= 32768) {
+                            difference -= 65536;
+                        }
+                        if (arithmetic) {
+                            var left = column == 0 ? 0 : classes[index - components];
+                            var up = row == 0 ? 0 : classes[index - stride];
+                            classes[index] = coder.difference(20 * left + 4 * up, up >= 3 ? 129 : 100, difference);
+                        } else if (difference == -32768) {
+                            bits.write(16, 5);
+                        } else {
+                            var category = 32 - Integer.numberOfLeadingZeros(Math.abs(difference));
+                            bits.write(category, 5);
+                            if (category > 0) {
+                                bits.write(difference >= 0 ? difference : difference + (1 << category) - 1,
+                                        category);
+                            }
+                        }
+                    }
+                }
+            }
+            if (arithmetic) {
+                coder.finish();
+            } else {
+                bits.flush();
+            }
+        }
+        marker(out, 0xD9);
+        return out.toByteArray();
+    }
+
+    /**
      * Returns the prediction of a lossless JPEG sample: the initial value at the start of the image
      * or of a restart interval, the left neighbor on the first row of either, the upper neighbor at
      * the start of other rows, and the predictor's combination elsewhere.
@@ -687,6 +782,204 @@ final class SyntheticImages {
             }
             buffer = 0;
             count = 0;
+        }
+    }
+
+    /**
+     * Codes the differences of one arithmetic-coded lossless JPEG scan (T.81 annex D and H.1.2.3):
+     * the binary arithmetic coder over one statistics area of the lossless model, with the default
+     * conditioning bounds, writing the segment with the byte output and termination procedures of
+     * T.81 D.1.6 and D.1.8.
+     */
+    private static final class ArithmeticBits {
+        /**
+         * The probability estimation states of T.81 Table D.2 as {@code Qe}, the next state after
+         * an LPS, the next state after an MPS, and the MPS switch flag.
+         */
+        private static final int[] STATES = {
+                0x5a1d, 1, 1, 1, 0x2586, 14, 2, 0, 0x1114, 16, 3, 0, 0x080b, 18, 4, 0,
+                0x03d8, 20, 5, 0, 0x01da, 23, 6, 0, 0x00e5, 25, 7, 0, 0x006f, 28, 8, 0,
+                0x0036, 30, 9, 0, 0x001a, 33, 10, 0, 0x000d, 35, 11, 0, 0x0006, 9, 12, 0,
+                0x0003, 10, 13, 0, 0x0001, 12, 13, 0, 0x5a7f, 15, 15, 1, 0x3f25, 36, 16, 0,
+                0x2cf2, 38, 17, 0, 0x207c, 39, 18, 0, 0x17b9, 40, 19, 0, 0x1182, 42, 20, 0,
+                0x0cef, 43, 21, 0, 0x09a1, 45, 22, 0, 0x072f, 46, 23, 0, 0x055c, 48, 24, 0,
+                0x0406, 49, 25, 0, 0x0303, 51, 26, 0, 0x0240, 52, 27, 0, 0x01b1, 54, 28, 0,
+                0x0144, 56, 29, 0, 0x00f5, 57, 30, 0, 0x00b7, 59, 31, 0, 0x008a, 60, 32, 0,
+                0x0068, 62, 33, 0, 0x004e, 63, 34, 0, 0x003b, 32, 35, 0, 0x002c, 33, 9, 0,
+                0x5ae1, 37, 37, 1, 0x484c, 64, 38, 0, 0x3a0d, 65, 39, 0, 0x2ef1, 67, 40, 0,
+                0x261f, 68, 41, 0, 0x1f33, 69, 42, 0, 0x19a8, 70, 43, 0, 0x1518, 72, 44, 0,
+                0x1177, 73, 45, 0, 0x0e74, 74, 46, 0, 0x0bfb, 75, 47, 0, 0x09f8, 77, 48, 0,
+                0x0861, 78, 49, 0, 0x0706, 79, 50, 0, 0x05cd, 48, 51, 0, 0x04de, 50, 52, 0,
+                0x040f, 50, 53, 0, 0x0363, 51, 54, 0, 0x02d4, 52, 55, 0, 0x025c, 53, 56, 0,
+                0x01f8, 54, 57, 0, 0x01a4, 55, 58, 0, 0x0160, 56, 59, 0, 0x0125, 57, 60, 0,
+                0x00f6, 58, 61, 0, 0x00cb, 59, 62, 0, 0x00ab, 61, 63, 0, 0x008f, 61, 32, 0,
+                0x5b12, 65, 65, 1, 0x4d04, 80, 66, 0, 0x412c, 81, 67, 0, 0x37d8, 82, 68, 0,
+                0x2fe8, 83, 69, 0, 0x293c, 84, 70, 0, 0x2379, 86, 71, 0, 0x1edf, 87, 72, 0,
+                0x1aa9, 87, 73, 0, 0x174e, 72, 74, 0, 0x1424, 72, 75, 0, 0x119c, 74, 76, 0,
+                0x0f6b, 74, 77, 0, 0x0d51, 75, 78, 0, 0x0bb6, 77, 79, 0, 0x0a40, 77, 48, 0,
+                0x5832, 80, 81, 1, 0x4d1c, 88, 82, 0, 0x438e, 89, 83, 0, 0x3bdd, 90, 84, 0,
+                0x34ee, 91, 85, 0, 0x2eae, 92, 86, 0, 0x299a, 93, 87, 0, 0x2516, 86, 71, 0,
+                0x5570, 88, 89, 1, 0x4ca9, 95, 90, 0, 0x44d9, 96, 91, 0, 0x3e22, 97, 92, 0,
+                0x3824, 99, 93, 0, 0x32b4, 99, 94, 0, 0x2e17, 93, 86, 0, 0x56a8, 95, 96, 1,
+                0x4f46, 101, 97, 0, 0x47e5, 102, 98, 0, 0x41cf, 103, 99, 0, 0x3c3d, 104, 100, 0,
+                0x375e, 99, 93, 0, 0x5231, 105, 102, 0, 0x4c0f, 106, 103, 0, 0x4639, 107, 104, 0,
+                0x415e, 103, 99, 0, 0x5627, 105, 106, 1, 0x50e7, 108, 107, 0, 0x4b85, 109, 103, 0,
+                0x5597, 110, 109, 0, 0x504f, 111, 107, 0, 0x5a10, 110, 111, 1, 0x5522, 112, 109, 0,
+                0x59eb, 112, 111, 1, 0x5a1d, 113, 113, 0
+        };
+
+        private final ByteArrayOutputStream out;
+        private final byte[] stats = new byte[158];
+        private byte[] segment = new byte[1024];
+        private int length;
+        private long c;
+        private long a = 0x10000L;
+        private int ct = 11;
+        private int stacked;
+
+        private ArithmeticBits(ByteArrayOutputStream out) {
+            this.out = out;
+        }
+
+        /**
+         * Codes one difference and returns its conditioning class: 0 for zero, 1 and 2 for small
+         * positive and negative, 3 and 4 for large positive and negative.
+         *
+         * @param s0 the context of the zero decision, from the classes of the differences to the
+         * left and above
+         * @param x1 the context of the first magnitude decision
+         * @param difference the difference, from -32768 to 32767
+         * @return the class
+         */
+        private int difference(int s0, int x1, int difference) {
+            if (difference == 0) {
+                encode(s0, 0);
+                return 0;
+            }
+            encode(s0, 1);
+            var v = Math.abs(difference);
+            encode(s0 + 1, difference > 0 ? 0 : 1);
+            var st = s0 + (difference > 0 ? 2 : 3);
+            var m = 0;
+            v -= 1;
+            if (v != 0) {
+                encode(st, 1);
+                m = 1;
+                st = x1;
+                for (var rest = v >> 1; rest != 0; rest >>= 1) {
+                    encode(st, 1);
+                    m <<= 1;
+                    st++;
+                }
+            }
+            encode(st, 0);
+            var large = m > 1;
+            st += 14;
+            while ((m >>= 1) != 0) {
+                encode(st, (m & v) != 0 ? 1 : 0);
+            }
+            return (difference > 0 ? 1 : 2) + (large ? 2 : 0);
+        }
+
+        /**
+         * Codes one binary decision (T.81 D.1.4 to D.1.6).
+         *
+         * @param index the statistics bin
+         * @param value the decision, 0 or 1
+         */
+        private void encode(int index, int value) {
+            var sv = stats[index] & 0xFF;
+            var state = sv & 0x7F;
+            long qe = STATES[4 * state];
+            a -= qe;
+            if (value != (sv >> 7)) {
+                if (a >= qe) {
+                    c += a;
+                    a = qe;
+                }
+                stats[index] = (byte) ((sv & 0x80) ^ (STATES[4 * state + 1] | (STATES[4 * state + 3] << 7)));
+            } else {
+                if (a >= 0x8000L) {
+                    return;
+                }
+                if (a < qe) {
+                    c += a;
+                    a = qe;
+                }
+                stats[index] = (byte) ((sv & 0x80) ^ STATES[4 * state + 2]);
+            }
+            do {
+                a <<= 1;
+                c <<= 1;
+                if (--ct == 0) {
+                    byteOut();
+                    ct = 8;
+                }
+            } while (a < 0x8000L);
+        }
+
+        /**
+         * Removes one byte from the code register ({@code Byte_out}, T.81 Figure D.8): a carry is
+         * added to the last byte written, a {@code FF} byte is held back until no carry can reach it,
+         * and every {@code FF} written is followed by a stuffed zero.
+         */
+        private void byteOut() {
+            var t = (int) (c >>> 19);
+            if (t > 0xFF) {
+                if (length > 0) {
+                    segment[length - 1]++;
+                    if (segment[length - 1] == (byte) 0xFF) {
+                        put(0);
+                    }
+                }
+                for (; stacked > 0; stacked--) {
+                    put(0);
+                }
+                put(t & 0xFF);
+            } else if (t == 0xFF) {
+                stacked++;
+            } else {
+                for (; stacked > 0; stacked--) {
+                    put(0xFF);
+                    put(0);
+                }
+                put(t);
+            }
+            c &= 0x7FFFFL;
+        }
+
+        /**
+         * Appends one byte to the segment.
+         *
+         * @param value the byte
+         */
+        private void put(int value) {
+            if (length == segment.length) {
+                segment = Arrays.copyOf(segment, 2 * length);
+            }
+            segment[length++] = (byte) value;
+        }
+
+        /**
+         * Terminates the segment ({@code Flush}, T.81 Figure D.13) and writes it: the code value with
+         * the most trailing zero bits in the final interval, its two bytes, the {@code FF} bytes still
+         * held back, and no trailing zero byte that is not a stuffed one.
+         */
+        private void finish() {
+            var t = (c + a - 1) & 0xFFFF0000L;
+            c = t < c ? t + 0x8000L : t;
+            c <<= ct;
+            byteOut();
+            c <<= 8;
+            byteOut();
+            for (; stacked > 0; stacked--) {
+                put(0xFF);
+                put(0);
+            }
+            while (length > 0 && segment[length - 1] == 0 && (length < 2 || segment[length - 2] != (byte) 0xFF)) {
+                length--;
+            }
+            out.write(segment, 0, length);
         }
     }
 

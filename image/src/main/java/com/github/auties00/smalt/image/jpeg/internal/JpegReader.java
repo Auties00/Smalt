@@ -21,7 +21,7 @@ import java.util.Objects;
  * ignored, and a missing EOI ends the image at the end of the input. A frame whose height is zero
  * gets it from the DNL segment that follows its first scan. Huffman table slots 0 and 1 start out
  * holding the example tables of T.81 Annex K, so streams that omit their DHT segments, as
- * Motion-JPEG frames do, decode. The scan of a lossless (SOF3) frame is decoded by
+ * Motion-JPEG frames do, decode. The scans of a lossless (SOF3, SOF11) frame are decoded by
  * {@link LosslessOutput} through {@link #openLossless()}, not by this reader's scan decoders.
  *
  * <p>Entropy-coded data never makes the decode fail: corrupt or truncated segments turn into gray
@@ -619,7 +619,8 @@ public final class JpegReader {
      * reader decodes.
      *
      * <p>The DCT processes (SOF0, SOF1, SOF2, SOF9, SOF10) take 8-bit and 12-bit precision; the
-     * lossless Huffman process (SOF3) takes any precision from 2 to 16.
+     * lossless processes (SOF3, SOF11) take any precision from 2 to 16. Every component count from 1 to
+     * 255 is accepted; {@link #colorSpace()} tells which have a color space.
      *
      * @throws MediaException.Malformed if the precision is not a valid precision of the process
      * @throws MediaException.Unsupported if it does not
@@ -635,21 +636,16 @@ public final class JpegReader {
                     default -> throw new MediaException.Malformed("invalid JPEG sample precision " + frame.precision);
                 }
             }
-            case 0xC3 -> {
+            case 0xC3, 0xCB -> {
                 if (frame.precision < 2 || frame.precision > 16) {
                     throw new MediaException.Malformed("invalid lossless JPEG sample precision " + frame.precision);
                 }
             }
-            case 0xC7, 0xCB, 0xCF -> throw new MediaException.Unsupported("jpeg lossless",
-                    "differential or arithmetic-coded lossless JPEG is not supported");
+            case 0xC7, 0xCF -> throw new MediaException.Unsupported("jpeg lossless",
+                    "differential lossless JPEG frames belong to hierarchical coding, which is not supported");
             case 0xC5, 0xC6, 0xCD, 0xCE -> throw new MediaException.Unsupported("jpeg hierarchical", "hierarchical JPEG is not supported");
             case 0xF7 -> throw new MediaException.Unsupported("jpeg-ls", "JPEG-LS streams are not supported");
             default -> throw new MediaException.Malformed("invalid SOF marker 0x" + Integer.toHexString(marker));
-        }
-        var count = frame.components.length;
-        if (count != 1 && count != 3 && count != 4) {
-            throw new MediaException.Unsupported("jpeg with " + count + " components",
-                    "JPEG frames with " + count + " components have no defined color space");
         }
     }
 
@@ -667,10 +663,10 @@ public final class JpegReader {
     }
 
     /**
-     * {@return whether the frame is coded with the lossless Huffman process (SOF3)}
+     * {@return whether the frame is coded with a lossless process (SOF3 Huffman, SOF11 arithmetic)}
      */
     public boolean lossless() {
-        return frame.marker == 0xC3;
+        return frame.marker == 0xC3 || frame.marker == 0xCB;
     }
 
     /**
@@ -690,7 +686,7 @@ public final class JpegReader {
             throw new IllegalStateException("the frame is not lossless");
         }
         prepareFrame();
-        return new LosslessJpeg(input, start, end - start, 4, frame.height);
+        return new LosslessJpeg(input, start, end - start, 4, frame.height, limits);
     }
 
     /**
@@ -699,10 +695,10 @@ public final class JpegReader {
      * <p>One component is gray. Three components are YCbCr when a JFIF segment is present; else an
      * Adobe transform of 0 means RGB and any other transform YCbCr; else component identifiers
      * {@code 'R'}, {@code 'G'}, {@code 'B'} mean RGB and anything else YCbCr. Four components are
-     * YCCK when an Adobe segment declares a non-zero transform and CMYK otherwise.
+     * YCCK when an Adobe segment declares a non-zero transform and CMYK otherwise. Any other count
+     * is {@link JpegColorSpace#UNKNOWN}.
      *
      * @return the color space
-     * @throws MediaException.Unsupported if the frame has 2 or more than 4 components
      */
     public JpegColorSpace colorSpace() {
         var components = frame.components;
@@ -721,8 +717,7 @@ public final class JpegReader {
                 yield JpegColorSpace.YCBCR;
             }
             case 4 -> adobeTransform > 0 ? JpegColorSpace.YCCK : JpegColorSpace.CMYK;
-            default -> throw new MediaException.Unsupported("jpeg with " + components.length + " components",
-                    "JPEG frames with " + components.length + " components have no defined color space");
+            default -> JpegColorSpace.UNKNOWN;
         };
     }
 
@@ -934,6 +929,7 @@ public final class JpegReader {
      */
     private void prepareFrame() {
         LimitChecks.checkPicture(limits, frame.width, frame.height);
+        LimitChecks.checkChannels(limits, frame.components.length);
         frame.computeLayout();
     }
 

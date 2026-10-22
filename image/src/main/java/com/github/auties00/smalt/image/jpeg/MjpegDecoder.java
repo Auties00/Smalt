@@ -30,7 +30,7 @@ import java.util.function.Consumer;
  * where every frame is an independent JPEG image or a pair of field images.
  *
  * <p>Each image is decoded like {@link JpegDecoder#decode}, at full size, and must be gray or
- * YCbCr, coded with a DCT process or with the lossless process (SOF3). Frames that omit their
+ * YCbCr, coded with a DCT process or with a lossless process (SOF3, SOF11). Frames that omit their
  * Huffman tables, as Motion-JPEG allows, use the tables of T.81 Annex K. A frame decodes to a
  * {@link YuvPicture} with {@link ColorInfo#JPEG} in its stored subsampling
  * ({@link ChromaFormat#MONOCHROME}, {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422} or
@@ -168,8 +168,9 @@ public final class MjpegDecoder implements VideoDecoder {
      * @param output receives the frame, a key frame carrying the packet's timestamps
      * @throws MediaException.Malformed if the frame is invalid or holds no decodable data
      * @throws MediaException.Unsupported if the frame uses a coding feature {@link JpegDecoder}
-     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, or is a
-     * format B frame that takes its quantization tables from the sample description
+     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, has two
+     * or more than four components ({@code "jpeg with N components"}), or is a format B frame that
+     * takes its quantization tables from the sample description
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     @Override
@@ -195,8 +196,9 @@ public final class MjpegDecoder implements VideoDecoder {
      * @throws IndexOutOfBoundsException if the range is invalid
      * @throws MediaException.Malformed if the frame is invalid or holds no decodable data
      * @throws MediaException.Unsupported if the frame uses a coding feature {@link JpegDecoder}
-     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, or is a
-     * format B frame that takes its quantization tables from the sample description
+     * lacks, is coded as RGB (other than through the reversible transform), CMYK or YCCK, has two
+     * or more than four components ({@code "jpeg with N components"}), or is a format B frame that
+     * takes its quantization tables from the sample description
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     public Picture decodeFrame(byte[] data, int offset, int length) {
@@ -288,6 +290,11 @@ public final class MjpegDecoder implements VideoDecoder {
             return LosslessOutput.decodeReversibleRgb(reader, limits);
         }
         var colorSpace = reader.colorSpace();
+        if (colorSpace == JpegColorSpace.UNKNOWN) {
+            var count = frame.components().size();
+            throw new MediaException.Unsupported("jpeg with " + count + " components",
+                    "a Motion-JPEG frame of " + count + " components has no planar Y'CbCr form");
+        }
         if (colorSpace != JpegColorSpace.GRAY && colorSpace != JpegColorSpace.YCBCR) {
             throw new MediaException.Unsupported("jpeg " + colorSpace.name().toLowerCase() + " color space",
                     "a Motion-JPEG frame coded as " + colorSpace + " has no planar Y'CbCr form");

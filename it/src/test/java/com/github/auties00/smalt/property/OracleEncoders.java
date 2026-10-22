@@ -5,6 +5,7 @@ import com.github.auties00.smalt.testkit.Skip;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -94,10 +95,31 @@ public final class OracleEncoders {
      * @return the JPEG file
      */
     public static byte[] cjpegLossless(byte[] netpbm, int precision, int predictor, String name) {
+        return cjpegLossless(netpbm, precision, predictor, name, null);
+    }
+
+    /**
+     * Encodes a PGM or PPM file to lossless JPEG with libjpeg-turbo's cjpeg, optionally in the scans of a scan
+     * script.
+     *
+     * @param netpbm the picture, a binary PGM or PPM file
+     * @param precision the sample precision in bits
+     * @param predictor the lossless predictor, from 1 to 7
+     * @param name a file name stem unique to the caller
+     * @param scans the scan script cjpeg's {@code -scans} reads, or {@code null} for one interleaved scan
+     * @return the JPEG file
+     */
+    public static byte[] cjpegLossless(byte[] netpbm, int precision, int predictor, String name, String scans) {
         var input = write(name + ".pnm", netpbm);
         var output = DIRECTORY.resolve(name + ".jpg");
-        Oracle.run(Oracle.Tool.CJPEG, Duration.ofMinutes(1), List.of("-precision", Integer.toString(precision),
-                "-lossless", Integer.toString(predictor), "-outfile", output.toString(), input.toString()));
+        var arguments = new ArrayList<>(List.of("-precision", Integer.toString(precision), "-lossless",
+                Integer.toString(predictor)));
+        if (scans != null) {
+            arguments.addAll(List.of("-scans", write(name + ".scans", scans.getBytes(StandardCharsets.US_ASCII))
+                    .toString()));
+        }
+        arguments.addAll(List.of("-outfile", output.toString(), input.toString()));
+        Oracle.run(Oracle.Tool.CJPEG, Duration.ofMinutes(1), arguments);
         return read(output);
     }
 

@@ -2,9 +2,13 @@ package com.github.auties00.smalt.image.jpeg;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
 import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -30,6 +34,7 @@ import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
+import java.util.Collections;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -38,14 +43,18 @@ import java.util.Optional;
  *
  * <p>Supported: baseline and extended sequential (SOF0, SOF1) and progressive (SOF2) Huffman
  * coding, and sequential and progressive arithmetic coding (SOF9, SOF10), all at 8-bit and 12-bit
- * precision with one, three or four components, any sampling factors from 1 to 4, arbitrary component
- * identifiers and scan order, 16-bit quantization tables, and streams without Huffman tables
- * (which use the tables of T.81 Annex K, as Motion-JPEG frames expect); lossless Huffman coding
- * (SOF3) at any precision from 2 to 16 with one, three or four components, any sampling factors
- * from 1 to 4, every predictor and point transform, in one interleaved scan; and, for every
- * process, restart intervals and frame heights defined by DNL. A lossless JFIF image of 9-bit
- * precision whose three or four components are not subsampled holds RGB samples (and alpha) through
- * the reversible transform ffmpeg's lossless JPEG encoder applies, and decodes to them:
+ * precision, any sampling factors from 1 to 4, arbitrary component identifiers and scan order,
+ * 16-bit quantization tables, and streams without Huffman tables (which use the tables of T.81
+ * Annex K, as Motion-JPEG frames expect); lossless Huffman and arithmetic coding (SOF3, SOF11) at
+ * any precision from 2 to 16, any sampling factors from 1 to 4, every predictor and point
+ * transform, in one scan or several, each interleaving up to four components or coding one, with
+ * tables and restart intervals that may change between scans; frames of 1 to 255 components; and,
+ * for every process, restart intervals and frame heights defined by DNL. A lossless restart
+ * interval that starts within a row of minimum coded units, which T.81 does not allow, restarts
+ * the prediction at its first unit, the rest of that row being the first line of the interval. A
+ * lossless JFIF image of 9-bit precision whose three or four components are not subsampled holds
+ * RGB samples (and alpha) through the reversible transform ffmpeg's lossless JPEG encoder applies,
+ * and decodes to them:
  * {@code G = Y - ((U + V - 512) >> 2)}, {@code B = U - 256 + G}, {@code R = V - 256 + G} for the
  * components {@code Y}, {@code U}, {@code V} of each sample. Corrupt or truncated entropy-coded
  * data does not fail the decode: damaged restart intervals of a DCT frame decode as gray and
@@ -54,15 +63,14 @@ import java.util.Optional;
  * rejected. Motion-JPEG frames are decoded by {@link MjpegDecoder}.
  *
  * <p>Unsupported, and rejected with {@link MediaException.Unsupported}: 16-bit precision of the
- * DCT processes ({@code "jpeg 16-bit precision"}), which T.81 does not define; lossless coding
- * other than SOF3 (SOF7, SOF11, SOF15), lossless frames coded in more than one scan, and
- * subsampled lossless frames whose restart interval does not span whole rows of minimum coded
- * units, which T.81 forbids ({@code "jpeg lossless"});
- * hierarchical coding ({@code "jpeg hierarchical"}, SOF5, SOF6, SOF13, SOF14, DHP, EXP); JPEG-LS
- * ({@code "jpeg-ls"}, SOF55, LSE); the reserved JPG extension marker ({@code "jpeg extensions"}); and
- * frames with two or more than four components ({@code "jpeg with N components"}). JPEG XT files
- * decode through their backward-compatible base layer; the extension boxes carried in
- * {@code APP11} segments are ignored.
+ * DCT processes ({@code "jpeg 16-bit precision"}), which T.81 does not define; the differential
+ * lossless frames of hierarchical coding (SOF7, SOF15, {@code "jpeg lossless"}); hierarchical
+ * coding ({@code "jpeg hierarchical"}, SOF5, SOF6, SOF13, SOF14, DHP, EXP); JPEG-LS
+ * ({@code "jpeg-ls"}, SOF55, LSE); and the reserved JPG extension marker
+ * ({@code "jpeg extensions"}). A frame of more components than
+ * {@link com.github.auties00.smalt.MediaLimits#maxChannels()} is rejected with
+ * {@link MediaException.LimitExceeded}. JPEG XT files decode through their backward-compatible
+ * base layer; the extension boxes carried in {@code APP11} segments are ignored.
  *
  * <p>Every decoded component plane of a DCT frame is bit-exact with libjpeg-turbo's accurate
  * integer IDCT ({@code djpeg -dct int}; its reduced-size IDCTs at 1/2, 1/4 and 1/8), at 8 and at
@@ -160,6 +168,25 @@ public final class JpegDecoder {
      * {@code round(v * 65535 / (2^P - 1))}. For an image with an Adobe segment, converting the channel picture
      * with {@link ImageOps#toRgba(Picture)} gives exactly the default output.
      *
+     * <p>With {@link ImageDecoderOptions#keepChannels()} set (and {@code convertToSrgb} not set), an image
+     * of two or more than four components, to which JPEG gives no color meaning, decodes to a channel
+     * picture: a {@link Channel8Picture}, or, with {@link ImageDecoderOptions#highBitDepth()} also set and
+     * a precision {@code P} above 8, a {@link Channel16Picture} with every sample rescaled as
+     * {@code round(v * 65535 / (2^P - 1))}. It has one channel per component in frame order, at the image
+     * size: subsampled components are upsampled as the chroma of a Y'CbCr image is, replicated for a
+     * lossless image. The channels take their meaning from the embedded ICC profile: a profile of as
+     * many channels as the image has makes them unnamed inks ({@link ColorModel#INK}); a gray, RGB or
+     * CMYK profile of fewer channels names the leading ones (CMYK samples inverted when an Adobe
+     * {@code APP14} segment is present) and leaves the others {@link ChannelType#UNSPECIFIED}; with any
+     * other profile or none, the first channel is gray and the others unspecified. The result carries
+     * the profile as its {@link DecodedImage#colorProfile()} when it describes the leading channels.
+     * Without the option, such an image decodes to the picture {@link ImageOps#toRgba(Picture)} makes of
+     * that channel picture ({@link ImageOps#toRgba16(Picture)} for a 16-bit one), the extra channels
+     * dropped, with the profile only when it is gray or RGB; an image of inks, and any of these images
+     * when {@link ImageDecoderOptions#convertToSrgb()} is set, is converted with
+     * {@link ImageOps#toSrgb(DecodedImage)}, and an image of inks whose profile does not convert to sRGB
+     * is rejected with {@link MediaException.Unsupported} ({@code "jpeg ink set"}).
+     *
      * <p>When the options ask for a minimum size, the image is decoded at the smallest of 1/1,
      * 1/2, 1/4 and 1/8 of its stored size that still covers it, with reduced-size inverse DCTs, so
      * the work saved is real; the result reports the full size through
@@ -201,6 +228,9 @@ public final class JpegDecoder {
                 reader.checkSupported();
                 var reversible = LosslessOutput.reversibleRgb(reader);
                 var colorSpace = reversible ? JpegColorSpace.RGB : reader.colorSpace();
+                if (colorSpace == JpegColorSpace.UNKNOWN) {
+                    return decodeChannels(reader, options);
+                }
                 Picture wide = null;
                 JpegPlanes planes = null;
                 if (!reader.lossless()) {
@@ -257,6 +287,130 @@ public final class JpegDecoder {
                         Optional.ofNullable(icc), Optional.ofNullable(exif)).withXmp(xmp);
                 return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             });
+        }
+    }
+
+    /**
+     * Decodes a frame of two or more than four components to a channel picture.
+     *
+     * @param reader the reader, its headers read
+     * @param options the decoder options
+     * @return the decoded image
+     */
+    private static DecodedImage decodeChannels(JpegReader reader, ImageDecoderOptions options) {
+        var frame = reader.frame();
+        var count = frame.components().size();
+        var limits = options.limits();
+        var icc = reader.iccProfile();
+        ColorProfile profile = null;
+        if (icc != null) {
+            try {
+                profile = ColorProfile.parse(icc);
+            } catch (MediaException.Malformed | MediaException.Unsupported exception) {
+                // a profile that does not parse leaves the channels without a color meaning
+            }
+        }
+        var layout = channelLayout(count, profile);
+        var colors = layout.colorChannels();
+        var wide = options.highBitDepth() && frame.precision() > 8;
+        Picture picture;
+        if (reader.lossless()) {
+            picture = wide ? LosslessOutput.decodeChannels(reader, layout, limits)
+                    : JpegOutput.toChannels(LosslessOutput.decodePlanes(reader, limits), layout, limits);
+        } else {
+            var scale = reader.chooseScale(options.minWidth(), options.minHeight());
+            picture = wide && frame.precision() == 12
+                    ? JpegOutput.toWideChannels(reader.decodeWidePlanes(scale), layout, limits)
+                    : JpegOutput.toChannels(reader.decodePlanes(scale), layout, limits);
+        }
+        if (layout.colorModel() == ColorModel.CMYK && reader.hasAdobeMarker()) {
+            invertInks(picture, count);
+        }
+        var exif = reader.exif();
+        var orientation = exif == null ? Orientation.NORMAL : ExifReader.orientation(exif);
+        var xmp = Optional.ofNullable(reader.xmp(limits));
+        var declared = profile != null && profile.channels() == colors ? Optional.of(profile)
+                : Optional.<ColorProfile>empty();
+        var image = new DecodedImage(picture, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, declared);
+        if (options.keepChannels() && !options.convertToSrgb()) {
+            return image;
+        }
+        var model = layout.colorModel();
+        if (options.convertToSrgb() || model == ColorModel.INK) {
+            try {
+                return ImageOps.toSrgb(image);
+            } catch (MediaException.Unsupported exception) {
+                if (model != ColorModel.INK) {
+                    throw exception;
+                }
+                throw new MediaException.Unsupported("jpeg ink set", "the embedded ICC profile of the JPEG image of "
+                        + count + " inks does not convert to sRGB");
+            }
+        }
+        var packed = picture instanceof Channel16Picture ? ImageOps.toRgba16(picture) : ImageOps.toRgba(picture);
+        var describes = model == ColorModel.RGB || model == ColorModel.GRAY ? declared : Optional.<ColorProfile>empty();
+        return new DecodedImage(packed, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, describes);
+    }
+
+    /**
+     * Returns the layout of a frame of two or more than four components: as many leading channels
+     * as the embedded profile has, of its color model (gray, RGB, CMYK, or unnamed inks for an
+     * N-color profile of every component), followed by unspecified extra channels; the first
+     * component gray when no profile fits.
+     *
+     * @param count the number of components
+     * @param profile the embedded profile, or {@code null}
+     * @return the layout
+     */
+    private static PixelLayout channelLayout(int count, ColorProfile profile) {
+        if (profile == null) {
+            return JpegOutput.rawLayout(count);
+        }
+        var colors = profile.channels();
+        PixelLayout layout;
+        if (colors == count && profile.colorSpace() == ProfileColorSpace.OTHER) {
+            return PixelLayout.ofInks(Collections.nCopies(count, ""));
+        } else if (colors < count && profile.colorSpace() == ProfileColorSpace.RGB) {
+            layout = PixelLayout.RGB;
+        } else if (colors < count && profile.colorSpace() == ProfileColorSpace.CMYK) {
+            layout = PixelLayout.CMYK;
+        } else {
+            return JpegOutput.rawLayout(count);
+        }
+        for (var c = layout.count(); c < count; c++) {
+            layout = layout.withChannel(Channel.of(ChannelType.UNSPECIFIED));
+        }
+        return layout;
+    }
+
+    /**
+     * Inverts the four leading ink channels of a channel picture, stored inverted as Adobe
+     * applications write them.
+     *
+     * @param picture the 8-bit or 16-bit channel picture
+     * @param count the number of channels
+     */
+    private static void invertInks(Picture picture, int count) {
+        switch (picture) {
+            case Channel8Picture channels -> {
+                var pixels = channels.pixels();
+                for (var i = 0; i < pixels.length; i += count) {
+                    for (var c = 0; c < 4; c++) {
+                        pixels[i + c] = (byte) ~pixels[i + c];
+                    }
+                }
+            }
+            case Channel16Picture channels -> {
+                var pixels = channels.pixels();
+                for (var i = 0; i < pixels.length; i += count) {
+                    for (var c = 0; c < 4; c++) {
+                        pixels[i + c] = (short) ~pixels[i + c];
+                    }
+                }
+            }
+            default -> throw new IllegalStateException("not a channel picture: " + picture);
         }
     }
 

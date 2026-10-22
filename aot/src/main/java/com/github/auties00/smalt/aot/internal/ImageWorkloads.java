@@ -138,6 +138,7 @@ final class ImageWorkloads {
                 file("jpeg-decode-reduced", () -> jpegDecodeReduced(2)),
                 file("jpeg-decode-full", () -> jpegDecodeFull(2)),
                 file("jpeg-lossless-decode", ImageWorkloads::jpegLosslessDecode),
+                file("jpeg-lossless-variants-decode", ImageWorkloads::jpegLosslessVariantsDecode),
                 file("jpeg-decode-12bit", ImageWorkloads::jpegDecode12),
                 file("jpeg-encode", ImageWorkloads::jpegEncode),
                 file("jpeg-transform", ImageWorkloads::jpegTransform),
@@ -262,6 +263,47 @@ final class ImageWorkloads {
                 Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), ImageDecoderOptions.defaults()).picture()
                         .height());
             }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes lossless JPEG files of 256x192 pixels beyond one interleaved
+     * Huffman scan of full-resolution components: arithmetic-coded 8-bit Y'CbCr in one scan and
+     * 12-bit Y'CbCr in a scan per component, Huffman-coded 16-bit Y'CbCr in a scan per component,
+     * Huffman-coded 4:2:0 Y'CbCr, and five components, each at its own depth and reduced to 8 bits,
+     * the five components also to a channel picture.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegLosslessVariantsDecode() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(256, 192, 1).getFirst(), false);
+        var together = new int[][]{{0, 1, 2}};
+        var apart = new int[][]{{0}, {1}, {2}};
+        var rgb = SyntheticImages.losslessSamples(picture, 3, 8);
+        var gray = SyntheticImages.losslessSamples(picture, 1, 8);
+        var five = new int[256 * 192 * 5];
+        for (var i = 0; i < 256 * 192; i++) {
+            for (var c = 0; c < 5; c++) {
+                five[i * 5 + c] = c < 3 ? rgb[i * 3 + c] : gray[i] ^ (c == 3 ? 0x55 : 0xAA);
+            }
+        }
+        var files = List.of(
+                SyntheticImages.losslessScansJpeg(rgb, 256, 192, 3, 8, 1, true, together),
+                SyntheticImages.losslessScansJpeg(SyntheticImages.losslessSamples(picture, 3, 12), 256, 192, 3, 12,
+                        4, true, apart),
+                SyntheticImages.losslessScansJpeg(SyntheticImages.losslessSamples(picture, 3, 16), 256, 192, 3, 16,
+                        7, false, apart),
+                SyntheticImages.subsampledLosslessJpeg(picture),
+                SyntheticImages.losslessScansJpeg(five, 256, 192, 5, 8, 6, false, new int[][]{{0, 1, 2, 3}, {4}}));
+        var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        var channels = ImageDecoderOptions.builder().keepChannels(true).build();
+        return TrainingWorkload.of("jpeg-lossless-variants-decode", () -> {
+            for (var file : files) {
+                Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), highBitDepth).picture().width());
+                Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), ImageDecoderOptions.defaults()).picture()
+                        .height());
+            }
+            Blackhole.consume(JpegDecoder.decode(MediaSource.of(files.getLast()), channels).picture().width());
         });
     }
 

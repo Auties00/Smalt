@@ -328,6 +328,19 @@ The decoders under `image/src/test/resources/com/github/auties00/smalt/image/int
   29 and 32, and smaller images coded with every option (`tools/testdata/jbig/make-vectors.py`), listed in
   `entities.tsv` with the SHA-256 of their source raster; `jbig.sha256` pins them.
 
+## Lossless JPEG vectors
+
+`LosslessVariantsTest` of `smalt-image` decodes the lossless streams of the ITU-T T.83 | ISO/IEC 10918-2
+compliance data (`itu-t83-data-files.zip` of `vectors.tsv`: O1 and O2 Huffman, P1 and P2 arithmetic, with
+subsampled interleaved and one-scan-per-component frames) against the reference samples of the same archive, and
+B2 with the tables of B1, a baseline frame of 255 components. The archive is (c) ITU and ISO/IEC 1994 and comes
+with a disclaimer and no license, so it is fetched into the conformance cache and never committed.
+`image/src/test/resources/com/github/auties00/smalt/image/jpeg/lossless/variants/` holds small vectors of the
+other variants (arithmetic coding, several scans, five components, a `cjpeg -lossless -scans` file of
+libjpeg-turbo 3.1.3), pinned in `variants.sha256`; the test class `LosslessVectorWriter` writes them, from the
+test encoder and the test DCT writer and with `cjpeg` on `PATH`, when run with
+`-Dsmalt.jpeg.writeLosslessVectors=<directory>` (`-Dtest=LosslessVectorWriter`), and the output is deterministic.
+
 ## AV1 super-resolution vectors
 
 `Av1SuperresTest` of `smalt-video` decodes short IVF streams coded by libaom's aomenc with super-resolution

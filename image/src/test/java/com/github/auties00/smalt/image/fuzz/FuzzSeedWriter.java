@@ -218,6 +218,14 @@ class FuzzSeedWriter {
         copy(ImageFuzzTest.class, "jpeg", "valid-lossless-rgb.jpg", VECTORS.resolve("jpeg/lossless/61x43-rgb-p8-psv1.jpg"));
         copy(ImageFuzzTest.class, "jpeg", "valid-restart-arithmetic.jpg",
                 VECTORS.resolve("jpeg/cjpeg/227x149-monochrome-arithmetic-rst3.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-lossless-arithmetic-420.jpg",
+                VECTORS.resolve("jpeg/lossless/variants/37x29-ycbcr420-p8-sof11-psv4-r19.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-lossless-multiscan-422.jpg",
+                VECTORS.resolve("jpeg/lossless/variants/37x29-ycbcr422-p12-3scans.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-lossless-five-components.jpg",
+                VECTORS.resolve("jpeg/lossless/variants/23x17-5ch-p8-sof11-2scans.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-five-components.jpg",
+                VECTORS.resolve("jpeg/lossless/variants/23x17-5ch-baseline.jpg"));
 
         copy(ImageFuzzTest.class, "png", "valid-rgba.png", ffmpeg("png", still, "-frames:v", "1", "-update", "1",
                 "-pix_fmt", "rgba"));
