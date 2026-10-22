@@ -51,7 +51,9 @@ public enum ImageFormat {
      * HEIF with an HEVC-coded primary image (HEIC), an ISO-BMFF file whose {@code ftyp} brands
      * include {@code heic}, {@code heix}, {@code heim}, {@code heis}, {@code hevc} or {@code hevx};
      * a file with only the generic HEIF brands ({@code mif1}, {@code mif2}, {@code msf1} or
-     * {@code miaf}) and no AVIF brand is taken as HEIC too, the codec HEIF files use most.
+     * {@code miaf}) and no AVIF brand is taken as HEIC too, the codec HEIF files use most, and so is
+     * HEIF with AVC, JPEG or JPEG 2000 images (brands {@code avci}, {@code avcs}, {@code jpeg},
+     * {@code jpgs}, {@code j2ki} and {@code j2is}), which the same decoder reads.
      */
     HEIC("image/heic"),
 
@@ -307,7 +309,8 @@ public enum ImageFormat {
                 case "avif", "avis" -> {
                     return AVIF;
                 }
-                case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "mif2", "msf1", "miaf" -> match = HEIC;
+                case "heic", "heix", "heim", "heis", "hevc", "hevx", "mif1", "mif2", "msf1", "miaf", "avci", "avcs", "jpeg",
+                     "jpgs", "j2ki", "j2is" -> match = HEIC;
                 default -> {
                 }
             }

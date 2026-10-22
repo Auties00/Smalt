@@ -14,12 +14,16 @@ import java.nio.file.Path;
 /**
  * Runs the H.264, HEVC, MPEG-4 Part 2 and H.263 video decoders and the AAC, AC-3, E-AC-3 and AMR audio decoders
  * ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
- * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}) and
- * smoke-tier vectors, comparing each with its golden dump under {@code src/test/resources/dumps}.
+ * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
+ * vectors and the HEIF fuzz seeds of AVC and uncompressed items, comparing each with its golden dump under
+ * {@code src/test/resources/dumps}.
  */
 @DisplayName("MPEG and Dolby decoder I/O behaviors")
 class MpegDecoderBehaviorTest {
     private static final Path SAMPLES = Path.of("..", "core", "src", "test", "resources", "samples");
+
+    private static final Path HEIF_SEEDS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
+            "mpeg", "fuzz", "MpegFuzzTestInputs", "heic");
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mp4/faststart.mp4", "mp4/fragmented.mp4", "mp4/hevc.mp4", "mp4/h264-422-10.mov",
@@ -48,9 +52,16 @@ class MpegDecoderBehaviorTest {
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"heic-pillow-tests-images-heif-L_8__29x100.heif",
             "heic-pillow-tests-images-heif-RGBA_10__29x100.heif", "heic-nokia-MIAF002.heic", "heic-nokia-C053.heic",
-            "heic-pillow-tests-images-heif_other-L_exif_xmp_iptc.heic"})
+            "heic-pillow-tests-images-heif_other-L_exif_xmp_iptc.heic", "heic-nokia-multilayer004.heic"})
     @DisplayName("HEIC smoke vectors: identical pictures under every source behavior and clean faults")
     void heic(String name) throws IOException {
         ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"valid-avc.heic", "valid-unci-rgb3.heic", "valid-unci-v210.heic", "valid-unci-zlib.heic"})
+    @DisplayName("HEIF items of other codecs (the HEIC fuzz seeds): identical pictures under every source behavior")
+    void heifItems(String name) throws IOException {
+        ImageDecoderAsserts.of("heif-items/" + name, Files.readAllBytes(HEIF_SEEDS.resolve(name))).run();
     }
 }

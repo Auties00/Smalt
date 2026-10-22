@@ -83,6 +83,9 @@ class ImageBombTest {
                 new Bomb("JPEG 2000 HTJ2K", ImageBombTest::highThroughput, ImageBombTest::jp2),
                 new Bomb("AVIF", () -> avif(16, 16), (file, width, height) -> avif(width, height), false),
                 new Bomb("HEIC", () -> heic(16, 16), (file, width, height) -> heic(width, height), false),
+                new Bomb("HEIF AVC", () -> heifAvc(16, 16), (file, width, height) -> heifAvc(width, height), false),
+                new Bomb("HEIF uncompressed", () -> heifUncompressed(16, 16, 16),
+                        (file, width, height) -> heifUncompressed(width, height, 16)),
                 new Bomb("JPEG XL", () -> jxl(16, 16), (file, width, height) -> jxl(width, height), false),
                 new Bomb("DNG", () -> dng(16, 16), (file, width, height) -> dng(width, height)));
         var arguments = new ArrayList<Arguments>();
@@ -117,6 +120,7 @@ class ImageBombTest {
                 new Large("JPEG 2000", () -> encodeFlat(ImageFormat.JP2, LARGE, ImageEncoderOptions.builder().build()),
                         LARGE),
                 new Large("AVIF", () -> encodeFlat(ImageFormat.AVIF, LARGE, ImageEncoderOptions.builder().build()), LARGE),
+                new Large("HEIF uncompressed", () -> heifUncompressed(LARGE, LARGE, LARGE), LARGE),
                 new Large("JPEG XL", ImageBombTest::cjxl, LARGE),
                 new Large("DNG", () -> dng(LARGE, LARGE), LARGE));
     }
@@ -189,6 +193,34 @@ class ImageBombTest {
                 }
             }
             return bomb.patch().apply(base, size[0], size[1]);
+        }
+    }
+
+    @Nested
+    @DisplayName("an uncompressed HEIF item whose compressed data inflates beyond the buffer limit")
+    class Inflated {
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"zlib", "defl"})
+        @DisplayName("is rejected while inflating, before the inflated data is held")
+        void decode(String type) {
+            var deflater = new java.util.zip.Deflater(9, type.equals("defl"));
+            deflater.setInput(new byte[64 << 20]);
+            deflater.finish();
+            var compressed = new ByteArrayOutputStream();
+            var chunk = new byte[1 << 16];
+            while (!deflater.finished()) {
+                compressed.write(chunk, 0, deflater.deflate(chunk));
+            }
+            deflater.end();
+            var builder = new HeifBuilder().brands("mif1", "mif1", "miaf");
+            builder.primary(builder.item("unci", compressed.toByteArray(), HeifBuilder.plain(HeifBuilder.ispe(16, 16)),
+                    HeifBuilder.essential(HeifBuilder.fullBox("uncC", 1, 0, new byte[]{'r', 'g', 'b', '3'})),
+                    HeifBuilder.essential(HeifBuilder.fullBox("cmpC", 0, 0,
+                            new byte[]{(byte) type.charAt(0), (byte) type.charAt(1), (byte) type.charAt(2),
+                                    (byte) type.charAt(3), 0}))));
+            var data = builder.build();
+            assertRejected("inflated " + type, MediaException.LimitExceeded.class,
+                    () -> Images.decode(MediaSource.of(data), ImageDecoderOptions.builder().limits(LIMITS).build()));
         }
     }
 
@@ -512,6 +544,27 @@ class ImageBombTest {
         var item = builder.item("hvc1", stream.packet(),
                 HeifBuilder.essential(HeifBuilder.box("hvcC", stream.config())),
                 HeifBuilder.plain(HeifBuilder.ispe(width, height)));
+        return builder.primary(item).build();
+    }
+
+    static byte[] heifAvc(int width, int height) {
+        var stream = ForgedHeaders.h264(width, height);
+        var builder = new HeifBuilder().brands("avci", "mif1", "avci");
+        var item = builder.item("avc1", stream.packet(),
+                HeifBuilder.essential(HeifBuilder.box("avcC", stream.config())),
+                HeifBuilder.plain(HeifBuilder.ispe(width, height)));
+        return builder.primary(item).build();
+    }
+
+    /** An uncompressed RGB item ({@code rgb3}) declaring a size, with the data of {@code rows} rows. */
+    static byte[] heifUncompressed(int width, int height, int rows) {
+        var data = new byte[width * rows * 3];
+        for (var i = 0; i < data.length; i++) {
+            data[i] = (byte) (i * 7);
+        }
+        var builder = new HeifBuilder().brands("mif1", "mif1", "miaf");
+        var item = builder.item("unci", data, HeifBuilder.plain(HeifBuilder.ispe(width, height)),
+                HeifBuilder.essential(HeifBuilder.fullBox("uncC", 1, 0, new byte[]{'r', 'g', 'b', '3'})));
         return builder.primary(item).build();
     }
 

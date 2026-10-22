@@ -466,6 +466,46 @@ class ProbeTest {
         assertTrue(composed.hasAlpha());
     }
 
+    @Test
+    @DisplayName("describes HEIF files of AVC, JPEG 2000 and uncompressed items")
+    void heifItems() {
+        var unci = new HeifBuilder().brands("mif1", "mif1", "miaf");
+        unci.primary(unci.item("unci", new byte[16 * 8 * 4], HeifBuilder.plain(HeifBuilder.ispe(16, 8)),
+                HeifBuilder.essential(HeifBuilder.fullBox("uncC", 1, 0, new byte[]{'r', 'g', 'b', 'a'}))));
+        var rgba = Media.probe(MediaSource.of(unci.build())).image().orElseThrow();
+        assertEquals(16, rgba.width());
+        assertEquals(8, rgba.bitDepth().orElse(-1));
+        assertTrue(rgba.hasAlpha());
+        // an 8-bit alpha component before a 12-bit luma component: the depth is that of the luma
+        var layout = new byte[]{0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 7, 0, 0, 0, 1, 11, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        var deep = new HeifBuilder().brands("mif1", "mif1", "miaf");
+        deep.primary(deep.item("unci", new byte[16 * 8 * 3], HeifBuilder.plain(HeifBuilder.ispe(16, 8)),
+                HeifBuilder.essential(HeifBuilder.fullBox("uncC", 0, 0, layout)),
+                HeifBuilder.essential(HeifBuilder.box("cmpd", new byte[]{0, 0, 0, 2, 0, 7, 0, 1}))));
+        var twelveBit = Media.probe(MediaSource.of(deep.build())).image().orElseThrow();
+        assertEquals(12, twelveBit.bitDepth().orElse(-1));
+        assertTrue(twelveBit.hasAlpha());
+        var avc = new HeifBuilder().brands("avci", "avci", "mif1");
+        avc.primary(avc.item("avc1", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(40, 30)),
+                HeifBuilder.plain(HeifBuilder.pixi(10, 10, 10))));
+        var avcData = avc.build();
+        assertEquals(ImageFormat.HEIC, ImageFormat.detect(avcData, avcData.length).orElseThrow());
+        var tenBit = Media.probe(MediaSource.of(avcData)).image().orElseThrow();
+        assertEquals(40, tenBit.width());
+        assertEquals(10, tenBit.bitDepth().orElse(-1));
+        assertFalse(tenBit.hasAlpha());
+        var cdef = HeifBuilder.box("cdef", new byte[]{0, 2, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0});
+        var j2k = new HeifBuilder().brands("j2ki", "j2ki", "mif1");
+        j2k.primary(j2k.item("j2k1", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(20, 10)),
+                HeifBuilder.essential(HeifBuilder.box("j2kH", cdef))));
+        var j2kData = j2k.build();
+        assertEquals(ImageFormat.HEIC, ImageFormat.detect(j2kData, j2kData.length).orElseThrow());
+        assertTrue(Media.probe(MediaSource.of(j2kData)).image().orElseThrow().hasAlpha());
+        var jpeg = new HeifBuilder().brands("jpeg", "jpeg", "mif1").build();
+        assertEquals(ImageFormat.HEIC, ImageFormat.detect(jpeg, jpeg.length).orElseThrow());
+    }
+
     @Nested
     @DisplayName("an image orientation")
     class Orientations {

@@ -21,10 +21,10 @@ import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifStill;
 import com.github.auties00.smalt.internal.heif.HeifStills;
+import com.github.auties00.smalt.internal.heif.HeifUncompressed;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
-import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -40,8 +40,10 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>The reconstructed image of an item (ISO/IEC 23008-12 clause 6.6) is:
  * <ul>
- *   <li>for an HEVC-coded item ({@code hvc1}), its decoded picture, after the items it is
- *       predicted from ({@code pred} references) are decoded;</li>
+ *   <li>for a coded item, its decoded picture: an HEVC-coded ({@code hvc1}) or AVC-coded
+ *       ({@code avc1}) item after the items it is predicted from ({@code pred} references) are
+ *       decoded, a JPEG ({@code jpeg}), JPEG 2000 ({@code j2k1}) or uncompressed ({@code unci})
+ *       item as {@link PictureItems} decodes it, with the alpha plane it carries itself;</li>
  *   <li>for an image grid ({@code grid}), its input images placed edge to edge and cropped to the
  *       output size. Inputs that are coded items without transformative properties, the grids of
  *       cameras, decode in parallel on the module's shared helper threads, each written straight
@@ -73,8 +75,13 @@ public final class StillDecoder {
      * The property types this decoder implements; an item with another essential property is not
      * decodable.
      */
-    static final Set<String> SUPPORTED_PROPERTIES = Set.of("ispe", "pixi", "hvcC", "colr", "pasp", "clap", "irot",
-            "imir", "auxC", "clli", "mdcv", "rref");
+    static final Set<String> SUPPORTED_PROPERTIES = Set.of("ispe", "pixi", "hvcC", "avcC", "jpgC", "j2kH", "uncC",
+            "cmpd", "cmpC", "cloc", "colr", "pasp", "clap", "irot", "imir", "auxC", "clli", "mdcv", "rref");
+
+    /**
+     * The types of the coded items this decoder decodes.
+     */
+    static final Set<String> CODED_TYPES = Set.of("hvc1", "avc1", "jpeg", "j2k1", "unci");
 
     /**
      * The item reference types this decoder follows when an {@code rref} property requires them.
@@ -117,9 +124,9 @@ public final class StillDecoder {
     private final AtomicLong budget;
 
     /**
-     * The decoder of the coded items reconstructed on the calling thread.
+     * The decoders of the coded items reconstructed on the calling thread.
      */
-    private final ItemDecoder decoder;
+    private final Decoders decoders;
 
     /**
      * The items being reconstructed, to reject a derivation that references itself.
@@ -138,7 +145,7 @@ public final class StillDecoder {
         this.file = file;
         this.limits = limits;
         this.budget = new AtomicLong(limits.maxPixels() > Long.MAX_VALUE / 4 ? Long.MAX_VALUE : limits.maxPixels() * 4);
-        this.decoder = new ItemDecoder(limits, ParallelBands.THREADS);
+        this.decoders = new Decoders(ParallelBands.THREADS);
     }
 
     /**
@@ -192,19 +199,56 @@ public final class StillDecoder {
     }
 
     /**
-     * Rejects an item this decoder cannot reconstruct: an item of another type than a coded HEVC
-     * item, a grid, an identity derivation or an overlay, or one with an essential property this
-     * decoder does not implement.
+     * Rejects an item this decoder cannot reconstruct: an item of another type than a coded item
+     * of {@link #CODED_TYPES}, a grid, an identity derivation or an overlay, or one with an
+     * essential property this decoder does not implement.
      *
      * @param item the item to check
      * @throws MediaException.Unsupported if the item cannot be reconstructed
      */
     static void requireDecodable(HeifItem item) {
-        switch (item.type()) {
-            case "hvc1", "grid", "iden", "iovl" -> requireSupported(item);
-            default -> throw new MediaException.Unsupported(FORMAT, "item " + item.id() + " is coded as '"
-                    + item.type() + "', not HEVC");
+        if (!CODED_TYPES.contains(item.type()) && !isDerived(item)) {
+            throw new MediaException.Unsupported(FORMAT, "item " + item.id() + " is coded as '" + item.type() + "'");
         }
+        requireSupported(item);
+    }
+
+    /**
+     * {@return whether an item is a derived image this decoder reconstructs: a grid, an identity
+     * derivation or an overlay}
+     *
+     * @param item the item to test
+     */
+    private static boolean isDerived(HeifItem item) {
+        return switch (item.type()) {
+            case "grid", "iden", "iovl" -> true;
+            default -> false;
+        };
+    }
+
+    /**
+     * {@return whether an item is coded with a video codec, as NAL units}
+     *
+     * @param item the coded item to test
+     */
+    private static boolean isNal(HeifItem item) {
+        return item.type().equals("hvc1") || item.type().equals("avc1");
+    }
+
+    /**
+     * Returns whether a coded item carries alpha of its own: an uncompressed item with an alpha
+     * component, or a JPEG 2000 item whose channel definition declares an opacity channel.
+     *
+     * @param item the item to test, of any type
+     * @return {@code true} for such an item
+     */
+    static boolean hasOwnAlpha(HeifItem item) {
+        if (HeifUncompressed.hasAlpha(item)) {
+            return true;
+        }
+        var header = item.property(HeifProperty.Jpeg2000Header.class);
+        return item.type().equals("j2k1") && header != null
+                && header.opacity() != HeifProperty.Jpeg2000Header.NO_OPACITY;
     }
 
     /**
@@ -217,17 +261,12 @@ public final class StillDecoder {
      */
     static HeifItem alphaOf(HeifFile file, HeifItem item) {
         for (var candidate : HeifStills.alphaCandidates(file, item, SUPPORTED_PROPERTIES)) {
-            switch (candidate.type()) {
-                case "hvc1", "grid" -> {
-                    if (candidate.isLocated() && candidate.size() > 0) {
-                        return candidate;
-                    }
-                }
-                case "iden" -> {
-                    return candidate;
-                }
-                default -> {
-                }
+            if (candidate.type().equals("iden")) {
+                return candidate;
+            }
+            if ((candidate.type().equals("grid") || CODED_TYPES.contains(candidate.type())) && candidate.isLocated()
+                    && candidate.size() > 0) {
+                return candidate;
             }
         }
         return null;
@@ -246,14 +285,15 @@ public final class StillDecoder {
     }
 
     /**
-     * Returns whether an item is a coded HEVC item with data and without transformative
-     * properties, which a grid can decode straight into its canvas.
+     * Returns whether an item is a coded item with data and without transformative properties,
+     * which a grid can decode straight into its canvas.
      *
      * @param item the item, or {@code null}
      * @return {@code true} for such an item
      */
     private static boolean isPlainCoded(HeifItem item) {
-        return item != null && item.type().equals("hvc1") && item.isLocated() && item.size() > 0 && !transforms(item);
+        return item != null && CODED_TYPES.contains(item.type()) && item.isLocated() && item.size() > 0
+                && !transforms(item);
     }
 
     /**
@@ -272,14 +312,12 @@ public final class StillDecoder {
             throw new MediaException.Malformed("heic: item " + item.id() + " is derived from itself");
         }
         try {
-            requireSupported(item);
+            requireDecodable(item);
             return switch (item.type()) {
-                case "hvc1" -> coded(item, wide, depth);
                 case "grid" -> grid(item, wide, depth);
                 case "iden" -> identity(item, wide, depth);
                 case "iovl" -> overlay(item, wide, depth);
-                default -> throw new MediaException.Unsupported(FORMAT, "item " + item.id() + " is coded as '"
-                        + item.type() + "', not HEVC");
+                default -> coded(item, wide, depth);
             };
         } finally {
             inProgress.remove(item.id());
@@ -314,43 +352,112 @@ public final class StillDecoder {
      */
     private Picture coded(HeifItem item, boolean wide, int depth) {
         var alpha = alphaOf(file, item);
-        var frame = decodeCoded(decoder, item);
-        var canvas = HevcTile.canvas(limits, frame, wide, alpha != null);
-        var color = Colors.override(Colors.of(frame), item);
-        canvas.writeColor(HevcTile.of(frame), 0, 0, canvas.width(), canvas.height(), true);
+        var frame = decodeCoded(decoders, item);
+        var own = frame.alpha();
+        var canvas = frame.canvas(limits, frame.width(), frame.height(), wide, alpha != null || own != null);
+        var color = Colors.of(frame, item);
+        canvas.writeColor(frame, 0, 0, canvas.width(), canvas.height(), true);
+        if (own != null) {
+            canvas.writeAlpha(own, 0, 0, canvas.width(), canvas.height(), false);
+        }
+        var premultiplied = alpha == null ? frame.premultiplied() : item.references("prem", alpha.id());
         if (alpha != null) {
             attachAlpha(canvas, alpha, depth);
         }
         var picture = canvas.toPicture(color);
-        return alpha != null && item.references("prem", alpha.id()) ? HeifPictures.unpremultiply(picture) : picture;
+        return premultiplied ? HeifPictures.unpremultiply(picture) : picture;
     }
 
     /**
-     * Decodes a coded item after the items it is predicted from.
+     * Decodes a coded item, after the items it is predicted from when it is coded with a video
+     * codec.
      *
-     * @param decoder the decoder to use
+     * @param decoders the decoders to use
      * @param item the coded item
-     * @return the decoded picture, valid until the next call on {@code decoder}
+     * @return the decoded picture, valid until the next call on {@code decoders}
      */
-    private HevcFrame decodeCoded(ItemDecoder decoder, HeifItem item) {
+    private CodedFrame decodeCoded(Decoders decoders, HeifItem item) {
+        if (!isNal(item)) {
+            var frame = PictureItems.decode(source, file, item, limits);
+            charge((long) frame.width() * frame.height());
+            return frame;
+        }
+        var avc = item.type().equals("avc1");
         var chain = new ArrayList<HeifItem>();
         collectChain(item, chain, new HashSet<>(), 0);
         var configurations = new ArrayList<byte[]>(chain.size());
         var payloads = new ArrayList<byte[]>(chain.size());
         for (var coded : chain) {
-            var config = coded.property(HeifProperty.HevcConfiguration.class);
-            if (config == null) {
-                throw new MediaException.Malformed("heic: item " + coded.id() + " has no hvcC property");
+            byte[] record;
+            if (avc) {
+                var config = coded.property(HeifProperty.AvcConfiguration.class);
+                if (config == null) {
+                    throw new MediaException.Malformed("heic: item " + coded.id() + " has no avcC property");
+                }
+                record = config.record();
+            } else {
+                var config = coded.property(HeifProperty.HevcConfiguration.class);
+                if (config == null) {
+                    throw new MediaException.Malformed("heic: item " + coded.id() + " has no hvcC property");
+                }
+                record = config.record();
             }
             if (!coded.isLocated()) {
                 throw new MediaException.Malformed("heic: item " + coded.id() + " has no data");
             }
-            configurations.add(config.record());
+            configurations.add(record);
             payloads.add(file.readItem(source, coded, limits));
         }
-        var frame = decoder.decodeItem(configurations, payloads);
-        charge((long) HevcTile.widthOf(frame) * HevcTile.heightOf(frame) * chain.size());
+        var frame = decoders.nal(avc).decodeItem(configurations, payloads);
+        charge((long) frame.width() * frame.height() * chain.size());
         return frame;
+    }
+
+    /**
+     * Holds the decoders of one thread, created when first needed.
+     */
+    private final class Decoders {
+        /**
+         * The most pictures a decoder decodes concurrently.
+         */
+        private final int threads;
+
+        /**
+         * The HEVC decoder, or {@code null}.
+         */
+        private ItemDecoder hevc;
+
+        /**
+         * The AVC decoder, or {@code null}.
+         */
+        private ItemDecoder avc;
+
+        /**
+         * Constructs the decoders of a thread.
+         *
+         * @param threads the most pictures a decoder decodes concurrently
+         */
+        private Decoders(int threads) {
+            this.threads = threads;
+        }
+
+        /**
+         * {@return the decoder of a video codec}
+         *
+         * @param isAvc whether the codec is AVC rather than HEVC
+         */
+        private ItemDecoder nal(boolean isAvc) {
+            if (isAvc) {
+                if (avc == null) {
+                    avc = ItemDecoder.of(true, limits, threads);
+                }
+                return avc;
+            }
+            if (hevc == null) {
+                hevc = ItemDecoder.of(false, limits, threads);
+            }
+            return hevc;
+        }
     }
 
     /**
@@ -361,7 +468,7 @@ public final class StillDecoder {
      * @param visited the items already listed or being listed
      * @param depth the length of the prediction chain so far
      * @throws MediaException.Malformed if the chain is too deep, cyclic or names an item that is
-     * not coded HEVC
+     * not coded with the codec of {@code item}
      */
     private void collectChain(HeifItem item, List<HeifItem> chain, Set<Integer> visited, int depth) {
         if (depth > MAX_DEPTH) {
@@ -373,9 +480,9 @@ public final class StillDecoder {
         }
         for (var id : item.references("pred")) {
             var reference = file.item(id);
-            if (reference == null || !reference.type().equals("hvc1")) {
+            if (reference == null || !reference.type().equals(item.type())) {
                 throw new MediaException.Malformed("heic: item " + item.id() + " is predicted from item " + id
-                        + ", which is not a coded HEVC item");
+                        + ", which is not coded as '" + item.type() + "'");
             }
             if (!chain.contains(reference)) {
                 collectChain(reference, chain, visited, depth + 1);
@@ -406,13 +513,13 @@ public final class StillDecoder {
      */
     private void attachAlpha(HeifCanvas canvas, HeifItem alpha, int depth) {
         if (isPlainCoded(alpha) && alpha.references("pred").length == 0) {
-            var frame = decodeCoded(decoder, alpha);
-            var limited = Colors.limitedAlpha(frame, alpha.property(HeifProperty.ColorNclx.class));
-            if (HevcTile.widthOf(frame) == canvas.width() && HevcTile.heightOf(frame) == canvas.height()) {
-                canvas.writeAlpha(HevcTile.of(frame), 0, 0, canvas.width(), canvas.height(), limited);
+            var frame = decodeCoded(decoders, alpha);
+            var limited = frame.limitedAlpha(alpha.property(HeifProperty.ColorNclx.class));
+            if (frame.width() == canvas.width() && frame.height() == canvas.height()) {
+                canvas.writeAlpha(frame, 0, 0, canvas.width(), canvas.height(), limited);
             } else {
-                canvas.writeAlpha(HeifPictures.resampleAlpha(HevcTile.lumaPicture(frame), canvas.width(),
-                        canvas.height()), limited);
+                canvas.writeAlpha(HeifPictures.resampleAlpha(frame.lumaPicture(), canvas.width(), canvas.height()),
+                        limited);
             }
             return;
         }
@@ -500,13 +607,18 @@ public final class StillDecoder {
             }
             tileAlphas = found;
         }
-        var hasAlpha = alpha != null || tileAlphas != null;
+        var ownAlpha = false;
+        for (var tile : tiles) {
+            ownAlpha |= hasOwnAlpha(tile);
+        }
+        var hasAlpha = alpha != null || tileAlphas != null || ownAlpha;
         var state = new GridState();
         var perTileAlpha = tileAlphas;
-        decodeTiles(tiles, (index, tileDecoder, frame) -> {
-            if (HevcTile.widthOf(frame) != tileWidth || HevcTile.heightOf(frame) != tileHeight) {
-                throw new MediaException.Malformed("heic: a grid tile decodes to " + HevcTile.widthOf(frame) + "x"
-                        + HevcTile.heightOf(frame) + ", not the " + tileWidth + "x" + tileHeight + " its grid declares");
+        var fillOpaque = ownAlpha && tileAlphas == null;
+        decodeTiles(tiles, (index, tileDecoders, frame) -> {
+            if (frame.width() != tileWidth || frame.height() != tileHeight) {
+                throw new MediaException.Malformed("heic: a grid tile decodes to " + frame.width() + "x"
+                        + frame.height() + ", not the " + tileWidth + "x" + tileHeight + " its grid declares");
             }
             var canvas = state.canvas(frame, width, height, wide, hasAlpha);
             var x = (index % grid.columns()) * tileWidth;
@@ -517,19 +629,25 @@ public final class StillDecoder {
             }
             var w = Math.min(tileWidth, width - x);
             var h = Math.min(tileHeight, height - y);
-            canvas.writeColor(HevcTile.of(frame), x, y, w, h, false);
+            canvas.writeColor(frame, x, y, w, h, false);
             if (index == 0) {
-                state.color = Colors.override(Colors.of(frame), tiles.getFirst());
+                state.color = Colors.of(frame, tiles.getFirst());
+            }
+            var own = frame.alpha();
+            if (own != null && perTileAlpha == null) {
+                canvas.writeAlpha(own, x, y, w, h, false);
+            } else if (fillOpaque) {
+                canvas.fillAlpha(x, y, w, h);
             }
             if (perTileAlpha != null) {
                 var tileAlpha = perTileAlpha.get(index);
-                var alphaFrame = decodeCoded(tileDecoder, tileAlpha);
-                var limited = Colors.limitedAlpha(alphaFrame, tileAlpha.property(HeifProperty.ColorNclx.class));
-                if (HevcTile.widthOf(alphaFrame) == tileWidth && HevcTile.heightOf(alphaFrame) == tileHeight) {
-                    canvas.writeAlpha(HevcTile.of(alphaFrame), x, y, w, h, limited);
+                var alphaFrame = decodeCoded(tileDecoders, tileAlpha);
+                var limited = alphaFrame.limitedAlpha(tileAlpha.property(HeifProperty.ColorNclx.class));
+                if (alphaFrame.width() == tileWidth && alphaFrame.height() == tileHeight) {
+                    canvas.writeAlpha(alphaFrame, x, y, w, h, limited);
                 } else {
-                    canvas.writeAlpha(HeifPictures.resampleAlpha(HevcTile.lumaPicture(alphaFrame), tileWidth,
-                            tileHeight), x, y, w, h, limited);
+                    canvas.writeAlpha(HeifPictures.resampleAlpha(alphaFrame.lumaPicture(), tileWidth, tileHeight), x,
+                            y, w, h, limited);
                 }
             }
         });
@@ -570,18 +688,18 @@ public final class StillDecoder {
          * @return the canvas
          * @throws MediaException.Malformed if the tile differs from the others in layout or depth
          */
-        private HeifCanvas canvas(HevcFrame frame, int width, int height, boolean wide, boolean hasAlpha) {
+        private HeifCanvas canvas(CodedFrame frame, int width, int height, boolean wide, boolean hasAlpha) {
             var current = canvas;
             if (current == null) {
                 synchronized (lock) {
                     current = canvas;
                     if (current == null) {
-                        current = HevcTile.canvas(limits, frame, width, height, wide, hasAlpha);
+                        current = frame.canvas(limits, width, height, wide, hasAlpha);
                         canvas = current;
                     }
                 }
             }
-            if (!HevcTile.fits(current, frame)) {
+            if (!frame.fits(current)) {
                 throw new MediaException.Malformed("heic: the tiles of a grid differ in chroma layout or bit depth");
             }
             return current;
@@ -597,10 +715,10 @@ public final class StillDecoder {
          * Copies a decoded tile into the canvas.
          *
          * @param index the tile index in row-major order
-         * @param decoder the decoder of the calling thread, free for further items
-         * @param frame the decoded tile, valid until the next call on {@code decoder}
+         * @param decoders the decoders of the calling thread, free for further items
+         * @param frame the decoded tile, valid until the next call on {@code decoders}
          */
-        void accept(int index, ItemDecoder decoder, HevcFrame frame);
+        void accept(int index, Decoders decoders, CodedFrame frame);
     }
 
     /**
@@ -616,10 +734,10 @@ public final class StillDecoder {
         var tasks = new ArrayList<Callable<Void>>(workers);
         for (var w = 0; w < workers; w++) {
             tasks.add(() -> {
-                var tileDecoder = new ItemDecoder(limits, 1);
+                var tileDecoders = new Decoders(1);
                 for (var index = next.getAndIncrement(); index < count; index = next.getAndIncrement()) {
-                    var frame = decodeCoded(tileDecoder, tiles.get(index));
-                    sink.accept(index, tileDecoder, frame);
+                    var frame = decodeCoded(tileDecoders, tiles.get(index));
+                    sink.accept(index, tileDecoders, frame);
                     ParallelBands.checkpoint();
                 }
                 return null;
@@ -740,7 +858,7 @@ public final class StillDecoder {
         }
         return switch (item.type()) {
             case "iovl" -> true;
-            case "hvc1" -> premultiplied(item);
+            case "hvc1", "avc1", "jpeg", "j2k1", "unci" -> premultiplied(item);
             case "iden" -> {
                 var ids = item.references("dimg");
                 yield ids.length == 1 && reconstructsPacked(file.item(ids[0]), depth + 1);
@@ -761,13 +879,19 @@ public final class StillDecoder {
     }
 
     /**
-     * {@return whether the color of an item is premultiplied by its alpha auxiliary image}
+     * {@return whether the color of an item is premultiplied by its alpha auxiliary image, or by
+     * the alpha it carries itself when it has no alpha auxiliary image}
      *
      * @param item the coded item or grid
      */
     private boolean premultiplied(HeifItem item) {
         var alpha = alphaOf(file, item);
-        return alpha != null && item.references("prem", alpha.id());
+        if (alpha != null) {
+            return item.references("prem", alpha.id());
+        }
+        var header = item.property(HeifProperty.Jpeg2000Header.class);
+        return item.type().equals("j2k1") && header != null
+                && header.opacity() == HeifProperty.Jpeg2000Header.PREMULTIPLIED_OPACITY;
     }
 
     /**

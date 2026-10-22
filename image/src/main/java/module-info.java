@@ -60,6 +60,9 @@ module com.github.auties00.smalt.image {
             com.github.auties00.smalt.internal.provider.image.PngCodecProvider,
             com.github.auties00.smalt.internal.provider.image.TiffCodecProvider,
             com.github.auties00.smalt.internal.provider.image.WebpCodecProvider;
+    // The JPEG 2000 items of HEIF files, for the HEIF decoders of the artifacts that do not depend on this one
+    provides com.github.auties00.smalt.internal.heif.HeifComponentCodec with
+            com.github.auties00.smalt.internal.provider.image.Jp2HeifComponentCodec;
     provides com.github.auties00.smalt.spi.VideoCodecProvider with
             com.github.auties00.smalt.internal.provider.image.MjpegCodecProvider,
             com.github.auties00.smalt.internal.provider.image.Vp8CodecProvider;

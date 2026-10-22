@@ -82,12 +82,12 @@ public final class HeifFile {
      * The brands whose files keep their images in a file-level {@code meta} box.
      */
     private static final Set<String> ITEM_BRANDS = Set.of("avif", "avio", "mif1", "mif2", "heic", "heix",
-            "heim", "heis", "hevc", "hevx", "miaf");
+            "heim", "heis", "hevc", "hevx", "miaf", "avci", "jpeg", "j2ki");
 
     /**
      * The brands whose files hold an image sequence in a {@code moov} box.
      */
-    private static final Set<String> SEQUENCE_BRANDS = Set.of("avis", "msf1", "hevs", "hevm");
+    private static final Set<String> SEQUENCE_BRANDS = Set.of("avis", "msf1", "hevs", "hevm", "avcs", "jpgs", "j2is");
 
     /**
      * The major brand.

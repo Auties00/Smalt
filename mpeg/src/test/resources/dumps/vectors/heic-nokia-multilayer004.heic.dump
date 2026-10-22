@@ -1,0 +1,13 @@
+# image dump of vectors/heic-nokia-multilayer004.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=1024, height=512, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 1024x512 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=47108e12 u=8adaff7c v=9702fec8
+  format=HEIC orientation=NORMAL source=1024x512
+  icc=none exif=none xmp=none
+  profile=none
+scaled 256x128
+picture 1024x512 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=47108e12 u=8adaff7c v=9702fec8
+  format=HEIC orientation=NORMAL source=1024x512
+  icc=none exif=none xmp=none
+  profile=none

@@ -1,0 +1,13 @@
+# image dump of heif-items/valid-unci-zlib.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=16, height=8, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 16x8 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=c266e207
+  format=HEIC orientation=NORMAL source=16x8
+  icc=none exif=none xmp=none
+  profile=none
+scaled 4x2
+picture 16x8 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=c266e207
+  format=HEIC orientation=NORMAL source=16x8
+  icc=none exif=none xmp=none
+  profile=none

@@ -30,8 +30,8 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
 /**
  * Writes the committed seeds of the mpeg fuzz targets (tools/fuzz/README.md): short streams encoded by ffmpeg and
  * converted to the packet format through Smalt's demuxers, raw elementary streams and H.264 parameter sets made by
- * ffmpeg (and from a separate-color-plane test stream), HEIC stills built with the test kit's
- * {@link HeifBuilder} around x265 pictures, and AAC LTP, ER AAC LTP and SSR streams written bit by bit. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
+ * ffmpeg (and from a separate-color-plane test stream), HEIF stills built with the test kit's
+ * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, and AAC LTP, ER AAC LTP and SSR streams written bit by bit. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
@@ -265,6 +265,87 @@ class FuzzSeedWriter {
         write(MpegFuzzTest.class, "heic", "valid-10bit.heic", still(ffmpeg("mp4", video(32, 32, 1), "-frames:v",
                 "1", "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le", "-x265-params",
                 "log-level=0")));
+        write(MpegFuzzTest.class, "heic", "valid-avc.heic", avcStill(ffmpeg("mp4", video(32, 32, 1), "-frames:v",
+                "1", "-c:v", "libx264", "-preset", "ultrafast", "-profile:v", "baseline")));
+        var random = new java.util.Random(7);
+        var rgb = new byte[8 * 8 * 3];
+        random.nextBytes(rgb);
+        write(MpegFuzzTest.class, "heic", "valid-unci-rgb3.heic", unci(rgb, 8, 8,
+                HeifBuilder.fullBox("uncC", 1, 0, new byte[]{'r', 'g', 'b', '3'})));
+        var v210 = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG,
+                java.time.Duration.ofMinutes(1), List.of("-v", "error", "-f", "lavfi", "-i",
+                        "testsrc2=size=48x4:rate=1", "-frames:v", "1", "-pix_fmt", "yuv422p10le", "-c:v", "v210", "-f",
+                        "rawvideo", "-"));
+        // multi-Y 4:2:2 (Cb Y Cr Y) of 10-bit values in reversed little-endian blocks of 4 bytes, rows of 128 bytes
+        write(MpegFuzzTest.class, "heic", "valid-unci-v210.heic", unci(v210, 48, 4,
+                uncC(new int[]{1, 0, 2, 0}, 10, 1, 5, 4, 0x30, 128), cmpd(1, 2, 3)));
+        var gray = new byte[16 * 8];
+        for (var i = 0; i < gray.length; i++) {
+            gray[i] = (byte) ((i % 16) * 7 + (i / 16) * 3);
+        }
+        var deflater = new java.util.zip.Deflater(9);
+        deflater.setInput(gray);
+        deflater.finish();
+        var compressed = new byte[1024];
+        var size = deflater.deflate(compressed);
+        deflater.end();
+        write(MpegFuzzTest.class, "heic", "valid-unci-zlib.heic", unci(Arrays.copyOf(compressed, size), 16, 8,
+                uncC(new int[]{0}, 8, 0, 0, 0, 0, 0), cmpd(0),
+                HeifBuilder.fullBox("cmpC", 0, 0, new byte[]{'z', 'l', 'i', 'b', 0})));
+    }
+
+    private static byte[] avcStill(Path mp4) {
+        try (var source = MediaSource.of(mp4); var demuxer = Containers.openDemuxer(source)) {
+            var track = (VideoTrack) demuxer.tracks().getFirst();
+            var packet = demuxer.read();
+            var builder = new HeifBuilder().brands("avci", "avci", "mif1", "miaf");
+            var id = builder.item("avc1", packet.data(),
+                    HeifBuilder.plain(HeifBuilder.ispe(track.width(), track.height())),
+                    HeifBuilder.essential(HeifBuilder.box("avcC", track.codecConfig().orElseThrow())));
+            return builder.primary(id).build();
+        }
+    }
+
+    private static byte[] unci(byte[] data, int width, int height, byte[]... properties) {
+        var builder = new HeifBuilder().brands("mif1", "mif1", "miaf");
+        var all = new HeifBuilder.Property[properties.length + 1];
+        all[0] = HeifBuilder.plain(HeifBuilder.ispe(width, height));
+        for (var i = 0; i < properties.length; i++) {
+            all[i + 1] = HeifBuilder.essential(properties[i]);
+        }
+        return builder.primary(builder.item("unci", data, all)).build();
+    }
+
+    private static byte[] uncC(int[] indexes, int depth, int sampling, int interleave, int blockSize, int flags,
+                               int rowAlign) {
+        var out = new ByteArrayOutputStream();
+        HeifBuilder.u32(out, 0);
+        HeifBuilder.u32(out, indexes.length);
+        for (var index : indexes) {
+            HeifBuilder.u16(out, index);
+            out.write(depth - 1);
+            out.write(0);
+            out.write(0);
+        }
+        out.write(sampling);
+        out.write(interleave);
+        out.write(blockSize);
+        out.write(flags);
+        HeifBuilder.u32(out, 0);
+        HeifBuilder.u32(out, rowAlign);
+        HeifBuilder.u32(out, 0);
+        HeifBuilder.u32(out, 0);
+        HeifBuilder.u32(out, 0);
+        return HeifBuilder.fullBox("uncC", 0, 0, out.toByteArray());
+    }
+
+    private static byte[] cmpd(int... types) {
+        var out = new ByteArrayOutputStream();
+        HeifBuilder.u32(out, types.length);
+        for (var type : types) {
+            HeifBuilder.u16(out, type);
+        }
+        return HeifBuilder.box("cmpd", out.toByteArray());
     }
 
     @Test

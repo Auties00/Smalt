@@ -24,7 +24,6 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
-import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
 
 import java.util.ArrayDeque;
 import java.util.function.Consumer;
@@ -35,8 +34,9 @@ import java.util.function.Supplier;
  * Plays the image sequence of a HEIC file ({@code msf1}): the color track, and the alpha track
  * that references it with {@code auxl} when there is one, decoded sample by sample.
  *
- * <p>The color track is the first track with an {@code hvc1} or {@code hev1} sample entry and
- * samples that is neither an auxiliary track nor a thumbnail track ({@code auxl} or {@code thmb}
+ * <p>The color track is the first track with an HEVC ({@code hvc1}, {@code hev1}) or AVC
+ * ({@code avc1}, {@code avc3}) sample entry and samples that is neither an auxiliary track nor a
+ * thumbnail track ({@code auxl} or {@code thmb}
  * reference); the alpha track is the first such track that references it with {@code auxl} and
  * whose {@code auxi} box, when present, names an alpha URN. The samples are read through
  * {@link Mp4Demuxer} and decoded in output order, so sequences with inter prediction and
@@ -62,9 +62,10 @@ public final class SequenceReader implements AnimationReader {
     // TODO: pair the color and alpha pictures by their index after a seek too, which needs the sample index of the
     //  packets the demuxer returns, so that an alpha track timed unlike its color track seeks as it reads
     /**
-     * Accepts the sample entries of HEVC tracks.
+     * Accepts the sample entries of HEVC and AVC tracks.
      */
-    private static final Predicate<String> HEVC = entry -> entry.equals("hvc1") || entry.equals("hev1");
+    private static final Predicate<String> CODED = entry -> entry.equals("hvc1") || entry.equals("hev1")
+            || entry.equals("avc1") || entry.equals("avc3");
 
     /**
      * The demuxer of the file.
@@ -214,7 +215,7 @@ public final class SequenceReader implements AnimationReader {
         /**
          * Receives the decoded pictures and calls {@link #add}.
          */
-        private Consumer<HevcFrame> sink;
+        private Consumer<CodedFrame> sink;
 
         /**
          * The configuration record of the track, or {@code null}.
@@ -238,7 +239,7 @@ public final class SequenceReader implements AnimationReader {
          * @param sink receives the decoded pictures and calls {@link #add}
          * @param configuration the configuration record of the track, or {@code null}
          */
-        private void start(Consumer<HevcFrame> sink, byte[] configuration) {
+        private void start(Consumer<CodedFrame> sink, byte[] configuration) {
             this.sink = sink;
             this.configuration = configuration;
             decoder.open(sink);
@@ -311,16 +312,14 @@ public final class SequenceReader implements AnimationReader {
      * @param limits the bounds of the frames and of the samples held back
      * @param highBitDepth whether the frames {@link #read()} returns keep a source depth above 8
      * bits, as {@link Rgba16Picture} pictures
-     * @throws MediaException.Malformed if the file has no HEVC color track or its tracks are
-     * corrupt
+     * @throws MediaException.Malformed if the file has no color track or its tracks are corrupt
+     * @throws MediaException.Unsupported if the color tracks of the file are coded with another
+     * codec than HEVC or AVC
      * @throws MediaException.LimitExceeded if the canvas or the sample count exceeds the limits
      */
     public SequenceReader(MediaSource source, HeifFile file, MediaLimits limits, boolean highBitDepth) {
         var movie = HeifMovie.parse(source, file, limits);
-        var colorInfo = colorTrack(movie);
-        if (colorInfo == null) {
-            throw new MediaException.Malformed("heic: the sequence has no HEVC color track");
-        }
+        var colorInfo = requireColorTrack(movie);
         var alphaInfo = alphaTrack(movie, colorInfo.id());
         this.info = colorInfo;
         this.limits = limits;
@@ -339,11 +338,11 @@ public final class SequenceReader implements AnimationReader {
             this.samples = new HeifSequence(demuxer, colorTrack.id(), alphaTrack == null ? -1 : alphaTrack.id(), limits,
                     "heic");
             this.alphaTrack = alphaTrack;
-            colorDecoder = new ItemDecoder(limits, ParallelBands.THREADS);
+            colorDecoder = ItemDecoder.of(colorTrack.codec() == Codec.H264, limits, ParallelBands.THREADS);
             this.color = new Lane<>(colorDecoder, samples::nextColor);
             color.start(this::acceptColor, colorTrack.codecConfig().orElse(null));
             if (alphaTrack != null) {
-                alphaDecoder = new ItemDecoder(limits, ParallelBands.THREADS);
+                alphaDecoder = ItemDecoder.of(alphaTrack.codec() == Codec.H264, limits, ParallelBands.THREADS);
                 this.alpha = new Lane<>(alphaDecoder, samples::nextAlpha);
                 alpha.start(this::acceptAlpha, alphaTrack.codecConfig().orElse(null));
             } else {
@@ -367,7 +366,31 @@ public final class SequenceReader implements AnimationReader {
      * @param movie the tracks of the file
      */
     static HeifMovie.Track colorTrack(HeifMovie movie) {
-        return HeifSequence.colorTrack(movie, HEVC, true);
+        return HeifSequence.colorTrack(movie, CODED, true);
+    }
+
+    /**
+     * Returns the color track of a sequence.
+     *
+     * @param movie the tracks of the file
+     * @return the track
+     * @throws MediaException.Malformed if the file has no picture or video track with samples
+     * that is not an auxiliary track
+     * @throws MediaException.Unsupported if such a track exists but is coded with another codec
+     * than HEVC or AVC
+     */
+    static HeifMovie.Track requireColorTrack(HeifMovie movie) {
+        var color = colorTrack(movie);
+        if (color != null) {
+            return color;
+        }
+        for (var track : movie.tracks()) {
+            if ((track.handler().equals("pict") || track.handler().equals("vide")) && track.sampleCount() > 0
+                    && !track.references().containsKey("auxl")) {
+                throw new MediaException.Unsupported("heic", "image sequences coded as '" + track.sampleEntry() + "'");
+            }
+        }
+        throw new MediaException.Malformed("heic: the sequence has no color track");
     }
 
     /**
@@ -377,7 +400,7 @@ public final class SequenceReader implements AnimationReader {
      * @param colorId the color track identifier
      */
     static HeifMovie.Track alphaTrack(HeifMovie movie, int colorId) {
-        return HeifSequence.alphaTrack(movie, colorId, HEVC);
+        return HeifSequence.alphaTrack(movie, colorId, CODED);
     }
 
     /**
@@ -385,15 +408,16 @@ public final class SequenceReader implements AnimationReader {
      *
      * @param id the track identifier
      * @return the track
-     * @throws MediaException.Malformed if the demuxer has no such HEVC track
+     * @throws MediaException.Malformed if the demuxer has no such HEVC or AVC track
      */
     private VideoTrack videoTrack(int id) {
         for (var track : demuxer.tracks()) {
-            if (track.id() == id && track instanceof VideoTrack video && video.codec() == Codec.HEVC) {
+            if (track.id() == id && track instanceof VideoTrack video
+                    && (video.codec() == Codec.HEVC || video.codec() == Codec.H264)) {
                 return video;
             }
         }
-        throw new MediaException.Malformed("heic: track " + id + " is not an HEVC video track");
+        throw new MediaException.Malformed("heic: track " + id + " is not an HEVC or AVC video track");
     }
 
     /**
@@ -402,8 +426,8 @@ public final class SequenceReader implements AnimationReader {
      *
      * @param frame the decoded picture
      */
-    private static boolean hidden(HevcFrame frame) {
-        return frame.pts != Packet.NO_TIMESTAMP && frame.pts < 0;
+    private static boolean hidden(CodedFrame frame) {
+        return frame.pts() != Packet.NO_TIMESTAMP && frame.pts() < 0;
     }
 
     /**
@@ -411,13 +435,13 @@ public final class SequenceReader implements AnimationReader {
      *
      * @param frame the decoded picture
      */
-    private void acceptColor(HevcFrame frame) {
+    private void acceptColor(CodedFrame frame) {
         if (hidden(frame)) {
             return;
         }
-        var canvas = HevcTile.canvas(limits, frame, wide, alpha != null);
-        canvas.writeColor(HevcTile.of(frame), 0, 0, canvas.width(), canvas.height(), true);
-        color.add(new ColorPicture(canvas, Colors.override(Colors.of(frame), info), frame.pts, frame.duration));
+        var canvas = frame.canvas(limits, frame.width(), frame.height(), wide, alpha != null);
+        canvas.writeColor(frame, 0, 0, canvas.width(), canvas.height(), true);
+        color.add(new ColorPicture(canvas, Colors.override(frame.color(), info), frame.pts(), frame.duration()));
     }
 
     /**
@@ -425,14 +449,13 @@ public final class SequenceReader implements AnimationReader {
      *
      * @param frame the decoded picture
      */
-    private void acceptAlpha(HevcFrame frame) {
+    private void acceptAlpha(CodedFrame frame) {
         if (hidden(frame)) {
             return;
         }
-        var canvas = HevcTile.canvas(limits, frame, true, false);
-        canvas.writeColor(HevcTile.of(frame), 0, 0, canvas.width(), canvas.height(), true);
-        alpha.add(new AlphaPicture(canvas.toPicture(Colors.of(frame)), Colors.limitedAlpha(frame, alphaNclx),
-                frame.pts));
+        var canvas = frame.canvas(limits, frame.width(), frame.height(), true, false);
+        canvas.writeColor(frame, 0, 0, canvas.width(), canvas.height(), true);
+        alpha.add(new AlphaPicture(canvas.toPicture(frame.color()), frame.limitedAlpha(alphaNclx), frame.pts()));
     }
 
     @Override

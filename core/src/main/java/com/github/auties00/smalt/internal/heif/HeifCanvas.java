@@ -13,6 +13,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.Arrays;
 import java.util.Objects;
 
 /**
@@ -317,6 +318,25 @@ public final class HeifCanvas {
             return;
         }
         writeAlpha(tile.plane16(0), offset, stride, tile.depth(0), x, y, w, h, limited);
+    }
+
+    /**
+     * Makes a region of the alpha plane fully opaque.
+     *
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     */
+    public void fillAlpha(int x, int y, int w, int h) {
+        for (var row = y; row < y + h; row++) {
+            var from = x + row * width;
+            if (wide) {
+                Arrays.fill(widePlanes[3], from, from + w, (short) ((1 << bitDepth) - 1));
+            } else {
+                Arrays.fill(narrowPlanes[3], from, from + w, (byte) 0xFF);
+            }
+        }
     }
 
     /**

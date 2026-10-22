@@ -18,11 +18,15 @@ import java.util.function.Supplier;
 
 /**
  * A decoder of HEIC images (HEIF with HEVC-coded images, the photo format of many phones and
- * cameras): still images, grids, derived images, alpha and image sequences.
+ * cameras) and of the other HEIF images: still images, grids, derived images, alpha and image
+ * sequences.
  *
  * <p>The primary image decodes to its native planar representation: a {@link YuvPicture} in the
- * chroma layout of its HEVC payload (4:2:0, 4:2:2, 4:4:4 or monochrome), with an alpha plane when
- * the file has an alpha auxiliary image. Sources of 10 to 16 bits are reduced to 8 bits by rounding
+ * chroma layout of its payload (4:2:0, 4:2:2, 4:4:4 or monochrome), with an alpha plane when
+ * the file has an alpha auxiliary image or the payload carries alpha itself. RGB payloads (JPEG
+ * 2000 and uncompressed items with red, green and blue components, and RGB-coded JPEG) decode to
+ * 4:4:4 planes with the identity matrix, green in the luma plane and blue and red in the chroma
+ * planes. Sources of 10 to 16 bits are reduced to 8 bits by rounding
  * to nearest, exactly as {@link com.github.auties00.smalt.video.hevc.HevcDecoder} reduces them; with
  * {@link ImageDecoderOptions#highBitDepth()} set they decode to a {@link Yuv16Picture} of their
  * own depth instead, which
@@ -35,8 +39,15 @@ import java.util.function.Supplier;
  *
  * <p>The file structure follows ISO/IEC 23008-12 (HEIF) and MIAF (ISO/IEC 23000-22):
  * <ul>
- *   <li>the primary item is an HEVC-coded item ({@code hvc1}), possibly predicted from other
- *       coded items ({@code pred} references), or a derived image: an image grid ({@code grid}),
+ *   <li>the primary item is a coded item, or a derived image. A coded item is HEVC-coded
+ *       ({@code hvc1}) or AVC-coded ({@code avc1}, ISO/IEC 23008-12 Annex E), possibly predicted
+ *       from other coded items ({@code pred} references); JPEG-coded ({@code jpeg}, Annex H, its
+ *       {@code jpgC} property preceding its data); JPEG 2000-coded ({@code j2k1}, ISO/IEC
+ *       15444-16, with the channel definition, component mapping and palette of its {@code j2kH}
+ *       property); or uncompressed ({@code unci}, ISO/IEC 23001-17, with its {@code uncC},
+ *       {@code cmpd} and {@code cmpC} properties). JPEG and JPEG 2000 items decode with the codecs
+ *       of the {@code smalt-image} artifact and raise {@link MediaException.Unsupported} when it is
+ *       not present. A derived image is an image grid ({@code grid}),
  *       whose coded tiles decode in parallel on the module's shared helper threads, an identity
  *       derivation ({@code iden}) or an image overlay ({@code iovl}), nested to any depth up to
  *       eight;</li>
@@ -56,10 +67,13 @@ import java.util.function.Supplier;
  *       association order, and those of the inputs of derived images are applied to the
  *       inputs. A crop that starts inside a subsampled chroma block yields a 4:4:4 picture, so
  *       that no pixel changes color;</li>
- *   <li>the color description comes from the {@code nclx} color box, or from the video
- *       usability information of the HEVC stream without one, with the MIAF defaults (sRGB
- *       primaries and transfer, BT.601 matrix, full range) for what neither specifies, together
- *       with the {@code clli} and {@code mdcv} properties (or the HEVC SEI messages); an ICC
+ *   <li>the color description comes from the {@code nclx} color box, or without one from the
+ *       video usability information of the HEVC or AVC stream or from the JPEG stream, with the
+ *       MIAF defaults (sRGB primaries and transfer, BT.601 matrix, full range) for what neither
+ *       specifies, together with the {@code clli} and {@code mdcv} properties (or the SEI messages
+ *       of the stream); RGB payloads keep the identity matrix and full range whatever the
+ *       {@code nclx} box says, and uncompressed components of fewer than 8 bits are rescaled to 8
+ *       bits; an ICC
  *       profile ({@code colr} of type {@code prof} or {@code rICC}) is returned with the picture
  *       and as its {@link DecodedImage#colorProfile()}, which otherwise describes the
  *       {@code nclx} color when it is not sRGB; the EXIF item and the XMP item ({@code mime} item
@@ -74,8 +88,8 @@ import java.util.function.Supplier;
  * of the primary image. Without a suitable thumbnail the hint is ignored. With
  * {@link ImageDecoderOptions#convertToSrgb()} the pixels are converted to sRGB.
  *
- * <p>An image sequence ({@code msf1}) plays through {@link #openAnimation}: its color track and
- * its alpha track, every frame converted to RGBA (16-bit RGBA when
+ * <p>An image sequence ({@code msf1}) of HEVC or AVC tracks plays through {@link #openAnimation}:
+ * its color track and its alpha track, every frame converted to RGBA (16-bit RGBA when
  * {@link ImageDecoderOptions#highBitDepth()} is set and the sequence has more than 8 bits), with
  * the loop count of the edit list (a track
  * without an edit list loops forever); a picture the edit list does not show is skipped. The
@@ -89,7 +103,8 @@ import java.util.function.Supplier;
  * times the pixel limit. Malformed input raises {@link MediaException.Malformed}, never an
  * unchecked runtime exception; a valid file using a feature this decoder lacks (an essential
  * property it does not know, an image coded with another codec) raises
- * {@link MediaException.Unsupported}. HEVC items of every range extension
+ * {@link MediaException.Unsupported}; the README lists the unsupported features of JPEG 2000 and
+ * uncompressed items. HEVC items of every range extension
  * format decode, such as the 10-bit 4:2:2 grids of camera {@code .hif} files and 4:4:4 images; a
  * picture whose luma and chroma depths differ keeps the larger depth under
  * {@link ImageDecoderOptions#highBitDepth()}, the shallower planes shifted left to it, as

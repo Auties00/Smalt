@@ -1,0 +1,8 @@
+# image dump of heif-items/valid-unci-v210.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=48, height=4, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 48x4 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=44eb89df u=2d8a3881 v=6a02f88b
+  format=HEIC orientation=NORMAL source=48x4
+  icc=none exif=none xmp=none
+  profile=none

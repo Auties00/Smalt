@@ -1,0 +1,13 @@
+# image dump of heif-items/valid-unci-rgb3.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=8, height=8, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 8x8 yuv8 YUV444 color=IDENTITY/FULL/BT709/SRGB y=dc81ec9e u=436d3a86 v=35e65de8
+  format=HEIC orientation=NORMAL source=8x8
+  icc=none exif=none xmp=none
+  profile=none
+scaled 2x2
+picture 8x8 yuv8 YUV444 color=IDENTITY/FULL/BT709/SRGB y=dc81ec9e u=436d3a86 v=35e65de8
+  format=HEIC orientation=NORMAL source=8x8
+  icc=none exif=none xmp=none
+  profile=none

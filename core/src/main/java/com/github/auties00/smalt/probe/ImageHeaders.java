@@ -12,6 +12,7 @@ import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifSampleTransform;
+import com.github.auties00.smalt.internal.heif.HeifUncompressed;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.io.SlicedSource;
@@ -30,6 +31,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Describes an image file from its headers, without decoding pixels.
@@ -62,6 +64,16 @@ final class ImageHeaders {
      * The most pages of a TIFF file counted.
      */
     private static final int MAX_PAGES = 10_000;
+
+    /**
+     * The types of HEIF image items that hold coded pixels.
+     */
+    private static final Set<String> CODED_ITEMS = Set.of("av01", "hvc1", "avc1", "jpeg", "j2k1", "unci");
+
+    /**
+     * The sample entries of the HEIF image sequence tracks the decoders play.
+     */
+    private static final Set<String> SEQUENCE_ENTRIES = Set.of("av01", "hvc1", "hev1", "avc1", "avc3");
 
     /**
      * Prevents instantiation.
@@ -777,8 +789,7 @@ final class ImageHeaders {
         result.orientation = geometry.orientation();
         result.alpha = hasAlpha(file, primary) || primary.type().equals("iovl");
         var coded = primary;
-        for (var depth = 0; coded != null && depth < 8 && !coded.type().equals("av01") && !coded.type().equals("hvc1");
-             depth++) {
+        for (var depth = 0; coded != null && depth < 8 && !CODED_ITEMS.contains(coded.type()); depth++) {
             var inputs = coded.references("dimg");
             coded = inputs.length == 0 ? null : file.item(inputs[0]);
         }
@@ -825,12 +836,12 @@ final class ImageHeaders {
      * Returns whether a track of a HEIF image sequence is the color track a decoder shows.
      *
      * @param track a track of the image sequence
-     * @return {@code true} for an AV1 or HEVC track with samples and a size that is neither an
+     * @return {@code true} for an AV1, HEVC or AVC track with samples and a size that is neither an
      * auxiliary nor a thumbnail track
      */
     private static boolean isSequenceTrack(HeifMovie.Track track) {
         var entry = track.sampleEntry();
-        return (entry.equals("av01") || entry.equals("hvc1") || entry.equals("hev1")) && track.sampleCount() > 0
+        return SEQUENCE_ENTRIES.contains(entry) && track.sampleCount() > 0
                 && track.width() > 0 && track.height() > 0 && !track.references().containsKey("auxl")
                 && !track.references().containsKey("thmb");
     }
@@ -861,13 +872,19 @@ final class ImageHeaders {
     }
 
     /**
-     * Returns whether an auxiliary item with the alpha URN references an item.
+     * Returns whether an item has alpha of its own or an auxiliary item with the alpha URN references it.
      *
      * @param file the parsed file
      * @param item the auxiliary item to check
-     * @return {@code true} when such an item exists
+     * @return {@code true} when such an item exists, or the item is an uncompressed image with an
+     * alpha component
      */
     private static boolean hasAlphaItem(HeifFile file, HeifItem item) {
+        var header = item.property(HeifProperty.Jpeg2000Header.class);
+        if (HeifUncompressed.hasAlpha(item)
+                || (header != null && header.opacity() != HeifProperty.Jpeg2000Header.NO_OPACITY)) {
+            return true;
+        }
         for (var auxiliary : file.auxiliariesOf(item.id())) {
             var type = auxiliary.property(HeifProperty.AuxiliaryType.class);
             if (type != null && type.isAlpha()) {
@@ -881,8 +898,8 @@ final class ImageHeaders {
      * Returns the bit depth that a list of HEIF properties declares.
      *
      * @param properties the properties of an item or a sample entry
-     * @return the first {@code pixi} depth, or the depth of the AV1 or HEVC configuration, or
-     * {@code 0} when neither tells
+     * @return the first {@code pixi} depth, or the depth of the AV1, HEVC or AVC configuration or of the
+     * deepest color component of an uncompressed layout, or {@code 0} when none tells
      */
     private static int depthOf(List<HeifProperty> properties) {
         for (var property : properties) {
@@ -894,12 +911,44 @@ final class ImageHeaders {
             var info = switch (property) {
                 case HeifProperty.Av1Configuration config -> VideoConfigs.describe(Codec.AV1, config.record());
                 case HeifProperty.HevcConfiguration config -> VideoConfigs.describe(Codec.HEVC, config.record());
+                case HeifProperty.AvcConfiguration config -> VideoConfigs.describe(Codec.H264, config.record());
                 default -> null;
             };
             if (info != null) {
                 return info.bitDepth();
             }
+            if (property instanceof HeifProperty.UncompressedConfiguration config && !config.components().isEmpty()) {
+                return uncompressedDepth(config, properties);
+            }
         }
         return 0;
+    }
+
+    /**
+     * Returns the bit depth of an uncompressed image.
+     *
+     * @param config the layout of the image
+     * @param properties the properties of the item, with its component definition
+     * @return the largest depth of its color components (monochrome, Y'CbCr or RGB), or the depth
+     * of its first component when none is a color component
+     */
+    private static int uncompressedDepth(HeifProperty.UncompressedConfiguration config, List<HeifProperty> properties) {
+        HeifProperty.ComponentDefinition definition = null;
+        for (var property : properties) {
+            if (property instanceof HeifProperty.ComponentDefinition found) {
+                definition = found;
+                break;
+            }
+        }
+        var depth = 0;
+        for (var component : config.components()) {
+            var type = config.shorthand() ? component.index()
+                    : definition != null && component.index() < definition.types().length
+                    ? definition.types()[component.index()] : -1;
+            if (type >= 0 && type <= 6) {
+                depth = Math.max(depth, component.bitDepth());
+            }
+        }
+        return depth != 0 ? depth : config.components().getFirst().bitDepth();
     }
 }

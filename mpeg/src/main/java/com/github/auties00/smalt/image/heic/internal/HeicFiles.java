@@ -39,7 +39,7 @@ import java.util.function.Supplier;
  *
  * <p>A file shows its primary item when it has one, the image HEIF designates for display, and
  * the first frame of its image sequence otherwise. An
- * animation is opened over the sequence whenever the file has an HEVC color track, and over the
+ * animation is opened over the sequence whenever the file has an HEVC or AVC color track, and over the
  * primary image as a single frame otherwise.
  */
 public final class HeicFiles {
@@ -67,7 +67,7 @@ public final class HeicFiles {
     }
 
     /**
-     * Returns whether the sequence of a file has an HEVC color track.
+     * Returns whether the sequence of a file has an HEVC or AVC color track.
      *
      * @param source the file
      * @param file the parsed file
@@ -112,10 +112,7 @@ public final class HeicFiles {
         var file = HeifFile.parse(source, limits, false);
         if (showsSequence(file)) {
             var movie = HeifMovie.parse(source, file, limits);
-            var color = SequenceReader.colorTrack(movie);
-            if (color == null) {
-                throw new MediaException.Malformed("heic: the sequence has no HEVC color track");
-            }
+            var color = SequenceReader.requireColorTrack(movie);
             var frames = (int) Math.min(Integer.MAX_VALUE, color.sampleCount());
             Orientation orientation;
             int width;
@@ -155,10 +152,11 @@ public final class HeicFiles {
      *
      * @param file the parsed file
      * @param item the image item
-     * @return {@code true} when an alpha auxiliary image is found, or for an overlay
+     * @return {@code true} when the item or a grid tile carries alpha of its own, an alpha auxiliary
+     * image is found for the item or for every tile of a grid, or for an overlay
      */
     private static boolean hasAlpha(HeifFile file, HeifItem item) {
-        if (StillDecoder.alphaOf(file, item) != null || item.type().equals("iovl")) {
+        if (StillDecoder.alphaOf(file, item) != null || StillDecoder.hasOwnAlpha(item) || item.type().equals("iovl")) {
             return true;
         }
         if (item.type().equals("grid")) {
@@ -166,13 +164,15 @@ public final class HeicFiles {
             if (ids.length == 0) {
                 return false;
             }
+            var every = true;
             for (var id : ids) {
                 var tile = file.item(id);
-                if (tile == null || StillDecoder.alphaOf(file, tile) == null) {
-                    return false;
+                if (tile != null && StillDecoder.hasOwnAlpha(tile)) {
+                    return true;
                 }
+                every &= tile != null && StillDecoder.alphaOf(file, tile) != null;
             }
-            return true;
+            return every;
         }
         return false;
     }
@@ -408,7 +408,7 @@ public final class HeicFiles {
      * @param source the file
      * @param limits the bounds
      * @param highBitDepth whether frames of a source deeper than 8 bits are 16-bit RGBA
-     * @return the reader: the sequence when the file has an HEVC color track, otherwise the
+     * @return the reader: the sequence when the file has an HEVC or AVC color track, otherwise the
      * shown still image as one frame shown for zero microseconds and played once; both can seek
      */
     public static AnimationReader openAnimation(MediaSource source, MediaLimits limits, boolean highBitDepth) {
