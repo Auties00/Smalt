@@ -114,7 +114,7 @@ final class ColorPipeline {
         this.highlights = options.highlights();
         var standard = options.toneCurve() == RawToneCurve.STANDARD;
         var stops = options.exposure() + (standard ? calibration.baselineExposure : 0);
-        this.gain = (float) Math.pow(2, Math.clamp(stops, -16, 16));
+        this.gain = (float) StrictMath.pow(2, Math.clamp(stops, -16, 16));
         var minimum = Double.MAX_VALUE;
         var maximum = 0.0;
         for (var index = 0; index < 3; index++) {
@@ -136,6 +136,12 @@ final class ColorPipeline {
         }
         look = standard && calibration.lookDims != null
                 ? new HueSatTable(calibration.lookDims, calibration.lookTable, calibration.lookSrgb) : null;
+        if (hueSat != null) {
+            ColorKernels.HUE_SAT.prepare(hueSat);
+        }
+        if (look != null) {
+            ColorKernels.HUE_SAT.prepare(look);
+        }
         tone = standard ? toneTable(calibration.toneCurve) : null;
         profiled = !monochrome && (hueSat != null || look != null || tone != null);
         var folded = ColorMath.multiply(proPhotoToOutput, balancedToProPhoto);

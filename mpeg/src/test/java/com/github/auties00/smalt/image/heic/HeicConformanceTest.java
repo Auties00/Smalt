@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.heic;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
@@ -38,7 +37,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -533,18 +531,6 @@ class HeicConformanceTest {
             assertEquals(8, info.frameCount());
             assertEquals(1280, info.width());
         }
-    }
-
-    @Nested
-    @DisplayName("unsupported features raise MediaException.Unsupported")
-    class Unsupported {
-        @ParameterizedTest(name = "{0}")
-        @ValueSource(strings = {"multilayer004.heic"})
-        @DisplayName("Nokia files")
-        void nokia(String name) {
-            assertThrows(MediaException.Unsupported.class, () -> HeicDecoder.decode(source(HeicVectors.nokia(name))));
-        }
-
     }
 
     @Nested

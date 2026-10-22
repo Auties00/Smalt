@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.testkit;
 
-import org.junit.jupiter.api.Assumptions;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -120,7 +119,7 @@ public final class Conformance {
                 verify(target, sha256);
                 return target;
             }
-            Assumptions.assumeTrue(DOWNLOAD, "conformance vector " + name + " is not cached in " + CACHE
+            Skip.unless(DOWNLOAD, "data:vector", "conformance vector " + name + " is not cached in " + CACHE
                     + " and downloads are off (smalt.conformance.download=false)");
             Files.createDirectories(CACHE);
             var temporary = Files.createTempFile(CACHE, "download-", ".part");
@@ -133,8 +132,61 @@ public final class Conformance {
                 Files.deleteIfExists(temporary);
             }
         } catch (IOException exception) {
-            Assumptions.abort("conformance vector " + name + " unavailable: " + exception);
-            throw new UncheckedIOException(exception);
+            throw Skip.now("data:vector", "conformance vector " + name + " unavailable: " + exception);
+        }
+    }
+
+    /**
+     * Returns the cached copy of a vector listed in {@code tools/testdata/vectors.tsv}, downloading it
+     * first when needed, with the URL and SHA-256 of its manifest row.
+     *
+     * <p>The manifest is found by walking up from the working directory; a test that cannot find it, or
+     * whose vector is not listed, fails, because the manifest is part of the repository.
+     *
+     * @param name the vector name, the second column of the manifest
+     * @return the verified file
+     */
+    public static Path fetchListed(String name) {
+        var row = Manifest.ROWS.get(name);
+        if (row == null) {
+            throw new IllegalArgumentException("vector " + name + " is not listed in " + Manifest.FILE);
+        }
+        return fetch(name, row[1], row[0]);
+    }
+
+    /**
+     * The rows of {@code tools/testdata/vectors.tsv}, loaded on first use.
+     */
+    private static final class Manifest {
+        static final Path FILE = locate();
+        static final java.util.Map<String, String[]> ROWS = load();
+
+        private static Path locate() {
+            for (var directory = Path.of("").toAbsolutePath(); directory != null; directory = directory.getParent()) {
+                var candidate = directory.resolve("tools").resolve("testdata").resolve("vectors.tsv");
+                if (Files.isRegularFile(candidate)) {
+                    return candidate;
+                }
+            }
+            throw new IllegalStateException("tools/testdata/vectors.tsv not found above " + Path.of("").toAbsolutePath());
+        }
+
+        private static java.util.Map<String, String[]> load() {
+            var rows = new java.util.HashMap<String, String[]>();
+            try {
+                for (var line : Files.readAllLines(FILE)) {
+                    if (line.isBlank() || line.startsWith("#")) {
+                        continue;
+                    }
+                    var columns = line.split("\t");
+                    if (columns.length >= 5) {
+                        rows.put(columns[1], new String[]{columns[3], columns[4]});
+                    }
+                }
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+            return rows;
         }
     }
 
@@ -171,25 +223,25 @@ public final class Conformance {
             if (status / 100 == 3) {
                 var next = connection.getHeaderField("Location");
                 connection.disconnect();
-                Assumptions.assumeTrue(next != null, "redirect without Location from " + location);
+                Skip.unless(next != null, "data:vector", "redirect without Location from " + location);
                 location = location.resolve(next);
                 continue;
             }
-            Assumptions.assumeTrue(status / 100 == 2, "HTTP " + status + " from " + location);
+            Skip.unless(status / 100 == 2, "data:vector", "HTTP " + status + " from " + location);
             // An HTML page in place of a binary vector is a landing or bot-check page, not the file
             var contentType = connection.getContentType();
             var path = location.getPath().toLowerCase();
             if (contentType != null && contentType.startsWith("text/html")
                     && !path.endsWith(".html") && !path.endsWith(".htm")) {
                 connection.disconnect();
-                Assumptions.abort("HTML page instead of the file from " + location);
+                throw Skip.now("data:vector", "HTML page instead of the file from " + location);
             }
             try (var input = connection.getInputStream()) {
                 Files.copy(input, target, StandardCopyOption.REPLACE_EXISTING);
             }
             return;
         }
-        Assumptions.abort("too many redirects from " + url);
+        throw Skip.now("data:vector", "too many redirects from " + url);
     }
 
     /**

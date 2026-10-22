@@ -1,0 +1,103 @@
+# demux dump of mp3/vbr-xing.mp3; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_AUDIO
+duration 2000000
+seekable true
+metadata TIT2="Behavior"
+metadata TSSE="Lavf61.7.100"
+track 0 AUDIO MP3 timebase=1/44100 duration=88200 config=none
+  audio rate=44100 bits=0 skip=1105 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 78
+0 t0 pts=0 dts=0 dur=1152 flags=KEY size=835 crc=b1064746
+1 t0 pts=1152 dts=1152 dur=1152 flags=KEY size=208 crc=e8612d93
+2 t0 pts=2304 dts=2304 dur=1152 flags=KEY size=208 crc=6606755b
+3 t0 pts=3456 dts=3456 dur=1152 flags=KEY size=182 crc=ee172d78
+4 t0 pts=4608 dts=4608 dur=1152 flags=KEY size=208 crc=950b26f2
+5 t0 pts=5760 dts=5760 dur=1152 flags=KEY size=208 crc=2bb5c391
+6 t0 pts=6912 dts=6912 dur=1152 flags=KEY size=208 crc=9783bbf8
+7 t0 pts=8064 dts=8064 dur=1152 flags=KEY size=182 crc=91959b75
+8 t0 pts=9216 dts=9216 dur=1152 flags=KEY size=208 crc=f111e21d
+9 t0 pts=10368 dts=10368 dur=1152 flags=KEY size=182 crc=55d1ce0d
+10 t0 pts=11520 dts=11520 dur=1152 flags=KEY size=208 crc=503c3c24
+11 t0 pts=12672 dts=12672 dur=1152 flags=KEY size=208 crc=fabfa747
+12 t0 pts=13824 dts=13824 dur=1152 flags=KEY size=182 crc=239fa6d0
+13 t0 pts=14976 dts=14976 dur=1152 flags=KEY size=208 crc=e5e5546c
+14 t0 pts=16128 dts=16128 dur=1152 flags=KEY size=208 crc=7d8a1574
+15 t0 pts=17280 dts=17280 dur=1152 flags=KEY size=208 crc=ab259ef3
+16 t0 pts=18432 dts=18432 dur=1152 flags=KEY size=182 crc=b0eed4de
+17 t0 pts=19584 dts=19584 dur=1152 flags=KEY size=208 crc=7694e486
+18 t0 pts=20736 dts=20736 dur=1152 flags=KEY size=208 crc=ff160dbf
+19 t0 pts=21888 dts=21888 dur=1152 flags=KEY size=182 crc=71459bdc
+20 t0 pts=23040 dts=23040 dur=1152 flags=KEY size=182 crc=a4f80dd1
+21 t0 pts=24192 dts=24192 dur=1152 flags=KEY size=208 crc=db6a9c02
+22 t0 pts=25344 dts=25344 dur=1152 flags=KEY size=208 crc=ff0f1fbb
+23 t0 pts=26496 dts=26496 dur=1152 flags=KEY size=182 crc=3addb187
+24 t0 pts=27648 dts=27648 dur=1152 flags=KEY size=208 crc=f539dddb
+25 t0 pts=28800 dts=28800 dur=1152 flags=KEY size=208 crc=f8514175
+26 t0 pts=29952 dts=29952 dur=1152 flags=KEY size=182 crc=5f4e7299
+27 t0 pts=31104 dts=31104 dur=1152 flags=KEY size=182 crc=03ae3cf5
+28 t0 pts=32256 dts=32256 dur=1152 flags=KEY size=208 crc=df331a82
+29 t0 pts=33408 dts=33408 dur=1152 flags=KEY size=182 crc=21bd4d32
+30 t0 pts=34560 dts=34560 dur=1152 flags=KEY size=182 crc=7a7759b5
+31 t0 pts=35712 dts=35712 dur=1152 flags=KEY size=208 crc=d43baa66
+32 t0 pts=36864 dts=36864 dur=1152 flags=KEY size=208 crc=211bfbf5
+33 t0 pts=38016 dts=38016 dur=1152 flags=KEY size=208 crc=a1d7550e
+34 t0 pts=39168 dts=39168 dur=1152 flags=KEY size=182 crc=aae56829
+35 t0 pts=40320 dts=40320 dur=1152 flags=KEY size=208 crc=1bead275
+36 t0 pts=41472 dts=41472 dur=1152 flags=KEY size=182 crc=2cc592e6
+37 t0 pts=42624 dts=42624 dur=1152 flags=KEY size=208 crc=67f5a9f8
+38 t0 pts=43776 dts=43776 dur=1152 flags=KEY size=182 crc=05613a9c
+39 t0 pts=44928 dts=44928 dur=1152 flags=KEY size=208 crc=8b643ec5
+40 t0 pts=46080 dts=46080 dur=1152 flags=KEY size=182 crc=9e3e3748
+41 t0 pts=47232 dts=47232 dur=1152 flags=KEY size=208 crc=1b04eaf0
+42 t0 pts=48384 dts=48384 dur=1152 flags=KEY size=182 crc=be9df3d1
+43 t0 pts=49536 dts=49536 dur=1152 flags=KEY size=208 crc=7c25d252
+44 t0 pts=50688 dts=50688 dur=1152 flags=KEY size=182 crc=7691a162
+45 t0 pts=51840 dts=51840 dur=1152 flags=KEY size=208 crc=944cc383
+46 t0 pts=52992 dts=52992 dur=1152 flags=KEY size=182 crc=2cca6c51
+47 t0 pts=54144 dts=54144 dur=1152 flags=KEY size=208 crc=136d33ea
+48 t0 pts=55296 dts=55296 dur=1152 flags=KEY size=208 crc=54541279
+49 t0 pts=56448 dts=56448 dur=1152 flags=KEY size=208 crc=0290d622
+50 t0 pts=57600 dts=57600 dur=1152 flags=KEY size=182 crc=63a5a9e2
+51 t0 pts=58752 dts=58752 dur=1152 flags=KEY size=208 crc=eff7721c
+52 t0 pts=59904 dts=59904 dur=1152 flags=KEY size=182 crc=65d6cc27
+53 t0 pts=61056 dts=61056 dur=1152 flags=KEY size=208 crc=dc0aa366
+54 t0 pts=62208 dts=62208 dur=1152 flags=KEY size=182 crc=84fc56a1
+55 t0 pts=63360 dts=63360 dur=1152 flags=KEY size=208 crc=575cf519
+56 t0 pts=64512 dts=64512 dur=1152 flags=KEY size=208 crc=2eb05e24
+57 t0 pts=65664 dts=65664 dur=1152 flags=KEY size=208 crc=21c958ce
+58 t0 pts=66816 dts=66816 dur=1152 flags=KEY size=182 crc=313da7a6
+59 t0 pts=67968 dts=67968 dur=1152 flags=KEY size=208 crc=cb240e2e
+60 t0 pts=69120 dts=69120 dur=1152 flags=KEY size=182 crc=77aac7af
+61 t0 pts=70272 dts=70272 dur=1152 flags=KEY size=208 crc=21ad6b76
+62 t0 pts=71424 dts=71424 dur=1152 flags=KEY size=208 crc=63091ec5
+63 t0 pts=72576 dts=72576 dur=1152 flags=KEY size=182 crc=de9cf720
+64 t0 pts=73728 dts=73728 dur=1152 flags=KEY size=208 crc=6b2573c8
+65 t0 pts=74880 dts=74880 dur=1152 flags=KEY size=182 crc=37f872d0
+66 t0 pts=76032 dts=76032 dur=1152 flags=KEY size=208 crc=d82e5f08
+67 t0 pts=77184 dts=77184 dur=1152 flags=KEY size=182 crc=fb365037
+68 t0 pts=78336 dts=78336 dur=1152 flags=KEY size=208 crc=53712f2c
+69 t0 pts=79488 dts=79488 dur=1152 flags=KEY size=208 crc=df85a740
+70 t0 pts=80640 dts=80640 dur=1152 flags=KEY size=208 crc=d7c7fc58
+71 t0 pts=81792 dts=81792 dur=1152 flags=KEY size=182 crc=eb537517
+72 t0 pts=82944 dts=82944 dur=1152 flags=KEY size=182 crc=59d89edd
+73 t0 pts=84096 dts=84096 dur=1152 flags=KEY size=208 crc=4b87ba5a
+74 t0 pts=85248 dts=85248 dur=1152 flags=KEY size=208 crc=4e75b841
+75 t0 pts=86400 dts=86400 dur=1152 flags=KEY size=208 crc=a13f54b6
+76 t0 pts=87552 dts=87552 dur=1152 flags=KEY size=182 crc=af54b51b
+77 t0 pts=88704 dts=88704 dur=1152 flags=KEY size=156 crc=ff0fe2cd
+seek 0: t0@0
+seek 666666: t0@25
+seek 1333333: t0@51
+seek 2037552: end
+seek 2000000: t0@76
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_AUDIO
+  duration 2000000
+  seekable false
+  metadata TIT2="Behavior"
+  metadata TSSE="Lavf61.7.100"
+  track 0 AUDIO MP3 timebase=1/44100 duration=88200 config=none
+    audio rate=44100 bits=0 skip=1105 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

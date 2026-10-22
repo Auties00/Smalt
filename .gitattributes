@@ -7,3 +7,11 @@
 *.java text eol=lf
 *.head text eol=lf
 *.template text eol=lf
+# The I/O behavior samples are pinned by SHA-256 (tools/testdata/behavior/samples.tsv), so no checkout may rewrite
+# them; their golden dumps are plain text compared with LF line endings.
+core/src/test/resources/samples/** -text
+image/src/test/resources/samples/** -text
+*.dump text eol=lf
+# Fuzz seeds and saved findings are byte-exact inputs, text-looking ones (subtitles, XMP) included.
+**/src/test/resources/**/*Inputs/** -text -diff
+**/src/test/resources/fuzz-regressions/** -text -diff
