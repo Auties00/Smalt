@@ -13,6 +13,7 @@ import com.github.auties00.smalt.image.gif.GifAnimationEncoder;
 import com.github.auties00.smalt.image.gif.GifDecoder;
 import com.github.auties00.smalt.image.gif.GifEncoder;
 import com.github.auties00.smalt.image.gif.GifEncoderOptions;
+import com.github.auties00.smalt.internal.check.LosslessDepth;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -62,6 +63,9 @@ public final class GifCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        if (options.isLossless()) {
+            picture = LosslessDepth.fit(picture, 8, "gif");
+        }
         GifEncoder.encode(picture, settings(options), sink);
     }
 
