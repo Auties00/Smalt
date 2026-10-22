@@ -14,6 +14,8 @@ import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
+import com.github.auties00.smalt.image.webp.WebpEncoder;
+import com.github.auties00.smalt.image.webp.WebpEncoderOptions;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -29,8 +31,9 @@ import java.util.Random;
 
 /**
  * Prints one SHA-256 per workload of the codecs and picture operations that parallelize on the shared helper threads
- * (image encoders and decoders, video decoders left to choose their threads, resampling, the Opus multistream
- * encoder): the output of a JVM whose {@code smalt.threads} differs must be the same, line for line.
+ * (image encoders and decoders, the WebP encoder's lossy and near-lossless modes, video decoders left to choose their
+ * threads, resampling, the Opus multistream encoder): the output of a JVM whose {@code smalt.threads} differs must be
+ * the same, line for line.
  */
 public final class ThreadDigest {
     private ThreadDigest() {
@@ -93,6 +96,16 @@ public final class ThreadDigest {
         for (var mode : jpegModes.entrySet()) {
             digests.put(mode.getKey() + "-encode", sha256(JpegEncoder.encode(picture, mode.getValue())));
         }
+        var webpModes = new LinkedHashMap<String, WebpEncoderOptions>();
+        webpModes.put("webp-sharp", WebpEncoderOptions.builder().sharpYuv(true).build());
+        webpModes.put("webp-photo", WebpEncoderOptions.forPreset(WebpEncoderOptions.Preset.PHOTO));
+        webpModes.put("webp-autofilter", WebpEncoderOptions.builder().autoFilter(true).build());
+        webpModes.put("webp-autofilter-m2", WebpEncoderOptions.builder().autoFilter(true).method(2).build());
+        webpModes.put("webp-psnr", WebpEncoderOptions.builder().targetPsnr(36).build());
+        webpModes.put("webp-passes-partitions", WebpEncoderOptions.builder().passes(3).tokenPartitions(4).build());
+        webpModes.put("webp-near-lossless", WebpEncoderOptions.lossless().toBuilder().nearLossless(40).build());
+        webpModes.forEach((name, options) -> digests.put(name + "-encode",
+                sha256(WebpEncoder.encode(picture, options))));
         for (var filter : ResizeFilter.values()) {
             digests.put("resize-" + filter.name().toLowerCase(),
                     sha256(ImageOps.toRgba(ImageOps.resize(picture, 517, 333, filter)).pixels()));

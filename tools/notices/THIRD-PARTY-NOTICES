@@ -260,12 +260,14 @@ Derived Smalt packages:
   image.webp.internal.riff
   video.vp8.internal
 
-Derivation: the WebP decoder and encoder (VP8L lossless codec, alpha
-coding and filters, animation encoding and decoding, RIFF container rules,
-YUV conversion) follow libwebp's src/dec, src/enc, src/dsp, src/utils,
-src/mux and src/demux; the lossy VP8 encoder in video.vp8.internal is a
-port of libwebp 1.6.0's src/enc and src/dsp encoder, including tables
-copied verbatim.
+Derivation: the WebP decoder and encoder (VP8L lossless codec and its
+near-lossless modes, alpha coding and filters, animation encoding and
+decoding, RIFF container rules, YUV conversion with dithering, and the
+sharp YUV conversion of sharpyuv/) follow libwebp's src/dec, src/enc,
+src/dsp, src/utils, src/mux, src/demux and sharpyuv; the lossy VP8 encoder
+in video.vp8.internal (multi-pass PSNR search and loop filter search
+included) is a port of libwebp 1.6.0's src/enc and src/dsp encoder,
+including tables copied verbatim.
 
 Copyright:
   Copyright (c) 2010, Google Inc. All rights reserved.

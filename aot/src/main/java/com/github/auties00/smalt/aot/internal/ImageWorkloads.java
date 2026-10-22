@@ -659,8 +659,9 @@ final class ImageWorkloads {
 
     /**
      * Returns a workload that encodes 256x256 pictures with alpha as lossy and lossless WebP still
-     * images, and a 1024x768 picture as lossy WebP, which is large enough for the multi-threaded
-     * token loop.
+     * images, in the default modes and with sharp conversion, the photo preset's dithering,
+     * automatic filtering, a PSNR target and near-lossless coding, and a 1024x768 picture as lossy
+     * WebP, which is large enough for the multi-threaded token loop.
      *
      * @return the workload
      */
@@ -668,10 +669,20 @@ final class ImageWorkloads {
         var frames = SyntheticImages.alphaFrames(256, 2);
         var lossy = WebpEncoderOptions.lossy(75);
         var lossless = WebpEncoderOptions.lossless();
+        var modes = List.of(
+                lossy.toBuilder().sharpYuv(true).build(),
+                WebpEncoderOptions.forPreset(WebpEncoderOptions.Preset.PHOTO),
+                lossy.toBuilder().autoFilter(true).method(2).build(),
+                lossy.toBuilder().autoFilter(true).simpleFilter(true).build(),
+                lossy.toBuilder().targetPsnr(38).build(),
+                lossless.toBuilder().nearLossless(60).build());
         var photo = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
         return TrainingWorkload.of("webp-encode", () -> {
             for (var frame : frames) {
                 Blackhole.consume(WebpEncoder.encode(frame, lossy).length + WebpEncoder.encode(frame, lossless).length);
+                for (var mode : modes) {
+                    Blackhole.consume(WebpEncoder.encode(frame, mode).length);
+                }
             }
             Blackhole.consume(WebpEncoder.encode(photo, lossy).length);
         });
