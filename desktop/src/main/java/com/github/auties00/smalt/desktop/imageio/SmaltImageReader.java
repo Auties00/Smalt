@@ -219,12 +219,12 @@ public final class SmaltImageReader extends ImageReader {
                 var frame = new SmaltImageMetadata.Frame(imageIndex, timing[0] / 1000, timing[1] / 1000,
                         animation.loopCount());
                 return new SmaltImageMetadata(summary.format(), summary.width(), summary.height(), summary.hasAlpha(),
-                        false, summary.orientation(), frame, Optional.empty(), Optional.empty());
+                        false, summary.orientation(), frame, Optional.empty(), Optional.empty(), Optional.empty());
             }
             var decoded = paged() ? page(imageIndex) : still();
             return new SmaltImageMetadata(summary.format(), decoded.sourceWidth(), decoded.sourceHeight(),
                     decoded.picture().hasAlpha(), BufferedImages.isMonochrome(decoded.picture()),
-                    decoded.orientation(), null, decoded.exif(), decoded.iccProfile());
+                    decoded.orientation(), null, decoded.exif(), decoded.iccProfile(), decoded.density());
         } catch (MediaException exception) {
             throw failure(exception);
         }

@@ -17,9 +17,10 @@ import java.util.Objects;
  * Writes the pages of a multi-page TIFF through a {@link TiffEncoder}, one directory per page, with
  * {@link TiffEncoderOptions#defaults()}.
  *
- * <p>A decoded page keeps its orientation, color profile, EXIF metadata and XMP packet; the
- * orientation written is the decoded one, whatever the EXIF metadata says, and EXIF or XMP bytes
- * that do not parse are left out.
+ * <p>A decoded page keeps its orientation, color profile, pixel density, EXIF metadata and XMP packet; the
+ * orientation written is the decoded one, whatever the EXIF metadata says, a density that is only the
+ * aspect ratio of square pixels is not written (the page then takes its resolution from the EXIF metadata
+ * or records 72 dots per inch), and EXIF or XMP bytes that do not parse are left out.
  */
 final class TiffPageWriter implements PageWriter {
     /**
@@ -51,6 +52,8 @@ final class TiffPageWriter implements PageWriter {
             options.orientation(page.orientation());
         }
         page.colorProfile().ifPresent(options::colorProfile);
+        page.density().filter(density -> density.isPhysical() || density.horizontal() != density.vertical())
+                .ifPresent(options::density);
         page.exif().ifPresent(bytes -> {
             try {
                 options.exif(ExifData.parse(bytes).withoutThumbnail());

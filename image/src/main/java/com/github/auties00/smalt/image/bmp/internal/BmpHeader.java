@@ -44,11 +44,15 @@ import com.github.auties00.smalt.io.MediaSource;
  * fixed point, all zero when the header has none
  * @param iccOffset the file offset of an embedded or linked ICC profile, or {@code -1}
  * @param iccSize the size of the embedded or linked ICC profile in bytes
+ * @param horizontalPixelsPerMeter the stored horizontal resolution in pixels per meter, 0 when the header has
+ * none
+ * @param verticalPixelsPerMeter the stored vertical resolution in pixels per meter, 0 when the header has none
  */
 public record BmpHeader(int width, int height, boolean topDown, int bitCount, int compression, int[] masks,
                         boolean alphaMaskActive, int[] palette, int paletteSize, long dataOffset, long dataSize,
                         long infoOffset, long headerSize, int colorSpace, int[] endpoints, int[] gammas,
-                        long iccOffset, long iccSize) {
+                        long iccOffset, long iccSize, int horizontalPixelsPerMeter,
+                        int verticalPixelsPerMeter) {
     /**
      * Uncompressed pixels ({@code BI_RGB}).
      */
@@ -199,6 +203,8 @@ public record BmpHeader(int width, int height, boolean topDown, int bitCount, in
         var compression = 0L;
         var imageSize = 0L;
         var colorsUsed = 0L;
+        var horizontalPixelsPerMeter = 0;
+        var verticalPixelsPerMeter = 0;
         if (core) {
             width = ByteArrays.u16le(info, 4);
             height = ByteArrays.u16le(info, 6);
@@ -212,6 +218,10 @@ public record BmpHeader(int width, int height, boolean topDown, int bitCount, in
             }
             if (infoSize >= 24) {
                 imageSize = ByteArrays.i32le(info, 20) & 0xFFFF_FFFFL;
+            }
+            if (infoSize >= 32) {
+                horizontalPixelsPerMeter = ByteArrays.i32le(info, 24);
+                verticalPixelsPerMeter = ByteArrays.i32le(info, 28);
             }
             if (infoSize >= 36) {
                 colorsUsed = ByteArrays.i32le(info, 32) & 0xFFFF_FFFFL;
@@ -317,7 +327,8 @@ public record BmpHeader(int width, int height, boolean topDown, int bitCount, in
             iccSize = ByteArrays.i32le(info, PROFILE_FIELD + 4) & 0xFFFF_FFFFL;
         }
         return new BmpHeader((int) width, (int) height, topDown, bitCount, type, masks, alphaActive, palette, paletteSize,
-                dataOffset, imageSize, infoOffset, infoSize, colorSpace, endpoints, gammas, iccOffset, iccSize);
+                dataOffset, imageSize, infoOffset, infoSize, colorSpace, endpoints, gammas, iccOffset, iccSize,
+                horizontalPixelsPerMeter, verticalPixelsPerMeter);
     }
 
     /**

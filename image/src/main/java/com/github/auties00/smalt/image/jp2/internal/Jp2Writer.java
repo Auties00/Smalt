@@ -3,6 +3,8 @@
 package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.PixelDensity;
+import com.github.auties00.smalt.image.internal.density.DensityTerms;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -130,10 +132,11 @@ public final class Jp2Writer {
      * @param icc the ICC profile to embed, or {@code null}
      * @param alpha the index of the opacity channel, or {@code -1}
      * @param premultiplied whether the opacity channel is premultiplied opacity
+     * @param density the physical density written in a capture resolution box, or {@code null} for none
      * @return the JP2 file
      */
     public static byte[] jp2(byte[] codestream, EncoderConfig config, int colorSpace, byte[] icc, int alpha,
-                             boolean premultiplied) {
+                             boolean premultiplied, PixelDensity density) {
         var out = new ByteWriter(codestream.length + 256);
         out.bytes(Jp2Boxes.SIGNATURE);
         // ISO/IEC 15444-15 D.3: a file holding an HTJ2K codestream is a JPH file
@@ -194,11 +197,67 @@ public final class Jp2Writer {
             }
             out.end();
         }
+        if (density != null) {
+            var perMeter = density.to(PixelDensity.Unit.DOTS_PER_METER);
+            var vertical = gridResolution(perMeter.vertical());
+            var horizontal = gridResolution(perMeter.horizontal());
+            out.begin(FourCc.of("res "));
+            out.begin(FourCc.of("resc"));
+            out.u16be(vertical[0]);
+            out.u16be(vertical[1]);
+            out.u16be(horizontal[0]);
+            out.u16be(horizontal[1]);
+            out.u8(vertical[2] & 0xFF);
+            out.u8(horizontal[2] & 0xFF);
+            out.end();
+            out.end();
+        }
         out.end();
         out.begin(FourCc.of("jp2c"));
         out.bytes(codestream);
         out.end();
         return out.toByteArray();
+    }
+
+    /**
+     * Returns the terms of a resolution box value {@code N / D * 10^E} (ISO/IEC 15444-1 I.5.3.7.1) closest to
+     * a resolution.
+     *
+     * <p>Each exponent from -20 to 20, nearest to zero first, contributes the last continued-fraction
+     * convergent of {@code value / 10^E} whose terms fit 16 bits; the first exact one, or else the closest,
+     * wins. A value too small or too large for any term is clamped to the smallest or largest one.
+     *
+     * @param value the resolution in grid points per meter, positive and finite
+     * @return the numerator, the denominator and the exponent
+     */
+    static int[] gridResolution(double value) {
+        int[] best = null;
+        var bestError = Double.POSITIVE_INFINITY;
+        for (var step = 0; step <= 40; step++) {
+            var exponent = (step & 1) == 0 ? step / 2 : -(step + 1) / 2;
+            var scale = 1.0;
+            for (var i = 0; i < Math.abs(exponent); i++) {
+                scale *= 10;
+            }
+            var scaled = exponent >= 0 ? value / scale : value * scale;
+            var terms = DensityTerms.fraction(scaled, 0xFFFF);
+            if (terms == null) {
+                continue;
+            }
+            var decoded = exponent >= 0 ? terms[0] * scale / terms[1] : terms[0] / (terms[1] * scale);
+            var error = Math.abs(decoded - value);
+            if (error < bestError) {
+                bestError = error;
+                best = new int[]{(int) terms[0], (int) terms[1], exponent};
+                if (error == 0) {
+                    break;
+                }
+            }
+        }
+        if (best == null) {
+            return value < 1 ? new int[]{1, 0xFFFF, -20} : new int[]{0xFFFF, 1, 20};
+        }
+        return best;
     }
 
     /**

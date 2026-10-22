@@ -6,8 +6,10 @@ picture 48x32 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=e415e72b u=1149acda v=6f
   format=JPEG orientation=NORMAL source=48x32
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0
 scaled 12x8
 picture 12x8 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=28f02afd u=2ae6af5b v=09ee0603
   format=JPEG orientation=NORMAL source=48x32
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0

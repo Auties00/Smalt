@@ -39,7 +39,9 @@ import java.util.Optional;
  *       opacity and premultiplied opacity, opacity boxes with chroma keys; codestreams stored contiguously or in
  *       fragment tables within the file; several codestreams, their codestream header boxes and compositing layer
  *       header boxes, with codestream registration and cross-reference boxes; the composition box, rendered as an
- *       animation; EXIF and XMP metadata in {@code uuid} and {@code xml } boxes; and raw codestreams;</li>
+ *       animation; EXIF and XMP metadata in {@code uuid} and {@code xml } boxes; the capture resolution box of the
+ *       JP2 header (or, without a valid one, its display resolution box) as the {@link DecodedImage#density()} in
+ *       dots per meter; and raw codestreams;</li>
  *   <li>the whole of Part 1 coding: any number of tiles and tile-parts, 1 to 16384 components with
  *       any subsampling, precisions of 1 to 38 bits, signed or unsigned, all five progression
  *       orders and progression order changes, user precinct sizes, packed packet headers
@@ -210,7 +212,7 @@ public final class Jp2Decoder {
                             : layerProfile(headers, 0);
                     return new DecodedImage(frame.picture(), ImageFormat.JP2, orientation, animation.width(),
                             animation.height(), Optional.empty(), exif, Optional.ofNullable(headers.boxes().xmp()),
-                            profile);
+                            profile, Optional.ofNullable(headers.boxes().density()));
                 }
                 return layer(headers, 0, options, true);
             });
@@ -231,6 +233,7 @@ public final class Jp2Decoder {
         var size = headers.size(index);
         var reduction = sized ? reduction(size[0], size[1], options.minWidth(), options.minHeight()) : 0;
         var image = Jp2Reader.decode(headers, index, reduction, 0, options.limits());
+        var density = Optional.ofNullable(headers.boxes().density());
         var exif = image.exif();
         var orientation = exif.isEmpty() ? Orientation.NORMAL : ExifReader.orientation(exif.get());
         if (options.keepChannels() && !options.convertToSrgb()) {
@@ -238,12 +241,12 @@ public final class Jp2Decoder {
             if (channels != null) {
                 return new DecodedImage(channels, ImageFormat.JP2, orientation, image.fullWidth(),
                         image.fullHeight(), image.iccProfile(), exif, image.xmp(),
-                        profile(image).filter(profile -> profile.channels() == 4));
+                        profile(image).filter(profile -> profile.channels() == 4), density);
             }
         }
         var picture = Jp2Pictures.toPicture(image, options.highBitDepth(), options.limits());
         var decoded = new DecodedImage(picture, ImageFormat.JP2, orientation, image.fullWidth(),
-                image.fullHeight(), image.iccProfile(), exif, image.xmp(), profile(image));
+                image.fullHeight(), image.iccProfile(), exif, image.xmp(), profile(image), density);
         return options.convertToSrgb() ? ImageOps.toSrgb(decoded) : decoded;
     }
 

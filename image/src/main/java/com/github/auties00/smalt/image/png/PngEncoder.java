@@ -185,7 +185,7 @@ public final class PngEncoder {
         if (options.significantBits().isPresent()) {
             out.significantBits(layout.significantBits(options.significantBits().getAsInt()));
         }
-        options.physicalDimensions().ifPresent(out::physicalDimensions);
+        options.density().ifPresent(out::physicalDimensions);
         if (layout.palette() != null) {
             out.palette(layout.palette());
         } else if (layout.key() != null) {

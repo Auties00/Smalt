@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.io.ByteArrays;
@@ -23,7 +24,8 @@ import java.util.List;
  * Reads the boxes of a JP2 or JPX file (ISO/IEC 15444-1 annex I and ISO/IEC 15444-2 annex M): the codestreams,
  * stored contiguously or in fragment tables, the header of each codestream (palette and component mapping), the
  * compositing layers with their color specification, channel definitions, opacity and codestream registration, the
- * composition and its instructions, and the EXIF and XMP metadata of {@code uuid} and {@code xml } boxes.
+ * composition and its instructions, the capture and display resolutions of the JP2 header, and the EXIF and XMP
+ * metadata of {@code uuid} and {@code xml } boxes.
  *
  * <p>A raw codestream (starting with the {@code SOC} and {@code SIZ} markers) is accepted too and yields one
  * codestream and one compositing layer. Unknown boxes are skipped. The boxes of the JP2 header are the defaults of
@@ -127,6 +129,16 @@ public final class Jp2Boxes {
      * The XMP packet of a {@code uuid} or {@code xml } box, or {@code null}.
      */
     private byte[] xmp;
+
+    /**
+     * The density of the first valid capture resolution box, or {@code null}.
+     */
+    private PixelDensity captureDensity;
+
+    /**
+     * The density of the first valid display resolution box, or {@code null}.
+     */
+    private PixelDensity displayDensity;
 
     /**
      * Holds a palette (I.5.3.4).
@@ -580,10 +592,85 @@ public final class Jp2Boxes {
             case "opct" -> header.opacity = readOpacity(contents);
             case "creg" -> header.registration = readRegistration(contents);
             case "cref" -> readCrossReference(contents, header, depth);
+            case "res " -> {
+                if (header == defaults) {
+                    readResolution(contents);
+                }
+            }
             default -> {
-                // res, lbl, roid, ipr, pxfm, bpcc and metadata boxes carry nothing the decoder needs
+                // lbl, roid, ipr, pxfm, bpcc and metadata boxes carry nothing the decoder needs
             }
         }
+    }
+
+    /**
+     * Reads the capture ({@code resc}) and display ({@code resd}) boxes of the resolution superbox of the JP2
+     * header (ISO/IEC 15444-1 I.5.3.7); of each kind the first valid one is kept. Sub-boxes after one whose length is
+     * invalid are ignored, since the resolution is not needed to decode the image.
+     *
+     * @param contents the contents of the resolution superbox
+     */
+    private void readResolution(View contents) {
+        var position = contents.start();
+        var end = contents.end();
+        var count = 0;
+        while (end - position >= 8 && count++ < MAX_BOXES) {
+            Box box;
+            try {
+                box = box(contents, position);
+            } catch (MediaException.Malformed exception) {
+                return;
+            }
+            var capture = box.type.equals("resc");
+            if ((capture || box.type.equals("resd")) && box.size() >= 10) {
+                var density = resolution(contents, box.content);
+                if (capture && captureDensity == null) {
+                    captureDensity = density;
+                } else if (!capture && displayDensity == null) {
+                    displayDensity = density;
+                }
+            }
+            if (box.end >= end) {
+                break;
+            }
+            position = box.end;
+        }
+    }
+
+    /**
+     * Reads the content of a capture or display resolution box: the vertical and horizontal numerators and
+     * denominators, then the vertical and horizontal signed decimal exponents, each resolution being
+     * {@code N / D * 10^E} grid points per meter.
+     *
+     * @param view the range holding the box
+     * @param content the index of the content
+     * @return the density, or {@code null} when a numerator or denominator is zero
+     */
+    private static PixelDensity resolution(View view, int content) {
+        var bytes = view.bytes();
+        var vertical = gridResolution(view.u16(content), view.u16(content + 2), bytes[content + 8]);
+        var horizontal = gridResolution(view.u16(content + 4), view.u16(content + 6), bytes[content + 9]);
+        return vertical > 0 && horizontal > 0 && Double.isFinite(vertical) && Double.isFinite(horizontal)
+                ? PixelDensity.ofDotsPerMeter(horizontal, vertical) : null;
+    }
+
+    /**
+     * {@return the resolution {@code numerator / denominator * 10^exponent}, or {@code 0} when a term is zero}
+     *
+     * @param numerator the 16-bit numerator {@code N}
+     * @param denominator the 16-bit denominator {@code D}
+     * @param exponent the signed decimal exponent {@code E}
+     */
+    private static double gridResolution(int numerator, int denominator, int exponent) {
+        if (numerator == 0 || denominator == 0) {
+            return 0;
+        }
+        // powers of ten up to 10^22 are exact doubles, so small exponents round once
+        var scale = 1.0;
+        for (var i = 0; i < Math.abs(exponent); i++) {
+            scale *= 10;
+        }
+        return exponent >= 0 ? numerator * scale / denominator : numerator / (denominator * scale);
     }
 
     /**
@@ -1269,5 +1356,13 @@ public final class Jp2Boxes {
      */
     public byte[] xmp() {
         return xmp;
+    }
+
+    /**
+     * {@return the density of the capture resolution box or, without a valid one, of the display resolution
+     * box, in dots per meter, or {@code null} when neither is present and valid}
+     */
+    public PixelDensity density() {
+        return captureDensity != null ? captureDensity : displayDensity;
     }
 }

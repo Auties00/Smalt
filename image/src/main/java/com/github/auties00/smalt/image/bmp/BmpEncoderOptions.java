@@ -1,11 +1,12 @@
 package com.github.auties00.smalt.image.bmp;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
+import com.github.auties00.smalt.image.internal.density.DensityTerms;
 import com.github.auties00.smalt.image.ops.Dithering;
 import com.github.auties00.smalt.image.ops.QuantizeMethod;
-import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -30,9 +31,7 @@ public final class BmpEncoderOptions {
 
     private final boolean topDown;
 
-    private final int horizontalPixelsPerMeter;
-
-    private final int verticalPixelsPerMeter;
+    private final PixelDensity density;
 
     private final QuantizeMethod method;
 
@@ -44,8 +43,7 @@ public final class BmpEncoderOptions {
         this.headerVersion = builder.headerVersion;
         this.colorProfile = builder.colorProfile;
         this.topDown = builder.topDown;
-        this.horizontalPixelsPerMeter = builder.horizontalPixelsPerMeter;
-        this.verticalPixelsPerMeter = builder.verticalPixelsPerMeter;
+        this.density = builder.density;
         this.method = builder.method;
         this.dithering = builder.dithering;
     }
@@ -138,19 +136,26 @@ public final class BmpEncoderOptions {
     }
 
     /**
-     * {@return the horizontal resolution in pixels per meter, at least 0, 0 meaning unspecified; 0 by
-     * default}
+     * {@return the pixel density written in the information header, or empty to leave its resolution
+     * unspecified (0 pixels per meter); empty by default}
+     *
+     * <p>The header stores whole pixels per meter from 1 to {@code 2^31 - 1}: a physical density is converted
+     * to pixels per meter and rounded, so that 72 dots per inch is written as 2835. An aspect ratio is not
+     * written, since the header has no unitless form.
      */
-    public int horizontalPixelsPerMeter() {
-        return horizontalPixelsPerMeter;
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
     }
 
     /**
-     * {@return the vertical resolution in pixels per meter, at least 0, 0 meaning unspecified; 0 by
-     * default}
+     * {@return the horizontal and vertical pixels per meter written in the information header, 0 for an
+     * unspecified resolution}
      */
-    public int verticalPixelsPerMeter() {
-        return verticalPixelsPerMeter;
+    long[] pixelsPerMeter() {
+        if (density == null || !density.isPhysical()) {
+            return new long[2];
+        }
+        return DensityTerms.rounded(density, PixelDensity.Unit.DOTS_PER_METER, Integer.MAX_VALUE);
     }
 
     /**
@@ -179,16 +184,15 @@ public final class BmpEncoderOptions {
                 && headerVersion == that.headerVersion
                 && Objects.equals(colorProfile, that.colorProfile)
                 && topDown == that.topDown
-                && horizontalPixelsPerMeter == that.horizontalPixelsPerMeter
-                && verticalPixelsPerMeter == that.verticalPixelsPerMeter
+                && Objects.equals(density, that.density)
                 && method == that.method
                 && dithering == that.dithering;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(pixelFormat, runLength, headerVersion, colorProfile, topDown, horizontalPixelsPerMeter,
-                verticalPixelsPerMeter, method, dithering);
+        return Objects.hash(pixelFormat, runLength, headerVersion, colorProfile, topDown, density, method,
+                dithering);
     }
 
     @Override
@@ -198,7 +202,7 @@ public final class BmpEncoderOptions {
                 + ", headerVersion=" + (headerVersion == null ? "automatic" : headerVersion)
                 + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed"))
                 + (topDown ? ", topDown" : "")
-                + ", pixelsPerMeter=" + horizontalPixelsPerMeter + "x" + verticalPixelsPerMeter
+                + (density == null ? "" : ", density=" + density)
                 + ", method=" + method + ", dithering=" + dithering + "]";
     }
 
@@ -219,9 +223,7 @@ public final class BmpEncoderOptions {
 
         private boolean topDown;
 
-        private int horizontalPixelsPerMeter;
-
-        private int verticalPixelsPerMeter;
+        private PixelDensity density;
 
         private QuantizeMethod method = QuantizeMethod.MEDIAN_CUT;
 
@@ -236,8 +238,7 @@ public final class BmpEncoderOptions {
             this.headerVersion = options.headerVersion;
             this.colorProfile = options.colorProfile;
             this.topDown = options.topDown;
-            this.horizontalPixelsPerMeter = options.horizontalPixelsPerMeter;
-            this.verticalPixelsPerMeter = options.verticalPixelsPerMeter;
+            this.density = options.density;
             this.method = options.method;
             this.dithering = options.dithering;
         }
@@ -330,27 +331,23 @@ public final class BmpEncoderOptions {
         }
 
         /**
-         * Sets the resolution; see {@link BmpEncoderOptions#horizontalPixelsPerMeter()} and
-         * {@link BmpEncoderOptions#verticalPixelsPerMeter()}.
+         * Sets the pixel density; see {@link BmpEncoderOptions#density()}.
          *
-         * @param horizontal the horizontal resolution in pixels per meter
-         * @param vertical the vertical resolution in pixels per meter
+         * @param density the value
          * @return this builder
          */
-        public Builder pixelsPerMeter(int horizontal, int vertical) {
-            this.horizontalPixelsPerMeter = horizontal;
-            this.verticalPixelsPerMeter = vertical;
+        public Builder density(PixelDensity density) {
+            this.density = Objects.requireNonNull(density, "density");
             return this;
         }
 
         /**
-         * Leaves the resolution unspecified; see {@link BmpEncoderOptions#horizontalPixelsPerMeter()}.
+         * Leaves the resolution unspecified; see {@link BmpEncoderOptions#density()}.
          *
          * @return this builder
          */
-        public Builder noResolution() {
-            this.horizontalPixelsPerMeter = 0;
-            this.verticalPixelsPerMeter = 0;
+        public Builder noDensity() {
+            this.density = null;
             return this;
         }
 
@@ -380,7 +377,8 @@ public final class BmpEncoderOptions {
          * Returns the options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if a resolution is negative; if run-length encoding is combined
+         * @throws IllegalArgumentException if a physical density rounds to 0 or to more than {@code 2^31 - 1}
+         * pixels per meter; if run-length encoding is combined
          * with top-down rows or with a pixel format other than {@link PixelFormat#PALETTE_4} and
          * {@link PixelFormat#PALETTE_8}; or if the header version cannot hold the settings
          * ({@link HeaderVersion#INFO} with {@link PixelFormat#ARGB_8888} or a color profile,
@@ -388,8 +386,9 @@ public final class BmpEncoderOptions {
          * @throws MediaException.Unsupported if the color profile describes a color space other than RGB
          */
         public BmpEncoderOptions build() {
-            Checks.nonNegative("horizontal pixels per meter", horizontalPixelsPerMeter);
-            Checks.nonNegative("vertical pixels per meter", verticalPixelsPerMeter);
+            if (density != null && density.isPhysical()) {
+                DensityTerms.rounded(density, PixelDensity.Unit.DOTS_PER_METER, Integer.MAX_VALUE);
+            }
             if (runLength && topDown) {
                 throw new IllegalArgumentException("run-length encoded bitmaps are stored bottom-up");
             }

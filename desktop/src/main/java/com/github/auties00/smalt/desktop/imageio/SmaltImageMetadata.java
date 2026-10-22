@@ -2,6 +2,7 @@ package com.github.auties00.smalt.desktop.imageio;
 
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelDensity;
 import org.w3c.dom.Node;
 
 import javax.imageio.metadata.IIOMetadata;
@@ -19,7 +20,9 @@ import java.util.OptionalLong;
  * <p>The native format is {@link SmaltImageMetadataFormat}; the standard format
  * ({@value IIOMetadataFormatImpl#standardMetadataFormatName}) carries the color type, the alpha
  * and the EXIF orientation as {@code Dimension/ImageOrientation}, named as the JDK's TIFF plug-in
- * names the EXIF orientations.
+ * names the EXIF orientations. The pixel density of the image, when it declares one, gives
+ * {@code Dimension/PixelAspectRatio} (the pixel width over its height) and, when it has a physical unit,
+ * {@code Dimension/HorizontalPixelSize} and {@code VerticalPixelSize} (the size of a pixel in millimeters).
  */
 public final class SmaltImageMetadata extends IIOMetadata {
     /**
@@ -74,6 +77,11 @@ public final class SmaltImageMetadata extends IIOMetadata {
     private final byte[] iccProfile;
 
     /**
+     * The pixel density, or {@code null}.
+     */
+    private final PixelDensity density;
+
+    /**
      * Constructs the metadata.
      *
      * @param format the image format
@@ -85,9 +93,11 @@ public final class SmaltImageMetadata extends IIOMetadata {
      * @param frame the frame timing of an animated image, or {@code null}
      * @param exif the raw EXIF block, or empty
      * @param iccProfile the raw ICC profile, or empty
+     * @param density the pixel density, or empty
      */
     SmaltImageMetadata(ImageFormat format, int width, int height, boolean hasAlpha, boolean gray,
-                       Orientation orientation, Frame frame, Optional<byte[]> exif, Optional<byte[]> iccProfile) {
+                       Orientation orientation, Frame frame, Optional<byte[]> exif, Optional<byte[]> iccProfile,
+                       Optional<PixelDensity> density) {
         super(true, SmaltImageMetadataFormat.NAME, SmaltImageMetadataFormat.class.getName(), null, null);
         this.format = Objects.requireNonNull(format, "format");
         this.width = width;
@@ -98,6 +108,7 @@ public final class SmaltImageMetadata extends IIOMetadata {
         this.frame = frame;
         this.exif = exif.orElse(null);
         this.iccProfile = iccProfile.orElse(null);
+        this.density = density.orElse(null);
     }
 
     /**
@@ -125,6 +136,16 @@ public final class SmaltImageMetadata extends IIOMetadata {
      */
     public Optional<byte[]> iccProfile() {
         return Optional.ofNullable(iccProfile).map(byte[]::clone);
+    }
+
+    /**
+     * Returns the pixel density of the image, as {@link com.github.auties00.smalt.image.DecodedImage#density()}
+     * reports it.
+     *
+     * @return the density, or empty when the image declares none or is a frame of an animation
+     */
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
     }
 
     /**
@@ -210,6 +231,13 @@ public final class SmaltImageMetadata extends IIOMetadata {
             animation.setAttribute("loopCount", Integer.toString(frame.loopCount()));
             root.appendChild(animation);
         }
+        if (density != null) {
+            var node = new IIOMetadataNode("Density");
+            node.setAttribute("unit", density.unit().name().toLowerCase(Locale.ROOT));
+            node.setAttribute("horizontal", Double.toString(density.horizontal()));
+            node.setAttribute("vertical", Double.toString(density.vertical()));
+            root.appendChild(node);
+        }
         if (exif != null) {
             var node = new IIOMetadataNode("Exif");
             node.setUserObject(exif.clone());
@@ -238,10 +266,31 @@ public final class SmaltImageMetadata extends IIOMetadata {
     @Override
     protected IIOMetadataNode getStandardDimensionNode() {
         var dimension = new IIOMetadataNode("Dimension");
+        if (density != null) {
+            dimension.appendChild(floatNode("PixelAspectRatio", density.pixelAspectRatio()));
+        }
         var imageOrientation = new IIOMetadataNode("ImageOrientation");
         imageOrientation.setAttribute("value", STANDARD_ORIENTATIONS[orientation.exifCode()]);
         dimension.appendChild(imageOrientation);
+        if (density != null && density.isPhysical()) {
+            var perMeter = density.to(PixelDensity.Unit.DOTS_PER_METER);
+            dimension.appendChild(floatNode("HorizontalPixelSize", 1000 / perMeter.horizontal()));
+            dimension.appendChild(floatNode("VerticalPixelSize", 1000 / perMeter.vertical()));
+        }
         return dimension;
+    }
+
+    /**
+     * Returns a standard-format node whose {@code value} attribute is a float.
+     *
+     * @param name the node name
+     * @param value the number written as the attribute
+     * @return the node
+     */
+    private static IIOMetadataNode floatNode(String name, double value) {
+        var node = new IIOMetadataNode(name);
+        node.setAttribute("value", Float.toString((float) value));
+        return node;
     }
 
     @Override

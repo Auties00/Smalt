@@ -36,8 +36,8 @@ import java.util.Optional;
  * the reader was opened with. Sub-directories ({@code SubIFDs}, such as the reduced-resolution
  * levels of a pyramid or the EXIF directory) are not pages; a page's EXIF and GPS directories
  * reach its {@link DecodedImage#exif()}, its {@code XMLPacket} tag its {@link DecodedImage#xmp()},
- * and its reduced-resolution levels serve the size hint
- * of {@link ImageDecoderOptions}.
+ * its resolution fields its {@link DecodedImage#density()}, as {@link TiffPage#density()} reads them, and
+ * its reduced-resolution levels serve the size hint of {@link ImageDecoderOptions}.
  *
  * <p>The source is not closed by {@link #close()}. Instances are not thread-safe.
  */
@@ -208,6 +208,7 @@ public final class TiffPages implements PageReader {
             var icc = Optional.ofNullable(profile != null && profile.length > 0 ? profile : null);
             var exif = Optional.ofNullable(TiffExif.extract(directory));
             var xmp = Optional.ofNullable(xmp(directory));
+            var density = Optional.ofNullable(TiffPage.density(directory));
             if (options.minWidth() > 0 || options.minHeight() > 0) {
                 for (var level : levels(index, full.width(), full.height())) {
                     if (level.width() < options.minWidth() || level.height() < options.minHeight()) {
@@ -215,13 +216,13 @@ public final class TiffPages implements PageReader {
                     }
                     try {
                         return masked(index, image(level.directory(), pageDecoder(level.directory()), full, icc,
-                                exif).withXmp(xmp));
+                                exif).withXmp(xmp)).withDensity(density);
                     } catch (MediaException.Unsupported | MediaException.Malformed ignored) {
                         // an undecodable level gives way to the next larger one, then to the page
                     }
                 }
             }
-            return masked(index, image(directory, full, full, icc, exif).withXmp(xmp));
+            return masked(index, image(directory, full, full, icc, exif).withXmp(xmp)).withDensity(density);
         }
     }
 
@@ -245,7 +246,8 @@ public final class TiffPages implements PageReader {
         }
         var picture = TransparencyMask.apply(image.picture(), maskPicture);
         return new DecodedImage(picture, image.format(), image.orientation(), image.sourceWidth(),
-                image.sourceHeight(), image.iccProfile(), image.exif(), image.xmp(), image.colorProfile());
+                image.sourceHeight(), image.iccProfile(), image.exif(), image.xmp(), image.colorProfile(),
+                image.density());
     }
 
     /**
@@ -458,7 +460,7 @@ public final class TiffPages implements PageReader {
         if (!highBitDepth && converted.picture() instanceof Rgba16Picture wide) {
             return new DecodedImage(ImageOps.toEightBit(wide), converted.format(), converted.orientation(),
                     converted.sourceWidth(), converted.sourceHeight(), converted.iccProfile(), converted.exif(),
-                    converted.xmp(), converted.colorProfile());
+                    converted.xmp(), converted.colorProfile(), converted.density());
         }
         return converted;
     }

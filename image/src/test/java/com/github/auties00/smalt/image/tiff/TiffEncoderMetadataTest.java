@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.tiff;
 
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifReader;
 import com.github.auties00.smalt.image.exif.ExifValue;
@@ -60,9 +61,9 @@ class TiffEncoderMetadataTest {
         @CsvSource({"300, 300", "72.5, 96", "118.11, 0.5", "4294967295, 1", "1E-7, 1E12", "0.3333333333333333, 1"})
         @DisplayName("is written as the closest 32-bit rationals in inches")
         void dotsPerInch(double horizontal, double vertical) {
-            var encoded = encode(TiffEncoderOptions.builder().resolution(horizontal, vertical).build());
+            var encoded = encode(TiffEncoderOptions.builder().density(PixelDensity.ofDotsPerInch(horizontal, vertical)).build());
             var page = TiffDecoder.openPages(MediaSource.of(encoded)).page(0);
-            var resolution = page.resolution().orElseThrow();
+            var resolution = page.density().orElseThrow();
             assertEquals(Math.min(horizontal, 0xFFFF_FFFFL), resolution.horizontal(), Math.max(horizontal * 1e-9, 1e-6));
             assertEquals(Math.min(vertical, 0xFFFF_FFFFL), resolution.vertical(),
                     vertical > 1e9 ? vertical * 1e-2 : Math.max(vertical * 1e-9, 1e-6));
@@ -89,10 +90,9 @@ class TiffEncoderMetadataTest {
                     .with(ExifData.Directory.IFD0, 0x0128, ExifValue.ofShort(3));
             var encoded = encode(TiffEncoderOptions.builder().exif(exif).build());
             assertArrayEquals(new long[]{3}, TiffEncoderModesTest.tag(encoded, 296));
-            var resolution = TiffDecoder.openPages(MediaSource.of(encoded)).page(0).resolution().orElseThrow();
-            assertEquals(118 * 2.54, resolution.horizontal(), 1e-9);
-            assertEquals(59 * 2.54, resolution.vertical(), 1e-9);
-            var overridden = encode(TiffEncoderOptions.builder().exif(exif).resolution(600, 600).build());
+            assertEquals(PixelDensity.ofDotsPerCentimeter(118, 59),
+                    TiffDecoder.openPages(MediaSource.of(encoded)).page(0).density().orElseThrow());
+            var overridden = encode(TiffEncoderOptions.builder().exif(exif).density(PixelDensity.ofDotsPerInch(600, 600)).build());
             assertArrayEquals(new long[]{2}, TiffEncoderModesTest.tag(overridden, 296));
             assertArrayEquals(new long[]{600, 1}, TiffEncoderModesTest.tag(overridden, 282));
         }
@@ -101,11 +101,20 @@ class TiffEncoderMetadataTest {
         @DisplayName("is printed by tiffinfo")
         void libtiff() {
             LibTiff.assume("tiffinfo");
-            var file = LibTiff.write("resolution.tif", encode(TiffEncoderOptions.builder().resolution(300, 150)
+            var file = LibTiff.write("resolution.tif", encode(TiffEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerInch(300, 150))
                     .orientation(Orientation.ROTATE_90).build()));
             var text = new String(LibTiff.run("tiffinfo", List.of(file.toString())), StandardCharsets.UTF_8);
             assertTrue(text.contains("Resolution: 300, 150 pixels/inch"), text);
             assertTrue(text.contains("Orientation: row 0 rhs, col 0 top"), text);
+            var centimeters = LibTiff.write("resolution-cm.tif", encode(TiffEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerMeter(4000, 4125)).build()));
+            text = new String(LibTiff.run("tiffinfo", List.of(centimeters.toString())), StandardCharsets.UTF_8);
+            assertTrue(text.contains("Resolution: 40, 41.25 pixels/cm"), text);
+            var unitless = LibTiff.write("resolution-none.tif", encode(TiffEncoderOptions.builder()
+                    .density(PixelDensity.ofAspectRatio(1, 2)).build()));
+            text = new String(LibTiff.run("tiffinfo", List.of(unitless.toString())), StandardCharsets.UTF_8);
+            assertTrue(text.contains("Resolution: 1, 2 (unitless)"), text);
         }
     }
 

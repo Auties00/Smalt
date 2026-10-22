@@ -48,7 +48,9 @@ import java.util.Optional;
  * {@code iCCP} profile is also returned in {@link DecodedImage#iccProfile()}. An
  * {@code eXIf} chunk before the image data supplies {@link DecodedImage#exif()} and the
  * orientation, and the first {@code iTXt} chunk with the keyword {@code XML:com.adobe.xmp}
- * supplies {@link DecodedImage#xmp()}.
+ * supplies {@link DecodedImage#xmp()}. The first {@code pHYs} chunk before the image data supplies
+ * {@link DecodedImage#density()}, in dots per meter or as an aspect ratio; one of another length than 9 bytes,
+ * with a bad CRC, a zero value, a value above {@code 2^31 - 1} or an unknown unit gives none.
  *
  * <p>A CRC-32 mismatch in a critical chunk ({@code IHDR}, {@code PLTE}, {@code IDAT},
  * {@code IEND}) is malformed, while an ancillary chunk with a bad CRC is skipped; an unknown
@@ -170,7 +172,8 @@ public final class PngDecoder {
                 reader.readTrailingMetadata();
                 var image = new DecodedImage(picture, ImageFormat.PNG, reader.orientation(), width, height,
                         Optional.ofNullable(reader.iccProfile()), Optional.ofNullable(reader.exif()),
-                        Optional.ofNullable(reader.xmp()), Optional.ofNullable(reader.colorProfile()));
+                        Optional.ofNullable(reader.xmp()), Optional.ofNullable(reader.colorProfile()),
+                        Optional.ofNullable(reader.density()));
                 return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             });
         }

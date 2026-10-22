@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.tiff;
 
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
@@ -101,7 +102,7 @@ public final class TiffEncoderOptions {
 
     private final boolean faxFillBits;
 
-    private final TiffPage.Resolution resolution;
+    private final PixelDensity density;
 
     private final Orientation orientation;
 
@@ -251,7 +252,7 @@ public final class TiffEncoderOptions {
         this.bigTiff = builder.bigTiff;
         this.faxTwoDimensional = builder.faxTwoDimensional;
         this.faxFillBits = builder.faxFillBits;
-        this.resolution = builder.resolution;
+        this.density = builder.density;
         this.orientation = builder.orientation;
         this.colorProfile = builder.colorProfile;
         this.exif = builder.exif;
@@ -526,12 +527,17 @@ public final class TiffEncoderOptions {
     }
 
     /**
-     * {@return the resolution of every page, in dots per inch, or empty to take it from
-     * {@link #exif()} (its {@code XResolution}, {@code YResolution} and {@code ResolutionUnit}) or,
-     * without one there, to write 72 dots per inch; empty by default}
+     * {@return the pixel density of every page, written in its {@code XResolution}, {@code YResolution} and
+     * {@code ResolutionUnit} fields, or empty to take them from {@link #exif()} or, without them there, to
+     * write 72 dots per inch; empty by default}
+     *
+     * <p>Dots per inch are written with {@code ResolutionUnit} 2, dots per centimeter with 3, dots per meter
+     * converted to dots per centimeter, and an aspect ratio with 1 (no absolute unit). Each value is written as
+     * a continued-fraction approximation of two 32-bit unsigned terms, exact for integers and for fractions
+     * whose terms fit.
      */
-    public Optional<TiffPage.Resolution> resolution() {
-        return Optional.ofNullable(resolution);
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
     }
 
     /**
@@ -565,7 +571,7 @@ public final class TiffEncoderOptions {
      * {@code DateTime}, {@code Artist}, {@code Copyright} and the like) in the page's directory.
      * Entries that describe the image structure, which the encoder writes itself, are left out,
      * except that the orientation and resolution entries apply when {@link #orientation()} and
-     * {@link #resolution()} are empty. The thumbnail is not written, since a TIFF page cannot hold
+     * {@link #density()} are empty. The thumbnail is not written, since a TIFF page cannot hold
      * one.
      */
     public Optional<ExifData> exif() {
@@ -616,8 +622,8 @@ public final class TiffEncoderOptions {
      *
      * <p>The quality, the chroma subsampling ({@link ChromaFormat#MONOCHROME} writing gray pages),
      * the Huffman optimization and the restart interval apply; the color profile and the JFIF density are
-     * ignored, since the page's profile is {@link #colorProfile()} and its resolution
-     * {@link #resolution()}. The other settings must keep their defaults: the pages are 8-bit baseline
+     * ignored, since the page's profile is {@link #colorProfile()} and its density
+     * {@link #density()}. The other settings must keep their defaults: the pages are 8-bit baseline
      * Y'CbCr or gray.
      */
     public JpegEncoderOptions jpegOptions() {
@@ -652,7 +658,7 @@ public final class TiffEncoderOptions {
                 && rowsPerStrip == that.rowsPerStrip && tileWidth == that.tileWidth && tileHeight == that.tileHeight
                 && bigEndian == that.bigEndian && bigTiff == that.bigTiff
                 && faxTwoDimensional == that.faxTwoDimensional && faxFillBits == that.faxFillBits
-                && Objects.equals(resolution, that.resolution) && orientation == that.orientation
+                && Objects.equals(density, that.density) && orientation == that.orientation
                 && Objects.equals(colorProfile, that.colorProfile) && Objects.equals(exif, that.exif)
                 && Objects.equals(xmp, that.xmp) && Objects.equals(iptc, that.iptc)
                 && webpOptions.equals(that.webpOptions) && jpeg2000Options.equals(that.jpeg2000Options)
@@ -663,7 +669,7 @@ public final class TiffEncoderOptions {
     public int hashCode() {
         return Objects.hash(compression, predictor, compressionLevel, layout, depth, planar, chromaFormat,
                 quantizeOptions, bilevelDithering, rowsPerStrip, tileWidth, tileHeight, bigEndian, bigTiff,
-                faxTwoDimensional, faxFillBits, resolution, orientation, colorProfile, exif, xmp, iptc, webpOptions,
+                faxTwoDimensional, faxFillBits, density, orientation, colorProfile, exif, xmp, iptc, webpOptions,
                 jpeg2000Options, jpegOptions);
     }
 
@@ -679,7 +685,7 @@ public final class TiffEncoderOptions {
                 + ", bigEndian=" + bigEndian + ", bigTiff=" + bigTiff
                 + (compression == TiffCompression.CCITT_T4
                 ? ", faxTwoDimensional=" + faxTwoDimensional + ", faxFillBits=" + faxFillBits : "")
-                + (resolution == null ? "" : ", resolution=" + resolution.horizontal() + "x" + resolution.vertical())
+                + (density == null ? "" : ", density=" + density)
                 + (orientation == null ? "" : ", orientation=" + orientation)
                 + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed"))
                 + (exif == null ? "" : ", exif")
@@ -731,7 +737,7 @@ public final class TiffEncoderOptions {
 
         private boolean faxFillBits;
 
-        private TiffPage.Resolution resolution;
+        private PixelDensity density;
 
         private Orientation orientation;
 
@@ -781,7 +787,7 @@ public final class TiffEncoderOptions {
             this.bigTiff = options.bigTiff;
             this.faxTwoDimensional = options.faxTwoDimensional;
             this.faxFillBits = options.faxFillBits;
-            this.resolution = options.resolution;
+            this.density = options.density;
             this.orientation = options.orientation;
             this.colorProfile = options.colorProfile;
             this.exif = options.exif;
@@ -986,25 +992,24 @@ public final class TiffEncoderOptions {
         }
 
         /**
-         * Sets the resolution of every page; see {@link TiffEncoderOptions#resolution()}.
+         * Sets the pixel density of every page; see {@link TiffEncoderOptions#density()}.
          *
-         * @param horizontal the horizontal resolution in dots per inch
-         * @param vertical the vertical resolution in dots per inch
+         * @param density the value
          * @return this builder
          */
-        public Builder resolution(double horizontal, double vertical) {
-            this.resolution = new TiffPage.Resolution(horizontal, vertical);
+        public Builder density(PixelDensity density) {
+            this.density = Objects.requireNonNull(density, "density");
             return this;
         }
 
         /**
-         * Takes the resolution from the EXIF metadata, or writes 72 dots per inch; see
-         * {@link TiffEncoderOptions#resolution()}.
+         * Takes the pixel density from the EXIF metadata, or writes 72 dots per inch; see
+         * {@link TiffEncoderOptions#density()}.
          *
          * @return this builder
          */
-        public Builder automaticResolution() {
-            this.resolution = null;
+        public Builder automaticDensity() {
+            this.density = null;
             return this;
         }
 
@@ -1146,11 +1151,10 @@ public final class TiffEncoderOptions {
          * {@link TiffEncoderOptions#compression()} lists, the compression level is not in [1, 9], the rows
          * per strip are not positive or, for JPEG or subsampled Y'CbCr pages, not a multiple of the row
          * group {@link TiffEncoderOptions#rowsPerStrip()} describes, a tile dimension is not a positive
-         * multiple of 16, the chroma format is {@code MONOCHROME}, a resolution is not positive and
-         * finite, the layout is {@code PALETTE}, {@code BILEVEL} or {@code YCBCR} with a depth they do not
-         * take, the compression does not take the layout, the depth or separate planes, as
-         * {@link TiffEncoderOptions#compression()} describes, or the JPEG settings ask for more than
-         * {@link TiffEncoderOptions#jpegOptions()} takes
+         * multiple of 16, the chroma format is {@code MONOCHROME}, the layout is {@code PALETTE},
+         * {@code BILEVEL} or {@code YCBCR} with a depth they do not take, the compression does not take the
+         * layout, the depth or separate planes, as {@link TiffEncoderOptions#compression()} describes, or the
+         * JPEG settings ask for more than {@link TiffEncoderOptions#jpegOptions()} takes
          */
         public TiffEncoderOptions build() {
             // TODO: JPEG XL pages, once Smalt has a JPEG XL encoder
@@ -1163,11 +1167,6 @@ public final class TiffEncoderOptions {
             Checks.inRange("compression level", compressionLevel, 1, 9);
             if (chromaFormat == ChromaFormat.MONOCHROME) {
                 throw new IllegalArgumentException("a Y'CbCr page needs chroma; use the GRAY layout instead");
-            }
-            if (resolution != null && (!(resolution.horizontal() > 0) || !(resolution.vertical() > 0)
-                    || !Double.isFinite(resolution.horizontal()) || !Double.isFinite(resolution.vertical()))) {
-                throw new IllegalArgumentException("invalid resolution " + resolution.horizontal() + "x"
-                        + resolution.vertical());
             }
             var fixedDepth = layout == Layout.PALETTE || layout == Layout.BILEVEL || layout == Layout.YCBCR;
             if (fixedDepth && depth != Depth.AUTO && !(layout == Layout.YCBCR && depth == Depth.EIGHT)) {

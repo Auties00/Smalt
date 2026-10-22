@@ -6,8 +6,10 @@ picture 32x32 rgba8 alpha=false crc=878a46a3
   format=PNG orientation=NORMAL source=32x32
   icc=none exif=none xmp=none
   profile=ColorProfile[RGB, gamma 1.0, RGB, DISPLAY, v4.3.0]
+  density=DOTS_PER_METER 1000.0x1000.0
 scaled 8x8
 picture 32x32 rgba8 alpha=false crc=878a46a3
   format=PNG orientation=NORMAL source=32x32
   icc=none exif=none xmp=none
   profile=ColorProfile[RGB, gamma 1.0, RGB, DISPLAY, v4.3.0]
+  density=DOTS_PER_METER 1000.0x1000.0

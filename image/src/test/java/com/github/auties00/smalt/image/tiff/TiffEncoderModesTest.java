@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -294,7 +295,7 @@ class TiffEncoderModesTest {
                             int width, int rows, int dpi) {
             LibTiff.assume("tiffcp");
             var picture = bilevelPicture(width, 23, width * 31L + rows);
-            var base = TiffEncoderOptions.builder().layout(TiffEncoderOptions.Layout.BILEVEL).resolution(dpi, dpi);
+            var base = TiffEncoderOptions.builder().layout(TiffEncoderOptions.Layout.BILEVEL).density(PixelDensity.ofDotsPerInch(dpi, dpi));
             if (rows > 0) {
                 base.strips(rows);
             }
@@ -377,7 +378,7 @@ class TiffEncoderModesTest {
             var options = TiffEncoderOptions.builder().compression(compression).faxTwoDimensional(kind.contains("2d"))
                     .faxFillBits(kind.contains("fill"));
             if (kind.endsWith("fine")) {
-                options.resolution(204, 196);
+                options.density(PixelDensity.ofDotsPerInch(204, 196));
             }
             var encoded = chunks(TiffEncoder.encode(inverted, options.build())).getFirst();
             assertEquals(1, chunks(reference).size(), "the vector has one strip");
@@ -431,9 +432,9 @@ class TiffEncoderModesTest {
             var picture = bilevelPicture(300, 12, 5);
             var base = TiffEncoderOptions.builder().compression(TiffCompression.CCITT_T4).faxTwoDimensional(true);
             var standard = chunks(TiffEncoder.encode(picture, base.build())).getFirst();
-            var fine = chunks(TiffEncoder.encode(picture, base.resolution(204, 196).build())).getFirst();
+            var fine = chunks(TiffEncoder.encode(picture, base.density(PixelDensity.ofDotsPerInch(204, 196)).build())).getFirst();
             assertFalse(Arrays.equals(standard, fine));
-            base.automaticResolution();
+            base.automaticDensity();
             var centimeters = com.github.auties00.smalt.image.exif.ExifData.EMPTY
                     .with(com.github.auties00.smalt.image.exif.ExifData.Directory.IFD0, 0x011A,
                             com.github.auties00.smalt.image.exif.ExifValue.ofRational(80, 1))
@@ -1103,10 +1104,10 @@ class TiffEncoderModesTest {
                     .depth(TiffEncoderOptions.Depth.FLOAT).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().compression(TiffCompression.WEBP)
                     .layout(TiffEncoderOptions.Layout.CMYK).build());
-            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().resolution(0, 72).build());
-            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().resolution(72, Double.NaN).build());
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().density(PixelDensity.ofDotsPerInch(0, 72)).build());
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().density(PixelDensity.ofDotsPerInch(72, Double.NaN)).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder()
-                    .resolution(Double.POSITIVE_INFINITY, 72).build());
+                    .density(PixelDensity.ofDotsPerInch(Double.POSITIVE_INFINITY, 72)).build());
             assertThrows(NullPointerException.class, () -> defaults.toBuilder().exif(null));
             assertThrows(NullPointerException.class, () -> defaults.toBuilder().orientation(null));
             assertThrows(NullPointerException.class, () -> defaults.toBuilder().jpegOptions(null));
@@ -1117,7 +1118,7 @@ class TiffEncoderModesTest {
         @DisplayName("keep every setting through toBuilder, equality and the presets")
         void copies() {
             var options = TiffEncoderOptions.builder().compression(TiffCompression.CCITT_T4).faxTwoDimensional(true)
-                    .faxFillBits(true).resolution(204, 196).orientation(Orientation.ROTATE_180)
+                    .faxFillBits(true).density(PixelDensity.ofDotsPerInch(204, 196)).orientation(Orientation.ROTATE_180)
                     .bilevelDithering(Dithering.SIERRA).planar(true).chromaFormat(ChromaFormat.YUV422)
                     .quantizeOptions(QuantizeOptions.ofColors(8)).exif(TiffEncoderMetadataTest.EXIF)
                     .xmp(XmpPacket.empty()).iptc(IptcData.of(List.of()))
@@ -1125,14 +1126,14 @@ class TiffEncoderModesTest {
             assertEquals(options, options.toBuilder().build());
             assertEquals(options.hashCode(), options.toBuilder().build().hashCode());
             assertNotEquals(options, options.toBuilder().faxFillBits(false).build());
-            assertNotEquals(options, options.toBuilder().automaticResolution().build());
+            assertNotEquals(options, options.toBuilder().automaticDensity().build());
             assertNotEquals(options, options.toBuilder().automaticOrientation().build());
             assertNotEquals(options, options.toBuilder().noExif().build());
             assertTrue(options.toString().contains("faxTwoDimensional=true"), options.toString());
             assertEquals(TiffCompression.CCITT_T6, TiffEncoderOptions.fax().compression());
             assertEquals(TiffEncoderOptions.Layout.BILEVEL, TiffEncoderOptions.fax().layout());
             assertEquals(TiffCompression.JPEG, TiffEncoderOptions.jpeg().compression());
-            assertTrue(TiffEncoderOptions.defaults().resolution().isEmpty());
+            assertTrue(TiffEncoderOptions.defaults().density().isEmpty());
             assertTrue(TiffEncoderOptions.defaults().orientation().isEmpty());
             assertFalse(TiffEncoderOptions.defaults().isPlanar());
             assertEquals(ChromaFormat.YUV420, TiffEncoderOptions.defaults().chromaFormat());

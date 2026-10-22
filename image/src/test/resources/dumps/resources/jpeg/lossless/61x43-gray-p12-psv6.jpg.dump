@@ -6,8 +6,10 @@ picture 61x43 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=9790a1e7
   format=JPEG orientation=NORMAL source=61x43
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0
 scaled 15x10
 picture 61x43 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=9790a1e7
   format=JPEG orientation=NORMAL source=61x43
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0

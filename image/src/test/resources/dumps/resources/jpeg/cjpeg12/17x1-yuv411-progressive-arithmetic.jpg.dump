@@ -6,3 +6,4 @@ picture 17x1 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=cc973f02 u=88256002 v=b80
   format=JPEG orientation=NORMAL source=17x1
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0

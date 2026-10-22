@@ -1,10 +1,9 @@
 package com.github.auties00.smalt.image.jpeg;
 
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.ColorSpace;
-import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.Density;
-import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.DensityUnit;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.QuantizationTable;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.Sampling;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.Scan;
@@ -60,7 +59,7 @@ class JpegEncoderModeOptionsTest {
         assertTrue(defaults.quantizationSlots().isEmpty());
         assertTrue(defaults.baselineQuantization());
         assertTrue(defaults.scanScript().isEmpty());
-        assertEquals(Density.ofAspectRatio(1, 1), defaults.density());
+        assertEquals(PixelDensity.ofAspectRatio(1, 1), defaults.density());
         assertTrue(JpegEncoderOptions.ofProgressive(60).progressive());
         assertEquals(60, JpegEncoderOptions.ofProgressive(60).quality());
         assertTrue(JpegEncoderOptions.ofLossless().lossless());
@@ -75,7 +74,7 @@ class JpegEncoderModeOptionsTest {
         var built = JpegEncoderOptions.builder().quality(80).chromaQuality(55).colorSpace(ColorSpace.YCCK)
                 .progressive(true).arithmetic(true).precision(12).samplingFactors(Sampling.of(1, 2))
                 .quantizationTables(tables).quantizationSlots(0, 2).baselineQuantization(false)
-                .density(Density.ofDotsPerInch(300, 200))
+                .density(PixelDensity.ofDotsPerInch(300, 200))
                 .scanScript(Scan.of(0, 0, 0, 0, 0, 1, 2, 3), Scan.of(1, 63, 0, 0, 0), Scan.of(1, 63, 0, 0, 1),
                         Scan.of(1, 63, 0, 0, 2), Scan.of(1, 63, 0, 0, 3))
                 .build();
@@ -91,7 +90,7 @@ class JpegEncoderModeOptionsTest {
         var reset = built.toBuilder().automaticChromaQuality().automaticPrecision().automaticSamplingFactors()
                 .automaticQuantizationTables().automaticQuantizationSlots().automaticScanScript().progressive(false)
                 .arithmetic(false).colorSpace(ColorSpace.YCBCR).baselineQuantization(true)
-                .density(Density.ofAspectRatio(1, 1)).quality(75).build();
+                .density(PixelDensity.ofAspectRatio(1, 1)).quality(75).build();
         assertEquals(JpegEncoderOptions.defaults(), reset);
         assertNotEquals(built, reset);
     }
@@ -187,9 +186,13 @@ class JpegEncoderModeOptionsTest {
         assertThrows(IllegalArgumentException.class, () -> Scan.of(0, 63, 0, 0, 1, 0));
         assertThrows(IllegalArgumentException.class, () -> Scan.of(0, 64, 0, 0, 0));
         assertThrows(IllegalArgumentException.class, () -> Scan.of(0, 63, 16, 0, 0));
-        assertThrows(IllegalArgumentException.class, () -> Density.ofDotsPerInch(0, 72));
-        assertThrows(IllegalArgumentException.class, () -> Density.ofDotsPerCentimeter(72, 65536));
-        assertThrows(NullPointerException.class, () -> new Density(null, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> JpegEncoderOptions.builder()
+                .density(PixelDensity.ofDotsPerInch(0.4, 72)).build());
+        assertThrows(IllegalArgumentException.class, () -> JpegEncoderOptions.builder()
+                .density(PixelDensity.ofDotsPerCentimeter(72, 65535.5)).build());
+        assertThrows(IllegalArgumentException.class, () -> JpegEncoderOptions.builder()
+                .density(PixelDensity.ofAspectRatio(70000, 1)).build());
+        assertThrows(NullPointerException.class, () -> JpegEncoderOptions.builder().density(null));
         var ones = new int[64];
         java.util.Arrays.fill(ones, 1);
         assertArrayEquals(ones, QuantizationTable.of(ones).toArray());
@@ -261,14 +264,14 @@ class JpegEncoderModeOptionsTest {
         @DisplayName("YCbCr carries a JFIF segment with the density, the other color spaces an Adobe segment")
         void headers() {
             var picture = picture(20, 12);
-            var dpi = JpegEncoder.encode(picture, JpegEncoderOptions.builder().density(Density.ofDotsPerInch(300, 150))
+            var dpi = JpegEncoder.encode(picture, JpegEncoderOptions.builder().density(PixelDensity.ofDotsPerInch(300, 150))
                     .build());
             var app0 = indexOf(dpi, 0xE0);
             assertEquals(2, app0);
             assertArrayEquals(new byte[]{'J', 'F', 'I', 'F', 0, 1, 1, 1, 0x01, 0x2C, 0x00, (byte) 0x96, 0, 0},
                     java.util.Arrays.copyOfRange(dpi, app0 + 4, app0 + 18));
             var cm = JpegEncoder.encode(picture, JpegEncoderOptions.builder().progressive(true)
-                    .density(new Density(DensityUnit.DOTS_PER_CENTIMETER, 40, 41)).build());
+                    .density(PixelDensity.ofDotsPerCentimeter(40, 41)).build());
             assertEquals(2, cm[indexOf(cm, 0xE0) + 11]);
             for (var space : new ColorSpace[]{ColorSpace.RGB, ColorSpace.CMYK, ColorSpace.YCCK}) {
                 var jpeg = JpegEncoder.encode(picture, JpegEncoderOptions.builder().colorSpace(space).build());
@@ -292,7 +295,7 @@ class JpegEncoderModeOptionsTest {
         @DisplayName("a lossless 9-bit YCbCr file of 1x1 components carries an Adobe segment of transform 1")
         void ninebitLossless() {
             var lossless = JpegEncoderOptions.builder().lossless(true).precision(9).chromaFormat(ChromaFormat.YUV444)
-                    .density(Density.ofDotsPerInch(72, 72)).build();
+                    .density(PixelDensity.ofDotsPerInch(72, 72)).build();
             var jpeg = JpegEncoder.encode(picture(20, 12), lossless);
             assertEquals(-1, indexOf(jpeg, 0xE0));
             var app14 = indexOf(jpeg, 0xEE);
@@ -339,7 +342,7 @@ class JpegEncoderModeOptionsTest {
         @DisplayName("take the quality, subsampling, Huffman, restart and density settings")
         void accepts() {
             var jpeg = JpegEncoderOptions.builder().quality(40).chromaFormat(ChromaFormat.YUV422).optimizeHuffman(false)
-                    .restartInterval(2).precision(8).density(Density.ofDotsPerInch(300, 300)).build();
+                    .restartInterval(2).precision(8).density(PixelDensity.ofDotsPerInch(300, 300)).build();
             var options = TiffEncoderOptions.jpeg().toBuilder().jpegOptions(jpeg)
                     .build();
             assertEquals(jpeg, options.jpegOptions());

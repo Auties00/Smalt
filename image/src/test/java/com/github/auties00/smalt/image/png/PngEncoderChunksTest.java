@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.TransferCharacteristics;
@@ -249,13 +250,13 @@ class PngEncoderChunksTest {
         @DisplayName("writes pHYs in meters or as an aspect ratio")
         void physicalDimensions() {
             var dpi = PngEncoder.encode(colorPhoto(), PngEncoderOptions.builder()
-                    .physicalDimensions(PngPhysicalDimensions.ofDotsPerInch(300)).build());
+                    .density(PixelDensity.ofDotsPerInch(300)).build());
             var phys = chunk(dpi, "pHYs").data();
             assertEquals(11811, u32(phys, 0));
             assertEquals(11811, u32(phys, 4));
             assertEquals(1, phys[8]);
             var aspect = PngEncoder.encode(colorPhoto(), PngEncoderOptions.builder()
-                    .physicalDimensions(PngPhysicalDimensions.ofAspectRatio(2, 1)).build());
+                    .density(PixelDensity.ofAspectRatio(1, 2)).build());
             phys = chunk(aspect, "pHYs").data();
             assertEquals(1, u32(phys, 0));
             assertEquals(2, u32(phys, 4));
@@ -264,11 +265,25 @@ class PngEncoderChunksTest {
                 assertEquals("pHYs 11811 11811 1", PngOracles.libpngChunk(PngOracles.libpngInfo(dpi), "pHYs"));
                 assertEquals("pHYs 1 2 0", PngOracles.libpngChunk(PngOracles.libpngInfo(aspect), "pHYs"));
             }
-            assertEquals(new PngPhysicalDimensions(2835, 2835, PngPhysicalDimensions.Unit.METER),
-                    PngPhysicalDimensions.ofDotsPerInch(72));
-            assertThrows(IllegalArgumentException.class, () -> PngPhysicalDimensions.ofDotsPerInch(0));
-            assertThrows(IllegalArgumentException.class, () -> PngPhysicalDimensions.ofDotsPerInch(Double.NaN));
-            assertThrows(IllegalArgumentException.class, () -> PngPhysicalDimensions.ofAspectRatio(0, 1));
+            var seventyTwo = PngEncoder.encode(colorPhoto(), PngEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerInch(72)).build());
+            assertEquals(2835, u32(chunk(seventyTwo, "pHYs").data(), 0));
+            var centimeters = PngEncoder.encode(colorPhoto(), PngEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerCentimeter(40, 41.5)).build());
+            phys = chunk(centimeters, "pHYs").data();
+            assertEquals(4000, u32(phys, 0));
+            assertEquals(4150, u32(phys, 4));
+            var fractional = PngEncoder.encode(colorPhoto(), PngEncoderOptions.builder()
+                    .density(PixelDensity.ofAspectRatio(1.5, 1)).build());
+            phys = chunk(fractional, "pHYs").data();
+            assertEquals(3, u32(phys, 0));
+            assertEquals(2, u32(phys, 4));
+            assertThrows(IllegalArgumentException.class, () -> PngEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerMeter(0.4, 1)).build());
+            assertThrows(IllegalArgumentException.class, () -> PngEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerMeter(3e9, 1)).build());
+            assertThrows(IllegalArgumentException.class, () -> PngEncoderOptions.builder()
+                    .density(PixelDensity.ofAspectRatio(3e9, 1)).build());
         }
 
         @Test
@@ -277,7 +292,7 @@ class PngEncoderChunksTest {
             var picture = narrow(40, 30, true, (x, y) -> 0xFF00_0000 | ((x % 5) * 0x30_2010 + 1));
             var png = PngEncoder.encode(picture, PngEncoderOptions.builder().colorProfile(ColorProfile.adobeRgb())
                     .gamma(0.5).chromaticities(PngChromaticities.ofSrgb()).significantBits(6)
-                    .physicalDimensions(PngPhysicalDimensions.ofDotsPerInch(96)).build());
+                    .density(PixelDensity.ofDotsPerInch(96)).build());
             assertEquals(PngHeader.PALETTE, png[25]);
             assertEquals(List.of("IHDR", "iCCP", "gAMA", "cHRM", "sBIT", "pHYs", "PLTE", "IDAT", "IEND"), types(png));
             if (PngOracles.hasLibpng()) {
@@ -488,8 +503,7 @@ class PngEncoderChunksTest {
             assertThrows(NullPointerException.class, () -> PngEncoderOptions.builder().srgbIntent(null));
             assertThrows(IllegalArgumentException.class, () -> new PngChromaticities(new Chromaticity(30000, 0),
                     new Chromaticity(0, 0), new Chromaticity(0, 0), new Chromaticity(0, 0)));
-            assertThrows(IllegalArgumentException.class, () -> new PngPhysicalDimensions(0, 1,
-                    PngPhysicalDimensions.Unit.METER));
+            assertThrows(NullPointerException.class, () -> PngEncoderOptions.builder().density(null));
         }
 
         @Test
@@ -497,12 +511,12 @@ class PngEncoderChunksTest {
         void resets() {
             var full = PngEncoderOptions.builder().colorProfile(ColorProfile.of(pqColor())).interlaced(true).significantBits(10)
                     .gamma(0.5).chromaticities(PngChromaticities.ofSrgb())
-                    .physicalDimensions(PngPhysicalDimensions.ofDotsPerInch(72)).build();
+                    .density(PixelDensity.ofDotsPerInch(72)).build();
             assertEquals(full, full.toBuilder().build());
             assertEquals(full.hashCode(), full.toBuilder().build().hashCode());
             assertTrue(full.toString().contains("interlaced"));
             var cleared = full.toBuilder().noColorProfile().interlaced(false).noSignificantBits().noGamma()
-                    .noChromaticities().noPhysicalDimensions().build();
+                    .noChromaticities().noDensity().build();
             assertEquals(PngEncoderOptions.defaults(), cleared);
             var srgb = PngEncoderOptions.builder().srgbIntent(RenderingIntent.SATURATION).build();
             assertEquals(PngEncoderOptions.defaults(), srgb.toBuilder().noSrgbIntent().build());

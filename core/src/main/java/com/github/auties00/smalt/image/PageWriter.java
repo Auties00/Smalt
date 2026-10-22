@@ -41,7 +41,7 @@ public interface PageWriter extends AutoCloseable {
 
     /**
      * Adds a decoded page, with the metadata the format can carry: its orientation, color profile,
-     * EXIF metadata and XMP packet.
+     * pixel density, EXIF metadata and XMP packet.
      *
      * @implSpec The default implementation calls {@link #write(Picture)} with
      * {@link DecodedImage#picture()}, dropping the metadata.

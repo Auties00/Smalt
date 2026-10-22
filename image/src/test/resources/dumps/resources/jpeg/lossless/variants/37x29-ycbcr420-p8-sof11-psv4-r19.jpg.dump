@@ -6,8 +6,10 @@ picture 37x29 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=95b142fe u=98971cf5 v=40
   format=JPEG orientation=NORMAL source=37x29
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0
 scaled 9x7
 picture 37x29 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=95b142fe u=98971cf5 v=40383094
   format=JPEG orientation=NORMAL source=37x29
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0

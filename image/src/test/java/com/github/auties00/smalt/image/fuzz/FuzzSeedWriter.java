@@ -45,6 +45,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.Set;
+import java.util.zip.CRC32;
 import java.util.zip.ZipInputStream;
 
 import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.copy;
@@ -433,6 +434,82 @@ class FuzzSeedWriter {
                 MetadataSeeds.uncompressedThumbnailJpeg());
         copy(ImageMetadataFuzzTest.class, "metadata", "valid-jxl-reconstruction.jxl",
                 VECTORS.resolve("jxl/reconstruction/tagged.jxl"));
+    }
+
+    @Test
+    @DisplayName("writes the pixel density seeds, derived from the JPEG, PNG, BMP and JPEG 2000 decoder seeds")
+    void densities() {
+        var jpeg = seed("jpeg", "valid-baseline-420.jpg");
+        // the JFIF segment after SOI: units 1, 300 by 300 dots per inch
+        jpeg[13] = 1;
+        jpeg[14] = 0x01;
+        jpeg[15] = 0x2C;
+        jpeg[16] = 0x01;
+        jpeg[17] = 0x2C;
+        write(ImageFuzzTest.class, "jpeg", "valid-jfif-dpi.jpg", jpeg);
+
+        var png = seed("png", "valid-rgba.png");
+        var phys = indexOf(png, "pHYs".getBytes(StandardCharsets.ISO_8859_1));
+        var body = new byte[9];
+        ByteArrays.put32be(body, 0, 11811);
+        ByteArrays.put32be(body, 4, 11811);
+        body[8] = 1;
+        System.arraycopy(body, 0, png, phys + 4, 9);
+        var crc = new CRC32();
+        crc.update(png, phys, 13);
+        ByteArrays.put32be(png, phys + 13, (int) crc.getValue());
+        write(ImageFuzzTest.class, "png", "valid-phys-meter.png", png);
+
+        var bmp = seed("bmp", "valid-24bit.bmp");
+        ByteArrays.put32le(bmp, 38, 2835);
+        ByteArrays.put32le(bmp, 42, 3780);
+        write(ImageFuzzTest.class, "bmp", "valid-density.bmp", bmp);
+
+        var jp2 = seed("jp2", "valid-jp2.jp2");
+        var header = indexOf(jp2, "jp2h".getBytes(StandardCharsets.ISO_8859_1)) - 4;
+        var length = (int) ByteArrays.u32be(jp2, header);
+        // a resolution superbox: a capture box of 15000/127 * 10^2 grid points per meter on both axes, and a
+        // display box with negative exponents
+        var res = new byte[44];
+        ByteArrays.put32be(res, 0, 44);
+        System.arraycopy("res ".getBytes(StandardCharsets.ISO_8859_1), 0, res, 4, 4);
+        ByteArrays.put32be(res, 8, 18);
+        System.arraycopy("resc".getBytes(StandardCharsets.ISO_8859_1), 0, res, 12, 4);
+        for (var at : new int[]{16, 20}) {
+            ByteArrays.put16be(res, at, 15000);
+            ByteArrays.put16be(res, at + 2, 127);
+        }
+        res[24] = 2;
+        res[25] = 2;
+        ByteArrays.put32be(res, 26, 18);
+        System.arraycopy("resd".getBytes(StandardCharsets.ISO_8859_1), 0, res, 30, 4);
+        ByteArrays.put16be(res, 34, 1);
+        ByteArrays.put16be(res, 36, 4);
+        ByteArrays.put16be(res, 38, 3);
+        ByteArrays.put16be(res, 40, 2);
+        res[42] = -2;
+        res[43] = -1;
+        var withRes = new byte[jp2.length + res.length];
+        System.arraycopy(jp2, 0, withRes, 0, header + length);
+        System.arraycopy(res, 0, withRes, header + length, res.length);
+        System.arraycopy(jp2, header + length, withRes, header + length + res.length, jp2.length - header - length);
+        ByteArrays.put32be(withRes, header, length + res.length);
+        write(ImageFuzzTest.class, "jp2", "valid-res.jp2", withRes);
+    }
+
+    /** Returns a copy of a committed seed of an image target. */
+    private static byte[] seed(String target, String name) {
+        return Fixtures.read(FuzzSeeds.directory(ImageFuzzTest.class, target).resolve(name));
+    }
+
+    /** Returns the index of the first occurrence of a byte sequence. */
+    private static int indexOf(byte[] data, byte[] needle) {
+        for (var i = 0; i + needle.length <= data.length; i++) {
+            if (java.util.Arrays.equals(data, i, i + needle.length, needle, 0, needle.length)) {
+                return i;
+            }
+        }
+        throw new AssertionError("not found");
     }
 
     @Test

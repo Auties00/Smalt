@@ -2,8 +2,10 @@ package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -137,6 +139,11 @@ public final class JpegReader {
      * Whether a JFIF APP0 segment was seen before the first scan.
      */
     private boolean jfif;
+
+    /**
+     * The density of the first JFIF APP0 segment, or {@code null} when it is absent or invalid.
+     */
+    private PixelDensity jfifDensity;
 
     /**
      * The transform flag of the last Adobe APP14 segment seen before the first scan, or
@@ -562,6 +569,9 @@ public final class JpegReader {
         switch (marker) {
             case 0xE0 -> {
                 if (beforeScan && size >= 14 && matches(at, "JFIF\0")) {
+                    if (!jfif) {
+                        jfifDensity = jfifDensity(input[at + 7] & 0xFF, u16(at + 8), u16(at + 10));
+                    }
                     jfif = true;
                 }
             }
@@ -1382,6 +1392,45 @@ public final class JpegReader {
      */
     public byte[] iccProfile() {
         return icc.profile();
+    }
+
+    /**
+     * Returns the density of a JFIF header.
+     *
+     * @param units the units byte: 0 for an aspect ratio, 1 for inches, 2 for centimeters
+     * @param x the horizontal density
+     * @param y the vertical density
+     * @return the density, or {@code null} for another unit or a zero value
+     */
+    private static PixelDensity jfifDensity(int units, int x, int y) {
+        if (x == 0 || y == 0) {
+            return null;
+        }
+        return switch (units) {
+            case 0 -> PixelDensity.ofAspectRatio(x, y);
+            case 1 -> PixelDensity.ofDotsPerInch(x, y);
+            case 2 -> PixelDensity.ofDotsPerCentimeter(x, y);
+            default -> null;
+        };
+    }
+
+    /**
+     * Returns the pixel density the stream declares: that of the first JFIF {@code APP0} segment before the
+     * first scan when it is valid and physical, otherwise the resolution of the IFD0 of the first
+     * {@code APP1 Exif} segment when it is valid and physical, otherwise the aspect ratio of either, the JFIF one
+     * first.
+     *
+     * @return the density, or {@code null} when neither declares a valid one
+     */
+    public PixelDensity density() {
+        if (jfifDensity != null && jfifDensity.isPhysical()) {
+            return jfifDensity;
+        }
+        var exifDensity = exif == null ? null : TiffExif.density(exif, 0);
+        if (exifDensity != null && exifDensity.isPhysical()) {
+            return exifDensity;
+        }
+        return jfifDensity != null ? jfifDensity : exifDensity;
     }
 
     /**

@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -60,7 +61,7 @@ import java.util.Optional;
  * planes, in strips or tiles, compressed with no compression, PackBits, LZW, Deflate, Zstandard,
  * the CCITT fax codings (bilevel pages), JPEG (TIFF Technical Note 2), WebP or JPEG 2000, as
  * {@link TiffEncoderOptions#compression()} describes, and, for LZW, Deflate and Zstandard, the
- * horizontal or floating-point predictor. Every page records its resolution (72 dots per inch
+ * horizontal or floating-point predictor. Every page records its pixel density (72 dots per inch
  * unless the options or the EXIF metadata give one), the orientation when one is given, and the
  * ICC profile, EXIF metadata, XMP packet and IPTC data the options carry. Y'CbCr pictures are
  * converted to RGB first, except under the {@link TiffEncoderOptions.Layout#YCBCR} layout.
@@ -1367,9 +1368,9 @@ public final class TiffEncoder {
      * @return the resolution, or the value as stored when the unit is not absolute
      */
     private static double verticalDpi(TiffEncoderOptions pageOptions) {
-        var resolution = pageOptions.resolution();
-        if (resolution.isPresent()) {
-            return resolution.get().vertical();
+        var density = pageOptions.density().orElse(null);
+        if (density != null) {
+            return density.isPhysical() ? density.to(PixelDensity.Unit.DOTS_PER_INCH).vertical() : density.vertical();
         }
         var exif = pageOptions.exif().orElse(null);
         // the directory takes the EXIF resolution only when both of its entries are present
@@ -1413,13 +1414,22 @@ public final class TiffEncoder {
             TiffExifWriter.copy(exif, TiffTags.ORIENTATION, directory, little);
         }
         directory.shorts(TiffTags.SAMPLES_PER_PIXEL, page.channels());
-        var resolution = pageOptions.resolution();
-        if (resolution.isPresent()) {
-            var x = rational(resolution.get().horizontal());
-            var y = rational(resolution.get().vertical());
+        var density = pageOptions.density().orElse(null);
+        if (density != null) {
+            var unit = switch (density.unit()) {
+                case ASPECT_RATIO -> 1;
+                case DOTS_PER_INCH -> 2;
+                case DOTS_PER_CENTIMETER -> 3;
+                case DOTS_PER_METER -> {
+                    density = density.to(PixelDensity.Unit.DOTS_PER_CENTIMETER);
+                    yield 3;
+                }
+            };
+            var x = rational(density.horizontal());
+            var y = rational(density.vertical());
             directory.rational(TiffTags.X_RESOLUTION, x[0], x[1]);
             directory.rational(TiffTags.Y_RESOLUTION, y[0], y[1]);
-            directory.shorts(TiffTags.RESOLUTION_UNIT, 2);
+            directory.shorts(TiffTags.RESOLUTION_UNIT, unit);
         } else if (exif == null || !TiffExifWriter.copy(exif, TiffTags.X_RESOLUTION, directory, little)
                 || !TiffExifWriter.copy(exif, TiffTags.Y_RESOLUTION, directory, little)) {
             directory.rational(TiffTags.X_RESOLUTION, 72, 1);

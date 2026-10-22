@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
@@ -84,7 +85,8 @@ public final class PictureDump {
 
     /**
      * Describes a decoded image: the picture line, then the format, orientation, source size and the
-     * sizes and CRCs of its ICC, EXIF and XMP blocks, and its color profile.
+     * sizes and CRCs of its ICC, EXIF and XMP blocks, its color profile and, when the file declares one, its
+     * pixel density.
      *
      * @param image the decoded image
      * @return the description, one property per line, with a final line terminator
@@ -95,7 +97,12 @@ public final class PictureDump {
                 + image.sourceWidth() + "x" + image.sourceHeight() + "\n"
                 + "  icc=" + block(image.iccProfile()) + " exif=" + block(image.exif()) + " xmp=" + block(image.xmp())
                 + "\n"
-                + "  profile=" + image.colorProfile().map(Object::toString).orElse("none") + "\n";
+                + "  profile=" + image.colorProfile().map(Object::toString).orElse("none") + "\n"
+                + image.density().map(PictureDump::density).orElse("");
+    }
+
+    private static String density(PixelDensity density) {
+        return "  density=" + density.unit() + " " + density.horizontal() + "x" + density.vertical() + "\n";
     }
 
     private static String color(ColorInfo color) {

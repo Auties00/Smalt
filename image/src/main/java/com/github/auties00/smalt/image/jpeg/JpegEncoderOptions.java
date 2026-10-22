@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.image.jpeg;
 
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.jpeg.internal.JpegEncoding;
 import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Arrays;
@@ -15,6 +17,11 @@ import java.util.OptionalInt;
  * with {@link #builder()} or a preset such as {@link #defaults()}.
  */
 public final class JpegEncoderOptions {
+    /**
+     * The square-pixel aspect ratio, the default of {@link #density()}.
+     */
+    private static final PixelDensity DEFAULT_DENSITY = PixelDensity.ofAspectRatio(1, 1);
+
     /**
      * The options of {@link #defaults()}.
      */
@@ -56,7 +63,7 @@ public final class JpegEncoderOptions {
 
     private final List<Scan> scanScript;
 
-    private final Density density;
+    private final PixelDensity density;
 
     private JpegEncoderOptions(Builder builder) {
         this.quality = builder.quality;
@@ -364,14 +371,19 @@ public final class JpegEncoderOptions {
     }
 
     /**
-     * {@return the pixel density of the JFIF header; {@link Density#ofAspectRatio(int, int) an aspect
+     * {@return the pixel density of the JFIF header; {@link PixelDensity#ofAspectRatio(double, double) an aspect
      * ratio of 1:1} by default}
+     *
+     * <p>The header stores whole values from 1 to 65535 in dots per inch (units 1), dots per centimeter
+     * (units 2) or as an aspect ratio (units 0). A physical density is rounded to whole values in its unit,
+     * dots per meter being converted to dots per centimeter; an aspect ratio keeps whole values up to 65535
+     * and otherwise takes the closest ratio of such values that a continued fraction gives.
      *
      * <p>Only {@link ColorSpace#YCBCR} files (grayscale included) carry a JFIF header; the other color
      * spaces ignore it, and so does a lossless 9-bit YCbCr file whose three components are all sampled 1x1,
      * which carries an Adobe {@code APP14} header instead.
      */
-    public Density density() {
+    public PixelDensity density() {
         return density;
     }
 
@@ -446,7 +458,7 @@ public final class JpegEncoderOptions {
         if (!scanScript.isEmpty()) {
             text.append(", scanScript=").append(scanScript.size()).append(" scans");
         }
-        if (!density.equals(Density.DEFAULT)) {
+        if (!density.equals(DEFAULT_DENSITY)) {
             text.append(", density=").append(density);
         }
         return text.append(']').toString();
@@ -653,87 +665,6 @@ public final class JpegEncoderOptions {
     }
 
     /**
-     * The unit of a JFIF {@link Density}.
-     */
-    public enum DensityUnit {
-        /**
-         * No unit: the values give only the pixel aspect ratio (JFIF units 0).
-         */
-        ASPECT_RATIO,
-
-        /**
-         * Dots per inch (JFIF units 1).
-         */
-        DOTS_PER_INCH,
-
-        /**
-         * Dots per centimeter (JFIF units 2).
-         */
-        DOTS_PER_CENTIMETER
-    }
-
-    /**
-     * The pixel density of a JFIF header.
-     *
-     * @param unit the unit of the values
-     * @param horizontal the horizontal density, from 1 to 65535
-     * @param vertical the vertical density, from 1 to 65535
-     */
-    public record Density(DensityUnit unit, int horizontal, int vertical) {
-        /**
-         * The square-pixel aspect ratio, the default of {@link #density()}.
-         */
-        private static final Density DEFAULT = new Density(DensityUnit.ASPECT_RATIO, 1, 1);
-
-        /**
-         * Constructs a density.
-         *
-         * @throws IllegalArgumentException if a value is not in [1, 65535]
-         */
-        public Density {
-            Objects.requireNonNull(unit, "unit");
-            Checks.inRange("horizontal density", horizontal, 1, 0xFFFF);
-            Checks.inRange("vertical density", vertical, 1, 0xFFFF);
-        }
-
-        /**
-         * Returns a pixel aspect ratio without a physical density.
-         *
-         * @param horizontal the horizontal value, from 1 to 65535
-         * @param vertical the vertical value, from 1 to 65535
-         * @return the density
-         * @throws IllegalArgumentException if a value is not in [1, 65535]
-         */
-        public static Density ofAspectRatio(int horizontal, int vertical) {
-            return new Density(DensityUnit.ASPECT_RATIO, horizontal, vertical);
-        }
-
-        /**
-         * Returns a density in dots per inch.
-         *
-         * @param horizontal the horizontal density, from 1 to 65535
-         * @param vertical the vertical density, from 1 to 65535
-         * @return the density
-         * @throws IllegalArgumentException if a value is not in [1, 65535]
-         */
-        public static Density ofDotsPerInch(int horizontal, int vertical) {
-            return new Density(DensityUnit.DOTS_PER_INCH, horizontal, vertical);
-        }
-
-        /**
-         * Returns a density in dots per centimeter.
-         *
-         * @param horizontal the horizontal density, from 1 to 65535
-         * @param vertical the vertical density, from 1 to 65535
-         * @return the density
-         * @throws IllegalArgumentException if a value is not in [1, 65535]
-         */
-        public static Density ofDotsPerCentimeter(int horizontal, int vertical) {
-            return new Density(DensityUnit.DOTS_PER_CENTIMETER, horizontal, vertical);
-        }
-    }
-
-    /**
      * A builder of {@link JpegEncoderOptions}.
      *
      * <p>Setters reject only {@code null}; {@link #build()} checks the ranges and how the settings
@@ -776,7 +707,7 @@ public final class JpegEncoderOptions {
 
         private List<Scan> scanScript = List.of();
 
-        private Density density = Density.DEFAULT;
+        private PixelDensity density = DEFAULT_DENSITY;
 
         private Builder() {
         }
@@ -1122,7 +1053,7 @@ public final class JpegEncoderOptions {
          * @param density the value
          * @return this builder
          */
-        public Builder density(Density density) {
+        public Builder density(PixelDensity density) {
             this.density = Objects.requireNonNull(density, "density");
             return this;
         }
@@ -1136,10 +1067,13 @@ public final class JpegEncoderOptions {
          * or not below a set precision, a set precision is not 8 or 12 for a DCT file or not in [2, 16] for a
          * lossless one, the file is both progressive and lossless, {@link ChromaFormat#MONOCHROME} is asked of
          * a color space other than {@link ColorSpace#YCBCR}, there are more sampling factors than components,
-         * more than four quantization tables, a slot outside [0, 3] or one with no table, or a scan script
-         * that does not suit the process as {@link JpegEncoderOptions#scanScript()} describes
+         * more than four quantization tables, a slot outside [0, 3] or one with no table, a scan script
+         * that does not suit the process as {@link JpegEncoderOptions#scanScript()} describes, or a density that
+         * the JFIF header cannot hold as {@link JpegEncoderOptions#density()} describes (a physical value that
+         * rounds to 0 or above 65535, or an aspect ratio above 65535 or below 1/65535)
          */
         public JpegEncoderOptions build() {
+            JpegEncoding.jfifDensity(density);
             Checks.inRange("quality", quality, 0, 100);
             if (chromaQuality.isPresent()) {
                 Checks.inRange("chroma quality", chromaQuality.getAsInt(), 0, 100);

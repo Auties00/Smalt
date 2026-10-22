@@ -293,8 +293,9 @@ public final class BmpEncoder {
             ByteArrays.put16le(header, info + 14, bitCount);
             ByteArrays.put32le(header, info + 16, compression());
             ByteArrays.put32le(header, info + 20, dataSize);
-            ByteArrays.put32le(header, info + 24, options.horizontalPixelsPerMeter());
-            ByteArrays.put32le(header, info + 28, options.verticalPixelsPerMeter());
+            var pixelsPerMeter = options.pixelsPerMeter();
+            ByteArrays.put32le(header, info + 24, pixelsPerMeter[0]);
+            ByteArrays.put32le(header, info + 28, pixelsPerMeter[1]);
             ByteArrays.put32le(header, info + 32, palette == null ? 0 : palette.length);
             var bitFields = bitFields();
             if (bitFields != null) {

@@ -6,8 +6,10 @@ picture 48x32 rgba8 alpha=true crc=164f0d13
   format=PNG orientation=NORMAL source=48x32
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0
 scaled 12x8
 picture 48x32 rgba8 alpha=true crc=164f0d13
   format=PNG orientation=NORMAL source=48x32
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0

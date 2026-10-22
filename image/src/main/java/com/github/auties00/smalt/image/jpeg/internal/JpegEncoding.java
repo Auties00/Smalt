@@ -5,10 +5,12 @@ package com.github.auties00.smalt.image.jpeg.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.internal.density.DensityTerms;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.ColorSpace;
@@ -376,14 +378,13 @@ public final class JpegEncoding {
      * @param density the JFIF density
      * @return the header
      */
-    static CoefficientWriter.Header header(FrameLayout layout, JpegEncoderOptions.Density density) {
-        var unit = density.unit().ordinal();
+    static CoefficientWriter.Header header(FrameLayout layout, PixelDensity density) {
+        var jfif = jfifDensity(density);
         if (isReversibleRgbShape(layout)) {
             return new CoefficientWriter.Header(false, 1, 1, 0, 1, 1, true, 1);
         }
         return switch (layout.colorSpace) {
-            case YCBCR -> new CoefficientWriter.Header(true, 1, 1, unit, density.horizontal(), density.vertical(),
-                    false, 0);
+            case YCBCR -> new CoefficientWriter.Header(true, 1, 1, jfif[0], jfif[1], jfif[2], false, 0);
             case RGB, CMYK -> new CoefficientWriter.Header(false, 1, 1, 0, 1, 1, true, 0);
             case YCCK -> new CoefficientWriter.Header(false, 1, 1, 0, 1, 1, true, 2);
         };
@@ -414,11 +415,33 @@ public final class JpegEncoding {
      * @param density the pixel density of the JFIF segment
      * @return the payload
      */
-    private static byte[] jfifPayload(JpegEncoderOptions.Density density) {
-        var x = density.horizontal();
-        var y = density.vertical();
-        return new byte[]{'J', 'F', 'I', 'F', 0, 1, 1, (byte) density.unit().ordinal(), (byte) (x >> 8), (byte) x,
+    private static byte[] jfifPayload(PixelDensity density) {
+        var jfif = jfifDensity(density);
+        var x = jfif[1];
+        var y = jfif[2];
+        return new byte[]{'J', 'F', 'I', 'F', 0, 1, 1, (byte) jfif[0], (byte) (x >> 8), (byte) x,
                 (byte) (y >> 8), (byte) y, 0, 0};
+    }
+
+    /**
+     * Returns the JFIF units and densities of a pixel density, as {@link JpegEncoderOptions#density()}
+     * describes them.
+     *
+     * @param density the pixel density to write
+     * @return the units byte (0 for an aspect ratio, 1 for inches, 2 for centimeters), then the horizontal and
+     * vertical densities, from 1 to 65535
+     * @throws IllegalArgumentException if the header cannot hold the density
+     */
+    public static int[] jfifDensity(PixelDensity density) {
+        var unit = switch (density.unit()) {
+            case ASPECT_RATIO -> 0;
+            case DOTS_PER_INCH -> 1;
+            case DOTS_PER_CENTIMETER, DOTS_PER_METER -> 2;
+        };
+        var terms = unit == 0 ? DensityTerms.ratio(density, 0xFFFF)
+                : DensityTerms.rounded(density, unit == 1 ? PixelDensity.Unit.DOTS_PER_INCH
+                : PixelDensity.Unit.DOTS_PER_CENTIMETER, 0xFFFF);
+        return new int[]{unit, (int) terms[0], (int) terms[1]};
     }
 
     /**

@@ -146,7 +146,8 @@ final class ManagedColor {
             return image;
         }
         return new DecodedImage(converted, image.format(), image.orientation(), image.sourceWidth(),
-                image.sourceHeight(), Optional.empty(), image.exif(), image.xmp(), Optional.of(ColorProfile.srgb()));
+                image.sourceHeight(), Optional.empty(), image.exif(), image.xmp(), Optional.of(ColorProfile.srgb()),
+                image.density());
     }
 
     /**
@@ -172,7 +173,7 @@ final class ManagedColor {
                 var converted = convertChannels(integer, transform, ColorModel.RGB, true);
                 return new DecodedImage(ChannelOps.toPacked(converted, sixteen), image.format(), image.orientation(),
                         image.sourceWidth(), image.sourceHeight(), Optional.empty(), image.exif(), image.xmp(),
-                        Optional.of(ColorProfile.srgb()));
+                        Optional.of(ColorProfile.srgb()), image.density());
             } catch (MediaException.Malformed | MediaException.Unsupported exception) {
                 // a profile that cannot be applied leaves the conversion without color management
             }
@@ -182,7 +183,7 @@ final class ManagedColor {
                 && profile.channels() == layout.colorChannels();
         return new DecodedImage(ChannelOps.toPacked(channels, sixteen), image.format(), image.orientation(),
                 image.sourceWidth(), image.sourceHeight(), image.iccProfile(), image.exif(), image.xmp(),
-                describes ? image.colorProfile() : Optional.empty());
+                describes ? image.colorProfile() : Optional.empty(), image.density());
     }
 
     /**

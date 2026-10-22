@@ -9,6 +9,7 @@ import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.bmp.BmpEncoderOptions.HeaderVersion;
@@ -435,15 +436,17 @@ class BmpEncoderTest {
         @DisplayName("writes the resolution and the same bytes to a sink as to an array")
         void fieldsAndSink() {
             var picture = picture(13, 9, 0, 8, false);
-            var options = BmpEncoderOptions.builder().pixelsPerMeter(3780, 2835).build();
+            var options = BmpEncoderOptions.builder().density(PixelDensity.ofDotsPerMeter(3780, 2835)).build();
             var bmp = BmpEncoder.encode(picture, options);
             assertEquals(3780, ByteArrays.i32le(bmp, 38));
             assertEquals(2835, ByteArrays.i32le(bmp, 42));
+            assertEquals(PixelDensity.ofDotsPerMeter(3780, 2835), BmpDecoder.decode(MediaSource.of(bmp)).density()
+                    .orElseThrow());
             var sink = MediaSink.memory();
             BmpEncoder.encode(picture, options, sink);
             assertArrayEquals(bmp, sink.toByteArray());
             assertArrayEquals(BmpEncoder.encode(picture), Images.encode(picture, ImageFormat.BMP));
-            var reset = options.toBuilder().noResolution().build();
+            var reset = options.toBuilder().noDensity().build();
             assertEquals(BmpEncoderOptions.defaults(), reset);
             assertEquals(options, options.toBuilder().build());
         }
@@ -462,7 +465,11 @@ class BmpEncoderTest {
                     .colorProfile(ColorProfile.srgb()).build());
             assertThrows(IllegalArgumentException.class, () -> BmpEncoderOptions.builder().headerVersion(HeaderVersion.V4)
                     .colorProfile(ColorProfile.srgb()).build());
-            assertThrows(IllegalArgumentException.class, () -> BmpEncoderOptions.builder().pixelsPerMeter(-1, 0).build());
+            assertThrows(IllegalArgumentException.class, () -> BmpEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerMeter(0.4, 1)).build());
+            assertThrows(IllegalArgumentException.class, () -> BmpEncoderOptions.builder()
+                    .density(PixelDensity.ofDotsPerInch(1e9)).build());
+            assertThrows(NullPointerException.class, () -> BmpEncoderOptions.builder().density(null));
             assertThrows(MediaException.Unsupported.class, () -> BmpEncoderOptions.builder()
                     .colorProfile(ColorProfile.grayGamma22()).build());
             assertThrows(NullPointerException.class, () -> BmpEncoderOptions.builder().pixelFormat(null));
@@ -512,7 +519,8 @@ class BmpEncoderTest {
         files.put("PALETTE_8 quantized", BmpEncoder.encode(gradient(64, 48),
                 BmpEncoderOptions.builder().pixelFormat(PixelFormat.PALETTE_8).build()));
         files.put("RGB_888 V5 profile", BmpEncoder.encode(picture(5, 3, 0, 1, false), BmpEncoderOptions.builder()
-                .pixelFormat(PixelFormat.RGB_888).colorProfile(ColorProfile.adobeRgb()).pixelsPerMeter(100, 200).build()));
+                .pixelFormat(PixelFormat.RGB_888).colorProfile(ColorProfile.adobeRgb()).density(PixelDensity.ofDotsPerMeter(100, 200))
+                .build()));
         return files;
     }
 

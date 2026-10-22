@@ -2,8 +2,10 @@ package com.github.auties00.smalt.image.png;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Chromaticity;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.RenderingIntent;
+import com.github.auties00.smalt.image.internal.density.DensityTerms;
 import com.github.auties00.smalt.image.internal.zlib.Zlib;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -186,15 +188,33 @@ final class PngChunkWriter {
     /**
      * Writes a {@code pHYs} chunk.
      *
-     * @param dimensions the pixel dimensions
+     * @param density the pixel density, representable as {@link #physicalTerms(PixelDensity)} requires
      * @throws MediaException.LimitExceeded if the datastream would exceed the size limit
      */
-    void physicalDimensions(PngPhysicalDimensions dimensions) {
+    void physicalDimensions(PixelDensity density) {
+        var terms = physicalTerms(density);
         var phys = new byte[9];
-        ByteArrays.put32be(phys, 0, dimensions.pixelsPerUnitX());
-        ByteArrays.put32be(phys, 4, dimensions.pixelsPerUnitY());
-        phys[8] = (byte) dimensions.unit().ordinal();
+        ByteArrays.put32be(phys, 0, (int) terms[0]);
+        ByteArrays.put32be(phys, 4, (int) terms[1]);
+        phys[8] = (byte) terms[2];
         chunk(PngChunks.PHYS, phys, 0, phys.length);
+    }
+
+    /**
+     * Returns the {@code pHYs} values of a pixel density, as {@link PngEncoderOptions#density()} describes them.
+     *
+     * @param density the pixel density to write
+     * @return the pixels per unit along x and y, from 1 to {@code 2^31 - 1}, and the unit specifier, 0 for an
+     * aspect ratio and 1 for the meter
+     * @throws IllegalArgumentException if the chunk cannot hold the density
+     */
+    static long[] physicalTerms(PixelDensity density) {
+        if (!density.isPhysical()) {
+            var terms = DensityTerms.ratio(density, Integer.MAX_VALUE);
+            return new long[]{terms[0], terms[1], 0};
+        }
+        var terms = DensityTerms.rounded(density, PixelDensity.Unit.DOTS_PER_METER, Integer.MAX_VALUE);
+        return new long[]{terms[0], terms[1], 1};
     }
 
     /**

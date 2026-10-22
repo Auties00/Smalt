@@ -10,6 +10,7 @@ import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifReader;
@@ -50,7 +51,10 @@ import java.util.zip.CRC32;
  *       {@link #colorProfile()} combines them; pixels are returned as stored. The {@code mDCV}
  *       and {@code cLLI} chunks (also spelled {@code mDCv} and {@code cLLi}), under the same
  *       placement rule, add their metadata to a {@code cICP} description.</li>
- *   <li>{@code sBIT}, {@code pHYs}, {@code bKGD} and the textual chunks are ignored.</li>
+ *   <li>{@code pHYs} (the first one before {@code IDAT}) supplies the {@link #density()}; one of another
+ *       length than 9 bytes, with a bad CRC, a zero value, a value above {@code 2^31 - 1} or an unknown unit
+ *       gives none.</li>
+ *   <li>{@code sBIT}, {@code bKGD} and the textual chunks other than the XMP packet are ignored.</li>
  * </ul>
  *
  * <p>Image data is served by {@link #readImageData(byte[], int, int)} from the run of consecutive
@@ -253,6 +257,16 @@ final class PngReader {
     private Orientation orientation;
 
     /**
+     * The density of the {@code pHYs} chunk, or {@code null} when absent or invalid.
+     */
+    private PixelDensity density;
+
+    /**
+     * Whether a {@code pHYs} chunk was read.
+     */
+    private boolean densitySeen;
+
+    /**
      * Whether an {@code acTL} chunk was seen.
      */
     private boolean animationControlSeen;
@@ -378,6 +392,14 @@ final class PngReader {
     }
 
     /**
+     * {@return the density of the {@code pHYs} chunk, in {@link PixelDensity.Unit#DOTS_PER_METER} or as an
+     * aspect ratio, or {@code null} when absent or invalid}
+     */
+    PixelDensity density() {
+        return density;
+    }
+
+    /**
      * Returns the orientation from the Exif block.
      *
      * @return the orientation, {@link Orientation#NORMAL} when absent
@@ -476,6 +498,7 @@ final class PngReader {
                 case PngChunks.GAMA, PngChunks.CHRM, PngChunks.SRGB, PngChunks.CICP -> readColorChunk();
                 case PngChunks.MDCV, PngChunks.MDCV_DRAFT, PngChunks.CLLI, PngChunks.CLLI_DRAFT -> readHdrChunk();
                 case PngChunks.EXIF -> readExif();
+                case PngChunks.PHYS -> readPhysicalDimensions();
                 case PngChunks.ITXT -> readText();
                 case PngChunks.ACTL -> readAnimationControl();
                 case PngChunks.FCTL -> readDefaultFrameControl();
@@ -1125,6 +1148,29 @@ final class PngReader {
         }
         iccProfile = Zlib.inflate(data, nameEnd + 2, data.length - nameEnd - 2,
                 (int) Math.min(MAX_ICC_PROFILE, limits.maxBytes()));
+    }
+
+    /**
+     * Reads {@code pHYs}: two 31-bit pixel counts per unit and the unit, 0 for none and 1 for the meter.
+     */
+    private void readPhysicalDimensions() {
+        if (densitySeen || chunkLength != 9) {
+            densitySeen = true;
+            skipChunk();
+            return;
+        }
+        densitySeen = true;
+        var data = readChunk(false);
+        if (data == null) {
+            return;
+        }
+        var x = ByteArrays.u32be(data, 0);
+        var y = ByteArrays.u32be(data, 4);
+        var unit = data[8] & 0xFF;
+        if (x == 0 || y == 0 || x > Integer.MAX_VALUE || y > Integer.MAX_VALUE || unit > 1) {
+            return;
+        }
+        density = unit == 1 ? PixelDensity.ofDotsPerMeter(x, y) : PixelDensity.ofAspectRatio(x, y);
     }
 
     /**

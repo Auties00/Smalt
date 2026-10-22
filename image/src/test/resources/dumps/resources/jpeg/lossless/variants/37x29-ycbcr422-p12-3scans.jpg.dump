@@ -6,8 +6,10 @@ picture 37x29 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=34f6717d u=c931069c v=e8
   format=JPEG orientation=NORMAL source=37x29
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0
 scaled 9x7
 picture 37x29 yuv8 YUV422 color=BT601/FULL/BT709/SRGB y=34f6717d u=c931069c v=e888b09a
   format=JPEG orientation=NORMAL source=37x29
   icc=none exif=none xmp=none
   profile=none
+  density=ASPECT_RATIO 1.0x1.0

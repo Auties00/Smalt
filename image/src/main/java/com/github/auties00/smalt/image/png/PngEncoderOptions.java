@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.png;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.color.RenderingIntent;
@@ -37,7 +38,7 @@ public final class PngEncoderOptions {
 
     private final PngChromaticities chromaticities;
 
-    private final PngPhysicalDimensions physicalDimensions;
+    private final PixelDensity density;
 
     private PngEncoderOptions(Builder builder) {
         this.compressionLevel = builder.compressionLevel;
@@ -48,7 +49,7 @@ public final class PngEncoderOptions {
         this.srgbIntent = builder.srgbIntent;
         this.gamma = builder.gamma;
         this.chromaticities = builder.chromaticities;
-        this.physicalDimensions = builder.physicalDimensions;
+        this.density = builder.density;
     }
 
     /**
@@ -170,11 +171,16 @@ public final class PngEncoderOptions {
     }
 
     /**
-     * {@return the pixel size or aspect ratio written as a {@code pHYs} chunk, or empty when none
+     * {@return the pixel density or aspect ratio written as a {@code pHYs} chunk, or empty when none
      * is written; empty by default}
+     *
+     * <p>The chunk stores whole values from 1 to {@code 2^31 - 1}, in pixels per meter (unit 1) or as an
+     * aspect ratio (unit 0). A physical density is converted to pixels per meter and rounded, so that 72 dots
+     * per inch is written as 2835 and 300 as 11811; an aspect ratio keeps whole values up to {@code 2^31 - 1}
+     * and otherwise takes the closest ratio of such values that a continued fraction gives.
      */
-    public Optional<PngPhysicalDimensions> physicalDimensions() {
-        return Optional.ofNullable(physicalDimensions);
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
     }
 
     @Override
@@ -188,13 +194,13 @@ public final class PngEncoderOptions {
                 && srgbIntent == that.srgbIntent
                 && Objects.equals(gamma, that.gamma)
                 && Objects.equals(chromaticities, that.chromaticities)
-                && Objects.equals(physicalDimensions, that.physicalDimensions);
+                && Objects.equals(density, that.density);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(compressionLevel, filter, colorProfile, interlaced, significantBits, srgbIntent, gamma,
-                chromaticities, physicalDimensions);
+                chromaticities, density);
     }
 
     @Override
@@ -206,7 +212,7 @@ public final class PngEncoderOptions {
                 + (srgbIntent == null ? "" : ", srgbIntent=" + srgbIntent)
                 + (gamma == null ? "" : ", gamma=" + gamma)
                 + (chromaticities == null ? "" : ", chromaticities=" + chromaticities)
-                + (physicalDimensions == null ? "" : ", physicalDimensions=" + physicalDimensions)
+                + (density == null ? "" : ", density=" + density)
                 + "]";
     }
 
@@ -248,7 +254,7 @@ public final class PngEncoderOptions {
 
         private PngChromaticities chromaticities;
 
-        private PngPhysicalDimensions physicalDimensions;
+        private PixelDensity density;
 
         private Builder() {
         }
@@ -262,7 +268,7 @@ public final class PngEncoderOptions {
             this.srgbIntent = options.srgbIntent;
             this.gamma = options.gamma;
             this.chromaticities = options.chromaticities;
-            this.physicalDimensions = options.physicalDimensions;
+            this.density = options.density;
         }
 
         /**
@@ -405,23 +411,23 @@ public final class PngEncoderOptions {
         }
 
         /**
-         * Sets the pixel size or aspect ratio; see {@link PngEncoderOptions#physicalDimensions()}.
+         * Sets the pixel density or aspect ratio; see {@link PngEncoderOptions#density()}.
          *
-         * @param physicalDimensions the value
+         * @param density the value
          * @return this builder
          */
-        public Builder physicalDimensions(PngPhysicalDimensions physicalDimensions) {
-            this.physicalDimensions = Objects.requireNonNull(physicalDimensions, "physicalDimensions");
+        public Builder density(PixelDensity density) {
+            this.density = Objects.requireNonNull(density, "density");
             return this;
         }
 
         /**
-         * Removes the {@code pHYs} chunk; see {@link PngEncoderOptions#physicalDimensions()}.
+         * Removes the {@code pHYs} chunk; see {@link PngEncoderOptions#density()}.
          *
          * @return this builder
          */
-        public Builder noPhysicalDimensions() {
-            this.physicalDimensions = null;
+        public Builder noDensity() {
+            this.density = null;
             return this;
         }
 
@@ -432,7 +438,9 @@ public final class PngEncoderOptions {
          * @throws IllegalArgumentException if the compression level is not in [0, 9], the
          * significant bits are not in [1, 16], the gamma is
          * not positive or rounds outside {@code [1, 2^31 - 1]} hundred-thousandths, or an
-         * {@code sRGB} intent is combined with a color profile, a gamma or chromaticities
+         * {@code sRGB} intent is combined with a color profile, a gamma or chromaticities, or the density
+         * is not representable as {@link PngEncoderOptions#density()} describes (a physical density that
+         * rounds to 0 or above {@code 2^31 - 1} pixels per meter, or an aspect ratio beyond that range)
          * @throws MediaException.Unsupported if the color profile is an ICC profile of a color space
          * other than RGB and gray
          */
@@ -451,6 +459,9 @@ public final class PngEncoderOptions {
                 throw new IllegalArgumentException("an sRGB intent writes its own gAMA and cHRM and excludes a color profile");
             }
             checkProfile(colorProfile);
+            if (density != null) {
+                PngChunkWriter.physicalTerms(density);
+            }
             return new PngEncoderOptions(this);
         }
     }

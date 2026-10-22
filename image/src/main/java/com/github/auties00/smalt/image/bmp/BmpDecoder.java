@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -80,6 +81,10 @@ import java.util.Optional;
  * An embedded file decodes as {@link JpegDecoder} and {@link PngDecoder} decode it, except that a
  * Y'CbCr picture is converted to RGBA ({@link ImageOps#toRgba(Picture)}, or
  * {@link ImageOps#toRgba16(Picture)} for one deeper than 8 bits).
+ *
+ * <p>{@link DecodedImage#density()} holds the header's horizontal and vertical pixels per meter, in
+ * {@link PixelDensity.Unit#DOTS_PER_METER}, when both are positive; otherwise
+ * it is empty, or for an embedded JPEG or PNG file the density that file declares.
  *
  * <p>An OS/2 bitmap array decodes to its bitmap of the largest area (the first among equal
  * areas), or, with a size hint, the smallest bitmap at least {@link ImageDecoderOptions#minWidth()} by
@@ -394,7 +399,7 @@ public final class BmpDecoder {
     }
 
     /**
-     * Decodes one bitmap.
+     * Decodes one bitmap with the pixel density of its headers.
      *
      * @param source the input
      * @param header the bitmap's headers
@@ -402,6 +407,21 @@ public final class BmpDecoder {
      * @return the decoded image
      */
     private static DecodedImage decodeBitmap(MediaSource source, BmpHeader header, ImageDecoderOptions options) {
+        var image = decodePixels(source, header, options);
+        var x = header.horizontalPixelsPerMeter();
+        var y = header.verticalPixelsPerMeter();
+        return x > 0 && y > 0 ? image.withDensity(Optional.of(PixelDensity.ofDotsPerMeter(x, y))) : image;
+    }
+
+    /**
+     * Decodes the pixels of one bitmap.
+     *
+     * @param source the input
+     * @param header the bitmap's headers
+     * @param options the decoding options
+     * @return the decoded image, without the density of the headers
+     */
+    private static DecodedImage decodePixels(MediaSource source, BmpHeader header, ImageDecoderOptions options) {
         var limits = options.limits();
         if (header.compression() == BmpHeader.JPEG || header.compression() == BmpHeader.PNG) {
             return decodeEmbedded(source, header, options);
@@ -527,7 +547,7 @@ public final class BmpDecoder {
         };
         var image = new DecodedImage(picture, ImageFormat.BMP, decoded.orientation(), decoded.sourceWidth(),
                 decoded.sourceHeight(), own ? decoded.iccProfile() : Optional.ofNullable(icc), decoded.exif(),
-                decoded.xmp(), own ? decoded.colorProfile() : Optional.ofNullable(declared));
+                decoded.xmp(), own ? decoded.colorProfile() : Optional.ofNullable(declared), decoded.density());
         return declared != null && options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
     }
 

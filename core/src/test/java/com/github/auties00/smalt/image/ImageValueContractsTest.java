@@ -75,6 +75,31 @@ class ImageValueContractsTest {
             assertEquals(image(null, null), withXmp.withXmp(Optional.empty()));
             assertThrows(NullPointerException.class, () -> image(null, null).withXmp(null));
         }
+
+        @Test
+        @DisplayName("keeps the pixel density through every copy, compares it, and leaves it empty in the older constructors")
+        void density() {
+            var dpi = PixelDensity.ofDotsPerInch(300, 150);
+            var full = new DecodedImage(picture, ImageFormat.PNG, Orientation.NORMAL, 2, 2, Optional.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty(), Optional.of(dpi));
+            assertEquals(dpi, full.density().orElseThrow());
+            assertTrue(image(null, null).density().isEmpty());
+            assertTrue(new DecodedImage(picture, ImageFormat.PNG, Orientation.NORMAL, 2, 2, Optional.empty(),
+                    Optional.empty(), Optional.empty(), Optional.empty()).density().isEmpty());
+            var copy = image(null, null).withDensity(Optional.of(PixelDensity.ofDotsPerInch(300, 150)));
+            assertEquals(full, copy);
+            assertEquals(full.hashCode(), copy.hashCode());
+            assertSame(picture, copy.picture());
+            assertNotEquals(full, image(null, null));
+            assertNotEquals(full, image(null, null).withDensity(Optional.of(PixelDensity.ofDotsPerCentimeter(300,
+                    150))));
+            assertEquals(dpi, full.withXmp(Optional.of(new byte[]{1})).density().orElseThrow());
+            assertEquals(image(null, null), full.withDensity(Optional.empty()));
+            assertThrows(NullPointerException.class, () -> image(null, null).withDensity(null));
+            assertThrows(NullPointerException.class, () -> new DecodedImage(picture, ImageFormat.PNG,
+                    Orientation.NORMAL, 2, 2, Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+                    null));
+        }
     }
 
     @Nested

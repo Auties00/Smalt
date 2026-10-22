@@ -6,6 +6,7 @@ import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -13,7 +14,6 @@ import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.ColorSpace;
-import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.Density;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.QuantizationTable;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.Sampling;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.Scan;
@@ -540,7 +540,7 @@ class JpegEncoderModesTest {
                 .arithmetic(f[8].equals("1"))
                 .restartInterval(Integer.parseInt(f[9]))
                 .precision(precision)
-                .density(new Density(JpegEncoderOptions.DensityUnit.values()[Integer.parseInt(f[11])],
+                .density(new PixelDensity(PixelDensity.Unit.values()[Integer.parseInt(f[11])],
                         Integer.parseInt(f[12]), Integer.parseInt(f[13])));
         var format = switch (subsampling) {
             case "444" -> ChromaFormat.YUV444;

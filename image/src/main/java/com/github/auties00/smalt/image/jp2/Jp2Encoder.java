@@ -10,6 +10,7 @@ import com.github.auties00.smalt.image.ChannelFloatPicture;
 import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
@@ -519,6 +520,7 @@ public final class Jp2Encoder {
         if (options.format() == Jp2Format.CODESTREAM) {
             return codestream;
         }
-        return Jp2Writer.jp2(codestream, config, colorSpace, icc, alpha, premultiplied);
+        var density = options.density().filter(PixelDensity::isPhysical).orElse(null);
+        return Jp2Writer.jp2(codestream, config, colorSpace, icc, alpha, premultiplied, density);
     }
 }

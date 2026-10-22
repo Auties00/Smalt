@@ -23,6 +23,7 @@ import com.github.auties00.smalt.image.color.ColorTransform;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.exif.ExifReader;
 import com.github.auties00.smalt.image.jpeg.internal.JpegColorSpace;
+import com.github.auties00.smalt.image.jpeg.internal.JpegFrame;
 import com.github.auties00.smalt.image.jpeg.internal.JpegOutput;
 import com.github.auties00.smalt.image.jpeg.internal.JpegPlanes;
 import com.github.auties00.smalt.image.jpeg.internal.JpegProbe;
@@ -198,7 +199,10 @@ public final class JpegDecoder {
      * <p>The result carries the orientation of the first {@code APP1 Exif} segment, that segment's
      * TIFF block, the ICC profile reassembled from the {@code APP2 ICC_PROFILE} segments, and the
      * packet of the first {@code APP1} XMP segment, with the properties of the Extended XMP packet
-     * it names merged into it when its segments hold the whole extended packet.
+     * it names merged into it when its segments hold the whole extended packet. Its
+     * {@link DecodedImage#density()} is the density of the first JFIF {@code APP0} segment or, when that
+     * segment is absent, holds a zero density or an unknown unit, or gives only an aspect ratio, the resolution
+     * of the EXIF {@code IFD0} when it has a physical unit; failing both, the aspect ratio either declares.
      *
      * <p>A CMYK or YCCK image is returned as RGBA converted without color management, from the
      * samples taken as stored inverted (the convention of Adobe applications):
@@ -226,68 +230,80 @@ public final class JpegDecoder {
                 var reader = new JpegReader(data, 0, data.length, options.limits());
                 var frame = reader.readHeaders();
                 reader.checkSupported();
-                var reversible = LosslessOutput.reversibleRgb(reader);
-                var colorSpace = reversible ? JpegColorSpace.RGB : reader.colorSpace();
-                if (colorSpace == JpegColorSpace.UNKNOWN) {
-                    return decodeChannels(reader, options);
-                }
-                Picture wide = null;
-                JpegPlanes planes = null;
-                if (!reader.lossless()) {
-                    var scale = reader.chooseScale(options.minWidth(), options.minHeight());
-                    if (options.highBitDepth() && LosslessOutput.keepsPrecision(reader, colorSpace)) {
-                        wide = JpegOutput.toWidePicture(reader.decodeWidePlanes(scale), colorSpace, options.limits());
-                    } else {
-                        planes = reader.decodePlanes(scale);
-                    }
-                } else if (reversible) {
-                    wide = LosslessOutput.decodeReversibleRgb(reader, options.limits());
-                } else if (options.highBitDepth() && LosslessOutput.keepsPrecision(reader, colorSpace)) {
-                    wide = LosslessOutput.decodePicture(reader, colorSpace, options.limits());
-                } else if (options.highBitDepth() && options.keepChannels() && !options.convertToSrgb()
-                        && LosslessOutput.keepsCmykPrecision(reader, colorSpace)) {
-                    wide = LosslessOutput.decodeCmyk(reader, reader.hasAdobeMarker(), options.limits());
-                } else {
-                    planes = LosslessOutput.decodePlanes(reader, options.limits());
-                }
-                var exif = reader.exif();
-                var orientation = exif == null ? Orientation.NORMAL : ExifReader.orientation(exif);
-                var icc = reader.iccProfile();
-                var xmp = Optional.ofNullable(reader.xmp(options.limits()));
-                if (wide != null) {
-                    var image = new DecodedImage(wide, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                            Optional.ofNullable(icc), Optional.ofNullable(exif)).withXmp(xmp);
-                    if (colorSpace == JpegColorSpace.CMYK) {
-                        return new DecodedImage(wide, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                                Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, cmykProfile(image));
-                    }
-                    return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
-                }
-                var cmyk = colorSpace == JpegColorSpace.CMYK || colorSpace == JpegColorSpace.YCCK;
-                if (cmyk && options.convertToSrgb()) {
-                    var converted = cmykToSrgb(planes, colorSpace, reader.hasAdobeMarker(), icc, options.limits());
-                    if (converted != null) {
-                        return new DecodedImage(converted, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                                Optional.empty(), Optional.ofNullable(exif), xmp, Optional.of(ColorProfile.srgb()));
-                    }
-                }
-                if (cmyk && options.keepChannels() && !options.convertToSrgb()) {
-                    var kept = keptCmyk(planes, colorSpace, reader.hasAdobeMarker(), options.limits());
-                    var image = new DecodedImage(kept, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                            Optional.ofNullable(icc), Optional.ofNullable(exif));
-                    return new DecodedImage(kept, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                            Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, cmykProfile(image));
-                }
-                var picture = JpegOutput.toPicture(planes, colorSpace, options.limits());
-                if (cmyk) {
-                    return new DecodedImage(picture, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                            Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, Optional.empty());
-                }
-                var image = new DecodedImage(picture, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
-                        Optional.ofNullable(icc), Optional.ofNullable(exif)).withXmp(xmp);
-                return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+                return decodeImage(reader, frame, options).withDensity(Optional.ofNullable(reader.density()));
             });
         }
+    }
+
+    /**
+     * Decodes the image of a stream whose headers are read.
+     *
+     * @param reader the reader, its headers read and checked
+     * @param frame the frame header
+     * @param options the decoder options
+     * @return the decoded image, without its pixel density
+     */
+    private static DecodedImage decodeImage(JpegReader reader, JpegFrame frame, ImageDecoderOptions options) {
+        var reversible = LosslessOutput.reversibleRgb(reader);
+        var colorSpace = reversible ? JpegColorSpace.RGB : reader.colorSpace();
+        if (colorSpace == JpegColorSpace.UNKNOWN) {
+            return decodeChannels(reader, options);
+        }
+        Picture wide = null;
+        JpegPlanes planes = null;
+        if (!reader.lossless()) {
+            var scale = reader.chooseScale(options.minWidth(), options.minHeight());
+            if (options.highBitDepth() && LosslessOutput.keepsPrecision(reader, colorSpace)) {
+                wide = JpegOutput.toWidePicture(reader.decodeWidePlanes(scale), colorSpace, options.limits());
+            } else {
+                planes = reader.decodePlanes(scale);
+            }
+        } else if (reversible) {
+            wide = LosslessOutput.decodeReversibleRgb(reader, options.limits());
+        } else if (options.highBitDepth() && LosslessOutput.keepsPrecision(reader, colorSpace)) {
+            wide = LosslessOutput.decodePicture(reader, colorSpace, options.limits());
+        } else if (options.highBitDepth() && options.keepChannels() && !options.convertToSrgb()
+                && LosslessOutput.keepsCmykPrecision(reader, colorSpace)) {
+            wide = LosslessOutput.decodeCmyk(reader, reader.hasAdobeMarker(), options.limits());
+        } else {
+            planes = LosslessOutput.decodePlanes(reader, options.limits());
+        }
+        var exif = reader.exif();
+        var orientation = exif == null ? Orientation.NORMAL : ExifReader.orientation(exif);
+        var icc = reader.iccProfile();
+        var xmp = Optional.ofNullable(reader.xmp(options.limits()));
+        if (wide != null) {
+            var image = new DecodedImage(wide, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                    Optional.ofNullable(icc), Optional.ofNullable(exif)).withXmp(xmp);
+            if (colorSpace == JpegColorSpace.CMYK) {
+                return new DecodedImage(wide, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                        Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, cmykProfile(image));
+            }
+            return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        }
+        var cmyk = colorSpace == JpegColorSpace.CMYK || colorSpace == JpegColorSpace.YCCK;
+        if (cmyk && options.convertToSrgb()) {
+            var converted = cmykToSrgb(planes, colorSpace, reader.hasAdobeMarker(), icc, options.limits());
+            if (converted != null) {
+                return new DecodedImage(converted, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                        Optional.empty(), Optional.ofNullable(exif), xmp, Optional.of(ColorProfile.srgb()));
+            }
+        }
+        if (cmyk && options.keepChannels() && !options.convertToSrgb()) {
+            var kept = keptCmyk(planes, colorSpace, reader.hasAdobeMarker(), options.limits());
+            var image = new DecodedImage(kept, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                    Optional.ofNullable(icc), Optional.ofNullable(exif));
+            return new DecodedImage(kept, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                    Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, cmykProfile(image));
+        }
+        var picture = JpegOutput.toPicture(planes, colorSpace, options.limits());
+        if (cmyk) {
+            return new DecodedImage(picture, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                    Optional.ofNullable(icc), Optional.ofNullable(exif), xmp, Optional.empty());
+        }
+        var image = new DecodedImage(picture, ImageFormat.JPEG, orientation, frame.width(), frame.height(),
+                Optional.ofNullable(icc), Optional.ofNullable(exif)).withXmp(xmp);
+        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
     }
 
     /**

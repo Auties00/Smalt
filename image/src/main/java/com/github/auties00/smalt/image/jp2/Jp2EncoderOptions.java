@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.jp2;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
 
@@ -94,6 +95,8 @@ public final class Jp2EncoderOptions {
 
     private final String comment;
 
+    private final PixelDensity density;
+
     private Jp2EncoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.format = builder.format;
@@ -116,6 +119,7 @@ public final class Jp2EncoderOptions {
         this.colorTransform = builder.colorTransform;
         this.colorProfile = builder.colorProfile;
         this.comment = builder.comment;
+        this.density = builder.density;
     }
 
     /**
@@ -379,6 +383,19 @@ public final class Jp2EncoderOptions {
         return Optional.ofNullable(comment);
     }
 
+    /**
+     * {@return the pixel density written in the capture resolution box of a JP2 file, or empty for none; empty
+     * by default}
+     *
+     * <p>The box holds grid points per meter, each resolution as {@code N / D * 10^E} with 16-bit {@code N}
+     * and {@code D}; the terms are chosen to represent the value as closely as they can, exactly for integers
+     * up to 65535 and for whole dots per inch or per centimeter. An aspect ratio is not written, since the
+     * box has no unitless form, and nothing is written into a raw codestream.
+     */
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof Jp2EncoderOptions that && limits.equals(that.limits) && format == that.format
@@ -391,7 +408,8 @@ public final class Jp2EncoderOptions {
                 && codeBlockStyles.equals(that.codeBlockStyles) && highThroughput == that.highThroughput
                 && sopMarkers == that.sopMarkers
                 && ephMarkers == that.ephMarkers && colorTransform == that.colorTransform
-                && Objects.equals(colorProfile, that.colorProfile) && Objects.equals(comment, that.comment);
+                && Objects.equals(colorProfile, that.colorProfile) && Objects.equals(comment, that.comment)
+                && Objects.equals(density, that.density);
     }
 
     @Override
@@ -399,7 +417,7 @@ public final class Jp2EncoderOptions {
         return Objects.hash(limits, format, reversible, Arrays.hashCode(ratios), Arrays.hashCode(psnrTargets),
                 decompositionLevels, tileWidth, tileHeight, codeBlockWidth, codeBlockHeight, precinctWidth,
                 precinctHeight, progression, codeBlockStyles, highThroughput, sopMarkers, ephMarkers, colorTransform,
-                colorProfile, comment);
+                colorProfile, comment, density);
     }
 
     @Override
@@ -411,7 +429,7 @@ public final class Jp2EncoderOptions {
                 + ", progression=" + progression + ", styles=" + codeBlockStyles + ", highThroughput=" + highThroughput
                 + ", sop=" + sopMarkers + ", eph="
                 + ephMarkers + ", colorTransform=" + colorTransform + ", colorProfile=" + (colorProfile != null)
-                + ", comment=" + (comment != null) + "]";
+                + ", comment=" + (comment != null) + (density == null ? "" : ", density=" + density) + "]";
     }
 
     /**
@@ -472,6 +490,8 @@ public final class Jp2EncoderOptions {
 
         private String comment;
 
+        private PixelDensity density;
+
         private Builder() {
         }
 
@@ -497,6 +517,7 @@ public final class Jp2EncoderOptions {
             this.colorTransform = options.colorTransform;
             this.colorProfile = options.colorProfile;
             this.comment = options.comment;
+            this.density = options.density;
         }
 
         /**
@@ -725,6 +746,27 @@ public final class Jp2EncoderOptions {
          */
         public Builder comment(String comment) {
             this.comment = comment;
+            return this;
+        }
+
+        /**
+         * Sets the pixel density; see {@link Jp2EncoderOptions#density()}.
+         *
+         * @param density the value
+         * @return this builder
+         */
+        public Builder density(PixelDensity density) {
+            this.density = Objects.requireNonNull(density, "density");
+            return this;
+        }
+
+        /**
+         * Writes no resolution box; see {@link Jp2EncoderOptions#density()}.
+         *
+         * @return this builder
+         */
+        public Builder noDensity() {
+            this.density = null;
             return this;
         }
 

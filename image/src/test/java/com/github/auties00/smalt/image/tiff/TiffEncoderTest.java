@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
@@ -233,7 +234,7 @@ class TiffEncoderTest {
                 assertFalse(page.isAlphaPremultiplied());
                 assertEquals(4, page.samplesPerPixel());
                 assertEquals(TiffPhotometric.RGB, page.photometric());
-                assertEquals(72, page.resolution().orElseThrow().horizontal(), 1e-9);
+                assertEquals(72, page.density().orElseThrow().horizontal(), 1e-9);
             }
         }
 
