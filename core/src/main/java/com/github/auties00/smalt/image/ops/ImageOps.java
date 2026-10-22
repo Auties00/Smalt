@@ -5,6 +5,10 @@ package com.github.auties00.smalt.image.ops;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.MediaRuntime;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.DecodedImage;
@@ -12,6 +16,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
@@ -19,6 +24,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
 import com.github.auties00.smalt.image.color.ColorTransformOptions;
+import com.github.auties00.smalt.internal.color.YcgcoR;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 import java.util.Objects;
@@ -48,17 +54,47 @@ import java.util.Optional;
  * <p>Conversions between packed RGBA and planar Y'CbCr use the matrix and range of the picture's
  * {@link ColorInfo}; RGBA is always treated as gamma-encoded R'G'B'. Those conversions carry the
  * primaries and the transfer characteristics as labels only; color management, from one
- * {@link ColorProfile} to another and from high-dynamic-range video to sRGB, is what
- * {@link #convertColor(Picture, ColorTransform)} and {@link #toSrgb(Picture)} do.
+ * {@link ColorProfile} to another (standard or high dynamic range) and from high-dynamic-range video
+ * to sRGB, is what {@link #convertColor(Picture, ColorTransform)} and {@link #toSrgb(Picture)} do.
  *
  * <p>High-bit-depth pictures ({@link Yuv16Picture}, {@link Rgba16Picture}) keep their depth
- * through {@link #crop}, {@link #orient}, the flips and transposes, {@link #rotate},
- * {@link #affine}, {@link #trim}, {@link #extend}, {@link #resizeCanvas} and {@link #isOpaque}
- * (the operations that compute new pixels return an {@link Rgba16Picture}), and change it through
+ * through every operation that does not name a depth: resampling ({@link #resize},
+ * {@link #fitWithin}, {@link #fitInto}, {@link #coverSquare}, {@link #smartCrop}), {@link #crop},
+ * {@link #orient}, the flips and transposes, {@link #rotate}, {@link #affine}, {@link #trim},
+ * {@link #extend}, {@link #resizeCanvas}, {@link #pad}, {@link #flatten}, {@link #isOpaque} and
+ * {@link #convertColor}; the operations that compute new pixels of a planar picture, except
+ * resampling and flattening, return an {@link Rgba16Picture}. Depth changes through
  * {@link #toEightBit(Picture)}, {@link #toBitDepth(YuvPicture, int)},
- * {@link #toBitDepth(Yuv16Picture, int)} and {@link #toSixteenBit(RgbaPicture)}. Every other
- * operation reduces them to 8 bits with {@link #toEightBit(Picture)} first and returns an 8-bit
- * picture.
+ * {@link #toBitDepth(Yuv16Picture, int)}, {@link #toSixteenBit(RgbaPicture)},
+ * {@link #toRgba16(Picture)} and {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int)}, and the
+ * 8-bit conversions {@link #toRgba(Picture)}, {@link #toYuv(Picture, ChromaFormat, ColorInfo)} and
+ * {@link #toSrgb(Picture)} convert a 16-bit picture at its full precision and round once.
+ *
+ * <p>A {@link ChannelPicture} keeps its sample type and layout through resampling ({@link #resize},
+ * {@link #fitWithin}, {@link #coverSquare}, {@link #smartCrop}), {@link #crop}, {@link #orient}, the flips and
+ * transposes, quarter turns by {@link #rotate} onto an expanded or inscribed canvas, and {@link #isOpaque};
+ * {@link #convertColor} converts its color channels and keeps its extra channels. The conversions
+ * {@link #toRgba(Picture)}, {@link #toRgba16(Picture)}, {@link #toYuv(Picture, ChromaFormat, ColorInfo)},
+ * {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int)} and {@link #toSrgb(Picture)} convert it without color
+ * management, computing every value at the integer depth of the picture ({@code M} being the largest sample,
+ * 255 or 65535) and then rescaling it to the result's depth as {@code v * 257} or
+ * {@code (v * 255 + 32767) / 65535}, so the 8-bit conversion equals the 16-bit one reduced with
+ * {@link #toEightBit(Rgba16Picture)}:
+ * <ul>
+ *   <li>floating-point samples are first quantized to 16 bits, {@code round(v * 65535)} clamped to the range
+ *       and NaN becoming 0;</li>
+ *   <li>premultiplied colors are divided by their alpha {@code a}, as {@code min(M, (v * M + a / 2) / a)}, 0
+ *       when {@code a} is 0;</li>
+ *   <li>gray becomes red, green and blue; RGB is kept; CMYK becomes {@code R = round((M - C) * (M - K) / M)},
+ *       likewise G from magenta and B from yellow;</li>
+ *   <li>alpha becomes the alpha channel, opaque without one, and the other extra channels are dropped;</li>
+ *   <li>ink separations ({@link com.github.auties00.smalt.image.ColorModel#INK}) have no conversion without a
+ *       profile and are rejected.</li>
+ * </ul>
+ * {@link #toChannel8(Picture)}, {@link #toChannel16(Picture)} and {@link #toChannelFloat(Picture)} change its
+ * sample type. Every other operation, which computes pixels from RGB values or fills with an RGB color, throws
+ * {@link MediaException.Unsupported} for a channel picture, and so do the operations of {@link ImageFilters},
+ * {@link ImageAdjustments} and {@link ImageCompositing}; convert it first.
  *
  * @implNote This implementation runs every hot loop in a kernel with a scalar and a Vector API twin that produce
  * identical results. Color conversion and chroma upsampling follow libjpeg-turbo, and resampling follows the structure
@@ -83,7 +119,6 @@ public final class ImageOps {
      *
      * @param picture the picture to convert
      * @return the picture itself if it is already an {@link RgbaPicture}, otherwise a new one
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      * @see #toRgba(Picture, ChromaUpsampling)
      */
@@ -97,19 +132,26 @@ public final class ImageOps {
      * Converts a picture to packed RGBA.
      *
      * <p>A {@link YuvPicture} is converted with the matrix and range of its {@link ColorInfo}
-     * (resolved with {@link MatrixCoefficients#effective()}, so an unspecified matrix is BT.601):
-     * BT.601, BT.709, BT.470BG, SMPTE 240M, BT.2020 non-constant luminance, FCC, YCgCo and identity
-     * (GBR) matrices, each in limited or full range. Values outside the R'G'B' cube are clamped. Monochrome pictures
-     * become gray. Subsampled chroma is reconstructed as {@code upsampling} specifies. The alpha
+     * (resolved with {@link MatrixCoefficients#effective()}, so an unspecified matrix is BT.601), any
+     * ITU-T H.273 matrix in limited or full range. The BT.601, BT.709, BT.470BG, SMPTE 240M, BT.2020
+     * non-constant luminance, FCC, YCgCo and identity (GBR) matrices use fixed-point coefficients; every
+     * other matrix is converted per pixel in double precision, as
+     * {@link #toRgba16(Picture, ChromaUpsampling)} describes, and rounded once. Values outside the R'G'B'
+     * cube are clamped. Monochrome pictures become gray. Subsampled chroma is reconstructed as
+     * {@code upsampling} specifies. The alpha
      * plane, if any, becomes the alpha channel, and the result reports alpha exactly when the
      * input has an alpha plane. For a full-range BT.601 (JPEG) picture, {@link ChromaUpsampling#TRIANGLE} output is
      * bit-identical to libjpeg-turbo's decoder.
      *
+     * <p>A {@link Yuv16Picture} is converted at its full precision, as {@link #toRgba16(Picture, ChromaUpsampling)}
+     * describes, and each sample is rounded once to 8 bits. An {@link Rgba16Picture} is reduced with
+     * {@link #toEightBit(Rgba16Picture)}. A {@link ChannelPicture} is converted as the class description
+     * states.
+     *
      * @param picture the picture to convert
      * @param upsampling how to reconstruct subsampled chroma
      * @return the picture itself if it is already an {@link RgbaPicture}, otherwise a new one
-     * @throws MediaException.Unsupported if the picture's matrix coefficients need the transfer function or the
-     * primaries (BT.2020 constant luminance, SMPTE 2085, chromaticity-derived, ICtCp)
+     * @throws MediaException.Unsupported if the picture holds ink separations
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static RgbaPicture toRgba(Picture picture, ChromaUpsampling upsampling) {
@@ -121,7 +163,8 @@ public final class ImageOps {
                     case RgbaPicture rgba -> rgba;
                     case Rgba16Picture rgba -> HighDepth.toEightBit(rgba);
                     case YuvPicture yuv -> yuvToRgba(yuv, upsampling, PictureBuffers.FRESH);
-                    case Yuv16Picture yuv -> yuvToRgba(HighDepth.toEightBit(yuv), upsampling, PictureBuffers.FRESH);
+                    case Yuv16Picture yuv -> DeepColor.toRgba(yuv, upsampling);
+                    case ChannelPicture channels -> (RgbaPicture) ChannelOps.toPacked(channels, false);
                 };
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
@@ -136,7 +179,6 @@ public final class ImageOps {
      * @param format the chroma layout of the result
      * @param color the color description of the result
      * @return the picture itself if it already has this layout and color, otherwise a new one
-     * @throws MediaException.Unsupported if a matrix is not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      * @see #toYuv(Picture, ChromaFormat, ColorInfo, ChromaDownsampling)
      */
@@ -166,15 +208,24 @@ public final class ImageOps {
      * from itself and the chroma at its position (reconstructed with the triangle filter), rounded
      * once. For colors inside the R'G'B' cube this is within one code value of a conversion through
      * RGBA; colors outside the cube are not clamped to it first. Otherwise the picture is converted
-     * through RGBA. Matrices are resolved with {@link MatrixCoefficients#effective()}. The alpha plane
-     * is kept. The primaries and transfer of {@code color} are assigned without conversion.
+     * through RGBA. Any conversion from or to a matrix without fixed coefficients (see
+     * {@link #toRgba(Picture, ChromaUpsampling)}), of an {@link RgbaPicture} or a planar picture, runs
+     * as {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int, ChromaDownsampling)} describes for a
+     * depth of 8.
+     * Matrices are resolved with {@link MatrixCoefficients#effective()}. The alpha plane is kept. The
+     * primaries and transfer of {@code color} are assigned without conversion; the matrices without
+     * fixed coefficients compute with them as {@link #toRgba16(Picture, ChromaUpsampling)} describes.
+     *
+     * <p>A 16-bit picture is converted at its full precision, as
+     * {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int, ChromaDownsampling)} describes for a depth of 8,
+     * rounding each sample once. A {@link ChannelPicture} is first converted to RGBA of its depth, as the class
+     * description states.
      *
      * @param picture the picture to convert
      * @param format the chroma layout of the result
      * @param color the color description of the result
      * @param downsampling how to average the pixels a subsampled chroma sample covers
      * @return the picture itself if it already has this layout and color, otherwise a new one
-     * @throws MediaException.Unsupported if a matrix is not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static YuvPicture toYuv(Picture picture, ChromaFormat format, ColorInfo color, ChromaDownsampling downsampling) {
@@ -204,11 +255,16 @@ public final class ImageOps {
             try {
                 return switch (picture) {
                     case RgbaPicture rgba -> rgbaToYuv(rgba, format, color, downsampling, buffers);
-                    case Rgba16Picture rgba -> rgbaToYuv(HighDepth.toEightBit(rgba), format, color, downsampling,
-                            PictureBuffers.FRESH);
+                    case Rgba16Picture rgba -> HighDepth.toEightBit(DeepColor.fromPacked(rgba, format, color, 8,
+                            downsampling == ChromaDownsampling.ALPHA_WEIGHTED));
                     case YuvPicture yuv -> yuvToYuv(yuv, format, color, downsampling, buffers);
-                    case Yuv16Picture yuv -> yuvToYuv(HighDepth.toEightBit(yuv), format, color, downsampling,
-                            PictureBuffers.FRESH);
+                    case Yuv16Picture yuv -> HighDepth.toEightBit(DeepColor.convert(yuv, format, color, 8,
+                            downsampling == ChromaDownsampling.ALPHA_WEIGHTED));
+                    case Channel8Picture channels -> rgbaToYuv((RgbaPicture) ChannelOps.toPacked(channels, false),
+                            format, color, downsampling, buffers);
+                    case ChannelPicture channels -> HighDepth.toEightBit(DeepColor.fromPacked(
+                            (Rgba16Picture) ChannelOps.toPacked(channels, true), format, color, 8,
+                            downsampling == ChromaDownsampling.ALPHA_WEIGHTED));
                 };
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
@@ -217,42 +273,217 @@ public final class ImageOps {
     }
 
     /**
-     * Resamples a picture to a new size.
+     * Converts a picture to packed 16-bit RGBA, upsampling subsampled chroma with the triangle
+     * filter.
      *
-     * <p>The picture is filtered separably with {@code filter}, stretched by the reduction factor
-     * of each axis that shrinks (see {@link ResizeFilter}); the aspect ratio is not preserved
-     * unless the caller preserves it. The result has the input's representation:
+     * @param picture the picture to convert
+     * @return the picture itself if it is already an {@link Rgba16Picture}, otherwise a new one
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     * @see #toRgba16(Picture, ChromaUpsampling)
+     */
+    public static Rgba16Picture toRgba16(Picture picture) {
+        return toRgba16(picture, ChromaUpsampling.TRIANGLE);
+    }
+
+    /**
+     * Converts a picture to packed 16-bit RGBA at full precision.
+     *
+     * <p>A {@link Yuv16Picture} or {@link YuvPicture} is converted with the matrix and range of
+     * its {@link ColorInfo} (any matrix, as for {@link #toRgba(Picture, ChromaUpsampling)}) in floating
+     * point and rounded once. The matrices other than the eight of fixed coefficients follow the ITU-T
+     * H.273 equations with the description's primaries and transfer function: SMPTE ST 2085 reads the
+     * samples as X'Y'Z', the constant-luminance, ICtCp and IPT-C2 matrices linearize with the transfer
+     * function (an unspecified one is BT.709 for constant luminance and PQ for ICtCp and IPT-C2), the
+     * chromaticity-derived matrices take their luma weights from the primaries (unspecified ones are
+     * BT.709), and YCgCo-Re and YCgCo-Ro invert their integer transform, with interpolated chroma rounded
+     * to the nearest integer, to R'G'B' samples two or one bits shallower than the planes. Each sample
+     * {@code v} of depth {@code d} is quantized as ITU-T H.273
+     * defines its range: limited-range samples as {@code v / 2^(d - 8)} in 8-bit code values
+     * (luma {@code 16} to {@code 235} at 8 bits), full-range samples as {@code v / (2^d - 1)} of the
+     * nominal range (chroma centered on {@code 2^(d - 1)}). Values outside the R'G'B' cube are
+     * clamped. Subsampled chroma is reconstructed at the centered positions of its samples, with
+     * {@link ChromaUpsampling#TRIANGLE} by bilinear interpolation (edge samples replicated) and with
+     * {@link ChromaUpsampling#NEAREST} by replication. Monochrome pictures become gray. The alpha
+     * plane, if any, becomes the alpha channel, rescaled as {@code round(a * 65535 / (2^d - 1))},
+     * and the result reports alpha exactly when the input has an alpha plane. An
+     * {@link RgbaPicture} is widened with {@link #toSixteenBit(RgbaPicture)}. A {@link ChannelPicture} is
+     * converted as the class description states.
+     *
+     * @param picture the picture to convert
+     * @param upsampling how to reconstruct subsampled chroma
+     * @return the picture itself if it is already an {@link Rgba16Picture}, otherwise a new one
+     * @throws MediaException.Unsupported if the picture holds ink separations
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Rgba16Picture toRgba16(Picture picture, ChromaUpsampling upsampling) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            Objects.requireNonNull(upsampling, "upsampling");
+            try {
+                return switch (picture) {
+                    case Rgba16Picture rgba -> rgba;
+                    case RgbaPicture rgba -> HighDepth.toSixteenBit(rgba);
+                    case Yuv16Picture yuv -> DeepColor.toRgba16(yuv, upsampling);
+                    case YuvPicture yuv -> DeepColor.toRgba16(HighDepth.toBitDepth(yuv, 8), upsampling);
+                    case ChannelPicture channels -> (Rgba16Picture) ChannelOps.toPacked(channels, true);
+                };
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Converts a picture to planar Y'CbCr of a given depth, averaging subsampled chroma with equal
+     * weights.
+     *
+     * @param picture the picture to convert
+     * @param format the chroma layout of the result
+     * @param color the color description of the result
+     * @param bitDepth the depth of the result; 8 to 16
+     * @return the picture itself if it is a {@link Yuv16Picture} that already has this layout, color and depth,
+     * otherwise a new one
+     * @throws IllegalArgumentException if {@code bitDepth} is outside 8 to 16
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     * @see #toYuv16(Picture, ChromaFormat, ColorInfo, int, ChromaDownsampling)
+     */
+    public static Yuv16Picture toYuv16(Picture picture, ChromaFormat format, ColorInfo color, int bitDepth) {
+        return toYuv16(picture, format, color, bitDepth, ChromaDownsampling.AVERAGE);
+    }
+
+    /**
+     * Converts a picture to planar Y'CbCr of a given depth at full precision.
+     *
+     * <p>Samples are quantized as {@link #toRgba16(Picture, ChromaUpsampling)} describes, every value
+     * is computed in floating point and rounded once to nearest, and values are clamped to the
+     * sample range.
      * <ul>
-     *   <li>an {@link RgbaPicture} that reports alpha and is not fully opaque is filtered in
-     *       premultiplied alpha, so the color of transparent pixels never bleeds into visible
-     *       ones, and divided back with exact rounding; other RGBA pictures are filtered
-     *       directly (and, when they report no alpha, get opaque alpha);</li>
-     *   <li>each plane of a {@link YuvPicture} is filtered independently: the chroma planes to
-     *       the size its {@link ChromaFormat} implies for the new size (odd sizes round up),
-     *       using the same source-to-output mapping as luma so chroma stays registered with
-     *       luma, and the alpha plane like luma (straight alpha; convert to RGBA first for
-     *       premultiplied filtering).</li>
+     *   <li>A packed picture, 8 or 16-bit, is converted with the matrix and range of {@code color};
+     *       each chroma sample of a subsampled layout is computed from the exact average (or, with
+     *       {@link ChromaDownsampling#ALPHA_WEIGHTED}, the alpha-weighted average) of the R'G'B'
+     *       values of the pixels it covers, and pixels past an odd right or bottom edge are not
+     *       invented. The alpha channel becomes an alpha plane, rescaled to the depth, when the
+     *       picture reports alpha.</li>
+     *   <li>A limited-range planar picture, 8 or 16-bit, with the same layout and color is
+     *       converted with {@link #toBitDepth(Yuv16Picture, int)}, whose shifts are the
+     *       limited-range quantization; a full-range one is requantized sample by sample, so that
+     *       {@code 2^d - 1} stays the largest value. With the same matrix (other than the identity
+     *       matrix together with a monochrome layout), the samples stay in Y'CbCr: luma is remapped
+     *       between the ranges and depths sample by sample, and chroma is resampled per axis
+     *       (halved by averaging pairs, weighted by the alpha plane with
+     *       {@link ChromaDownsampling#ALPHA_WEIGHTED}; doubled with the triangle filter) and
+     *       remapped. Otherwise, and always from or to a matrix without fixed coefficients, each
+     *       pixel is converted to R'G'B' with its chroma reconstructed by the triangle filter, without
+     *       clamping, and to {@code color} as a packed picture is. The alpha plane is kept, rescaled
+     *       to the depth.</li>
+     *   <li>A {@link ChannelPicture} is first converted with {@link #toRgba16(Picture)}.</li>
      * </ul>
+     * Matrices are resolved with {@link MatrixCoefficients#effective()}; the primaries and transfer
+     * of {@code color} are assigned without conversion. A matrix without fixed coefficients (see
+     * {@link #toRgba16(Picture, ChromaUpsampling)}) converts each pixel with the ITU-T H.273 equations
+     * and averages the color differences of the pixels a subsampled chroma sample covers rather than
+     * their R'G'B' values; YCgCo-Re and YCgCo-Ro first quantize R'G'B' to two or one bits fewer than
+     * {@code bitDepth}, so they are lossless for R'G'B' of that depth.
+     *
+     * @param picture the picture to convert
+     * @param format the chroma layout of the result
+     * @param color the color description of the result
+     * @param bitDepth the depth of the result; 8 to 16
+     * @param downsampling how to average the pixels a subsampled chroma sample covers
+     * @return the picture itself if it is a {@link Yuv16Picture} that already has this layout, color and depth,
+     * otherwise a new one
+     * @throws IllegalArgumentException if {@code bitDepth} is outside 8 to 16
+     * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
+     */
+    public static Yuv16Picture toYuv16(Picture picture, ChromaFormat format, ColorInfo color, int bitDepth,
+                                       ChromaDownsampling downsampling) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            Objects.requireNonNull(format, "format");
+            Objects.requireNonNull(color, "color");
+            Objects.requireNonNull(downsampling, "downsampling");
+            requireBitDepth(bitDepth);
+            var weighted = downsampling == ChromaDownsampling.ALPHA_WEIGHTED;
+            try {
+                return switch (picture) {
+                    case RgbaPicture rgba -> DeepColor.fromPacked(rgba, format, color, bitDepth, weighted);
+                    case Rgba16Picture rgba -> DeepColor.fromPacked(rgba, format, color, bitDepth, weighted);
+                    case Yuv16Picture yuv -> DeepColor.convert(yuv, format, color, bitDepth, weighted);
+                    case YuvPicture yuv -> DeepColor.convert(HighDepth.toBitDepth(yuv, 8), format, color, bitDepth,
+                            weighted);
+                    case ChannelPicture channels -> DeepColor.fromPacked(
+                            (Rgba16Picture) ChannelOps.toPacked(channels, true), format, color, bitDepth, weighted);
+                };
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Resamples a picture to a new size with a filter, in the picture's own gamma-encoded values.
      *
      * @param picture the picture to resample
      * @param width the new width; positive
      * @param height the new height; positive
      * @param filter the reconstruction filter
-     * @return the picture itself if it already has this size, otherwise a new picture
+     * @return the picture itself if it already has this size, otherwise a new picture, as
+     * {@link #resize(Picture, int, int, ResizeOptions)} describes
      * @throws IllegalArgumentException if {@code width} or {@code height} is not positive
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture resize(Picture picture, int width, int height, ResizeFilter filter) {
+        Objects.requireNonNull(filter, "filter");
+        return resize(picture, width, height, ResizeOptions.of(filter));
+    }
+
+    /**
+     * Resamples a picture to a new size.
+     *
+     * <p>The picture is filtered separably with the options' filter, stretched by the reduction
+     * factor of each axis that shrinks (see {@link ResizeFilter}); the aspect ratio is not
+     * preserved unless the caller preserves it. The result has the input's representation and
+     * depth:
+     * <ul>
+     *   <li>an {@link RgbaPicture} or {@link Rgba16Picture} that reports alpha and is not fully
+     *       opaque is filtered in premultiplied alpha, so the color of transparent pixels never
+     *       bleeds into visible ones, and divided back; other packed pictures are filtered
+     *       directly (and, when they report no alpha, get opaque alpha);</li>
+     *   <li>each plane of a {@link YuvPicture} or {@link Yuv16Picture} is filtered independently:
+     *       the chroma planes to the size its {@link ChromaFormat} implies for the new size (odd
+     *       sizes round up), using the same source-to-output mapping as luma so chroma stays
+     *       registered with luma, and the alpha plane like luma (straight alpha; convert to RGBA
+     *       first for premultiplied filtering);</li>
+     *   <li>every channel of a {@link ChannelPicture} is filtered independently in double-precision floating
+     *       point, the color channels premultiplied by a straight alpha channel that is not fully opaque;
+     *       integer samples are rounded and clamped, floating-point samples are neither, and
+     *       {@link ResizeOptions#linearLight()} does not apply.</li>
+     * </ul>
+     * 8-bit pictures are filtered in fixed point and 16-bit pictures in double-precision floating
+     * point, rounding only the final value: an 8-bit result is within one level of the same filter
+     * applied in exact arithmetic, a 16-bit result within one level at 16 bits. With
+     * {@link ResizeOptions#linearLight()} the colors are filtered in linear light, as that
+     * setting describes, in floating point at every depth.
+     *
+     * @param picture the picture to resample
+     * @param width the new width; positive
+     * @param height the new height; positive
+     * @param options the filter and the linear-light setting
+     * @return the picture itself if it already has this size, otherwise a new picture
+     * @throws IllegalArgumentException if {@code width} or {@code height} is not positive
+     * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
+     */
+    public static Picture resize(Picture picture, int width, int height, ResizeOptions options) {
         try (var _ = ParallelBands.operation()) {
             Objects.requireNonNull(picture, "picture");
-            Objects.requireNonNull(filter, "filter");
+            Objects.requireNonNull(options, "options");
             requirePositive(width, height);
             OpChecks.checkResult(picture, width, height);
             if (width == picture.width() && height == picture.height()) {
                 return picture;
             }
             try {
-                return resample(picture, 0, 0, picture.width(), picture.height(), width, height, filter);
+                return resample(picture, 0, 0, picture.width(), picture.height(), width, height, options);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
             }
@@ -340,11 +571,13 @@ public final class ImageOps {
     /**
      * Places a picture on a canvas filled with a background color.
      *
-     * <p>The picture is converted to RGBA and its pixels, including their alpha, replace the
-     * canvas pixels they cover (they are copied, not blended). The top-left corner goes to
-     * {@code (x, y)}, which may be negative or place the picture partly or entirely outside the
-     * canvas; only the overlapping part is copied. The result reports alpha when the background
-     * is not opaque or the picture reports alpha.
+     * <p>The picture is converted to packed RGBA at its depth (an {@link RgbaPicture} for an 8-bit
+     * picture, an {@link Rgba16Picture}, whose background channels are widened as {@code v * 257},
+     * for a 16-bit one) and its pixels, including their alpha, replace the canvas pixels they cover
+     * (they are copied, not blended). The top-left corner goes to {@code (x, y)}, which may be
+     * negative or place the picture partly or entirely outside the canvas; only the overlapping
+     * part is copied. The result reports alpha when the background is not opaque or the picture
+     * reports alpha.
      *
      * @param picture the picture to place
      * @param canvasWidth the canvas width; positive
@@ -354,16 +587,15 @@ public final class ImageOps {
      * @param argbBackground the background as {@code 0xAARRGGBB} (straight alpha)
      * @return a new picture
      * @throws IllegalArgumentException if a canvas dimension is not positive
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the canvas is larger than the picture and exceeds the default limits
      */
-    public static RgbaPicture pad(Picture picture, int canvasWidth, int canvasHeight, int x, int y, int argbBackground) {
+    public static Picture pad(Picture picture, int canvasWidth, int canvasHeight, int x, int y, int argbBackground) {
         try (var _ = ParallelBands.operation()) {
             Objects.requireNonNull(picture, "picture");
             requirePositive(canvasWidth, canvasHeight);
             OpChecks.checkResult(picture, canvasWidth, canvasHeight);
             try {
-                return Geometry.pad(toRgba(picture), canvasWidth, canvasHeight, x, y, argbBackground);
+                return Geometry.pad(Canvas.toPacked(picture), canvasWidth, canvasHeight, x, y, argbBackground);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
             }
@@ -373,18 +605,20 @@ public final class ImageOps {
     /**
      * Composites a picture's straight alpha over an opaque background color.
      *
-     * <p>Each sample becomes {@code round((c * a + k * (255 - a)) / 255)}, with {@code k} the
-     * background's sample, and the result reports no alpha. An {@link RgbaPicture} is composited
-     * in R'G'B'. A {@link YuvPicture} is composited directly in Y'CbCr, which is exact because
-     * the conversion is affine: luma is blended per pixel with the background's luma, and each
-     * chroma sample with the background's chroma by the average alpha of the pixels it covers
-     * (a monochrome picture keeps only the background's luma). The result keeps the input's
-     * representation, layout and color description.
+     * <p>Each sample becomes {@code round((c * a + k * (max - a)) / max)}, with {@code k} the
+     * background's sample and {@code max} the largest sample value, and the result reports no
+     * alpha. A packed picture is composited in R'G'B' (the background's channels widened as
+     * {@code v * 257} for an {@link Rgba16Picture}). A planar picture is composited directly in
+     * Y'CbCr, which is exact because the conversion is affine: luma is blended per pixel with the
+     * background's luma, and each chroma sample with the background's chroma by the average alpha
+     * of the pixels it covers (a monochrome picture keeps only the background's luma); for a
+     * {@link Yuv16Picture} the background is converted to the picture's depth in floating point,
+     * as {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int)} converts a color. The result keeps
+     * the input's representation, depth, layout and color description.
      *
      * @param picture the picture to flatten
      * @param rgbBackground the background as {@code 0xRRGGBB}; the top byte is ignored
      * @return the input if it reports no alpha, otherwise a new opaque picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      */
     public static Picture flatten(Picture picture, int rgbBackground) {
         try (var _ = ParallelBands.operation()) {
@@ -433,9 +667,25 @@ public final class ImageOps {
      * @throws IllegalArgumentException if {@code maxEdge} is not positive
      */
     public static Picture fitWithin(Picture picture, int maxEdge, ResizeFilter filter) {
+        Objects.requireNonNull(filter, "filter");
+        return fitWithin(picture, maxEdge, ResizeOptions.of(filter));
+    }
+
+    /**
+     * Shrinks a picture, keeping its aspect ratio, so that neither side exceeds a bound, with the
+     * sizes {@link #fitWithin(Picture, int, ResizeFilter)} chooses and the resampling of
+     * {@link #resize(Picture, int, int, ResizeOptions)}.
+     *
+     * @param picture the picture to scale
+     * @param maxEdge the largest allowed width and height; positive
+     * @param options the filter and the linear-light setting
+     * @return the input if both sides are already within the bound, otherwise a new picture
+     * @throws IllegalArgumentException if {@code maxEdge} is not positive
+     */
+    public static Picture fitWithin(Picture picture, int maxEdge, ResizeOptions options) {
         try (var _ = ParallelBands.operation()) {
             Objects.requireNonNull(picture, "picture");
-            Objects.requireNonNull(filter, "filter");
+            Objects.requireNonNull(options, "options");
             if (maxEdge <= 0) {
                 throw new IllegalArgumentException("maximum edge " + maxEdge + " is not positive");
             }
@@ -445,9 +695,9 @@ public final class ImageOps {
                 return picture;
             }
             if (width >= height) {
-                return resize(picture, maxEdge, scaleEdge(height, maxEdge, width), filter);
+                return resize(picture, maxEdge, scaleEdge(height, maxEdge, width), options);
             }
-            return resize(picture, scaleEdge(width, maxEdge, height), maxEdge, filter);
+            return resize(picture, scaleEdge(width, maxEdge, height), maxEdge, options);
         }
     }
 
@@ -456,24 +706,46 @@ public final class ImageOps {
      * centers it on a canvas of the box's size.
      *
      * <p>The picture is enlarged or reduced until one side equals the box's and the other is at
-     * most the box's (rounded to the nearest integer, at least 1). It is converted to RGBA,
-     * resized (premultiplied when it has transparency), and placed as {@link #pad} does at
-     * {@code ((boxWidth - w) / 2, (boxHeight - h) / 2)}, rounding down.
+     * most the box's (rounded to the nearest integer, at least 1). It is converted to packed RGBA
+     * at its depth, resized (premultiplied when it has transparency), and placed as {@link #pad}
+     * does at {@code ((boxWidth - w) / 2, (boxHeight - h) / 2)}, rounding down.
      *
      * @param picture the picture to scale
      * @param boxWidth the box width; positive
      * @param boxHeight the box height; positive
      * @param filter the reconstruction filter
      * @param argbBackground the canvas color as {@code 0xAARRGGBB}, typically transparent
-     * @return a new picture of the box's size
+     * @return a new picture of the box's size: an {@link RgbaPicture} for an 8-bit picture, an
+     * {@link Rgba16Picture} for a 16-bit one
      * @throws IllegalArgumentException if a box dimension is not positive
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the box is larger than the picture and exceeds the default limits
      */
-    public static RgbaPicture fitInto(Picture picture, int boxWidth, int boxHeight, ResizeFilter filter, int argbBackground) {
+    public static Picture fitInto(Picture picture, int boxWidth, int boxHeight, ResizeFilter filter, int argbBackground) {
+        Objects.requireNonNull(filter, "filter");
+        return fitInto(picture, boxWidth, boxHeight, ResizeOptions.of(filter), argbBackground);
+    }
+
+    /**
+     * Scales a picture, keeping its aspect ratio, to the largest size that fits a box, and
+     * centers it on a canvas of the box's size, as
+     * {@link #fitInto(Picture, int, int, ResizeFilter, int)} describes, with the resampling of
+     * {@link #resize(Picture, int, int, ResizeOptions)}.
+     *
+     * @param picture the picture to scale
+     * @param boxWidth the box width; positive
+     * @param boxHeight the box height; positive
+     * @param options the filter and the linear-light setting
+     * @param argbBackground the canvas color as {@code 0xAARRGGBB}, typically transparent
+     * @return a new picture of the box's size: an {@link RgbaPicture} for an 8-bit picture, an
+     * {@link Rgba16Picture} for a 16-bit one
+     * @throws IllegalArgumentException if a box dimension is not positive
+     * @throws MediaException.LimitExceeded if the box is larger than the picture and exceeds the default limits
+     */
+    public static Picture fitInto(Picture picture, int boxWidth, int boxHeight, ResizeOptions options,
+                                  int argbBackground) {
         try (var _ = ParallelBands.operation()) {
             Objects.requireNonNull(picture, "picture");
-            Objects.requireNonNull(filter, "filter");
+            Objects.requireNonNull(options, "options");
             requirePositive(boxWidth, boxHeight);
             OpChecks.checkResult(picture, boxWidth, boxHeight);
             var width = picture.width();
@@ -487,8 +759,8 @@ public final class ImageOps {
                 fittedHeight = boxHeight;
                 fittedWidth = Math.min(boxWidth, scaleEdge(width, boxHeight, height));
             }
-            var fitted = (RgbaPicture) resize(toRgba(picture), fittedWidth, fittedHeight, filter);
             try {
+                var fitted = resize(Canvas.toPacked(picture), fittedWidth, fittedHeight, options);
                 return Geometry.pad(fitted, boxWidth, boxHeight, (boxWidth - fittedWidth) / 2,
                         (boxHeight - fittedHeight) / 2, argbBackground);
             } catch (RuntimeException exception) {
@@ -514,9 +786,26 @@ public final class ImageOps {
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture coverSquare(Picture picture, int side, ResizeFilter filter) {
+        Objects.requireNonNull(filter, "filter");
+        return coverSquare(picture, side, ResizeOptions.of(filter));
+    }
+
+    /**
+     * Crops the largest centered square out of a picture and resizes it, as
+     * {@link #coverSquare(Picture, int, ResizeFilter)} describes, with the resampling of
+     * {@link #resize(Picture, int, int, ResizeOptions)}.
+     *
+     * @param picture the picture to crop and scale
+     * @param side the side of the result; positive
+     * @param options the filter and the linear-light setting
+     * @return the input if it is already a square of that side, otherwise a new picture with the input's representation
+     * @throws IllegalArgumentException if {@code side} is not positive
+     * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
+     */
+    public static Picture coverSquare(Picture picture, int side, ResizeOptions options) {
         try (var _ = ParallelBands.operation()) {
             Objects.requireNonNull(picture, "picture");
-            Objects.requireNonNull(filter, "filter");
+            Objects.requireNonNull(options, "options");
             requirePositive(side, side);
             OpChecks.checkResult(picture, side, side);
             var square = Math.min(picture.width(), picture.height());
@@ -526,7 +815,7 @@ public final class ImageOps {
                 return crop(picture, x, y, square, square);
             }
             try {
-                return resample(picture, x, y, square, square, side, side, filter);
+                return resample(picture, x, y, square, square, side, side, options);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
             }
@@ -541,7 +830,6 @@ public final class ImageOps {
      * @param degrees the angle in degrees; positive turns clockwise, negative counter-clockwise
      * @return the rotated picture, as {@link #rotate(Picture, double, Interpolation, RotationCanvas, int)} describes
      * @throws IllegalArgumentException if {@code degrees} is not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture rotate(Picture picture, double degrees) {
@@ -580,7 +868,6 @@ public final class ImageOps {
      * alpha
      * @return the input for a multiple of 360 degrees, otherwise a new picture
      * @throws IllegalArgumentException if {@code degrees} is not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture rotate(Picture picture, double degrees, Interpolation interpolation, RotationCanvas canvas,
@@ -669,7 +956,6 @@ public final class ImageOps {
      * alpha
      * @return a new picture
      * @throws IllegalArgumentException if a dimension is not positive or {@code transform} is not invertible
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture affine(Picture picture, AffineTransform transform, int width, int height,
@@ -701,7 +987,6 @@ public final class ImageOps {
      * {@code 0} to {@code 255} (in 8-bit units, scaled by 257 for 16-bit pictures)
      * @return the bounds, as {@link #trimBounds(Picture, int, int)} describes
      * @throws IllegalArgumentException if {@code tolerance} is outside {@code 0..255}
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Optional<Region> trimBounds(Picture picture, int tolerance) {
@@ -721,7 +1006,6 @@ public final class ImageOps {
      * {@code 0} to {@code 255} (in 8-bit units, scaled by 257 for 16-bit pictures)
      * @return the bounds, or an empty optional when every pixel belongs to the border
      * @throws IllegalArgumentException if {@code tolerance} is outside {@code 0..255}
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Optional<Region> trimBounds(Picture picture, int argbBorder, int tolerance) {
@@ -737,7 +1021,6 @@ public final class ImageOps {
      * @return the picture cropped to {@link #trimBounds(Picture, int)}, with its representation and depth; the input
      * itself when it has no border or is entirely border
      * @throws IllegalArgumentException if {@code tolerance} is outside {@code 0..255}
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture trim(Picture picture, int tolerance) {
@@ -756,7 +1039,6 @@ public final class ImageOps {
      * @return the picture cropped to {@link #trimBounds(Picture, int, int)}, with its representation and depth; the
      * input itself when it has no border or is entirely border
      * @throws IllegalArgumentException if {@code tolerance} is outside {@code 0..255}
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture trim(Picture picture, int argbBorder, int tolerance) {
@@ -784,7 +1066,6 @@ public final class ImageOps {
      * alpha; ignored by the other modes
      * @return the input when every border is zero, otherwise a new picture
      * @throws IllegalArgumentException if a border is negative
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture extend(Picture picture, int top, int right, int bottom, int left, ExtendMode mode,
@@ -828,7 +1109,6 @@ public final class ImageOps {
      * @param argbBackground the color of the added areas, as {@code 0xAARRGGBB} with straight alpha
      * @return the input when the size is unchanged, otherwise a new picture
      * @throws IllegalArgumentException if a dimension is not positive
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture resizeCanvas(Picture picture, int width, int height, Anchor anchor, int argbBackground) {
@@ -860,8 +1140,7 @@ public final class ImageOps {
      * <p>The crop is the rectangle {@link #findSmartCrop} returns for the aspect ratio
      * {@code width:height}; it is then resized to exactly {@code width} by {@code height} with
      * {@code filter}, as {@link #resize} does (cropping and resizing in one pass, so the result
-     * keeps the input's representation; 16-bit pictures are reduced to 8 bits, as by
-     * {@link #resize}).
+     * keeps the input's representation and depth).
      *
      * @param picture the picture to crop
      * @param width the width of the result; positive
@@ -870,14 +1149,34 @@ public final class ImageOps {
      * @param filter the reconstruction filter of the resize
      * @return a new picture, or the input when it already has this size and the crop is the whole picture
      * @throws IllegalArgumentException if a dimension is not positive
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
      */
     public static Picture smartCrop(Picture picture, int width, int height, SmartCropStrategy strategy,
                                     ResizeFilter filter) {
+        Objects.requireNonNull(filter, "filter");
+        return smartCrop(picture, width, height, strategy, ResizeOptions.of(filter));
+    }
+
+    /**
+     * Crops a picture to the aspect ratio of a size around its most interesting region, and
+     * resizes the crop to that size, as
+     * {@link #smartCrop(Picture, int, int, SmartCropStrategy, ResizeFilter)} describes, with the
+     * resampling of {@link #resize(Picture, int, int, ResizeOptions)}.
+     *
+     * @param picture the picture to crop
+     * @param width the width of the result; positive
+     * @param height the height of the result; positive
+     * @param strategy how to choose the region
+     * @param options the filter and the linear-light setting of the resize
+     * @return a new picture, or the input when it already has this size and the crop is the whole picture
+     * @throws IllegalArgumentException if a dimension is not positive
+     * @throws MediaException.LimitExceeded if the result is larger than the input and exceeds the default limits
+     */
+    public static Picture smartCrop(Picture picture, int width, int height, SmartCropStrategy strategy,
+                                    ResizeOptions options) {
         try (var _ = ParallelBands.operation()) {
             Objects.requireNonNull(picture, "picture");
-            Objects.requireNonNull(filter, "filter");
+            Objects.requireNonNull(options, "options");
             requirePositive(width, height);
             OpChecks.checkResult(picture, width, height);
             var region = findSmartCrop(picture, width, height, strategy);
@@ -885,7 +1184,8 @@ public final class ImageOps {
                 return crop(picture, region.x(), region.y(), width, height);
             }
             try {
-                return resample(picture, region.x(), region.y(), region.width(), region.height(), width, height, filter);
+                return resample(picture, region.x(), region.y(), region.width(), region.height(), width, height,
+                        options);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
             }
@@ -913,7 +1213,6 @@ public final class ImageOps {
      * @param strategy how to choose the region
      * @return the region, inside the picture
      * @throws IllegalArgumentException if a part of the aspect ratio is not positive
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Region findSmartCrop(Picture picture, int aspectWidth, int aspectHeight, SmartCropStrategy strategy) {
@@ -939,7 +1238,13 @@ public final class ImageOps {
      * VP9 decoders' default 8-bit mode) and each alpha sample rescaled as
      * {@code round(v * 255 / (2^d - 1))}. An {@link Rgba16Picture} becomes an {@link RgbaPicture}
      * with every sample reduced as {@code (v * 255 + 32767) / 65535}, which equals the output of
-     * the PNG decoder's default 8-bit mode.
+     * the PNG decoder's default 8-bit mode. A 16-bit or floating-point {@link ChannelPicture} becomes a
+     * {@link Channel8Picture} with the same layout, as {@link #toChannel8(Picture)} describes.
+     *
+     * <p>The YCgCo-Re and YCgCo-Ro matrices tie the depth of their R'G'B' samples to the depth of the Y'CbCr
+     * samples, so a shift would change the colors: their pictures are converted as
+     * {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int)} converts them to the same layout, color description
+     * and depth 8, which requantizes the R'G'B' of each pixel.
      *
      * @param picture the picture to reduce
      * @return the picture itself if it has 8-bit storage, otherwise a new picture
@@ -952,6 +1257,7 @@ public final class ImageOps {
                 case YuvPicture yuv -> yuv;
                 case Rgba16Picture rgba -> toEightBit(rgba);
                 case Yuv16Picture yuv -> toEightBit(yuv);
+                case ChannelPicture channels -> toChannel8(channels);
             };
         }
     }
@@ -966,6 +1272,10 @@ public final class ImageOps {
         try (var _ = ParallelBands.operation()) {
             Objects.requireNonNull(picture, "picture");
             try {
+                if (YcgcoR.applies(picture.color().matrix())) {
+                    return HighDepth.toEightBit(DeepColor.convert(picture, picture.chromaFormat(), picture.color(), 8,
+                            false));
+                }
                 return HighDepth.toEightBit(picture);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
@@ -998,6 +1308,11 @@ public final class ImageOps {
      * {@code round(v * (2^bitDepth - 1) / 255)}, so opaque stays opaque. Reducing the result with
      * {@link #toEightBit(Yuv16Picture)} restores the input exactly.
      *
+     * <p>Pictures in the YCgCo-Re and YCgCo-Ro matrices, whose R'G'B' depth follows the Y'CbCr depth,
+     * are instead converted as {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int)} converts them to
+     * the same layout and color description, which requantizes the R'G'B' of each pixel; reducing the
+     * result restores a 4:4:4 picture whose samples are the transform of R'G'B' samples.
+     *
      * @param picture the picture to widen
      * @param bitDepth the depth of the result; 8 to 16
      * @return a new picture
@@ -1008,6 +1323,10 @@ public final class ImageOps {
             Objects.requireNonNull(picture, "picture");
             requireBitDepth(bitDepth);
             try {
+                if (YcgcoR.applies(picture.color().matrix())) {
+                    return DeepColor.convert(HighDepth.toBitDepth(picture, 8), picture.chromaFormat(),
+                            picture.color(), bitDepth, false);
+                }
                 return HighDepth.toBitDepth(picture, bitDepth);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
@@ -1020,7 +1339,10 @@ public final class ImageOps {
      *
      * <p>Y'CbCr samples are shifted left to gain bits and rounded to nearest to lose them,
      * {@code min((v + 2^(n - 1)) >> n, 2^bitDepth - 1)} for {@code n} lost bits; alpha samples are
-     * rescaled as {@code round(v * (2^bitDepth - 1) / (2^d - 1))}.
+     * rescaled as {@code round(v * (2^bitDepth - 1) / (2^d - 1))}. Pictures in the YCgCo-Re and
+     * YCgCo-Ro matrices are instead converted as {@link #toYuv16(Picture, ChromaFormat, ColorInfo, int)}
+     * converts them to the same layout and color description, which requantizes the R'G'B' of each
+     * pixel (see {@link #toBitDepth(YuvPicture, int)}).
      *
      * @param picture the picture to convert
      * @param bitDepth the depth of the result; 8 to 16
@@ -1035,6 +1357,9 @@ public final class ImageOps {
                 return picture;
             }
             try {
+                if (YcgcoR.applies(picture.color().matrix())) {
+                    return DeepColor.convert(picture, picture.chromaFormat(), picture.color(), bitDepth, false);
+                }
                 return HighDepth.toBitDepth(picture, bitDepth);
             } catch (RuntimeException exception) {
                 throw OpChecks.translate(exception);
@@ -1062,6 +1387,79 @@ public final class ImageOps {
     }
 
     /**
+     * Converts a picture to packed 8-bit channels.
+     *
+     * <p>A {@link ChannelPicture} keeps its layout: 16-bit samples are reduced as
+     * {@code (v * 255 + 32767) / 65535}, and floating-point samples are quantized to 16 bits as
+     * {@code round(v * 65535)}, clamped, NaN becoming 0, then reduced likewise. A packed RGBA picture becomes the
+     * {@link PixelLayout#RGBA} layout when it reports alpha and {@link PixelLayout#RGB} otherwise, 16-bit
+     * samples reduced as above; a Y'CbCr picture is first converted with {@link #toRgba(Picture)}.
+     *
+     * @param picture the picture to convert
+     * @return the picture itself if it is already a {@link Channel8Picture}, otherwise a new one
+     * @throws MediaException.LimitExceeded if the result does not fit one Java array
+     */
+    public static Channel8Picture toChannel8(Picture picture) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            try {
+                return ChannelOps.toChannel8(picture);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Converts a picture to packed 16-bit channels.
+     *
+     * <p>A {@link ChannelPicture} keeps its layout: 8-bit samples are widened as {@code v * 257}, and
+     * floating-point samples are quantized as {@code round(v * 65535)}, clamped, NaN becoming 0. A packed RGBA
+     * picture becomes the {@link PixelLayout#RGBA} layout when it reports alpha and {@link PixelLayout#RGB}
+     * otherwise, 8-bit samples widened as above; a Y'CbCr picture is first converted at full precision with
+     * {@link #toRgba16(Picture)}.
+     *
+     * @param picture the picture to convert
+     * @return the picture itself if it is already a {@link Channel16Picture}, otherwise a new one
+     * @throws MediaException.LimitExceeded if the result does not fit one Java array
+     */
+    public static Channel16Picture toChannel16(Picture picture) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            try {
+                return ChannelOps.toChannel16(picture);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
+     * Converts a picture to packed floating-point channels.
+     *
+     * <p>Integer samples become nominal values, {@code v / 255} or {@code v / 65535}, so the conversion back
+     * with {@link #toChannel8(Picture)} or {@link #toChannel16(Picture)} restores them exactly. A
+     * {@link ChannelPicture} keeps its layout; a packed RGBA picture becomes the {@link PixelLayout#RGBA} layout
+     * when it reports alpha and {@link PixelLayout#RGB} otherwise; a Y'CbCr picture is first converted at its
+     * full precision with {@link #toRgba(Picture)} (8-bit) or {@link #toRgba16(Picture)} (16-bit). The transfer
+     * function is unchanged: gamma-encoded samples stay gamma-encoded.
+     *
+     * @param picture the picture to convert
+     * @return the picture itself if it is already a {@link ChannelFloatPicture}, otherwise a new one
+     * @throws MediaException.LimitExceeded if the result does not fit one Java array
+     */
+    public static ChannelFloatPicture toChannelFloat(Picture picture) {
+        try (var _ = ParallelBands.operation()) {
+            Objects.requireNonNull(picture, "picture");
+            try {
+                return ChannelOps.toChannelFloat(picture);
+            } catch (RuntimeException exception) {
+                throw OpChecks.translate(exception);
+            }
+        }
+    }
+
+    /**
      * Converts a picture from one color profile to another with the default options (perceptual
      * intent).
      *
@@ -1071,8 +1469,7 @@ public final class ImageOps {
      * @return the converted picture, as {@link #convertColor(Picture, ColorTransform)} describes
      * @throws IllegalArgumentException if a profile is neither RGB nor gray
      * @throws MediaException.Malformed if a profile is damaged
-     * @throws MediaException.Unsupported if a profile cannot be used as source or target, or the picture's matrix
-     * coefficients are not supported
+     * @throws MediaException.Unsupported if a profile cannot be used as source or target
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      * @see ColorTransform
      */
@@ -1090,8 +1487,7 @@ public final class ImageOps {
      * @return the converted picture, as {@link #convertColor(Picture, ColorTransform)} describes
      * @throws IllegalArgumentException if a profile is neither RGB nor gray
      * @throws MediaException.Malformed if a profile is damaged
-     * @throws MediaException.Unsupported if a profile cannot be used as source or target, or the picture's matrix
-     * coefficients are not supported
+     * @throws MediaException.Unsupported if a profile cannot be used as source or target
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture convertColor(Picture picture, ColorProfile source, ColorProfile target,
@@ -1109,15 +1505,24 @@ public final class ImageOps {
      * an {@link Rgba16Picture}, and alpha is copied unchanged. Y'CbCr pictures are first converted
      * to R'G'B' with the matrix and range of their {@link ColorInfo} (16-bit ones in floating point,
      * keeping their precision). A gray source profile reads the red channel; a gray target profile
-     * writes the same value to red, green and blue.
+     * writes the same value to red, green and blue. With a CMYK target profile, an RGB picture becomes a
+     * {@link Channel8Picture} or {@link Channel16Picture} of the {@link PixelLayout#CMYK} layout, followed by
+     * alpha when the picture reports it.
+     *
+     * <p>A {@link ChannelPicture} of 8 or 16-bit samples needs a source profile with as many channels as its
+     * color channels; its color channels are replaced by those of the target profile (gray, RGB or CMYK), its
+     * extra channels are copied, and premultiplied colors are divided by their alpha before the transform and
+     * multiplied by it after.
      *
      * @apiNote Create the transform once with {@link ColorTransform#create} and reuse it for every picture with the
      * same pair of profiles: creating one reads and links the profiles.
      * @param picture the picture, whose values are in the transform's source profile
-     * @param transform the transform, between RGB or gray profiles
+     * @param transform the transform, from an RGB or gray profile, or the profile of a channel picture, to an
+     * RGB, gray or CMYK profile
      * @return the converted picture
-     * @throws IllegalArgumentException if a profile of the transform is neither RGB nor gray
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
+     * @throws IllegalArgumentException if a profile of the transform does not fit the picture or is not RGB, gray
+     * or CMYK
+     * @throws MediaException.Unsupported if the picture has floating-point samples
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture convertColor(Picture picture, ColorTransform transform) {
@@ -1142,7 +1547,8 @@ public final class ImageOps {
      * color is already sRGB (BT.709 primaries with an SDR transfer, the color of JPEG and of most
      * video) converts exactly as {@link #toRgba(Picture)} does. RGBA pictures carry no color
      * description and are taken as sRGB: they are only reduced to 8 bits; convert them with
-     * {@link #convertColor(Picture, ColorProfile, ColorProfile)} or {@link #toSrgb(DecodedImage)}.
+     * {@link #convertColor(Picture, ColorProfile, ColorProfile)} or {@link #toSrgb(DecodedImage)}. A
+     * {@link ChannelPicture} is converted as {@link #toRgba(Picture)} converts it.
      *
      * @apiNote This is the conversion for thumbnails and previews of video frames, including HDR video.
      * @param picture the picture to convert
@@ -1185,9 +1591,15 @@ public final class ImageOps {
      * {@link DecodedImage#iccProfile()} and {@link ColorProfile#srgb()} as its color profile;
      * the other components are kept.
      *
+     * <p>A {@link ChannelPicture} is always converted to packed RGBA, an {@link RgbaPicture} for 8-bit samples
+     * and an {@link Rgba16Picture} otherwise. When its color profile has as many channels as its color channels
+     * and can be applied, the picture is converted through it, floating-point samples first quantized to 16
+     * bits, and the result is labeled as above. Otherwise it is converted as {@link #toRgba16(Picture)}
+     * describes, keeping the ICC bytes and keeping the color profile only for gray and RGB pictures.
+     *
      * @param image the decoded image
      * @return the sRGB image, or {@code image} itself
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
+     * @throws MediaException.Unsupported if the picture holds ink separations its profile cannot convert
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      * @see ImageDecoderOptions#convertToSrgb()
      */
@@ -1261,27 +1673,47 @@ public final class ImageOps {
      * @param height the rectangle's height
      * @param outWidth the output width
      * @param outHeight the output height
-     * @param filter the resampling filter
+     * @param options the filter and the linear-light setting
      * @return the resampled picture
      */
     private static Picture resample(Picture picture, int x, int y, int width, int height, int outWidth, int outHeight,
-                                    ResizeFilter filter) {
+                                    ResizeOptions options) {
+        var filter = options.filter();
         var windowX = new Resampler.Window(x, width, 1);
         var windowY = new Resampler.Window(y, height, 1);
+        var linear = options.linearLight() && filter != ResizeFilter.NEAREST;
         return switch (picture) {
-            // TODO: resample 16-bit pictures at their own depth instead of reducing them first
-            case Rgba16Picture rgba -> resample(HighDepth.toEightBit(rgba), x, y, width, height, outWidth, outHeight, filter);
-            case Yuv16Picture yuv -> resample(HighDepth.toEightBit(yuv), x, y, width, height, outWidth, outHeight, filter);
             case RgbaPicture rgba -> {
                 OpChecks.checkArray(4L * outWidth * outHeight);
                 var out = RgbaPicture.allocate(outWidth, outHeight, rgba.hasAlpha());
                 var premultiplied = rgba.hasAlpha() && !Geometry.isOpaque(rgba);
-                Resampler.rgba(rgba.pixels(), rgba.stride(), rgba.width(), rgba.height(), windowX, windowY,
-                        out.pixels(), out.stride(), outWidth, outHeight, filter, premultiplied, !rgba.hasAlpha());
+                if (linear) {
+                    DoubleResampler.linearRgba8(rgba.pixels(), rgba.stride(), rgba.width(), rgba.height(), windowX,
+                            windowY, out.pixels(), out.stride(), outWidth, outHeight, filter, premultiplied,
+                            !rgba.hasAlpha());
+                } else {
+                    Resampler.rgba(rgba.pixels(), rgba.stride(), rgba.width(), rgba.height(), windowX, windowY,
+                            out.pixels(), out.stride(), outWidth, outHeight, filter, premultiplied, !rgba.hasAlpha());
+                }
                 yield out;
             }
+            case Rgba16Picture rgba -> {
+                OpChecks.checkArray(4L * outWidth * outHeight);
+                var out = Rgba16Picture.allocate(outWidth, outHeight, rgba.hasAlpha());
+                var premultiplied = rgba.hasAlpha() && !HighDepth.isOpaque(rgba);
+                DoubleResampler.rgba16(rgba.pixels(), rgba.stride(), rgba.width(), rgba.height(), windowX, windowY,
+                        out.pixels(), out.stride(), outWidth, outHeight, filter, premultiplied, !rgba.hasAlpha(), linear);
+                yield out;
+            }
+            case ChannelPicture channels -> ChannelResampler.resample(channels, windowX, windowY, outWidth, outHeight,
+                    filter);
+            case YuvPicture yuv when linear -> toYuv((RgbaPicture) resample(toRgba(yuv), x, y, width, height, outWidth,
+                    outHeight, options), yuv.chromaFormat(), yuv.color(), backDownsampling(yuv));
+            case Yuv16Picture yuv when linear -> toYuv16(resample(toRgba16(yuv), x, y, width, height, outWidth,
+                    outHeight, options), yuv.chromaFormat(), yuv.color(), yuv.bitDepth(), backDownsampling(yuv));
             case YuvPicture yuv -> {
                 var format = yuv.chromaFormat();
+                OpChecks.checkArray((long) outWidth * outHeight);
                 var out = YuvPicture.allocate(outWidth, outHeight, format, yuv.hasAlpha(), yuv.color());
                 Resampler.plane(yuv.y(), yuv.yStride(), yuv.width(), yuv.height(), windowX, windowY,
                         out.y(), out.yStride(), outWidth, outHeight, filter);
@@ -1301,7 +1733,42 @@ public final class ImageOps {
                 }
                 yield out;
             }
+            case Yuv16Picture yuv -> {
+                var format = yuv.chromaFormat();
+                var max = (1 << yuv.bitDepth()) - 1;
+                OpChecks.checkArray((long) outWidth * outHeight);
+                var out = Yuv16Picture.allocate(outWidth, outHeight, format, yuv.bitDepth(), yuv.hasAlpha(), yuv.color());
+                DoubleResampler.plane(yuv.y(), yuv.yStride(), yuv.width(), yuv.height(), windowX, windowY,
+                        out.y(), out.yStride(), outWidth, outHeight, filter, max);
+                if (format.hasChroma()) {
+                    var chromaWidth = out.chromaWidth();
+                    var chromaHeight = out.chromaHeight();
+                    var chromaX = chromaWindow(windowX, format.shiftX(), outWidth, chromaWidth);
+                    var chromaY = chromaWindow(windowY, format.shiftY(), outHeight, chromaHeight);
+                    DoubleResampler.plane(yuv.u(), yuv.uvStride(), yuv.chromaWidth(), yuv.chromaHeight(), chromaX,
+                            chromaY, out.u(), out.uvStride(), chromaWidth, chromaHeight, filter, max);
+                    DoubleResampler.plane(yuv.v(), yuv.uvStride(), yuv.chromaWidth(), yuv.chromaHeight(), chromaX,
+                            chromaY, out.v(), out.uvStride(), chromaWidth, chromaHeight, filter, max);
+                }
+                if (yuv.hasAlpha()) {
+                    DoubleResampler.plane(yuv.alpha(), yuv.alphaStride(), yuv.width(), yuv.height(), windowX, windowY,
+                            out.alpha(), out.alphaStride(), outWidth, outHeight, filter, max);
+                }
+                yield out;
+            }
         };
+    }
+
+    /**
+     * Returns how a planar picture resampled through packed RGBA in linear light computes its
+     * chroma again: weighted by alpha when it has an alpha plane, since the colors of fully
+     * transparent pixels come back as black from premultiplied filtering.
+     *
+     * @param picture the planar picture
+     * @return the downsampling
+     */
+    private static ChromaDownsampling backDownsampling(Picture picture) {
+        return picture.hasAlpha() ? ChromaDownsampling.ALPHA_WEIGHTED : ChromaDownsampling.AVERAGE;
     }
 
     /**
@@ -1338,6 +1805,11 @@ public final class ImageOps {
         var width = yuv.width();
         var height = yuv.height();
         OpChecks.checkArray(4L * width * height);
+        if (CicpColor.handles(yuv.color())) {
+            var out = buffers.rgba(width, height, yuv.hasAlpha());
+            CicpColor.toPacked(yuv, upsampling, null, out.pixels(), out.stride());
+            return out;
+        }
         var matrix = ColorMatrix.of(yuv.color());
         var out = buffers.rgba(width, height, yuv.hasAlpha());
         var format = yuv.chromaFormat();
@@ -1405,9 +1877,14 @@ public final class ImageOps {
                                         ChromaDownsampling downsampling, PictureBuffers buffers) {
         var width = rgba.width();
         var height = rgba.height();
+        var weighted = downsampling == ChromaDownsampling.ALPHA_WEIGHTED && rgba.hasAlpha();
+        if (CicpColor.handles(color)) {
+            var out = buffers.yuv(width, height, format, rgba.hasAlpha(), color);
+            CicpColor.fromPacked(rgba, out, weighted);
+            return out;
+        }
         var matrix = ColorMatrix.of(color);
         var out = buffers.yuv(width, height, format, rgba.hasAlpha(), color);
-        var weighted = downsampling == ChromaDownsampling.ALPHA_WEIGHTED && rgba.hasAlpha();
         var groups = format.hasChroma() ? out.chromaHeight() : height;
         var bands = ParallelBands.bands(groups, COLOR_WORK * width * height);
         ParallelBands.run(bands, band -> rgbaToYuvRows(rgba, matrix, weighted, out, ParallelBands.start(band, bands, groups),
@@ -1471,6 +1948,12 @@ public final class ImageOps {
                                        ChromaDownsampling downsampling, PictureBuffers buffers) {
         if (yuv.chromaFormat() == format && yuv.color().equals(color)) {
             return yuv;
+        }
+        if (CicpColor.handles(yuv.color()) || CicpColor.handles(color)) {
+            OpChecks.checkArray((long) yuv.width() * yuv.height());
+            var out = buffers.yuv(yuv.width(), yuv.height(), format, yuv.hasAlpha(), color);
+            CicpColor.convert(yuv, out, downsampling == ChromaDownsampling.ALPHA_WEIGHTED, ChromaUpsampling.TRIANGLE);
+            return out;
         }
         var source = ColorMatrix.of(yuv.color());
         var target = ColorMatrix.of(color);

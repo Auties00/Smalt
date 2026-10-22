@@ -1,0 +1,25 @@
+# video decode dump of ivf/av1.ivf; regenerate with -Dsmalt.test.updateDumps=true
+format IVF
+duration 1000000
+seekable true
+track 0 AV1 160x120 timebase=1/15
+0 pts=0 dur=-1 key=true 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=087469ea u=359b3572 v=1f3a053b
+1 pts=1 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=53dc87ea u=b544495f v=11fd560c
+2 pts=2 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=622d98e5 u=3c38f739 v=f3677530
+3 pts=3 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8dfb77a1 u=2602e1e2 v=6c0bfbc5
+4 pts=4 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=6fc69dc6 u=807ab2f0 v=1fff2541
+5 pts=5 dur=-1 key=true 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=b25eca2f u=3ee3b35f v=1e51da09
+6 pts=6 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7903ed23 u=35748352 v=4a70598c
+7 pts=7 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=60b3d682 u=8898a837 v=8b3ed638
+8 pts=8 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=63f47bbc u=3da88c79 v=48c4ddb1
+9 pts=9 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f9688583 u=68b90fd9 v=f61f7916
+10 pts=10 dur=-1 key=true 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=524dce23 u=17e56274 v=95d59160
+11 pts=11 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8b9f65c5 u=b7e17d4d v=1e72a8ef
+12 pts=12 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=b8a8def6 u=f256cfd6 v=cf056657
+13 pts=13 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=68129824 u=565a02d6 v=2a10eca2
+14 pts=14 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=302533e5 u=c008bfd2 v=8f45f6d5
+seek 0: @0
+seek 333333: @4
+seek 666666: @9
+seek 1000000: end
+seek -1000000: @0
