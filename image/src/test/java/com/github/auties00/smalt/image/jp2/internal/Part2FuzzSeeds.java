@@ -21,7 +21,8 @@ import static com.github.auties00.smalt.image.jp2.internal.Part2Forward.VERTICAL
  * transformations, written by {@link Part2Writer}, and the JPX and Part 2 behavior samples. Runs only with
  * {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
-@EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true")
+@EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
+        disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
 @DisplayName("JPEG 2000 Part 2 fuzz seeds")
 class Part2FuzzSeeds {
     private static final String FUZZ = "com.github.auties00.smalt.image.fuzz.ImageFuzzTest";
