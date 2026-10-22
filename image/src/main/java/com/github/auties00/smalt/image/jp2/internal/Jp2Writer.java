@@ -12,6 +12,8 @@ import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.PriorityQueue;
 
 /**
  * Encodes components into a JPEG 2000 codestream (ISO/IEC 15444-1 annex A to F), and wraps a
@@ -21,9 +23,9 @@ import java.util.Arrays;
  * wavelet transform, the code-block coder and the rate allocation, then its packets are written
  * in the configured progression order as one tile-part.
  *
- * <p>Lossless codestreams are byte-identical to {@code opj_compress}'s with the same parameters and
- * comment. Arguments are not checked; values outside the documented ranges give unspecified
- * results.
+ * <p>Lossless codestreams of the ISO/IEC 15444-1 block coder are byte-identical to
+ * {@code opj_compress}'s with the same parameters and comment. Arguments are not checked; values
+ * outside the documented ranges give unspecified results.
  *
  * @implNote This implementation follows OpenJPEG's rate allocation ({@code opj_tcd_rateallocate}
  * and {@code opj_tcd_makelayer}): a bisection on the rate-distortion slope threshold against each
@@ -47,6 +49,23 @@ public final class Jp2Writer {
     private static final double[] ICT_NORMS = {1.732, 1.805, 1.573};
 
     /**
+     * The {@code Rsiz} flag of a codestream that needs ISO/IEC 15444-15 (bit 14).
+     */
+    private static final int RSIZ_PART15 = 0x4000;
+
+    /**
+     * The number of times the selection of high-throughput candidates narrows its byte target when the
+     * packets it selects exceed a layer's budget.
+     */
+    private static final int SELECTION_ROUNDS = 8;
+
+    /**
+     * The largest number of magnitude bit-planes of a sub-band coded with the high-throughput block coder, the
+     * most {@link HtDecoder} decodes.
+     */
+    private static final int HT_MAX_BIT_PLANES = 30;
+
+    /**
      * Prevents instantiation.
      */
     private Jp2Writer() {
@@ -61,12 +80,19 @@ public final class Jp2Writer {
      * ({@code ceil(width / dx)} by {@code ceil(height / dy)})
      * @param limits the limits bounding the allocations
      * @return the codestream
+     * @throws IllegalArgumentException if the high-throughput block coder is selected and a sub-band needs more
+     * than 30 magnitude bit-planes
      */
     public static byte[] codestream(EncoderConfig config, int[][] planes, MediaLimits limits) {
         var components = config.components();
         var quantizations = new Quantization[components];
         for (var c = 0; c < components; c++) {
             quantizations[c] = stepSizes(config, config.precisions()[c]);
+        }
+        if ((config.codeBlockStyle() & ComponentCoding.HIGH_THROUGHPUT) != 0
+                && magnitudeBound(config, quantizations) > HT_MAX_BIT_PLANES) {
+            throw new IllegalArgumentException("the high-throughput block coder codes at most " + HT_MAX_BIT_PLANES
+                    + " magnitude bit-planes, and these channels need " + magnitudeBound(config, quantizations));
         }
         var coding = coding(config);
         var out = new ByteWriter(4096);
@@ -95,22 +121,27 @@ public final class Jp2Writer {
     }
 
     /**
-     * Wraps a codestream in a JP2 file.
+     * Wraps a codestream in a JP2 file, or a JPH file (ISO/IEC 15444-15 annex D) when it codes with the
+     * high-throughput block coder.
      *
      * @param codestream the codestream bytes
      * @param config the parameters it was encoded with
      * @param colorSpace the enumerated color space, used when {@code icc} is {@code null}
      * @param icc the ICC profile to embed, or {@code null}
      * @param alpha the index of the opacity channel, or {@code -1}
+     * @param premultiplied whether the opacity channel is premultiplied opacity
      * @return the JP2 file
      */
-    public static byte[] jp2(byte[] codestream, EncoderConfig config, int colorSpace, byte[] icc, int alpha) {
+    public static byte[] jp2(byte[] codestream, EncoderConfig config, int colorSpace, byte[] icc, int alpha,
+                             boolean premultiplied) {
         var out = new ByteWriter(codestream.length + 256);
         out.bytes(Jp2Boxes.SIGNATURE);
+        // ISO/IEC 15444-15 D.3: a file holding an HTJ2K codestream is a JPH file
+        var brand = (config.codeBlockStyle() & ComponentCoding.HIGH_THROUGHPUT) != 0 ? "jph " : "jp2 ";
         out.begin(FourCc.of("ftyp"));
-        out.fourCc("jp2 ");
+        out.fourCc(brand);
         out.u32be(0);
-        out.fourCc("jp2 ");
+        out.fourCc(brand);
         out.end();
         var components = config.components();
         var uniform = true;
@@ -154,7 +185,7 @@ public final class Jp2Writer {
             for (var c = 0; c < components; c++) {
                 out.u16be(c);
                 if (c == alpha) {
-                    out.u16be(1);
+                    out.u16be(premultiplied ? 2 : 1);
                     out.u16be(0);
                 } else {
                     out.u16be(0);
@@ -231,8 +262,9 @@ public final class Jp2Writer {
     }
 
     /**
-     * Writes the main header: {@code SOC}, {@code SIZ}, {@code COD}, {@code QCD}, a {@code QCC}
-     * for each component quantized differently from the first, and {@code COM}.
+     * Writes the main header: {@code SOC}, {@code SIZ}, {@code CAP} for the high-throughput block
+     * coder, {@code COD}, {@code QCD}, a {@code QCC} for each component quantized differently from
+     * the first, and {@code COM}.
      *
      * @param out the stream
      * @param config the parameters
@@ -242,10 +274,11 @@ public final class Jp2Writer {
     private static void writeMainHeader(ByteWriter out, EncoderConfig config, ComponentCoding coding,
                                         Quantization[] quantizations) {
         var components = config.components();
+        var highThroughput = (config.codeBlockStyle() & ComponentCoding.HIGH_THROUGHPUT) != 0;
         out.u16be(Codestream.SOC);
         out.u16be(Codestream.SIZ);
         out.u16be(38 + 3 * components);
-        out.u16be(0);
+        out.u16be(highThroughput ? RSIZ_PART15 : 0);
         out.u32be(config.width());
         out.u32be(config.height());
         out.u32be(0);
@@ -259,6 +292,12 @@ public final class Jp2Writer {
             out.u8(depth(config, c));
             out.u8(config.subsamplingX()[c]);
             out.u8(config.subsamplingY()[c]);
+        }
+        if (highThroughput) {
+            out.u16be(Codestream.CAP);
+            out.u16be(8);
+            out.u32be(Codestream.PCAP_PART15);
+            out.u16be(capabilities(config, quantizations));
         }
         var precincts = config.precinctWidths() != null;
         var flags = (precincts ? 1 : 0) | (config.sop() ? 2 : 0) | (config.eph() ? 4 : 0);
@@ -294,6 +333,50 @@ public final class Jp2Writer {
             out.u16be(1);
             out.bytes(text);
         }
+    }
+
+    /**
+     * Returns the {@code Ccap15} field of a codestream coded with the high-throughput block coder (ISO/IEC
+     * 15444-15 Table A.2): every code-block an HT one, one HT set each, no region of interest, every
+     * parameter in the main header, the irreversible flag, and the cleanup magnitude bound.
+     *
+     * @param config the parameters
+     * @param quantizations the quantization of each component
+     * @return the field
+     */
+    private static int capabilities(EncoderConfig config, Quantization[] quantizations) {
+        var bound = magnitudeBound(config, quantizations);
+        // the irreversible bound of A.3.7 is one bit lower for a sub-band without decomposition
+        if (!config.reversible()) {
+            bound++;
+        }
+        int field;
+        if (bound <= 8) {
+            field = 0;
+        } else if (bound < 28) {
+            field = bound - 8;
+        } else {
+            field = Math.min(31, 19 + Math.ceilDiv(bound - 27, 4));
+        }
+        return (config.reversible() ? 0 : 0x20) | field;
+    }
+
+    /**
+     * Returns the largest number of magnitude bit-planes of a sub-band ({@code Mb} of equation E-2).
+     *
+     * @param config the parameters
+     * @param quantizations the quantization of each component
+     * @return the number of bit-planes
+     */
+    private static int magnitudeBound(EncoderConfig config, Quantization[] quantizations) {
+        var bound = 0;
+        var bands = 3 * config.resolutions() - 2;
+        for (var quantization : quantizations) {
+            for (var b = 0; b < bands; b++) {
+                bound = Math.max(bound, quantization.exponent(b) + quantization.guardBits() - 1);
+            }
+        }
+        return bound;
     }
 
     /**
@@ -491,7 +574,10 @@ public final class Jp2Writer {
                 Wavelet.forward97(floats[c], stride, components[c]);
             }
         }
-        var blocks = encodeBlocks(config, components, integers, floats, transform);
+        var highThroughput = (config.codeBlockStyle() & ComponentCoding.HIGH_THROUGHPUT) != 0;
+        var blocks = highThroughput
+                ? encodeHighThroughput(config, components, integers, floats, transform, bounds, budgets, limits)
+                : encodeBlocks(config, components, integers, floats, transform);
         var distortion = 0.0;
         for (var value : blocks) {
             distortion += value;
@@ -644,6 +730,381 @@ public final class Jp2Writer {
             }
         });
         return distortions;
+    }
+
+    /**
+     * Codes every code-block of a tile with the high-throughput block coder (ISO/IEC 15444-15), one HT set per
+     * block.
+     *
+     * <p>When the last quality layer takes every pass, each block is coded at full precision with a cleanup pass
+     * alone. Otherwise each block is first coded with a cleanup pass at every bit-plane, alone and followed by the
+     * SigProp and MagRef passes of the bit-plane below; the candidates on the convex hull of each block's
+     * rate-distortion points then compete under one slope threshold, set so that the packets of the selected
+     * candidates fit the last layer's byte budget or reach its PSNR target, and each block is coded once more with
+     * its selected candidate.
+     *
+     * @param config the parameters
+     * @param components the tile-components
+     * @param integers the integer coefficients
+     * @param floats the floating-point coefficients
+     * @param transform whether the component transform was applied
+     * @param bounds the tile's area
+     * @param budgets the byte budget of each layer
+     * @param limits the resource bounds checked before every allocation
+     * @return the weighted distortion reduction of each block at full precision, in codestream order
+     */
+    private static double[] encodeHighThroughput(EncoderConfig config, TileComponent[] components, int[][] integers,
+                                                 float[][] floats, boolean transform, int[] bounds, float[] budgets,
+                                                 MediaLimits limits) {
+        var jobs = new ArrayList<Job>();
+        var work = 0L;
+        for (var c = 0; c < components.length; c++) {
+            var component = components[c];
+            for (var r = 0; r < component.resolutions.length; r++) {
+                for (var band : component.resolutions[r].bands()) {
+                    if (band.empty()) {
+                        continue;
+                    }
+                    for (var precinct : band.precincts()) {
+                        for (var block : precinct.encodedBlocks) {
+                            jobs.add(new Job(c, r, band, block));
+                            work += (long) (block.x1 - block.x0) * (block.y1 - block.y0) * SAMPLE_WORK;
+                        }
+                    }
+                }
+            }
+        }
+        var distortions = new double[jobs.size()];
+        if (jobs.isEmpty()) {
+            return distortions;
+        }
+        var last = config.layers() - 1;
+        var constrained = config.ratios() != null ? budgets[last] > 0.0f : config.qualities()[last] > 0.0;
+        var bands = ParallelBands.bands(jobs.size(), work * (constrained ? 8 : 1));
+        ParallelBands.run(bands, index -> {
+            var coder = new HtEncoder();
+            var rates = new int[3];
+            var gains = new double[3];
+            var end = ParallelBands.start(index + 1, bands, jobs.size());
+            for (var j = ParallelBands.start(index, bands, jobs.size()); j < end; j++) {
+                var job = jobs.get(j);
+                var block = job.block();
+                var planes = load(coder, config, components, integers, floats, transform, job);
+                block.resetCandidates(2 * planes);
+                if (planes == 0) {
+                    block.totalPasses = 0;
+                    continue;
+                }
+                if (!constrained) {
+                    coder.encode(0, false);
+                    keep(block, coder, 0, 1);
+                    distortions[j] = coder.distortion(0);
+                    continue;
+                }
+                for (var plane = 0; plane < planes; plane++) {
+                    var refine = plane > 0;
+                    coder.encode(plane, refine);
+                    var cleanup = coder.cleanupLength();
+                    rates[0] = cleanup;
+                    rates[1] = cleanup + coder.sigPropLength();
+                    rates[2] = rates[1] + coder.magRefLength();
+                    gains[0] = coder.distortion(0);
+                    gains[1] = refine ? coder.distortion(1) : gains[0];
+                    gains[2] = refine ? coder.distortion(2) : gains[0];
+                    block.addCandidate(plane, 1, rates, gains);
+                    if (refine) {
+                        block.addCandidate(plane, 3, rates, gains);
+                    }
+                    if (plane == 0) {
+                        distortions[j] = gains[0];
+                    }
+                }
+                block.buildHull();
+            }
+        });
+        if (!constrained) {
+            return distortions;
+        }
+        selectHighThroughput(config, components, bounds, budgets[last], distortions, limits);
+        ParallelBands.run(bands, index -> {
+            var coder = new HtEncoder();
+            var end = ParallelBands.start(index + 1, bands, jobs.size());
+            for (var j = ParallelBands.start(index, bands, jobs.size()); j < end; j++) {
+                var job = jobs.get(j);
+                var block = job.block();
+                var chosen = block.chosen;
+                if (chosen < 0) {
+                    block.totalPasses = 0;
+                    continue;
+                }
+                load(coder, config, components, integers, floats, transform, job);
+                var plane = block.candidatePlane[chosen];
+                var passes = block.candidatePasses[chosen];
+                coder.encode(plane, passes > 1);
+                keep(block, coder, plane, passes);
+            }
+        });
+        return distortions;
+    }
+
+    /**
+     * Loads the coefficients of a code-block into a high-throughput coder.
+     *
+     * @param coder the high-throughput coder
+     * @param config the parameters
+     * @param components the tile-components
+     * @param integers the integer coefficients
+     * @param floats the floating-point coefficients
+     * @param transform whether the component transform was applied
+     * @param job the code-block and its location
+     * @return the number of magnitude bit-planes of its largest coefficient
+     */
+    private static int load(HtEncoder coder, EncoderConfig config, TileComponent[] components, int[][] integers,
+                            float[][] floats, boolean transform, Job job) {
+        var c = job.component();
+        var r = job.resolution();
+        var band = job.band();
+        var block = job.block();
+        var component = components[c];
+        var x = block.x0 - band.x0();
+        var y = block.y0 - band.y0();
+        if ((band.orientation() & 1) != 0) {
+            x += component.resolutions[r - 1].width();
+        }
+        if ((band.orientation() & 2) != 0) {
+            y += component.resolutions[r - 1].height();
+        }
+        var stride = component.x1 - component.x0;
+        var weight = transform && c < 3 ? (config.reversible() ? RCT_NORMS : ICT_NORMS)[c] : 1.0;
+        var level = component.resolutions.length - 1 - r;
+        var scale = Tier1Encoder.distortionScale(level, band.orientation(), config.reversible(), band.stepSize(),
+                weight);
+        var planes = coder.load(integers[c], floats[c], y * stride + x, stride, block.x1 - block.x0,
+                block.y1 - block.y0, band.stepSize(), config.reversible(), scale,
+                (config.codeBlockStyle() & ComponentCoding.VERTICALLY_CAUSAL) != 0);
+        return planes;
+    }
+
+    /**
+     * Gives a code-block the passes a high-throughput coder just coded.
+     *
+     * @param block the code-block
+     * @param coder the high-throughput coder
+     * @param plane the cleanup pass's bit-plane
+     * @param passes the number of passes, 1 or 3
+     */
+    private static void keep(EncodedBlock block, HtEncoder coder, int plane, int passes) {
+        block.ensurePasses(3);
+        var cleanup = coder.cleanupLength();
+        var length = passes > 1 ? cleanup + coder.sigPropLength() + coder.magRefLength() : cleanup;
+        block.data = Arrays.copyOf(coder.bytes(), length);
+        block.totalPasses = passes;
+        block.bitPlanes = plane + 1;
+        block.passRate[0] = cleanup;
+        block.passDistortion[0] = coder.distortion(0);
+        block.passTerminated[0] = true;
+        if (passes > 1) {
+            block.passRate[1] = cleanup + coder.sigPropLength();
+            block.passRate[2] = length;
+            block.passDistortion[1] = coder.distortion(1);
+            block.passDistortion[2] = coder.distortion(2);
+            block.passTerminated[1] = false;
+            block.passTerminated[2] = true;
+        }
+    }
+
+    /**
+     * Selects the candidate of every high-throughput code-block of a tile for the last quality layer, by
+     * bisection on a rate-distortion slope threshold.
+     *
+     * @param config the parameters
+     * @param components the tile-components
+     * @param bounds the tile's area
+     * @param budget the last layer's byte budget, used when layers target compression ratios
+     * @param distortions the full-precision distortion reduction of each block
+     * @param limits the resource bounds checked before every allocation
+     */
+    private static void selectHighThroughput(EncoderConfig config, TileComponent[] components, int[] bounds,
+                                             float budget, double[] distortions, MediaLimits limits) {
+        var blocks = new ArrayList<EncodedBlock>();
+        var maxSlope = 0.0;
+        for (var component : components) {
+            forEachBlock(component, (band, block) -> {
+                if (block.hullSize > 0) {
+                    blocks.add(block);
+                }
+            });
+        }
+        for (var block : blocks) {
+            var first = block.hull[0];
+            maxSlope = Math.max(maxSlope, block.candidateGain(first) / block.candidateBytes(first));
+        }
+        var hi = maxSlope * 2 + 1;
+        if (config.ratios() == null) {
+            var total = 0.0;
+            for (var value : distortions) {
+                total += value;
+            }
+            var target = total - maxSquaredError(config, components)
+                    / Math.pow(10.0, config.qualities()[config.layers() - 1] / 10);
+            var lo = 0.0;
+            for (var i = 0; i < 100; i++) {
+                var threshold = (lo + hi) / 2;
+                var gain = 0.0;
+                for (var block : blocks) {
+                    var c = block.select(threshold);
+                    gain += c < 0 ? 0 : block.candidateGain(c);
+                }
+                if (gain >= target) {
+                    lo = threshold;
+                } else {
+                    hi = threshold;
+                }
+            }
+            for (var block : blocks) {
+                block.chosen = block.select(lo);
+            }
+            return;
+        }
+        var limit = (double) budget;
+        for (var round = 0; round < SELECTION_ROUNDS; round++) {
+            var lo = 0.0;
+            var top = hi;
+            for (var i = 0; i < 100; i++) {
+                var threshold = (lo + top) / 2;
+                var rate = 0L;
+                for (var block : blocks) {
+                    var c = block.select(threshold);
+                    rate += c < 0 ? 0 : block.candidateBytes(c);
+                }
+                if (rate <= limit) {
+                    top = threshold;
+                } else {
+                    lo = threshold;
+                }
+            }
+            var positions = new int[blocks.size()];
+            var rate = 0L;
+            for (var b = 0; b < blocks.size(); b++) {
+                var block = blocks.get(b);
+                positions[b] = block.hullPosition(top);
+                rate += positions[b] < 0 ? 0 : block.candidateBytes(block.hull[positions[b]]);
+            }
+            fill(blocks, positions, (long) limit - rate);
+            for (var b = 0; b < blocks.size(); b++) {
+                var block = blocks.get(b);
+                block.chosen = positions[b] < 0 ? -1 : block.hull[positions[b]];
+            }
+            var size = measureCandidates(config, components, bounds, limits);
+            if (size <= budget) {
+                return;
+            }
+            limit -= size - budget + 1;
+        }
+    }
+
+    /**
+     * Spends the bytes a slope threshold leaves under a budget: repeatedly moves the code-block whose next hull
+     * step has the steepest slope and still fits to that step.
+     *
+     * @param blocks the code-blocks with candidates
+     * @param positions the hull position each block has, {@code -1} for none; updated
+     * @param remaining the bytes left
+     */
+    private static void fill(List<EncodedBlock> blocks, int[] positions, long remaining) {
+        var queue = new PriorityQueue<Integer>(Math.max(1, blocks.size()),
+                (a, b) -> Double.compare(nextSlope(blocks.get(b), positions[b]),
+                        nextSlope(blocks.get(a), positions[a])));
+        for (var b = 0; b < blocks.size(); b++) {
+            if (positions[b] + 1 < blocks.get(b).hullSize) {
+                queue.add(b);
+            }
+        }
+        while (!queue.isEmpty() && remaining > 0) {
+            var b = queue.poll();
+            var block = blocks.get(b);
+            var next = block.hull[positions[b] + 1];
+            var current = positions[b] < 0 ? 0 : block.candidateBytes(block.hull[positions[b]]);
+            var bytes = block.candidateBytes(next) - current;
+            if (bytes > remaining) {
+                continue;
+            }
+            remaining -= bytes;
+            positions[b]++;
+            if (positions[b] + 1 < block.hullSize) {
+                queue.add(b);
+            }
+        }
+    }
+
+    /**
+     * Returns the rate-distortion slope of a code-block's next hull step.
+     *
+     * @param block the code-block
+     * @param position its hull position, {@code -1} for none
+     * @return the slope
+     */
+    private static double nextSlope(EncodedBlock block, int position) {
+        var next = block.hull[position + 1];
+        var rate = position < 0 ? 0 : block.candidateBytes(block.hull[position]);
+        var gain = position < 0 ? 0 : block.candidateGain(block.hull[position]);
+        return (block.candidateGain(next) - gain) / (block.candidateBytes(next) - rate);
+    }
+
+    /**
+     * Measures the packets of a tile whose high-throughput code-blocks hold their chosen candidates in one layer.
+     *
+     * @param config the parameters
+     * @param components the tile-components
+     * @param bounds the tile's area
+     * @param limits the resource bounds checked before every allocation
+     * @return the packets' length
+     */
+    private static long measureCandidates(EncoderConfig config, TileComponent[] components, int[] bounds,
+                                          MediaLimits limits) {
+        for (var component : components) {
+            forEachBlock(component, (band, block) -> {
+                block.ensureLayers(config.layers());
+                var c = block.chosen;
+                if (c < 0) {
+                    block.totalPasses = 0;
+                    return;
+                }
+                var passes = block.candidatePasses[c];
+                block.ensurePasses(3);
+                block.totalPasses = passes;
+                for (var p = 0; p < passes; p++) {
+                    block.passRate[p] = block.candidateRate[3 * c + p];
+                    block.passDistortion[p] = block.candidateDistortion[3 * c + p];
+                }
+                block.passTerminated[0] = true;
+                block.passTerminated[1] = false;
+                block.passTerminated[2] = true;
+                block.bitPlanes = block.candidatePlane[c] + 1;
+            });
+        }
+        makeLayer(components, 0, -1, false, new double[config.layers()]);
+        return measure(config, components, bounds, 1, Long.MAX_VALUE, limits);
+    }
+
+    /**
+     * Returns the sum, over a tile's components, of the largest squared error of a sample times the component's
+     * sample count, the reference of PSNR targets.
+     *
+     * @param config the parameters
+     * @param components the tile-components
+     * @return the sum
+     */
+    private static double maxSquaredError(EncoderConfig config, TileComponent[] components) {
+        var total = 0.0;
+        for (var c = 0; c < components.length; c++) {
+            var pixels = new long[1];
+            forEachBlock(components[c], (band, block) ->
+                    pixels[0] += (long) (block.x1 - block.x0) * (block.y1 - block.y0));
+            var peak = (double) (1 << config.precisions()[c]) - 1.0;
+            total += peak * peak * (double) pixels[0];
+        }
+        return total;
     }
 
     /**

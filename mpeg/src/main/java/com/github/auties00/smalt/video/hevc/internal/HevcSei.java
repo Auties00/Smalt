@@ -1,16 +1,19 @@
 package com.github.auties00.smalt.video.hevc.internal;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
+import com.github.auties00.smalt.video.h264.internal.H264BitReader;
 
 /**
  * Collects the supplemental enhancement information messages the decoder uses (ITU-T H.265 D.2):
- * the decoded picture hash (D.3.19), the mastering display color volume (D.3.28), the content light
- * level information (D.3.35), the alternative transfer characteristics (D.3.38) and the recovery
- * point (D.3.8).
+ * the picture timing (D.3.3), the recovery point (D.3.8), the decoded picture hash (D.3.19), the
+ * mastering display color volume (D.3.28), the content light level information (D.3.35) and the
+ * alternative transfer characteristics (D.3.38).
  *
- * <p>A message too short for its syntax is ignored; every other message is skipped.
+ * <p>A message too short for its syntax, or whose values are out of range, is ignored; every other
+ * message is skipped.
  */
 public final class HevcSei {
     /**
@@ -54,6 +57,33 @@ public final class HevcSei {
      * MD5, the value in the first 2 (CRC) or 4 (checksum) bytes big-endian otherwise.
      */
     public final byte[][] hash = new byte[3][16];
+
+    /**
+     * Whether a recovery point message arrived for the next picture.
+     */
+    public boolean recoveryPoint;
+
+    /**
+     * {@code recovery_poc_cnt} of the last recovery point message, from -32768 to 32767.
+     */
+    public int recoveryPocCount;
+
+    /**
+     * {@code exact_match_flag} of the last recovery point message.
+     */
+    public boolean recoveryExactMatch;
+
+    /**
+     * The first payload byte of the last picture timing message for the next picture, whose high
+     * four bits are {@code pic_struct} when the sequence's {@code frame_field_info_present_flag}
+     * is set, or -1 when none arrived.
+     */
+    public int pictureTiming = -1;
+
+    /**
+     * The reader of message payloads coded with Exp-Golomb codes.
+     */
+    private final H264BitReader payloadReader = new H264BitReader();
 
     /**
      * Constructs an empty collector.
@@ -101,8 +131,12 @@ public final class HevcSei {
                 }
             } else {
                 switch (payloadType) {
-                    // TODO: keep recovery point messages (payload type 6) for random access from
-                    // non-IRAP pictures
+                    case 1 -> {
+                        if (payloadSize >= 1) {
+                            pictureTiming = rbsp[position] & 0xFF;
+                        }
+                    }
+                    case 6 -> parseRecoveryPoint(rbsp, position, payloadSize);
                     case 132 -> parseHash(rbsp, position, payloadSize, components);
                     case 137 -> {
                         if (payloadSize >= 24) {
@@ -125,6 +159,43 @@ public final class HevcSei {
             }
             position += payloadSize;
         }
+    }
+
+    /**
+     * Parses a recovery point message: {@code recovery_poc_cnt se(v)}, {@code exact_match_flag}
+     * and {@code broken_link_flag}.
+     *
+     * @param rbsp the payload buffer, followed by at least {@link H264BitReader#PADDING} bytes
+     * @param position the index of the message payload
+     * @param size the message payload size
+     */
+    private void parseRecoveryPoint(byte[] rbsp, int position, int size) {
+        if (size < 1) {
+            return;
+        }
+        payloadReader.init(rbsp, position, size);
+        try {
+            var count = payloadReader.readSe();
+            var exact = payloadReader.readFlag();
+            payloadReader.readFlag();
+            if (payloadReader.overrun() || count < -32768 || count > 32767) {
+                return;
+            }
+            recoveryPocCount = count;
+            recoveryExactMatch = exact;
+            recoveryPoint = true;
+        } catch (MediaException ignored) {
+            // an invalid Exp-Golomb code makes the message unusable, not the stream
+        }
+    }
+
+    /**
+     * Forgets the messages that apply only to the next picture: the recovery point and the
+     * picture timing.
+     */
+    public void clearPictureMessages() {
+        recoveryPoint = false;
+        pictureTiming = -1;
     }
 
     /**

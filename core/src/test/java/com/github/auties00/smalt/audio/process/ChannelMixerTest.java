@@ -239,6 +239,51 @@ class ChannelMixerTest {
         }
 
         @Test
+        @DisplayName("folds the wide, surround direct, second LFE, top side and bottom speakers")
+        void extended() {
+            var k = (float) Math.sqrt(0.5);
+            var input = layout(WIDE_LEFT, WIDE_RIGHT, SURROUND_DIRECT_LEFT, SURROUND_DIRECT_RIGHT, LOW_FREQUENCY_2,
+                    TOP_SIDE_LEFT, TOP_SIDE_RIGHT, BOTTOM_FRONT_CENTER, BOTTOM_FRONT_LEFT, BOTTOM_FRONT_RIGHT);
+            assertMatrix(new float[][]{
+                    {1, 0, 0, 0, 0, 0, 0, 0, k, 0},
+                    {0, 1, 0, 0, 0, 0, 0, 0, 0, k},
+                    {0, 0, 0, 0, 0, 0, 0, k, 0, 0},
+                    {0, 0, 0, 0, 1, 0, 0, 0, 0, 0},
+                    {0, 0, 1, 0, 0, k, 0, 0, 0, 0},
+                    {0, 0, 0, 1, 0, 0, k, 0, 0, 0}}, new ChannelMixer(input, L51S).matrix(), "extended -> 5.1 side");
+            var doubled = layout(FRONT_LEFT, FRONT_RIGHT, LOW_FREQUENCY, SIDE_LEFT, SIDE_RIGHT, SURROUND_DIRECT_LEFT,
+                    SURROUND_DIRECT_RIGHT, LOW_FREQUENCY_2);
+            assertMatrix(new float[][]{
+                    {1, 0, 0, 0, 0, 0, 0, 0},
+                    {0, 1, 0, 0, 0, 0, 0, 0},
+                    {0, 0, 0, 0, 0, 0, 0, 0},
+                    {0, 0, 1, 0, 0, 0, 0, k},
+                    {0, 0, 0, 1, 0, k, 0, 0},
+                    {0, 0, 0, 0, 1, 0, k, 0}}, new ChannelMixer(doubled, L51S).matrix(), "doubled -> 5.1 side");
+        }
+
+        @Test
+        @DisplayName("routes every channel of 22.2 but the LFE pair into stereo")
+        void twentyTwoTwo() {
+            var input = layout(FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER, LOW_FREQUENCY, BACK_LEFT, BACK_RIGHT,
+                    FRONT_LEFT_OF_CENTER, FRONT_RIGHT_OF_CENTER, BACK_CENTER, SIDE_LEFT, SIDE_RIGHT, TOP_CENTER,
+                    TOP_FRONT_LEFT, TOP_FRONT_CENTER, TOP_FRONT_RIGHT, TOP_BACK_LEFT, TOP_BACK_CENTER, TOP_BACK_RIGHT,
+                    LOW_FREQUENCY_2, TOP_SIDE_LEFT, TOP_SIDE_RIGHT, BOTTOM_FRONT_CENTER, BOTTOM_FRONT_LEFT,
+                    BOTTOM_FRONT_RIGHT);
+            var matrix = new ChannelMixer(input, STEREO).matrix();
+            for (var i = 0; i < input.channels(); i++) {
+                var speaker = input.speakers().get(i);
+                var reached = matrix[0][i] != 0 || matrix[1][i] != 0;
+                assertEquals(speaker != LOW_FREQUENCY && speaker != LOW_FREQUENCY_2, reached, speaker.name());
+                if (speaker.name().endsWith("LEFT")) {
+                    assertTrue(matrix[0][i] > matrix[1][i], speaker.name());
+                } else if (speaker.name().endsWith("RIGHT")) {
+                    assertTrue(matrix[1][i] > matrix[0][i], speaker.name());
+                }
+            }
+        }
+
+        @Test
         @DisplayName("normalizes rows whose absolute gains exceed one")
         void normalized() {
             var k = Math.sqrt(0.5);

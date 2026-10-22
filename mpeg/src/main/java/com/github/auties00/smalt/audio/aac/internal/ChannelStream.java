@@ -8,10 +8,24 @@ import java.util.Arrays;
  * Parses one AAC {@code individual_channel_stream} and holds its decoded spectrum.
  *
  * <p>An instance is reused frame after frame. {@link #parse} reads the side information
- * (window sequence, sections, scalefactors, pulses, TNS) and the Huffman-coded spectral data,
- * then inverse-quantizes the coded bands into {@link #spectrum()}. Noise and intensity bands
- * are left at zero for the element decoder to fill; TNS is applied separately by
- * {@link #applyTns()} because coupling may have to happen before it.
+ * (window sequence, prediction or long term prediction data, sections, scalefactors, pulses, TNS,
+ * SSR gain control) and the Huffman-coded spectral data, then inverse-quantizes the coded bands
+ * into {@link #spectrum()}. Noise and intensity bands are left at zero for the element decoder to
+ * fill; TNS is applied separately by {@link #applyTns()} because prediction and coupling may have
+ * to happen before it.
+ *
+ * <p>The object type selects the syntax: AAC Main reads prediction data in {@code ics_info}, AAC
+ * LTP, ER AAC LTP and AAC-LD read long term prediction data (AAC-LD with its 10-bit lag that may repeat
+ * the previous one), AAC SSR reads gain control data and uses the TNS limits of the PQF filterbank.
+ * The error resilient object types (ER AAC LC, ER AAC LTP, AAC-LD, AAC-ELD) read their fields in the
+ * order of their error sensitivity categories (ISO/IEC 14496-3 subclause 4.5.2.4, {@code epConfig} 0):
+ * in a channel pair with a common window each channel's long term prediction data precedes its global
+ * gain, and the TNS data follows the gain control flag, after the reordering lengths and the RVLC
+ * codewords (AAC-ELD reads it right after the flag). AAC-ELD codes {@code max_sfb} alone as its
+ * {@code ics_info} and has neither pulses nor gain control. The error resilience tools of the
+ * configuration replace the section data with virtual codebooks of codebook 11, the scalefactors with
+ * reversible variable length codes ({@link ReversibleScalefactors}) and the spectral data with reordered
+ * codewords ({@link CodewordReordering}).
  *
  * <p>Band arrays are indexed {@code group * MAX_BANDS + band}. Short-window spectra keep window
  * {@code w} at lines {@code w * shortLength} to {@code (w + 1) * shortLength}.
@@ -43,19 +57,36 @@ public final class ChannelStream {
     public static final int MAX_BANDS = 64;
 
     /**
-     * The largest TNS filter order of long windows in the Low Complexity profile.
+     * The number of long-window bands long term prediction covers ({@code MAX_LTP_LONG_SFB}).
+     */
+    public static final int LTP_MAX_BANDS = 40;
+
+    /**
+     * The largest TNS filter order of long windows in every object type but AAC Main.
      */
     private static final int TNS_MAX_ORDER_LONG = 12;
 
     /**
-     * The largest TNS filter order of short windows in the Low Complexity profile.
+     * The largest TNS filter order of long windows in AAC Main.
+     */
+    private static final int TNS_MAX_ORDER_LONG_MAIN = 20;
+
+    /**
+     * The largest TNS filter order of short windows.
      */
     private static final int TNS_MAX_ORDER_SHORT = 7;
 
     /**
      * The stride of the TNS coefficient array: one more than the largest order.
      */
-    private static final int TNS_STRIDE = 13;
+    private static final int TNS_STRIDE = TNS_MAX_ORDER_LONG_MAIN + 1;
+
+    /**
+     * The LTP coefficient of each {@code ltp_coef} code (ISO/IEC 14496-3 Table 4.152).
+     */
+    private static final float[] LTP_COEFFICIENTS = {
+            0.570829f, 0.696616f, 0.813004f, 0.911304f, 0.984900f, 1.067894f, 1.194601f, 1.369533f
+    };
 
     /**
      * The inverse quantization kernel.
@@ -76,6 +107,56 @@ public final class ChannelStream {
      * The sampling table index.
      */
     private final int tableIndex;
+
+    /**
+     * The core audio object type, which selects the syntax.
+     */
+    private final int objectType;
+
+    /**
+     * Whether the fields are read in error resilient order.
+     */
+    private final boolean errorResilient;
+
+    /**
+     * Whether the object type is AAC-LD.
+     */
+    private final boolean lowDelay;
+
+    /**
+     * Whether the object type is AAC-ELD.
+     */
+    private final boolean enhancedLowDelay;
+
+    /**
+     * Whether section data codes virtual codebooks ({@code aacSectionDataResilienceFlag}).
+     */
+    private final boolean virtualCodebooks;
+
+    /**
+     * The RVLC scalefactor reader, or {@code null} without {@code aacScalefactorDataResilienceFlag}.
+     */
+    private final ReversibleScalefactors reversibleScalefactors;
+
+    /**
+     * The codeword reordering decoder, or {@code null} without {@code aacSpectralDataResilienceFlag}.
+     */
+    private final CodewordReordering reordering;
+
+    /**
+     * The codebook of each band as coded, virtual codebooks 16 to 31 included.
+     */
+    private final int[] sectionCodebooks = new int[8 * MAX_BANDS];
+
+    /**
+     * The length of the reordered spectral data, in bits.
+     */
+    private int reorderedBits;
+
+    /**
+     * The longest codeword of the reordered spectral data, in bits.
+     */
+    private int longestCodeword;
 
     /**
      * The long-window band offsets.
@@ -131,6 +212,63 @@ public final class ChannelStream {
      * The global gain.
      */
     private int globalGain;
+
+    /**
+     * Whether {@code ics_info} sets {@code predictor_data_present}.
+     */
+    private boolean predictorPresent;
+
+    /**
+     * The AAC Main predictor reset group, from 1 to 30, or 0 when no group is reset.
+     */
+    private int predictorResetGroup;
+
+    /**
+     * The AAC Main {@code prediction_used} flag of each band.
+     */
+    private final boolean[] predictionUsed = new boolean[MAX_BANDS];
+
+    /**
+     * Whether long term prediction data is present.
+     */
+    private boolean ltpPresent;
+
+    /**
+     * The long term prediction lag, from 0 to 2047.
+     */
+    private int ltpLag;
+
+    /**
+     * The long term prediction coefficient.
+     */
+    private float ltpCoefficient;
+
+    /**
+     * The {@code ltp_long_used} flag of each band.
+     */
+    private final boolean[] ltpUsed = new boolean[LTP_MAX_BANDS];
+
+    /**
+     * The number of gain-controlled PQF bands ({@code max_band}), 0 without gain control data.
+     */
+    private int gainBands;
+
+    /**
+     * The number of gain changes, indexed {@code band * 8 + window}.
+     */
+    private final int[] gainCounts = new int[32];
+
+    /**
+     * The gain change level exponent ({@code AdjLev(alevcode)}), indexed
+     * {@code (band * 8 + window) * 8 + change}.
+     */
+    private final int[] gainLevels = new int[256];
+
+    /**
+     * The gain change location in samples ({@code AdjLoc(aloccode)}), indexed like
+     * {@link #gainLevels}.
+     */
+    private final int[] gainLocations = new int[256];
 
     /**
      * The number of pulses, 0 when the frame has none.
@@ -203,17 +341,45 @@ public final class ChannelStream {
     private final float[] spectrum;
 
     /**
-     * Allocates a stream decoder.
+     * Allocates a stream decoder without error resilience tools.
      *
      * @param frameLength the number of spectral lines per frame, 1024 or 960
      * @param tableIndex the sampling table index
+     * @param objectType the core audio object type, one of the core {@code AOT_*} constants of
+     * {@link AudioSpecificConfig}
      * @param kernel the inverse quantization kernel
      */
-    public ChannelStream(int frameLength, int tableIndex, AacKernel kernel) {
+    public ChannelStream(int frameLength, int tableIndex, int objectType, AacKernel kernel) {
+        this(frameLength, tableIndex, objectType, 0, kernel);
+    }
+
+    /**
+     * Allocates a stream decoder.
+     *
+     * @param frameLength the number of spectral lines per frame: 1024 or 960, or 512 or 480 for the low
+     * delay object types
+     * @param tableIndex the sampling table index
+     * @param objectType the core audio object type, one of the core {@code AOT_*} constants of
+     * {@link AudioSpecificConfig}
+     * @param resilience the error resilience tools, a combination of the flags of
+     * {@link AudioSpecificConfig#resilience()}
+     * @param kernel the inverse quantization kernel
+     */
+    public ChannelStream(int frameLength, int tableIndex, int objectType, int resilience, AacKernel kernel) {
         this.kernel = kernel;
         this.frameLength = frameLength;
         this.shortLength = frameLength / 8;
         this.tableIndex = tableIndex;
+        this.objectType = objectType;
+        this.errorResilient = objectType == AudioSpecificConfig.AOT_ER_LC || objectType == AudioSpecificConfig.AOT_ER_LTP
+                || objectType == AudioSpecificConfig.AOT_ER_LD || objectType == AudioSpecificConfig.AOT_ER_ELD;
+        this.lowDelay = objectType == AudioSpecificConfig.AOT_ER_LD;
+        this.enhancedLowDelay = objectType == AudioSpecificConfig.AOT_ER_ELD;
+        this.virtualCodebooks = errorResilient && (resilience & AudioSpecificConfig.VIRTUAL_CODEBOOKS) != 0;
+        this.reversibleScalefactors = errorResilient && (resilience & AudioSpecificConfig.RVLC_SCALEFACTORS) != 0
+                ? new ReversibleScalefactors() : null;
+        this.reordering = errorResilient && (resilience & AudioSpecificConfig.CODEWORD_REORDERING) != 0
+                ? new CodewordReordering() : null;
         this.longOffsets = SamplingTables.longOffsets(tableIndex, frameLength);
         this.shortOffsets = SamplingTables.shortOffsets(tableIndex, frameLength);
         this.quant = new int[frameLength];
@@ -223,16 +389,43 @@ public final class ChannelStream {
     /**
      * Reads an {@code ics_info} element.
      *
+     * <p>For the common {@code ics_info} of a channel pair, {@code partner} is the second channel:
+     * its long term prediction data, which this element carries outside the error resilient
+     * syntax, is read into it. The partner's other fields are set by {@link #copyInfo}.
+     *
      * @param reader the bit source
+     * @param partner the second channel of a pair sharing this {@code ics_info}, or {@code null}
      * @throws MediaException.Malformed if the reserved bit is set, too many bands are declared,
-     * or prediction is signaled
+     * prediction is signaled outside AAC Main and LTP, the predictor reset group is invalid, or an
+     * AAC-LD frame has short windows
      */
-    public void readInfo(AacBitReader reader) {
+    public void readInfo(AacBitReader reader, ChannelStream partner) {
+        predictorPresent = false;
+        predictorResetGroup = 0;
+        ltpPresent = false;
+        if (partner != null) {
+            partner.ltpPresent = false;
+        }
+        if (enhancedLowDelay) {
+            windowSequence = ONLY_LONG_SEQUENCE;
+            windowShape = Windows.SINE;
+            maxBands = reader.read(6);
+            windowCount = 1;
+            groupCount = 1;
+            groupLengths[0] = 1;
+            if (maxBands > longOffsets.length - 1) {
+                throw new MediaException.Malformed("AAC max_sfb " + maxBands + " exceeds " + (longOffsets.length - 1) + " long bands");
+            }
+            return;
+        }
         if (reader.readFlag()) {
             throw new MediaException.Malformed("AAC ics_info reserved bit is set");
         }
         windowSequence = reader.read(2);
         windowShape = reader.read(1);
+        if (lowDelay && windowSequence != ONLY_LONG_SEQUENCE) {
+            throw new MediaException.Malformed("AAC-LD frame with window sequence " + windowSequence);
+        }
         if (windowSequence == EIGHT_SHORT_SEQUENCE) {
             maxBands = reader.read(4);
             var grouping = reader.read(7);
@@ -254,17 +447,84 @@ public final class ChannelStream {
             windowCount = 1;
             groupCount = 1;
             groupLengths[0] = 1;
-            if (reader.readFlag()) {
-                throw new MediaException.Malformed("AAC Low Complexity stream signals prediction");
-            }
             if (maxBands > longOffsets.length - 1) {
                 throw new MediaException.Malformed("AAC max_sfb " + maxBands + " exceeds " + (longOffsets.length - 1) + " long bands");
+            }
+            predictorPresent = reader.readFlag();
+            if (predictorPresent) {
+                readPredictorData(reader, partner);
             }
         }
     }
 
     /**
-     * Copies the {@code ics_info} of the other channel of a pair with a common window.
+     * Reads the prediction data of {@code ics_info} after {@code predictor_data_present}.
+     *
+     * @param reader the bit source
+     * @param partner the second channel of a pair sharing the {@code ics_info}, or {@code null}
+     * @throws MediaException.Malformed if the object type has no prediction or the reset group is
+     * 0 or 31
+     */
+    private void readPredictorData(AacBitReader reader, ChannelStream partner) {
+        switch (objectType) {
+            case AudioSpecificConfig.AOT_MAIN -> {
+                if (reader.readFlag()) {
+                    predictorResetGroup = reader.read(5);
+                    if (predictorResetGroup == 0 || predictorResetGroup == 31) {
+                        throw new MediaException.Malformed("invalid AAC predictor reset group " + predictorResetGroup);
+                    }
+                }
+                var bands = Math.min(maxBands, SamplingTables.predictionMaxBands(tableIndex));
+                for (var band = 0; band < bands; band++) {
+                    predictionUsed[band] = reader.readFlag();
+                }
+                Arrays.fill(predictionUsed, bands, MAX_BANDS, false);
+            }
+            case AudioSpecificConfig.AOT_LTP, AudioSpecificConfig.AOT_ER_LTP, AudioSpecificConfig.AOT_ER_LD -> {
+                if (errorResilient && partner != null) {
+                    return;
+                }
+                readLtp(reader, maxBands);
+                if (partner != null) {
+                    partner.readLtp(reader, maxBands);
+                }
+            }
+            default -> throw new MediaException.Malformed("AAC stream of object type " + objectType + " signals prediction");
+        }
+    }
+
+    /**
+     * Reads {@code ltp_data_present} and, when set, the {@code ltp_data} of a long window.
+     *
+     * <p>AAC-LD codes a 10-bit lag behind {@code ltp_lag_update}; without it the lag of the previous
+     * frame applies.
+     *
+     * @param reader the bit source
+     * @param bands the {@code max_sfb} of the window
+     */
+    private void readLtp(AacBitReader reader, int bands) {
+        ltpPresent = reader.readFlag();
+        if (!ltpPresent) {
+            return;
+        }
+        if (lowDelay) {
+            if (reader.readFlag()) {
+                ltpLag = reader.read(10);
+            }
+        } else {
+            ltpLag = reader.read(11);
+        }
+        ltpCoefficient = LTP_COEFFICIENTS[reader.read(3)];
+        var used = Math.min(bands, LTP_MAX_BANDS);
+        for (var band = 0; band < used; band++) {
+            ltpUsed[band] = reader.readFlag();
+        }
+        Arrays.fill(ltpUsed, used, LTP_MAX_BANDS, false);
+    }
+
+    /**
+     * Copies the {@code ics_info} of the other channel of a pair with a common window, except the
+     * long term prediction data, which each channel has its own.
      *
      * @param other the channel whose information is shared
      */
@@ -275,6 +535,9 @@ public final class ChannelStream {
         windowCount = other.windowCount;
         groupCount = other.groupCount;
         System.arraycopy(other.groupLengths, 0, groupLengths, 0, 8);
+        predictorPresent = other.predictorPresent;
+        predictorResetGroup = other.predictorResetGroup;
+        System.arraycopy(other.predictionUsed, 0, predictionUsed, 0, MAX_BANDS);
     }
 
     /**
@@ -283,31 +546,108 @@ public final class ChannelStream {
      * @param reader the bit source
      * @param commonWindow whether {@code ics_info} was already read for a channel pair
      * @param intensityAllowed whether intensity stereo codebooks may appear
-     * @throws MediaException.Malformed if the stream is invalid
-     * @throws MediaException.Unsupported if gain control data is present
+     * @throws MediaException.Malformed if the stream is invalid, including gain control data
+     * outside AAC SSR
      */
     public void parse(AacBitReader reader, boolean commonWindow, boolean intensityAllowed) {
-        globalGain = reader.read(8);
-        if (!commonWindow) {
-            readInfo(reader);
+        parse(reader, reader, reader, reader, commonWindow, intensityAllowed);
+    }
+
+    /**
+     * Parses an error resilient {@code individual_channel_stream} whose error sensitivity categories
+     * come from separate sources, as {@code epConfig} 1 stores them, and inverse-quantizes its coded
+     * bands.
+     *
+     * <p>The side information (long term prediction, global gain, {@code ics_info}, sections,
+     * scalefactors or the RVLC side information, pulses, the TNS and gain control flags and the
+     * reordering lengths) comes from {@code main}, the RVLC codewords and escapes from
+     * {@code reversible}, the TNS data from {@code tns} and the spectral data from {@code spectral}.
+     * With one source for every category this reads the payload of {@code epConfig} 0.
+     *
+     * @param main the source of the side information
+     * @param reversible the source of the RVLC codewords
+     * @param tns the source of the TNS data
+     * @param spectral the source of the spectral data
+     * @param commonWindow whether {@code ics_info} was already read for a channel pair
+     * @param intensityAllowed whether intensity stereo codebooks may appear
+     * @throws MediaException.Malformed if the stream is invalid, including gain control data
+     * outside AAC SSR
+     */
+    public void parse(AacBitReader main, AacBitReader reversible, AacBitReader tns, AacBitReader spectral,
+                      boolean commonWindow, boolean intensityAllowed) {
+        if (errorResilient && commonWindow && predictorPresent) {
+            readLtp(main, maxBands);
         }
-        readSections(reader, intensityAllowed);
-        readScalefactors(reader);
+        globalGain = main.read(8);
+        if (!commonWindow) {
+            readInfo(main, null);
+        }
+        readSections(main, intensityAllowed);
+        if (reversibleScalefactors != null) {
+            reversibleScalefactors.readSideInfo(main, windowCount == 8, hasNoiseBands());
+        } else {
+            readScalefactors(main);
+        }
         pulseCount = 0;
         tnsPresent = false;
-        if (reader.readFlag()) {
-            readPulses(reader);
+        if (!enhancedLowDelay && main.readFlag()) {
+            readPulses(main);
         }
-        if (reader.readFlag()) {
-            readTns(reader);
+        var tnsData = main.readFlag();
+        if (tnsData && !errorResilient) {
+            readTns(main);
         }
-        if (reader.readFlag()) {
-            throw new MediaException.Unsupported("aac gain control", "AAC SSR gain control is not supported");
+        gainBands = 0;
+        if (!enhancedLowDelay && main.readFlag()) {
+            if (objectType != AudioSpecificConfig.AOT_SSR) {
+                throw new MediaException.Malformed("AAC gain control data outside AAC SSR");
+            }
+            readGainControl(main);
         }
-        reader.checkNotOverrun();
-        readSpectralData(reader);
-        reader.checkNotOverrun();
+        if (errorResilient) {
+            if (tnsData && enhancedLowDelay) {
+                readTns(tns);
+            }
+            if (reordering != null) {
+                reorderedBits = main.read(14);
+                longestCodeword = main.read(6);
+            }
+            main.checkNotOverrun();
+            if (reversibleScalefactors != null) {
+                reversibleScalefactors.decode(reversible, globalGain, bandTypes, bandValues, groupCount, maxBands);
+                reversible.checkNotOverrun();
+            }
+            if (tnsData && !enhancedLowDelay) {
+                readTns(tns);
+            }
+            tns.checkNotOverrun();
+        }
+        main.checkNotOverrun();
+        if (reordering != null) {
+            reordering.decode(spectral, reorderedBits, longestCodeword, sectionCodebooks, bandOffsets(), maxBands,
+                    groupLengths, groupCount, windowCount, windowLength(), quant);
+            applyPulses();
+        } else {
+            readSpectralData(spectral);
+        }
+        spectral.checkNotOverrun();
         dequantize();
+    }
+
+    /**
+     * Returns whether a transmitted band uses the noise codebook.
+     *
+     * @return {@code true} when the stream has a noise band
+     */
+    private boolean hasNoiseBands() {
+        for (var group = 0; group < groupCount; group++) {
+            for (var band = 0; band < maxBands; band++) {
+                if (bandTypes[group * MAX_BANDS + band] == Codebooks.NOISE_HCB) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**
@@ -320,30 +660,36 @@ public final class ChannelStream {
     private void readSections(AacBitReader reader, boolean intensityAllowed) {
         var lengthBits = windowCount == 8 ? 3 : 5;
         var escape = (1 << lengthBits) - 1;
+        var codebookBits = virtualCodebooks ? 5 : 4;
         for (var group = 0; group < groupCount; group++) {
             var band = 0;
             var base = group * MAX_BANDS;
             while (band < maxBands) {
-                var codebook = reader.read(4);
+                var codebook = reader.read(codebookBits);
                 if (codebook == Codebooks.RESERVED_HCB) {
                     throw new MediaException.Malformed("AAC section uses the reserved codebook 12");
                 }
-                if (!intensityAllowed && codebook >= Codebooks.INTENSITY_HCB2) {
+                if (!intensityAllowed && (codebook == Codebooks.INTENSITY_HCB2 || codebook == Codebooks.INTENSITY_HCB)) {
                     throw new MediaException.Malformed("AAC intensity stereo outside the second channel of a pair");
                 }
                 var length = 0;
-                int increment;
-                while ((increment = reader.read(lengthBits)) == escape) {
-                    length += escape;
-                    if (reader.overrun()) {
-                        throw new MediaException.Malformed("AAC section data truncated");
+                if (virtualCodebooks && (codebook == Codebooks.ESC_HCB || codebook >= 16)) {
+                    length = 1;
+                } else {
+                    int increment;
+                    while ((increment = reader.read(lengthBits)) == escape) {
+                        length += escape;
+                        if (reader.overrun()) {
+                            throw new MediaException.Malformed("AAC section data truncated");
+                        }
                     }
+                    length += increment;
                 }
-                length += increment;
                 if (band + length > maxBands) {
                     throw new MediaException.Malformed("AAC section exceeds max_sfb");
                 }
-                Arrays.fill(bandTypes, base + band, base + band + length, codebook);
+                Arrays.fill(sectionCodebooks, base + band, base + band + length, codebook);
+                Arrays.fill(bandTypes, base + band, base + band + length, codebook >= 16 ? Codebooks.ESC_HCB : codebook);
                 band += length;
                 if (reader.overrun()) {
                     throw new MediaException.Malformed("AAC section data truncated");
@@ -435,7 +781,8 @@ public final class ChannelStream {
     private void readTns(AacBitReader reader) {
         tnsPresent = true;
         var shortWindow = windowCount == 8;
-        var maxOrder = shortWindow ? TNS_MAX_ORDER_SHORT : TNS_MAX_ORDER_LONG;
+        var maxOrder = shortWindow ? TNS_MAX_ORDER_SHORT
+                : objectType == AudioSpecificConfig.AOT_MAIN ? TNS_MAX_ORDER_LONG_MAIN : TNS_MAX_ORDER_LONG;
         for (var window = 0; window < windowCount; window++) {
             var filters = reader.read(shortWindow ? 1 : 2);
             tnsFilterCounts[window] = filters;
@@ -479,6 +826,59 @@ public final class ChannelStream {
     }
 
     /**
+     * Reads the SSR gain control data of every gain-controlled PQF band.
+     *
+     * @param reader the bit source
+     * @throws MediaException.Malformed if a gain change location is reserved or the locations of a
+     * window do not increase
+     */
+    private void readGainControl(AacBitReader reader) {
+        gainBands = reader.read(2);
+        var windows = switch (windowSequence) {
+            case ONLY_LONG_SEQUENCE -> 1;
+            case EIGHT_SHORT_SEQUENCE -> 8;
+            default -> 2;
+        };
+        for (var band = 1; band <= gainBands; band++) {
+            for (var window = 0; window < windows; window++) {
+                var entry = band * 8 + window;
+                var count = reader.read(3);
+                gainCounts[entry] = count;
+                var bits = gainLocationBits(window);
+                var previous = -1;
+                for (var change = 0; change < count; change++) {
+                    gainLevels[entry * 8 + change] = reader.read(4) - 4;
+                    var code = reader.read(bits);
+                    if (bits == 4 && code >= 14) {
+                        throw new MediaException.Malformed("reserved AAC gain control location " + code);
+                    }
+                    var location = 8 * code;
+                    if (location <= previous) {
+                        throw new MediaException.Malformed("AAC gain control locations do not increase");
+                    }
+                    gainLocations[entry * 8 + change] = location;
+                    previous = location;
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns the width of {@code aloccode} in a window of the current window sequence.
+     *
+     * @param window the window index
+     * @return 2, 4 or 5 bits
+     */
+    private int gainLocationBits(int window) {
+        return switch (windowSequence) {
+            case ONLY_LONG_SEQUENCE -> 5;
+            case EIGHT_SHORT_SEQUENCE -> 2;
+            case LONG_START_SEQUENCE -> window == 0 ? 4 : 2;
+            default -> window == 0 ? 4 : 5;
+        };
+    }
+
+    /**
      * Reads the Huffman-coded spectral data into {@link #quant}.
      *
      * @param reader the bit source
@@ -505,6 +905,13 @@ public final class ChannelStream {
             }
             firstWindow = lastWindow;
         }
+        applyPulses();
+    }
+
+    /**
+     * Adds the pulses to the quantized values.
+     */
+    private void applyPulses() {
         for (var i = 0; i < pulseCount; i++) {
             var line = pulseOffsets[i];
             quant[line] += quant[line] > 0 ? pulseAmplitudes[i] : -pulseAmplitudes[i];
@@ -603,10 +1010,10 @@ public final class ChannelStream {
                 reader.count = count;
                 reader.next = next;
                 if (v0 == Codebooks.ESC_FLAG || v0 == -Codebooks.ESC_FLAG) {
-                    v0 = v0 < 0 ? -readEscape(reader) : readEscape(reader);
+                    v0 = v0 < 0 ? -Codebooks.readEscape(reader) : Codebooks.readEscape(reader);
                 }
                 if (v1 == Codebooks.ESC_FLAG || v1 == -Codebooks.ESC_FLAG) {
-                    v1 = v1 < 0 ? -readEscape(reader) : readEscape(reader);
+                    v1 = v1 < 0 ? -Codebooks.readEscape(reader) : Codebooks.readEscape(reader);
                 }
                 cache = reader.cache;
                 count = reader.count;
@@ -618,24 +1025,6 @@ public final class ChannelStream {
         reader.cache = cache;
         reader.count = count;
         reader.next = next;
-    }
-
-    /**
-     * Reads an escape sequence: a prefix of {@code N} one bits, a zero, and an
-     * {@code N + 4}-bit word.
-     *
-     * @param reader the bit source
-     * @return the magnitude, {@code 2^(N+4)} plus the word
-     * @throws MediaException.Malformed if the prefix is longer than eight bits
-     */
-    private static int readEscape(AacBitReader reader) {
-        var bits = 4;
-        while (reader.readBit() != 0) {
-            if (++bits > 12) {
-                throw new MediaException.Malformed("AAC escape sequence longer than 13 bits");
-            }
-        }
-        return (1 << bits) + reader.read(bits);
     }
 
     /**
@@ -668,14 +1057,43 @@ public final class ChannelStream {
      * Applies the TNS synthesis filters to the spectrum, if the frame carries TNS data.
      */
     public void applyTns() {
-        if (!tnsPresent) {
-            return;
+        if (tnsPresent) {
+            filterTns(spectrum, false);
         }
+    }
+
+    /**
+     * Applies the TNS analysis filters of the current frame to a spectrum of the same window
+     * structure, if the frame carries TNS data.
+     *
+     * <p>The analysis filters invert the synthesis filters of {@link #applyTns()}; long term
+     * prediction runs its estimated spectrum through them before adding it.
+     *
+     * @param target the spectrum to filter in place
+     */
+    public void applyTnsAnalysis(float[] target) {
+        if (tnsPresent) {
+            filterTns(target, true);
+        }
+    }
+
+    /**
+     * Runs every TNS filter of the current frame over a spectrum.
+     *
+     * @param target the spectrum to filter in place
+     * @param analysis whether to run the all-zero analysis filters instead of the all-pole
+     * synthesis filters
+     */
+    private void filterTns(float[] target, boolean analysis) {
         var shortWindow = windowCount == 8;
         var offsets = shortWindow ? shortOffsets : longOffsets;
         var bandCount = offsets.length - 1;
         var windowLength = shortWindow ? shortLength : frameLength;
-        var limit = Math.min(SamplingTables.tnsMaxBands(tableIndex, shortWindow), maxBands);
+        var bandLimit = objectType == AudioSpecificConfig.AOT_SSR
+                ? SamplingTables.tnsMaxBandsPqf(tableIndex, shortWindow)
+                : lowDelay || enhancedLowDelay ? SamplingTables.tnsMaxBandsLowDelay(tableIndex, frameLength)
+                : SamplingTables.tnsMaxBands(tableIndex, shortWindow);
+        var limit = Math.min(bandLimit, maxBands);
         for (var window = 0; window < windowCount; window++) {
             var bottom = bandCount;
             for (var filter = 0; filter < tnsFilterCounts[window]; filter++) {
@@ -698,7 +1116,11 @@ public final class ChannelStream {
                     increment = -1;
                     line = window * windowLength + end - 1;
                 }
-                filterAllPole(line, increment, size, entry * TNS_STRIDE, order);
+                if (analysis) {
+                    filterAllZero(target, line, increment, size, entry * TNS_STRIDE, order);
+                } else {
+                    filterAllPole(target, line, increment, size, entry * TNS_STRIDE, order);
+                }
             }
         }
     }
@@ -706,18 +1128,19 @@ public final class ChannelStream {
     /**
      * Runs one TNS all-pole filter over a run of spectral lines.
      *
+     * @param target the spectrum
      * @param line the first line
      * @param increment 1 to filter upwards, -1 downwards
      * @param size the number of lines
      * @param base the index of {@code a[0]} in {@link #tnsCoefficients}
      * @param order the filter order
      */
-    private void filterAllPole(int line, int increment, int size, int base, int order) {
+    private void filterAllPole(float[] target, int line, int increment, int size, int base, int order) {
         var state = tnsState;
         Arrays.fill(state, 0, order, 0);
         var lpc = tnsCoefficients;
         for (var m = 0; m < size; m++) {
-            var y = spectrum[line];
+            var y = target[line];
             for (var i = 0; i < order; i++) {
                 y -= lpc[base + i + 1] * state[i];
             }
@@ -725,7 +1148,37 @@ public final class ChannelStream {
                 state[i] = state[i - 1];
             }
             state[0] = y;
-            spectrum[line] = y;
+            target[line] = y;
+            line += increment;
+        }
+    }
+
+    /**
+     * Runs one TNS all-zero (analysis) filter, {@code y(n) = x(n) + a[1] x(n-1) + ... + a[order] x(n-order)},
+     * over a run of spectral lines.
+     *
+     * @param target the spectrum
+     * @param line the first line
+     * @param increment 1 to filter upwards, -1 downwards
+     * @param size the number of lines
+     * @param base the index of {@code a[0]} in {@link #tnsCoefficients}
+     * @param order the filter order
+     */
+    private void filterAllZero(float[] target, int line, int increment, int size, int base, int order) {
+        var state = tnsState;
+        Arrays.fill(state, 0, order, 0);
+        var lpc = tnsCoefficients;
+        for (var m = 0; m < size; m++) {
+            var x = target[line];
+            var y = x;
+            for (var i = 0; i < order; i++) {
+                y += lpc[base + i + 1] * state[i];
+            }
+            for (var i = order - 1; i > 0; i--) {
+                state[i] = state[i - 1];
+            }
+            state[0] = x;
+            target[line] = y;
             line += increment;
         }
     }
@@ -737,6 +1190,106 @@ public final class ChannelStream {
      */
     public int windowSequence() {
         return windowSequence;
+    }
+
+    /**
+     * Returns whether {@code ics_info} sets {@code predictor_data_present}.
+     *
+     * @return {@code true} when prediction data is present in a long window
+     */
+    public boolean predictorPresent() {
+        return predictorPresent;
+    }
+
+    /**
+     * Returns the AAC Main predictor reset group of the frame.
+     *
+     * @return the group from 1 to 30, or 0 when no group is reset
+     */
+    public int predictorResetGroup() {
+        return predictorResetGroup;
+    }
+
+    /**
+     * Returns whether AAC Main prediction is enabled in a band.
+     *
+     * @param band the long-window band
+     * @return {@code prediction_used}, {@code false} beyond {@code max_sfb}
+     */
+    public boolean predictionUsed(int band) {
+        return predictionUsed[band];
+    }
+
+    /**
+     * Returns whether long term prediction data is present.
+     *
+     * @return {@code ltp_data_present}
+     */
+    public boolean ltpPresent() {
+        return ltpPresent;
+    }
+
+    /**
+     * Returns the long term prediction lag.
+     *
+     * @return the lag in samples, from 0 to 2047
+     */
+    public int ltpLag() {
+        return ltpLag;
+    }
+
+    /**
+     * Returns the long term prediction coefficient.
+     *
+     * @return the coefficient of {@code ltp_coef}
+     */
+    public float ltpCoefficient() {
+        return ltpCoefficient;
+    }
+
+    /**
+     * Returns whether long term prediction is enabled in a band.
+     *
+     * @param band the long-window band, below {@link #LTP_MAX_BANDS}
+     * @return {@code ltp_long_used}, {@code false} beyond {@code max_sfb}
+     */
+    public boolean ltpUsed(int band) {
+        return ltpUsed[band];
+    }
+
+    /**
+     * Returns the number of gain changes of a PQF band in a window.
+     *
+     * @param band the PQF band, from 1 to 3
+     * @param window the window index
+     * @return {@code adjust_num}, 0 for a band without gain control
+     */
+    public int gainChanges(int band, int window) {
+        return band <= gainBands ? gainCounts[band * 8 + window] : 0;
+    }
+
+    /**
+     * Returns the level exponent of a gain change, the gain being {@code 2^exponent}.
+     *
+     * @param band the PQF band, from 1 to 3
+     * @param window the window index
+     * @param change the change index, below {@link #gainChanges}
+     * @return {@code AdjLev(alevcode)}, from -4 to 11
+     */
+    public int gainLevel(int band, int window, int change) {
+        return gainLevels[(band * 8 + window) * 8 + change];
+    }
+
+    /**
+     * Returns the location of a gain change.
+     *
+     * @param band the PQF band, from 1 to 3
+     * @param window the window index
+     * @param change the change index, below {@link #gainChanges}
+     * @return {@code AdjLoc(aloccode)}, in band samples
+     */
+    public int gainLocation(int band, int window, int change) {
+        return gainLocations[(band * 8 + window) * 8 + change];
     }
 
     /**

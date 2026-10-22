@@ -3,8 +3,10 @@ package com.github.auties00.smalt.image.heic.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.heif.DecodedTile;
 import com.github.auties00.smalt.internal.heif.HeifCanvas;
+import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
 
 /**
@@ -12,7 +14,8 @@ import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
  * and allocates the canvases decoded pictures are written into.
  *
  * <p>Color samples reach the canvas as the HEVC decoder of this module hands out its output:
- * copied at the source depth, or reduced to 8 bits by rounding to nearest. A tile is a view of
+ * copied at the source depth, the planes of a shallower component shifted left to the depth of
+ * the deeper one, or reduced to 8 bits by rounding to nearest. A tile is a view of
  * the engine's picture, valid while the engine keeps it.
  */
 final class HevcTile implements DecodedTile {
@@ -84,7 +87,6 @@ final class HevcTile implements DecodedTile {
      * @param wide whether a source of more than 8 bits keeps its depth
      * @param hasAlpha whether to allocate an alpha plane
      * @return the canvas
-     * @throws MediaException.Unsupported if a deep picture has different luma and chroma depths
      * @throws MediaException.LimitExceeded if the canvas exceeds the limits
      */
     static HeifCanvas canvas(MediaLimits limits, HevcFrame frame, boolean wide, boolean hasAlpha) {
@@ -94,6 +96,9 @@ final class HevcTile implements DecodedTile {
     /**
      * Allocates a canvas in the layout and depth of a decoded picture.
      *
+     * <p>The depth of a picture whose luma and chroma depths differ is the larger of the two;
+     * a canvas that keeps it holds the shallower planes shifted left to it.
+     *
      * @param limits the bounds of the canvas
      * @param frame the decoded picture whose layout and depth the canvas takes
      * @param width the canvas width
@@ -101,19 +106,28 @@ final class HevcTile implements DecodedTile {
      * @param wide whether a source of more than 8 bits keeps its depth
      * @param hasAlpha whether to allocate an alpha plane
      * @return the canvas
-     * @throws MediaException.Unsupported if a deep picture has different luma and chroma depths
      * @throws MediaException.LimitExceeded if the canvas exceeds the limits
      */
     static HeifCanvas canvas(MediaLimits limits, HevcFrame frame, int width, int height, boolean wide,
                              boolean hasAlpha) {
+        var depth = frame.sps.pictureBitDepth();
+        return new HeifCanvas(FORMAT, limits, width, height, formatOf(frame), depth, wide && depth > 8, hasAlpha);
+    }
+
+    /**
+     * {@return a copy of the visible luma plane of a decoded picture, at its depth, as a monochrome
+     * picture with the default color description}
+     *
+     * @param frame the decoded picture
+     */
+    static Picture lumaPicture(HevcFrame frame) {
         var sps = frame.sps;
-        var depth = sps.pictureBitDepth();
-        var keep = wide && depth > 8;
-        if (keep && sps.mixedBitDepth()) {
-            throw new MediaException.Unsupported(FORMAT, "luma of " + sps.bitDepthLuma + " bits with chroma of "
-                    + sps.bitDepthChroma + " bits");
+        var offset = sps.cropTop * frame.width + sps.cropLeft;
+        if (frame.eightBit()) {
+            return HeifPictures.lumaPicture(frame.y8, offset, frame.width, widthOf(frame), heightOf(frame));
         }
-        return new HeifCanvas(FORMAT, limits, width, height, formatOf(frame), depth, keep, hasAlpha);
+        return HeifPictures.lumaPicture(frame.y, offset, frame.width, widthOf(frame), heightOf(frame),
+                sps.bitDepthLuma);
     }
 
     /**
