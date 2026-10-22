@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.packaging;
 
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 
@@ -8,8 +9,8 @@ import java.util.Locale;
 
 /**
  * Builds the {@code CODECS} values of HLS playlists and the {@code codecs} attributes of DASH
- * manifests (RFC 6381, ISO/IEC 14496-15 Annex E, and the VP9, AV1, Opus and AC-3 ISOBMFF
- * bindings).
+ * manifests (RFC 6381, ISO/IEC 14496-15 Annex E, the VP codec, AV1, Opus and AC-3 ISOBMFF
+ * bindings, and the sample entry types of the other codecs a CMAF segment carries).
  */
 final class CodecStrings {
     private CodecStrings() {
@@ -20,8 +21,8 @@ final class CodecStrings {
      * Returns the codec string of a track.
      *
      * @param track the track to describe
-     * @param keyFrame the first key frame of a VP9 or AV1 track without a configuration record, or
-     * {@code null}
+     * @param keyFrame the first key frame of a video track, which describes a VP8, VP9, AV1 or MPEG-4
+     * Part 2 track without a configuration and a ProRes or DNxHD track, or {@code null}
      * @return the codec string, or {@code null} when the codec has none
      */
     static String of(Track track, byte[] keyFrame) {
@@ -32,9 +33,15 @@ final class CodecStrings {
                     : "avc1";
             case HEVC -> hevc(config);
             case AV1 -> av1(config != null ? config : keyFrame != null ? CodecConfigs.av1Config(keyFrame) : null);
-            case VP9 -> vp9(config != null ? config : keyFrame != null && track instanceof VideoTrack video
+            case VP9 -> vp("vp09", config != null ? config : keyFrame != null && track instanceof VideoTrack video
                     ? CodecConfigs.vp9Config(keyFrame, video.width(), video.height(), video.color().orElse(null)) : null);
-            case VP8 -> "vp8";
+            case VP8 -> vp("vp08", config != null ? config : keyFrame != null && track instanceof VideoTrack video
+                    ? CodecConfigs.vp8Config(keyFrame, video.width(), video.height(), video.color().orElse(null)) : null);
+            case MPEG4_PART2 -> mpeg4(config != null && config.length > 0 ? config
+                    : keyFrame != null ? CodecConfigs.mpeg4Config(keyFrame) : null);
+            case H263 -> "s263";
+            case MJPEG -> "mp4v.6C";
+            case PRORES, DNXHD -> fourCc(CodecConfigs.quickTimeVisualType(track.codec() == Codec.PRORES, config, keyFrame));
             case AAC -> "mp4a.40." + aacObjectType(config);
             case MP3 -> "mp4a.40.34";
             case MP2 -> "mp4a.40.33";
@@ -43,8 +50,42 @@ final class CodecStrings {
             case ALAC -> "alac";
             case AC3 -> "ac-3";
             case EAC3 -> "ec-3";
+            case AMR_NB -> "samr";
+            case AMR_WB -> "sawb";
+            case PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE -> "ipcm";
+            case PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE -> "fpcm";
             default -> null;
         };
+    }
+
+    /**
+     * Returns the codec string of an MPEG-4 Part 2 track (RFC 6381 clause 3.3): the object type
+     * {@code 20} and the decimal {@code profile_and_level_indication} of the visual object
+     * sequence header, when the configuration holds one.
+     *
+     * @param config the decoder configuration, or {@code null}
+     * @return the codec string
+     */
+    private static String mpeg4(byte[] config) {
+        if (config != null) {
+            for (var index = 0; index + 4 < config.length; index++) {
+                if (config[index] == 0 && config[index + 1] == 0 && config[index + 2] == 1
+                        && (config[index + 3] & 0xFF) == 0xB0) {
+                    return "mp4v.20." + (config[index + 4] & 0xFF);
+                }
+            }
+        }
+        return "mp4v.20";
+    }
+
+    /**
+     * {@return a four-character code as a string}
+     *
+     * @param code the code, four ASCII characters packed big-endian
+     */
+    private static String fourCc(int code) {
+        return new String(new char[]{(char) (code >>> 24), (char) ((code >>> 16) & 0xFF), (char) ((code >>> 8) & 0xFF),
+                (char) (code & 0xFF)});
     }
 
     /**
@@ -100,17 +141,19 @@ final class CodecStrings {
     }
 
     /**
-     * Returns the codec string of a VP9 track from its {@code vpcC} record body (VP codec ISOBMFF
-     * binding clause 4): profile, level and bit depth.
+     * Returns the codec string of a VP8 or VP9 track from its {@code vpcC} record body (VP codec
+     * ISOBMFF binding clause 4): the sample entry type, profile, level and bit depth.
      *
+     * @param entry the sample entry type, {@code vp08} or {@code vp09}
      * @param config the record body, or {@code null}
      * @return the codec string
      */
-    private static String vp9(byte[] config) {
+    private static String vp(String entry, byte[] config) {
         if (config == null || config.length < 3) {
-            return "vp09";
+            return entry;
         }
-        return String.format(Locale.ROOT, "vp09.%02d.%02d.%02d", config[0] & 0xFF, config[1] & 0xFF, (config[2] & 0xFF) >> 4);
+        return String.format(Locale.ROOT, "%s.%02d.%02d.%02d", entry, config[0] & 0xFF, config[1] & 0xFF,
+                (config[2] & 0xFF) >> 4);
     }
 
     /**

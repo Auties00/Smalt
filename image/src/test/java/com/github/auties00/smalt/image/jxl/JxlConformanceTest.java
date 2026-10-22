@@ -1,8 +1,11 @@
 package com.github.auties00.smalt.image.jxl;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.jxl.internal.JxlCodestream;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -20,6 +23,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * their original JPEG files bit for bit.
  */
 class JxlConformanceTest {
+    /** The reference holds the samples at the suite's precision; both renders round them to 16 bits. */
+    static final Tolerance SPOTS = Tolerance.maxAbs(2);
+
     static java.util.List<JxlVectors.Case> cases() {
         return JxlVectors.CASES;
     }
@@ -73,6 +79,44 @@ class JxlConformanceTest {
         assertEquals(reference.frames(), frames, "frame count");
         assertTrue(worstRmse <= test.rmse(), "RMSE " + worstRmse + " above " + test.rmse());
         assertTrue(worstPeak <= test.peak(), "peak error " + worstPeak + " above " + test.peak());
+        if (test.name().equals("spot")) {
+            assertSpotsRendered(data, reference);
+        }
+    }
+
+    /**
+     * Checks that the RGBA picture of the spot case composites both spot channels of the reference over its
+     * color, in the output color space, as libjxl's default render does.
+     */
+    static void assertSpotsRendered(byte[] data, JxlVectors.Reference reference) {
+        var actual = (Rgba16Picture) JxlDecoder.decode(MediaSource.of(data), ImageDecoderOptions.builder()
+                .highBitDepth(true).build()).picture();
+        var infos = JxlCodestream.open(data, MediaLimits.DEFAULT).header().extraChannels();
+        var expected = new short[actual.width() * actual.height() * 3];
+        var got = new short[expected.length];
+        for (var y = 0; y < actual.height(); y++) {
+            for (var x = 0; x < actual.width(); x++) {
+                var rgb = new float[3];
+                for (var c = 0; c < 3; c++) {
+                    rgb[c] = reference.sample(0, x, y, c);
+                }
+                for (var e = 0; e < infos.size(); e++) {
+                    var spot = infos.get(e).spotColor();
+                    if (spot != null) {
+                        var mix = spot[3] * reference.sample(0, x, y, 3 + e);
+                        for (var c = 0; c < 3; c++) {
+                            rgb[c] = mix * spot[c] + (1 - mix) * rgb[c];
+                        }
+                    }
+                }
+                for (var c = 0; c < 3; c++) {
+                    var i = (y * actual.width() + x) * 3 + c;
+                    expected[i] = (short) Math.round(Math.min(Math.max(rgb[c], 0), 1) * 65535);
+                    got[i] = actual.pixels()[y * actual.stride() + x * 4 + c];
+                }
+            }
+        }
+        SPOTS.assertWithin("spot colors rendered", expected, got, 16);
     }
 
     @ParameterizedTest(name = "{0}")

@@ -69,6 +69,16 @@ import java.util.Set;
  * {@link #read()}; a stream whose format is not known by then is not exposed, and changes of the
  * program map table after the start are ignored.
  *
+ * <p>A stream whose configuration changes after the start (a splice, concatenated recordings)
+ * keeps its track, and the packet where the change takes effect carries the new configuration as
+ * its {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig()}: an H.264 IDR or
+ * HEVC IRAP access unit whose active sequence (and HEVC video) parameter sets differ from those of
+ * the configuration in force (a picture parameter set change alone stays in band), the first ADTS
+ * frame of a new sampling frequency, profile or channel configuration that the next frame
+ * confirms, and the first LATM payload after a new {@code AudioSpecificConfig}. Audio durations
+ * stay in samples of the track's rate. After a seek the configuration in force is the track's, so
+ * the first packet read in another one carries it again.
+ *
  * <p>Timing. PES timestamps are unwrapped across the 33-bit wrap and continued across timeline
  * discontinuities (a splice or a restarted encoder, recognized by a stream's decoding times
  * jumping more than half a second back or ten seconds forwards), then shifted so that the

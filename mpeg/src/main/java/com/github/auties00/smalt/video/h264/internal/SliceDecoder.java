@@ -106,6 +106,11 @@ final class SliceDecoder {
     private H264Dsp dsp = H264Dsp.SCALAR;
 
     /**
+     * The kernels of pictures deeper than 8 bits.
+     */
+    private final H264WideDsp wideDsp = H264WideDsp.INSTANCE;
+
+    /**
      * The bit reader of CAVLC slice data and PCM samples.
      */
     private final H264BitReader bits = new H264BitReader();
@@ -129,6 +134,76 @@ final class SliceDecoder {
      * The inter predictor.
      */
     private final InterPredictor inter = new InterPredictor();
+
+    /**
+     * The intra predictor of pictures deeper than 8 bits.
+     */
+    private final WideIntraPredictor wideIntra = new WideIntraPredictor();
+
+    /**
+     * The inter predictor of pictures deeper than 8 bits.
+     */
+    private final WideInterPredictor wideInter = new WideInterPredictor();
+
+    /**
+     * The bit reader of slice data partition B, which holds the residual of I and SI
+     * macroblocks.
+     */
+    private final H264BitReader partitionBBits = new H264BitReader();
+
+    /**
+     * The bit reader of slice data partition C, which holds the residual of P and B
+     * macroblocks.
+     */
+    private final H264BitReader partitionCBits = new H264BitReader();
+
+    /**
+     * The transform-domain reconstruction of SP and SI macroblocks.
+     */
+    private final SwitchingTransform switchingTransform = new SwitchingTransform();
+
+    /**
+     * Whether the frame being decoded holds 16-bit samples ({@link DecoderFrame#wide}).
+     */
+    private boolean wide;
+
+    /**
+     * The 16-bit luma plane of a {@link #wide} frame being decoded.
+     */
+    private short[] lumaPlane16;
+
+    /**
+     * The 16-bit Cb plane of a {@link #wide} frame being decoded, or {@code null} for
+     * monochrome.
+     */
+    private short[] cbPlane16;
+
+    /**
+     * The 16-bit Cr plane of a {@link #wide} frame being decoded, or {@code null} for
+     * monochrome.
+     */
+    private short[] crPlane16;
+
+    /**
+     * The largest luma sample value, {@code (1 << BitDepthY) - 1}.
+     */
+    private int lumaMax = 255;
+
+    /**
+     * The largest chroma sample value, {@code (1 << BitDepthC) - 1}.
+     */
+    private int chromaMax = 255;
+
+    /**
+     * The luma quantization parameter range offset {@code QpBdOffsetY}, {@code 6 * (BitDepthY - 8)}.
+     */
+    private int qpBdOffsetY;
+
+    /**
+     * The chroma quantization parameter range offset {@code QpBdOffsetC},
+     * {@code 6 * (BitDepthC - 8)}.
+     */
+    private int qpBdOffsetC;
 
     /**
      * The frame being decoded.
@@ -179,6 +254,44 @@ final class SliceDecoder {
      * Whether the picture has chroma.
      */
     private boolean hasChroma;
+
+    /**
+     * Whether the picture's chroma is 4:2:2 ({@code ChromaArrayType} 2) rather than 4:2:0.
+     */
+    private boolean chroma422;
+
+    /**
+     * Whether the picture's chroma is 4:4:4 ({@code ChromaArrayType} 3): Cb and Cr are predicted,
+     * coded and reconstructed like luma.
+     */
+    private boolean chroma444;
+
+    /**
+     * The {@code colour_plane_id} of the color plane being decoded when the picture's planes are
+     * coded separately, which selects the plane's scaling lists; 0 otherwise.
+     */
+    private int colorPlane;
+
+    /**
+     * Whether the sequence sets {@code qpprime_y_zero_transform_bypass_flag}.
+     */
+    private boolean transformBypass;
+
+    /**
+     * Whether the current macroblock is coded without transform ({@code TransformBypassModeFlag}:
+     * {@link #transformBypass} with {@code QP'Y} equal to 0).
+     */
+    private boolean bypass;
+
+    /**
+     * The chroma width of a macroblock, {@code MbWidthC}: 16 for 4:4:4, 8 otherwise.
+     */
+    private int chromaColumns = 8;
+
+    /**
+     * The chroma height of a macroblock, {@code MbHeightC}: 16 for 4:2:2, 8 otherwise.
+     */
+    private int chromaRows = 8;
 
     /**
      * The slice being decoded.
@@ -246,16 +359,88 @@ final class SliceDecoder {
     private boolean lastQpDeltaNonZero;
 
     /**
+     * Whether the slice is coded as data partitions: its residual comes from
+     * {@link #partitionBBits} and {@link #partitionCBits}, everything else from {@link #bits}.
+     */
+    private boolean partitioned;
+
+    /**
+     * Whether partition B is present and has not failed.
+     */
+    private boolean partitionBUsable;
+
+    /**
+     * Whether partition C is present and has not failed.
+     */
+    private boolean partitionCUsable;
+
+    /**
+     * The reader the residual of the current macroblock is parsed from with CAVLC.
+     */
+    private H264BitReader residualBits = bits;
+
+    /**
+     * Whether CAVLC {@code nC} derivation treats inter neighbors as unavailable: for an intra
+     * macroblock of a partitioned slice with {@code constrained_intra_pred_flag} (ITU-T H.264
+     * 9.2.1).
+     */
+    private boolean ncConstrained;
+
+    /**
+     * The first failure of a partition B or C of the slice, or {@code null}.
+     */
+    private MediaException.Malformed partitionFailure;
+
+    /**
+     * Whether a macroblock of the slice lost its residual or samples with a missing or failed
+     * partition.
+     */
+    private boolean residualLost;
+
+    /**
+     * Whether the slice is an SP slice.
+     */
+    private boolean spSlice;
+
+    /**
+     * Whether the slice is an SI slice.
+     */
+    private boolean siSlice;
+
+    /**
+     * Whether the transform-domain reconstruction uses the switching process of ITU-T H.264
+     * 8.6.2 (SI slices and SP slices with {@code sp_for_switch_flag}) rather than 8.6.1.
+     */
+    private boolean switchingProcess;
+
+    /**
+     * The switching quantization parameter {@code QSY} of an SP or SI slice.
+     */
+    private int qs;
+
+    /**
+     * Whether the residual of the current macroblock is kept as coefficient levels for the
+     * transform-domain reconstruction of SP and SI macroblocks.
+     */
+    private boolean rawLevels;
+
+    /**
      * The level scale factors of the six 4x4 scaling lists, indexed
      * {@code [list][qP % 6][raster]}.
      */
     private final int[][][] levelScale4 = new int[6][6][16];
 
     /**
-     * The level scale factors of the intra and inter luma 8x8 scaling lists, indexed
-     * {@code [list][qP % 6][raster]}.
+     * The level scale factors of the six 8x8 scaling lists (intra and inter, for Y, Cb and Cr),
+     * indexed {@code [list][qP % 6][raster]}.
      */
-    private final int[][][] levelScale8 = new int[2][6][64];
+    private final int[][][] levelScale8 = new int[6][6][64];
+
+    /**
+     * The scale of the coefficient levels of transform-bypass blocks, which are their residual
+     * samples (ITU-T H.264 8.5.12 and 8.5.13): 1 at every position.
+     */
+    private static final int[] UNIT_SCALE = unitScale();
 
     /**
      * The scaling lists the level scale factors were computed from.
@@ -272,16 +457,6 @@ final class SliceDecoder {
      */
     private int weightMode;
 
-    /**
-     * The implicit bi-predictive list 0 weights, indexed {@code refIdxL0 * 32 + refIdxL1}.
-     */
-    private final int[] implicitWeight = new int[32 * 32];
-
-    /**
-     * The temporal direct scale factor of each list 0 reference, or {@code 9999} when the motion
-     * vector is copied unscaled.
-     */
-    private final int[] directScale = new int[32];
 
     /**
      * The co-located picture of temporal and spatial direct prediction, {@code RefPicList1[0]}.
@@ -427,14 +602,21 @@ final class SliceDecoder {
     private final int[] lumaCoeffs = new int[256];
 
     /**
-     * The Cb coefficients: four 4x4 blocks.
+     * The Cb coefficients: four (4:2:0) or eight (4:2:2) 4x4 blocks in {@code chroma4x4BlkIdx}
+     * order, or for 4:4:4 the blocks of {@link #lumaCoeffs} in its layout.
      */
-    private final int[] cbCoeffs = new int[64];
+    private final int[] cbCoeffs = new int[256];
 
     /**
-     * The Cr coefficients: four 4x4 blocks.
+     * The Cr coefficients, laid out as {@link #cbCoeffs}.
      */
-    private final int[] crCoeffs = new int[64];
+    private final int[] crCoeffs = new int[256];
+
+    /**
+     * The coefficients of each color component that is coded like luma, indexed by component:
+     * luma, then the Cb and Cr of 4:4:4 macroblocks.
+     */
+    private final int[][] planeCoeffs = {lumaCoeffs, cbCoeffs, crCoeffs};
 
     /**
      * The Intra16x16 DC levels in raster order.
@@ -442,25 +624,52 @@ final class SliceDecoder {
     private final int[] lumaDc = new int[16];
 
     /**
-     * The chroma DC levels of Cb then Cr.
+     * The chroma DC levels in coefficient list order, Cb from index 0 and Cr from index 8.
      */
-    private final int[] chromaDc = new int[8];
+    private final int[] chromaDc = new int[16];
 
     /**
-     * The luma blocks with coefficients: bits by {@code luma4x4BlkIdx}, or by 8x8 block with the
-     * 8x8 transform.
+     * The Cb Intra16x16 DC levels of 4:4:4 macroblocks, laid out as {@link #lumaDc}.
      */
-    private int lumaCoded;
+    private final int[] cbDc = new int[16];
 
     /**
-     * The luma blocks whose only non-zero coefficient is the DC one: 4x4 blocks by block index,
-     * or 8x8 blocks by quarter index in a macroblock with the 8x8 transform. A block in both this
-     * set and {@link #lumaCoded} takes the full inverse transform.
+     * The Cr Intra16x16 DC levels of 4:4:4 macroblocks, laid out as {@link #lumaDc}.
      */
-    private int lumaDcOnly;
+    private final int[] crDc = new int[16];
 
     /**
-     * The chroma AC blocks with coefficients: bits 0 to 3 Cb, 4 to 7 Cr.
+     * The Intra16x16 DC levels of each color component that is coded like luma.
+     */
+    private final int[][] planeDc = {lumaDc, cbDc, crDc};
+
+    /**
+     * The blocks with coefficients of each color component coded like luma: bits by
+     * {@code luma4x4BlkIdx}, or by 8x8 block with the 8x8 transform.
+     */
+    private final int[] coded = new int[3];
+
+    /**
+     * The blocks of each color component coded like luma whose only non-zero coefficient is the
+     * DC one: 4x4 blocks by block index, or 8x8 blocks by quarter index in a macroblock with the
+     * 8x8 transform. A block in both this set and {@link #coded} takes the full inverse transform.
+     */
+    private final int[] dcOnly = new int[3];
+
+    /**
+     * The coded DC blocks of the current CABAC macroblock as bits 6 (luma or Y), 7 (Cb) and 8 (Cr)
+     * of {@link PictureState#cbp}.
+     */
+    private int dcFlags;
+
+    /**
+     * The residual of a transform-bypass region in raster order, 16 samples per row.
+     */
+    private final int[] bypassScratch = new int[256];
+
+    /**
+     * The chroma AC blocks with coefficients: bit {@code chroma4x4BlkIdx} for Cb, bit
+     * {@code 8 + chroma4x4BlkIdx} for Cr.
      */
     private int chromaCoded;
 
@@ -473,6 +682,143 @@ final class SliceDecoder {
      * Whether the current macroblock's chroma residual needs reconstruction.
      */
     private boolean chromaResidual;
+
+    /**
+     * The structure of the picture being decoded: {@link DecoderFrame#FRAME},
+     * {@link DecoderFrame#TOP} or {@link DecoderFrame#BOTTOM}.
+     */
+    private int structure = DecoderFrame.FRAME;
+
+    /**
+     * Whether the picture being decoded is a field.
+     */
+    private boolean fieldPicture;
+
+    /**
+     * Whether the picture being decoded is an MBAFF frame.
+     */
+    private boolean mbaff;
+
+    /**
+     * The parity of the field picture being decoded (0 top, 1 bottom), 0 for a frame.
+     */
+    private int pictureParity;
+
+    /**
+     * The index distance from a macroblock to the one above it in a picture that is not an MBAFF
+     * frame: the width in macroblocks for a frame, twice that for a field.
+     */
+    private int mbStride;
+
+    /**
+     * The address of the current macroblock in the picture's own numbering.
+     */
+    private int currAddr = -2;
+
+    /**
+     * Whether the current macroblock is a field macroblock.
+     */
+    private boolean fieldMb;
+
+    /**
+     * The parity of the field of the current field macroblock (0 top, 1 bottom), or -1 for a
+     * frame macroblock.
+     */
+    private int mbParity = -1;
+
+    /**
+     * The reference view of the current macroblock: 0 for the macroblocks of frames and fields,
+     * whose reference indices name list entries, and {@code 1 + parity} for the field
+     * macroblocks of MBAFF frames, whose reference indices name fields of the list entries.
+     */
+    private int view;
+
+    /**
+     * The index of the left neighbor macroblock A of the current macroblock, valid when
+     * {@link #availA}.
+     */
+    private int mbA;
+
+    /**
+     * The index of the upper neighbor macroblock B, valid when {@link #availB}.
+     */
+    private int mbB;
+
+    /**
+     * The index of the upper-right neighbor macroblock C, valid when {@link #availC}.
+     */
+    private int mbC;
+
+    /**
+     * The index of the upper-left neighbor macroblock D, valid when {@link #availD}.
+     */
+    private int mbD;
+
+    /**
+     * The index of the top-left luma sample of the current macroblock.
+     */
+    private int lumaBase;
+
+    /**
+     * The index of the top-left chroma sample of the current macroblock.
+     */
+    private int chromaBase;
+
+    /**
+     * The 4x4 coefficient scan of the current macroblock: zig-zag or field.
+     */
+    private byte[] scan4 = H264Tables.ZIGZAG_4X4;
+
+    /**
+     * The 8x8 coefficient scan of the current macroblock: zig-zag or field.
+     */
+    private byte[] scan8 = H264Tables.ZIGZAG_8X8;
+
+    /**
+     * The reference picture of each reference index per view and list, {@code (id << 2) | kind}
+     * as stored in {@link DecoderFrame#refId}, indexed {@code [view][list][refIdx]}.
+     */
+    private final int[][][] viewRefId = new int[3][2][64];
+
+    /**
+     * The frame holding the reference of each reference index per view and list.
+     */
+    private final DecoderFrame[][][] viewFrame = new DecoderFrame[3][2][64];
+
+    /**
+     * The field each reference index reads per view and list (0 top, 1 bottom), or -1 for a
+     * frame.
+     */
+    private final int[][][] viewParity = new int[3][2][64];
+
+    /**
+     * The picture order count of the picture each reference index names, per view and list.
+     */
+    private final int[][][] viewPoc = new int[3][2][64];
+
+    /**
+     * The reference marking of the picture each reference index names, per view and list.
+     */
+    private final int[][][] viewMarking = new int[3][2][64];
+
+    /**
+     * The picture order count of the current picture per view: of the picture, then of its top
+     * and bottom fields.
+     */
+    private final int[] viewCurrentPoc = new int[3];
+
+    /**
+     * The implicit bi-predictive list 0 weights of each view, indexed
+     * {@code refIdxL0 * 64 + refIdxL1} for the field views and {@code refIdxL0 * 32 + refIdxL1}
+     * for view 0.
+     */
+    private final int[][] viewImplicit = {new int[32 * 32], new int[64 * 64], new int[64 * 64]};
+
+    /**
+     * The temporal direct scale factor of each list 0 reference index per view, or {@code 9999}
+     * when the motion vector is copied unscaled.
+     */
+    private final int[][] viewDirectScale = new int[3][64];
 
     /**
      * Constructs a slice decoder, marking the motion cache column right of the macroblock
@@ -494,22 +840,58 @@ final class SliceDecoder {
      * @param frame the frame to decode into
      * @param pic the per-macroblock state sized for the frame
      * @param dsp the kernels the picture is reconstructed with
+     * @param structure the picture structure: {@link DecoderFrame#FRAME}, {@link DecoderFrame#TOP}
+     * or {@link DecoderFrame#BOTTOM}
+     * @param mbaff whether the picture is an MBAFF frame
+     * @param colorPlane the {@code colour_plane_id} of the plane the picture is, for frames of
+     * separately coded color planes, 0 otherwise
      */
-    void startPicture(DecoderFrame frame, PictureState pic, H264Dsp dsp) {
+    void startPicture(DecoderFrame frame, PictureState pic, H264Dsp dsp, int structure, boolean mbaff,
+                      int colorPlane) {
         this.frame = frame;
         this.pic = pic;
         this.dsp = dsp;
+        this.structure = structure;
+        this.fieldPicture = structure != DecoderFrame.FRAME;
+        this.mbaff = mbaff;
+        this.pictureParity = structure == DecoderFrame.BOTTOM ? 1 : 0;
         this.mbWidth = frame.mbWidth;
-        this.mbCount = frame.mbWidth * frame.mbHeight;
+        this.mbStride = fieldPicture ? 2 * frame.mbWidth : frame.mbWidth;
+        this.mbCount = frame.mbWidth * (fieldPicture ? frame.mbHeight / 2 : frame.mbHeight);
         this.mbAddr = -2;
+        this.currAddr = -2;
         this.lumaPlane = frame.luma;
         this.cbPlane = frame.cb;
         this.crPlane = frame.cr;
-        this.lumaStride = frame.lumaStride;
-        this.chromaStride = frame.chromaStride;
+        this.wide = frame.wide;
+        this.lumaPlane16 = frame.luma16;
+        this.cbPlane16 = frame.cb16;
+        this.crPlane16 = frame.cr16;
+        this.lumaMax = (1 << frame.bitDepthLuma) - 1;
+        this.chromaMax = (1 << frame.bitDepthChroma) - 1;
+        this.qpBdOffsetY = 6 * (frame.bitDepthLuma - 8);
+        this.qpBdOffsetC = 6 * (frame.bitDepthChroma - 8);
+        this.lumaStride = fieldPicture ? 2 * frame.lumaStride : frame.lumaStride;
+        this.chromaStride = fieldPicture ? 2 * frame.chromaStride : frame.chromaStride;
         this.hasChroma = frame.hasChroma;
-        inter.startPicture(frame, dsp);
+        this.chroma422 = frame.chromaFormat == 2;
+        this.chroma444 = frame.chromaFormat == 3;
+        this.colorPlane = colorPlane;
+        this.chromaRows = frame.chromaMbHeight;
+        this.chromaColumns = frame.chromaMbWidth;
+        this.fieldMb = fieldPicture;
+        this.mbParity = fieldPicture ? pictureParity : -1;
+        this.view = 0;
+        this.scan4 = fieldPicture ? H264Tables.FIELD_4X4 : H264Tables.ZIGZAG_4X4;
+        this.scan8 = fieldPicture ? H264Tables.FIELD_8X8 : H264Tables.ZIGZAG_8X8;
+        if (wide) {
+            wideIntra.setBitDepths(frame.bitDepthLuma, frame.bitDepthChroma);
+            wideInter.startPicture(frame);
+        } else {
+            inter.startPicture(frame, dsp);
+        }
     }
+
 
     /**
      * Decodes the data of one slice into the current picture.
@@ -541,6 +923,21 @@ final class SliceDecoder {
         this.refCount[1] = header.numRefIdxActive[1];
         this.qp = header.sliceQp;
         this.lastQpDeltaNonZero = false;
+        this.transformBypass = header.sps.transformBypass;
+        this.spSlice = sliceType == H264SliceHeader.SP;
+        this.siSlice = sliceType == H264SliceHeader.SI;
+        this.switchingProcess = siSlice || (spSlice && header.spForSwitch);
+        this.qs = header.sliceQs;
+        this.rawLevels = false;
+        this.residualBits = bits;
+        this.ncConstrained = false;
+        this.partitioned = header.nalUnitType == H264Nal.SLICE_PARTITION_A;
+        if (partitioned) {
+            partitionBUsable = openPartition(partitionBBits, task.partitionB, task.partitionBSize,
+                    task.partitionBStart);
+            partitionCUsable = openPartition(partitionCBits, task.partitionC, task.partitionCSize,
+                    task.partitionCStart);
+        }
         // Reconstruction expects zeroed coefficient buffers; a slice aborted by corrupt data
         // may have left parsed but unconsumed coefficients behind.
         Arrays.fill(lumaCoeffs, 0);
@@ -548,30 +945,195 @@ final class SliceDecoder {
         Arrays.fill(crCoeffs, 0);
         Arrays.fill(lumaDc, 0);
         Arrays.fill(chromaDc, 0);
+        Arrays.fill(cbDc, 0);
+        Arrays.fill(crDc, 0);
         prepareScaling();
+        prepareViews();
         prepareWeights();
         prepareDirect();
         if (!bSlice) {
             clearList(1);
         }
-        inter.startSlice(header, lists, weightMode, implicitWeight);
+        if (wide) {
+            wideInter.startSlice(header, weightMode);
+        } else {
+            inter.startSlice(header, weightMode);
+        }
+        selectView(0);
         var filter = header.disableDeblockingFilterIdc | ((header.filterOffsetA + 12) << 2)
                 | ((header.filterOffsetB + 12) << 8);
-        var addr = header.firstMbInSlice;
+        var addr = (long) header.firstMbInSlice * (mbaff ? 2 : 1);
         if (addr >= mbCount) {
-            throw new MediaException.Malformed("first_mb_in_slice " + addr + " out of range");
+            throw new MediaException.Malformed("first_mb_in_slice " + header.firstMbInSlice + " out of range");
         }
         bits.init(rbsp, offset, length);
         if (cabacMode) {
             var aligned = (int) ((header.dataBitPosition + 7) >>> 3);
             cabac.init(rbsp, offset + aligned, offset + length);
-            CabacTables.initContexts(cabac.states, iSlice ? 0 : header.cabacInitIdc + 1, header.sliceQp);
-            decodeCabacSlice(addr, filter, onMacroblock);
+            CabacTables.initContexts(cabac.states, iSlice ? 0 : header.cabacInitIdc + 1, header.sliceQp,
+                    chroma444 ? CabacTables.CONTEXT_COUNT_444 : CabacTables.CONTEXT_COUNT);
+            if (mbaff) {
+                decodeCabacMbaffSlice((int) addr, filter, onMacroblock);
+            } else {
+                decodeCabacSlice((int) addr, filter, onMacroblock);
+            }
         } else {
             skipTo(bits, header.dataBitPosition);
             var stopBit = NalUnits.stopBitPosition(rbsp, offset, length);
-            decodeCavlcSlice(addr, filter, stopBit, onMacroblock);
+            if (mbaff) {
+                decodeCavlcMbaffSlice((int) addr, filter, stopBit, onMacroblock);
+            } else {
+                decodeCavlcSlice((int) addr, filter, stopBit, onMacroblock);
+            }
         }
+    }
+
+    /**
+     * Positions the reader of a slice data partition B or C at its {@code slice_data()}.
+     *
+     * @param reader the reader of the partition, positioned on return
+     * @param data the unescaped partition payload, or {@code null} when the partition is absent
+     * @param size the payload length
+     * @param start the bit position of the partition's {@code slice_data()}
+     * @return whether the partition is present
+     */
+    private static boolean openPartition(H264BitReader reader, byte[] data, int size, long start) {
+        if (data == null) {
+            return false;
+        }
+        reader.init(data, 0, size);
+        skipTo(reader, start);
+        return true;
+    }
+
+    /**
+     * Returns the first failure of a partition B or C since the last call, and forgets it.
+     *
+     * <p>A failed partition does not fail its slice: the macroblocks whose residual it holds are
+     * reconstructed without residual from the failure on.
+     *
+     * @return the failure, or {@code null}
+     */
+    MediaException.Malformed takePartitionFailure() {
+        var failure = partitionFailure;
+        partitionFailure = null;
+        return failure;
+    }
+
+    /**
+     * Returns whether a macroblock lost its residual or samples to a missing or failed partition
+     * since the last call, and forgets it.
+     *
+     * @return {@code true} when a macroblock was reconstructed without data it was coded with
+     */
+    boolean takeResidualLoss() {
+        var lost = residualLost;
+        residualLost = false;
+        return lost;
+    }
+
+    /**
+     * Derives, for every view the slice uses, the reference picture, field, picture order count
+     * and marking of each reference index.
+     *
+     * <p>View 0 serves frames and fields: reference index {@code i} names list entry {@code i}.
+     * Views 1 and 2 serve the top and bottom field macroblocks of MBAFF frames: reference index
+     * {@code i} names the field of entry {@code i / 2} with the macroblock's parity when
+     * {@code i} is even, and the other field when it is odd (ITU-T H.264 8.4.2.1).
+     */
+    private void prepareViews() {
+        var views = mbaff && !iSlice ? 3 : 1;
+        var lists = refList;
+        for (var v = 0; v < views; v++) {
+            var current = v == 0 ? task.currentPoc : task.currentFieldPoc[v - 1];
+            viewCurrentPoc[v] = current;
+            for (var list = 0; list < 2; list++) {
+                var count = refCount[list] << (v == 0 ? 0 : 1);
+                var ids = viewRefId[v][list];
+                var frames = viewFrame[v][list];
+                var parities = viewParity[v][list];
+                var pocs = viewPoc[v][list];
+                var marks = viewMarking[v][list];
+                for (var r = 0; r < count; r++) {
+                    if (v == 0) {
+                        var entry = lists[list][r].plane(colorPlane);
+                        var entryStructure = task.structures[list][r];
+                        frames[r] = entry;
+                        if (entryStructure == DecoderFrame.FRAME) {
+                            parities[r] = -1;
+                            ids[r] = entry.id << 2;
+                        } else {
+                            parities[r] = entryStructure - 1;
+                            ids[r] = (entry.id << 2) | entryStructure;
+                        }
+                        pocs[r] = task.refPoc[list][r];
+                        marks[r] = task.refMarking[list][r];
+                    } else {
+                        var entry = lists[list][r >> 1].plane(colorPlane);
+                        var parity = (r & 1) == 0 ? v - 1 : 2 - v;
+                        frames[r] = entry;
+                        parities[r] = parity;
+                        ids[r] = (entry.id << 2) | (parity + 1);
+                        pocs[r] = task.refFieldPoc[list][(r & ~1) + parity];
+                        marks[r] = task.refFieldMarking[list][(r & ~1) + parity];
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Makes a view current: the reference indices of the macroblocks that follow name its
+     * pictures (see {@link #prepareViews()}).
+     *
+     * @param v the view
+     */
+    private void selectView(int v) {
+        view = v;
+        var parity = v == 0 ? (fieldPicture ? pictureParity : -1) : v - 1;
+        if (wide) {
+            wideInter.selectReferences(viewFrame[v], viewParity[v], parity, v == 0 ? 0 : 1, viewImplicit[v],
+                    v == 0 ? 32 : 64);
+        } else {
+            inter.selectReferences(viewFrame[v], viewParity[v], parity, v == 0 ? 0 : 1, viewImplicit[v],
+                    v == 0 ? 32 : 64);
+        }
+    }
+
+    /**
+     * Sets the position of the macroblock the next inter prediction predicts, in the predictor
+     * of the picture's sample size.
+     *
+     * @param x the horizontal luma position of the macroblock
+     * @param y its vertical luma position in the frame or field it is predicted in
+     */
+    private void positionInter(int x, int y) {
+        if (wide) {
+            wideInter.position(lumaBase, lumaStride, chromaBase, chromaStride, x, y);
+        } else {
+            inter.position(lumaBase, lumaStride, chromaBase, chromaStride, x, y);
+        }
+    }
+
+    /**
+     * Forms the inter prediction of the current macroblock from its motion caches.
+     */
+    private void predictInter() {
+        if (wide) {
+            wideInter.predictMacroblock(this);
+        } else {
+            inter.predictMacroblock(this);
+        }
+    }
+
+    /**
+     * Returns the number of reference indices of a list available to the current macroblock.
+     *
+     * @param list the list index
+     * @return the active entry count, doubled for the field macroblocks of MBAFF frames
+     */
+    private int activeRefs(int list) {
+        return refCount[list] << (view == 0 ? 0 : 1);
     }
 
     /**
@@ -698,31 +1260,55 @@ final class SliceDecoder {
     }
 
     /**
-     * Sets up the addressing and neighbor availability of a macroblock.
+     * Sets up the addressing, geometry and neighbor availability of a macroblock of a frame or
+     * field.
      *
-     * @param addr the macroblock address
+     * @param addr the macroblock address in the picture's own numbering
      * @param filter the packed deblocking parameters of the slice
      */
     private void beginMacroblock(int addr, int filter) {
-        if (addr == mbAddr + 1 && mbX + 1 < mbWidth) {
+        if (addr == currAddr + 1 && mbX + 1 < mbWidth) {
             mbX++;
+            mbAddr++;
         } else {
             mbX = addr % mbWidth;
             mbY = addr / mbWidth;
+            mbAddr = fieldPicture ? (2 * mbY + pictureParity) * mbWidth + mbX : addr;
         }
-        mbAddr = addr;
+        currAddr = addr;
+        var index = mbAddr;
+        var stride = mbStride;
         var slices = pic.sliceNum;
         var slice = sliceNum;
-        availA = mbX > 0 && slices[addr - 1] == slice;
-        availB = mbY > 0 && slices[addr - mbWidth] == slice;
-        availC = mbY > 0 && mbX + 1 < mbWidth && slices[addr - mbWidth + 1] == slice;
-        availD = mbY > 0 && mbX > 0 && slices[addr - mbWidth - 1] == slice;
-        pic.filter[addr] = filter;
+        mbA = index - 1;
+        mbB = index - stride;
+        mbC = mbB + 1;
+        mbD = mbB - 1;
+        availA = mbX > 0 && slices[mbA] == slice;
+        availB = mbY > 0 && slices[mbB] == slice;
+        availC = mbY > 0 && mbX + 1 < mbWidth && slices[mbC] == slice;
+        availD = mbY > 0 && mbX > 0 && slices[mbD] == slice;
+        lumaBase = frame.lumaOrigin + pictureParity * frame.lumaStride + mbY * 16 * lumaStride + mbX * 16;
+        chromaBase = frame.chromaOrigin + pictureParity * frame.chromaStride + mbY * chromaRows * chromaStride
+                + mbX * chromaColumns;
+        positionInter(mbX * 16, mbY * 16);
+        pic.filter[index] = filter;
+        resetMacroblock();
+    }
+
+    /**
+     * Resets the per-macroblock syntax state before a macroblock is parsed.
+     */
+    private void resetMacroblock() {
         mbFlags = 0;
         cbp = 0;
         directMask = 0;
-        lumaCoded = 0;
-        lumaDcOnly = 0;
+        coded[0] = 0;
+        coded[1] = 0;
+        coded[2] = 0;
+        dcOnly[0] = 0;
+        dcOnly[1] = 0;
+        dcOnly[2] = 0;
         chromaCoded = 0;
         chromaDcCoded = 0;
         chromaResidual = false;
@@ -735,11 +1321,468 @@ final class SliceDecoder {
      */
     private void finishMacroblock(MacroblockListener onMacroblock) {
         pic.sliceNum[mbAddr] = sliceNum;
-        frame.mbType[mbAddr] = mbFlags;
-        frame.decodedMbs++;
+        var flags = spSlice || siSlice ? mbFlags | DecoderFrame.MB_SWITCHING : mbFlags;
+        frame.mbType[mbAddr] = fieldMb ? flags | DecoderFrame.MB_FIELD : flags;
         if (onMacroblock != null) {
             onMacroblock.decoded(mbAddr);
         }
+    }
+
+    /**
+     * Decodes the macroblock pairs of a CAVLC slice of an MBAFF frame (ITU-T H.264 7.3.4).
+     *
+     * <p>A skipped top macroblock is reconstructed once the field decoding flag of its pair is
+     * known: the flag the bottom macroblock carries when it is coded, or the inferred one.
+     *
+     * @param firstMb the first macroblock address, a top macroblock
+     * @param filter the packed deblocking parameters of the slice
+     * @param stopBit the bit position of the {@code rbsp_stop_one_bit}
+     * @param onMacroblock the per-macroblock listener
+     */
+    private void decodeCavlcMbaffSlice(int firstMb, int filter, long stopBit, MacroblockListener onMacroblock) {
+        var addr = firstMb;
+        var pairIsField = false;
+        var flagRead = false;
+        var prevSkipped = false;
+        while (true) {
+            if (!iSlice) {
+                var run = bits.readUe();
+                if (run > mbCount) {
+                    throw new MediaException.Malformed("mb_skip_run " + run + " out of range");
+                }
+                prevSkipped = run > 0;
+                for (var i = 0; i < run; i++) {
+                    if (addr >= mbCount) {
+                        throw new MediaException.Malformed("slice runs past the end of the picture");
+                    }
+                    if ((addr & 1) == 0) {
+                        pairIsField = inferPairField(addr);
+                        if (i == run - 1 && bits.moreRbspData(stopBit)) {
+                            pairIsField = bits.readFlag();
+                            flagRead = true;
+                        }
+                    }
+                    beginMbaffMacroblock(addr, filter, pairIsField);
+                    decodeSkip();
+                    finishMacroblock(onMacroblock);
+                    addr = nextMbAddr(addr);
+                }
+                if (run > 0 && !bits.moreRbspData(stopBit)) {
+                    break;
+                }
+            }
+            if (addr >= mbCount) {
+                throw new MediaException.Malformed("slice runs past the end of the picture");
+            }
+            if ((addr & 1) == 0) {
+                pairIsField = bits.readFlag();
+            } else if (prevSkipped && !flagRead) {
+                pairIsField = bits.readFlag();
+            }
+            flagRead = false;
+            beginMbaffMacroblock(addr, filter, pairIsField);
+            decodeMacroblock();
+            if (bits.overrun()) {
+                throw new MediaException.Malformed("truncated slice data");
+            }
+            finishMacroblock(onMacroblock);
+            addr = nextMbAddr(addr);
+            if (!bits.moreRbspData(stopBit)) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * Decodes the macroblock pairs of a CABAC slice of an MBAFF frame (ITU-T H.264 7.3.4).
+     *
+     * <p>A skipped top macroblock is reconstructed once the field decoding flag of its pair is
+     * known: the flag the bottom macroblock carries when it is coded, or the inferred one.
+     *
+     * @param firstMb the first macroblock address, a top macroblock
+     * @param filter the packed deblocking parameters of the slice
+     * @param onMacroblock the per-macroblock listener
+     */
+    private void decodeCabacMbaffSlice(int firstMb, int filter, MacroblockListener onMacroblock) {
+        var addr = firstMb;
+        if ((addr & 1) != 0) {
+            throw new MediaException.Malformed("MBAFF slice starts at a bottom macroblock");
+        }
+        while (true) {
+            if (addr + 1 >= mbCount) {
+                throw new MediaException.Malformed("slice runs past the end of the picture");
+            }
+            var top = addr;
+            var bottom = addr + 1;
+            var inferred = inferPairField(top);
+            beginMbaffMacroblock(top, filter, inferred);
+            if (!iSlice && decodeSkipFlag()) {
+                var topIndex = mbAddr;
+                frame.mbType[topIndex] = inferred ? DecoderFrame.MB_SKIP | DecoderFrame.MB_FIELD : DecoderFrame.MB_SKIP;
+                pic.sliceNum[topIndex] = sliceNum;
+                beginMbaffMacroblock(bottom, filter, inferred);
+                var bottomSkipped = decodeSkipFlag();
+                var field = bottomSkipped ? inferred : decodeFieldFlag(bottom);
+                beginMbaffMacroblock(top, filter, field);
+                decodeSkip();
+                if (cabac.overrun()) {
+                    throw new MediaException.Malformed("truncated slice data");
+                }
+                finishMacroblock(onMacroblock);
+                beginMbaffMacroblock(bottom, filter, field);
+                if (bottomSkipped) {
+                    decodeSkip();
+                } else {
+                    decodeMacroblock();
+                }
+            } else {
+                var field = decodeFieldFlag(top);
+                if (field != inferred) {
+                    setMbaffField(field);
+                }
+                decodeMacroblock();
+                if (cabac.overrun()) {
+                    throw new MediaException.Malformed("truncated slice data");
+                }
+                finishMacroblock(onMacroblock);
+                beginMbaffMacroblock(bottom, filter, field);
+                if (!iSlice && decodeSkipFlag()) {
+                    decodeSkip();
+                } else {
+                    decodeMacroblock();
+                }
+            }
+            if (cabac.overrun()) {
+                throw new MediaException.Malformed("truncated slice data");
+            }
+            finishMacroblock(onMacroblock);
+            addr = nextMbAddr(bottom);
+            if (cabac.terminate() != 0) {
+                break;
+            }
+        }
+    }
+
+    /**
+     * Decodes {@code mb_field_decoding_flag} with CABAC (ITU-T H.264 9.3.3.1.1.2).
+     *
+     * @param addr the address of the macroblock carrying the flag
+     * @return the flag
+     */
+    private boolean decodeFieldFlag(int addr) {
+        var pair = addr >> 1;
+        var x = pair % mbWidth;
+        var y = pair / mbWidth;
+        var top = 2 * y * mbWidth + x;
+        var slices = pic.sliceNum;
+        var types = frame.mbType;
+        var inc = 0;
+        if (x > 0 && slices[top - 1] == sliceNum && (types[top - 1] & DecoderFrame.MB_FIELD) != 0) {
+            inc++;
+        }
+        if (y > 0 && slices[top - 2 * mbWidth] == sliceNum && (types[top - 2 * mbWidth] & DecoderFrame.MB_FIELD) != 0) {
+            inc++;
+        }
+        return cabac.decision(70 + inc) != 0;
+    }
+
+    /**
+     * Returns the field decoding flag inferred for a macroblock pair that carries none: the
+     * flag of the pair to the left in the same slice, else of the pair above in the same slice,
+     * else frame decoding (ITU-T H.264 7.4.4).
+     *
+     * @param addr the address of the top macroblock of the pair
+     * @return whether the pair is inferred to be a field pair
+     */
+    private boolean inferPairField(int addr) {
+        var pair = addr >> 1;
+        var x = pair % mbWidth;
+        var y = pair / mbWidth;
+        var top = 2 * y * mbWidth + x;
+        var slices = pic.sliceNum;
+        if (x > 0 && slices[top - 1] == sliceNum) {
+            return (frame.mbType[top - 1] & DecoderFrame.MB_FIELD) != 0;
+        }
+        if (y > 0 && slices[top - 2 * mbWidth] == sliceNum) {
+            return (frame.mbType[top - 2 * mbWidth] & DecoderFrame.MB_FIELD) != 0;
+        }
+        return false;
+    }
+
+    /**
+     * The index of the top macroblock of the current macroblock pair of an MBAFF frame.
+     */
+    private int pairTop;
+
+    /**
+     * The row of the current macroblock pair of an MBAFF frame.
+     */
+    private int pairY;
+
+    /**
+     * Whether the left macroblock pair of the current MBAFF macroblock is available.
+     */
+    private boolean pairAvailA;
+
+    /**
+     * The index of the macroblock each 4x4 luma block row of the current macroblock takes its
+     * left neighbor from (ITU-T H.264 6.4.11.4), valid when {@link #availA}.
+     */
+    private final int[] leftMb = new int[4];
+
+    /**
+     * The 4x4 block row, within {@link #leftMb}, of the left neighbor of each 4x4 luma block row.
+     */
+    private final int[] leftRow = new int[4];
+
+    /**
+     * The index of the macroblock each 4x4 chroma block row of the current macroblock takes its
+     * left neighbor from (ITU-T H.264 6.4.11.5), valid when {@link #availA}.
+     */
+    private final int[] leftChromaMb = new int[2];
+
+    /**
+     * The 4x4 chroma block row, within {@link #leftChromaMb}, of the left neighbor of each
+     * chroma block row.
+     */
+    private final int[] leftChromaRow = new int[2];
+
+    /**
+     * The 4x4 block row of the upper-left neighbor block of the current macroblock in
+     * {@link #mbD}.
+     */
+    private int rowD = 3;
+
+    /**
+     * The index of the macroblock holding the upper-left neighbor of the left 4x4 block of each
+     * block row 1 to 3 of the current MBAFF macroblock (ITU-T H.264 6.4.11.7 with Table 6-4),
+     * indexed by block row; where the left pair is coded in the other of frame and field
+     * decoding, it is not the left neighbor of the block row above.
+     */
+    private final int[] leftDMb = new int[4];
+
+    /**
+     * The 4x4 block row, within {@link #leftDMb}, of each of those upper-left neighbors.
+     */
+    private final int[] leftDRow = new int[4];
+
+    /**
+     * The scaled reference index of each list of the upper-left neighbors of block rows 1 to 3
+     * of the current MBAFF macroblock, {@code -2} when unavailable, indexed
+     * {@code [list][row]}.
+     */
+    private final int[][] leftDRef = new int[2][4];
+
+    /**
+     * The scaled packed motion vectors of those upper-left neighbors, indexed like
+     * {@link #leftDRef}.
+     */
+    private final int[][] leftDMv = new int[2][4];
+
+    /**
+     * Sets up the addressing of a macroblock of an MBAFF frame and its geometry and neighbors
+     * for a field decoding flag of its pair.
+     *
+     * @param addr the macroblock address, {@code 2 * pair + bottom}
+     * @param filter the packed deblocking parameters of the slice
+     * @param field the field decoding flag of the pair, or the value inferred for it
+     */
+    private void beginMbaffMacroblock(int addr, int filter, boolean field) {
+        var pair = addr >> 1;
+        var bottom = addr & 1;
+        mbX = pair % mbWidth;
+        pairY = pair / mbWidth;
+        mbY = 2 * pairY + bottom;
+        mbAddr = mbY * mbWidth + mbX;
+        pairTop = 2 * pairY * mbWidth + mbX;
+        currAddr = addr;
+        pic.filter[mbAddr] = filter;
+        resetMacroblock();
+        setMbaffField(field);
+    }
+
+    /**
+     * Sets the current MBAFF macroblock's frame or field decoding: its sample geometry, scans,
+     * reference view and neighbors (ITU-T H.264 6.4.10 and 6.4.12.2).
+     *
+     * @param field whether the macroblock is a field macroblock
+     */
+    private void setMbaffField(boolean field) {
+        var bottom = mbY & 1;
+        fieldMb = field;
+        mbParity = field ? bottom : -1;
+        scan4 = field ? H264Tables.FIELD_4X4 : H264Tables.ZIGZAG_4X4;
+        scan8 = field ? H264Tables.FIELD_8X8 : H264Tables.ZIGZAG_8X8;
+        var frameLuma = frame.lumaStride;
+        var frameChroma = frame.chromaStride;
+        if (field) {
+            lumaStride = 2 * frameLuma;
+            chromaStride = 2 * frameChroma;
+            lumaBase = frame.lumaOrigin + (32 * pairY + bottom) * frameLuma + mbX * 16;
+            chromaBase = frame.chromaOrigin + (2 * chromaRows * pairY + bottom) * frameChroma + mbX * chromaColumns;
+            positionInter(mbX * 16, pairY * 16);
+        } else {
+            lumaStride = frameLuma;
+            chromaStride = frameChroma;
+            lumaBase = frame.lumaOrigin + mbY * 16 * frameLuma + mbX * 16;
+            chromaBase = frame.chromaOrigin + mbY * chromaRows * frameChroma + mbX * chromaColumns;
+            positionInter(mbX * 16, mbY * 16);
+        }
+        var wantedView = field ? 1 + bottom : 0;
+        if (!iSlice && wantedView != view) {
+            selectView(wantedView);
+        }
+        computeMbaffNeighbors(field, bottom);
+    }
+
+    /**
+     * Derives the neighbors of the current MBAFF macroblock from Table 6-4 of ITU-T H.264: the
+     * macroblock-level neighbors A, B, C and D, the macroblock and block row of the left neighbor
+     * of every 4x4 luma and chroma block row, and the block row of the upper-left neighbor.
+     *
+     * @param field whether the current macroblock is a field macroblock
+     * @param bottom 1 for the bottom macroblock of the pair, 0 for the top one
+     */
+    private void computeMbaffNeighbors(boolean field, int bottom) {
+        var width = mbWidth;
+        var top = pairTop;
+        var slices = pic.sliceNum;
+        var types = frame.mbType;
+        var slice = sliceNum;
+        var leftTop = top - 1;
+        var leftBottom = top - 1 + width;
+        var aboveTop = top - 2 * width;
+        var aboveBottom = top - width;
+        pairAvailA = mbX > 0 && slices[leftTop] == slice;
+        var pairAvailB = pairY > 0 && slices[aboveTop] == slice;
+        var pairAvailC = pairY > 0 && mbX + 1 < width && slices[aboveTop + 1] == slice;
+        var pairAvailD = pairY > 0 && mbX > 0 && slices[aboveTop - 1] == slice;
+        var leftField = pairAvailA && (types[leftTop] & DecoderFrame.MB_FIELD) != 0;
+        availA = pairAvailA;
+        if (!field) {
+            if (bottom == 0) {
+                mbA = leftTop;
+                mbB = aboveBottom;
+                availB = pairAvailB;
+                mbC = aboveBottom + 1;
+                availC = pairAvailC;
+                mbD = aboveBottom - 1;
+                availD = pairAvailD;
+                rowD = 3;
+                if (leftField) {
+                    setLeftRows(leftTop, 0, leftTop, 0, leftTop, 1, leftTop, 1);
+                    setLeftChroma(leftTop, 0, leftTop, 0);
+                    setLeftD(leftBottom, 0, leftBottom, 0, leftBottom, 1);
+                } else {
+                    setLeftRows(leftTop, 0, leftTop, 1, leftTop, 2, leftTop, 3);
+                    setLeftChroma(leftTop, 0, leftTop, 1);
+                    setLeftD(leftTop, 0, leftTop, 1, leftTop, 2);
+                }
+            } else {
+                mbA = leftField ? leftTop : leftBottom;
+                mbB = top;
+                availB = true;
+                availC = false;
+                mbD = leftField ? leftBottom : leftTop;
+                availD = pairAvailA;
+                rowD = leftField ? 1 : 3;
+                if (leftField) {
+                    setLeftRows(leftTop, 2, leftTop, 2, leftTop, 3, leftTop, 3);
+                    setLeftChroma(leftTop, 1, leftTop, 1);
+                    setLeftD(leftBottom, 2, leftBottom, 2, leftBottom, 3);
+                } else {
+                    setLeftRows(leftBottom, 0, leftBottom, 1, leftBottom, 2, leftBottom, 3);
+                    setLeftChroma(leftBottom, 0, leftBottom, 1);
+                    setLeftD(leftBottom, 0, leftBottom, 1, leftBottom, 2);
+                }
+            }
+        } else {
+            var aboveField = pairAvailB && (types[aboveTop] & DecoderFrame.MB_FIELD) != 0;
+            var aboveRightField = pairAvailC && (types[aboveTop + 1] & DecoderFrame.MB_FIELD) != 0;
+            var aboveLeftField = pairAvailD && (types[aboveTop - 1] & DecoderFrame.MB_FIELD) != 0;
+            availB = pairAvailB;
+            availC = pairAvailC;
+            availD = pairAvailD;
+            rowD = 3;
+            if (bottom == 0) {
+                mbB = aboveField ? aboveTop : aboveBottom;
+                mbC = aboveRightField ? aboveTop + 1 : aboveBottom + 1;
+                mbD = aboveLeftField ? aboveTop - 1 : aboveBottom - 1;
+            } else {
+                mbB = aboveBottom;
+                mbC = aboveBottom + 1;
+                mbD = aboveBottom - 1;
+            }
+            if (leftField) {
+                var left = bottom == 0 ? leftTop : leftBottom;
+                mbA = left;
+                setLeftRows(left, 0, left, 1, left, 2, left, 3);
+                setLeftChroma(left, 0, left, 1);
+                setLeftD(left, 0, left, 1, left, 2);
+            } else {
+                mbA = leftTop;
+                setLeftRows(leftTop, 0, leftTop, 2, leftBottom, 0, leftBottom, 2);
+                setLeftChroma(leftTop, 0, leftBottom, 0);
+                setLeftD(leftTop, 1, leftTop, 3, leftBottom, 1);
+            }
+        }
+    }
+
+    /**
+     * Sets the left neighbors of the four 4x4 luma block rows.
+     *
+     * @param mb0 the macroblock of row 0
+     * @param row0 the block row of row 0 in it
+     * @param mb1 the macroblock of row 1
+     * @param row1 the block row of row 1 in it
+     * @param mb2 the macroblock of row 2
+     * @param row2 the block row of row 2 in it
+     * @param mb3 the macroblock of row 3
+     * @param row3 the block row of row 3 in it
+     */
+    private void setLeftRows(int mb0, int row0, int mb1, int row1, int mb2, int row2, int mb3, int row3) {
+        leftMb[0] = mb0;
+        leftRow[0] = row0;
+        leftMb[1] = mb1;
+        leftRow[1] = row1;
+        leftMb[2] = mb2;
+        leftRow[2] = row2;
+        leftMb[3] = mb3;
+        leftRow[3] = row3;
+    }
+
+    /**
+     * Sets the upper-left neighbors of the left 4x4 blocks of block rows 1 to 3.
+     *
+     * @param mb1 the macroblock of row 1
+     * @param row1 the block row of row 1 in it
+     * @param mb2 the macroblock of row 2
+     * @param row2 the block row of row 2 in it
+     * @param mb3 the macroblock of row 3
+     * @param row3 the block row of row 3 in it
+     */
+    private void setLeftD(int mb1, int row1, int mb2, int row2, int mb3, int row3) {
+        leftDMb[1] = mb1;
+        leftDRow[1] = row1;
+        leftDMb[2] = mb2;
+        leftDRow[2] = row2;
+        leftDMb[3] = mb3;
+        leftDRow[3] = row3;
+    }
+
+    /**
+     * Sets the left neighbors of the two 4x4 chroma block rows.
+     *
+     * @param mb0 the macroblock of row 0
+     * @param row0 the block row of row 0 in it
+     * @param mb1 the macroblock of row 1
+     * @param row1 the block row of row 1 in it
+     */
+    private void setLeftChroma(int mb0, int row0, int mb1, int row1) {
+        leftChromaMb[0] = mb0;
+        leftChromaRow[0] = row0;
+        leftChromaMb[1] = mb1;
+        leftChromaRow[1] = row1;
     }
 
     /**
@@ -760,7 +1803,7 @@ final class SliceDecoder {
                 }
             }
         }
-        for (var list = 0; list < 2; list++) {
+        for (var list = 0; list < 6; list++) {
             var weights = pps.scaling8x8[list];
             for (var m = 0; m < 6; m++) {
                 var target = levelScale8[list][m];
@@ -772,7 +1815,8 @@ final class SliceDecoder {
     }
 
     /**
-     * Selects the weighted prediction mode of the slice and computes implicit weights.
+     * Selects the weighted prediction mode of the slice and computes the implicit weights of
+     * every view (ITU-T H.264 8.4.3).
      */
     private void prepareWeights() {
         weightMode = 0;
@@ -784,54 +1828,66 @@ final class SliceDecoder {
             return;
         }
         weightMode = 2;
-        var currentPoc = task.currentPoc;
-        var pocs0 = task.refPoc[0];
-        var pocs1 = task.refPoc[1];
-        var marks0 = task.refMarking[0];
-        var marks1 = task.refMarking[1];
-        for (var i = 0; i < refCount[0]; i++) {
-            for (var j = 0; j < refCount[1]; j++) {
-                var weight1 = 32;
-                var td = Math.clamp(pocs1[j] - pocs0[i], -128, 127);
-                if (td != 0 && marks0[i] != DecoderFrame.LONG_TERM && marks1[j] != DecoderFrame.LONG_TERM) {
-                    var tb = Math.clamp(currentPoc - pocs0[i], -128, 127);
-                    var tx = (16384 + Math.abs(td / 2)) / td;
-                    var scale = Math.clamp((tb * tx + 32) >> 6, -1024, 1023);
-                    weight1 = scale >> 2;
-                    if (weight1 < -64 || weight1 > 128) {
-                        weight1 = 32;
+        var views = mbaff ? 3 : 1;
+        for (var v = 0; v < views; v++) {
+            var currentPoc = viewCurrentPoc[v];
+            var pocs0 = viewPoc[v][0];
+            var pocs1 = viewPoc[v][1];
+            var marks0 = viewMarking[v][0];
+            var marks1 = viewMarking[v][1];
+            var weights = viewImplicit[v];
+            var stride = v == 0 ? 32 : 64;
+            var count0 = refCount[0] << (v == 0 ? 0 : 1);
+            var count1 = refCount[1] << (v == 0 ? 0 : 1);
+            for (var i = 0; i < count0; i++) {
+                for (var j = 0; j < count1; j++) {
+                    var weight1 = 32;
+                    var td = Math.clamp(pocs1[j] - pocs0[i], -128, 127);
+                    if (td != 0 && marks0[i] != DecoderFrame.LONG_TERM && marks1[j] != DecoderFrame.LONG_TERM) {
+                        var tb = Math.clamp(currentPoc - pocs0[i], -128, 127);
+                        var tx = (16384 + Math.abs(td / 2)) / td;
+                        var scale = Math.clamp((tb * tx + 32) >> 6, -1024, 1023);
+                        weight1 = scale >> 2;
+                        if (weight1 < -64 || weight1 > 128) {
+                            weight1 = 32;
+                        }
                     }
+                    weights[i * stride + j] = 64 - weight1;
                 }
-                implicitWeight[i * 32 + j] = 64 - weight1;
             }
         }
     }
 
     /**
      * Prepares the direct prediction state of a B slice: the co-located picture and the temporal
-     * scale factors.
+     * scale factors of every view (ITU-T H.264 8.4.1.2.3).
      */
     private void prepareDirect() {
         colocated = null;
         if (!bSlice) {
             return;
         }
-        colocated = refList[1][0];
+        colocated = refList[1][0].plane(colorPlane);
         colocatedShortTerm = task.refMarking[1][0] == DecoderFrame.SHORT_TERM;
         if (header.directSpatialMvPred) {
             return;
         }
-        var currentPoc = task.currentPoc;
-        var poc1 = task.refPoc[1][0];
-        for (var i = 0; i < refCount[0]; i++) {
-            var poc0 = task.refPoc[0][i];
-            var td = Math.clamp(poc1 - poc0, -128, 127);
-            if (td == 0 || task.refMarking[0][i] == DecoderFrame.LONG_TERM) {
-                directScale[i] = 9999;
-            } else {
-                var tb = Math.clamp(currentPoc - poc0, -128, 127);
-                var tx = (16384 + Math.abs(td / 2)) / td;
-                directScale[i] = Math.clamp((tb * tx + 32) >> 6, -1024, 1023);
+        var views = mbaff ? 3 : 1;
+        for (var v = 0; v < views; v++) {
+            var currentPoc = viewCurrentPoc[v];
+            var poc1 = viewPoc[v][1][0];
+            var scales = viewDirectScale[v];
+            var count = refCount[0] << (v == 0 ? 0 : 1);
+            for (var i = 0; i < count; i++) {
+                var poc0 = viewPoc[v][0][i];
+                var td = Math.clamp(poc1 - poc0, -128, 127);
+                if (td == 0 || viewMarking[v][0][i] == DecoderFrame.LONG_TERM) {
+                    scales[i] = 9999;
+                } else {
+                    var tb = Math.clamp(currentPoc - poc0, -128, 127);
+                    var tx = (16384 + Math.abs(td / 2)) / td;
+                    scales[i] = Math.clamp((tb * tx + 32) >> 6, -1024, 1023);
+                }
             }
         }
     }
@@ -844,10 +1900,10 @@ final class SliceDecoder {
     private boolean decodeSkipFlag() {
         var ctx = 0;
         var types = frame.mbType;
-        if (availA && (types[mbAddr - 1] & DecoderFrame.MB_SKIP) == 0) {
+        if (availA && (types[mbA] & DecoderFrame.MB_SKIP) == 0) {
             ctx++;
         }
-        if (availB && (types[mbAddr - mbWidth] & DecoderFrame.MB_SKIP) == 0) {
+        if (availB && (types[mbB] & DecoderFrame.MB_SKIP) == 0) {
             ctx++;
         }
         return cabac.decision((bSlice ? 24 : 11) + ctx) != 0;
@@ -872,8 +1928,11 @@ final class SliceDecoder {
             derivePSkip();
         }
         storeMotion();
-        inter.predictMacroblock(this);
+        predictInter();
         storeSkipState();
+        if (spSlice) {
+            reconstructSwitching();
+        }
     }
 
     /**
@@ -890,7 +1949,7 @@ final class SliceDecoder {
     }
 
     /**
-     * Clears the 24 coefficient counts of a macroblock with three 64-bit stores.
+     * Clears the 48 coefficient counts of a macroblock with six 64-bit stores.
      *
      * @param addr the macroblock address
      */
@@ -899,7 +1958,20 @@ final class SliceDecoder {
         var at = addr * PictureState.NNZ_STRIDE;
         LONG_LE.set(nnz, at, 0L);
         LONG_LE.set(nnz, at + 8, 0L);
-        LONG_LE.set(nnz, at + 16, 0L);
+        clearChromaNnz(at);
+    }
+
+    /**
+     * Clears the chroma coefficient counts of the current macroblock.
+     *
+     * @param base the index of the macroblock in {@link PictureState#nnz}
+     */
+    private void clearChromaNnz(int base) {
+        var nnz = pic.nnz;
+        LONG_LE.set(nnz, base + 16, 0L);
+        LONG_LE.set(nnz, base + 24, 0L);
+        LONG_LE.set(nnz, base + 32, 0L);
+        LONG_LE.set(nnz, base + 40, 0L);
     }
 
     /**
@@ -907,20 +1979,23 @@ final class SliceDecoder {
      * filter.
      */
     private void storeChromaQp() {
-        pic.qpCb[mbAddr] = (byte) chromaQp(qp, pps.chromaQpIndexOffset);
-        pic.qpCr[mbAddr] = (byte) chromaQp(qp, pps.secondChromaQpIndexOffset);
+        pic.qpCb[mbAddr] = (byte) chromaQp(qp, pps.chromaQpIndexOffset, qpBdOffsetC);
+        pic.qpCr[mbAddr] = (byte) chromaQp(qp, pps.secondChromaQpIndexOffset, qpBdOffsetC);
     }
 
     /**
      * Returns {@code QPc} for a luma quantization parameter and chroma offset (ITU-T H.264
-     * 8.5.8, 8-bit video).
+     * 8.5.8): {@code qPI = Clip3(-QpBdOffsetC, 51, QPY + offset)} mapped through Table 8-15, which
+     * keeps every value below 30.
      *
-     * @param lumaQp the luma quantization parameter
+     * @param lumaQp the luma quantization parameter {@code QPY}, from {@code -QpBdOffsetY} to 51
      * @param offset the chroma quantization parameter offset
-     * @return the chroma quantization parameter
+     * @param qpBdOffsetC the chroma range offset {@code QpBdOffsetC}
+     * @return the chroma quantization parameter {@code QPC}, from {@code -qpBdOffsetC} to 39
      */
-    static int chromaQp(int lumaQp, int offset) {
-        return H264Tables.CHROMA_QP[Math.clamp(lumaQp + offset, 0, 51)];
+    static int chromaQp(int lumaQp, int offset, int qpBdOffsetC) {
+        var index = Math.clamp(lumaQp + offset, -qpBdOffsetC, 51);
+        return index < 0 ? index : H264Tables.CHROMA_QP[index];
     }
 
     /**
@@ -931,6 +2006,13 @@ final class SliceDecoder {
         int intraType;
         if (iSlice) {
             intraType = type;
+            if (siSlice) {
+                if (type == 0) {
+                    decodeIntraMacroblock(0, true);
+                    return;
+                }
+                intraType = type - 1;
+            }
         } else if (bSlice) {
             if (type > 48) {
                 throw new MediaException.Malformed("mb_type " + type + " out of range");
@@ -946,7 +2028,7 @@ final class SliceDecoder {
             if (intraType > 25) {
                 throw new MediaException.Malformed("mb_type " + type + " out of range");
             }
-            decodeIntraMacroblock(intraType);
+            decodeIntraMacroblock(intraType, false);
             return;
         }
         decodeInterMacroblock(type);
@@ -972,8 +2054,10 @@ final class SliceDecoder {
      * Decodes an intra macroblock.
      *
      * @param type the I slice {@code mb_type}, 0 to 25
+     * @param si whether the macroblock is the SI macroblock of an SI slice, which {@code type} 0
+     * then stands for
      */
-    private void decodeIntraMacroblock(int type) {
+    private void decodeIntraMacroblock(int type, boolean si) {
         var addr = mbAddr;
         if (type == 25) {
             decodePcm();
@@ -981,10 +2065,13 @@ final class SliceDecoder {
         }
         var transform8x8 = false;
         if (type == 0) {
-            if (pps.transform8x8Mode) {
+            if (!si && pps.transform8x8Mode) {
                 transform8x8 = cabacMode ? decodeTransformFlag() : bits.readFlag();
             }
             mbFlags = DecoderFrame.MB_INTRA | (transform8x8 ? DecoderFrame.MB_I8X8 | DecoderFrame.MB_T8X8 : DecoderFrame.MB_I4X4);
+            if (si) {
+                mbFlags |= DecoderFrame.MB_SI;
+            }
             fillModeCache();
             if (transform8x8) {
                 for (var b8 = 0; b8 < 4; b8++) {
@@ -1024,10 +2111,10 @@ final class SliceDecoder {
         } else {
             mbFlags = DecoderFrame.MB_INTRA | DecoderFrame.MB_I16X16;
             intra16Mode = (type - 1) & 3;
-            var chromaCbp = ((type - 1) >> 2) % 3;
+            var chromaCbp = chroma444 ? 0 : ((type - 1) >> 2) % 3;
             cbp = (type >= 13 ? 15 : 0) | (chromaCbp << 4);
         }
-        if (hasChroma) {
+        if (hasChroma && !chroma444) {
             chromaPredMode = cabacMode ? decodeChromaPredModeCabac() : bits.readUe();
             if (chromaPredMode > 3) {
                 throw new MediaException.Malformed("intra_chroma_pred_mode out of range");
@@ -1038,9 +2125,11 @@ final class SliceDecoder {
         if (type == 0) {
             cbp = decodeCbp(true);
         }
+        rawLevels = si;
         decodeQpDeltaAndResidual();
         storeIntraState();
         reconstructIntra();
+        rawLevels = false;
     }
 
     /**
@@ -1077,9 +2166,19 @@ final class SliceDecoder {
         var constrained = pps.constrainedIntraPred;
         var types = frame.mbType;
         var modes = pic.intraModes;
-        if (availA && (!constrained || (types[mbAddr - 1] & DecoderFrame.MB_INTRA) != 0)) {
-            var base = (mbAddr - 1) * 16;
-            var coded = (types[mbAddr - 1] & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) != 0;
+        if (mbaff) {
+            for (var y = 0; y < 4; y++) {
+                var n = leftMb[y];
+                if (availA && (!constrained || (types[n] & DecoderFrame.MB_INTRA) != 0)) {
+                    var coded = (types[n] & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) != 0;
+                    cache[8 + y * 8] = coded ? modes[n * 16 + leftRow[y] * 4 + 3] : 2;
+                } else {
+                    cache[8 + y * 8] = -1;
+                }
+            }
+        } else if (availA && (!constrained || (types[mbA] & DecoderFrame.MB_INTRA) != 0)) {
+            var base = mbA * 16;
+            var coded = (types[mbA] & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) != 0;
             for (var y = 0; y < 4; y++) {
                 cache[8 + y * 8] = coded ? modes[base + y * 4 + 3] : 2;
             }
@@ -1088,9 +2187,9 @@ final class SliceDecoder {
                 cache[8 + y * 8] = -1;
             }
         }
-        if (availB && (!constrained || (types[mbAddr - mbWidth] & DecoderFrame.MB_INTRA) != 0)) {
-            var base = (mbAddr - mbWidth) * 16 + 12;
-            var coded = (types[mbAddr - mbWidth] & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) != 0;
+        if (availB && (!constrained || (types[mbB] & DecoderFrame.MB_INTRA) != 0)) {
+            var base = mbB * 16 + 12;
+            var coded = (types[mbB] & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) != 0;
             for (var x = 0; x < 4; x++) {
                 cache[1 + x] = coded ? modes[base + x] : 2;
             }
@@ -1134,45 +2233,34 @@ final class SliceDecoder {
      */
     private void decodePcm() {
         mbFlags = DecoderFrame.MB_INTRA | DecoderFrame.MB_PCM;
-        byte[] data;
-        int position;
-        if (cabacMode) {
-            data = bits.data();
-            position = cabac.alignedBytePosition();
+        if (partitioned) {
+            decodePartitionedPcm();
         } else {
-            bits.alignToByte();
-            data = bits.data();
-            position = bits.bytePosition();
-        }
-        var needed = 256 + (hasChroma ? 128 : 0);
-        if (position + needed > bits.end()) {
-            throw new MediaException.Malformed("truncated I_PCM macroblock");
-        }
-        var luma = frame.lumaOrigin + mbY * 16 * lumaStride + mbX * 16;
-        for (var y = 0; y < 16; y++) {
-            System.arraycopy(data, position + y * 16, lumaPlane, luma + y * lumaStride, 16);
-        }
-        position += 256;
-        if (hasChroma) {
-            var chroma = frame.chromaOrigin + mbY * 8 * chromaStride + mbX * 8;
-            for (var y = 0; y < 8; y++) {
-                System.arraycopy(data, position + y * 8, cbPlane, chroma + y * chromaStride, 8);
+            byte[] data;
+            int position;
+            if (cabacMode) {
+                data = bits.data();
+                position = cabac.alignedBytePosition();
+            } else {
+                bits.alignToByte();
+                data = bits.data();
+                position = bits.bytePosition();
             }
-            position += 64;
-            for (var y = 0; y < 8; y++) {
-                System.arraycopy(data, position + y * 8, crPlane, chroma + y * chromaStride, 8);
+            if (wide) {
+                position = readWidePcm(data, position, bits.end());
+            } else {
+                position = readPcm(data, position, bits.end());
             }
-            position += 64;
-        }
-        if (cabacMode) {
-            cabac.init(data, position, bits.end());
-        } else {
-            bits.seekToByte(position);
+            if (cabacMode) {
+                cabac.init(data, position, bits.end());
+            } else {
+                bits.seekToByte(position);
+            }
         }
         var addr = mbAddr;
         pic.qp[addr] = 0;
-        pic.qpCb[addr] = (byte) chromaQp(0, pps.chromaQpIndexOffset);
-        pic.qpCr[addr] = (byte) chromaQp(0, pps.secondChromaQpIndexOffset);
+        pic.qpCb[addr] = (byte) chromaQp(0, pps.chromaQpIndexOffset, qpBdOffsetC);
+        pic.qpCr[addr] = (byte) chromaQp(0, pps.secondChromaQpIndexOffset, qpBdOffsetC);
         Arrays.fill(pic.nnz, addr * PictureState.NNZ_STRIDE, (addr + 1) * PictureState.NNZ_STRIDE,
                 (byte) (cabacMode ? 1 : 16));
         pic.nonZero[addr] = 0xFFFF;
@@ -1181,6 +2269,169 @@ final class SliceDecoder {
         lastQpDeltaNonZero = false;
         chromaPredMode = 0;
         storeIntraState();
+    }
+
+    /**
+     * Reads the samples of an I_PCM macroblock of a partitioned slice from partition B, which
+     * holds them (ITU-T H.264 7.3.5, category 3). Without a usable partition B the macroblock is
+     * filled with mid-gray.
+     */
+    private void decodePartitionedPcm() {
+        if (partitionBUsable) {
+            var reader = partitionBBits;
+            reader.alignToByte();
+            try {
+                var position = wide ? readWidePcm(reader.data(), reader.bytePosition(), reader.end())
+                        : readPcm(reader.data(), reader.bytePosition(), reader.end());
+                reader.seekToByte(position);
+                return;
+            } catch (MediaException.Malformed failure) {
+                losePartition(3, failure);
+            }
+        } else {
+            residualLost = true;
+        }
+        fillGray();
+    }
+
+    /**
+     * Fills the current macroblock with mid-gray, {@code 1 << (d - 1)} at bit depth {@code d}.
+     */
+    private void fillGray() {
+        var lumaGray = (lumaMax + 1) >> 1;
+        var chromaGray = (chromaMax + 1) >> 1;
+        for (var y = 0; y < 16; y++) {
+            var row = lumaBase + y * lumaStride;
+            if (wide) {
+                Arrays.fill(lumaPlane16, row, row + 16, (short) lumaGray);
+            } else {
+                Arrays.fill(lumaPlane, row, row + 16, (byte) lumaGray);
+            }
+        }
+        if (!hasChroma) {
+            return;
+        }
+        for (var y = 0; y < chromaRows; y++) {
+            var row = chromaBase + y * chromaStride;
+            if (wide) {
+                Arrays.fill(cbPlane16, row, row + chromaColumns, (short) chromaGray);
+                Arrays.fill(crPlane16, row, row + chromaColumns, (short) chromaGray);
+            } else {
+                Arrays.fill(cbPlane, row, row + chromaColumns, (byte) chromaGray);
+                Arrays.fill(crPlane, row, row + chromaColumns, (byte) chromaGray);
+            }
+        }
+    }
+
+    /**
+     * Copies the 8-bit samples of an I_PCM macroblock into the picture.
+     *
+     * @param data the slice data
+     * @param position the index of the first {@code pcm_sample_luma} byte
+     * @param end the index after the last byte of the slice data
+     * @return the index of the byte after the last sample
+     * @throws MediaException.Malformed if the samples run past the slice data
+     */
+    private int readPcm(byte[] data, int position, int end) {
+        var rows = chromaRows;
+        var columns = chromaColumns;
+        var needed = 256 + (hasChroma ? 2 * columns * rows : 0);
+        if (position + needed > end) {
+            throw new MediaException.Malformed("truncated I_PCM macroblock");
+        }
+        var luma = lumaBase;
+        for (var y = 0; y < 16; y++) {
+            System.arraycopy(data, position + y * 16, lumaPlane, luma + y * lumaStride, 16);
+        }
+        position += 256;
+        if (hasChroma) {
+            var chroma = chromaBase;
+            for (var y = 0; y < rows; y++) {
+                System.arraycopy(data, position + y * columns, cbPlane, chroma + y * chromaStride, columns);
+            }
+            position += columns * rows;
+            for (var y = 0; y < rows; y++) {
+                System.arraycopy(data, position + y * columns, crPlane, chroma + y * chromaStride, columns);
+            }
+            position += columns * rows;
+        }
+        return position;
+    }
+
+    /**
+     * Reads the samples of an I_PCM macroblock of a picture deeper than 8 bits into the picture:
+     * {@code BitDepthY} bits per luma sample, then {@code BitDepthC} bits per chroma sample, most
+     * significant bit first.
+     *
+     * @param data the slice data
+     * @param position the index of the first {@code pcm_sample_luma} byte
+     * @param end the index after the last byte of the slice data
+     * @return the index of the byte after the last sample
+     * @throws MediaException.Malformed if the samples run past the slice data
+     */
+    private int readWidePcm(byte[] data, int position, int end) {
+        var lumaDepth = frame.bitDepthLuma;
+        var chromaDepth = frame.bitDepthChroma;
+        var needed = 32 * lumaDepth + (hasChroma ? chromaColumns * chromaRows * chromaDepth / 4 : 0);
+        if (position + needed > end) {
+            throw new MediaException.Malformed("truncated I_PCM macroblock");
+        }
+        pcmPosition = position;
+        pcmBits = 0;
+        pcmCount = 0;
+        readPcmBlock(data, lumaPlane16, lumaBase, lumaStride, 16, 16, lumaDepth);
+        if (hasChroma) {
+            readPcmBlock(data, cbPlane16, chromaBase, chromaStride, chromaColumns, chromaRows, chromaDepth);
+            readPcmBlock(data, crPlane16, chromaBase, chromaStride, chromaColumns, chromaRows, chromaDepth);
+        }
+        return position + needed;
+    }
+
+    /**
+     * The index of the next byte of the I_PCM samples being read.
+     */
+    private int pcmPosition;
+
+    /**
+     * The bits read ahead of the I_PCM sample being read, in the low {@link #pcmCount} bits.
+     */
+    private long pcmBits;
+
+    /**
+     * The number of bits read ahead.
+     */
+    private int pcmCount;
+
+    /**
+     * Reads one block of I_PCM samples of a picture deeper than 8 bits.
+     *
+     * @param data the slice data
+     * @param plane the plane receiving the samples
+     * @param offset the index of the block's top-left sample
+     * @param stride the row stride
+     * @param width the block width, 16 or 8
+     * @param height the block height, 16 or 8
+     * @param depth the bits per sample
+     */
+    private void readPcmBlock(byte[] data, short[] plane, int offset, int stride, int width, int height, int depth) {
+        var mask = (1 << depth) - 1;
+        var position = pcmPosition;
+        var buffer = pcmBits;
+        var count = pcmCount;
+        for (var y = 0; y < height; y++) {
+            var row = offset + y * stride;
+            for (var x = 0; x < width; x++) {
+                while (count < depth) {
+                    buffer = (buffer << 8) | (data[position++] & 0xFF);
+                    count += 8;
+                }
+                count -= depth;
+                plane[row + x] = (short) ((int) (buffer >>> count) & mask);
+            }
+        }
+        pcmPosition = position;
+        pcmBits = buffer;
+        pcmCount = count;
     }
 
     /**
@@ -1194,7 +2445,7 @@ final class SliceDecoder {
             return decodeCbpCabac();
         }
         var code = bits.readUe();
-        if (hasChroma) {
+        if (hasChroma && !chroma444) {
             if (code > 47) {
                 throw new MediaException.Malformed("coded_block_pattern out of range");
             }
@@ -1213,24 +2464,102 @@ final class SliceDecoder {
         var intra16 = (mbFlags & DecoderFrame.MB_I16X16) != 0;
         if (cbp == 0 && !intra16) {
             lastQpDeltaNonZero = false;
+            bypass = transformBypass && qp == -qpBdOffsetY;
             pic.qp[mbAddr] = (byte) qp;
             storeChromaQp();
             clearResidualState();
             return;
         }
         var delta = cabacMode ? decodeQpDeltaCabac() : bits.readSe();
-        if (delta < -26 || delta > 25) {
+        var offset = qpBdOffsetY;
+        if (delta < -(26 + offset / 2) || delta > 25 + offset / 2) {
             throw new MediaException.Malformed("mb_qp_delta " + delta + " out of range");
         }
         lastQpDeltaNonZero = delta != 0;
-        qp = (qp + delta + 52) % 52;
+        qp = (qp + delta + 52 + 2 * offset) % (52 + offset) - offset;
+        bypass = transformBypass && qp == -offset;
         pic.qp[mbAddr] = (byte) qp;
         storeChromaQp();
         if (cabacMode) {
             residualCabac();
+        } else if (partitioned) {
+            residualFromPartition();
         } else {
             residualCavlc();
         }
+    }
+
+    /**
+     * Parses the residual of the current macroblock of a partitioned slice from the partition
+     * holding it: B for I and SI macroblocks, C for P and B macroblocks (ITU-T H.264 7.4.2.9).
+     *
+     * <p>When that partition is absent or has failed, the macroblock is reconstructed without
+     * residual; a partition failing on this macroblock is recorded and not read again.
+     */
+    private void residualFromPartition() {
+        var intra = (mbFlags & DecoderFrame.MB_INTRA) != 0;
+        if (!(intra ? partitionBUsable : partitionCUsable)) {
+            residualLost = true;
+            dropResidual();
+            return;
+        }
+        var reader = intra ? partitionBBits : partitionCBits;
+        residualBits = reader;
+        ncConstrained = intra && pps.constrainedIntraPred;
+        try {
+            residualCavlc();
+            if (reader.overrun()) {
+                throw new MediaException.Malformed("truncated slice data partition");
+            }
+        } catch (MediaException.Malformed failure) {
+            losePartition(intra ? 3 : 4, failure);
+            dropResidual();
+        } finally {
+            residualBits = bits;
+            ncConstrained = false;
+        }
+    }
+
+    /**
+     * Stops reading a partition B or C that failed and records the failure.
+     *
+     * @param category 3 for partition B, 4 for partition C
+     * @param failure the failure, kept when it is the first of the slice
+     */
+    private void losePartition(int category, MediaException.Malformed failure) {
+        if (category == 3) {
+            partitionBUsable = false;
+        } else {
+            partitionCUsable = false;
+        }
+        residualLost = true;
+        if (partitionFailure == null) {
+            partitionFailure = failure;
+        }
+    }
+
+    /**
+     * Discards the residual of the current macroblock, parsed in part or not at all, leaving it
+     * without coefficients.
+     */
+    private void dropResidual() {
+        Arrays.fill(lumaCoeffs, 0);
+        Arrays.fill(cbCoeffs, 0);
+        Arrays.fill(crCoeffs, 0);
+        Arrays.fill(lumaDc, 0);
+        Arrays.fill(chromaDc, 0);
+        Arrays.fill(cbDc, 0);
+        Arrays.fill(crDc, 0);
+        coded[0] = 0;
+        coded[1] = 0;
+        coded[2] = 0;
+        dcOnly[0] = 0;
+        dcOnly[1] = 0;
+        dcOnly[2] = 0;
+        chromaCoded = 0;
+        chromaDcCoded = 0;
+        chromaResidual = false;
+        clearResidualState();
     }
 
     /**
@@ -1244,12 +2573,40 @@ final class SliceDecoder {
     }
 
     /**
-     * Returns the luma list index (0 intra, 3 inter) of the current macroblock's scaling lists.
+     * Returns the 4x4 scaling list index of a color component of the current macroblock:
+     * {@code iYCbCr + (inter ? 3 : 0)} (ITU-T H.264 8.5.9).
      *
-     * @return the 4x4 scaling list index of luma
+     * @param comp the component coded like luma: 0 luma, 1 Cb, 2 Cr
+     * @return the index into {@link #levelScale4}
      */
-    private int lumaList() {
-        return (mbFlags & DecoderFrame.MB_INTRA) != 0 ? 0 : 3;
+    private int list4(int comp) {
+        return ((mbFlags & DecoderFrame.MB_INTRA) != 0 ? 0 : 3) + comp + colorPlane;
+    }
+
+    /**
+     * Returns the 8x8 scaling list index of a color component of the current macroblock:
+     * {@code 2 * iYCbCr + (inter ? 1 : 0)} (ITU-T H.264 8.5.9).
+     *
+     * @param comp the component coded like luma: 0 luma, 1 Cb, 2 Cr
+     * @return the index into {@link #levelScale8}
+     */
+    private int list8(int comp) {
+        return 2 * (comp + colorPlane) + ((mbFlags & DecoderFrame.MB_INTRA) != 0 ? 0 : 1);
+    }
+
+    /**
+     * Returns the quantization parameter of the residual of a color component of the current
+     * macroblock: {@code QP'Y} for luma, {@code QP'C} for the Cb and Cr of 4:4:4.
+     *
+     * @param comp the component coded like luma: 0 luma, 1 Cb, 2 Cr
+     * @return the quantization parameter, from 0
+     */
+    private int componentQp(int comp) {
+        return switch (comp) {
+            case 0 -> qp + qpBdOffsetY;
+            case 1 -> pic.qpCb[mbAddr] + qpBdOffsetC;
+            default -> pic.qpCr[mbAddr] + qpBdOffsetC;
+        };
     }
 
     /**
@@ -1265,29 +2622,66 @@ final class SliceDecoder {
     }
 
     /**
+     * Returns the scale of transform-bypass coefficient levels.
+     *
+     * @return 64 ones
+     */
+    private static int[] unitScale() {
+        var scale = new int[64];
+        Arrays.fill(scale, 1);
+        return scale;
+    }
+
+    /**
      * Parses the residual of the current macroblock with CAVLC (ITU-T H.264 7.3.5.3).
      */
     private void residualCavlc() {
         var addr = mbAddr;
-        var nnz = pic.nnz;
         var base = addr * PictureState.NNZ_STRIDE;
-        fillNnzCacheCavlc();
+        pic.nonZero[addr] = residualPlaneCavlc(0, base);
+        if (chroma444) {
+            residualPlaneCavlc(1, base);
+            residualPlaneCavlc(2, base);
+        } else if (hasChroma) {
+            residualChromaCavlc(base);
+        } else {
+            clearChromaNnz(base);
+        }
+        pic.cbp[addr] = cbp;
+    }
+
+    /**
+     * Parses the residual of one color component coded like luma with CAVLC
+     * ({@code residual_luma}, ITU-T H.264 7.3.5.3.1): luma, or the Cb or Cr of a 4:4:4
+     * macroblock.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param base the index of the macroblock in {@link PictureState#nnz}
+     * @return the 4x4 blocks of the component with coefficients, one bit per raster index
+     */
+    private int residualPlaneCavlc(int comp, int base) {
+        var nnz = pic.nnz;
+        fillNnzCacheCavlc(comp);
         var intra16 = (mbFlags & DecoderFrame.MB_I16X16) != 0;
         var transform8x8 = (mbFlags & DecoderFrame.MB_T8X8) != 0;
-        var qpDiv = qp / 6;
-        var qpMod = qp % 6;
-        var list = lumaList();
-        var dequant4 = levelScale4[list][qpMod];
-        var shift4 = scaleShift(qpDiv, 4);
+        var qpPrime = componentQp(comp);
+        var qpDiv = qpPrime / 6;
+        var qpMod = qpPrime % 6;
+        var lossless = bypass || rawLevels;
+        var dequant4 = lossless ? UNIT_SCALE : levelScale4[list4(comp)][qpMod];
+        var shift4 = lossless ? 0 : scaleShift(qpDiv, 4);
+        var coeffs = planeCoeffs[comp];
         var cache = nnzCache;
         if (intra16) {
             var nC = lumaNc(CACHE_ORIGIN);
-            var count = cavlc.residualBlock(bits, nC, 16, lumaDc, 0, H264Tables.ZIGZAG_4X4, 0, 1, 0, null, 0);
+            var count = cavlc.residualBlock(residualBits, nC, 16, planeDc[comp], 0, scan4, 0, 1, 0, null, 0);
             if (count > 0) {
-                transformLumaDc(dequant4[0], qpDiv);
+                transformPlaneDc(comp, dequant4[0], qpDiv);
             }
         }
         var nonZero = 0;
+        var codedBlocks = 0;
+        var dcBlocks = 0;
         for (var b8 = 0; b8 < 4; b8++) {
             if ((cbp & (1 << b8)) == 0) {
                 for (var i = 0; i < 4; i++) {
@@ -1297,23 +2691,23 @@ final class SliceDecoder {
                 continue;
             }
             if (transform8x8) {
-                var dequant8 = levelScale8[list == 0 ? 0 : 1][qpMod];
-                var shift8 = scaleShift(qpDiv, 6);
+                var dequant8 = lossless ? UNIT_SCALE : levelScale8[list8(comp)][qpMod];
+                var shift8 = lossless ? 0 : scaleShift(qpDiv, 6);
                 var total = 0;
                 for (var i = 0; i < 4; i++) {
                     var blk = b8 * 4 + i;
                     var c = CACHE_OF_RASTER[H264Tables.BLOCK_RASTER[blk]];
                     var nC = lumaNc(c);
-                    var count = cavlc.residualBlock(bits, nC, 16, lumaCoeffs, b8 * 64, H264Tables.ZIGZAG_8X8,
+                    var count = cavlc.residualBlock(residualBits, nC, 16, coeffs, b8 * 64, scan8,
                             0, 4, i, dequant8, shift8);
                     cache[c] = count;
                     total += count;
                 }
                 if (total != 0) {
-                    if (total == 1 && lumaCoeffs[b8 * 64] != 0) {
-                        lumaDcOnly |= 1 << b8;
+                    if (total == 1 && coeffs[b8 * 64] != 0) {
+                        dcBlocks |= 1 << b8;
                     } else {
-                        lumaCoded |= 1 << b8;
+                        codedBlocks |= 1 << b8;
                     }
                     nonZero |= 0x33 << ((b8 & 1) * 2 + (b8 >> 1) * 8);
                 }
@@ -1325,36 +2719,31 @@ final class SliceDecoder {
                     var nC = lumaNc(c);
                     int count;
                     if (intra16) {
-                        count = cavlc.residualBlock(bits, nC, 15, lumaCoeffs, blk * 16, H264Tables.ZIGZAG_4X4,
+                        count = cavlc.residualBlock(residualBits, nC, 15, coeffs, blk * 16, scan4,
                                 1, 1, 0, dequant4, shift4);
                     } else {
-                        count = cavlc.residualBlock(bits, nC, 16, lumaCoeffs, blk * 16, H264Tables.ZIGZAG_4X4,
+                        count = cavlc.residualBlock(residualBits, nC, 16, coeffs, blk * 16, scan4,
                                 0, 1, 0, dequant4, shift4);
                     }
                     cache[c] = count;
                     if (count != 0) {
-                        if (count == 1 && !intra16 && lumaCoeffs[blk * 16] != 0) {
-                            lumaDcOnly |= 1 << blk;
+                        if (count == 1 && !intra16 && coeffs[blk * 16] != 0) {
+                            dcBlocks |= 1 << blk;
                         } else {
-                            lumaCoded |= 1 << blk;
+                            codedBlocks |= 1 << blk;
                         }
                         nonZero |= 1 << raster;
                     }
                 }
             }
         }
+        coded[comp] |= codedBlocks;
+        dcOnly[comp] |= dcBlocks;
+        var at = base + 16 * comp;
         for (var i = 0; i < 16; i++) {
-            nnz[base + i] = (byte) cache[CACHE_OF_RASTER[i]];
+            nnz[at + i] = (byte) cache[CACHE_OF_RASTER[i]];
         }
-        pic.nonZero[addr] = nonZero;
-        if (hasChroma) {
-            residualChromaCavlc(base);
-        } else {
-            for (var i = 16; i < 24; i++) {
-                nnz[base + i] = 0;
-            }
-        }
-        pic.cbp[addr] = cbp;
+        return nonZero;
     }
 
     /**
@@ -1366,53 +2755,66 @@ final class SliceDecoder {
         var nnz = pic.nnz;
         var chroma = cbp >> 4;
         if (chroma == 0) {
-            for (var i = 16; i < 24; i++) {
-                nnz[base + i] = 0;
-            }
+            clearChromaNnz(base);
             return;
         }
         chromaResidual = true;
+        var dcCount = chroma422 ? 8 : 4;
+        var dcNc = chroma422 ? -2 : -1;
         for (var c = 0; c < 2; c++) {
-            var count = cavlc.residualBlock(bits, -1, 4, chromaDc, c * 4, H264Tables.CHROMA_DC_SCAN, 0, 1, 0, null, 0);
+            var count = cavlc.residualBlock(residualBits, dcNc, dcCount, chromaDc, c * 8, H264Tables.CHROMA_DC_SCAN, 0, 1, 0,
+                    null, 0);
             if (count != 0) {
                 chromaDcCoded |= 1 << c;
             }
         }
         if ((chroma & 2) != 0) {
             var intra = (mbFlags & DecoderFrame.MB_INTRA) != 0;
+            var blocks = chromaRows >> 1;
             for (var c = 0; c < 2; c++) {
                 var list = (intra ? 1 : 4) + c;
-                var chromaQpValue = c == 0 ? pic.qpCb[mbAddr] : pic.qpCr[mbAddr];
-                var dequant = levelScale4[list][chromaQpValue % 6];
-                var shift = scaleShift(chromaQpValue / 6, 4);
+                var chromaQpValue = (c == 0 ? pic.qpCb[mbAddr] : pic.qpCr[mbAddr]) + qpBdOffsetC;
+                var dequant = bypass ? UNIT_SCALE : levelScale4[list][chromaQpValue % 6];
+                var shift = bypass ? 0 : scaleShift(chromaQpValue / 6, 4);
                 var coeffs = c == 0 ? cbCoeffs : crCoeffs;
-                for (var blk = 0; blk < 4; blk++) {
+                if (rawLevels) {
+                    dequant = UNIT_SCALE;
+                    shift = 0;
+                }
+                for (var blk = 0; blk < blocks; blk++) {
                     var nC = chromaNc(c, blk);
-                    var count = cavlc.residualBlock(bits, nC, 15, coeffs, blk * 16, H264Tables.ZIGZAG_4X4,
+                    var count = cavlc.residualBlock(residualBits, nC, 15, coeffs, blk * 16, scan4,
                             1, 1, 0, dequant, shift);
-                    nnz[base + 16 + c * 4 + blk] = (byte) count;
+                    nnz[base + 16 + c * 8 + blk] = (byte) count;
                     if (count != 0) {
-                        chromaCoded |= 1 << (c * 4 + blk);
+                        chromaCoded |= 1 << (c * 8 + blk);
                     }
                 }
             }
         } else {
-            for (var i = 16; i < 24; i++) {
-                nnz[base + i] = 0;
-            }
+            clearChromaNnz(base);
         }
     }
 
 
     /**
-     * Fills the luma coefficient count cache from the neighboring macroblocks for CAVLC
-     * {@code nC} derivation; unavailable neighbors are marked {@code -1}.
+     * Fills the coefficient count cache of a color component coded like luma from the
+     * neighboring macroblocks for CAVLC {@code nC} derivation; unavailable neighbors are marked
+     * {@code -1}.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
      */
-    private void fillNnzCacheCavlc() {
+    private void fillNnzCacheCavlc(int comp) {
         var cache = nnzCache;
         var nnz = pic.nnz;
-        if (availA) {
-            var base = (mbAddr - 1) * PictureState.NNZ_STRIDE;
+        var offset = 16 * comp;
+        if (availA && mbaff) {
+            for (var y = 0; y < 4; y++) {
+                cache[8 + y * 8] = ncExcluded(leftMb[y]) ? -1
+                        : nnz[leftMb[y] * PictureState.NNZ_STRIDE + offset + leftRow[y] * 4 + 3];
+            }
+        } else if (availA && !ncExcluded(mbA)) {
+            var base = mbA * PictureState.NNZ_STRIDE + offset;
             for (var y = 0; y < 4; y++) {
                 cache[8 + y * 8] = nnz[base + y * 4 + 3];
             }
@@ -1421,8 +2823,8 @@ final class SliceDecoder {
                 cache[8 + y * 8] = -1;
             }
         }
-        if (availB) {
-            var base = (mbAddr - mbWidth) * PictureState.NNZ_STRIDE + 12;
+        if (availB && !ncExcluded(mbB)) {
+            var base = mbB * PictureState.NNZ_STRIDE + offset + 12;
             for (var x = 0; x < 4; x++) {
                 cache[1 + x] = nnz[base + x];
             }
@@ -1455,25 +2857,25 @@ final class SliceDecoder {
      * Returns the CAVLC {@code nC} of a chroma AC block.
      *
      * @param component 0 for Cb, 1 for Cr
-     * @param blk the chroma 4x4 block index, 0 to 3
+     * @param blk the {@code chroma4x4BlkIdx}, 0 to 3 for 4:2:0 and 0 to 7 for 4:2:2
      * @return the {@code nC}
      */
     private int chromaNc(int component, int blk) {
         var nnz = pic.nnz;
-        var base = mbAddr * PictureState.NNZ_STRIDE + 16 + component * 4;
+        var base = mbAddr * PictureState.NNZ_STRIDE + 16 + component * 8;
         var x = blk & 1;
         var y = blk >> 1;
         var a = -1;
         var b = -1;
         if (x > 0) {
             a = nnz[base + blk - 1];
-        } else if (availA) {
-            a = nnz[base - PictureState.NNZ_STRIDE + y * 2 + 1];
+        } else if (availA && !ncExcluded(leftChromaMb(y))) {
+            a = nnz[leftChromaIndex(component, y)];
         }
         if (y > 0) {
             b = nnz[base + blk - 2];
-        } else if (availB) {
-            b = nnz[base - mbWidth * PictureState.NNZ_STRIDE + 2 + x];
+        } else if (availB && !ncExcluded(mbB)) {
+            b = nnz[topChromaIndex(component, x)];
         }
         if (a >= 0 && b >= 0) {
             return (a + b + 1) >> 1;
@@ -1485,18 +2887,96 @@ final class SliceDecoder {
     }
 
     /**
-     * Applies the inverse Intra16x16 DC Hadamard transform and scaling, distributing the DC
-     * values to the sixteen 4x4 blocks (ITU-T H.264 8.5.10).
+     * Returns whether CAVLC {@code nC} derivation treats a neighboring macroblock as unavailable:
+     * an inter macroblock next to an intra macroblock of a partitioned slice with
+     * {@code constrained_intra_pred_flag} (ITU-T H.264 9.2.1).
      *
+     * @param neighbor the index of the neighboring macroblock
+     * @return {@code true} when the neighbor's coefficient counts are not used
+     */
+    private boolean ncExcluded(int neighbor) {
+        return false;
+    }
+
+    /**
+     * Returns the macroblock holding the left neighbor of the chroma 4x4 blocks of a block row in
+     * the left column of the current macroblock.
+     *
+     * @param y the block row
+     * @return the index of the neighboring macroblock
+     */
+    private int leftChromaMb(int y) {
+        if (!mbaff) {
+            return mbA;
+        }
+        return chroma422 ? leftMb[y] : leftChromaMb[y];
+    }
+
+    /**
+     * Returns the index in {@link PictureState#nnz} of the left neighbor of a chroma 4x4 block
+     * in the left column of the current macroblock.
+     *
+     * <p>A 4:2:2 macroblock has as many chroma as luma rows, so its chroma block rows take their
+     * left neighbors from the macroblocks and block rows of the luma block rows (ITU-T H.264
+     * 6.4.12).
+     *
+     * @param component 0 for Cb, 1 for Cr
+     * @param y the block row, 0 or 1 for 4:2:0 and 0 to 3 for 4:2:2
+     * @return the index of the neighbor's coefficient count or coded block flag
+     */
+    private int leftChromaIndex(int component, int y) {
+        if (mbaff) {
+            if (chroma422) {
+                return leftMb[y] * PictureState.NNZ_STRIDE + 16 + component * 8 + leftRow[y] * 2 + 1;
+            }
+            return leftChromaMb[y] * PictureState.NNZ_STRIDE + 16 + component * 8 + leftChromaRow[y] * 2 + 1;
+        }
+        return mbA * PictureState.NNZ_STRIDE + 16 + component * 8 + y * 2 + 1;
+    }
+
+    /**
+     * Returns the index in {@link PictureState#nnz} of the neighbor above a chroma 4x4 block in
+     * the top row of the current macroblock: the block of the same column in the bottom block
+     * row of {@link #mbB}.
+     *
+     * @param component 0 for Cb, 1 for Cr
+     * @param x the block column, 0 or 1
+     * @return the index of the neighbor's coefficient count or coded block flag
+     */
+    private int topChromaIndex(int component, int x) {
+        return mbB * PictureState.NNZ_STRIDE + 16 + component * 8 + (chromaRows >> 1) - 2 + x;
+    }
+
+    /**
+     * Applies the inverse Intra16x16 DC Hadamard transform and scaling of a color component
+     * coded like luma, distributing the DC values to its sixteen 4x4 blocks (ITU-T H.264 8.5.10);
+     * a transform-bypass macroblock takes the levels as the DC values.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
      * @param levelScale the level scale factor {@code LevelScale4x4(qP % 6, 0, 0)}
      * @param qpDiv {@code qP / 6}
      */
-    private void transformLumaDc(int levelScale, int qpDiv) {
-        var c = lumaDc;
+    private void transformPlaneDc(int comp, int levelScale, int qpDiv) {
+        var c = planeDc[comp];
+        var coeffs = planeCoeffs[comp];
         var raster = dcScratch;
+        var scan = scan4;
         for (var i = 0; i < 16; i++) {
-            raster[H264Tables.ZIGZAG_4X4[i]] = c[i];
+            raster[scan[i]] = c[i];
             c[i] = 0;
+        }
+        if (bypass) {
+            var blocks = 0;
+            for (var i = 0; i < 16; i++) {
+                var dc = raster[i];
+                if (dc != 0) {
+                    var blk = blockIndexOf(i & 3, i >> 2);
+                    coeffs[blk * 16] = dc;
+                    blocks |= 1 << blk;
+                }
+            }
+            dcOnly[comp] |= blocks;
+            return;
         }
         for (var i = 0; i < 4; i++) {
             var r = i * 4;
@@ -1519,6 +2999,7 @@ final class SliceDecoder {
             raster[j + 8] = s1 - s3;
             raster[j + 12] = s1 + s3;
         }
+        var blocks = 0;
         for (var i = 0; i < 16; i++) {
             var f = raster[i];
             int dc;
@@ -1531,10 +3012,11 @@ final class SliceDecoder {
                 var x = i & 3;
                 var y = i >> 2;
                 var blk = blockIndexOf(x, y);
-                lumaCoeffs[blk * 16] = dc;
-                lumaDcOnly |= 1 << blk;
+                coeffs[blk * 16] = dc;
+                blocks |= 1 << blk;
             }
         }
+        dcOnly[comp] |= blocks;
     }
 
     /**
@@ -1560,7 +3042,11 @@ final class SliceDecoder {
      * @param component 0 for Cb, 1 for Cr
      */
     private void transformChromaDc(int component) {
-        var o = component * 4;
+        if (chroma422) {
+            transformChromaDc422(component);
+            return;
+        }
+        var o = component * 8;
         var c0 = chromaDc[o];
         var c1 = chromaDc[o + 1];
         var c2 = chromaDc[o + 2];
@@ -1573,7 +3059,7 @@ final class SliceDecoder {
         var f1 = c0 - c1 + c2 - c3;
         var f2 = c0 + c1 - c2 - c3;
         var f3 = c0 - c1 - c2 + c3;
-        var chromaQpValue = component == 0 ? pic.qpCb[mbAddr] : pic.qpCr[mbAddr];
+        var chromaQpValue = (component == 0 ? pic.qpCb[mbAddr] : pic.qpCr[mbAddr]) + qpBdOffsetC;
         var intra = (mbFlags & DecoderFrame.MB_INTRA) != 0;
         var list = (intra ? 1 : 4) + component;
         var scale = levelScale4[list][chromaQpValue % 6][0];
@@ -1583,6 +3069,68 @@ final class SliceDecoder {
         coeffs[16] = ((f1 * scale) << shift) >> 5;
         coeffs[32] = ((f2 * scale) << shift) >> 5;
         coeffs[48] = ((f3 * scale) << shift) >> 5;
+    }
+
+    /**
+     * Applies the inverse 2x4 chroma DC transform and scaling of one 4:2:2 component (ITU-T
+     * H.264 8.5.11.1 and 8.5.11.2), distributing the scaled values to the DC coefficients of the
+     * eight 4x4 blocks.
+     *
+     * <p>The levels, in list order {@code d0} to {@code d7}, form the 4x2 matrix
+     * {@code c = {{d0, d2}, {d1, d5}, {d3, d6}, {d4, d7}}} (equation 8-305); its transform
+     * {@code f} scales with {@code QP'c + 3} and row {@code i}, column {@code j} becomes the DC of
+     * block {@code 2 * i + j}.
+     *
+     * @param component 0 for Cb, 1 for Cr
+     */
+    private void transformChromaDc422(int component) {
+        var dc = chromaDc;
+        var o = component * 8;
+        var c00 = dc[o];
+        var c10 = dc[o + 1];
+        var c01 = dc[o + 2];
+        var c20 = dc[o + 3];
+        var c30 = dc[o + 4];
+        var c11 = dc[o + 5];
+        var c21 = dc[o + 6];
+        var c31 = dc[o + 7];
+        Arrays.fill(dc, o, o + 8, 0);
+        var a0 = c00 + c10 + c20 + c30;
+        var a1 = c00 + c10 - c20 - c30;
+        var a2 = c00 - c10 - c20 + c30;
+        var a3 = c00 - c10 + c20 - c30;
+        var b0 = c01 + c11 + c21 + c31;
+        var b1 = c01 + c11 - c21 - c31;
+        var b2 = c01 - c11 - c21 + c31;
+        var b3 = c01 - c11 + c21 - c31;
+        var qpDc = (component == 0 ? pic.qpCb[mbAddr] : pic.qpCr[mbAddr]) + qpBdOffsetC + 3;
+        var intra = (mbFlags & DecoderFrame.MB_INTRA) != 0;
+        var scale = levelScale4[(intra ? 1 : 4) + component][qpDc % 6][0];
+        var qpDiv = qpDc / 6;
+        var coeffs = component == 0 ? cbCoeffs : crCoeffs;
+        coeffs[0] = scaleChromaDc422(a0 + b0, scale, qpDiv);
+        coeffs[16] = scaleChromaDc422(a0 - b0, scale, qpDiv);
+        coeffs[32] = scaleChromaDc422(a1 + b1, scale, qpDiv);
+        coeffs[48] = scaleChromaDc422(a1 - b1, scale, qpDiv);
+        coeffs[64] = scaleChromaDc422(a2 + b2, scale, qpDiv);
+        coeffs[80] = scaleChromaDc422(a2 - b2, scale, qpDiv);
+        coeffs[96] = scaleChromaDc422(a3 + b3, scale, qpDiv);
+        coeffs[112] = scaleChromaDc422(a3 - b3, scale, qpDiv);
+    }
+
+    /**
+     * Scales one 4:2:2 chroma DC value (ITU-T H.264 equation 8-328 and 8-329).
+     *
+     * @param f the transformed DC value
+     * @param scale {@code LevelScale4x4(qPDC % 6, 0, 0)}
+     * @param qpDiv {@code qPDC / 6}
+     * @return the scaled DC coefficient
+     */
+    private static int scaleChromaDc422(int f, int scale, int qpDiv) {
+        if (qpDiv >= 6) {
+            return (f * scale) << (qpDiv - 6);
+        }
+        return (f * scale + (1 << (5 - qpDiv))) >> (6 - qpDiv);
     }
 
     /**
@@ -1660,10 +3208,16 @@ final class SliceDecoder {
             }
         }
         storeMotion();
+        rawLevels = spSlice;
         decodeQpDeltaAndResidual();
         pic.chromaMode[mbAddr] = 0;
-        inter.predictMacroblock(this);
-        reconstructInterResidual();
+        predictInter();
+        if (spSlice) {
+            reconstructSwitching();
+        } else {
+            reconstructInterResidual();
+        }
+        rawLevels = false;
     }
 
     /**
@@ -1989,16 +3543,24 @@ final class SliceDecoder {
         var refB = rc[c - 8];
         var cIdx = c - 8 + width;
         var refC = rc[cIdx];
-        if (refC == UNAVAILABLE) {
+        int mvC;
+        if (refC != UNAVAILABLE) {
+            mvC = mc[cIdx];
+        } else {
             cIdx = c - 9;
-            refC = rc[cIdx];
+            if (mbaff && (cIdx & 7) == 0 && cIdx != 0) {
+                refC = leftDRef[list][cIdx >> 3];
+                mvC = leftDMv[list][cIdx >> 3];
+            } else {
+                refC = rc[cIdx];
+                mvC = mc[cIdx];
+            }
         }
         var mvA = mc[c - 1];
         if (refB == UNAVAILABLE && refC == UNAVAILABLE && refA != UNAVAILABLE) {
             return mvA;
         }
         var mvB = mc[c - 8];
-        var mvC = mc[cIdx];
         var match = (refA == r ? 1 : 0) | (refB == r ? 2 : 0) | (refC == r ? 4 : 0);
         return switch (match) {
             case 1 -> mvA;
@@ -2173,7 +3735,7 @@ final class SliceDecoder {
     private void deriveSubMbMotion() {
         var spatial = bSlice && header.directSpatialMvPred;
         if (directMask != 0) {
-            colocated.awaitDecodedRows(mbY + 1);
+            prepareColocated();
         }
         int[] direct = null;
         if (directMask != 0 && spatial) {
@@ -2249,7 +3811,7 @@ final class SliceDecoder {
      * Derives the motion of a B_Skip or B_Direct_16x16 macroblock.
      */
     private void deriveDirect() {
-        colocated.awaitDecodedRows(mbY + 1);
+        prepareColocated();
         if (header.directSpatialMvPred) {
             var predictors = spatialPredictors();
             if (header.sps.direct8x8Inference && spatialDirectUniform(predictors)) {
@@ -2340,10 +3902,9 @@ final class SliceDecoder {
         var ref1 = predictors[1];
         var directZero = predictors[4] != 0;
         var colZero = false;
-        if (!directZero && (ref0 == 0 || ref1 == 0) && colocatedShortTerm
-                && (colocated.mbType[mbAddr] & DecoderFrame.MB_INTRA) == 0) {
-            var zeros = (colocatedZero(0, 0) ? 1 : 0) + (colocatedZero(1, 3) ? 1 : 0)
-                    + (colocatedZero(2, 12) ? 1 : 0) + (colocatedZero(3, 15) ? 1 : 0);
+        if (!directZero && (ref0 == 0 || ref1 == 0) && colocatedShortTerm) {
+            var zeros = (colocatedZero(0) ? 1 : 0) + (colocatedZero(3) ? 1 : 0)
+                    + (colocatedZero(12) ? 1 : 0) + (colocatedZero(15) ? 1 : 0);
             if (zeros != 0 && zeros != 4) {
                 return false;
             }
@@ -2372,10 +3933,8 @@ final class SliceDecoder {
         var directZero = predictors[4] != 0;
         refIdx[0][i] = ref0;
         refIdx[1][i] = ref1;
-        var col = colocated;
-        var colIntra = (col.mbType[mbAddr] & DecoderFrame.MB_INTRA) != 0;
         if (header.sps.direct8x8Inference) {
-            var colZero = !directZero && !colIntra && colocatedShortTerm && colocatedZero(i, cornerRaster(i));
+            var colZero = !directZero && colocatedShortTerm && colocatedZero(cornerRaster(i));
             fillBlock(0, c8, 2, 2, ref0, ref0 < 0 || directZero || (ref0 == 0 && colZero) ? 0 : mv0);
             fillBlock(1, c8, 2, 2, ref1, ref1 < 0 || directZero || (ref1 == 0 && colZero) ? 0 : mv1);
             return;
@@ -2383,7 +3942,7 @@ final class SliceDecoder {
         for (var j = 0; j < 4; j++) {
             var c = c8 + (j & 1) + (j >> 1) * 8;
             var raster = rasterOfCache(c);
-            var colZero = !directZero && !colIntra && colocatedShortTerm && colocatedZero(i, raster);
+            var colZero = !directZero && colocatedShortTerm && colocatedZero(raster);
             fillBlock(0, c, 1, 1, ref0, ref0 < 0 || directZero || (ref0 == 0 && colZero) ? 0 : mv0);
             fillBlock(1, c, 1, 1, ref1, ref1 < 0 || directZero || (ref1 == 0 && colZero) ? 0 : mv1);
         }
@@ -2406,24 +3965,191 @@ final class SliceDecoder {
     }
 
     /**
-     * Returns whether the co-located block is "not moving" for spatial direct prediction: its
-     * reference index is 0 and both motion vector components lie in {@code [-1, 1]}.
+     * The macroblock index in the co-located picture of the co-located blocks in the upper half
+     * of the current macroblock (ITU-T H.264 Table 8-8).
+     */
+    private int colMbTop;
+
+    /**
+     * The macroblock index in the co-located picture of the co-located blocks in the lower half
+     * of the current macroblock.
+     */
+    private int colMbBottom;
+
+    /**
+     * The vertical relation of the current and the co-located macroblock: 0
+     * {@code One_To_One}, 1 {@code Frm_To_Fld}, 2 {@code Fld_To_Frm}.
+     */
+    private int colScale;
+
+    /**
+     * The first co-located row, in luma samples, of a {@code Fld_To_Frm} macroblock: 0 for a
+     * top macroblock, 8 for a bottom one.
+     */
+    private int colRowOffset;
+
+    /**
+     * The co-located macroblock found by the last {@link #locateColocated}.
+     */
+    private int colMb;
+
+    /**
+     * The raster index of the co-located 4x4 block found by the last {@link #locateColocated}.
+     */
+    private int colBlock;
+
+    /**
+     * The 8x8 partition of the co-located block found by the last {@link #locateColocated}.
+     */
+    private int colPart;
+
+    /**
+     * Derives the co-located macroblocks of the current macroblock (ITU-T H.264 8.4.1.2.1,
+     * Tables 8-6 and 8-8) and waits until their motion is final.
+     */
+    private void prepareColocated() {
+        var col = colocated;
+        var width = mbWidth;
+        colScale = 0;
+        colRowOffset = 0;
+        if (col.codingStruct == DecoderFrame.CODED_MBAFF) {
+            col.awaitDecodedRows(2 * ((mbAddr / width) >> 1) + 2);
+        }
+        if (fieldPicture) {
+            switch (col.codingStruct) {
+                case DecoderFrame.CODED_FIELDS -> {
+                    colMbTop = (2 * mbY + task.structures[1][0] - 1) * width + mbX;
+                    colMbBottom = colMbTop;
+                }
+                case DecoderFrame.CODED_FRAME -> {
+                    colMbTop = 2 * mbY * width + mbX;
+                    colMbBottom = colMbTop + width;
+                    colScale = 1;
+                }
+                default -> {
+                    var x = 2 * mbY * width + mbX;
+                    if ((col.mbType[x] & DecoderFrame.MB_FIELD) == 0) {
+                        colMbTop = x;
+                        colMbBottom = x + width;
+                        colScale = 1;
+                    } else {
+                        colMbTop = x + pictureParity * width;
+                        colMbBottom = colMbTop;
+                    }
+                }
+            }
+        } else if (!mbaff) {
+            if (col.codingStruct == DecoderFrame.CODED_FIELDS) {
+                colMbTop = (2 * (mbY >> 1) + closerColocatedField()) * width + mbX;
+                colMbBottom = colMbTop;
+                colScale = 2;
+                colRowOffset = 8 * (mbY & 1);
+            } else {
+                colMbTop = mbAddr;
+                colMbBottom = mbAddr;
+            }
+        } else {
+            var top = pairTop;
+            if (col.codingStruct == DecoderFrame.CODED_FIELDS) {
+                colMbTop = top + (fieldMb ? mbParity : closerColocatedField()) * width;
+                colMbBottom = colMbTop;
+                if (!fieldMb) {
+                    colScale = 2;
+                    colRowOffset = 8 * (mbY & 1);
+                }
+            } else {
+                var colField = col.codingStruct == DecoderFrame.CODED_MBAFF
+                        && (col.mbType[mbAddr] & DecoderFrame.MB_FIELD) != 0;
+                if (fieldMb == colField) {
+                    colMbTop = mbAddr;
+                    colMbBottom = mbAddr;
+                } else if (!fieldMb) {
+                    colMbTop = top + closerColocatedField() * width;
+                    colMbBottom = colMbTop;
+                    colScale = 2;
+                    colRowOffset = 8 * (mbY & 1);
+                } else {
+                    colMbTop = top;
+                    colMbBottom = top + width;
+                    colScale = 1;
+                }
+            }
+        }
+        if (col.codingStruct == DecoderFrame.CODED_FRAME) {
+            col.awaitDecodedRows(Math.max(colMbTop, colMbBottom) / width + 1);
+        } else if (col.codingStruct == DecoderFrame.CODED_FIELDS) {
+            col.awaitDone(((colMbTop / width) & 1) + 1);
+        }
+    }
+
+    /**
+     * Returns the field of {@code RefPicList1[0]} closer in output order to the current frame,
+     * the top field on a tie (ITU-T H.264 Table 8-6).
      *
-     * @param partition the 8x8 partition of the co-located block
-     * @param raster the raster 4x4 index of the co-located block
+     * @return 0 for the top field, 1 for the bottom field
+     */
+    private int closerColocatedField() {
+        var current = viewCurrentPoc[0];
+        var top = Math.abs(task.refFieldPoc[1][0] - current);
+        var bottom = Math.abs(task.refFieldPoc[1][1] - current);
+        return top < bottom ? 0 : 1;
+    }
+
+    /**
+     * Locates the co-located block of the luma location {@code (xCol, yCol)} of the current
+     * macroblock (ITU-T H.264 8.4.1.2.1) into {@link #colMb}, {@link #colBlock} and
+     * {@link #colPart}.
+     *
+     * @param raster the raster 4x4 index of the block at {@code (xCol, yCol)}
+     */
+    private void locateColocated(int raster) {
+        var xCol = (raster & 3) * 4;
+        var yCol = (raster >> 2) * 4;
+        int yM;
+        switch (colScale) {
+            case 0 -> {
+                colMb = colMbTop;
+                yM = yCol;
+            }
+            case 1 -> {
+                colMb = yCol < 8 ? colMbTop : colMbBottom;
+                yM = (2 * yCol) & 15;
+            }
+            default -> {
+                colMb = colMbTop;
+                yM = colRowOffset + 4 * (yCol >> 3);
+            }
+        }
+        colBlock = (xCol >> 2) + 4 * (yM >> 2);
+        colPart = (yM >> 3) * 2 + (xCol >> 3);
+    }
+
+    /**
+     * Returns whether the co-located block of a block of the current macroblock is "not moving"
+     * for spatial direct prediction: the co-located macroblock is not intra coded, its reference
+     * index is 0 and both motion vector components lie in {@code [-1, 1]}, in the units of the
+     * co-located macroblock.
+     *
+     * @param raster the raster 4x4 index of the block
      * @return the {@code colZeroFlag} without the short-term condition
      */
-    private boolean colocatedZero(int partition, int raster) {
+    private boolean colocatedZero(int raster) {
+        locateColocated(raster);
         var col = colocated;
-        var r0 = col.ref[0][mbAddr * 4 + partition];
+        var mb = colMb;
+        if ((col.mbType[mb] & DecoderFrame.MB_INTRA) != 0) {
+            return false;
+        }
+        var at = mb * 4 + colPart;
+        var r0 = col.ref[0][at];
         int ref;
         int mv;
         if (r0 >= 0) {
             ref = r0;
-            mv = col.mv[0][mbAddr * 16 + raster];
+            mv = col.mv[0][mb * 16 + colBlock];
         } else {
-            ref = col.ref[1][mbAddr * 4 + partition];
-            mv = col.mv[1][mbAddr * 16 + raster];
+            ref = col.ref[1][at];
+            mv = col.mv[1][mb * 16 + colBlock];
         }
         if (ref != 0) {
             return false;
@@ -2440,25 +4166,59 @@ final class SliceDecoder {
      */
     private void temporalDirect8x8(int i) {
         var c8 = CACHE_ORIGIN + (i & 1) * 2 + (i >> 1) * 16;
-        var col = colocated;
-        var colIntra = (col.mbType[mbAddr] & DecoderFrame.MB_INTRA) != 0;
-        var r0 = col.ref[0][mbAddr * 4 + i];
-        var colList = r0 >= 0 ? 0 : 1;
-        var colRef = colIntra ? -1 : col.ref[colList][mbAddr * 4 + i];
-        var refL0 = colRef < 0 ? 0 : mapColocatedToList0(col.refId[colList][mbAddr * 4 + i]);
-        refIdx[0][i] = refL0;
-        refIdx[1][i] = 0;
-        var scale = directScale[refL0];
+        var scales = viewDirectScale[view];
         if (header.sps.direct8x8Inference) {
-            var mvCol = colRef < 0 ? 0 : col.mv[colList][mbAddr * 16 + cornerRaster(i)];
-            fillTemporal(c8, 2, refL0, scale, mvCol);
+            var refL0 = temporalReference(cornerRaster(i));
+            refIdx[0][i] = refL0;
+            refIdx[1][i] = 0;
+            fillTemporal(c8, 2, refL0, scales[refL0], temporalMv);
             return;
         }
         for (var j = 0; j < 4; j++) {
             var c = c8 + (j & 1) + (j >> 1) * 8;
-            var mvCol = colRef < 0 ? 0 : col.mv[colList][mbAddr * 16 + rasterOfCache(c)];
-            fillTemporal(c, 1, refL0, scale, mvCol);
+            var refL0 = temporalReference(rasterOfCache(c));
+            refIdx[0][i] = refL0;
+            refIdx[1][i] = 0;
+            fillTemporal(c, 1, refL0, scales[refL0], temporalMv);
         }
+    }
+
+    /**
+     * The co-located motion vector of the last {@link #temporalReference}, scaled vertically to
+     * the units of the current macroblock.
+     */
+    private int temporalMv;
+
+    /**
+     * Derives the list 0 reference index of the temporal direct prediction of a block, and its
+     * co-located motion vector into {@link #temporalMv} (ITU-T H.264 8.4.1.2.3).
+     *
+     * @param raster the raster 4x4 index of the block
+     * @return {@code refIdxL0}
+     */
+    private int temporalReference(int raster) {
+        locateColocated(raster);
+        var col = colocated;
+        var mb = colMb;
+        var at = mb * 4 + colPart;
+        if ((col.mbType[mb] & DecoderFrame.MB_INTRA) != 0) {
+            temporalMv = 0;
+            return 0;
+        }
+        var colList = col.ref[0][at] >= 0 ? 0 : 1;
+        if (col.ref[colList][at] < 0) {
+            temporalMv = 0;
+            return 0;
+        }
+        var mv = col.mv[colList][mb * 16 + colBlock];
+        var y = mv >> 16;
+        if (colScale == 1) {
+            y /= 2;
+        } else if (colScale == 2) {
+            y *= 2;
+        }
+        temporalMv = (y << 16) | (mv & 0xFFFF);
+        return mapColocatedToList0(col.refId[colList][at]);
     }
 
     /**
@@ -2489,15 +4249,54 @@ final class SliceDecoder {
     }
 
     /**
-     * Returns the lowest list 0 index that refers to a picture ({@code MapColToList0}).
+     * Returns the list 0 reference index of the current macroblock that refers to the picture a
+     * co-located block referenced ({@code MapColToList0} of ITU-T H.264 8.4.1.2.3): the picture
+     * itself, the field of a frame with the parity of the current field, or the frame holding a
+     * field, as the vertical relation of the two macroblocks requires.
      *
-     * @param pictureId the identity of the picture
-     * @return the index, or 0 when the picture is not in list 0
+     * @param reference the co-located block's reference, {@code (id << 2) | kind} as stored in
+     * {@link DecoderFrame#refId}
+     * @return the lowest such index, or 0 when list 0 holds none
      */
-    private int mapColocatedToList0(int pictureId) {
-        var list = refList[0];
-        for (var i = 0; i < refCount[0]; i++) {
-            if (list[i].id == pictureId) {
+    private int mapColocatedToList0(int reference) {
+        var frameId = reference >> 2;
+        var kind = reference & 3;
+        var ids = viewRefId[0][0];
+        var count = refCount[0];
+        int target;
+        if (fieldMb && !fieldPicture) {
+            var index = lowestFrameIndex(frameId, count, ids);
+            if (colScale == 0 && kind != DecoderFrame.REF_FRAME) {
+                return (index << 1) + (kind - 1 == mbParity ? 0 : 1);
+            }
+            return index << 1;
+        }
+        if (colScale == 1) {
+            target = (frameId << 2) | (pictureParity + 1);
+        } else if (colScale == 2) {
+            return lowestFrameIndex(frameId, count, ids);
+        } else {
+            target = reference;
+        }
+        for (var i = 0; i < count; i++) {
+            if (ids[i] == target) {
+                return i;
+            }
+        }
+        return 0;
+    }
+
+    /**
+     * Returns the lowest list 0 index of view 0 that refers to a frame, or to a field of it.
+     *
+     * @param frameId the {@link DecoderFrame#id} of the frame
+     * @param count the number of active list 0 entries
+     * @param ids the references of the list 0 entries of view 0
+     * @return the index, or 0 when none refers to it
+     */
+    private static int lowestFrameIndex(int frameId, int count, int[] ids) {
+        for (var i = 0; i < count; i++) {
+            if (ids[i] >> 2 == frameId) {
                 return i;
             }
         }
@@ -2515,12 +4314,16 @@ final class SliceDecoder {
      * @param list the list index
      */
     private void fillMotionCache(int list) {
+        if (mbaff) {
+            fillMbaffMotionCache(list, 4);
+            return;
+        }
         var rc = refCache[list];
         var mc = mvCache[list];
         var refs = frame.ref[list];
         var mvs = frame.mv[list];
         if (availA) {
-            var a = mbAddr - 1;
+            var a = mbA;
             for (var y = 0; y < 4; y++) {
                 rc[8 + y * 8] = refs[a * 4 + (y >> 1) * 2 + 1];
                 mc[8 + y * 8] = mvs[a * 16 + y * 4 + 3];
@@ -2532,7 +4335,7 @@ final class SliceDecoder {
             }
         }
         if (availB) {
-            var b = mbAddr - mbWidth;
+            var b = mbB;
             for (var x = 0; x < 4; x++) {
                 rc[1 + x] = refs[b * 4 + 2 + (x >> 1)];
                 mc[1 + x] = mvs[b * 16 + 12 + x];
@@ -2544,7 +4347,7 @@ final class SliceDecoder {
             }
         }
         if (availC) {
-            var c = mbAddr - mbWidth + 1;
+            var c = mbC;
             rc[5] = refs[c * 4 + 2];
             mc[5] = mvs[c * 16 + 12];
         } else {
@@ -2552,13 +4355,105 @@ final class SliceDecoder {
             mc[5] = 0;
         }
         if (availD) {
-            var d = mbAddr - mbWidth - 1;
+            var d = mbD;
             rc[0] = refs[d * 4 + 3];
             mc[0] = mvs[d * 16 + 15];
         } else {
             rc[0] = UNAVAILABLE;
             mc[0] = 0;
         }
+    }
+
+    /**
+     * Fills the neighbor entries of the motion caches of a list for a macroblock of an MBAFF
+     * frame, scaling the vectors and reference indices of neighbors coded in the other of frame
+     * and field decoding to the current macroblock's units (ITU-T H.264 8.4.1.3.2).
+     *
+     * @param list the list index
+     * @param width the number of left rows and upper columns filled: 4, or 1 for the entries a
+     * 16x16 partition reads
+     */
+    private void fillMbaffMotionCache(int list, int width) {
+        var rc = refCache[list];
+        var mc = mvCache[list];
+        var refs = frame.ref[list];
+        var mvs = frame.mv[list];
+        var types = frame.mbType;
+        for (var y = 0; y < width; y++) {
+            if (availA) {
+                var n = leftMb[y];
+                var row = leftRow[y];
+                setScaledNeighbor(rc, mc, 8 + y * 8, refs[n * 4 + (row >> 1) * 2 + 1], mvs[n * 16 + row * 4 + 3],
+                        types[n]);
+            } else {
+                rc[8 + y * 8] = UNAVAILABLE;
+                mc[8 + y * 8] = 0;
+            }
+        }
+        var dRefs = leftDRef[list];
+        var dMvs = leftDMv[list];
+        for (var y = 1; y < width; y++) {
+            if (availA) {
+                var n = leftDMb[y];
+                var row = leftDRow[y];
+                setScaledNeighbor(dRefs, dMvs, y, refs[n * 4 + (row >> 1) * 2 + 1], mvs[n * 16 + row * 4 + 3], types[n]);
+            } else {
+                dRefs[y] = UNAVAILABLE;
+                dMvs[y] = 0;
+            }
+        }
+        for (var x = 0; x < width; x++) {
+            if (availB) {
+                var n = mbB;
+                setScaledNeighbor(rc, mc, 1 + x, refs[n * 4 + 2 + (x >> 1)], mvs[n * 16 + 12 + x], types[n]);
+            } else {
+                rc[1 + x] = UNAVAILABLE;
+                mc[1 + x] = 0;
+            }
+        }
+        if (availC) {
+            var n = mbC;
+            setScaledNeighbor(rc, mc, 5, refs[n * 4 + 2], mvs[n * 16 + 12], types[n]);
+        } else {
+            rc[5] = UNAVAILABLE;
+            mc[5] = 0;
+        }
+        if (availD) {
+            var n = mbD;
+            var row = rowD;
+            setScaledNeighbor(rc, mc, 0, refs[n * 4 + (row >> 1) * 2 + 1], mvs[n * 16 + row * 4 + 3], types[n]);
+        } else {
+            rc[0] = UNAVAILABLE;
+            mc[0] = 0;
+        }
+    }
+
+    /**
+     * Stores the motion of a neighboring block of an MBAFF macroblock into the motion caches,
+     * scaled to the current macroblock: a frame neighbor of a field macroblock halves its vertical
+     * vector and doubles its reference index, a field neighbor of a frame macroblock doubles its
+     * vertical vector and halves its reference index.
+     *
+     * @param rc the reference index cache
+     * @param mc the motion vector cache
+     * @param at the cache index
+     * @param ref the neighbor's reference index, -1 when it does not use the list
+     * @param mv the neighbor's packed motion vector
+     * @param type the flags of the neighbor's macroblock
+     */
+    private void setScaledNeighbor(int[] rc, int[] mc, int at, int ref, int mv, int type) {
+        if (ref >= 0) {
+            var neighborField = (type & DecoderFrame.MB_FIELD) != 0;
+            if (fieldMb && !neighborField) {
+                mv = (((mv >> 16) / 2) << 16) | (mv & 0xFFFF);
+                ref <<= 1;
+            } else if (!fieldMb && neighborField) {
+                mv = (((mv >> 16) * 2) << 16) | (mv & 0xFFFF);
+                ref >>= 1;
+            }
+        }
+        rc[at] = ref;
+        mc[at] = mv;
     }
 
     /**
@@ -2569,12 +4464,16 @@ final class SliceDecoder {
      * @param list the list index
      */
     private void fillCornerMotionCache(int list) {
+        if (mbaff) {
+            fillMbaffMotionCache(list, 1);
+            return;
+        }
         var rc = refCache[list];
         var mc = mvCache[list];
         var refs = frame.ref[list];
         var mvs = frame.mv[list];
         if (availA) {
-            var a = mbAddr - 1;
+            var a = mbA;
             rc[8] = refs[a * 4 + 1];
             mc[8] = mvs[a * 16 + 3];
         } else {
@@ -2582,7 +4481,7 @@ final class SliceDecoder {
             mc[8] = 0;
         }
         if (availB) {
-            var b = mbAddr - mbWidth;
+            var b = mbB;
             rc[1] = refs[b * 4 + 2];
             mc[1] = mvs[b * 16 + 12];
         } else {
@@ -2590,7 +4489,7 @@ final class SliceDecoder {
             mc[1] = 0;
         }
         if (availC) {
-            var c = mbAddr - mbWidth + 1;
+            var c = mbC;
             rc[5] = refs[c * 4 + 2];
             mc[5] = mvs[c * 16 + 12];
         } else {
@@ -2598,7 +4497,7 @@ final class SliceDecoder {
             mc[5] = 0;
         }
         if (availD) {
-            var d = mbAddr - mbWidth - 1;
+            var d = mbD;
             rc[0] = refs[d * 4 + 3];
             mc[0] = mvs[d * 16 + 15];
         } else {
@@ -2619,6 +4518,10 @@ final class SliceDecoder {
      * entries left of and above its top-left block
      */
     private void fillCabacMotionCaches(boolean whole) {
+        if (mbaff) {
+            fillMbaffCabacCaches(whole ? 1 : 4);
+            return;
+        }
         if (whole) {
             fillCornerCabacCaches();
             return;
@@ -2631,7 +4534,7 @@ final class SliceDecoder {
             var refs = frame.ref[list];
             var types = frame.mbType;
             if (availA) {
-                var a = mbAddr - 1;
+                var a = mbA;
                 var type = types[a];
                 var coded = (type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) == 0;
                 for (var y = 0; y < 4; y++) {
@@ -2646,7 +4549,7 @@ final class SliceDecoder {
                 }
             }
             if (availB) {
-                var b = mbAddr - mbWidth;
+                var b = mbB;
                 var type = types[b];
                 var coded = (type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) == 0;
                 for (var x = 0; x < 4; x++) {
@@ -2676,7 +4579,7 @@ final class SliceDecoder {
             var stored = pic.mvd[list];
             var refs = frame.ref[list];
             if (availA) {
-                var a = mbAddr - 1;
+                var a = mbA;
                 var type = types[a];
                 md[8] = (type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) == 0 ? stored[a * 16 + 3] : 0;
                 rf[8] = refContext(type, 1, refs[a * 4 + 1]);
@@ -2685,7 +4588,7 @@ final class SliceDecoder {
                 rf[8] = 0;
             }
             if (availB) {
-                var b = mbAddr - mbWidth;
+                var b = mbB;
                 var type = types[b];
                 md[1] = (type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) == 0 ? stored[b * 16 + 12] : 0;
                 rf[1] = refContext(type, 2, refs[b * 4 + 2]);
@@ -2694,6 +4597,92 @@ final class SliceDecoder {
                 rf[1] = 0;
             }
         }
+    }
+
+    /**
+     * Fills the neighbor entries of the CABAC motion vector difference and reference index
+     * context caches of the lists the slice uses for a macroblock of an MBAFF frame, with the
+     * vertical differences of neighbors coded in the other of frame and field decoding scaled to
+     * the current macroblock (ITU-T H.264 9.3.3.1.1.6 and 9.3.3.1.1.7).
+     *
+     * @param width the number of left rows and upper columns filled: 4, or 1 for the entries a
+     * 16x16 partition reads
+     */
+    private void fillMbaffCabacCaches(int width) {
+        var lists = bSlice ? 2 : 1;
+        var types = frame.mbType;
+        for (var list = 0; list < lists; list++) {
+            var md = mvdCache[list];
+            var rf = refCtxCache[list];
+            var stored = pic.mvd[list];
+            var refs = frame.ref[list];
+            for (var y = 0; y < width; y++) {
+                if (availA) {
+                    var n = leftMb[y];
+                    var row = leftRow[y];
+                    var type = types[n];
+                    var coded = (type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) == 0;
+                    md[8 + y * 8] = coded ? scaledMvd(stored[n * 16 + row * 4 + 3], type) : 0;
+                    var part = (row >> 1) * 2 + 1;
+                    rf[8 + y * 8] = mbaffRefContext(type, part, refs[n * 4 + part]);
+                } else {
+                    md[8 + y * 8] = 0;
+                    rf[8 + y * 8] = 0;
+                }
+            }
+            for (var x = 0; x < width; x++) {
+                if (availB) {
+                    var n = mbB;
+                    var type = types[n];
+                    var coded = (type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) == 0;
+                    md[1 + x] = coded ? scaledMvd(stored[n * 16 + 12 + x], type) : 0;
+                    var part = 2 + (x >> 1);
+                    rf[1 + x] = mbaffRefContext(type, part, refs[n * 4 + part]);
+                } else {
+                    md[1 + x] = 0;
+                    rf[1 + x] = 0;
+                }
+            }
+        }
+    }
+
+    /**
+     * Scales the packed absolute motion vector difference of a neighboring block of an MBAFF
+     * macroblock to the current macroblock: the vertical component is doubled for a field
+     * neighbor of a frame macroblock and halved for a frame neighbor of a field macroblock.
+     *
+     * @param packed the neighbor's packed absolute difference, {@code |y| << 8 | |x|}
+     * @param type the flags of the neighbor's macroblock
+     * @return the packed scaled absolute difference
+     */
+    private int scaledMvd(int packed, int type) {
+        var neighborField = (type & DecoderFrame.MB_FIELD) != 0;
+        if (neighborField == fieldMb) {
+            return packed;
+        }
+        var y = packed >> 8;
+        return ((fieldMb ? y >> 1 : y * 2) << 8) | (packed & 0xFF);
+    }
+
+    /**
+     * Returns the CABAC {@code ref_idx} context condition of a neighboring partition of an MBAFF
+     * macroblock: a field neighbor of a frame macroblock counts from reference index 2.
+     *
+     * @param type the flags of the neighboring macroblock
+     * @param part the 8x8 partition of the neighboring block
+     * @param ref the reference index of the neighboring partition
+     * @return 1 when the scaled reference index is above 0 and the partition was not skipped or
+     * predicted in direct mode
+     */
+    private int mbaffRefContext(int type, int part, int ref) {
+        if ((type & (DecoderFrame.MB_SKIP | DecoderFrame.MB_INTRA)) != 0) {
+            return 0;
+        }
+        if ((type & (1 << (DecoderFrame.MB_DIRECT8_SHIFT + part))) != 0) {
+            return 0;
+        }
+        var threshold = !fieldMb && (type & DecoderFrame.MB_FIELD) != 0 ? 1 : 0;
+        return ref > threshold ? 1 : 0;
     }
 
     /**
@@ -2782,10 +4771,10 @@ final class SliceDecoder {
             if (r < 0) {
                 r = -1;
                 id = -1;
-            } else if (r >= refCount[list]) {
+            } else if (r >= activeRefs(list)) {
                 throw new MediaException.Malformed("reference index " + r + " out of range");
             } else {
-                id = refList[list][r].id;
+                id = viewRefId[view][list][r];
             }
             var refs = frame.ref[list];
             var ids = frame.refId[list];
@@ -2827,10 +4816,11 @@ final class SliceDecoder {
                 mvs[out + 3] = mc[c + 3];
                 out += 4;
             }
-            var entries = refList[list];
+            var entries = viewRefId[view][list];
+            var active = activeRefs(list);
             for (var p = 0; p < 4; p++) {
                 var r = rc[CACHE_ORIGIN + (p & 1) * 2 + (p >> 1) * 16];
-                if (r < 0 || r >= refCount[list]) {
+                if (r < 0 || r >= active) {
                     if (r >= 0) {
                         throw new MediaException.Malformed("reference index " + r + " out of range");
                     }
@@ -2838,7 +4828,7 @@ final class SliceDecoder {
                     ids[addr * 4 + p] = -1;
                 } else {
                     refs[addr * 4 + p] = (byte) r;
-                    ids[addr * 4 + p] = entries[r].id;
+                    ids[addr * 4 + p] = entries[r];
                 }
             }
             if (cabacMode && (mbFlags & DecoderFrame.MB_SKIP) == 0) {
@@ -2940,7 +4930,7 @@ final class SliceDecoder {
      * @throws MediaException.Malformed if the index is not below the active count
      */
     private int decodeRefIdx(int list, int c) {
-        var count = refCount[list];
+        var count = activeRefs(list);
         if (count <= 1) {
             return 0;
         }
@@ -3038,14 +5028,28 @@ final class SliceDecoder {
     private int decodeMbTypeCabac() {
         var types = frame.mbType;
         if (iSlice) {
+            var offset = 0;
+            if (siSlice) {
+                var prefix = 0;
+                if (availA && (types[mbA] & DecoderFrame.MB_SI) == 0) {
+                    prefix++;
+                }
+                if (availB && (types[mbB] & DecoderFrame.MB_SI) == 0) {
+                    prefix++;
+                }
+                if (cabac.decision(prefix) == 0) {
+                    return 0;
+                }
+                offset = 1;
+            }
             var inc = 0;
-            if (availA && (types[mbAddr - 1] & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) == 0) {
+            if (availA && !intraNxN(types[mbA])) {
                 inc++;
             }
-            if (availB && (types[mbAddr - mbWidth] & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) == 0) {
+            if (availB && !intraNxN(types[mbB])) {
                 inc++;
             }
-            return decodeIntraMbType(3 + inc, 3, true);
+            return offset + decodeIntraMbType(3 + inc, 3, true);
         }
         if (!bSlice) {
             if (cabac.decision(14) == 0) {
@@ -3057,10 +5061,10 @@ final class SliceDecoder {
             return 5 + decodeIntraMbType(17, 17, false);
         }
         var inc = 0;
-        if (availA && (types[mbAddr - 1] & (DecoderFrame.MB_SKIP | DecoderFrame.MB_DIRECT16)) == 0) {
+        if (availA && (types[mbA] & (DecoderFrame.MB_SKIP | DecoderFrame.MB_DIRECT16)) == 0) {
             inc++;
         }
-        if (availB && (types[mbAddr - mbWidth] & (DecoderFrame.MB_SKIP | DecoderFrame.MB_DIRECT16)) == 0) {
+        if (availB && (types[mbB] & (DecoderFrame.MB_SKIP | DecoderFrame.MB_DIRECT16)) == 0) {
             inc++;
         }
         if (cabac.decision(27 + inc) == 0) {
@@ -3087,6 +5091,16 @@ final class SliceDecoder {
         }
         value = (value << 1) | cabac.decision(27 + 5);
         return value - 4;
+    }
+
+    /**
+     * Returns whether a macroblock has {@code mb_type} I_NxN, which an SI macroblock does not.
+     *
+     * @param type the flags of the macroblock ({@code DecoderFrame.MB_*})
+     * @return {@code true} for Intra_4x4 and Intra_8x8 macroblocks other than SI
+     */
+    private static boolean intraNxN(int type) {
+        return (type & (DecoderFrame.MB_I4X4 | DecoderFrame.MB_I8X8)) != 0 && (type & DecoderFrame.MB_SI) == 0;
     }
 
     /**
@@ -3164,10 +5178,10 @@ final class SliceDecoder {
     private boolean decodeTransformFlag() {
         var inc = 0;
         var types = frame.mbType;
-        if (availA && (types[mbAddr - 1] & DecoderFrame.MB_T8X8) != 0) {
+        if (availA && (types[mbA] & DecoderFrame.MB_T8X8) != 0) {
             inc++;
         }
-        if (availB && (types[mbAddr - mbWidth] & DecoderFrame.MB_T8X8) != 0) {
+        if (availB && (types[mbB] & DecoderFrame.MB_T8X8) != 0) {
             inc++;
         }
         return cabac.decision(399 + inc) != 0;
@@ -3183,13 +5197,13 @@ final class SliceDecoder {
         var types = frame.mbType;
         var modes = pic.chromaMode;
         if (availA) {
-            var a = mbAddr - 1;
+            var a = mbA;
             if ((types[a] & DecoderFrame.MB_INTRA) != 0 && (types[a] & DecoderFrame.MB_PCM) == 0 && modes[a] != 0) {
                 inc++;
             }
         }
         if (availB) {
-            var b = mbAddr - mbWidth;
+            var b = mbB;
             if ((types[b] & DecoderFrame.MB_INTRA) != 0 && (types[b] & DecoderFrame.MB_PCM) == 0 && modes[b] != 0) {
                 inc++;
             }
@@ -3236,11 +5250,11 @@ final class SliceDecoder {
         var leftCbp = -1;
         var topCbp = -1;
         if (availA) {
-            var a = mbAddr - 1;
+            var a = mbA;
             leftCbp = (types[a] & DecoderFrame.MB_PCM) != 0 ? -2 : cbps[a];
         }
         if (availB) {
-            var b = mbAddr - mbWidth;
+            var b = mbB;
             topCbp = (types[b] & DecoderFrame.MB_PCM) != 0 ? -2 : cbps[b];
         }
         var luma = 0;
@@ -3250,6 +5264,10 @@ final class SliceDecoder {
             int condA;
             if (x == 1) {
                 condA = (luma & (1 << (b8 - 1))) == 0 ? 1 : 0;
+            } else if (mbaff && availA) {
+                var n = leftMb[2 * y];
+                var neighborCbp = (types[n] & DecoderFrame.MB_PCM) != 0 ? -2 : cbps[n];
+                condA = neighborLumaCbpCondition(neighborCbp, (leftRow[2 * y] >> 1) * 2 + 1);
             } else {
                 condA = neighborLumaCbpCondition(leftCbp, b8 + 1);
             }
@@ -3263,7 +5281,7 @@ final class SliceDecoder {
                 luma |= 1 << b8;
             }
         }
-        if (!hasChroma) {
+        if (!hasChroma || chroma444) {
             return luma;
         }
         var condA = chromaCbpCondition(leftCbp, 0);
@@ -3311,6 +5329,12 @@ final class SliceDecoder {
     }
 
     /**
+     * The {@code ctxBlockCat} of the DC, AC, 4x4 and 8x8 blocks of each color component coded
+     * like luma, indexed {@code [component][kind]} (ITU-T H.264 Table 9-42).
+     */
+    private static final byte[][] CATEGORIES = {{0, 1, 2, 5}, {6, 7, 8, 9}, {10, 11, 12, 13}};
+
+    /**
      * Parses the residual of the current macroblock with CABAC (ITU-T H.264 7.3.5.3 and
      * 9.3.3.1.1.9).
      */
@@ -3318,26 +5342,92 @@ final class SliceDecoder {
         var addr = mbAddr;
         var nnz = pic.nnz;
         var base = addr * PictureState.NNZ_STRIDE;
+        var isIntra = (mbFlags & DecoderFrame.MB_INTRA) != 0;
+        dcFlags = 0;
+        pic.nonZero[addr] = residualPlaneCabac(0, base, isIntra);
+        if (chroma444) {
+            residualPlaneCabac(1, base, isIntra);
+            residualPlaneCabac(2, base, isIntra);
+            pic.cbp[addr] = cbp | dcFlags;
+            return;
+        }
+        var cbpFlags = cbp | dcFlags;
+        if (hasChroma && (cbp >> 4) != 0) {
+            chromaResidual = true;
+            var dcCategory = chroma422 ? CabacReader.CHROMA_DC_422 : 3;
+            var dcCount = chroma422 ? 8 : 4;
+            for (var c = 0; c < 2; c++) {
+                var inc = dcCbfCondition(isIntra, 7 + c);
+                if (cabac.decision(CabacTables.CBF_OFFSET[3] + inc) != 0) {
+                    cbpFlags |= 1 << (7 + c);
+                    residualBlockCabac(dcCategory, chromaDc, c * 8, H264Tables.CHROMA_DC_SCAN, 0, dcCount, null, 0,
+                            true);
+                    chromaDcCoded |= 1 << c;
+                }
+            }
+            if ((cbp & 0x20) != 0) {
+                var blocks = chromaRows >> 1;
+                for (var c = 0; c < 2; c++) {
+                    var chromaList = (isIntra ? 1 : 4) + c;
+                    var chromaQpValue = (c == 0 ? pic.qpCb[addr] : pic.qpCr[addr]) + qpBdOffsetC;
+                    var dequant = bypass || rawLevels ? UNIT_SCALE : levelScale4[chromaList][chromaQpValue % 6];
+                    var shift = bypass || rawLevels ? 0 : scaleShift(chromaQpValue / 6, 4);
+                    var coeffs = c == 0 ? cbCoeffs : crCoeffs;
+                    for (var blk = 0; blk < blocks; blk++) {
+                        var inc = chromaCbfCondition(isIntra, c, blk);
+                        if (cabac.decision(CabacTables.CBF_OFFSET[4] + inc) == 0) {
+                            nnz[base + 16 + c * 8 + blk] = 0;
+                            continue;
+                        }
+                        nnz[base + 16 + c * 8 + blk] = 1;
+                        residualBlockCabac(4, coeffs, blk * 16, scan4, 1, 15, dequant, shift, false);
+                        chromaCoded |= 1 << (c * 8 + blk);
+                    }
+                }
+            } else {
+                clearChromaNnz(base);
+            }
+        } else {
+            clearChromaNnz(base);
+        }
+        pic.cbp[addr] = cbpFlags;
+    }
+
+    /**
+     * Parses the residual of one color component coded like luma with CABAC
+     * ({@code residual_luma}, ITU-T H.264 7.3.5.3.1 and 7.3.5.3.3): luma, or the Cb or Cr of a
+     * 4:4:4 macroblock, whose 8x8 blocks carry a {@code coded_block_flag} of their own.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param base the index of the macroblock in {@link PictureState#nnz}
+     * @param isIntra whether the macroblock is intra coded
+     * @return the 4x4 blocks of the component with coefficients, one bit per raster index
+     */
+    private int residualPlaneCabac(int comp, int base, boolean isIntra) {
+        var nnz = pic.nnz;
         var intra16 = (mbFlags & DecoderFrame.MB_I16X16) != 0;
         var transform8x8 = (mbFlags & DecoderFrame.MB_T8X8) != 0;
-        var isIntra = (mbFlags & DecoderFrame.MB_INTRA) != 0;
-        fillCbfCache(isIntra);
-        var qpDiv = qp / 6;
-        var qpMod = qp % 6;
-        var list = lumaList();
-        var dequant4 = levelScale4[list][qpMod];
-        var shift4 = scaleShift(qpDiv, 4);
+        var categories = CATEGORIES[comp];
+        fillCbfCache(isIntra, comp);
+        var qpPrime = componentQp(comp);
+        var qpDiv = qpPrime / 6;
+        var qpMod = qpPrime % 6;
+        var lossless = bypass || rawLevels;
+        var dequant4 = lossless ? UNIT_SCALE : levelScale4[list4(comp)][qpMod];
+        var shift4 = lossless ? 0 : scaleShift(qpDiv, 4);
+        var coeffs = planeCoeffs[comp];
         var cache = nnzCache;
-        var cbpFlags = cbp;
         if (intra16) {
-            var inc = dcCbfCondition(isIntra, 6);
-            if (cabac.decision(CabacTables.CBF_OFFSET[0] + inc) != 0) {
-                cbpFlags |= 1 << 6;
-                residualBlockCabac(0, lumaDc, 0, H264Tables.ZIGZAG_4X4, 0, 16, null, 0, true);
-                transformLumaDc(dequant4[0], qpDiv);
+            var inc = dcCbfCondition(isIntra, 6 + comp);
+            if (cabac.decision(CabacTables.CBF_OFFSET[categories[0]] + inc) != 0) {
+                dcFlags |= 1 << (6 + comp);
+                residualBlockCabac(categories[0], planeDc[comp], 0, scan4, 0, 16, null, 0, true);
+                transformPlaneDc(comp, dequant4[0], qpDiv);
             }
         }
         var nonZero = 0;
+        var codedBlocks = 0;
+        var dcBlocks = 0;
         for (var b8 = 0; b8 < 4; b8++) {
             if ((cbp & (1 << b8)) == 0) {
                 for (var i = 0; i < 4; i++) {
@@ -3346,18 +5436,26 @@ final class SliceDecoder {
                 continue;
             }
             if (transform8x8) {
-                var dequant8 = levelScale8[list == 0 ? 0 : 1][qpMod];
-                var shift8 = scaleShift(qpDiv, 6);
-                var count = residualBlockCabac(5, lumaCoeffs, b8 * 64, H264Tables.ZIGZAG_8X8, 0, 64, dequant8, shift8,
-                        false);
-                if (count == 1 && lumaCoeffs[b8 * 64] != 0) {
-                    lumaDcOnly |= 1 << b8;
+                int flag;
+                if (chroma444) {
+                    flag = cabac.decision(CabacTables.CBF_OFFSET[categories[3]] + cbf8x8Condition(b8));
                 } else {
-                    lumaCoded |= 1 << b8;
+                    flag = 1;
                 }
-                nonZero |= 0x33 << ((b8 & 1) * 2 + (b8 >> 1) * 8);
+                if (flag != 0) {
+                    var dequant8 = lossless ? UNIT_SCALE : levelScale8[list8(comp)][qpMod];
+                    var shift8 = lossless ? 0 : scaleShift(qpDiv, 6);
+                    var count = residualBlockCabac(categories[3], coeffs, b8 * 64, scan8, 0, 64, dequant8, shift8,
+                            false);
+                    if (count == 1 && coeffs[b8 * 64] != 0) {
+                        dcBlocks |= 1 << b8;
+                    } else {
+                        codedBlocks |= 1 << b8;
+                    }
+                    nonZero |= 0x33 << ((b8 & 1) * 2 + (b8 >> 1) * 8);
+                }
                 for (var i = 0; i < 4; i++) {
-                    cache[CACHE_OF_RASTER[H264Tables.BLOCK_RASTER[b8 * 4 + i]]] = 1;
+                    cache[CACHE_OF_RASTER[H264Tables.BLOCK_RASTER[b8 * 4 + i]]] = flag;
                 }
                 continue;
             }
@@ -3365,7 +5463,7 @@ final class SliceDecoder {
                 var blk = b8 * 4 + i;
                 var raster = H264Tables.BLOCK_RASTER[blk];
                 var c = CACHE_OF_RASTER[raster];
-                var category = intra16 ? 1 : 2;
+                var category = categories[intra16 ? 1 : 2];
                 var inc = cache[c - 1] + 2 * cache[c - 8];
                 if (cabac.decision(CabacTables.CBF_OFFSET[category] + inc) == 0) {
                     cache[c] = 0;
@@ -3373,77 +5471,76 @@ final class SliceDecoder {
                 }
                 cache[c] = 1;
                 if (intra16) {
-                    residualBlockCabac(1, lumaCoeffs, blk * 16, H264Tables.ZIGZAG_4X4, 1, 15, dequant4, shift4, false);
-                    lumaCoded |= 1 << blk;
+                    residualBlockCabac(category, coeffs, blk * 16, scan4, 1, 15, dequant4, shift4, false);
+                    codedBlocks |= 1 << blk;
                 } else {
-                    var count = residualBlockCabac(2, lumaCoeffs, blk * 16, H264Tables.ZIGZAG_4X4, 0, 16, dequant4,
+                    var count = residualBlockCabac(category, coeffs, blk * 16, scan4, 0, 16, dequant4,
                             shift4, false);
-                    if (count == 1 && lumaCoeffs[blk * 16] != 0) {
-                        lumaDcOnly |= 1 << blk;
+                    if (count == 1 && coeffs[blk * 16] != 0) {
+                        dcBlocks |= 1 << blk;
                     } else {
-                        lumaCoded |= 1 << blk;
+                        codedBlocks |= 1 << blk;
                     }
                 }
                 nonZero |= 1 << raster;
             }
         }
+        coded[comp] |= codedBlocks;
+        dcOnly[comp] |= dcBlocks;
+        var at = base + 16 * comp;
         for (var i = 0; i < 16; i++) {
-            nnz[base + i] = (byte) cache[CACHE_OF_RASTER[i]];
+            nnz[at + i] = (byte) cache[CACHE_OF_RASTER[i]];
         }
-        pic.nonZero[addr] = nonZero;
-        if (hasChroma && (cbp >> 4) != 0) {
-            chromaResidual = true;
-            for (var c = 0; c < 2; c++) {
-                var inc = dcCbfCondition(isIntra, 7 + c);
-                if (cabac.decision(CabacTables.CBF_OFFSET[3] + inc) != 0) {
-                    cbpFlags |= 1 << (7 + c);
-                    residualBlockCabac(3, chromaDc, c * 4, H264Tables.CHROMA_DC_SCAN, 0, 4, null, 0, true);
-                    chromaDcCoded |= 1 << c;
-                }
-            }
-            if ((cbp & 0x20) != 0) {
-                for (var c = 0; c < 2; c++) {
-                    var chromaList = (isIntra ? 1 : 4) + c;
-                    var chromaQpValue = c == 0 ? pic.qpCb[addr] : pic.qpCr[addr];
-                    var dequant = levelScale4[chromaList][chromaQpValue % 6];
-                    var shift = scaleShift(chromaQpValue / 6, 4);
-                    var coeffs = c == 0 ? cbCoeffs : crCoeffs;
-                    for (var blk = 0; blk < 4; blk++) {
-                        var inc = chromaCbfCondition(isIntra, c, blk);
-                        if (cabac.decision(CabacTables.CBF_OFFSET[4] + inc) == 0) {
-                            nnz[base + 16 + c * 4 + blk] = 0;
-                            continue;
-                        }
-                        nnz[base + 16 + c * 4 + blk] = 1;
-                        residualBlockCabac(4, coeffs, blk * 16, H264Tables.ZIGZAG_4X4, 1, 15, dequant, shift, false);
-                        chromaCoded |= 1 << (c * 4 + blk);
-                    }
-                }
-            } else {
-                for (var i = 16; i < 24; i++) {
-                    nnz[base + i] = 0;
-                }
-            }
-        } else {
-            for (var i = 16; i < 24; i++) {
-                nnz[base + i] = 0;
-            }
-        }
-        pic.cbp[addr] = cbpFlags;
+        return nonZero;
     }
 
     /**
-     * Fills the luma coded block flag cache from the neighboring macroblocks for CABAC
-     * (ITU-T H.264 9.3.3.1.1.9).
+     * Returns the context increment of the {@code coded_block_flag} of an 8x8 block of a 4:4:4
+     * macroblock ({@code ctxBlockCat} 5, 9 or 13, ITU-T H.264 9.3.3.1.1.9), from the coded block
+     * flag cache of its component: a neighboring 8x8 block counts only in a macroblock coded with
+     * the 8x8 transform, and an I_PCM neighbor counts as coded.
+     *
+     * @param b8 the index of the 8x8 block
+     * @return the increment, 0 to 3
+     */
+    private int cbf8x8Condition(int b8) {
+        var cache = nnzCache;
+        var c = CACHE_ORIGIN + (b8 & 1) * 2 + (b8 >> 1) * 16;
+        var types = frame.mbType;
+        int a;
+        if ((b8 & 1) != 0 || !availA) {
+            a = cache[c - 1];
+        } else {
+            var n = mbaff ? leftMb[(b8 >> 1) * 2] : mbA;
+            a = (types[n] & DecoderFrame.MB_PCM) != 0 ? 1 : (types[n] & DecoderFrame.MB_T8X8) != 0 ? cache[c - 1] : 0;
+        }
+        int b;
+        if ((b8 >> 1) != 0 || !availB) {
+            b = cache[c - 8];
+        } else {
+            b = (types[mbB] & DecoderFrame.MB_PCM) != 0 ? 1 : (types[mbB] & DecoderFrame.MB_T8X8) != 0 ? cache[c - 8] : 0;
+        }
+        return a + 2 * b;
+    }
+
+    /**
+     * Fills the coded block flag cache of a color component coded like luma from the
+     * neighboring macroblocks for CABAC (ITU-T H.264 9.3.3.1.1.9).
      *
      * @param isIntra whether the current macroblock is intra coded
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
      */
-    private void fillCbfCache(boolean isIntra) {
+    private void fillCbfCache(boolean isIntra, int comp) {
         var cache = nnzCache;
         var nnz = pic.nnz;
         var unavailable = isIntra ? 1 : 0;
-        if (availA) {
-            var base = (mbAddr - 1) * PictureState.NNZ_STRIDE;
+        var offset = 16 * comp;
+        if (availA && mbaff) {
+            for (var y = 0; y < 4; y++) {
+                cache[8 + y * 8] = nnz[leftMb[y] * PictureState.NNZ_STRIDE + offset + leftRow[y] * 4 + 3];
+            }
+        } else if (availA) {
+            var base = mbA * PictureState.NNZ_STRIDE + offset;
             for (var y = 0; y < 4; y++) {
                 cache[8 + y * 8] = nnz[base + y * 4 + 3];
             }
@@ -3453,7 +5550,7 @@ final class SliceDecoder {
             }
         }
         if (availB) {
-            var base = (mbAddr - mbWidth) * PictureState.NNZ_STRIDE + 12;
+            var base = mbB * PictureState.NNZ_STRIDE + offset + 12;
             for (var x = 0; x < 4; x++) {
                 cache[1 + x] = nnz[base + x];
             }
@@ -3468,14 +5565,15 @@ final class SliceDecoder {
      * Returns the context increment of a DC {@code coded_block_flag}.
      *
      * @param isIntra whether the current macroblock is intra coded
-     * @param bit the bit of the DC flag in {@link PictureState#cbp}: 6 luma, 7 Cb, 8 Cr
+     * @param bit the bit of the DC flag in {@link PictureState#cbp}: 6 luma, 7 Cb, 8 Cr (the
+     * chroma DC blocks, or the Cb and Cr Intra16x16 DC blocks of 4:4:4)
      * @return the increment, 0 to 3
      */
     private int dcCbfCondition(boolean isIntra, int bit) {
         var cbps = pic.cbp;
         var unavailable = isIntra ? 1 : 0;
-        var a = availA ? (cbps[mbAddr - 1] >> bit) & 1 : unavailable;
-        var b = availB ? (cbps[mbAddr - mbWidth] >> bit) & 1 : unavailable;
+        var a = availA ? (cbps[mbA] >> bit) & 1 : unavailable;
+        var b = availB ? (cbps[mbB] >> bit) & 1 : unavailable;
         return a + 2 * b;
     }
 
@@ -3484,12 +5582,12 @@ final class SliceDecoder {
      *
      * @param isIntra whether the current macroblock is intra coded
      * @param component 0 for Cb, 1 for Cr
-     * @param blk the chroma block index, 0 to 3
+     * @param blk the {@code chroma4x4BlkIdx}, 0 to 3 for 4:2:0 and 0 to 7 for 4:2:2
      * @return the increment, 0 to 3
      */
     private int chromaCbfCondition(boolean isIntra, int component, int blk) {
         var nnz = pic.nnz;
-        var base = mbAddr * PictureState.NNZ_STRIDE + 16 + component * 4;
+        var base = mbAddr * PictureState.NNZ_STRIDE + 16 + component * 8;
         var x = blk & 1;
         var y = blk >> 1;
         var unavailable = isIntra ? 1 : 0;
@@ -3497,7 +5595,7 @@ final class SliceDecoder {
         if (x > 0) {
             a = nnz[base + blk - 1];
         } else if (availA) {
-            a = nnz[base - PictureState.NNZ_STRIDE + y * 2 + 1];
+            a = nnz[leftChromaIndex(component, y)];
         } else {
             a = unavailable;
         }
@@ -3505,7 +5603,7 @@ final class SliceDecoder {
         if (y > 0) {
             b = nnz[base + blk - 2];
         } else if (availB) {
-            b = nnz[base - mbWidth * PictureState.NNZ_STRIDE + 2 + x];
+            b = nnz[topChromaIndex(component, x)];
         } else {
             b = unavailable;
         }
@@ -3516,7 +5614,7 @@ final class SliceDecoder {
      * Decodes the significance map and levels of one CABAC residual block (ITU-T H.264
      * 7.3.5.3.3) and stores its coefficients, dequantized when {@code dequant} is given.
      *
-     * @param category the {@code ctxBlockCat}, 0 to 5
+     * @param category the {@code ctxBlockCat}, 0 to 13, or {@link CabacReader#CHROMA_DC_422}
      * @param coeffs receives the coefficients
      * @param coeffOffset the index of the block in {@code coeffs}
      * @param scan maps scan index to position within the block
@@ -3531,7 +5629,7 @@ final class SliceDecoder {
                                    int maxCoeff, int[] dequant, int shift, boolean dc) {
         var indices = significantIndices;
         var levels = significantLevels;
-        var count = cabac.residualBlock(category, maxCoeff, indices, levels);
+        var count = cabac.residualBlock(category, maxCoeff, fieldMb, indices, levels);
         if (dc) {
             for (var k = 0; k < count; k++) {
                 coeffs[coeffOffset + scanStart + indices[k]] = levels[k];
@@ -3572,25 +5670,135 @@ final class SliceDecoder {
      * Reconstructs an intra macroblock: prediction and residual of luma and chroma.
      */
     private void reconstructIntra() {
-        var luma = frame.lumaOrigin + mbY * 16 * lumaStride + mbX * 16;
         var constrained = pps.constrainedIntraPred;
         var types = frame.mbType;
-        var leftOk = availA && (!constrained || (types[mbAddr - 1] & DecoderFrame.MB_INTRA) != 0);
-        var topOk = availB && (!constrained || (types[mbAddr - mbWidth] & DecoderFrame.MB_INTRA) != 0);
-        var topRightOk = availC && (!constrained || (types[mbAddr - mbWidth + 1] & DecoderFrame.MB_INTRA) != 0);
-        var topLeftOk = availD && (!constrained || (types[mbAddr - mbWidth - 1] & DecoderFrame.MB_INTRA) != 0);
+        int leftRows;
+        int leftChromaRows;
+        if (mbaff) {
+            leftRows = mbaffLeftRows(constrained, false);
+            leftChromaRows = chromaRows == 16 ? leftRows : mbaffLeftRows(constrained, true);
+        } else {
+            var available = availA && (!constrained || intraSamples(types[mbA]));
+            leftRows = available ? 0xFFFF : 0;
+            leftChromaRows = available ? (1 << chromaRows) - 1 : 0;
+        }
+        var topOk = availB && (!constrained || intraSamples(types[mbB]));
+        var topRightOk = availC && (!constrained || intraSamples(types[mbC]));
+        var topLeftOk = availD && (!constrained || intraSamples(types[mbD]));
+        reconstructIntraPlane(0, leftRows, topOk, topRightOk, topLeftOk);
+        if (chroma444) {
+            var depths = wide && frame.bitDepthChroma != frame.bitDepthLuma;
+            if (depths) {
+                wideIntra.setBitDepths(frame.bitDepthChroma, frame.bitDepthChroma);
+            }
+            reconstructIntraPlane(1, leftRows, topOk, topRightOk, topLeftOk);
+            reconstructIntraPlane(2, leftRows, topOk, topRightOk, topLeftOk);
+            if (depths) {
+                wideIntra.setBitDepths(frame.bitDepthLuma, frame.bitDepthChroma);
+            }
+            return;
+        }
+        if (hasChroma) {
+            var chroma = chromaBase;
+            var leftBlocks = 0;
+            for (var row = 0; row < chromaRows >> 2; row++) {
+                if (((leftChromaRows >> (4 * row)) & 0xF) == 0xF) {
+                    leftBlocks |= 1 << row;
+                }
+            }
+            if (wide) {
+                wideIntra.predictChroma(chromaPredMode, cbPlane16, chroma, chromaStride, chromaRows, leftBlocks, topOk,
+                        topLeftOk);
+                wideIntra.predictChroma(chromaPredMode, crPlane16, chroma, chromaStride, chromaRows, leftBlocks, topOk,
+                        topLeftOk);
+            } else {
+                intra.predictChroma(chromaPredMode, cbPlane, chroma, chromaStride, chromaRows, leftBlocks, topOk,
+                        topLeftOk);
+                intra.predictChroma(chromaPredMode, crPlane, chroma, chromaStride, chromaRows, leftBlocks, topOk,
+                        topLeftOk);
+            }
+            if (rawLevels) {
+                reconstructSwitchingChroma(1);
+            } else {
+                addChromaResidual(chroma);
+            }
+        }
+    }
+
+    /**
+     * Returns whether the samples of a neighboring macroblock may be used for the intra
+     * prediction of the current macroblock under {@code constrained_intra_pred_flag}: those of
+     * intra macroblocks, except that an SI macroblock serves only another SI macroblock (ITU-T
+     * H.264 8.3.1.2, 8.3.3 and 8.3.4).
+     *
+     * @param type the flags of the neighbor ({@code DecoderFrame.MB_*})
+     * @return {@code true} when the neighbor's samples are available
+     */
+    private boolean intraSamples(int type) {
+        return (type & DecoderFrame.MB_INTRA) != 0;
+    }
+
+    /**
+     * Reconstructs the luma and chroma of a P macroblock of an SP slice from its inter
+     * prediction and coefficient levels in the transform domain (ITU-T H.264 8.6.1 and 8.6.2);
+     * a P_Skip macroblock has no levels.
+     */
+    private void reconstructSwitching() {
+        var scaleQp = levelScale4[3][qp % 6];
+        var scaleQs = levelScale4[3][qs % 6];
+        for (var blk = 0; blk < 16; blk++) {
+            var offset = lumaBase + H264Tables.BLOCK_Y[blk] * 4 * lumaStride + H264Tables.BLOCK_X[blk] * 4;
+            switchingTransform.luma(dsp, lumaPlane, offset, lumaStride, lumaCoeffs, blk * 16, scaleQp, qp, scaleQs,
+                    qs, switchingProcess);
+        }
+        reconstructSwitchingChroma(4);
+    }
+
+    /**
+     * Reconstructs both chroma components of a P macroblock of an SP slice or of an SI
+     * macroblock in the transform domain (ITU-T H.264 8.6.1.2 and 8.6.2.2).
+     *
+     * @param list the scaling list index of the Cb component: 1 for intra, 4 for inter
+     */
+    private void reconstructSwitchingChroma(int list) {
+        for (var c = 0; c < 2; c++) {
+            var qpc = c == 0 ? pic.qpCb[mbAddr] : pic.qpCr[mbAddr];
+            var qsc = chromaQp(qs, c == 0 ? pps.chromaQpIndexOffset : pps.secondChromaQpIndexOffset, 0);
+            switchingTransform.chroma(dsp, c == 0 ? cbPlane : crPlane, chromaBase, chromaStride,
+                    c == 0 ? cbCoeffs : crCoeffs, chromaDc, c * 8, levelScale4[list + c][qpc % 6], qpc,
+                    levelScale4[list + c][qsc % 6], qsc, switchingProcess);
+        }
+    }
+
+    /**
+     * Predicts and reconstructs one color component of an intra macroblock that is coded like
+     * luma: luma, or the Cb or Cr of a 4:4:4 macroblock, which takes the luma prediction modes
+     * (ITU-T H.264 8.3.4.5).
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param leftRows the available left neighboring sample rows, one bit per row
+     * @param topOk whether the samples above are available
+     * @param topRightOk whether the samples above and to the right are available
+     * @param topLeftOk whether the sample above and to the left is available
+     */
+    private void reconstructIntraPlane(int comp, int leftRows, boolean topOk, boolean topRightOk, boolean topLeftOk) {
+        var base = comp == 0 ? lumaBase : chromaBase;
+        var stride = comp == 0 ? lumaStride : chromaStride;
+        var plane = plane8(comp);
+        var plane16 = plane16(comp);
+        var blocks = coded[comp] | dcOnly[comp];
         if ((mbFlags & DecoderFrame.MB_I4X4) != 0) {
             for (var blk = 0; blk < 16; blk++) {
                 var x = H264Tables.BLOCK_X[blk];
                 var y = H264Tables.BLOCK_Y[blk];
-                var offset = luma + y * 4 * lumaStride + x * 4;
-                var hasLeft = x > 0 || leftOk;
+                var offset = base + y * 4 * stride + x * 4;
+                var hasLeft = x > 0 || ((leftRows >> (4 * y)) & 0xF) == 0xF;
                 var hasTop = y > 0 || topOk;
                 boolean hasTopLeft;
                 if (x > 0 && y > 0) {
                     hasTopLeft = true;
                 } else if (y > 0) {
-                    hasTopLeft = leftOk;
+                    hasTopLeft = ((leftRows >> (4 * y - 1)) & 1) != 0;
                 } else if (x > 0) {
                     hasTopLeft = topOk;
                 } else {
@@ -3602,26 +5810,38 @@ final class SliceDecoder {
                 } else {
                     hasTopRight = TOP_RIGHT_INSIDE[blk];
                 }
-                intra.predict4x4(predModes[H264Tables.BLOCK_RASTER[blk]], lumaPlane, offset, lumaStride,
-                        hasLeft, hasTop, hasTopLeft, hasTopRight);
-                if ((lumaCoded & (1 << blk)) != 0) {
-                    dsp.idct4x4Add(lumaCoeffs, blk * 16, lumaPlane, offset, lumaStride);
-                } else if ((lumaDcOnly & (1 << blk)) != 0) {
-                    dsp.idct4x4DcAdd(lumaCoeffs, blk * 16, lumaPlane, offset, lumaStride);
+                var mode = predModes[H264Tables.BLOCK_RASTER[blk]];
+                if (wide) {
+                    wideIntra.predict4x4(mode, plane16, offset, stride, hasLeft, hasTop, hasTopLeft, hasTopRight);
+                } else {
+                    intra.predict4x4(mode, plane, offset, stride, hasLeft, hasTop, hasTopLeft, hasTopRight);
+                }
+                if (rawLevels) {
+                    switchingTransform.luma(dsp, plane, offset, stride, lumaCoeffs, blk * 16, levelScale4[0][qp % 6], qp,
+                            levelScale4[0][qs % 6], qs, true);
+                    continue;
+                }
+                if ((blocks & (1 << blk)) == 0) {
+                    continue;
+                }
+                if (bypass) {
+                    addBypass(comp, blk * 16, 4, offset, mode < 2 ? mode + 1 : 0);
+                } else {
+                    addPlane4x4(comp, blk, offset, (coded[comp] & (1 << blk)) != 0);
                 }
             }
         } else if ((mbFlags & DecoderFrame.MB_I8X8) != 0) {
             for (var b8 = 0; b8 < 4; b8++) {
                 var x = b8 & 1;
                 var y = b8 >> 1;
-                var offset = luma + y * 8 * lumaStride + x * 8;
-                var hasLeft = x > 0 || leftOk;
+                var offset = base + y * 8 * stride + x * 8;
+                var hasLeft = x > 0 || ((leftRows >> (8 * y)) & 0xFF) == 0xFF;
                 var hasTop = y > 0 || topOk;
                 boolean hasTopLeft;
                 if (x > 0 && y > 0) {
                     hasTopLeft = true;
                 } else if (y > 0) {
-                    hasTopLeft = leftOk;
+                    hasTopLeft = ((leftRows >> 7) & 1) != 0;
                 } else if (x > 0) {
                     hasTopLeft = topOk;
                 } else {
@@ -3635,48 +5855,275 @@ final class SliceDecoder {
                 } else {
                     hasTopRight = b8 == 2;
                 }
-                intra.predict8x8(predModes[y * 8 + x * 2], lumaPlane, offset, lumaStride,
-                        hasLeft, hasTop, hasTopLeft, hasTopRight);
-                if ((lumaCoded & (1 << b8)) != 0) {
-                    dsp.idct8x8Add(lumaCoeffs, b8 * 64, lumaPlane, offset, lumaStride);
-                } else if ((lumaDcOnly & (1 << b8)) != 0) {
-                    dsp.idct8x8DcAdd(lumaCoeffs, b8 * 64, lumaPlane, offset, lumaStride);
+                var mode = predModes[y * 8 + x * 2];
+                if (wide) {
+                    wideIntra.predict8x8(mode, plane16, offset, stride, hasLeft, hasTop, hasTopLeft, hasTopRight);
+                } else {
+                    intra.predict8x8(mode, plane, offset, stride, hasLeft, hasTop, hasTopLeft, hasTopRight);
+                }
+                if ((blocks & (1 << b8)) == 0) {
+                    continue;
+                }
+                if (bypass) {
+                    addBypass(comp, b8 * 64, 8, offset, mode < 2 ? mode + 1 : 0);
+                } else {
+                    addPlane8x8(comp, b8, offset, (coded[comp] & (1 << b8)) != 0);
                 }
             }
         } else {
-            intra.predict16x16(intra16Mode, lumaPlane, luma, lumaStride, leftOk, topOk, topLeftOk);
-            addLumaResidual4x4(luma);
-        }
-        if (hasChroma) {
-            var chroma = frame.chromaOrigin + mbY * 8 * chromaStride + mbX * 8;
-            intra.predictChroma(chromaPredMode, cbPlane, chroma, chromaStride, leftOk, topOk, topLeftOk);
-            intra.predictChroma(chromaPredMode, crPlane, chroma, chromaStride, leftOk, topOk, topLeftOk);
-            addChromaResidual(chroma);
+            var leftOk = leftRows == 0xFFFF;
+            if (wide) {
+                wideIntra.predict16x16(intra16Mode, plane16, base, stride, leftOk, topOk, topLeftOk);
+            } else {
+                intra.predict16x16(intra16Mode, plane, base, stride, leftOk, topOk, topLeftOk);
+            }
+            if (bypass && intra16Mode < 2) {
+                if (blocks != 0) {
+                    addBypassRegion(comp, planeCoeffs[comp], 16, 16, true, base, intra16Mode + 1);
+                }
+            } else {
+                addPlaneResidual4x4(comp, base);
+            }
         }
     }
 
     /**
-     * Adds the 4x4-transformed luma residual of the current macroblock, including DC-only blocks
-     * of Intra16x16 macroblocks.
+     * Returns the 8-bit plane of a color component.
      *
-     * @param luma the index of the macroblock's top-left luma sample
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @return the plane, or {@code null} for a frame of 16-bit samples
      */
-    private void addLumaResidual4x4(int luma) {
-        var coded = lumaCoded;
-        var dcOnly = lumaDcOnly & ~coded;
-        if ((coded | dcOnly) == 0) {
+    private byte[] plane8(int comp) {
+        return comp == 0 ? lumaPlane : comp == 1 ? cbPlane : crPlane;
+    }
+
+    /**
+     * Returns the 16-bit plane of a color component.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @return the plane, or {@code null} for a frame of 8-bit samples
+     */
+    private short[] plane16(int comp) {
+        return comp == 0 ? lumaPlane16 : comp == 1 ? cbPlane16 : crPlane16;
+    }
+
+    /**
+     * Returns which left neighboring sample rows of the current MBAFF macroblock are available
+     * for intra prediction: rows of the left pair that are not inter coded under constrained
+     * intra prediction (ITU-T H.264 8.3.1.2 with Table 6-4).
+     *
+     * @param constrained whether {@code constrained_intra_pred_flag} is set
+     * @param chroma whether to describe the 8 chroma rows rather than the 16 luma rows
+     * @return one bit per row, row 0 in bit 0
+     */
+    private int mbaffLeftRows(boolean constrained, boolean chroma) {
+        var all = chroma ? 0xFF : 0xFFFF;
+        if (!pairAvailA) {
+            return 0;
+        }
+        if (!constrained) {
+            return all;
+        }
+        var types = frame.mbType;
+        var top = pairTop - 1;
+        var bottom = top + mbWidth;
+        var topOk = intraSamples(types[top]);
+        var bottomOk = intraSamples(types[bottom]);
+        var leftField = (types[top] & DecoderFrame.MB_FIELD) != 0;
+        int topRows;
+        int bottomRows;
+        if (leftField == fieldMb) {
+            return ((mbY & 1) == 0 ? topOk : bottomOk) ? all : 0;
+        } else if (!fieldMb) {
+            topRows = chroma ? 0x55 : 0x5555;
+            bottomRows = chroma ? 0xAA : 0xAAAA;
+        } else {
+            topRows = chroma ? 0x0F : 0x00FF;
+            bottomRows = chroma ? 0xF0 : 0xFF00;
+        }
+        return (topOk ? topRows : 0) | (bottomOk ? bottomRows : 0);
+    }
+
+    /**
+     * Adds the 4x4-transformed residual of a color component coded like luma, including the
+     * DC-only blocks of Intra16x16 macroblocks.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param base the index of the macroblock's top-left sample of the component
+     */
+    private void addPlaneResidual4x4(int comp, int base) {
+        var full = coded[comp];
+        var dc = dcOnly[comp] & ~full;
+        if ((full | dc) == 0) {
             return;
         }
+        var stride = comp == 0 ? lumaStride : chromaStride;
         for (var blk = 0; blk < 16; blk++) {
             var bit = 1 << blk;
-            if (((coded | dcOnly) & bit) == 0) {
+            if (((full | dc) & bit) == 0) {
                 continue;
             }
-            var offset = luma + H264Tables.BLOCK_Y[blk] * 4 * lumaStride + H264Tables.BLOCK_X[blk] * 4;
-            if ((coded & bit) != 0) {
-                dsp.idct4x4Add(lumaCoeffs, blk * 16, lumaPlane, offset, lumaStride);
+            var offset = base + H264Tables.BLOCK_Y[blk] * 4 * stride + H264Tables.BLOCK_X[blk] * 4;
+            if (bypass) {
+                addBypass(comp, blk * 16, 4, offset, 0);
             } else {
-                dsp.idct4x4DcAdd(lumaCoeffs, blk * 16, lumaPlane, offset, lumaStride);
+                addPlane4x4(comp, blk, offset, (full & bit) != 0);
+            }
+        }
+    }
+
+    /**
+     * Adds the inverse-transformed residual of one 4x4 block of a color component coded like
+     * luma to its prediction.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param blk the {@code luma4x4BlkIdx} of the block
+     * @param offset the index of the block's top-left sample
+     * @param full whether to apply the full inverse transform rather than the DC-only one
+     */
+    private void addPlane4x4(int comp, int blk, int offset, boolean full) {
+        var coeffs = planeCoeffs[comp];
+        var stride = comp == 0 ? lumaStride : chromaStride;
+        if (wide) {
+            var plane = plane16(comp);
+            var max = comp == 0 ? lumaMax : chromaMax;
+            if (full) {
+                wideDsp.idct4x4Add(coeffs, blk * 16, plane, offset, stride, max);
+            } else {
+                wideDsp.idct4x4DcAdd(coeffs, blk * 16, plane, offset, stride, max);
+            }
+        } else if (full) {
+            dsp.idct4x4Add(coeffs, blk * 16, plane8(comp), offset, stride);
+        } else {
+            dsp.idct4x4DcAdd(coeffs, blk * 16, plane8(comp), offset, stride);
+        }
+    }
+
+    /**
+     * Adds the inverse-transformed residual of one 8x8 block of a color component coded like
+     * luma to its prediction.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param b8 the index of the 8x8 block
+     * @param offset the index of the block's top-left sample
+     * @param full whether to apply the full inverse transform rather than the DC-only one
+     */
+    private void addPlane8x8(int comp, int b8, int offset, boolean full) {
+        var coeffs = planeCoeffs[comp];
+        var stride = comp == 0 ? lumaStride : chromaStride;
+        if (wide) {
+            var plane = plane16(comp);
+            var max = comp == 0 ? lumaMax : chromaMax;
+            if (full) {
+                wideDsp.idct8x8Add(coeffs, b8 * 64, plane, offset, stride, max);
+            } else {
+                wideDsp.idct8x8DcAdd(coeffs, b8 * 64, plane, offset, stride, max);
+            }
+        } else if (full) {
+            dsp.idct8x8Add(coeffs, b8 * 64, plane8(comp), offset, stride);
+        } else {
+            dsp.idct8x8DcAdd(coeffs, b8 * 64, plane8(comp), offset, stride);
+        }
+    }
+
+    /**
+     * Adds the residual of one transform-bypass block of a color component coded like luma,
+     * whose coefficient levels are its residual samples (ITU-T H.264 8.5.12 and 8.5.13), to its
+     * prediction, after the intra residual transform-bypass accumulation (8.5.15) when
+     * {@code dpcm} is not 0; the coefficients are cleared.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param coeffOffset the index of the block's levels in {@link #planeCoeffs}, in raster order
+     * @param size the block size, 4 or 8
+     * @param offset the index of the block's top-left sample
+     * @param dpcm 0 for none, 1 to accumulate down the columns (vertical prediction), 2 along the
+     * rows (horizontal prediction)
+     */
+    private void addBypass(int comp, int coeffOffset, int size, int offset, int dpcm) {
+        var coeffs = planeCoeffs[comp];
+        var residual = bypassScratch;
+        for (var y = 0; y < size; y++) {
+            for (var x = 0; x < size; x++) {
+                residual[y * 16 + x] = coeffs[coeffOffset + y * size + x];
+            }
+        }
+        Arrays.fill(coeffs, coeffOffset, coeffOffset + size * size, 0);
+        addResidualRegion(comp, size, size, offset, dpcm);
+    }
+
+    /**
+     * Adds the transform-bypass residual of the 4x4 blocks of a whole macroblock area of one
+     * component to its prediction, after the intra residual transform-bypass accumulation over the
+     * whole area (ITU-T H.264 8.5.15) when {@code dpcm} is not 0; the coefficients are cleared.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param coeffs the levels of the area's 4x4 blocks, 16 per block in raster order
+     * @param width the area width, 8 or 16
+     * @param height the area height, 8 or 16
+     * @param lumaOrder whether the blocks follow {@code luma4x4BlkIdx} rather than the raster
+     * order of {@code chroma4x4BlkIdx}
+     * @param offset the index of the area's top-left sample
+     * @param dpcm 0 for none, 1 to accumulate down the columns, 2 along the rows
+     */
+    private void addBypassRegion(int comp, int[] coeffs, int width, int height, boolean lumaOrder, int offset,
+                                 int dpcm) {
+        var residual = bypassScratch;
+        var blocks = (width >> 2) * (height >> 2);
+        for (var blk = 0; blk < blocks; blk++) {
+            var x0 = lumaOrder ? H264Tables.BLOCK_X[blk] * 4 : (blk & 1) * 4;
+            var y0 = lumaOrder ? H264Tables.BLOCK_Y[blk] * 4 : (blk >> 1) * 4;
+            for (var y = 0; y < 4; y++) {
+                for (var x = 0; x < 4; x++) {
+                    residual[(y0 + y) * 16 + x0 + x] = coeffs[blk * 16 + y * 4 + x];
+                }
+            }
+        }
+        Arrays.fill(coeffs, 0, blocks * 16, 0);
+        addResidualRegion(comp, width, height, offset, dpcm);
+    }
+
+    /**
+     * Adds the residual held in {@link #bypassScratch} to the prediction of an area of one
+     * component, after accumulating it down the columns or along the rows (ITU-T H.264 8.5.15).
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param width the area width
+     * @param height the area height
+     * @param offset the index of the area's top-left sample
+     * @param dpcm 0 for none, 1 to accumulate down the columns, 2 along the rows
+     */
+    private void addResidualRegion(int comp, int width, int height, int offset, int dpcm) {
+        var residual = bypassScratch;
+        if (dpcm == 1) {
+            for (var y = 1; y < height; y++) {
+                for (var x = 0; x < width; x++) {
+                    residual[y * 16 + x] += residual[(y - 1) * 16 + x];
+                }
+            }
+        } else if (dpcm == 2) {
+            for (var y = 0; y < height; y++) {
+                for (var x = 1; x < width; x++) {
+                    residual[y * 16 + x] += residual[y * 16 + x - 1];
+                }
+            }
+        }
+        var stride = comp == 0 ? lumaStride : chromaStride;
+        var max = comp == 0 ? lumaMax : chromaMax;
+        if (wide) {
+            var plane = plane16(comp);
+            for (var y = 0; y < height; y++) {
+                var row = offset + y * stride;
+                for (var x = 0; x < width; x++) {
+                    plane[row + x] = (short) Math.clamp(plane[row + x] + residual[y * 16 + x], 0, max);
+                }
+            }
+        } else {
+            var plane = plane8(comp);
+            for (var y = 0; y < height; y++) {
+                var row = offset + y * stride;
+                for (var x = 0; x < width; x++) {
+                    plane[row + x] = (byte) Math.clamp((plane[row + x] & 0xFF) + residual[y * 16 + x], 0, 255);
+                }
             }
         }
     }
@@ -3690,22 +6137,98 @@ final class SliceDecoder {
         if (!chromaResidual) {
             return;
         }
+        if (bypass) {
+            addBypassChroma(chroma);
+            return;
+        }
         for (var c = 0; c < 2; c++) {
             if ((chromaDcCoded & (1 << c)) != 0) {
                 transformChromaDc(c);
             }
             var coeffs = c == 0 ? cbCoeffs : crCoeffs;
-            var plane = c == 0 ? cbPlane : crPlane;
-            if (((chromaCoded >> (c * 4)) & 0xF) == 0) {
-                dsp.chromaDcAdd(coeffs, plane, chroma, chromaStride);
+            if (wide) {
+                addWideChroma(coeffs, c == 0 ? cbPlane16 : crPlane16, chroma, c);
                 continue;
             }
-            for (var blk = 0; blk < 4; blk++) {
+            var plane = c == 0 ? cbPlane : crPlane;
+            for (var half = 0; half < chromaRows >> 3; half++) {
+                var first = half * 4;
+                var origin = chroma + half * 8 * chromaStride;
+                if (((chromaCoded >> (c * 8 + first)) & 0xF) == 0) {
+                    dsp.chromaDcAdd(coeffs, first * 16, plane, origin, chromaStride);
+                    continue;
+                }
+                for (var blk = first; blk < first + 4; blk++) {
+                    var offset = chroma + (blk >> 1) * 4 * chromaStride + (blk & 1) * 4;
+                    if ((chromaCoded & (1 << (c * 8 + blk))) != 0) {
+                        dsp.idct4x4Add(coeffs, blk * 16, plane, offset, chromaStride);
+                    } else if (coeffs[blk * 16] != 0) {
+                        dsp.idct4x4DcAdd(coeffs, blk * 16, plane, offset, chromaStride);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Adds the transform-bypass chroma residual of the current 4:2:0 or 4:2:2 macroblock: the
+     * DC levels become the DC coefficients of the 4x4 blocks they belong to ({@code dcC = c},
+     * ITU-T H.264 8.5.11), and an intra macroblock with horizontal or vertical chroma prediction
+     * accumulates the residual over the whole chroma block (8.5.4 and 8.5.15).
+     *
+     * @param chroma the index of the macroblock's top-left chroma sample
+     */
+    private void addBypassChroma(int chroma) {
+        var intra = (mbFlags & DecoderFrame.MB_INTRA) != 0;
+        var dpcm = !intra ? 0 : chromaPredMode == 1 ? 2 : chromaPredMode == 2 ? 1 : 0;
+        for (var c = 0; c < 2; c++) {
+            var coeffs = c == 0 ? cbCoeffs : crCoeffs;
+            var o = c * 8;
+            if (chroma422) {
+                // dcC is the 4x2 matrix {{d0, d2}, {d1, d5}, {d3, d6}, {d4, d7}} (equation 8-305)
+                // and row i, column j is the DC of block 2 * i + j.
+                coeffs[0] = chromaDc[o];
+                coeffs[16] = chromaDc[o + 2];
+                coeffs[32] = chromaDc[o + 1];
+                coeffs[48] = chromaDc[o + 5];
+                coeffs[64] = chromaDc[o + 3];
+                coeffs[80] = chromaDc[o + 6];
+                coeffs[96] = chromaDc[o + 4];
+                coeffs[112] = chromaDc[o + 7];
+            } else {
+                coeffs[0] = chromaDc[o];
+                coeffs[16] = chromaDc[o + 1];
+                coeffs[32] = chromaDc[o + 2];
+                coeffs[48] = chromaDc[o + 3];
+            }
+            Arrays.fill(chromaDc, o, o + 8, 0);
+            addBypassRegion(c + 1, coeffs, 8, chromaRows, false, chroma, dpcm);
+        }
+    }
+
+    /**
+     * Adds the residual of one chroma component of the current macroblock to the prediction in
+     * a 16-bit plane.
+     *
+     * @param coeffs the component's coefficients, DC transform already applied
+     * @param plane the component's plane
+     * @param chroma the index of the macroblock's top-left chroma sample
+     * @param component 0 for Cb, 1 for Cr
+     */
+    private void addWideChroma(int[] coeffs, short[] plane, int chroma, int component) {
+        for (var half = 0; half < chromaRows >> 3; half++) {
+            var first = half * 4;
+            var origin = chroma + half * 8 * chromaStride;
+            if (((chromaCoded >> (component * 8 + first)) & 0xF) == 0) {
+                wideDsp.chromaDcAdd(coeffs, first * 16, plane, origin, chromaStride, chromaMax);
+                continue;
+            }
+            for (var blk = first; blk < first + 4; blk++) {
                 var offset = chroma + (blk >> 1) * 4 * chromaStride + (blk & 1) * 4;
-                if ((chromaCoded & (1 << (c * 4 + blk))) != 0) {
-                    dsp.idct4x4Add(coeffs, blk * 16, plane, offset, chromaStride);
+                if ((chromaCoded & (1 << (component * 8 + blk))) != 0) {
+                    wideDsp.idct4x4Add(coeffs, blk * 16, plane, offset, chromaStride, chromaMax);
                 } else if (coeffs[blk * 16] != 0) {
-                    dsp.idct4x4DcAdd(coeffs, blk * 16, plane, offset, chromaStride);
+                    wideDsp.idct4x4DcAdd(coeffs, blk * 16, plane, offset, chromaStride, chromaMax);
                 }
             }
         }
@@ -3715,21 +6238,39 @@ final class SliceDecoder {
      * Adds the residual of an inter macroblock after motion compensation.
      */
     private void reconstructInterResidual() {
-        var luma = frame.lumaOrigin + mbY * 16 * lumaStride + mbX * 16;
-        if ((mbFlags & DecoderFrame.MB_T8X8) != 0) {
-            for (var b8 = 0; b8 < 4; b8++) {
-                var offset = luma + (b8 >> 1) * 8 * lumaStride + (b8 & 1) * 8;
-                if ((lumaCoded & (1 << b8)) != 0) {
-                    dsp.idct8x8Add(lumaCoeffs, b8 * 64, lumaPlane, offset, lumaStride);
-                } else if ((lumaDcOnly & (1 << b8)) != 0) {
-                    dsp.idct8x8DcAdd(lumaCoeffs, b8 * 64, lumaPlane, offset, lumaStride);
-                }
-            }
-        } else {
-            addLumaResidual4x4(luma);
+        reconstructInterPlane(0, lumaBase);
+        if (chroma444) {
+            reconstructInterPlane(1, chromaBase);
+            reconstructInterPlane(2, chromaBase);
+        } else if (hasChroma) {
+            addChromaResidual(chromaBase);
         }
-        if (hasChroma) {
-            addChromaResidual(frame.chromaOrigin + mbY * 8 * chromaStride + mbX * 8);
+    }
+
+    /**
+     * Adds the residual of one color component coded like luma of an inter macroblock after
+     * motion compensation.
+     *
+     * @param comp the component: 0 luma, 1 Cb, 2 Cr
+     * @param base the index of the macroblock's top-left sample of the component
+     */
+    private void reconstructInterPlane(int comp, int base) {
+        if ((mbFlags & DecoderFrame.MB_T8X8) == 0) {
+            addPlaneResidual4x4(comp, base);
+            return;
+        }
+        var stride = comp == 0 ? lumaStride : chromaStride;
+        var blocks = coded[comp] | dcOnly[comp];
+        for (var b8 = 0; b8 < 4; b8++) {
+            if ((blocks & (1 << b8)) == 0) {
+                continue;
+            }
+            var offset = base + (b8 >> 1) * 8 * stride + (b8 & 1) * 8;
+            if (bypass) {
+                addBypass(comp, b8 * 64, 8, offset, 0);
+            } else {
+                addPlane8x8(comp, b8, offset, (coded[comp] & (1 << b8)) != 0);
+            }
         }
     }
 
@@ -3753,23 +6294,6 @@ final class SliceDecoder {
         return mvCache[list];
     }
 
-    /**
-     * Returns the current macroblock column.
-     *
-     * @return the column
-     */
-    int mbX() {
-        return mbX;
-    }
-
-    /**
-     * Returns the current macroblock row.
-     *
-     * @return the row
-     */
-    int mbY() {
-        return mbY;
-    }
 
     /**
      * Returns the partition shape of the current inter macroblock.

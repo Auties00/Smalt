@@ -23,8 +23,10 @@ import java.util.Arrays;
  * @param family the channel mapping family
  * @param streamCount the number of elementary streams: 1 for family 0
  * @param coupledCount the number of coupled (stereo) streams: {@code channels - 1} for family 0
- * @param mapping the channel mapping table, one entry per output channel (the decoded channel
- * that feeds it, or 255 for silence), or an empty array for family 0
+ * @param mapping the channel mapping table after the two stream counts: for family 3 the demixing matrix
+ * (RFC 8486 section 3.2, {@code channels} rows and {@code streamCount + coupledCount} columns of Q15 values
+ * in column-major order, two little-endian bytes each), for every other family but 0 one entry per output
+ * channel (the decoded channel that feeds it, or 255 for silence), and an empty array for family 0
  */
 public record OpusHeader(int version, int channels, int preSkip, long inputSampleRate, int outputGain, int family,
                          int streamCount, int coupledCount, byte[] mapping) {
@@ -50,8 +52,9 @@ public record OpusHeader(int version, int channels, int preSkip, long inputSampl
      *
      * <p>Beyond the checks of {@link #parseLenient}, the header must declare at most two channels
      * in family 0, and in the other families at least one stream, at most as many coupled
-     * streams as streams, at most 255 decoded channels and a mapping table whose entries name a
-     * decoded channel or 255. Family 3 and family 1 with more than eight channels are accepted.
+     * streams as streams and at most 255 decoded channels, and in families other than 3 a mapping
+     * table whose entries name a decoded channel or 255. Family 1 with more than eight channels is
+     * accepted.
      *
      * @param data the header bytes
      * @param limits the bounds the channel count is checked against
@@ -76,7 +79,7 @@ public record OpusHeader(int version, int channels, int preSkip, long inputSampl
                 throw new MediaException.Malformed("OpusHead declares " + streams + " streams, " + coupled
                         + " coupled");
             }
-            for (var i = 0; i < channels; i++) {
+            for (var i = 0; header.family != 3 && i < channels; i++) {
                 var entry = header.mapping[i] & 0xFF;
                 if (entry != 255 && entry >= streams + coupled) {
                     throw new MediaException.Malformed("OpusHead maps channel " + i + " to missing channel " + entry);
@@ -91,7 +94,9 @@ public record OpusHeader(int version, int channels, int preSkip, long inputSampl
      * Parses a header, checking only what reading its fields needs.
      *
      * <p>The checks run in this order: the size and the signature, the major version, the
-     * presence of the whole mapping table when the family is not 0, and a non-zero channel count.
+     * presence of the whole mapping table when the family is not 0 (for family 3, the stream counts
+     * and a demixing matrix of their sum times the channel count coefficients), and a non-zero channel
+     * count.
      *
      * @param data the header bytes
      * @return the header
@@ -109,7 +114,8 @@ public record OpusHeader(int version, int channels, int preSkip, long inputSampl
         }
         var channels = data[9] & 0xFF;
         var family = data[18] & 0xFF;
-        if (family != 0 && data.length < BASE_SIZE + 2 + channels) {
+        if (family != 0 && (data.length < BASE_SIZE + 2
+                || data.length < BASE_SIZE + 2 + tableSize(family, channels, data[19] & 0xFF, data[20] & 0xFF))) {
             throw new MediaException.Malformed("OpusHead channel mapping truncated");
         }
         if (channels == 0) {
@@ -123,8 +129,23 @@ public record OpusHeader(int version, int channels, int preSkip, long inputSampl
             return new OpusHeader(version, channels, preSkip, inputSampleRate, outputGain, 0, 1, channels - 1,
                     new byte[0]);
         }
-        return new OpusHeader(version, channels, preSkip, inputSampleRate, outputGain, family, data[19] & 0xFF,
-                data[20] & 0xFF, Arrays.copyOfRange(data, BASE_SIZE + 2, BASE_SIZE + 2 + channels));
+        var streams = data[19] & 0xFF;
+        var coupled = data[20] & 0xFF;
+        return new OpusHeader(version, channels, preSkip, inputSampleRate, outputGain, family, streams, coupled,
+                Arrays.copyOfRange(data, BASE_SIZE + 2, BASE_SIZE + 2 + tableSize(family, channels, streams, coupled)));
+    }
+
+    /**
+     * Returns the size of the channel mapping table that follows the two stream counts.
+     *
+     * @param family the channel mapping family, not 0
+     * @param channels the output channel count
+     * @param streams the stream count
+     * @param coupled the coupled stream count
+     * @return {@code 2 * channels * (streams + coupled)} for family 3, otherwise {@code channels}
+     */
+    public static int tableSize(int family, int channels, int streams, int coupled) {
+        return family == 3 ? 2 * channels * (streams + coupled) : channels;
     }
 
     /**
@@ -139,9 +160,28 @@ public record OpusHeader(int version, int channels, int preSkip, long inputSampl
      * {@return the decoded channel that feeds an output channel, or 255 for silence}
      *
      * @param channel the output channel in coded order, from 0 to {@code channels - 1}
+     * @throws IllegalStateException if the family is 3, whose channels are mixed by a matrix
      */
     public int mapping(int channel) {
+        if (family == 3) {
+            throw new IllegalStateException("mapping family 3 mixes its channels with a demixing matrix");
+        }
         return family == 0 ? channel : mapping[channel] & 0xFF;
+    }
+
+    /**
+     * {@return a coefficient of the demixing matrix of family 3, a signed Q15 value}
+     *
+     * @param row the output channel, from 0 to {@code channels - 1}
+     * @param column the decoded channel, from 0 to {@code streamCount + coupledCount - 1}
+     * @throws IllegalStateException if the family is not 3
+     */
+    public int demixing(int row, int column) {
+        if (family != 3) {
+            throw new IllegalStateException("mapping family " + family + " has no demixing matrix");
+        }
+        var index = 2 * (column * channels + row);
+        return (short) ((mapping[index] & 0xFF) | (mapping[index + 1] & 0xFF) << 8);
     }
 
     /**
