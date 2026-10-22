@@ -849,12 +849,13 @@ final class TransformEncoder {
      * @param greenToRed  the multiplier
      * @param accumulated the accumulated red histogram
      * @param histo       scratch histogram
+     * @param scratch     the kernel's lane scratch
      * @return the cost
      */
     private static long costCrossColorRed(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int prevX, int prevY,
-                                          int greenToRed, int[] accumulated, int[] histo) {
+                                          int greenToRed, int[] accumulated, int[] histo, int[] scratch) {
         Arrays.fill(histo, 0);
-        DSP.collectColorRedTransforms(argb, pos, stride, tileWidth, tileHeight, greenToRed, histo);
+        DSP.collectColorRedTransforms(argb, pos, stride, tileWidth, tileHeight, greenToRed, histo, scratch);
         var curDiff = predictionCostCrossColor(accumulated, histo);
         if ((greenToRed & 0xFF) == (prevX & 0xFF)) {
             curDiff -= 3L << EntropyMath.LOG_2_PRECISION_BITS;
@@ -882,12 +883,13 @@ final class TransformEncoder {
      * @param redToBlue   the red-to-blue multiplier
      * @param accumulated the accumulated blue histogram
      * @param histo       scratch histogram
+     * @param scratch     the kernel's lane scratch
      * @return the cost
      */
     private static long costCrossColorBlue(int[] argb, int pos, int stride, int tileWidth, int tileHeight, int prevX, int prevY,
-                                           int greenToBlue, int redToBlue, int[] accumulated, int[] histo) {
+                                           int greenToBlue, int redToBlue, int[] accumulated, int[] histo, int[] scratch) {
         Arrays.fill(histo, 0);
-        DSP.collectColorBlueTransforms(argb, pos, stride, tileWidth, tileHeight, greenToBlue, redToBlue, histo);
+        DSP.collectColorBlueTransforms(argb, pos, stride, tileWidth, tileHeight, greenToBlue, redToBlue, histo, scratch);
         var curDiff = predictionCostCrossColor(accumulated, histo);
         var bonus = 3L << EntropyMath.LOG_2_PRECISION_BITS;
         if ((greenToBlue & 0xFF) == ((prevX >>> 8) & 0xFF)) {
@@ -929,6 +931,7 @@ final class TransformEncoder {
         var accumulatedRed = new int[256];
         var accumulatedBlue = new int[256];
         var histo = new int[256];
+        var scratch = new int[LosslessDsp.LANE_SCRATCH];
         var redKeys = new int[16];
         var redCosts = new long[16];
         var blueGreens = new int[64];
@@ -954,7 +957,8 @@ final class TransformEncoder {
                 var greenToRedBest = 0;
                 var redSeen = 1;
                 redKeys[0] = 0;
-                var bestDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, accumulatedRed, histo);
+                var bestDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, accumulatedRed, histo,
+                        scratch);
                 redCosts[0] = bestDiff;
                 for (var iter = 0; iter < kMaxIters; iter++) {
                     var delta = 32 >> iter;
@@ -971,7 +975,8 @@ final class TransformEncoder {
                         if (known >= 0) {
                             curDiff = redCosts[known];
                         } else {
-                            curDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, cur, accumulatedRed, histo);
+                            curDiff = costCrossColorRed(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, cur, accumulatedRed, histo,
+                                    scratch);
                             redKeys[redSeen] = cur;
                             redCosts[redSeen++] = curDiff;
                         }
@@ -987,7 +992,8 @@ final class TransformEncoder {
                 var blueSeen = 1;
                 blueGreens[0] = 0;
                 blueReds[0] = 0;
-                bestDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, 0, accumulatedBlue, histo);
+                bestDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, 0, 0, accumulatedBlue, histo,
+                        scratch);
                 blueCosts[0] = bestDiff;
                 for (var iter = 0; iter < iters; iter++) {
                     var delta = BLUE_DELTAS[iter];
@@ -1005,7 +1011,8 @@ final class TransformEncoder {
                         if (known >= 0) {
                             curDiff = blueCosts[known];
                         } else {
-                            curDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, g2b, r2b, accumulatedBlue, histo);
+                            curDiff = costCrossColorBlue(argb, tilePos, width, tileWidth, tileHeight, prevX, prevY, g2b, r2b, accumulatedBlue,
+                                    histo, scratch);
                             blueGreens[blueSeen] = g2b;
                             blueReds[blueSeen] = r2b;
                             blueCosts[blueSeen++] = curDiff;

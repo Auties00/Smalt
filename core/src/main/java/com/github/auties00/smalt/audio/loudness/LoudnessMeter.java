@@ -29,10 +29,11 @@ import java.util.Objects;
  * </ul>
  *
  * <p>Channel weights follow BS.1770-4 from the {@link ChannelLayout}: 1.0 for the front channels
- * (left, right, center and the front-of-center pair), 1.41 for the side channels and for the back
- * pair of a layout without side channels (the surrounds of 5.1 and 4.0 layouts are either), 1.0
- * for the other back and height channels, and 0 for the low-frequency effects channel, which is
- * left out. {@link LoudnessMeterOptions} can replace them, or weight mono as dual mono.
+ * (left, right, center, the front-of-center and wide pairs), 1.41 for the side and surround direct
+ * channels and for the back pair of a layout without side channels (the surrounds of 5.1 and 4.0
+ * layouts are either), 1.0 for the other back, height and bottom channels, and 0 for the
+ * low-frequency effects channels, which are left out. {@link LoudnessMeterOptions} can replace
+ * them, or weight mono as dual mono.
  *
  * <p>Memory is bounded whatever the duration: the gated blocks are kept as histograms of 1000
  * bins of 0.1 LU from -70 to +30 LUFS, each bin holding its block count and the sum of the
@@ -68,12 +69,12 @@ public final class LoudnessMeter {
     /**
      * The ratio of the integrated loudness relative gate (-10 LU) in the energy domain.
      */
-    private static final double RELATIVE_GATE_FACTOR = Math.pow(10, -10.0 / 10);
+    private static final double RELATIVE_GATE_FACTOR = StrictMath.pow(10, -10.0 / 10);
 
     /**
      * The ratio of the loudness range relative gate (-20 LU) in the energy domain.
      */
-    private static final double RANGE_GATE_FACTOR = Math.pow(10, -20.0 / 10);
+    private static final double RANGE_GATE_FACTOR = StrictMath.pow(10, -20.0 / 10);
 
     /**
      * The number of histogram bins.
@@ -301,12 +302,12 @@ public final class LoudnessMeter {
     /**
      * Constructs a meter.
      *
-     * @param layout     the channel layout of the samples
+     * @param layout the channel layout of the samples
      * @param sampleRate the sampling rate in hertz, from 8000 to 2822400
-     * @param options    the options
-     * @throws NullPointerException     if an argument is {@code null}
+     * @param options the channel weights, gating and dual mono settings of the measurement
+     * @throws NullPointerException if an argument is {@code null}
      * @throws IllegalArgumentException if the sampling rate is out of range, or the options have
-     *                                  explicit weights for another number of channels
+     * explicit weights for another number of channels
      */
     public LoudnessMeter(ChannelLayout layout, int sampleRate, LoudnessMeterOptions options) {
         this.layout = Objects.requireNonNull(layout, "layout");
@@ -330,17 +331,17 @@ public final class LoudnessMeter {
                 measured[count++] = channel;
             }
         }
-        var k = Math.tan(Math.PI * 1681.974450955533 / sampleRate);
+        var k = StrictMath.tan(Math.PI * 1681.974450955533 / sampleRate);
         var q = 0.7071752369554196;
-        var vh = Math.pow(10.0, 3.999843853973347 / 20.0);
-        var vb = Math.pow(vh, 0.4996667741545416);
+        var vh = StrictMath.pow(10.0, 3.999843853973347 / 20.0);
+        var vb = StrictMath.pow(vh, 0.4996667741545416);
         var a0 = 1.0 + k / q + k * k;
         var pb0 = (vh + vb * k / q + k * k) / a0;
         var pb1 = 2.0 * (k * k - vh) / a0;
         var pb2 = (vh - vb * k / q + k * k) / a0;
         var pa1 = 2.0 * (k * k - 1.0) / a0;
         var pa2 = (1.0 - k / q + k * k) / a0;
-        k = Math.tan(Math.PI * 38.13547087602444 / sampleRate);
+        k = StrictMath.tan(Math.PI * 38.13547087602444 / sampleRate);
         q = 0.5003270373238773;
         var ra1 = 2.0 * (k * k - 1.0) / (1.0 + k / q + k * k);
         var ra2 = (1.0 - k / q + k * k) / (1.0 + k / q + k * k);
@@ -373,8 +374,8 @@ public final class LoudnessMeter {
     /**
      * Returns the weight of every channel.
      *
-     * @param layout  the layout
-     * @param options the options
+     * @param layout the speakers the weights follow when the options give none
+     * @param options the settings that may give explicit weights
      * @return the weights
      * @throws IllegalArgumentException if explicit weights do not match the channel count
      */
@@ -392,8 +393,8 @@ public final class LoudnessMeter {
         var result = new double[channels];
         for (var channel = 0; channel < channels; channel++) {
             result[channel] = switch (speakers.get(channel)) {
-                case LOW_FREQUENCY -> 0;
-                case SIDE_LEFT, SIDE_RIGHT -> 1.41;
+                case LOW_FREQUENCY, LOW_FREQUENCY_2 -> 0;
+                case SIDE_LEFT, SIDE_RIGHT, SURROUND_DIRECT_LEFT, SURROUND_DIRECT_RIGHT -> 1.41;
                 case BACK_LEFT, BACK_RIGHT -> sides ? 1.0 : 1.41;
                 default -> 1.0;
             };
@@ -412,7 +413,7 @@ public final class LoudnessMeter {
     private static double[] binCenters() {
         var result = new double[BINS];
         for (var bin = 0; bin < BINS; bin++) {
-            result[bin] = Math.pow(10.0, (bin / 10.0 - 69.95 + 0.691) / 10.0);
+            result[bin] = StrictMath.pow(10.0, (bin / 10.0 - 69.95 + 0.691) / 10.0);
         }
         return result;
     }
@@ -436,9 +437,7 @@ public final class LoudnessMeter {
     }
 
     /**
-     * Returns the options.
-     *
-     * @return the options
+     * {@return the settings this meter measures with}
      */
     public LoudnessMeterOptions options() {
         return options;
@@ -510,9 +509,9 @@ public final class LoudnessMeter {
      * Runs the K-weighting filter of every measured channel over a range and accumulates the
      * squares of its output, two channels per pass so that their recursions overlap.
      *
-     * @param planes the planes
+     * @param planes the samples, one array per channel
      * @param offset the index of the first sample
-     * @param count  the number of samples
+     * @param count the number of samples
      */
     private void filter(float[][] planes, int offset, int count) {
         var index = 0;
@@ -663,7 +662,7 @@ public final class LoudnessMeter {
     /**
      * Returns the histogram bin of an energy at or above the absolute gate.
      *
-     * @param energy the energy
+     * @param energy the weighted sum of the channels' mean squares, at or above the absolute gate
      * @return the bin, the last one for loudness of +30 LUFS and above
      */
     private static int bin(double energy) {
@@ -674,11 +673,11 @@ public final class LoudnessMeter {
     /**
      * Converts an energy to loudness.
      *
-     * @param energy the energy
+     * @param energy the weighted sum of the channels' mean squares, at least 0
      * @return the loudness in LUFS, negative infinity for zero
      */
     static double loudnessOf(double energy) {
-        return 10 * Math.log10(energy) - 0.691;
+        return 10 * StrictMath.log10(energy) - 0.691;
     }
 
     /**
@@ -688,7 +687,7 @@ public final class LoudnessMeter {
      * @return the energy
      */
     private static double energyOf(double loudness) {
-        return Math.pow(10, (loudness + 0.691) / 10);
+        return StrictMath.pow(10, (loudness + 0.691) / 10);
     }
 
     /**

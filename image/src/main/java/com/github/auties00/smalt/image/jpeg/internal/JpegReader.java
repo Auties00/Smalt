@@ -5,7 +5,9 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -146,6 +148,16 @@ public final class JpegReader {
      * The TIFF block of the first Exif APP1 segment, or {@code null}.
      */
     private byte[] exif;
+
+    /**
+     * The packet of the first XMP APP1 segment, or {@code null}.
+     */
+    private byte[] xmp;
+
+    /**
+     * The payloads of the Extended XMP APP1 segments, identifier included.
+     */
+    private final List<byte[]> extendedXmp = new ArrayList<>();
 
     /**
      * The index just after the first SOS marker code, or {@code -1} before the headers are read.
@@ -556,6 +568,12 @@ public final class JpegReader {
             case 0xE1 -> {
                 if (exif == null && JpegExif.prefixLength(input, at, size) != 0) {
                     exif = Arrays.copyOfRange(input, at + JpegExif.PREFIX, at + size);
+                } else if (JpegXmp.startsWith(input, at, size, JpegXmp.XMP_ID)) {
+                    if (xmp == null) {
+                        xmp = Arrays.copyOfRange(input, at + JpegXmp.XMP_ID.length, at + size);
+                    }
+                } else if (JpegXmp.startsWith(input, at, size, JpegXmp.EXTENDED_XMP_ID)) {
+                    extendedXmp.add(Arrays.copyOfRange(input, at, at + size));
                 }
             }
             case 0xE2 -> icc.add(input, at, size);
@@ -600,8 +618,8 @@ public final class JpegReader {
      * Checks that the frame uses a coding process, precision, component count and sampling this
      * reader decodes.
      *
-     * <p>The DCT processes (SOF0, SOF1, SOF2, SOF9, SOF10) need 8-bit precision; the lossless
-     * Huffman process (SOF3) takes any precision from 2 to 16 but no subsampled component.
+     * <p>The DCT processes (SOF0, SOF1, SOF2, SOF9, SOF10) take 8-bit and 12-bit precision; the
+     * lossless Huffman process (SOF3) takes any precision from 2 to 16.
      *
      * @throws MediaException.Malformed if the precision is not a valid precision of the process
      * @throws MediaException.Unsupported if it does not
@@ -611,9 +629,8 @@ public final class JpegReader {
         switch (marker) {
             case 0xC0, 0xC1, 0xC2, 0xC9, 0xCA -> {
                 switch (frame.precision) {
-                    case 8 -> {
+                    case 8, 12 -> {
                     }
-                    case 12 -> throw new MediaException.Unsupported("jpeg 12-bit precision", "12-bit JPEG is not supported");
                     case 16 -> throw new MediaException.Unsupported("jpeg 16-bit precision", "16-bit JPEG is not supported");
                     default -> throw new MediaException.Malformed("invalid JPEG sample precision " + frame.precision);
                 }
@@ -621,11 +638,6 @@ public final class JpegReader {
             case 0xC3 -> {
                 if (frame.precision < 2 || frame.precision > 16) {
                     throw new MediaException.Malformed("invalid lossless JPEG sample precision " + frame.precision);
-                }
-                for (var component : frame.components) {
-                    if (component.h != 1 || component.v != 1) {
-                        throw new MediaException.Unsupported("jpeg lossless", "subsampled lossless JPEG is not supported");
-                    }
                 }
             }
             case 0xC7, 0xCB, 0xCF -> throw new MediaException.Unsupported("jpeg lossless",
@@ -678,7 +690,7 @@ public final class JpegReader {
             throw new IllegalStateException("the frame is not lossless");
         }
         prepareFrame();
-        return new LosslessJpeg(input, start, end - start, false, frame.height);
+        return new LosslessJpeg(input, start, end - start, 4, frame.height);
     }
 
     /**
@@ -738,7 +750,9 @@ public final class JpegReader {
     }
 
     /**
-     * Decodes every scan into sample planes.
+     * Decodes every scan into 8-bit sample planes.
+     *
+     * <p>The samples of a 12-bit frame are rescaled as {@code round(v * 255 / 4095)}.
      *
      * @param scaleShift the binary logarithm of the size reduction, from 0 to 3
      * @return the planes
@@ -750,6 +764,9 @@ public final class JpegReader {
         readHeaders();
         checkDct();
         prepareFrame();
+        if (frame.precision == 12) {
+            return decodeTwelveBit(scaleShift, false);
+        }
         var components = frame.components;
         var size = 8 >> scaleShift;
         var planes = new byte[components.length][];
@@ -776,6 +793,116 @@ public final class JpegReader {
             }
         }
         return new JpegPlanes(frame, planes, strides, scaleShift);
+    }
+
+    /**
+     * Decodes every scan of a 12-bit frame into 12-bit sample planes.
+     *
+     * @param scaleShift the binary logarithm of the size reduction, from 0 to 3
+     * @return the {@linkplain JpegPlanes#wide() wide} planes
+     * @throws IllegalStateException if the frame is a DCT frame of 8-bit precision
+     * @throws MediaException.Malformed if a header is invalid or no MCU could be decoded
+     * @throws MediaException.Unsupported if the frame uses an unsupported feature or is lossless
+     * @throws MediaException.LimitExceeded if the frame exceeds the limits
+     */
+    public JpegPlanes decodeWidePlanes(int scaleShift) {
+        readHeaders();
+        checkDct();
+        if (frame.precision != 12) {
+            throw new IllegalStateException("the frame has " + frame.precision + "-bit precision, not 12");
+        }
+        prepareFrame();
+        return decodeTwelveBit(scaleShift, true);
+    }
+
+    /**
+     * Decodes every scan of a 12-bit frame into coefficients and transforms them into planes.
+     *
+     * <p>A component no scan referenced has an all-zero quantization table, so it transforms to
+     * mid-gray, as do the blocks of MCUs without decodable data.
+     *
+     * @param scaleShift the binary logarithm of the size reduction
+     * @param wide whether the planes keep 12-bit samples rather than 8-bit ones
+     * @return the planes
+     */
+    private JpegPlanes decodeTwelveBit(int scaleShift, boolean wide) {
+        var components = frame.components;
+        var size = 8 >> scaleShift;
+        var strides = new int[components.length];
+        var widePlanes = wide ? new short[components.length][] : null;
+        var planes = wide ? null : new byte[components.length][];
+        for (var i = 0; i < components.length; i++) {
+            var component = components[i];
+            strides[i] = component.paddedBlocksWide * size;
+            var samples = (long) strides[i] * component.paddedBlocksHigh * size;
+            LimitChecks.checkAllocation(limits, wide ? samples * 2 : samples);
+            if (wide) {
+                widePlanes[i] = new short[(int) samples];
+            } else {
+                planes[i] = new byte[(int) samples];
+            }
+        }
+        var target = new DecodeTarget(components.length, null, null, allocateCoefficients(),
+                frame.progressive() ? allocateMasks() : null, scaleShift);
+        decodeScans(target);
+        for (var i = 0; i < components.length; i++) {
+            var component = components[i];
+            var quant = naturalQuant(target.zigzagQuant[i]);
+            var coefficients = target.coefficients[i];
+            var widePlane = wide ? widePlanes[i] : null;
+            var plane = wide ? null : planes[i];
+            var stride = strides[i];
+            var rows = Math.min(component.paddedBlocksHigh, component.blocksHigh);
+            var columns = Math.min(component.paddedBlocksWide, component.blocksWide);
+            var paddedWide = component.paddedBlocksWide;
+            var bands = ParallelBands.bands(rows, (long) rows * columns * BLOCK_WORK);
+            ParallelBands.run(bands, band -> transformRows12(coefficients, paddedWide, columns, quant, widePlane,
+                    plane, stride, scaleShift, ParallelBands.start(band, bands, rows),
+                    ParallelBands.start(band + 1, bands, rows)));
+        }
+        return wide ? new JpegPlanes(frame, widePlanes, strides, scaleShift)
+                : new JpegPlanes(frame, planes, strides, scaleShift);
+    }
+
+    /**
+     * Transforms the block rows {@code [first, last)} of one component of a 12-bit frame into its
+     * 12-bit plane or, rescaled, its 8-bit plane.
+     *
+     * @param coefficients the component's stored coefficients, natural order
+     * @param paddedWide the number of blocks per row of the coefficient buffer
+     * @param columns the number of blocks per row to transform
+     * @param quant the natural-order dequantization table
+     * @param widePlane the 12-bit destination plane, or {@code null}
+     * @param plane the 8-bit destination plane, used when {@code widePlane} is {@code null}
+     * @param stride the plane stride
+     * @param scaleShift the binary logarithm of the size reduction
+     * @param first the first block row
+     * @param last the block row after the last one
+     */
+    private static void transformRows12(short[] coefficients, int paddedWide, int columns, int[] quant,
+                                        short[] widePlane, byte[] plane, int stride, int scaleShift, int first,
+                                        int last) {
+        var block = new int[64];
+        var size = 8 >> scaleShift;
+        var scratch = widePlane == null ? new short[size * size] : null;
+        var narrow = Idct12.EIGHT_BIT;
+        for (var by = first; by < last; by++) {
+            for (var bx = 0; bx < columns; bx++) {
+                var base = (by * paddedWide + bx) * 64;
+                var offset = (by * stride + bx) * size;
+                if (widePlane != null) {
+                    Idct12.transformBlock(coefficients, base, quant, block, widePlane, offset, stride, scaleShift);
+                    continue;
+                }
+                Idct12.transformBlock(coefficients, base, quant, block, scratch, 0, size, scaleShift);
+                for (var row = 0; row < size; row++) {
+                    var out = offset + row * stride;
+                    for (var x = 0; x < size; x++) {
+                        plane[out + x] = narrow[scratch[row * size + x]];
+                    }
+                }
+            }
+        }
     }
 
     /**
@@ -1238,11 +1365,34 @@ public final class JpegReader {
     }
 
     /**
+     * Returns the XMP packet of the stream: the packet of the first XMP APP1 segment, with the
+     * properties of the Extended XMP packet it names merged into it when the Extended XMP segments
+     * hold the whole extended packet.
+     *
+     * @param limits the bounds of the extended packet
+     * @return a copy of the packet bytes, or {@code null} when absent
+     */
+    public byte[] xmp(MediaLimits limits) {
+        if (xmp == null) {
+            return null;
+        }
+        var merged = JpegXmp.mergeBytes(xmp, extendedXmp, limits);
+        return merged == xmp ? xmp.clone() : merged;
+    }
+
+    /**
      * {@return the ICC profile reassembled from the APP2 segments, or {@code null} when absent or
      * inconsistent}
      */
     public byte[] iccProfile() {
         return icc.profile();
+    }
+
+    /**
+     * {@return whether a JFIF {@code APP0} segment precedes the first scan}
+     */
+    public boolean hasJfif() {
+        return jfif;
     }
 
     /**

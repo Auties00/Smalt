@@ -104,7 +104,10 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.transcode;
 
     // Internals shared with the other Smalt modules
-    exports com.github.auties00.smalt.internal.anim to com.github.auties00.smalt.image;
+    exports com.github.auties00.smalt.internal.anim to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.mpeg,
+            com.github.auties00.smalt.video;
     exports com.github.auties00.smalt.internal.bits to
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.audio;
@@ -133,6 +136,7 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.edit to com.github.auties00.smalt.image;
     exports com.github.auties00.smalt.internal.heif to
+            com.github.auties00.smalt.aot,
             com.github.auties00.smalt.image,
             com.github.auties00.smalt.video,
             com.github.auties00.smalt.mpeg;
@@ -171,6 +175,7 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.raw;
     exports com.github.auties00.smalt.internal.task to
             com.github.auties00.smalt.image,
+            com.github.auties00.smalt.audio,
             com.github.auties00.smalt.video,
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.raw;

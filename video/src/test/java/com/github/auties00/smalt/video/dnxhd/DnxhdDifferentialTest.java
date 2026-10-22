@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
+import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.video.intra.IntraTesting;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -36,17 +37,36 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * which Smalt returns as Y'CbCr planes holding those channels. The expected pictures are derived
  * from ffmpeg's decode with that exact relation. A FATE sample from a non-ffmpeg encoder checks the
  * reading of the flag on a real DNxHR 444 file.
+ *
+ * <p>ffmpeg's C decode of its RGB streams is wrong (about 36 dB against the source pictures, some
+ * samples off by full scale), and its arm64 builds decode them that way; its x86 decode reaches
+ * about 56 dB. The RGB stream is therefore also compared with the source pictures, and with ffmpeg's
+ * decode only where that decode is itself close to the source.
  */
 @DisplayName("DNxHD decoder differential against ffmpeg")
 class DnxhdDifferentialTest {
+    static final List<String> INPUTS = List.of("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
+            "-f", "lavfi", "-i", "mandelbrot=size=320x240:rate=25");
+
+    static String graph(int width, int height) {
+        return "[0][1]blend=all_mode=average,scale=" + width + ":" + height + ":flags=bicubic";
+    }
+
     static Path sample(int width, int height, List<String> codec) {
-        var output = new ArrayList<>(List.of("-filter_complex",
-                "[0][1]blend=all_mode=average,scale=" + width + ":" + height + ":flags=bicubic", "-frames:v", "2",
+        var output = new ArrayList<>(List.of("-filter_complex", graph(width, height), "-frames:v", "2",
                 "-c:v", "dnxhd"));
         output.addAll(codec);
         output.addAll(List.of("-an", "-f", "mov"));
-        return Fixtures.ffmpeg("mov", List.of("-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25",
-                "-f", "lavfi", "-i", "mandelbrot=size=320x240:rate=25"), output);
+        return Fixtures.ffmpeg("mov", INPUTS, output);
+    }
+
+    /** Returns the two source pictures of {@link #sample} in a raw pixel format, as the encoder received them. */
+    static byte[] source(int width, int height, String pixelFormat) {
+        var arguments = new ArrayList<>(List.of("-v", "error"));
+        arguments.addAll(INPUTS);
+        arguments.addAll(List.of("-filter_complex", graph(width, height) + ",format=" + pixelFormat, "-frames:v", "2",
+                "-f", "rawvideo", "-"));
+        return Oracle.run(Oracle.Tool.FFMPEG, java.time.Duration.ofMinutes(5), arguments);
     }
 
     /** How ffmpeg's decode of a stream relates to the standard's. */
@@ -141,6 +161,19 @@ class DnxhdDifferentialTest {
         var actual = ours.toByteArray();
         assertEquals(expected.length, actual.length, label);
         var wide = pixelFormat.endsWith("le");
+        if (relation == Relation.RELABELED) {
+            var width = stream.track().width();
+            var height = stream.track().height();
+            var source = source(width, height, pixelFormat);
+            var ffmpegToSource = IntraTesting.psnr(source, expected, wide, peak);
+            var oursToSource = IntraTesting.psnr(source, actual, wide, peak);
+            System.out.printf("%s: psnr against the source %.2f, ffmpeg's %.2f%n", label, oursToSource, ffmpegToSource);
+            assertTrue(oursToSource >= 50, label + " PSNR against the source " + oursToSource);
+            if (ffmpegToSource < 50) {
+                // the C decode described in the class documentation: there is no ffmpeg decode to compare with
+                return;
+            }
+        }
         var psnr = IntraTesting.psnr(expected, actual, wide, peak);
         var max = IntraTesting.maxDifference(expected, actual, wide);
         System.out.printf("%s: psnr=%.2f max=%d mismatch=%.5f%n", label, psnr, max,

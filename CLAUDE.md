@@ -9,27 +9,52 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
 
 - Maven, Java 26 only (the incubating Vector API is not binary compatible across JDK feature releases).
 - `mvn install -DskipTests` from the root; tests per module, one at a time (memory):
-  `mvn -f <module>/pom.xml test`.
+  `mvn -f <module>/pom.xml test`. `-Dsmalt.test.forks=N` (or `0.5C`) runs a module's suite in N test JVMs side
+  by side, as CI does with two (`it` and `capture` always use one), so a test helper that several test classes
+  share writes its files under the test kit's `Scratch.directory` (one per fork) or through `Scratch.share`,
+  never into a fixed path of `target` that another fork writes too.
 - Modules: `build` (`smalt-build`: metadata, plugin versions and the release profiles, inherited by
   `smalt-parent` and `smalt-bom`), `bom`, `core`, `image`, `audio`, `video`, `mpeg`, `capture`, `raw`,
   `desktop`, `aot`, `it` (JIT guard and cross-artifact tests, not published). Parent of the code modules:
   `smalt-parent` (the root `pom.xml`), which also gives every module JUnit and JMH for its tests.
-- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Quality`, `HeifBuilder`, `Bytes`, `Packets`, and the helpers
-  in `testkit.audio`, `testkit.image` and `testkit.container`) lives in core's `src/test/java` under `testkit` and
-  reaches the other modules through core's test jar (`smalt-core` with `<type>test-jar</type>`, test scope),
-  which holds only `testkit/**`.
+- The test kit (`Oracle`, `Fixtures`, `Conformance`, `Skip`, `Quality`, `Dumps`, `Scratch`, `HeifBuilder`, `Bytes`,
+  `Packets`, and the helpers in `testkit.audio`, `testkit.image`, `testkit.container`, `testkit.io` and
+  `testkit.fuzz`) lives in core's `src/test/java` under `testkit` and reaches the other modules through core's test
+  jar (`smalt-core` with `<type>test-jar</type>`, test scope), which holds only `testkit/**`.
+- Every demuxer, reader and image decoder runs through the I/O behavior harnesses (`DemuxerAsserts`,
+  `ReaderAsserts`, `ImageDecoderAsserts`) with golden dumps under each module's `src/test/resources/dumps`
+  (`-Dsmalt.test.updateDumps=true` rewrites them); a new container or codec adds its inputs as the `testkit.io`
+  package documentation describes, over samples made by `tools/testdata/behavior` and pinned in its
+  `samples.tsv`.
 - `tools/codegen`: the generators of the VP9, AV1 and transposition vector kernels and of the Vorbis setup data
   (edit the generator or its template, never the generated file; `python tools/codegen/check.py` fails when a
   generated file differs from its generator's output); `tools/lint`: the comment lint (section 11 of
   Documentation); `tools/notices`: the third-party notices; `tools/testdata`: the test vector manifests and
-  oracle scripts.
+  oracle scripts; `tools/fuzz`: the fuzzing runner. Every decoder, demuxer and parser has a Jazzer `@FuzzTest`
+  target in its module's `fuzz` test package (the contract and the workflow are in `tools/fuzz/README.md`); a new
+  one gets a target with `valid-*` seeds, and a crash a fuzzer finds gets its input saved under
+  `src/test/resources/fuzz-regressions`, which every build replays.
+- `tools/bench`: the benchmarks CI runs (`benchmarks.tsv`, `bench.py`, `.github/workflows/bench.yml`), base and
+  head built side by side in one job: the pull-request gate on the bytes allocated per operation (a change that
+  allocates more on purpose carries the `allocation-accepted` label) and the weekly A/B timing. A new hot path joins
+  `it`'s `JitWorkload` and the `hot-paths` row.
+- Tests run at the JVM's default thread stack size (no `-Xss`): a parser bounds its recursion instead. The `it`
+  module's `hostile` package checks decompression bombs (allocation metered), cyclic offsets and deep nesting
+  (on a 256 KiB stack) through every entry point, and its `property` package lossless round trips, mux/demux
+  packet identity, tag edits, seek against linear decode and thread-count invariance; a new codec or container
+  joins their tables. CI runs the fuzz replays and these tests in a 256 MiB heap (`-Dsmalt.test.jvmArgs=-Xmx256m`).
+  `-Pcoverage` (JaCoCo, `tools/coverage`), the weekly soak test and `-Pjcstress` (`it/src/jcstress`) complete it.
+- Tests skip only through the test kit's `Skip`, with a stable reason id (`[family:name] detail`; core's `SkipTest`
+  enforces it). CI installs the oracle tools pinned in `tools/testdata/oracles.tsv` (`oracles.py install`), makes a
+  missing oracle fail (`SMALT_TEST_REQUIRE_ORACLES`, `-Dsmalt.test.requireOracles=true` locally) and gates the
+  skips of every job with `tools/testdata/skip-baseline.tsv` (`skips.py`); see `tools/testdata/README.md`.
 
 The README's Install table is the single source of these descriptions; the pom `<description>`s copy it.
 
 | Artifact | JPMS module | Contents |
 |---|---|---|
 | `smalt-core` | `com.github.auties00.smalt` | The media model, the codec registries, every container, image and audio processing, loudness, subtitles, PCM, tag editing and XMP (`MediaSource`/`MediaSink`, the codec SPI in `spi`, `MediaRuntime`, `metadata`, `audio.loudness`, `subtitle`) |
-| `smalt-image` | `...smalt.image` | JPEG (and its lossless transforms), JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8) |
+| `smalt-image` | `...smalt.image` | JPEG (and its lossless transforms), JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, ANI, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8) |
 | `smalt-audio` | `...smalt.audio` | Opus, Vorbis, FLAC, ALAC, MP3, and voice processing |
 | `smalt-video` | `...smalt.video` | VP9, AV1, AVIF, ProRes and DNxHD/DNxHR |
 | `smalt-mpeg` | `...smalt.mpeg` | H.264, HEVC, HEIC, AAC, AMR, MPEG-4 Part 2, H.263, AC-3 and E-AC-3, the codecs licensed through patent pools or by Dolby |
@@ -54,11 +79,30 @@ packages (`internal.*`) are exported only to the artifacts that need them.
   allocating path costs the codec thread directly. Every codec and kernel gets a workload in its artifact's
   `TrainingFamily` (`aot.internal.<Artifact>Workloads`), on synthetic content, in the coding modes, thread
   counts and options that select different kernels; workloads never model a particular application.
-  Follow the JIT-robustness rules enforced by `it`'s `JitRobustnessTest` (no vectors across loop back edges
-  or branch merges, kernels under about 2000 bytecodes, per-shape `lanewise`).
+  Follow the JIT-robustness rules the kernel lint enforces (`kernel-lint`, run in `it`'s verify; rule ids in
+  its `Rule` enum): a vector, mask or shuffle method is called only on a value of known exact class (cast
+  through the shape's class constant, `INTS.cast(v)`, and again inside a loop for a value carried into it or
+  merged from branches); no method takes or returns a vector, mask or shuffle (pass arrays and offsets);
+  kernels under about 2000 bytes of bytecode; operators are `VectorOperators` constants; scalar operands
+  other than shift counts are broadcast first; no shift by a vector of counts; and 256-bit or wider species,
+  gathers and scatters only behind
+  `Simd.WIDE` (ARM NEON has 128-bit vectors and no gathers, so prefer species that adapt to the width,
+  `Simd.WIDE ? SPECIES_256 : SPECIES_128`). A finding is accepted only by `internal.simd.KernelLintSuppress`
+  on the method, with a reason, or a row of the shrink-only `tools/lint/kernel-baseline.tsv`. forbidden-apis
+  bans, in verify, the Vector API convenience methods and `reinterpretAs*` (`tools/lint/forbidden-vector.txt`),
+  `jdk.incubator.vector` outside the `Vector*` classes, and the transcendental `java.lang.Math` methods
+  (`tools/lint/forbidden-math.txt`: use `StrictMath`, whose results do not depend on the CPU). Each module's
+  `jit.*KernelGuardTest` runs every kernel family (the `Vector*` classes and the equivalence tests that call
+  them) in child JVMs (`testkit.jit.KernelGuard`): after a fixed warm-up every kernel entry point must have C2
+  code, allocate nothing per call, report no failed vector intrinsic and match the scalar twin, under tiered,
+  C2-only, polluted-profile, stress-seed and narrower-width scenarios (`-Dsmalt.jit.scenarios=pr|nightly|<names>`,
+  `-Dsmalt.jit.families=<regex>`). A new kernel class needs an equivalence test, or the module's guard test
+  fails; a method that only builds tables is marked `internal.simd.KernelSetup` so the guard does not meter it.
 - **Correctness first.** Normative decoders stay bit-exact (conformance suites); encoders keep their output
   byte-identical unless a change is measured to be quality-neutral or better.
-- **Performance claims need JMH A/B** in the same session (3+ forks) against a frozen baseline.
+- **Performance claims need JMH A/B** in the same session (3+ forks) against a frozen baseline
+  (`tools/bench/bench.py ab` runs one, forks interleaved; on CI's shared runners it resolves only changes of 15 to 25%
+  or more).
 - **Licensing.** Port only from permissive sources; never read or port GPL/LGPL code (FFmpeg, x264, x265,
   libde265). Name the source of every port in a `/* Ports ... */` header above `package` (section 5 of Documentation), and
   record it in `tools/notices` when its license requires attribution in copies (see its README); thank every project Smalt learns from in the

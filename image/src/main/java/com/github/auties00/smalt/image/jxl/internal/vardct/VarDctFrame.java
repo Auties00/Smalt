@@ -616,7 +616,7 @@ public final class VarDctFrame {
         var blocks = meta.blocks();
         var stride = meta.blockWidth();
         var oim = image.opsinInverse();
-        var qmScale = new float[]{(float) Math.pow(0.8, frame.xQmScale - 2), 1.0f, (float) Math.pow(0.8, frame.bQmScale - 2)};
+        var qmScale = new float[]{(float) StrictMath.pow(0.8, frame.xQmScale - 2), 1.0f, (float) StrictMath.pow(0.8, frame.bQmScale - 2)};
         var quantBiasNumerator = oim.quantBiasNumerator();
         for (var c = 0; c < 3; c++) {
             var rect = rects[c];

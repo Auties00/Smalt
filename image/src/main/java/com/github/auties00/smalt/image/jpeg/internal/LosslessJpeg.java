@@ -128,7 +128,7 @@ public final class LosslessJpeg {
      * @throws MediaException.Unsupported if the stream is not a lossless JPEG this decoder handles
      */
     public LosslessJpeg(byte[] data, int offset, int length, boolean subsampled) {
-        this(data, offset, length, subsampled, 0);
+        this(data, offset, length, subsampled ? 2 : 1, 0);
     }
 
     /**
@@ -138,12 +138,13 @@ public final class LosslessJpeg {
      * @param data the bytes holding the stream
      * @param offset the index of its {@code SOI} marker
      * @param length the length of the stream
-     * @param subsampled whether sampling factors of up to 2 are accepted, for {@link #decodeUnits}
+     * @param maxFactor the largest sampling factor accepted: 1, 2 for {@link #decodeUnits}, or 4 for
+     * {@link #decodeComponents}
      * @param lines the frame height to use when the frame header declares zero rows, or 0 for none
      * @throws MediaException.Malformed if the headers are corrupt
      * @throws MediaException.Unsupported if the stream is not a lossless JPEG this decoder handles
      */
-    LosslessJpeg(byte[] data, int offset, int length, boolean subsampled, int lines) {
+    LosslessJpeg(byte[] data, int offset, int length, int maxFactor, int lines) {
         if (offset < 0 || length < 4 || offset > data.length - length) {
             throw new MediaException.Malformed("truncated lossless JPEG stream");
         }
@@ -199,8 +200,8 @@ public final class LosslessJpeg {
                         ids[component] = data[body + 6 + 3 * component] & 0xFF;
                         var sampling = data[body + 7 + 3 * component] & 0xFF;
                         factors[component] = new int[]{sampling >> 4, sampling & 15};
-                        var valid = subsampled ? factors[component][0] >= 1 && factors[component][0] <= 2
-                                && factors[component][1] >= 1 && factors[component][1] <= 2 : sampling == 0x11;
+                        var valid = factors[component][0] >= 1 && factors[component][0] <= maxFactor
+                                && factors[component][1] >= 1 && factors[component][1] <= maxFactor;
                         if (!valid) {
                             throw new MediaException.Unsupported("jpeg lossless",
                                     "lossless JPEG sampling factors of " + (sampling >> 4) + "x" + (sampling & 15)
@@ -215,7 +216,8 @@ public final class LosslessJpeg {
                     var at = body;
                     while (at < bodyEnd) {
                         var index = data[at] & 0x0F;
-                        if ((data[at] & 0xF0) != 0 || index > 3 || at + 17 > bodyEnd) {
+                        var tableClass = (data[at] & 0xF0) >> 4;
+                        if (tableClass > 1 || index > 3 || at + 17 > bodyEnd) {
                             throw new MediaException.Malformed("invalid lossless JPEG Huffman table");
                         }
                         var total = 0;
@@ -225,7 +227,10 @@ public final class LosslessJpeg {
                         if (at + 17 + total > bodyEnd || total > 256) {
                             throw new MediaException.Malformed("truncated lossless JPEG Huffman table");
                         }
-                        defined[index] = new DhtTable(data, at + 1, at + 17, total);
+                        // some encoders also define AC tables, which no lossless scan uses
+                        if (tableClass == 0) {
+                            defined[index] = new DhtTable(data, at + 1, at + 17, total);
+                        }
                         at += 17 + total;
                     }
                 }
@@ -389,7 +394,168 @@ public final class LosslessJpeg {
     }
 
     /**
-     * Decodes every row of the scan.
+     * Returns whether the scan interleaves components with sampling factors other than one, whose
+     * minimum coded units then hold blocks of several samples, so that {@link #decodeComponents}
+     * must decode it.
+     *
+     * @return {@code true} for a scan of two or more components, one of them with a factor above one
+     */
+    public boolean blockInterleaved() {
+        if (components == 1) {
+            return false;
+        }
+        for (var factor : sampling) {
+            if (factor[0] != 1 || factor[1] != 1) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns the number of columns {@link #decodeComponents} delivers for a component, the
+     * padding to whole minimum coded units included.
+     *
+     * @param component the component, in frame order
+     * @return the padded component width
+     */
+    public int paddedComponentWidth(int component) {
+        var hMax = 1;
+        for (var factor : sampling) {
+            hMax = Math.max(hMax, factor[0]);
+        }
+        return (width + hMax - 1) / hMax * sampling[component][0];
+    }
+
+    /**
+     * Receives the decoded rows of single components.
+     */
+    @FunctionalInterface
+    public interface ComponentSink {
+        /**
+         * Receives one decoded row of one component.
+         *
+         * @param component the component, in frame order
+         * @param row the row index within the component, from 0 to its height minus one
+         * @param samples the samples of the row in its first {@link #paddedComponentWidth}
+         * elements; the array is reused
+         */
+        void row(int component, int row, int[] samples);
+    }
+
+    /**
+     * Decodes a scan whose interleaved components may have any sampling factors, as T.81 annex H
+     * defines it: each minimum coded unit holds, for every component in frame order, the {@code h}
+     * by {@code v} block of its samples in raster order, and each sample is predicted from its
+     * neighbors in its own component.
+     *
+     * <p>A component of factors {@code h} and {@code v} is {@code ceil(X / Hmax) * h} samples wide
+     * and {@code ceil(Y * v / Vmax)} rows high, for a frame of {@code X} by {@code Y} samples and the
+     * largest factors {@code Hmax} and {@code Vmax}. Rows are delivered component by component once
+     * the row of units holding them is decoded; the rows of the last unit row past the component
+     * height are not delivered. The first row of the scan and of every restart interval is predicted
+     * from the left, its first sample from {@code 2^(P - Pt - 1)}, and the first sample of every
+     * other row from the sample above. Samples are shifted left by the point transform. A stream
+     * that ends early decodes to its end with zero bits supplied in place of the missing ones.
+     *
+     * @param sink receives the rows
+     * @throws MediaException.Unsupported if the restart interval is not a whole number of rows of
+     * units, the only interval T.81 permits for the lossless processes
+     */
+    public void decodeComponents(ComponentSink sink) {
+        var hMax = 1;
+        var vMax = 1;
+        for (var factor : sampling) {
+            hMax = Math.max(hMax, factor[0]);
+            vMax = Math.max(vMax, factor[1]);
+        }
+        var unitsWide = (width + hMax - 1) / hMax;
+        var unitsHigh = (height + vMax - 1) / vMax;
+        if (restartInterval > 0 && restartInterval % unitsWide != 0) {
+            throw new MediaException.Unsupported("jpeg lossless", "a lossless restart interval of " + restartInterval
+                    + " units does not span whole rows of " + unitsWide + " units");
+        }
+        var rowsPerRestart = restartInterval / unitsWide;
+        // rows[c][0] is the last row of the previous unit row, rows[c][1 .. v] the rows of the current one
+        var rows = new int[components][][];
+        var heights = new int[components];
+        for (var c = 0; c < components; c++) {
+            var v = sampling[c][1];
+            rows[c] = new int[v + 1][unitsWide * sampling[c][0]];
+            heights[c] = (int) (((long) height * v + vMax - 1) / vMax);
+        }
+        var shifted = pointTransform > 0 ? new int[unitsWide * hMax] : null;
+        var reader = new BitReader(data, scanStart, end);
+        var initial = 1 << (precision - pointTransform - 1);
+        var mask = (1 << precision) - 1;
+        for (var unitRow = 0; unitRow < unitsHigh; unitRow++) {
+            var reset = unitRow == 0;
+            if (rowsPerRestart > 0 && unitRow > 0 && unitRow % rowsPerRestart == 0) {
+                reader.restart();
+                reset = true;
+            }
+            for (var unit = 0; unit < unitsWide; unit++) {
+                for (var c = 0; c < components; c++) {
+                    var h = sampling[c][0];
+                    var v = sampling[c][1];
+                    var table = tables[c];
+                    var component = rows[c];
+                    for (var by = 0; by < v; by++) {
+                        var current = component[by + 1];
+                        var above = component[by];
+                        var firstLine = reset && by == 0;
+                        for (var bx = 0; bx < h; bx++) {
+                            var x = unit * h + bx;
+                            int prediction;
+                            if (firstLine) {
+                                prediction = x == 0 ? initial : current[x - 1];
+                            } else if (x == 0) {
+                                prediction = above[0];
+                            } else {
+                                var a = current[x - 1];
+                                var b = above[x];
+                                var cc = above[x - 1];
+                                prediction = switch (predictor) {
+                                    case 1 -> a;
+                                    case 2 -> b;
+                                    case 3 -> cc;
+                                    case 4 -> a + b - cc;
+                                    case 5 -> a + ((b - cc) >> 1);
+                                    case 6 -> b + ((a - cc) >> 1);
+                                    default -> (a + b) >> 1;
+                                };
+                            }
+                            current[x] = (prediction + reader.difference(table)) & mask;
+                        }
+                    }
+                }
+            }
+            for (var c = 0; c < components; c++) {
+                var v = sampling[c][1];
+                var component = rows[c];
+                for (var by = 0; by < v; by++) {
+                    var row = unitRow * v + by;
+                    if (row >= heights[c]) {
+                        break;
+                    }
+                    var samples = component[by + 1];
+                    if (shifted != null) {
+                        for (var x = 0; x < samples.length; x++) {
+                            shifted[x] = samples[x] << pointTransform;
+                        }
+                        samples = shifted;
+                    }
+                    sink.row(c, row, samples);
+                }
+                var last = component[v];
+                component[v] = component[0];
+                component[0] = last;
+            }
+        }
+    }
+
+    /**
+     * Decodes every row of a scan that is not {@linkplain #blockInterleaved() block interleaved}.
      *
      * <p>A stream that ends early, or whose entropy-coded data is corrupt, decodes to its end with
      * zero bits supplied in place of the missing ones; the rows are all delivered.

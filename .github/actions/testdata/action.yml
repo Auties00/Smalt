@@ -1,0 +1,145 @@
+# Fills the test data caches of tools/testdata: the smoke tier of vectors.tsv and the clips of clips.tsv, each from
+# the Actions cache when present, downloaded or derived otherwise. An entry is saved under its key only when every
+# item of it was fetched (and every clip matched its checksum), so that a host that is down does not leave an
+# incomplete entry behind; the tests then skip what is missing, and the skip baseline fails the job. Smoke vectors
+# fetched while a host is down are saved once under the key's "-partial" twin, so that the runs that follow restore
+# them and fetch only what is missing. A clip that does not match its
+# checksum fails the step. Every runner restores the same entry of each, written by Linux or macOS, which carries
+# the clips derived on Linux x64 to the arm64 and Windows runners. The cache stores paths relative to the workspace:
+# ~ lies three levels above it on Linux and macOS, while on Windows those three levels lead to the root of the
+# workspace's drive, so Windows moves what it restores from there into ~ and never saves an entry. Which other runs
+# save an entry they missed is .github/scripts/cache-policy.sh's rule: the default branch owns the entries
+# (warm-caches.yml fills them) and the pkg/* branches only restore them. The full tier is the nightly's
+# (nightly.yml), which downloads it.
+name: Test data
+description: Restores or fetches the smoke vectors and the clips
+inputs:
+  vectors:
+    description: Restore or fetch the smoke vectors
+    default: 'true'
+  clips:
+    description: >
+      true to restore or derive the clips (they need ffmpeg on PATH, so run the oracle action first); fill (on
+      Linux x64 only) to make sure that the cache holds them without restoring them: when it does not, the step
+      installs the oracle tools, derives the clips and saves them, whatever the save input says, since the runners
+      that cannot derive them byte for byte restore them from that entry; false to leave them
+    default: 'true'
+  save:
+    description: 'Save the entries this run missed: auto (the rule of .github/scripts/cache-policy.sh), true or false'
+    default: auto
+runs:
+  using: composite
+  steps:
+    # The smoke entry is keyed by the smoke rows alone, so that a vector added to the full tier keeps it.
+    - name: Key the test data
+      id: key
+      shell: bash
+      run: |
+        echo "smoke=$(grep '^smoke' tools/testdata/vectors.tsv | tr -d '\r' | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
+        echo "clips=$(tr -d '\r' < tools/testdata/clips.tsv | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
+
+    - name: Restore the smoke vectors
+      id: smoke
+      if: inputs.vectors == 'true'
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.smalt/cache/conformance
+        key: testdata-smoke-${{ steps.key.outputs.smoke }}
+        # the partial entry of these rows, or else an older entry, supplies the vectors it holds; the fetch below
+        # checks each one
+        restore-keys: |
+          testdata-smoke-${{ steps.key.outputs.smoke }}-partial
+          testdata-smoke-
+        enableCrossOsArchive: true
+
+    - name: Restore the clips
+      id: clips
+      if: inputs.clips != 'false'
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.smalt/cache/clips
+        key: testdata-clips-${{ steps.key.outputs.clips }}
+        enableCrossOsArchive: true
+        lookup-only: ${{ inputs.clips == 'fill' }}
+
+    - name: Decide which missing entries to save
+      id: policy
+      if: runner.os != 'Windows' && ((inputs.vectors == 'true' && steps.smoke.outputs.cache-hit != 'true') || (inputs.clips == 'true' && steps.clips.outputs.cache-hit != 'true'))
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      run: |
+        policy=.github/scripts/cache-policy.sh
+        if [ '${{ inputs.vectors }}' = true ] && [ '${{ steps.smoke.outputs.cache-hit }}' != 'true' ]; then
+          bash $policy smoke '${{ inputs.save }}' 'testdata-smoke-${{ steps.key.outputs.smoke }}' testdata-smoke-
+        fi
+        if [ '${{ inputs.clips }}' = true ] && [ '${{ steps.clips.outputs.cache-hit }}' != 'true' ]; then
+          bash $policy clips '${{ inputs.save }}' 'testdata-clips-${{ steps.key.outputs.clips }}' testdata-clips-
+        fi
+
+    - name: Move the restored entries into the home directory (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: |
+        restored="$(cd "$GITHUB_WORKSPACE/../../.." && pwd)/.smalt/cache"
+        mkdir -p ~/.smalt/cache
+        for directory in conformance clips; do
+          if [ -d "$restored/$directory" ]; then
+            rm -rf ~/.smalt/cache/"$directory"
+            mv "$restored/$directory" ~/.smalt/cache/"$directory"
+            echo "$directory: $(ls ~/.smalt/cache/"$directory" | wc -l) files"
+          fi
+        done
+
+    - name: Fetch the smoke vectors
+      id: fetch
+      if: inputs.vectors == 'true' && steps.smoke.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if python tools/testdata/testdata.py fetch --tier smoke --no-clips --strict; then
+          echo "complete=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::warning::some smoke vectors could not be fetched; their tests skip and the entry is not saved"
+        fi
+
+    - name: Save the smoke vectors
+      if: runner.os != 'Windows' && steps.fetch.outputs.complete == 'true' && steps.policy.outputs.smoke == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/cache/conformance
+        key: testdata-smoke-${{ steps.key.outputs.smoke }}
+        enableCrossOsArchive: true
+
+    - name: Save the smoke vectors fetched so far
+      if: >
+        runner.os != 'Windows' && steps.fetch.outcome == 'success' && steps.fetch.outputs.complete != 'true'
+        && steps.policy.outputs.smoke == 'true'
+        && steps.smoke.outputs.cache-matched-key != format('testdata-smoke-{0}-partial', steps.key.outputs.smoke)
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/cache/conformance
+        key: testdata-smoke-${{ steps.key.outputs.smoke }}-partial
+        enableCrossOsArchive: true
+
+    - name: Install the oracle tools to derive the clips
+      if: inputs.clips == 'fill' && steps.clips.outputs.cache-hit != 'true'
+      uses: ./.github/actions/oracles
+      with:
+        save: ${{ inputs.save }}
+
+    - name: Derive the clips
+      id: derive
+      if: inputs.clips != 'false' && steps.clips.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        python tools/testdata/testdata.py fetch --tier full --clips-only --strict
+        echo "complete=true" >> "$GITHUB_OUTPUT"
+
+    - name: Save the clips
+      if: runner.os != 'Windows' && steps.derive.outputs.complete == 'true' && (inputs.clips == 'fill' || steps.policy.outputs.clips == 'true')
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/cache/clips
+        key: testdata-clips-${{ steps.key.outputs.clips }}
+        enableCrossOsArchive: true
