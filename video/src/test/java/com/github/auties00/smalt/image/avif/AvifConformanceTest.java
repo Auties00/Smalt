@@ -14,7 +14,7 @@ import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.HeifBuilder;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -42,6 +42,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("AVIF conformance files")
 class AvifConformanceTest {
+    /**
+     * The lossy coding of the Link-U files against the PNG of the picture they were coded from, after the transforms
+     * their properties declare: at least 30 dB.
+     */
+    private static final Tolerance DISPLAYED = Tolerance.psnr(30);
+
+    /** The layer a Xiph file shows against the PNG of that layer: at least 35 dB. */
+    private static final Tolerance LAYER = Tolerance.psnr(35);
+
     private static final String LINK_U = "Link-U/";
 
     @ParameterizedTest(name = "{0}")
@@ -192,8 +201,7 @@ class AvifConformanceTest {
             assertEquals(width, shown.width());
             assertEquals(height, shown.height());
             var pixels = Arrays.copyOf(shown.pixels(), width * height * 4);
-            var psnr = Quality.psnr(reference, pixels);
-            assertTrue(psnr > 30, name + " shows the original at only " + psnr + " dB");
+            DISPLAYED.assertWithin(name + " against the original", reference, pixels);
         }
     }
 
@@ -233,8 +241,7 @@ class AvifConformanceTest {
         var rgba = ImageOps.toRgba(image.picture());
         var expected = Oracle.decodeVideo(AvifVectors.fetch("Xiph/" + reference + ".png"), "rgba", 1);
         assertEquals(expected.length, rgba.width() * rgba.height() * 4);
-        var psnr = Quality.psnr(expected, Arrays.copyOf(rgba.pixels(), expected.length));
-        assertTrue(psnr > 35, name + " matches " + reference + " at only " + psnr + " dB");
+        LAYER.assertWithin(name + " against " + reference, expected, Arrays.copyOf(rgba.pixels(), expected.length));
     }
 
     @Test
@@ -302,7 +309,7 @@ class AvifConformanceTest {
                 for (var frame = reader.read(); frame != null; frame = reader.read()) {
                     assertTrue(frame.timestampMicros() > previous);
                     previous = frame.timestampMicros();
-                    var pixels = frame.picture().pixels();
+                    var pixels = ((com.github.auties00.smalt.image.RgbaPicture) frame.picture()).pixels();
                     for (var i = 0; i < lumaSize; i++) {
                         var alpha = expectedAlpha[frames * lumaSize + i] & 0xFF;
                         if (limitedAlpha) {

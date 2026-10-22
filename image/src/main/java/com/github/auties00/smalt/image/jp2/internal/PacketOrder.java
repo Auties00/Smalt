@@ -103,7 +103,7 @@ final class PacketOrder {
      * @param changes whether progression changes apply
      * @param limits the limits bounding the bookkeeping of listed packets
      */
-    PacketOrder(int[] bounds, TileComponent[] components, int[] subsamplingX, int[] subsamplingY, int layers,
+    PacketOrder(long[] bounds, TileComponent[] components, int[] subsamplingX, int[] subsamplingY, int layers,
                 boolean changes, MediaLimits limits) {
         this.tx0 = bounds[0];
         this.ty0 = bounds[1];
@@ -353,8 +353,8 @@ final class PacketOrder {
             var count = component.resolutions.length;
             for (var r = 0; r < count; r++) {
                 var resolution = component.resolutions[r];
-                var shiftX = resolution.precinctWidth() + count - 1 - r;
-                var shiftY = resolution.precinctHeight() + count - 1 - r;
+                var shiftX = resolution.precinctWidth() + resolution.depthX();
+                var shiftY = resolution.precinctHeight() + resolution.depthY();
                 if (shiftX < 32 && ((long) subsamplingX[c] << shiftX) <= 0xFFFFFFFFL) {
                     var step = (long) subsamplingX[c] << shiftX;
                     dx = dx == 0 ? step : Math.min(dx, step);
@@ -392,7 +392,8 @@ final class PacketOrder {
             var subsampling = horizontal ? subsamplingX[c] : subsamplingY[c];
             for (var r = 0; r < resolutions; r++) {
                 var resolution = component.resolutions[r];
-                var shift = (horizontal ? resolution.precinctWidth() : resolution.precinctHeight()) + resolutions - 1 - r;
+                var shift = horizontal ? resolution.precinctWidth() + resolution.depthX()
+                        : resolution.precinctHeight() + resolution.depthY();
                 if (shift >= 32) {
                     continue;
                 }
@@ -463,33 +464,36 @@ final class PacketOrder {
             return true;
         }
         var resolution = component.resolutions[r];
-        var level = component.resolutions.length - 1 - r;
+        var levelX = resolution.depthX();
+        var levelY = resolution.depthY();
         var dx = (long) subsamplingX[c];
         var dy = (long) subsamplingY[c];
-        if ((dx << level) > 0xFFFFFFFFL || (dy << level) > 0xFFFFFFFFL) {
+        if ((dx << levelX) > 0xFFFFFFFFL || (dy << levelY) > 0xFFFFFFFFL) {
             return true;
         }
-        var trx0 = Math.ceilDiv(tx0, dx << level);
-        var try0 = Math.ceilDiv(ty0, dy << level);
-        var trx1 = Math.ceilDiv(tx1, dx << level);
-        var try1 = Math.ceilDiv(ty1, dy << level);
-        var rpx = resolution.precinctWidth() + level;
-        var rpy = resolution.precinctHeight() + level;
+        var trx0 = Math.ceilDiv(tx0, dx << levelX);
+        var try0 = Math.ceilDiv(ty0, dy << levelY);
+        var trx1 = Math.ceilDiv(tx1, dx << levelX);
+        var try1 = Math.ceilDiv(ty1, dy << levelY);
+        var rpx = resolution.precinctWidth() + levelX;
+        var rpy = resolution.precinctHeight() + levelY;
         if (rpx >= 64 || rpy >= 64 || (dx << rpx) > 0xFFFFFFFFL || (dy << rpy) > 0xFFFFFFFFL || (dx << rpx) <= 0
                 || (dy << rpy) <= 0) {
             return true;
         }
-        if (!(y % (dy << rpy) == 0 || (y == ty0 && ((try0 << level) % (1L << rpy)) != 0))) {
+        if (!(y % (dy << rpy) == 0 || (y == ty0 && ((try0 << levelY) % (1L << rpy)) != 0))) {
             return true;
         }
-        if (!(x % (dx << rpx) == 0 || (x == tx0 && ((trx0 << level) % (1L << rpx)) != 0))) {
+        if (!(x % (dx << rpx) == 0 || (x == tx0 && ((trx0 << levelX) % (1L << rpx)) != 0))) {
             return true;
         }
         if (resolution.precinctsWide() == 0 || resolution.precinctsHigh() == 0 || trx0 == trx1 || try0 == try1) {
             return true;
         }
-        var column = (Math.ceilDiv(x, dx << level) >> resolution.precinctWidth()) - (trx0 >> resolution.precinctWidth());
-        var row = (Math.ceilDiv(y, dy << level) >> resolution.precinctHeight()) - (try0 >> resolution.precinctHeight());
+        var column = (Math.ceilDiv(x, dx << levelX) >> resolution.precinctWidth())
+                - (trx0 >> resolution.precinctWidth());
+        var row = (Math.ceilDiv(y, dy << levelY) >> resolution.precinctHeight())
+                - (try0 >> resolution.precinctHeight());
         var precinct = (int) (column + row * resolution.precinctsWide());
         if (column < 0 || row < 0 || precinct >= resolution.precinctsWide() * resolution.precinctsHigh()) {
             return true;

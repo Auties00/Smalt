@@ -79,8 +79,8 @@ public final class JpegTranscoder {
      * @return the transformed file
      */
     private static byte[] transcode(byte[] data, JpegTransformOptions options, boolean autoOrient) {
-        // TODO: arithmetic-coded output, 12-bit frames (rejected by the decoder), restart intervals in MCU
-        //  rows, and jpegtran's -wipe, -drop and crop extension
+        // TODO: arithmetic-coded output, restart intervals in MCU rows, and jpegtran's -wipe, -drop and crop
+        //  extension
         var reader = new JpegReader(data, 0, data.length, options.limits());
         var coefficients = reader.decodeCoefficients();
         if (autoOrient) {
@@ -91,6 +91,11 @@ public final class JpegTranscoder {
         var colorSpace = reader.colorSpace();
         var frameComponents = frame.components;
         var count = frameComponents.length;
+        if (colorSpace == JpegColorSpace.UNKNOWN) {
+            // TODO: transform frames of two or more than four components, which jpegtran passes through
+            throw new MediaException.Unsupported("jpeg with " + count + " components",
+                    "lossless transforms of JPEG frames with " + count + " components are not supported");
+        }
         var transform = options.transform();
         var grayscale = options.grayscale();
         var outputCount = grayscale && colorSpace == JpegColorSpace.YCBCR && count == 3 ? 1 : count;
@@ -227,7 +232,7 @@ public final class JpegTranscoder {
         var header = new CoefficientWriter.Header(jfif, outputMajor, outputMinor, outputUnit, outputX, outputY, adobe,
                 adobeTransform);
         var writer = new CoefficientWriter(plan.outputWidth(), plan.outputHeight(), components, quantTables,
-                options.restartInterval());
+                options.restartInterval(), frame.precision);
         return writer.write(header, markers, options.progressive(), options.optimizeHuffman(),
                 outputSpace == JpegColorSpace.YCBCR);
     }

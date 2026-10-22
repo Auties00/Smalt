@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.aiff;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
@@ -114,8 +115,9 @@ public final class AiffMuxer implements Muxer {
      * Returns whether AIFF files can carry a codec.
      *
      * @param codec the codec of the track to write
-     * @return {@code true} for the signed integer formats of either byte order, unsigned 8-bit, big-endian 32 and
-     * 64-bit floats, A-law and mu-law
+     * @return {@code true} for the signed 8, 16, 24 and 32-bit integer formats of either byte order, unsigned 8-bit,
+     * big-endian 32 and 64-bit floats, A-law and mu-law; {@code false} for 64-bit integers, wider than the 32-bit
+     * sample size AIFF allows
      */
     public static boolean supports(Codec codec) {
         return compression(Objects.requireNonNull(codec, "codec")) != null;
@@ -220,6 +222,7 @@ public final class AiffMuxer implements Muxer {
      * @throws IllegalArgumentException if the packet belongs to another track or does not hold whole frames
      * @throws IllegalStateException if no track was declared, the muxer is finished, or the file would exceed the 4 GiB
      * an AIFF header can describe
+     * @throws MediaException.Unsupported if the packet changes the codec configuration
      */
     @Override
     public void writePacket(Packet packet) {
@@ -233,6 +236,7 @@ public final class AiffMuxer implements Muxer {
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        ConfigChanges.reject(packet, track.codecConfig().orElse(null), "AIFF");
         if (packet.size() % blockAlign != 0) {
             throw new IllegalArgumentException("a packet of " + packet.size() + " bytes does not hold whole frames of "
                     + blockAlign + " bytes");
