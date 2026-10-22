@@ -87,6 +87,12 @@ public final class H264SliceHeader {
     public H264Sps sps;
 
     /**
+     * The {@code colour_plane_id} of a slice of a picture whose color planes are coded
+     * separately: 0 for Y, 1 for Cb, 2 for Cr; 0 otherwise.
+     */
+    public int colorPlaneId;
+
+    /**
      * The {@code frame_num}.
      */
     public int frameNum;
@@ -256,6 +262,23 @@ public final class H264SliceHeader {
     public int sliceQp;
 
     /**
+     * The {@code sp_for_switch_flag} of an SP slice: whether its inter macroblocks are decoded
+     * with the switching process of ITU-T H.264 8.6.2 rather than 8.6.1.
+     */
+    public boolean spForSwitch;
+
+    /**
+     * The quantization parameter {@code QSY} of an SP or SI slice,
+     * {@code 26 + pic_init_qs_minus26 + slice_qs_delta}, 0 to 51.
+     */
+    public int sliceQs;
+
+    /**
+     * The {@code slice_id} of a slice data partition A, which its partitions B and C repeat.
+     */
+    public int sliceId;
+
+    /**
      * The {@code disable_deblocking_filter_idc}.
      */
     public int disableDeblockingFilterIdc;
@@ -341,8 +364,12 @@ public final class H264SliceHeader {
         this.nalUnitType = nalUnitType;
         this.nalRefIdc = nalRefIdc;
         this.idr = nalUnitType == H264Nal.IDR_SLICE;
+        colorPlaneId = 0;
         if (sps.separateColorPlane) {
-            reader.readBits(2);
+            colorPlaneId = reader.readBits(2);
+            if (colorPlaneId > 2) {
+                throw new MediaException.Malformed("colour_plane_id " + colorPlaneId + " out of range");
+            }
         }
         frameNum = reader.readBits(sps.log2MaxFrameNum);
         fieldPic = false;
@@ -438,11 +465,16 @@ public final class H264SliceHeader {
         if (sliceQp < -6 * (sps.bitDepthLuma - 8) || sliceQp > 51) {
             throw new MediaException.Malformed("slice QP " + sliceQp + " out of range");
         }
+        spForSwitch = false;
+        sliceQs = 0;
         if (sliceType == SP || sliceType == SI) {
             if (sliceType == SP) {
-                reader.readFlag();
+                spForSwitch = reader.readFlag();
             }
-            reader.readSe();
+            sliceQs = pps.initQs + reader.readSe();
+            if (sliceQs < 0 || sliceQs > 51) {
+                throw new MediaException.Malformed("slice QS " + sliceQs + " out of range");
+            }
         }
         disableDeblockingFilterIdc = 0;
         filterOffsetA = 0;
@@ -466,6 +498,14 @@ public final class H264SliceHeader {
             var value = mapUnits / pps.sliceGroupChangeRate + (mapUnits % pps.sliceGroupChangeRate != 0 ? 1 : 0) + 1;
             var bits = 32 - Integer.numberOfLeadingZeros(value - 1);
             sliceGroupChangeCycle = reader.readBits(bits);
+        }
+        sliceId = 0;
+        if (nalUnitType == H264Nal.SLICE_PARTITION_A) {
+            sliceId = reader.readUe();
+            var limit = sps.widthInMbs * sps.frameHeightInMbs;
+            if (sliceId >= limit) {
+                throw new MediaException.Malformed("slice_id " + sliceId + " out of range");
+            }
         }
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated slice header");
@@ -608,6 +648,7 @@ public final class H264SliceHeader {
         ppsId = other.ppsId;
         pps = other.pps;
         sps = other.sps;
+        colorPlaneId = other.colorPlaneId;
         frameNum = other.frameNum;
         fieldPic = other.fieldPic;
         bottomField = other.bottomField;
@@ -657,6 +698,9 @@ public final class H264SliceHeader {
         System.arraycopy(other.mmcoArg2, 0, mmcoArg2, 0, mmcoArg2.length);
         cabacInitIdc = other.cabacInitIdc;
         sliceQp = other.sliceQp;
+        spForSwitch = other.spForSwitch;
+        sliceQs = other.sliceQs;
+        sliceId = other.sliceId;
         disableDeblockingFilterIdc = other.disableDeblockingFilterIdc;
         filterOffsetA = other.filterOffsetA;
         filterOffsetB = other.filterOffsetB;

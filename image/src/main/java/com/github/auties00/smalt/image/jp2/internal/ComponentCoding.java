@@ -48,6 +48,12 @@ public final class ComponentCoding {
     public static final int HIGH_THROUGHPUT = 0x40;
 
     /**
+     * The code-block style flags allowing high-throughput and legacy code-blocks in one tile-component
+     * (ISO/IEC 15444-15 Table A.4).
+     */
+    public static final int MIXED = 0xC0;
+
+    /**
      * The largest number of resolution levels: 32 decomposition levels plus the lowest
      * resolution.
      */
@@ -119,8 +125,8 @@ public final class ComponentCoding {
      * @param userPrecincts  whether the style byte declares precinct sizes ({@code Scod} or
      *                       {@code Scoc} bit 0)
      * @return the coding style
-     * @throws MediaException.Malformed   if a field is out of range or the segment is too short
-     * @throws MediaException.Unsupported if the high-throughput block coder is selected
+     * @throws MediaException.Malformed if a field is out of range or the segment is too short
+     * @throws MediaException.Unsupported if the wavelet transform is not one of ISO/IEC 15444-1
      */
     static ComponentCoding parse(byte[] data, int offset, int end, boolean userPrecincts) {
         if (end - offset < 5) {
@@ -136,10 +142,6 @@ public final class ComponentCoding {
             throw new MediaException.Malformed("invalid JPEG 2000 code-block size 2^" + width + "x2^" + height);
         }
         var style = data[offset + 3] & 0xFF;
-        if ((style & HIGH_THROUGHPUT) != 0) {
-            // TODO: decode the high-throughput block coder of ISO/IEC 15444-15 (OpenJPEG 2.5 ht_dec.c)
-            throw new MediaException.Unsupported("JPEG 2000", "the high-throughput block coder (HTJ2K)");
-        }
         var transform = data[offset + 4] & 0xFF;
         if (transform > 1) {
             throw new MediaException.Unsupported("JPEG 2000", "wavelet transform " + transform);
@@ -206,8 +208,8 @@ public final class ComponentCoding {
      * Returns the code-block style flags.
      *
      * @return the flags, a combination of {@link #BYPASS}, {@link #RESET}, {@link #TERMINATE_ALL},
-     *         {@link #VERTICALLY_CAUSAL}, {@link #PREDICTABLE_TERMINATION} and
-     *         {@link #SEGMENTATION_SYMBOLS}
+     *         {@link #VERTICALLY_CAUSAL}, {@link #PREDICTABLE_TERMINATION}, {@link #SEGMENTATION_SYMBOLS},
+     *         {@link #HIGH_THROUGHPUT} and {@link #MIXED}
      */
     public int codeBlockStyle() {
         return codeBlockStyle;

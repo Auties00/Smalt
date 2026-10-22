@@ -248,12 +248,17 @@ final class TiffSamples {
         if (blockWidth <= 0 || blockHeight <= 0) {
             throw new MediaException.Malformed("raw image blocks of " + blockWidth + "x" + blockHeight);
         }
-        var across = (width + blockWidth - 1) / blockWidth;
-        var down = (height + blockHeight - 1) / blockHeight;
-        if ((long) across * down > offsets.length) {
-            throw new MediaException.Malformed("raw image declares " + offsets.length + " blocks for "
-                    + (long) across * down);
+        if (width <= 0 || height <= 0) {
+            throw new MediaException.Malformed("raw image of " + width + "x" + height);
         }
+        var blocksAcross = (width + (long) blockWidth - 1) / blockWidth;
+        var blocksDown = (height + (long) blockHeight - 1) / blockHeight;
+        if (blocksAcross * blocksDown > offsets.length) {
+            throw new MediaException.Malformed("raw image declares " + offsets.length + " blocks for "
+                    + blocksAcross * blocksDown);
+        }
+        var across = (int) blocksAcross;
+        var down = (int) blocksDown;
         var base = ifd.reader().base();
         var size = ifd.reader().size();
         var blocks = new Block[across * down];
@@ -321,7 +326,7 @@ final class TiffSamples {
         var data = new byte[(int) block.length];
         source.readFully(block.offset, data, 0, data.length);
         switch (compression) {
-            case 7 -> losslessJpeg(data, block, plane);
+            case 7 -> losslessJpeg(data, block, plane, limits);
             case COMPRESSION_LOSSY_JPEG -> lossyJpeg(data, block, plane, limits);
             case COMPRESSION_JPEG_XL -> jpegXl(data, block, plane, bits, floating, limits);
             default -> {
@@ -521,7 +526,7 @@ final class TiffSamples {
             return mantissa != 0 ? Float.NaN : sign != 0 ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY;
         }
         if (exponent == 0) {
-            var value = mantissa / 65536.0f * (float) Math.pow(2, -62);
+            var value = mantissa / 65536.0f * (float) StrictMath.pow(2, -62);
             return sign != 0 ? -value : value;
         }
         return Float.intBitsToFloat((sign << 31) | ((exponent - 64 + 127) << 23) | (mantissa << 7));
@@ -533,9 +538,13 @@ final class TiffSamples {
      * @param data the block bytes
      * @param block the strip or tile the samples belong to
      * @param plane the plane receiving the samples
+     * @param limits the resource bounds, which the frame size the JPEG declares must respect
      */
-    private static void losslessJpeg(byte[] data, Block block, SensorPlane plane) {
+    private static void losslessJpeg(byte[] data, Block block, SensorPlane plane, MediaLimits limits) {
         var jpeg = new LosslessJpeg(data, 0, data.length);
+        // the decoder runs over every sample the frame header declares, so a huge declared frame costs time
+        // although the block keeps only its own samples
+        LimitChecks.checkPicture(limits, jpeg.width(), jpeg.height());
         var spp = plane.samplesPerPixel;
         var blockRow = (long) block.width * spp;
         var rowSamples = (long) jpeg.width() * jpeg.components();

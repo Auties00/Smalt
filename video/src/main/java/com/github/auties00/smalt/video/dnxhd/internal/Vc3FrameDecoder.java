@@ -200,7 +200,7 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
         var alpha = first.alpha() || outOfBandAlpha;
         allocate(sizes, wide, alpha);
         var transformScale = depth == 12 ? 4f : 1f;
-        var scale = transformScale * (float) Math.pow(2, outputDepth - depth);
+        var scale = transformScale * (float) StrictMath.pow(2, outputDepth - depth);
         var levelShift = 1 << (outputDepth - 1);
         var targets = new Vc3Target[fields];
         for (var f = 0; f < fields; f++) {
