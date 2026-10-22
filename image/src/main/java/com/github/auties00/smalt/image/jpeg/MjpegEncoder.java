@@ -26,7 +26,8 @@ import java.util.function.Consumer;
 /**
  * Encodes pictures into Motion-JPEG video, every frame an independent baseline JPEG image.
  *
- * <p>A progressive frame is exactly the file {@link JpegEncoder#encode(Picture, JpegEncoderOptions)}
+ * <p>A progressive (non-interlaced) frame is exactly the baseline file
+ * {@link JpegEncoder#encode(Picture, JpegEncoderOptions)}
  * writes for the frame's picture at the frame's quality and the options' subsampling, Huffman
  * optimization and restart interval, without an ICC profile; with
  * {@link MjpegEncoderOptions#huffmanTables()} {@code false} its DHT segments are left out. An

@@ -429,8 +429,17 @@ JpegTranscoder) port the jpegtran sample program: the coefficient
 rotations, flips, transpositions and crops of transupp.c, the transcoding
 of jctrans.c, the marker writer of jcmarker.c, the progressive Huffman
 encoder of jcphuff.c, the pass sequence of jcmaster.c, and the parameter
-handling of jpegtran.c. The accurate integer inverse DCT is also the inverse
-DCT of the MPEG-4 Part 2 and H.263 decoders.
+handling of jpegtran.c. The encoder's coding modes (in image.jpeg.internal,
+JpegEncoding, SampleRows, ComponentBands, DctFrameEncoder, WideFdct,
+ArithmeticEncoder and LosslessFrameEncoder) port the compression library:
+the preprocessing and downsampling controllers (jcprepct.c, jcsample.c),
+color conversion at 8 to 16 bits with the CMYK and YCCK transforms
+(jccolor.c, cmyk.h) and the PPM sample rescaling (rdppm.c), the 8-bit and
+12-bit forward DCT and quantization (jfdctint.c, jcdctmgr.c), the coefficient
+controller (jccoefct.c), the arithmetic encoder (jcarith.c, jaricom.c), the
+lossless compressor (jclossls.c, jcdiffct.c, jclhuff.c) and the parameter
+setup (jcparam.c, jcmaster.c). The accurate integer inverse DCT is also the
+inverse DCT of the MPEG-4 Part 2 and H.263 decoders.
 
 This software is based in part on the work of the Independent JPEG Group.
 
@@ -607,6 +616,52 @@ Java code derives from):
     Copyright (C) 1995-2019, Thomas G. Lane, Guido Vollbeding.
     libjpeg-turbo Modifications:
     Copyright (C) 2010, 2014, 2017, 2019-2022, 2024, D. R. Commander.
+  jcarith.c
+    This file was part of the Independent JPEG Group's software:
+    Developed 1997-2009 by Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015, 2018, 2021-2022, D. R. Commander.
+  jccoefct.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1997, Thomas G. Lane.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jcprepct.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1996, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jclossls.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1998, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jcdiffct.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1994-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, 2024, D. R. Commander.
+  jclhuff.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Lossless JPEG Modifications:
+    Copyright (C) 1999, Ken Murchison.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2022, D. R. Commander.
+  cmyk.h
+    Copyright (C) 2017-2018, 2022, 2024-2025, D. R. Commander.
+  rdppm.c
+    This file was part of the Independent JPEG Group's software:
+    Copyright (C) 1991-1997, Thomas G. Lane.
+    Modified 2009 by Bill Allombert, Guido Vollbeding.
+    libjpeg-turbo Modifications:
+    Copyright (C) 2015-2017, 2020-2025, D. R. Commander.
 
 -------------------------------------------------------------------------------
 libjpeg-turbo license overview (LICENSE.md)

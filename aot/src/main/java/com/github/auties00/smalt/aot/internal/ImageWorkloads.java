@@ -143,6 +143,7 @@ final class ImageWorkloads {
                 file("jpeg-lossless-variants-decode", ImageWorkloads::jpegLosslessVariantsDecode),
                 file("jpeg-decode-12bit", ImageWorkloads::jpegDecode12),
                 file("jpeg-encode", ImageWorkloads::jpegEncode),
+                file("jpeg-encode-modes", ImageWorkloads::jpegEncodeModes),
                 file("jpeg-transform", ImageWorkloads::jpegTransform),
                 file("mjpeg-decode", ImageWorkloads::mjpegDecode),
                 file("mjpeg-encode", ImageWorkloads::mjpegEncode),
@@ -354,6 +355,58 @@ final class ImageWorkloads {
     private static byte[] losslessJpeg(RgbaPicture picture, int[] ids, int precision, int predictor, int restartRows) {
         return SyntheticImages.losslessJpeg(SyntheticImages.losslessSamples(picture, ids.length, precision),
                 picture.width(), picture.height(), ids, precision, predictor, restartRows);
+    }
+
+    /**
+     * Returns a workload that encodes a 512x288 picture in the coding modes beyond baseline: progressive,
+     * arithmetic (sequential and progressive), 12-bit, lossless (Huffman and arithmetic, 8 and 16 bits), RGB,
+     * CMYK and YCCK, 4:4:0 and 4:1:1 sampling, custom quantization tables and a 16-bit planar picture coded
+     * as is.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegEncodeModes() {
+        var yuv = SyntheticVideo.natural(512, 288, 1).getFirst();
+        var rgba = SyntheticImages.rgba(yuv, false);
+        var rgba16 = ImageOps.toSixteenBit(rgba);
+        var cmyk = Channel8Picture.allocate(rgba.width(), rgba.height(), PixelLayout.CMYK);
+        for (var i = 0; i < rgba.width() * rgba.height(); i++) {
+            for (var c = 0; c < 4; c++) {
+                cmyk.pixels()[4 * i + c] = (byte) (255 - rgba.pixels()[4 * i + (c == 3 ? 1 : c)]);
+            }
+        }
+        var deep = ImageOps.toBitDepth(yuv, 12);
+        var table = JpegEncoderOptions.QuantizationTable.ANNEX_K_LUMINANCE;
+        var options = List.of(
+                JpegEncoderOptions.ofProgressive(85),
+                JpegEncoderOptions.builder().arithmetic(true).build(),
+                JpegEncoderOptions.builder().arithmetic(true).progressive(true).restartInterval(8).build(),
+                JpegEncoderOptions.builder().precision(12).chromaFormat(ChromaFormat.YUV444).build(),
+                JpegEncoderOptions.builder().precision(12).progressive(true).build(),
+                JpegEncoderOptions.builder().colorSpace(JpegEncoderOptions.ColorSpace.RGB).progressive(true).build(),
+                JpegEncoderOptions.builder().colorSpace(JpegEncoderOptions.ColorSpace.YCCK).build(),
+                JpegEncoderOptions.builder().samplingFactors(JpegEncoderOptions.Sampling.of(1, 2)).build(),
+                JpegEncoderOptions.builder().samplingFactors(JpegEncoderOptions.Sampling.of(4, 1)).optimizeHuffman(false)
+                        .build(),
+                JpegEncoderOptions.builder().quality(40).chromaQuality(20).quantizationTables(table, table, table)
+                        .quantizationSlots(0, 1, 2).baselineQuantization(false).build());
+        var lossless = List.of(
+                JpegEncoderOptions.ofLossless(),
+                JpegEncoderOptions.ofLossless().toBuilder().arithmetic(true).predictor(6).build());
+        return TrainingWorkload.of("jpeg-encode-modes", () -> {
+            for (var option : options) {
+                Blackhole.consume(JpegEncoder.encode(rgba, option).length);
+            }
+            for (var option : lossless) {
+                Blackhole.consume(JpegEncoder.encode(rgba, option).length);
+                Blackhole.consume(JpegEncoder.encode(rgba16, option).length);
+            }
+            Blackhole.consume(JpegEncoder.encode(cmyk, JpegEncoderOptions.builder()
+                    .colorSpace(JpegEncoderOptions.ColorSpace.CMYK).progressive(true).build()).length);
+            Blackhole.consume(JpegEncoder.encode(deep, JpegEncoderOptions.builder().precision(12).build()).length);
+            Blackhole.consume(JpegEncoder.encode(yuv, JpegEncoderOptions.ofLossless().toBuilder()
+                    .colorSpace(JpegEncoderOptions.ColorSpace.YCBCR).build()).length);
+        });
     }
 
     /**

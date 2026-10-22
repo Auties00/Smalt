@@ -241,6 +241,21 @@ libtiff 4.7.1 itself writes 12-bit JPEG strips that decode to the wrong samples;
 sample of a decoded row with an odd number of samples, so the odd-width file is checked against djpeg strip
 by strip instead.
 
+## JPEG encoder mode vectors
+
+`JpegEncoderModesTest` of `smalt-image` checks the encoder's coding modes against MD5 sums kept with the test
+(`image/src/test/resources/com/github/auties00/smalt/image/jpeg/encoder/`). `cjpeg-cases.tsv` lists cjpeg runs
+(input, switches, MD5) over libjpeg-turbo's test images (`ljt-testorig.ppm`, `ljt-testorig.pgm`,
+`ljt-monkey16.ppm`, `ljt-monkey16.pgm`, `ljt-test1.icc` and `ljt-test.scan` in `vectors.tsv`) and the
+quantization tables and scan scripts next to it (self-made: `tables2.txt` and `tables3.txt` hold seeded random
+values, the `.scan` files hand-written scripts); `python -I tools/testdata/jpegenc/cjpeg-record.py <cjpeg>
+<testimages> cjpeg-cases.tsv` records the MD5 column with libjpeg-turbo 3.1.3's cjpeg, and the test checks the
+recorded value against a live cjpeg wherever one is installed. Ten of the cases are libjpeg-turbo's own CMake bit
+tests, whose MD5 sums the recording reproduces. `turbojpeg-md5.csv` holds the MD5 of the CMYK, YCCK and JFIF
+density files of the TurboJPEG API (which cjpeg cannot write) for the synthetic pattern of
+`tools/testdata/jpegenc/turbojpeg-record.py`, recorded with `python -I turbojpeg-record.py <libturbojpeg>
+turbojpeg-md5.csv` against libjpeg-turbo 3.1.3 (the MSYS2 UCRT64 build on Windows x64).
+
 ## Lossless Motion-JPEG vectors
 
 `MjpegLosslessTest` of `smalt-image` reads AVI and Matroska files of two frames coded by ffmpeg's lossless JPEG

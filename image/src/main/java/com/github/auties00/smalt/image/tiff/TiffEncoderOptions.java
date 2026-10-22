@@ -615,8 +615,10 @@ public final class TiffEncoderOptions {
      * {@link TiffCompression#JPEG}; {@link JpegEncoderOptions#defaults()} by default}
      *
      * <p>The quality, the chroma subsampling ({@link ChromaFormat#MONOCHROME} writing gray pages),
-     * the Huffman optimization and the restart interval apply; the color profile is ignored, since
-     * the page's profile is {@link #colorProfile()}.
+     * the Huffman optimization and the restart interval apply; the color profile and the JFIF density are
+     * ignored, since the page's profile is {@link #colorProfile()} and its resolution
+     * {@link #resolution()}. The other settings must keep their defaults: the pages are 8-bit baseline
+     * Y'CbCr or gray.
      */
     public JpegEncoderOptions jpegOptions() {
         return jpegOptions;
@@ -1146,8 +1148,9 @@ public final class TiffEncoderOptions {
          * group {@link TiffEncoderOptions#rowsPerStrip()} describes, a tile dimension is not a positive
          * multiple of 16, the chroma format is {@code MONOCHROME}, a resolution is not positive and
          * finite, the layout is {@code PALETTE}, {@code BILEVEL} or {@code YCBCR} with a depth they do not
-         * take, or the compression does not take the layout, the depth or separate planes, as
-         * {@link TiffEncoderOptions#compression()} describes
+         * take, the compression does not take the layout, the depth or separate planes, as
+         * {@link TiffEncoderOptions#compression()} describes, or the JPEG settings ask for more than
+         * {@link TiffEncoderOptions#jpegOptions()} takes
          */
         public TiffEncoderOptions build() {
             // TODO: JPEG XL pages, once Smalt has a JPEG XL encoder
@@ -1190,6 +1193,15 @@ public final class TiffEncoderOptions {
                             && layout != Layout.YCBCR) || !eightBit || planar) {
                         throw new IllegalArgumentException("JPEG-compressed TIFF pages hold interleaved 8-bit gray or"
                                 + " Y'CbCr samples only");
+                    }
+                    var jpeg = jpegOptions;
+                    if (jpeg.progressive() || jpeg.arithmetic() || jpeg.lossless() || jpeg.precision().orElse(8) != 8
+                            || jpeg.colorSpace() != JpegEncoderOptions.ColorSpace.YCBCR || jpeg.chromaQuality().isPresent()
+                            || !jpeg.samplingFactors().isEmpty() || !jpeg.quantizationTables().isEmpty()
+                            || !jpeg.quantizationSlots().isEmpty() || !jpeg.baselineQuantization()
+                            || !jpeg.scanScript().isEmpty()) {
+                        throw new IllegalArgumentException("JPEG-compressed TIFF pages take only the quality, chroma"
+                                + " subsampling, Huffman optimization and restart interval of the JPEG settings");
                     }
                 }
                 case JPEG_2000 -> {

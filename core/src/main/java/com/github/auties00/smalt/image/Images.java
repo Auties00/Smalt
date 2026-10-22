@@ -336,9 +336,9 @@ public final class Images {
      * @return the complete encoded image
      * @throws NullPointerException       if an argument is {@code null}
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG; a lossless picture with more bits
-     *                                    per sample than the format holds, unless its samples are
-     *                                    exactly those of an 8-bit picture)
+     *                                    options (a lossless picture with more bits per sample than
+     *                                    the format holds, unless its samples are exactly those of an
+     *                                    8-bit picture)
      */
     public static byte[] encode(Picture picture, ImageFormat format, ImageEncoderOptions options) {
         var sink = MediaSink.memory();
@@ -350,8 +350,8 @@ public final class Images {
      * Encodes a picture into a format and writes it to a sink, from the sink's position.
      *
      * <p>A JPEG encoding of a picture with alpha drops the alpha; a PNG ignores the quality; a
-     * WebP codes the picture losslessly when {@link ImageEncoderOptions#isLossless()} and lossily
-     * otherwise.
+     * WebP and a JPEG code the picture losslessly when {@link ImageEncoderOptions#isLossless()} and
+     * lossily otherwise.
      *
      * @param picture the pixels to encode
      * @param format  the format to produce
@@ -359,9 +359,9 @@ public final class Images {
      * @param sink    the output; not closed
      * @throws NullPointerException       if an argument is {@code null}
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG; a lossless picture with more bits
-     *                                    per sample than the format holds, unless its samples are
-     *                                    exactly those of an 8-bit picture)
+     *                                    options (a lossless picture with more bits per sample than
+     *                                    the format holds, unless its samples are exactly those of an
+     *                                    8-bit picture)
      * @throws MediaException.Io          if writing the sink fails
      */
     public static void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {

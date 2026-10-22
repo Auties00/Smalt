@@ -158,11 +158,13 @@ class RegistryCoverageTest {
         }
 
         @Test
-        @DisplayName("rejects lossless JPEG")
+        @DisplayName("codes lossless JPEG in RGB, which decodes to the same pixels")
         void losslessJpeg() {
-            var failure = assertThrows(MediaException.Unsupported.class,
-                    () -> Images.encode(picture(), ImageFormat.JPEG, ImageEncoderOptions.lossless()));
-            assertEquals("jpeg lossless", failure.format());
+            var picture = picture();
+            var jpeg = Images.encode(picture, ImageFormat.JPEG, ImageEncoderOptions.lossless());
+            assertArrayEquals(JpegEncoder.encode(picture, JpegEncoderOptions.ofLossless()), jpeg);
+            var decoded = assertInstanceOf(RgbaPicture.class, Images.decode(MediaSource.of(jpeg)).picture());
+            assertArrayEquals(picture.pixels(), decoded.pixels());
         }
     }
 

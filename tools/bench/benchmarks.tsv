@@ -1,0 +1,21 @@
+# The benchmarks CI runs (tools/bench/README.md). Tab-separated: id, module, sets (ab: the weekly and manual A/B
+# timing; alloc: the pull-request allocation gate), needs (- or oracles: the oracle tools of tools/testdata must be
+# installed), warmup (- or the least number of warm-up iterations of 1 s its cases need), the JMH include regex, and
+# the parameters (- or name=v1,v2;name=v1: every combination is a case of its own, timed fork by fork in both
+# trees). Every input is synthetic or made with the oracle tools, so that both trees of an A/B and every run of the
+# gate see the same data.
+#
+# hot-paths: one round of each synthetic steady-state workload of the it module's JitWorkload (a video or audio codec
+# stays open across rounds; an image workload codes whole images every round), so its allocation per operation is
+# what the code allocates per round of frames, samples or images.
+# av1-encoder: the same for the AV1 encoder, whose JVM takes 5 to more than 12 s to stop allocating from kernels the
+# JIT has not compiled yet.
+hot-paths	it	ab,alloc	-	-	\.JitEndToEndBenchmark\.round$	spec=h264enc:speed=BALANCED:profile=main:threads=1,h264enc:speed=FASTEST:profile=baseline:threads=1,h264enc:rt=true:threads=2,h264dec:threads=1,h264dec:threads=2,vp8enc:speed=6:threads=1,vp8enc:speed=8:threads=2:resilient=false,vp9enc:speed=6:threads=1,proresdec,proresenc,dnxhddec,dnxhdenc,webpenc,webpdec,webpanim,jpegsend,pngdec,gifdec,convert,effects,capture,opusvoice,opuscall,aacenc,heaac,ac3,amrnb,amrwb,flacenc,mp3enc,resample,voice
+av1-encoder	it	ab,alloc	-	25	\.JitEndToEndBenchmark\.round$	spec=av1enc:speed=FASTER:threads=1
+capture-conversion	capture	ab	-	-	\.ConversionBenchmark\.	kernel=vector
+color-transform	core	ab	-	-	\.ColorTransformBenchmark\.transform$	transform=p3,pq-16
+vp8-realtime	image	ab	-	-	\.Vp8RtEncodeBenchmark\.	size=720;threads=1
+vp9-realtime	video	ab	-	-	\.Vp9RtEncodeBenchmark\.	size=720;threads=1
+silk-encoder	audio	ab	-	-	\.SilkEncoderBenchmark\.	config=voiceNote
+voice-processor	audio	ab	-	-	\.VoiceProcessorBenchmark\.	scenario=double talk;kernels=vector
+h264-decoder	mpeg	ab	oracles	-	\.H264DecoderBenchmark\.	stream=720p-baseline-cavlc;threads=1

@@ -44,8 +44,9 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * (8 and 16 bits) a format holds, over a grid of sizes (one pixel, odd sizes, wide and tall strips) and contents
  * (seeded noise, gradients, flat fields, alternating extremes). Formats that hold fewer bits than the picture reject
  * the lossless request unless the samples are exactly 8-bit; WebP keeps the color of fully transparent pixels only
- * when asked to be exact. JPEG XL and lossless JPEG, which Smalt decodes but does not encode, are encoded by the
- * reference tools (cjxl or ffmpeg's libjxl, and ffmpeg's ljpeg).
+ * when asked to be exact; lossless JPEG holds no alpha, so it is checked on gray and RGB pictures. JPEG XL, which
+ * Smalt decodes but does not encode, and lossless JPEG of other encoders are encoded by the reference tools (cjxl
+ * or ffmpeg's libjxl, libjpeg-turbo's cjpeg, and ffmpeg's ljpeg).
  */
 @DisplayName("Lossless image round trips")
 class LosslessImageTest {
@@ -169,6 +170,23 @@ class LosslessImageTest {
             }
             assertIdentity("TIFF planar " + test, picture, TiffEncoder.encode(picture, options.build()), true);
         }
+    }
+
+    @Nested
+    @DisplayName("lossless JPEG")
+    class LosslessJpeg {
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessImageTest#opaqueCases")
+        @DisplayName("returns every sample of every opaque layout and depth")
+        void identity(Case test) {
+            var picture = picture(test);
+            assertIdentity("JPEG " + test, picture, Images.encode(picture, ImageFormat.JPEG,
+                    ImageEncoderOptions.lossless()), true);
+        }
+    }
+
+    static Stream<Case> opaqueCases() {
+        return allDepths().filter(test -> test.layout() == PixelLayout.RGB || test.layout() == PixelLayout.GRAY);
     }
 
     @Nested

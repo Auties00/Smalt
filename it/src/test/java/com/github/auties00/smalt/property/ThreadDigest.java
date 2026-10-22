@@ -10,6 +10,8 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.jp2.Jp2Encoder;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
+import com.github.auties00.smalt.image.jpeg.JpegEncoder;
+import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.io.MediaSource;
@@ -79,6 +81,17 @@ public final class ThreadDigest {
             digests.put(name + "-encode", sha256(encoded));
             digests.put(name + "-decode", sha256(ImageOps.toRgba(Images.decode(MediaSource.of(encoded)).picture())
                     .pixels()));
+        }
+        var jpegModes = new LinkedHashMap<String, JpegEncoderOptions>();
+        jpegModes.put("jpeg-progressive", JpegEncoderOptions.ofProgressive(80));
+        jpegModes.put("jpeg-arithmetic-progressive", JpegEncoderOptions.builder().arithmetic(true).progressive(true)
+                .restartInterval(5).build());
+        jpegModes.put("jpeg-12bit-440", JpegEncoderOptions.builder().precision(12)
+                .samplingFactors(JpegEncoderOptions.Sampling.of(1, 2)).build());
+        jpegModes.put("jpeg-lossless-arithmetic", JpegEncoderOptions.ofLossless().toBuilder().arithmetic(true)
+                .predictor(7).build());
+        for (var mode : jpegModes.entrySet()) {
+            digests.put(mode.getKey() + "-encode", sha256(JpegEncoder.encode(picture, mode.getValue())));
         }
         for (var filter : ResizeFilter.values()) {
             digests.put("resize-" + filter.name().toLowerCase(),

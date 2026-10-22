@@ -217,6 +217,10 @@ jobs:
       - name: Comment lint
         run: python tools/lint/doclint.py
 
+      # The benchmark tool of .github/workflows/bench.yml, against a stand-in for the JVM.
+      - name: Benchmark tool tests
+        run: python -m unittest discover -s tools/bench -p "test_*.py"
+
       # A pull request may shrink the baselines but never grow the comment findings or the environment skips.
       - name: Baselines only shrink
         if: github.event_name == 'pull_request'

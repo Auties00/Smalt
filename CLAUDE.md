@@ -42,6 +42,10 @@ Cobalt's `cobalt-media` module and is consumed by Cobalt (`../Cobalt1`), which b
   target in its module's `fuzz` test package (the contract and the workflow are in `tools/fuzz/README.md`); a new
   one gets a target with `valid-*` seeds, and a crash a fuzzer finds gets its input saved under
   `src/test/resources/fuzz-regressions`, which every build replays.
+- `tools/bench`: the benchmarks CI runs (`benchmarks.tsv`, `bench.py`, `.github/workflows/bench.yml`), base and
+  head built side by side in one job: the pull-request gate on the bytes allocated per operation (a change that
+  allocates more on purpose carries the `allocation-accepted` label) and the weekly A/B timing. A new hot path joins
+  `it`'s `JitWorkload` and the `hot-paths` row.
 - Tests run at the JVM's default thread stack size (no `-Xss`): a parser bounds its recursion instead. The `it`
   module's `hostile` package checks decompression bombs (allocation metered), cyclic offsets and deep nesting
   (on a 256 KiB stack) through every entry point, and its `property` package lossless round trips, mux/demux
@@ -104,7 +108,9 @@ packages (`internal.*`) are exported only to the artifacts that need them.
   fails; a method that only builds tables is marked `internal.simd.KernelSetup` so the guard does not meter it.
 - **Correctness first.** Normative decoders stay bit-exact (conformance suites); encoders keep their output
   byte-identical unless a change is measured to be quality-neutral or better.
-- **Performance claims need JMH A/B** in the same session (3+ forks) against a frozen baseline.
+- **Performance claims need JMH A/B** in the same session (3+ forks) against a frozen baseline
+  (`tools/bench/bench.py ab` runs one, forks interleaved; on CI's shared runners it resolves only changes of 15 to 25%
+  or more).
 - **Licensing.** Port only from permissive sources; never read or port GPL/LGPL code (FFmpeg, x264, x265,
   libde265). Name the source of every port in a `/* Ports ... */` header above `package` (section 5 of Documentation), and
   record it in `tools/notices` when its license requires attribution in copies (see its README); thank every project Smalt learns from in the

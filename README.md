@@ -156,7 +156,8 @@ seed and finding, and runs these tests, in a 256 MiB heap; a nightly job fuzzes 
 with that heap.
 
 The `property` tests check invariants that need no reference output: lossless coding (PNG, TIFF, JPEG 2000,
-AVIF, WebP, GIF, ICO, ANI, FLAC, PCM, and JPEG XL, lossless JPEG and ALAC encoded by the reference tools) decodes to
+lossless JPEG, AVIF, WebP, GIF, ICO, ANI, FLAC, PCM, and JPEG XL, ALAC and other encoders' lossless JPEG encoded by
+the reference tools) decodes to
 every input sample; muxing then demuxing returns every packet of every codec in every container Smalt writes;
 tag edits read back as written, are idempotent and never touch the media; video seeks return what a linear
 decode returns from the target on; and output does not depend on the thread count, the load on the shared
@@ -176,6 +177,20 @@ built from its source (AMR comfort noise and bad frames against the 3GPP decoder
 real-time codecs, the transcoder and the picture operations for hours, checking that heap, threads, file
 descriptors and allocation stay flat, and runs the [jcstress](https://github.com/openjdk/jcstress) tests of the
 shared thread pool and the codecs' wavefronts (`mvn -Pjcstress -pl it -am verify -DskipTests`).
+
+### Benchmarks in CI
+
+The JMH benchmarks live in each module's test sources; [tools/bench/benchmarks.tsv](tools/bench) picks the ones
+CI runs, among them one round of every synthetic steady-state workload of the `it` module (the video and audio
+codecs open across rounds, the image workloads coding whole images). `.github/workflows/bench.yml` always builds
+the base and the head side by side and compares them in one job, since the hosted runners differ too much from run
+to run to compare with recorded numbers. On
+every pull request it measures the bytes each case allocates per operation (JMH's gc profiler) in both trees and
+fails when the head allocates more than the base plus a tolerance; a change that allocates more on purpose carries
+the `allocation-accepted` label. Every week, and on demand, it times every case in both trees, fork by fork and
+interleaved, and reports each change with a 95% confidence interval; a slowdown of 20% or more fails the run, and
+the head's numbers are kept on the `gh-pages` branch. Smaller effects need the quiet machine of
+[Performance](#performance).
 
 ### Vector kernels and the JIT
 
@@ -257,7 +272,7 @@ Codecs are found at run time through the `spi` providers, so a format whose arti
 
 | Format | Decode | Encode | Artifact | Package | Source | Patents |
 |---|---|---|---|---|---|---|
-| JPEG | baseline, extended, progressive, arithmetic coding, 8-bit and 12-bit (bit-exact with `djpeg -dct int` at both depths); shrink-on-load; lossless Huffman and arithmetic (SOF3, SOF11) at 2 to 16 bits with any sampling factors, in one scan or several (bit-exact on the ITU-T T.83 compliance streams), and the RGB files of ffmpeg's lossless encoder (reversible color transform); frames of 2 or 5 to 255 components (raw channel pictures with `keepChannels`, the meaning of their channels from the ICC profile); samples above 8 bits reduced to 8 bits or kept with `ImageDecoderOptions.highBitDepth` (gray and YCbCr as `Yuv16Picture`, RGB as `Rgba16Picture`); CMYK and YCCK kept as CMYK channel pictures with `keepChannels` | baseline (sequential Huffman, 8-bit); lossless transforms of any decodable 8-bit or 12-bit DCT JPEG (`JpegTransforms`: rotations, flips, transpose, transverse, crop on MCU boundaries with trimming or perfect-only, grayscale, sequential or progressive output with standard or optimized tables, restart markers, marker copying, EXIF auto-orientation with the thumbnail transformed), byte-identical to `jpegtran` | `smalt-image` | `image.jpeg` | libjpeg-turbo and the IJG software (including jpegtran's transupp.c and jctrans.c); stb_image (Huffman lookup); spec (ITU-T T.81 annex H for arithmetic-coded lossless) | none in force |
+| JPEG | baseline, extended, progressive, arithmetic coding, 8-bit and 12-bit (bit-exact with `djpeg -dct int` at both depths); shrink-on-load; lossless Huffman and arithmetic (SOF3, SOF11) at 2 to 16 bits with any sampling factors, in one scan or several (bit-exact on the ITU-T T.83 compliance streams), and the RGB files of ffmpeg's lossless encoder (reversible color transform); frames of 2 or 5 to 255 components (raw channel pictures with `keepChannels`, the meaning of their channels from the ICC profile); samples above 8 bits reduced to 8 bits or kept with `ImageDecoderOptions.highBitDepth` (gray and YCbCr as `Yuv16Picture`, RGB as `Rgba16Picture`); CMYK and YCCK kept as CMYK channel pictures with `keepChannels` | baseline and extended sequential (one scan or a script of several), progressive (the default script or any custom one), arithmetic coding (SOF9, SOF10, SOF11) and lossless (SOF3, SOF11: predictors 1 to 7, point transform, 2 to 16 bits, also through `ImageEncoderOptions.lossless`); 8-bit and 12-bit; YCbCr (JFIF, with pixel density) and gray, RGB, CMYK and YCCK (Adobe `APP14`); any sampling factors (4:4:0, 4:1:1 and others), custom quantization tables, slots and per-component quality, 16-bit quantizers on request; byte-identical to `cjpeg -dct int` with the matching switches (libjpeg-turbo's bit tests included) and, for CMYK and YCCK, to the TurboJPEG API; lossless transforms of any decodable 8-bit or 12-bit DCT JPEG (`JpegTransforms`: rotations, flips, transpose, transverse, crop on MCU boundaries with trimming or perfect-only, grayscale, sequential or progressive output with standard or optimized tables, restart markers, marker copying, EXIF auto-orientation with the thumbnail transformed), byte-identical to `jpegtran` | `smalt-image` | `image.jpeg` | libjpeg-turbo and the IJG software (including jpegtran's transupp.c and jctrans.c, and the encoder's jcarith.c, jclossls.c and jclhuff.c); stb_image (Huffman lookup); spec (ITU-T T.81 annex H for arithmetic-coded lossless, decoding and encoding) | none in force |
 | PNG, APNG | every color type and bit depth, interlacing, animation; `cICP` with `mDCV`/`cLLI` HDR metadata | PNG: every color type, the smallest lossless one chosen from the pixels (indexed and grayscale at 1, 2, 4 or 8 bits, grayscale with alpha, truecolor, truecolor with alpha; 16 bits for `Rgba16Picture` and for `Yuv16Picture` deeper than 8 bits; `tRNS` palettes and color keys), Adam7 interlacing, `sBIT`, `gAMA`, `cHRM`, `sRGB`, `pHYs`, ICC (`iCCP`) or PQ/HLG (`cICP`, `mDCV`, `cLLI`, then the ICC form in `iCCP` unless grayscale) profiles; APNG (changed rectangles, disposal and blend chosen by size, one color type for the file: indexed, truecolor or truecolor with alpha; exact fraction delays; optional fallback image; ICC or PQ/HLG profile) | `smalt-image` | `image.png` | spec; libpng (vector filters), stb_image (Paeth) | none |
 | GIF | still and animated; ICC profiles (`ICCRGBG1` extension, as `colorProfile`) and XMP (`XMP DataXMP` extension) | still and animated: exact palettes up to 256 colors, otherwise median cut or NeuQuant quantization with none, ordered, Floyd-Steinberg or Sierra dithering; binary transparency; global or local palettes; changed rectangles with transparent unchanged pixels and disposal chosen per frame; looping, interlacing; an RGB ICC profile | `smalt-image` (quantizers in `smalt-core`) | `image.gif`, `image.gif.internal`, core `internal.quantize` | spec (GIF89a, ICC.1 Annex B); giflib (LZW, byte-identical), NeuQuant | LZW patents expired (2004) |
 | WebP | lossy, lossless, alpha, animated | lossy, lossless, alpha, animated | `smalt-image` | `image.webp` | libwebp | Google's royalty-free WebP grant (`PATENTS` in libwebp) |
@@ -843,6 +858,11 @@ file on a seekable output, its final `STREAMINFO` (length, MD5) and seek table.
   are ignored. Lossless JPEG transforms write Huffman-coded output only, a 12-bit output always has optimized
   Huffman tables, and frames of two or more than four components are rejected. 16-bit DCT JPEG, which T.81
   does not define, is rejected as unsupported.
+- The JPEG encoder writes no hierarchical frames (SOF5 to SOF7, SOF13 to SOF15) and uses only the accurate
+  integer forward DCT (cjpeg's `-dct fast`, `-dct float` and `-smooth` have no counterpart) and the default
+  arithmetic conditioning; its restart interval is the same number of MCUs in every scan, so cjpeg's
+  `-restart` in rows, which counts each scan's own MCU rows, has no counterpart in a scan script that mixes
+  interleaved and single-component scans.
 - The APNG encoder writes 8-bit indexed, truecolor or truecolor with alpha frames only, so a deeper frame is
   written with 8 bits per sample.
 - HEIF alpha images of another size than their color image are resampled with the triangle filter, which
@@ -1796,6 +1816,15 @@ thread (Smalt's own deflate compressor, 0.4x of the JDK zlib's time at level 6) 
 and 0.5x on eight; lossless WebP encode (2.5 MP) about 1.1x on one thread and 0.8x on eight. Eight-thread figures come from
 same-JVM interleaved comparisons combined with the quiet-machine FFmpeg times, and carry the noise of a shared
 machine.
+
+Absolute numbers, effects of a few percent and the comparison with FFmpeg and the other native libraries need
+dedicated hardware: one quiet machine with a fixed clock, both sides run in the same session with the same
+thread counts, ratios reported rather than times. The hosted CI runners are shared virtual machines whose speed
+drifts from run to run and with the CPU model a job lands on, so CI measures only what holds within one job
+([tools/bench](tools/bench)): a weekly A/B of the hot paths, base and head built side by side and timed fork by
+fork, that fails when a case gets 20% slower, and, on every pull request, the bytes allocated per operation
+against the base, which do not depend on the machine's load. The figures in this section come from the desktop
+above, not from CI.
 
 Some workloads do not speed up with threads, and some cost memory worth knowing about:
 

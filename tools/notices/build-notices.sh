@@ -276,15 +276,24 @@ JpegTranscoder) port the jpegtran sample program: the coefficient
 rotations, flips, transpositions and crops of transupp.c, the transcoding
 of jctrans.c, the marker writer of jcmarker.c, the progressive Huffman
 encoder of jcphuff.c, the pass sequence of jcmaster.c, and the parameter
-handling of jpegtran.c. The accurate integer inverse DCT is also the inverse
-DCT of the MPEG-4 Part 2 and H.263 decoders.
+handling of jpegtran.c. The encoder's coding modes (in image.jpeg.internal,
+JpegEncoding, SampleRows, ComponentBands, DctFrameEncoder, WideFdct,
+ArithmeticEncoder and LosslessFrameEncoder) port the compression library:
+the preprocessing and downsampling controllers (jcprepct.c, jcsample.c),
+color conversion at 8 to 16 bits with the CMYK and YCCK transforms
+(jccolor.c, cmyk.h) and the PPM sample rescaling (rdppm.c), the 8-bit and
+12-bit forward DCT and quantization (jfdctint.c, jcdctmgr.c), the coefficient
+controller (jccoefct.c), the arithmetic encoder (jcarith.c, jaricom.c), the
+lossless compressor (jclossls.c, jcdiffct.c, jclhuff.c) and the parameter
+setup (jcparam.c, jcmaster.c). The accurate integer inverse DCT is also the
+inverse DCT of the MPEG-4 Part 2 and H.263 decoders.
 
 This software is based in part on the work of the Independent JPEG Group.
 
 Copyright (as stated in the headers of the libjpeg-turbo source files the
 Java code derives from):
 EOF
-for f in jdmarker.c jdapimin.c jdmaster.c jdhuff.c jdphuff.c jdarith.c jaricom.c jidctint.c jidctred.c jfdctint.c jchuff.c jcdctmgr.c jcparam.c jdcolor.c jccolor.c jdsample.c jcsample.c jdicc.c jutils.c transupp.c jctrans.c jcphuff.c jcmarker.c jcmaster.c jpegtran.c; do
+for f in jdmarker.c jdapimin.c jdmaster.c jdhuff.c jdphuff.c jdarith.c jaricom.c jidctint.c jidctred.c jfdctint.c jchuff.c jcdctmgr.c jcparam.c jdcolor.c jccolor.c jdsample.c jcsample.c jdicc.c jutils.c transupp.c jctrans.c jcphuff.c jcmarker.c jcmaster.c jpegtran.c jcarith.c jccoefct.c jcprepct.c jclossls.c jcdiffct.c jclhuff.c cmyk.h rdppm.c; do
   jt_header "$f"
 done
 license_start "libjpeg-turbo license overview (LICENSE.md)"

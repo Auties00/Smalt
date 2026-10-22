@@ -881,9 +881,14 @@ smoke	libwebp-test-data-vp80-05-sharpness-1438.webp	9982	89e7696cf90f9493f764480
 smoke	libwebp-test-data-vp80-05-sharpness-1439.webp	20068	36bf4fef87be45f49411f93102433f117d54356a7aebd294ae1b68799938ce1c	https://raw.githubusercontent.com/webmproject/libwebp-test-data/06ddd96e276c2c638a72d39d3c0f340afd61978c/vp80-05-sharpness-1439.webp
 smoke	libwebp-test-data-vp80-05-sharpness-1440.webp	14508	f66a1bc109f04baa07a530fb79267d931899591c10798c4dc95f59eb03c5ac44	https://raw.githubusercontent.com/webmproject/libwebp-test-data/06ddd96e276c2c638a72d39d3c0f340afd61978c/vp80-05-sharpness-1440.webp
 smoke	libwebp-test-data-vp80-05-sharpness-1443.webp	6188	bcedf4d253801cf2461bd01675558dadc3895395a6432d0ba8f5cb9734b4040c	https://raw.githubusercontent.com/webmproject/libwebp-test-data/06ddd96e276c2c638a72d39d3c0f340afd61978c/vp80-05-sharpness-1443.webp
+smoke	ljt-monkey16.pgm	67663	8d122b926fba68154c4e3d73d29496c8bc67a8498ab34bb3edde56093364359f	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/monkey16.pgm
+smoke	ljt-monkey16.ppm	202955	030176fd82427469b57a80caf8cce9b62e4214291f44424f2022a081b5b04163	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/monkey16.ppm
+smoke	ljt-test.scan	110	a6e81cd5f36367b301e1d1c20902ec70357e4eb66ad8105a39bacc394475b144	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/test.scan
+smoke	ljt-test1.icc	557536	1a996ebe6b5d1e7a21620993ce1903df16e4e8fa6cca312bedfb5ae133e62b4d	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/test1.icc
 smoke	ljt-testimgari.jpg	5126	4672c7f08864cd0a8c73a4fa4b66ca32b635d38464551c1ecf06564ae8c89b38	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/testimgari.jpg
 smoke	ljt-testimgint.jpg	5756	491679b8057739b3c8e5bacd1e918efb1691d271cbbd69820ff8d480dcb90963	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/testimgint.jpg
 smoke	ljt-testorig.jpg	5770	acc6ec555d41d15b368320edaa3b20958ee6fa97cb6e4a18d1213d5ae8bec73b	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/testorig.jpg
+smoke	ljt-testorig.pgm	33838	e9250f272bb11de5452dcebd12500ebc8f418fc30530c39f0edfee76ad2eaac9	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/testorig.pgm
 smoke	ljt-testorig.ppm	101484	4afe49cb62ba87be1a958d7fd29b822a2ba1a0e966d1136f616ee5353691a002	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/3.1.2/testimages/testorig.ppm
 smoke	ljt-testorig12.jpg	12394	34790770f76db8e60a7765b52ca4edf5f16bc21bcb8c6045ca2efef39a8a013e	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/2.1.5.1/testimages/testorig12.jpg
 smoke	minimp3-ILL2_center2.bit	1152	a4b718b0d9e3c67fb85ed6f41504dd371630abffb3470fc5f49ec31012aa768e	https://raw.githubusercontent.com/lieff/minimp3/ea99364f61c14656440e8d77e9c233ccf3124633/vectors/ILL2_center2.bit
