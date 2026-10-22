@@ -344,6 +344,18 @@ libjpeg-turbo 3.1.3), pinned in `variants.sha256`; the test class `LosslessVecto
 test encoder and the test DCT writer and with `cjpeg` on `PATH`, when run with
 `-Dsmalt.jpeg.writeLosslessVectors=<directory>` (`-Dtest=LosslessVectorWriter`), and the output is deterministic.
 
+## JPEG XL feature vectors
+
+`JxlFeaturesTest` and the internal JPEG XL tests of `smalt-image` read small files with a preview frame, spot
+color channels (RGB and gray, XYB and not), progressive passes, a gray XYB image with a parametric gray ICC
+profile, `jhgm` gain map and `jumb` boxes (plain and in `brob` boxes) and animations with a `jxli` frame index
+(`image/src/test/resources/com/github/auties00/smalt/image/jxl/features/`), each next to djxl's decode of it
+(16-bit PNG, or float32 NumPy arrays for the previews). `python -I tools/testdata/jxl-features/make-vectors.py
+<cjxl/djxl directory> <that directory>` writes them with libjxl 0.11.2's cjxl and djxl (BSD-3-Clause, the
+release builds of `oracles.tsv`, black boxes) from ffmpeg 7.1's `mandelbrot` and `testsrc2` sources; since libjxl
+cannot write a preview frame or a spot color channel, the script splices the image headers of cjxl's files and
+checks each splice against djxl. `features.sha256` pins every file.
+
 ## AV1 super-resolution vectors
 
 `Av1SuperresTest` of `smalt-video` decodes short IVF streams coded by libaom's aomenc with super-resolution

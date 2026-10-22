@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.image.behavior;
 
+import com.github.auties00.smalt.image.jxl.JxlDecoder;
+import com.github.auties00.smalt.image.jxl.JxlGainMap;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
 import com.github.auties00.smalt.testkit.image.RasterTesting;
@@ -58,6 +60,20 @@ class ImageDecoderBehaviorTest {
             "tiff/compressions/pixarlog-rgb8.tif",
             "tiff/compressions/next-gray2.tif");
 
+    /**
+     * The JPEG XL feature vectors of {@code tools/testdata/jxl-features}, relative to the image resource directory,
+     * also run through the preview, gain map and box decodes.
+     */
+    private static final List<String> JXL_FEATURES = List.of(
+            "jxl/features/preview-vardct.jxl",
+            "jxl/features/preview-modular.jxl",
+            "jxl/features/progressive.jxl",
+            "jxl/features/progressive-lossless.jxl",
+            "jxl/features/spot-xyb.jxl",
+            "jxl/features/gray-icc.jxl",
+            "jxl/features/gainmap-brob.jxl",
+            "jxl/features/indexed.jxl");
+
     /** The PngSuite images, covering every color type, depth, interlacing and ancillary chunk family. */
     private static final List<String> PNGSUITE = List.of(
             "basn0g01.png", "basn0g16.png", "basn2c16.png", "basn3p02.png", "basn4a08.png", "basn6a16.png",
@@ -102,6 +118,10 @@ class ImageDecoderBehaviorTest {
         return RESOURCE_FILES.stream();
     }
 
+    static Stream<String> jxlFeatures() {
+        return JXL_FEATURES.stream();
+    }
+
     static Stream<String> pngSuite() {
         return PNGSUITE.stream();
     }
@@ -132,6 +152,18 @@ class ImageDecoderBehaviorTest {
     @DisplayName("codec vectors: identical pictures under every source behavior and clean faults")
     void resource(String file) throws IOException {
         ImageDecoderAsserts.of("resources/" + file, Files.readAllBytes(RESOURCES.resolve(file))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("jxlFeatures")
+    @DisplayName("JPEG XL features: identical pictures, previews, gain maps and boxes under every source behavior")
+    void jxlFeature(String file) throws IOException {
+        ImageDecoderAsserts.of("resources/" + file, Files.readAllBytes(RESOURCES.resolve(file)))
+                .decoder("preview", source -> JxlDecoder.decodePreview(source).orElse(null))
+                .decoder("gain map", source -> JxlDecoder.decodeGainMap(source).map(JxlGainMap::image).orElse(null))
+                .decoder("boxes", source -> JxlDecoder.readBoxes(source).stream()
+                        .map(box -> box.type() + (box.compressed() ? " brob " : " ") + box.content().length).toList())
+                .run();
     }
 
     @ParameterizedTest(name = "{0}")

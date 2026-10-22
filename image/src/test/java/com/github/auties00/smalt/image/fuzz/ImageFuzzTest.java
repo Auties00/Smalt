@@ -24,9 +24,11 @@ import java.util.zip.DataFormatException;
  * Fuzz targets of the image decoders of this module, one per format. Each input is probed, decoded at full and
  * reduced size, read as an animation and as pages (see {@link FuzzMedia#image}). The format-specific entry
  * points have targets of their own: the JPEG 2000 channel decoder ({@link Jp2Decoder#decodeChannels}), the JPEG XL
- * floating-point decoder ({@link JxlDecoder#decodeFloat}) and the JPEG XL to JPEG reconstruction
- * ({@link JxlDecoder#reconstructJpeg}), and the general-purpose decoders of the TIFF compressions: Zstandard
- * (whose output is also encoded and decoded back), XZ, LERC and JBIG.
+ * floating-point decoder ({@link JxlDecoder#decodeFloat}), the JPEG XL preview, gain map, box, reduced-size and
+ * seek entry points ({@link JxlDecoder#decodePreview}, {@link JxlDecoder#decodeGainMap},
+ * {@link JxlDecoder#readBoxes}), the JPEG XL to JPEG reconstruction ({@link JxlDecoder#reconstructJpeg}), and
+ * the general-purpose decoders of the TIFF compressions: Zstandard (whose output is also encoded and decoded
+ * back), XZ, LERC and JBIG.
  */
 class ImageFuzzTest {
     @FuzzTest
@@ -120,6 +122,36 @@ class ImageFuzzTest {
                     }
                     run.output();
                 });
+    }
+
+    @FuzzTest
+    void jxlFeatures(byte[] data) {
+        var run = Fuzz.start("jxlFeatures");
+        var options = ImageDecoderOptions.builder().limits(Fuzz.LIMITS).build();
+        // the last byte, which mutations of it explore, picks the size hint and the seek time
+        var selector = data.length == 0 ? 0 : data[data.length - 1] & 0xFF;
+        run.value("boxes", () -> JxlDecoder.readBoxes(MediaSource.of(data), options)).ifPresent(boxes -> run.output());
+        run.value("preview", () -> JxlDecoder.decodePreview(MediaSource.of(data), options).orElse(null))
+                .ifPresent(preview -> run.output());
+        run.value("gain map", () -> JxlDecoder.decodeGainMap(MediaSource.of(data), options).orElse(null))
+                .ifPresent(gainMap -> run.output());
+        var hinted = options.toBuilder().minSize(1 + selector % 64, 1 + (selector >>> 2) % 48).build();
+        run.value("reduced", () -> JxlDecoder.decode(MediaSource.of(data), hinted)).ifPresent(image -> {
+            if (image.picture().width() > image.sourceWidth() || image.picture().height() > image.sourceHeight()) {
+                throw new AssertionError("a reduced picture larger than the image: " + image);
+            }
+            run.output();
+        });
+        run.step("seek", () -> {
+            try (var animation = JxlDecoder.openAnimation(MediaSource.of(data), options)) {
+                animation.seek(selector * 25_000L);
+                for (var read = 0; read < 2 && animation.read() != null; read++) {
+                    run.output();
+                }
+                animation.seek(0);
+                animation.read();
+            }
+        });
     }
 
     @FuzzTest

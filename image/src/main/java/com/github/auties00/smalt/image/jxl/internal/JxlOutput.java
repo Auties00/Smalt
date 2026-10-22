@@ -40,8 +40,8 @@ import java.util.Optional;
  * <p>Floating-point samples are clamped to {@code 0..1} and rounded to 8 or 16 bits; a grayscale
  * image is replicated into the three color channels; premultiplied alpha is divided out, since
  * Smalt pictures hold straight alpha; a CMYK image is converted to sRGB through its embedded
- * profile; and an XYB image whose original color space is an ICC profile, decoded to linear sRGB,
- * is converted to that profile when Smalt can apply it, else to sRGB.
+ * profile; and an XYB image whose original color space is an ICC profile, decoded to linear sRGB (linear
+ * gray for a grayscale image), is converted to that profile when Smalt can apply it, else to sRGB.
  */
 public final class JxlOutput {
     /**
@@ -405,23 +405,20 @@ public final class JxlOutput {
     }
 
     /**
-     * Converts a linear sRGB picture to the embedded profile.
+     * Converts a linear sRGB picture, or a linear gray one replicated into red, green and blue, to the embedded
+     * profile.
      *
      * @param linear the linear picture
      * @param header the image header
-     * @param icc the embedded profile
+     * @param icc the embedded profile, RGB for a color image and gray for a grayscale one
      * @return the converted picture, or {@code null} when Smalt cannot apply the profile
      */
     private static Rgba16Picture convertLinear(Rgba16Picture linear, ImageHeader header, byte[] icc) {
         try {
             var target = ColorProfile.parse(icc);
-            if (header.isGray()) {
-                // TODO: convert grayscale XYB images to their gray ICC profile; they fall back to sRGB.
-                return null;
-            }
-            var source = ColorProfile.rgb(new Chromaticity(0.639998686, 0.330010138),
-                    new Chromaticity(0.300003784, 0.600003357), new Chromaticity(0.150002046, 0.059997204),
-                    new Chromaticity(0.3127, 0.329), 1.0);
+            var source = header.isGray() ? ColorProfile.gray(1.0) : ColorProfile.rgb(
+                    new Chromaticity(0.639998686, 0.330010138), new Chromaticity(0.300003784, 0.600003357),
+                    new Chromaticity(0.150002046, 0.059997204), new Chromaticity(0.3127, 0.329), 1.0);
             // linear 1.0 is the intensity target, which a high-dynamic-range target places in candelas per square meter
             var white = Math.min(Math.max(header.toneMapping().intensityTarget(), 1.0), 10000.0);
             var options = ColorTransformOptions.builder().referenceWhite(white).build();

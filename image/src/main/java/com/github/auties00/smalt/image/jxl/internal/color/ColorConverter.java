@@ -66,6 +66,22 @@ public final class ColorConverter {
      * @return the number of output channels: 3, or 1 for gray (left in plane 0)
      */
     public static int xybToTarget(float[][] planes, int length, ImageHeader image, ColorEncoding target) {
+        return xybToTarget(planes, length, image, target, null);
+    }
+
+    /**
+     * Converts XYB planes to an RGB or gray encoding, running a step on the linear planes before the transfer
+     * function: on the three RGB planes for an RGB target, and on plane 0, holding the luminance, for a gray one.
+     *
+     * @param planes the X, Y and B planes, converted in place
+     * @param length the number of samples per plane
+     * @param image the image header
+     * @param target the target encoding, RGB or gray
+     * @param linear the step to run on the linear planes, or {@code null} for none
+     * @return the number of output channels: 3, or 1 for gray (left in plane 0)
+     */
+    public static int xybToTarget(float[][] planes, int length, ImageHeader image, ColorEncoding target,
+                                  Runnable linear) {
         var oim = image.opsinInverse();
         var itScale = 255.0f / image.toneMapping().intensityTarget();
         var bias = oim.opsinBias();
@@ -123,8 +139,14 @@ public final class ColorConverter {
             for (var i = 0; i < length; i++) {
                 px[i] = kr * px[i] + kg * py[i] + kb * pb[i];
             }
+            if (linear != null) {
+                linear.run();
+            }
             encode(new float[][]{px}, 1, length, target, image.toneMapping().intensityTarget());
             return 1;
+        }
+        if (linear != null) {
+            linear.run();
         }
         encode(planes, 3, length, target, image.toneMapping().intensityTarget());
         return 3;

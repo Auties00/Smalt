@@ -98,6 +98,12 @@ class FuzzSeedWriter {
         }
         copy(ImageFuzzTest.class, "jxlJpeg", "valid-jpeg-reconstruction.jxl",
                 seeds.resolve("jxl").resolve("valid-jpeg-reconstruction.jxl"));
+        // the JPEG XL feature vectors of tools/testdata/jxl-features: a preview, a progressive file, a gain map in a
+        // brob box and an animation with a frame index
+        for (var vector : List.of("preview-vardct", "progressive", "gainmap-brob", "indexed")) {
+            copy(ImageFuzzTest.class, "jxlFeatures", "valid-" + vector + ".jxl",
+                    VECTORS.resolve("jxl/features/" + vector + ".jxl"));
+        }
         for (var seed : List.of("valid-lossy.webp", "valid-lossless-alpha.webp", "valid-animated.webp")) {
             copy(ImageMetadataFuzzTest.class, "webpContainer", seed, seeds.resolve("webp").resolve(seed));
         }

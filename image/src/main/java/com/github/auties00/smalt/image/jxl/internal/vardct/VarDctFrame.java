@@ -822,6 +822,26 @@ public final class VarDctFrame {
     }
 
     /**
+     * Returns an LF plane, after chroma from luma and adaptive smoothing.
+     *
+     * @param c the channel, 0 for X, 1 for Y and 2 for B
+     * @return the plane, one sample per 8x8 block, {@link #lfWidth(int)} wide
+     */
+    public float[] lfPlane(int c) {
+        return lf[c];
+    }
+
+    /**
+     * Returns the width of an LF plane.
+     *
+     * @param c the channel
+     * @return the width in samples
+     */
+    public int lfWidth(int c) {
+        return lfWidth[c];
+    }
+
+    /**
      * Returns the width of a plane.
      *
      * @param c the channel

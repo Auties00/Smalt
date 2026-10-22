@@ -3888,7 +3888,9 @@ DEALINGS IN THE SOFTWARE.
 ===============================================================================
 
 Project:      libjxl, the JPEG XL reference implementation
-              (commit 5f92f524f1407de323c409c360ab38cae1d97b27)
+              (commit 5f92f524f1407de323c409c360ab38cae1d97b27, and
+              release 0.11.2 for the spot color stage and the gain map
+              bundle)
 Home:         https://jpeg.org/jpegxl/
 Source:       https://github.com/libjxl/libjxl
 License text: LICENSE and PATENTS at the root of the repository
@@ -3896,6 +3898,7 @@ License:      BSD 3-Clause, with the Additional IP Rights Grant (Patents)
               reproduced below
 
 Derived Smalt packages:
+  image.jxl.internal.bitstream
   image.jxl.internal.color
   image.jxl.internal.header
   image.jxl.internal.jpeg
@@ -3910,7 +3913,10 @@ the sRGB curve (lib/jxl/cms) and the fast power function used by the BT.709,
 DCI and gamma curves (lib/jxl/base/fast_math-inl.h), the ICC profiles
 synthesized for enumerated color encodings, the rendering order of the
 frame pipeline (lib/jxl/render_pipeline), and the MCU grid of a JPEG scan
-of one subsampled component (lib/jxl/jpeg/dec_jpeg_data_writer.cc).
+of one subsampled component (lib/jxl/jpeg/dec_jpeg_data_writer.cc). The
+spot color blend and its place in the pipeline follow
+lib/jxl/render_pipeline/stage_spot.cc and lib/jxl/dec_cache.cc, and the
+layout of the jhgm gain map bundle follows lib/extras/gain_map.cc.
 
 Copyright:
   Copyright (c) the JPEG XL Project Authors.

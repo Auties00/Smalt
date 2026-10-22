@@ -81,11 +81,36 @@ class JxlChannelsTest {
                 assertEquals(expected, eight.pixels()[i * count + c] & 0xFF, "channel " + c + " sample " + i);
             }
         }
+        // the RGBA picture composites the spot channels the channel picture keeps apart
         var plain = (RgbaPicture) JxlDecoder.decode(MediaSource.of(file)).picture();
-        var converted = ImageOps.toRgba(picture);
-        if (!layout.isAlphaPremultiplied()) {
-            assertArrayEquals(plain.pixels(), converted.pixels());
+        var infos = com.github.auties00.smalt.image.jxl.internal.JxlCodestream.open(file,
+                com.github.auties00.smalt.MediaLimits.DEFAULT).header().extraChannels();
+        var composited = new byte[length * 4];
+        for (var i = 0; i < length; i++) {
+            var rgb = new float[]{planes.plane(0)[i], planes.plane(1)[i], planes.plane(2)[i]};
+            for (var e = 0; e < infos.size(); e++) {
+                var spot = infos.get(e).spotColor();
+                if (spot != null) {
+                    var mix = spot[3] * planes.plane(3 + e)[i];
+                    for (var c = 0; c < 3; c++) {
+                        rgb[c] = mix * spot[c] + (1 - mix) * rgb[c];
+                    }
+                }
+            }
+            if (planes.alphaPremultiplied()) {
+                var alpha = planes.extraChannel(JxlChannelType.ALPHA).orElseThrow()[i];
+                for (var c = 0; c < 3; c++) {
+                    rgb[c] = alpha > 1e-7f ? rgb[c] * (1.0f / alpha) : 0.0f;
+                }
+            }
+            for (var c = 0; c < 3; c++) {
+                composited[i * 4 + c] = (byte) Math.clamp((long) (rgb[c] * 255.0F + 0.5F), 0, 255);
+            }
+            composited[i * 4 + 3] = plain.pixels()[i * 4 + 3];
         }
+        assertArrayEquals(composited, plain.pixels());
+        assertFalse(java.util.Arrays.equals(ImageOps.toRgba(picture).pixels(), plain.pixels()),
+                "the spot colors show in the RGBA picture only");
     }
 
     @Test
