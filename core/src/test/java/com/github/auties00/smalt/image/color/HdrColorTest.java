@@ -743,13 +743,15 @@ class HdrColorTest {
                     assertFalse(ColorProfile.parse(shortTag).isHighDynamicRange());
                 }
             }
-            // a device link, abstract or named color profile stays one, and transforms still reject it
+            // a device link, abstract or named color profile stays one, and a source-target pair rejects it
             for (var deviceClass : List.of("link", "abst", "nmcl")) {
                 var bytes = base.clone();
                 System.arraycopy(deviceClass.getBytes(StandardCharsets.US_ASCII), 0, bytes, 12, 4);
                 var profile = ColorProfile.parse(bytes);
                 assertFalse(profile.isHighDynamicRange(), deviceClass);
                 assertThrows(MediaException.Unsupported.class, () -> ColorTransform.create(profile, ColorProfile.srgb()));
+                assertThrows(MediaException.Malformed.class,
+                        () -> ColorTransform.create(List.of(profile, ColorProfile.srgb())));
             }
             var gray = ColorProfile.grayGamma22().toByteArray();
             assertFalse(ColorProfile.parse(gray).isHighDynamicRange());

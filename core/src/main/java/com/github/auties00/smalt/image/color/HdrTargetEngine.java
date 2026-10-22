@@ -45,6 +45,12 @@ final class HdrTargetEngine implements ColorEngine {
     private final int inputs;
 
     /**
+     * The factor that widens an 8-bit source sample to the 16-bit sample {@link #inner} takes: {@code 257}, or
+     * {@code 1} for a named color index.
+     */
+    private final int widen;
+
+    /**
      * The luminance of a standard-dynamic-range white, in candelas per square meter.
      */
     private final float white;
@@ -112,14 +118,16 @@ final class HdrTargetEngine implements ColorEngine {
      *
      * @param inner the 16-bit transform of a standard-dynamic-range source, or {@code null}
      * @param inputs the number of source channels
+     * @param indexed whether the source samples are named color indexes, which keep their value at both depths
      * @param source the high-dynamic-range source, or {@code null}
      * @param target the high-dynamic-range target
      * @param options the transform options
      */
-    private HdrTargetEngine(ColorEngine inner, int inputs, ColorProfile.HdrSpec source, ColorProfile.HdrSpec target,
-                            ColorTransformOptions options) {
+    private HdrTargetEngine(ColorEngine inner, int inputs, boolean indexed, ColorProfile.HdrSpec source,
+                            ColorProfile.HdrSpec target, ColorTransformOptions options) {
         this.inner = inner;
         this.inputs = inputs;
+        this.widen = indexed ? 1 : 257;
         this.white = (float) options.referenceWhite();
         if (source != null) {
             this.sourceHlg = source.transfer() == TransferCharacteristics.HLG;
@@ -160,13 +168,14 @@ final class HdrTargetEngine implements ColorEngine {
      * @param inner the 16-bit transform from the source to a profile with the target primaries and a pure power
      * curve of exponent 2
      * @param inputs the number of source channels
+     * @param indexed whether the source is a named color profile, whose one sample is a color index at both depths
      * @param target the high-dynamic-range target
      * @param options the transform options, whose reference white places the source white
      * @return the engine
      */
-    static HdrTargetEngine fromStandard(ColorEngine inner, int inputs, ColorProfile.HdrSpec target,
+    static HdrTargetEngine fromStandard(ColorEngine inner, int inputs, boolean indexed, ColorProfile.HdrSpec target,
                                         ColorTransformOptions options) {
-        return new HdrTargetEngine(inner, inputs, null, target, options);
+        return new HdrTargetEngine(inner, inputs, indexed, null, target, options);
     }
 
     /**
@@ -179,7 +188,7 @@ final class HdrTargetEngine implements ColorEngine {
      */
     static HdrTargetEngine fromHigh(ColorProfile.HdrSpec source, ColorProfile.HdrSpec target,
                                     ColorTransformOptions options) {
-        return new HdrTargetEngine(null, 3, source, target, options);
+        return new HdrTargetEngine(null, 3, false, source, target, options);
     }
 
     /**
@@ -343,7 +352,7 @@ final class HdrTargetEngine implements ColorEngine {
             for (var i = 0; i < n; i++) {
                 var s = srcOffset + (start + i) * srcStride;
                 for (var c = 0; c < inputs; c++) {
-                    wide[i * inputs + c] = (short) ((src[s + c] & 0xFF) * 257);
+                    wide[i * inputs + c] = (short) ((src[s + c] & 0xFF) * widen);
                 }
             }
             inner.apply(wide, 0, inputs, samples, 0, 3, n);

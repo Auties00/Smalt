@@ -35,6 +35,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * Every profile is an ICC profile whose bytes {@link #toByteArray()} returns, ready to embed in a
  * file.
  *
+ * <p>Parsed profiles may be of any {@linkplain #deviceClass() device class}: input, display, output
+ * and color space profiles convert between device values and the connection space; device links,
+ * abstract and named color profiles join a {@link ColorTransform} chain as its documentation
+ * describes, and a named color profile lists its colors ({@link #namedColors()},
+ * {@link #namedColor(String)}).
+ *
  * <p>A high-dynamic-range profile ({@link #isHighDynamicRange()}) describes a PQ or HLG signal. It
  * comes from {@link #of(ColorInfo)}, or from {@link #parse(byte[])} when an RGB profile that is not
  * a device link, abstract or named color profile has a {@code cicp} tag (ICC.1:2022, version 4.4)
@@ -78,6 +84,11 @@ public final class ColorProfile {
      * The hash code, computed on first use; zero until then.
      */
     private int hash;
+
+    /**
+     * The colors of a named color profile, decoded on first use.
+     */
+    private volatile List<NamedColor> namedColors;
 
     /**
      * Describes a high-dynamic-range profile.
@@ -552,6 +563,58 @@ public final class ColorProfile {
     }
 
     /**
+     * Returns the colors of a named color profile ({@code ncl2} tag), in index order.
+     *
+     * @return the colors, an unmodifiable list; empty unless the profile is a {@link ProfileClass#NAMED_COLOR}
+     * profile
+     * @throws MediaException.Malformed if the profile is a named color profile whose {@code ncl2} tag is missing or
+     * damaged
+     */
+    public List<NamedColor> namedColors() {
+        var colors = namedColors;
+        if (colors == null) {
+            if (icc.deviceClass != IccReader.signature("nmcl")) {
+                colors = List.of();
+            } else {
+                var tag = icc.namedColors();
+                if (tag == null) {
+                    throw new MediaException.Malformed("ICC named color profile lacks the ncl2 tag");
+                }
+                var xyz = icc.pcs == IccReader.signature("XYZ ");
+                var list = new NamedColor[tag.count()];
+                for (var i = 0; i < list.length; i++) {
+                    list[i] = NamedColor.of(tag, i, xyz);
+                }
+                colors = List.of(list);
+            }
+            namedColors = colors;
+        }
+        return colors;
+    }
+
+    /**
+     * Finds a color of a named color profile by name.
+     *
+     * <p>A color matches when its {@linkplain NamedColor#rootName() root name} or its
+     * {@linkplain NamedColor#name() full name} equals {@code name}, ignoring case as
+     * {@link String#equalsIgnoreCase(String)} does; the first match in index order is returned.
+     *
+     * @param name the root or full name of the color
+     * @return the color, or empty when no color matches or the profile is not a named color profile
+     * @throws MediaException.Malformed if the profile is a named color profile whose {@code ncl2} tag is missing or
+     * damaged
+     */
+    public Optional<NamedColor> namedColor(String name) {
+        Objects.requireNonNull(name, "name");
+        for (var color : namedColors()) {
+            if (color.rootName().equalsIgnoreCase(name) || color.name().equalsIgnoreCase(name)) {
+                return Optional.of(color);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
      * Holds the sRGB tone curve {@link #isSrgb()} compares against, built on first use.
      */
     private static final class SrgbReference {
@@ -616,10 +679,11 @@ public final class ColorProfile {
      * curves.
      *
      * @param icc the profile
-     * @return {@code true} if an {@code A2Bn} or {@code B2An} tag is present
+     * @return {@code true} if an {@code A2Bn}, {@code B2An}, {@code D2Bn} or {@code B2Dn} tag is present
      */
     private static boolean hasLookupTables(IccReader icc) {
-        for (var tag : new String[]{"A2B0", "A2B1", "A2B2", "B2A0", "B2A1", "B2A2"}) {
+        for (var tag : new String[]{"A2B0", "A2B1", "A2B2", "B2A0", "B2A1", "B2A2", "D2B0", "D2B1", "D2B2", "D2B3",
+                "B2D0", "B2D1", "B2D2", "B2D3"}) {
             if (icc.has(IccReader.signature(tag))) {
                 return true;
             }

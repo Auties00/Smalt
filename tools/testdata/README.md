@@ -206,6 +206,23 @@ transformed to Little CMS's sRGB). Build it with `bash tools/testdata/icc-hdr/bu
 <directory>` against the Little CMS 2.16 or later sources (MIT; checked with the 2.17 release tarball) and put the
 directory on `PATH`; without it that test is skipped.
 
+## Advanced ICC profiles
+
+`AdvancedProfilesTest` (`smalt-core`) checks floating-point `multiProcessElementType` tables (`D2Bn`, `B2Dn`),
+device links, abstract and named color profiles and profile chains against Little CMS 2.17. Its profiles and
+reference outputs are kept with the test (`core/src/test/resources/com/github/auties00/smalt/image/color/advanced/`)
+and written by `icc-advanced/smalt-lcmsadvanced.c`: profiles built through the Little CMS API (segmented curves
+of every formula and sampled segments, matrices with offsets, float tables of one to six inputs, Little CMS's own
+sRGB and a Display P3, device links made by `cmsTransform2DeviceLink` in versions 2 and 4, a BCHSW abstract
+profile, named color lists with L*a*b* and XYZ connection spaces), with the creation date cleared; `cases.tsv`
+with the outputs of each chain for the 8-bit and 16-bit input sets the program documents; `pipelines.tsv` with
+`cmsPipelineEvalFloat` of every floating-point tag over a float input set; and `named.tsv` with what
+`cmsNamedColorInfo` returns. Every computation reads the profiles back from their files. Build and run it with
+`bash tools/testdata/icc-advanced/build.sh <lcms2 source directory> <directory>` against the Little CMS 2.17
+release tarball (MIT; SHA-256 `6e6f6411db50e85ae8ff7777f01b2da0614aac13b7b9fcbea66dc56a1bc71418`), then copy
+`<directory>/data` to the resource directory; `icc-advanced/profiles.sha256` pins every file, and the output is
+the same on every run.
+
 ## 12-bit JPEG vectors
 
 The 12-bit JPEG tests of `smalt-image` read vectors kept with the tests (`image/src/test/resources`): the

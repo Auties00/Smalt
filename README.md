@@ -551,7 +551,7 @@ tags); the tests use exiftool and ffprobe as independent readers.
 |---|---|---|---|
 | Resize, crop, orient, alpha weighting | `smalt-core` | `image.ops` | Pillow (resampling structure and filters); Mitchell and Netravali (1988) |
 | Color conversion and chroma upsampling | `smalt-core` | `image.ops` | libjpeg-turbo; ITU-T H.273 |
-| Color management: ICC v2/v4 profiles (matrix/TRC, `lut8`, `lut16`, `lutAtoB`/`lutBtoA`, gray, RGB, CMYK, L*a*b* and XYZ connection spaces), transforms with the four intents and black point compensation, built-in sRGB, Display P3, Adobe RGB, ProPhoto, BT.709, BT.2020 and gray profiles, CICP mapping of every H.273 primaries set (CIE XYZ included) and transfer (the logarithmic, BT.1361 and SMPTE ST 428-1 ones included), PQ and HLG profiles read from and written as ICC v4.4 `cicp`-tagged profiles, PQ/HLG to SDR tone mapping (BT.2390 EETF), SDR to PQ/HLG with the BT.2408 reference white, PQ to and from HLG through display light (BT.2390), HDR gamut conversion and tone mapping to a target's peak | `smalt-core` | `image.color` | Little CMS 2.17 (MIT); ITU-R BT.2100, BT.2390, BT.2408, SMPTE ST 2084, ARIB STD-B67, ICC.1:2022 |
+| Color management: ICC v2/v4 profiles (matrix/TRC, `lut8`, `lut16`, `lutAtoB`/`lutBtoA`, floating-point `multiProcessElement` `D2Bn`/`B2Dn` tables with segmented curves, matrices and float lookup tables, gray, RGB, CMYK, n-color, L*a*b* and XYZ connection spaces), device link, abstract and named color (`ncl2`) profiles, chains of profiles, transforms with the four intents and black point compensation, built-in sRGB, Display P3, Adobe RGB, ProPhoto, BT.709, BT.2020 and gray profiles, CICP mapping of every H.273 primaries set (CIE XYZ included) and transfer (the logarithmic, BT.1361 and SMPTE ST 428-1 ones included), PQ and HLG profiles read from and written as ICC v4.4 `cicp`-tagged profiles, PQ/HLG to SDR tone mapping (BT.2390 EETF), SDR to PQ/HLG with the BT.2408 reference white, PQ to and from HLG through display light (BT.2390), HDR gamut conversion and tone mapping to a target's peak | `smalt-core` | `image.color` | Little CMS 2.17 (MIT); ITU-R BT.2100, BT.2390, BT.2408, SMPTE ST 2084, ARIB STD-B67, ICC.1:2022 |
 | Audio resampling, channel mixing, FIFO | `smalt-core` | `audio.process` | textbook Kaiser-windowed sinc design |
 | Voice processing: echo cancellation (AEC3), noise suppression, high-pass filter | `smalt-audio` | `audio.voice` | WebRTC audio processing module; Ooura FFT; musl and fdlibm math (royalty-free WebRTC grant in `PATENTS`) |
 | Loudness: momentary, short-term and integrated loudness, loudness range, sample and true peak (ITU-R BS.1770-4, EBU R128, Tech 3341 and 3342 minimum requirements), any channel layout, bounded memory; silence detection; loudness normalization gains | `smalt-core` | `audio.loudness` | libebur128 (MIT) |
@@ -857,6 +857,11 @@ file on a seekable output, its final `STREAMINFO` (length, MD5) and seek table.
   only approximately, to readers that ignore the `cicp` tag. Little CMS 2.17 writes and reads a `cicp` tag of
   16 bytes rather than the 12 of ICC.1:2022: Smalt reads both and writes the standard one, which Little CMS
   2.17 does not see.
+- ICC chains: a named color profile can only start a chain, and its 8-bit transform reaches only the first 256
+  colors; a high-dynamic-range profile can only be converted to or from one other profile. Two cases differ from
+  Little CMS 2.17 on purpose: a device link read through its `D2B0` fallback (no `D2Bn` of the intent) has its XYZ
+  or L*a*b* ends scaled like any floating-point table, and the colors of a named color profile with an XYZ
+  connection space are read as XYZ, where Little CMS reads them as L*a*b*.
 - Camera raw: Canon CR3 (CRX) and compressed Fujifilm RAF sensor data, Nikon HE and HE* files and PEF files
   without a Huffman table, the green-first MRW files of the DiMAGE A200, and CRW streams that use a Huffman
   code no CC0 sample has shown (set 1, used by the EOS D30 and the PowerShot G1 and G5, lacks the most) are not
@@ -1086,9 +1091,10 @@ var p3 = JpegEncoder.encode(picture, JpegEncoderOptions.builder().colorProfile(C
 ```
 
 Without the option, pixels come back as stored and `DecodedImage.colorProfile()` tells which space they are
-in; `ColorTransform` converts between any two ICC profiles (version 2 or 4, matrix/TRC or lookup tables,
-CMYK) with the four rendering intents and black point compensation, matching Little CMS 2.17 bit for bit at
-8 bits. PQ and HLG sources are tone-mapped with the BT.2390 EETF; PQ and HLG targets receive standard-dynamic-range
+in; `ColorTransform` converts between any two ICC profiles (version 2 or 4, matrix/TRC, lookup or
+floating-point tables, CMYK) and through chains with device links and abstract profiles, from named colors too,
+with the four rendering intents and black point compensation, matching Little CMS 2.17 bit for bit at 8 bits.
+PQ and HLG sources are tone-mapped with the BT.2390 EETF; PQ and HLG targets receive standard-dynamic-range
 white at the BT.2408 reference white of 203 cd/m2, and PQ and HLG convert into each other through display light:
 
 ```java
@@ -1096,6 +1102,13 @@ var hdr10 = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRa
         ColorPrimaries.BT2020, TransferCharacteristics.PQ));
 var pq = ImageOps.convertColor(srgbPicture16, ColorProfile.srgb(), hdr10);         // SDR -> PQ, white at 203 cd/m2
 var png = PngEncoder.encode(pq, PngEncoderOptions.builder().colorProfile(hdr10).build());  // cICP + iCCP
+
+var effect = ColorTransform.create(List.of(ColorProfile.srgb(), ColorProfile.parse(abstractIcc),
+        ColorProfile.displayP3()));                                  // sRGB -> abstract adjustment -> Display P3
+var link = ColorTransform.create(List.of(ColorProfile.parse(deviceLinkIcc)));   // a device link alone
+var spots = ColorProfile.parse(namedColorIcc);
+var index = spots.namedColor("185 C").orElseThrow().index();         // named colors convert by index
+ColorTransform.create(List.of(spots, ColorProfile.srgb())).transform(new short[]{(short) index}, 0, 1, rgb, 0, 3, 1);
 ```
 
 ### Transcode

@@ -229,6 +229,10 @@ class FuzzSeedWriter {
         write(ColorFuzzTest.class, "icc", "valid-gray.icc", ColorProfile.grayGamma22().toByteArray());
         write(ColorFuzzTest.class, "icc", "valid-lcms-pq.icc", Files.readAllBytes(Path.of("src", "test", "resources",
                 "com", "github", "auties00", "smalt", "image", "color", "hdr", "lcms-pq.icc")));
+        for (var name : new String[]{"mpe-rgb", "link-mpe-rgb", "abstract-mpe-lab", "named-cmyk"}) {
+            write(ColorFuzzTest.class, "icc", "valid-" + name + ".icc", Files.readAllBytes(Path.of("src", "test",
+                    "resources", "com", "github", "auties00", "smalt", "image", "color", "advanced", name + ".icc")));
+        }
         var codecs = Arrays.stream(Codec.values()).filter(Codec::isPcm).toList();
         var s16 = ffmpeg("wav", tone(8000, 0.02), "-c:a", "pcm_s16le", "-ac", "2");
         write(PcmFuzzTest.class, "pcm", "valid-s16le.bin", FuzzSeeds.packets(s16, Codec.PCM_S16LE,
