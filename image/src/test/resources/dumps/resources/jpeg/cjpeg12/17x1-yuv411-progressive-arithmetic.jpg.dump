@@ -1,0 +1,8 @@
+# image dump of resources/jpeg/cjpeg12/17x1-yuv411-progressive-arithmetic.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=17, height=1, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 17x1 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=cc973f02 u=88256002 v=b80a2a4b
+  format=JPEG orientation=NORMAL source=17x1
+  icc=none exif=none xmp=none
+  profile=none

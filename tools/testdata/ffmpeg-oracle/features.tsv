@@ -1,0 +1,38 @@
+# The ffmpeg components the tests use beyond ffmpeg's own codecs: every CI runner's ffmpeg must have all of them
+# ("oracles.py versions" fails the job otherwise, and core's SkipTest fails when a test names an external library
+# component that is not listed here). Columns: kind (encoder, decoder, filter, muxer, or pixfmt for a pixel format
+# an encoder must accept, as "ffmpeg -h encoder=<encoder>" lists it), name (as "ffmpeg -<kind>s" lists it, or
+# <encoder>:<pixel format>), and what needs it.
+encoder	libmp3lame	MP3 fixtures (LAME)
+encoder	libopencore_amrnb	AMR-NB fixtures (opencore-amr)
+encoder	libvo_amrwbenc	AMR-WB fixtures (vo-amrwbenc)
+encoder	libspeex	Speex in Ogg fixtures
+encoder	libopus	Opus fixtures
+encoder	libvorbis	Vorbis fixtures
+encoder	libtheora	Theora in Ogg fixtures
+encoder	libvpx	VP8 fixtures
+encoder	libvpx-vp9	VP9 fixtures
+encoder	libwebp	WebP fixtures
+encoder	libwebp_anim	animated WebP fixtures
+encoder	libx264	H.264 fixtures, 8 and 10 bits
+encoder	libx264rgb	RGB H.264 fixtures (4:4:4 GBR and lossless)
+encoder	libx265	HEVC fixtures, 8, 10 and 12 bits
+encoder	libxvid	MPEG-4 Part 2 fixtures (Xvid)
+encoder	libaom-av1	AV1 and AVIF fixtures
+encoder	librav1e	AV1 differential fixtures
+encoder	libsvtav1	AV1 differential fixtures
+encoder	libopenjpeg	JPEG 2000 fixtures
+decoder	libopencore_amrnb	AMR-NB reference decoding
+decoder	libopencore_amrwb	AMR-WB reference decoding
+decoder	libdav1d	AV1 reference decoding
+filter	zscale	zimg color conversion oracle
+muxer	avif	AVIF fixtures
+demuxer	dash	DASH manifests read back by ffmpeg (libxml2)
+pixfmt	libx264:yuv420p10le	10-bit H.264 fixtures
+pixfmt	libx265:yuv420p10le	HEVC Main 10 fixtures
+pixfmt	libx265:yuv444p12le	12-bit HEVC range extension fixtures
+pixfmt	libvpx-vp9:yuv420p10le	VP9 profile 2 fixtures
+pixfmt	libvpx-vp9:yuv444p12le	VP9 profile 3 fixtures
+pixfmt	libaom-av1:yuv444p12le	12-bit AV1 fixtures
+pixfmt	libsvtav1:yuv420p10le	10-bit AV1 differential fixtures
+pixfmt	librav1e:yuv420p10le	10-bit AV1 differential fixtures
