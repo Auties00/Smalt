@@ -185,7 +185,7 @@ public final class JpegTransformOptions {
      * {@return whether the Huffman tables of a sequential output are optimized for the image rather
      * than taken from T.81 Annex K; {@code true} by default}
      *
-     * <p>A progressive output always has optimized tables.
+     * <p>A progressive or 12-bit output always has optimized tables.
      */
     public boolean optimizeHuffman() {
         return optimizeHuffman;
@@ -216,8 +216,11 @@ public final class JpegTransformOptions {
     }
 
     /**
-     * {@return whether the JPEG thumbnail of a copied EXIF segment is transformed with the image
-     * (rotated, flipped or made grayscale, not cropped); {@code true} by default}
+     * {@return whether the thumbnail of a copied EXIF segment, JPEG or uncompressed, is transformed
+     * with the image (rotated, flipped or made grayscale, not cropped); {@code true} by default}
+     *
+     * <p>A thumbnail that cannot be transformed (an uncompressed one whose samples are not 8 or 16
+     * bits, or are subsampled YCbCr) is removed.
      */
     public boolean transformThumbnail() {
         return transformThumbnail;

@@ -9,8 +9,18 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
 
+import com.github.auties00.smalt.image.exif.ExifData;
+import com.github.auties00.smalt.image.metadata.IptcData;
+import com.github.auties00.smalt.metadata.XmpPacket;
+
+import java.util.Collections;
+import java.util.List;
+import java.util.Optional;
+
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -73,6 +83,121 @@ class Jp2OptionsTest {
             assertEquals(Jp2EncoderOptions.defaults(), options);
             assertThrows(IllegalArgumentException.class,
                     () -> Jp2EncoderOptions.builder().precinctSize(0, 0).build());
+        }
+    }
+
+    @Nested
+    @DisplayName("Jp2EncoderOptions codestream settings")
+    class CodestreamSettings {
+        static Jp2EncoderOptions everything() {
+            return Jp2EncoderOptions.builder().imageOrigin(100, 50).tileOrigin(90, 40).tileSize(64, 32)
+                    .precinctSizes(new int[]{128, 64}, new int[]{64, 32})
+                    .progressionChanges(List.of(new Jp2ProgressionChange(0, 0, 1, 3, 3, Jp2ProgressionOrder.CPRL)))
+                    .tilePartDivision(Jp2TilePartDivision.LAYER).tlmMarkers(true).pltMarkers(true)
+                    .regionOfInterest(new Jp2RegionOfInterest.Rectangle(1, 2, 3, 4)).guardBits(4)
+                    .maxCodestreamBytes(100_000).maxComponentBytes(40_000)
+                    .exif(ExifData.EMPTY).xmp(XmpPacket.empty()).iptc(IptcData.of(List.of())).build();
+        }
+
+        @Test
+        @DisplayName("toBuilder() keeps every setting, and every setting takes part in equals")
+        void roundTrip() {
+            var options = everything();
+            assertEquals(options, options.toBuilder().build());
+            assertEquals(options.hashCode(), options.toBuilder().build().hashCode());
+            assertEquals(100, options.imageOriginX());
+            assertEquals(40, options.tileOriginY());
+            assertArrayEquals(new int[]{128, 64}, options.precinctWidths());
+            assertEquals(128, options.precinctWidth());
+            assertEquals(Optional.of(Jp2TilePartDivision.LAYER), options.tilePartDivision());
+            assertEquals(4, options.guardBits());
+            assertFalse(options.isLossless());
+            for (var changed : List.of(options.toBuilder().imageOrigin(101, 50), options.toBuilder().tileOrigin(0, 40),
+                    options.toBuilder().precinctSize(128, 64), options.toBuilder().progressionChanges(List.of()),
+                    options.toBuilder().noTilePartDivision(), options.toBuilder().tlmMarkers(false),
+                    options.toBuilder().pltMarkers(false), options.toBuilder().noRegionOfInterest(),
+                    options.toBuilder().guardBits(2), options.toBuilder().maxCodestreamBytes(0),
+                    options.toBuilder().maxComponentBytes(0), options.toBuilder().noExif(), options.toBuilder().noXmp(),
+                    options.toBuilder().noIptc())) {
+                assertNotEquals(options, changed.build());
+            }
+            var reset = options.toBuilder().imageOrigin(0, 0).tileOrigin(0, 0).noTiles().maximalPrecincts()
+                    .progressionChanges(List.of()).noTilePartDivision().tlmMarkers(false).pltMarkers(false)
+                    .noRegionOfInterest().guardBits(2).maxCodestreamBytes(0).maxComponentBytes(0).noExif().noXmp()
+                    .noIptc().build();
+            assertEquals(Jp2EncoderOptions.defaults(), reset);
+        }
+
+        @Test
+        @DisplayName("build() rejects settings a codestream cannot carry")
+        void rejected() {
+            var builder = Jp2EncoderOptions.builder();
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder().imageOrigin(-1, 0).build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder().imageOrigin(0xFFFF_FFFFL, 0)
+                    .build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder().tileOrigin(0, -1).build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder().guardBits(8).build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder().maxComponentBytes(-1)
+                    .build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder()
+                    .precinctSizes(new int[]{64, 32}, new int[]{64}).build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder()
+                    .precinctSizes(new int[]{64, 3}, new int[]{64, 4}).build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder()
+                    .progressionChanges(Collections.nCopies(256, new Jp2ProgressionChange(0, 0, 1, 1, 1,
+                            Jp2ProgressionOrder.LRCP))).build());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.builder().highThroughput(true)
+                    .regionOfInterest(new Jp2RegionOfInterest.Component(0, 1)).build());
+            assertThrows(NullPointerException.class, () -> builder.regionOfInterest(null));
+            assertThrows(NullPointerException.class, () -> builder.tilePartDivision(null));
+            assertThrows(IllegalArgumentException.class, () -> new Jp2ProgressionChange(2, 0, 1, 2, 1,
+                    Jp2ProgressionOrder.LRCP));
+            assertThrows(IllegalArgumentException.class, () -> new Jp2ProgressionChange(0, 0, 0, 1, 1,
+                    Jp2ProgressionOrder.LRCP));
+            assertThrows(IllegalArgumentException.class, () -> new Jp2ProgressionChange(0, 4, 1, 1, 4,
+                    Jp2ProgressionOrder.LRCP));
+            assertThrows(IllegalArgumentException.class, () -> new Jp2RegionOfInterest.Component(0, 38));
+            assertThrows(IllegalArgumentException.class, () -> new Jp2RegionOfInterest.Component(16384, 1));
+            assertThrows(IllegalArgumentException.class, () -> new Jp2RegionOfInterest.Rectangle(0, 0, 0, 1));
+            assertThrows(IllegalArgumentException.class, () -> new Jp2RegionOfInterest.Rectangle(-1, 0, 1, 1));
+        }
+
+        @Test
+        @DisplayName("the profile presets meet their profile, and settings that break it are rejected")
+        void profiles() {
+            var cinema = Jp2EncoderOptions.forCinema2k(24);
+            assertEquals(Optional.of(Jp2Profile.CINEMA_2K), cinema.profile());
+            assertEquals(1302083, cinema.maxCodestreamBytes());
+            assertEquals(1041666, cinema.maxComponentBytes());
+            assertEquals(651041, Jp2EncoderOptions.forCinema2k(48).maxCodestreamBytes());
+            assertEquals(1, cinema.guardBits());
+            assertEquals(2, Jp2EncoderOptions.forCinema4k().guardBits());
+            assertEquals(2, Jp2EncoderOptions.forCinema4k().progressionChanges().size());
+            assertTrue(Jp2EncoderOptions.forImf(Jp2Profile.IMF_8K_REVERSIBLE, 0, 0, 0).isLossless());
+            assertEquals(4, Jp2EncoderOptions.forImf(Jp2Profile.IMF_8K_REVERSIBLE, 0, 0, 0).decompositionLevels());
+            assertEquals(5, Jp2EncoderOptions.forImf(Jp2Profile.IMF_8K, 0, 0, 0).decompositionLevels());
+            assertEquals(51_200_000_000L / 8 / 60, Jp2EncoderOptions.forImf(Jp2Profile.IMF_8K, 11, 9, 60)
+                    .maxCodestreamBytes());
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.forCinema2k(30));
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.forImf(Jp2Profile.CINEMA_4K, 0, 0, 0));
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.forImf(Jp2Profile.IMF_2K, 2, 2, 0));
+            assertThrows(IllegalArgumentException.class, () -> Jp2EncoderOptions.forImf(Jp2Profile.IMF_2K, 12, 0, 0));
+            for (var broken : List.of(cinema.toBuilder().guardBits(2), cinema.toBuilder().reversible(true),
+                    cinema.toBuilder().codeBlockSize(64, 64), cinema.toBuilder().tlmMarkers(false),
+                    cinema.toBuilder().tileSize(512, 512), cinema.toBuilder().compressionRatios(10, 5),
+                    cinema.toBuilder().precinctSize(256, 256), cinema.toBuilder().imageOrigin(1, 0),
+                    cinema.toBuilder().maxCodestreamBytes(0), cinema.toBuilder().progressionOrder(Jp2ProgressionOrder.LRCP),
+                    Jp2EncoderOptions.forCinema4k().toBuilder().progressionChanges(List.of()),
+                    Jp2EncoderOptions.forImf(Jp2Profile.IMF_2K, 0, 0, 0).toBuilder().reversible(true),
+                    Jp2EncoderOptions.forImf(Jp2Profile.IMF_2K, 0, 0, 0).toBuilder().decompositionLevels(6)
+                            .precinctSizes(new int[]{256, 256, 256, 256, 256, 256},
+                                    new int[]{256, 256, 256, 256, 256, 256}))) {
+                assertThrows(IllegalArgumentException.class, broken::build);
+            }
+            assertEquals(Jp2EncoderOptions.defaults(), cinema.toBuilder().noProfile().reversible(true)
+                    .compressionRatios(0).decompositionLevels(5).codeBlockSize(64, 64).maximalPrecincts()
+                    .progressionOrder(Jp2ProgressionOrder.LRCP).guardBits(2).noTilePartDivision().tlmMarkers(false)
+                    .maxCodestreamBytes(0).maxComponentBytes(0).build());
         }
     }
 

@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.raw;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.nal.NalRecords;
@@ -136,6 +137,11 @@ public final class RawMuxer implements Muxer {
     private byte[] parameterSets = new byte[0];
 
     /**
+     * The codec configuration of the packets being written, initially the track's.
+     */
+    private byte[] config;
+
+    /**
      * The configuration of a FLAC track: the declared one, or the one
      * {@link #updateCodecConfig(int, byte[])} last stored.
      */
@@ -211,8 +217,9 @@ public final class RawMuxer implements Muxer {
      * Returns whether an elementary-stream file format can carry a codec.
      *
      * <p>{@link ContainerFormat#MPEG_AUDIO} carries MP3 and MP2, {@link ContainerFormat#FLAC} FLAC,
-     * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, and {@link ContainerFormat#AC3} AC-3 and
-     * E-AC-3; every other format is not an elementary stream this muxer writes.
+     * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
+     * and {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC} and {@link ContainerFormat#AV1}
+     * their codec; every other format is not an elementary stream this muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track
@@ -226,6 +233,9 @@ public final class RawMuxer implements Muxer {
             case FLAC -> codec == Codec.FLAC;
             case AMR -> codec == Codec.AMR_NB || codec == Codec.AMR_WB;
             case AC3 -> codec == Codec.AC3 || codec == Codec.EAC3;
+            case H264 -> codec == Codec.H264;
+            case HEVC -> codec == Codec.HEVC;
+            case AV1 -> codec == Codec.AV1;
             default -> false;
         };
     }
@@ -282,6 +292,7 @@ public final class RawMuxer implements Muxer {
             default -> {
             }
         }
+        this.config = config;
         this.track = track;
     }
 
@@ -319,9 +330,14 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the packet belongs to another track, or an H.264 or HEVC packet is not made
-     * of length-prefixed NAL units
+     * <p>A packet that changes the codec configuration of an H.264, HEVC or AV1 stream replaces the
+     * parameter sets or sequence header repeated before the key frames from then on.
+     *
+     * @throws IllegalArgumentException if the packet belongs to another track, an H.264 or HEVC packet is not made
+     * of length-prefixed NAL units, or a new H.264 or HEVC configuration cannot be parsed
      * @throws IllegalStateException if no track was declared or the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a stream
+     * that is not H.264, HEVC or AV1
      */
     @Override
     public void writePacket(Packet packet) {
@@ -334,6 +350,26 @@ public final class RawMuxer implements Muxer {
         }
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
+        }
+        var newConfig = ConfigChanges.changed(packet, config);
+        if (newConfig != null) {
+            switch (track.codec()) {
+                case H264, HEVC -> {
+                    var parsed = track.codec() == Codec.H264 ? NalRecords.parseAvc(newConfig)
+                            : NalRecords.parseHevc(newConfig);
+                    if (parsed == null) {
+                        throw new IllegalArgumentException("the new " + track.codec().displayName()
+                                + " configuration cannot be parsed");
+                    }
+                    lengthSize = parsed.lengthSize();
+                    parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+                }
+                case AV1 -> parameterSets = newConfig.length > 4 ? Arrays.copyOfRange(newConfig, 4, newConfig.length)
+                        : new byte[0];
+                default -> throw ConfigChanges.unsupported("a raw " + track.codec().displayName() + " stream",
+                        packet.trackId());
+            }
+            config = newConfig;
         }
         if (!started) {
             writeHeader();
