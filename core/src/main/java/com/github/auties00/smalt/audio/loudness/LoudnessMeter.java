@@ -69,12 +69,12 @@ public final class LoudnessMeter {
     /**
      * The ratio of the integrated loudness relative gate (-10 LU) in the energy domain.
      */
-    private static final double RELATIVE_GATE_FACTOR = Math.pow(10, -10.0 / 10);
+    private static final double RELATIVE_GATE_FACTOR = StrictMath.pow(10, -10.0 / 10);
 
     /**
      * The ratio of the loudness range relative gate (-20 LU) in the energy domain.
      */
-    private static final double RANGE_GATE_FACTOR = Math.pow(10, -20.0 / 10);
+    private static final double RANGE_GATE_FACTOR = StrictMath.pow(10, -20.0 / 10);
 
     /**
      * The number of histogram bins.
@@ -331,17 +331,17 @@ public final class LoudnessMeter {
                 measured[count++] = channel;
             }
         }
-        var k = Math.tan(Math.PI * 1681.974450955533 / sampleRate);
+        var k = StrictMath.tan(Math.PI * 1681.974450955533 / sampleRate);
         var q = 0.7071752369554196;
-        var vh = Math.pow(10.0, 3.999843853973347 / 20.0);
-        var vb = Math.pow(vh, 0.4996667741545416);
+        var vh = StrictMath.pow(10.0, 3.999843853973347 / 20.0);
+        var vb = StrictMath.pow(vh, 0.4996667741545416);
         var a0 = 1.0 + k / q + k * k;
         var pb0 = (vh + vb * k / q + k * k) / a0;
         var pb1 = 2.0 * (k * k - vh) / a0;
         var pb2 = (vh - vb * k / q + k * k) / a0;
         var pa1 = 2.0 * (k * k - 1.0) / a0;
         var pa2 = (1.0 - k / q + k * k) / a0;
-        k = Math.tan(Math.PI * 38.13547087602444 / sampleRate);
+        k = StrictMath.tan(Math.PI * 38.13547087602444 / sampleRate);
         q = 0.5003270373238773;
         var ra1 = 2.0 * (k * k - 1.0) / (1.0 + k / q + k * k);
         var ra2 = (1.0 - k / q + k * k) / (1.0 + k / q + k * k);
@@ -413,7 +413,7 @@ public final class LoudnessMeter {
     private static double[] binCenters() {
         var result = new double[BINS];
         for (var bin = 0; bin < BINS; bin++) {
-            result[bin] = Math.pow(10.0, (bin / 10.0 - 69.95 + 0.691) / 10.0);
+            result[bin] = StrictMath.pow(10.0, (bin / 10.0 - 69.95 + 0.691) / 10.0);
         }
         return result;
     }
@@ -677,7 +677,7 @@ public final class LoudnessMeter {
      * @return the loudness in LUFS, negative infinity for zero
      */
     static double loudnessOf(double energy) {
-        return 10 * Math.log10(energy) - 0.691;
+        return 10 * StrictMath.log10(energy) - 0.691;
     }
 
     /**
@@ -687,7 +687,7 @@ public final class LoudnessMeter {
      * @return the energy
      */
     private static double energyOf(double loudness) {
-        return Math.pow(10, (loudness + 0.691) / 10);
+        return StrictMath.pow(10, (loudness + 0.691) / 10);
     }
 
     /**

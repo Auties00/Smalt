@@ -178,9 +178,9 @@ final class VectorEpfKernel implements EpfKernel {
                         .lanewise(VectorOperators.SUB,
                                 FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, in2, center + d4)))
                         .lanewise(VectorOperators.ABS));
-                var distance = ZERO.lanewise(VectorOperators.ADD, sc0.lanewise(VectorOperators.MUL, acc0))
-                        .lanewise(VectorOperators.ADD, sc1.lanewise(VectorOperators.MUL, acc1))
-                        .lanewise(VectorOperators.ADD, sc2.lanewise(VectorOperators.MUL, acc2));
+                var distance = ZERO.lanewise(VectorOperators.ADD, FLOAT_VECTOR.cast(sc0).lanewise(VectorOperators.MUL, acc0))
+                        .lanewise(VectorOperators.ADD, FLOAT_VECTOR.cast(sc1).lanewise(VectorOperators.MUL, acc1))
+                        .lanewise(VectorOperators.ADD, FLOAT_VECTOR.cast(sc2).lanewise(VectorOperators.MUL, acc2));
                 var weight = ONE.lanewise(VectorOperators.ADD, distance.lanewise(VectorOperators.MUL, slope))
                         .lanewise(VectorOperators.MAX, ZERO);
                 FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, scratch, 0)).lanewise(VectorOperators.ADD, weight)
@@ -198,7 +198,7 @@ final class VectorEpfKernel implements EpfKernel {
                         .lanewise(VectorOperators.ADD, weight.lanewise(VectorOperators.MUL, t2))
                         .intoArray(scratch, 3 * LANES);
             }
-            var skip = slope.compare(VectorOperators.NE, slope);
+            var skip = FLOAT_VECTOR.cast(slope).compare(VectorOperators.NE, slope);
             var weights = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, scratch, 0));
             var o = outputRow + x;
             FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, scratch, LANES)).lanewise(VectorOperators.DIV, weights)
@@ -257,9 +257,9 @@ final class VectorEpfKernel implements EpfKernel {
                         .lanewise(VectorOperators.SUB,
                                 FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, in2, center + d0)))
                         .lanewise(VectorOperators.ABS);
-                var distance = ZERO.lanewise(VectorOperators.ADD, sc0.lanewise(VectorOperators.MUL, acc0))
-                        .lanewise(VectorOperators.ADD, sc1.lanewise(VectorOperators.MUL, acc1))
-                        .lanewise(VectorOperators.ADD, sc2.lanewise(VectorOperators.MUL, acc2));
+                var distance = ZERO.lanewise(VectorOperators.ADD, FLOAT_VECTOR.cast(sc0).lanewise(VectorOperators.MUL, acc0))
+                        .lanewise(VectorOperators.ADD, FLOAT_VECTOR.cast(sc1).lanewise(VectorOperators.MUL, acc1))
+                        .lanewise(VectorOperators.ADD, FLOAT_VECTOR.cast(sc2).lanewise(VectorOperators.MUL, acc2));
                 var weight = ONE.lanewise(VectorOperators.ADD, distance.lanewise(VectorOperators.MUL, slope))
                         .lanewise(VectorOperators.MAX, ZERO);
                 FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, scratch, 0)).lanewise(VectorOperators.ADD, weight)
@@ -277,7 +277,7 @@ final class VectorEpfKernel implements EpfKernel {
                         .lanewise(VectorOperators.ADD, weight.lanewise(VectorOperators.MUL, t2))
                         .intoArray(scratch, 3 * LANES);
             }
-            var skip = slope.compare(VectorOperators.NE, slope);
+            var skip = FLOAT_VECTOR.cast(slope).compare(VectorOperators.NE, slope);
             var weights = FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, scratch, 0));
             var o = outputRow + x;
             FLOAT_VECTOR.cast(FloatVector.fromArray(FLOATS, scratch, LANES)).lanewise(VectorOperators.DIV, weights)

@@ -158,7 +158,7 @@ public final class CouplingChannel {
         }
         afterTns = reader.readFlag();
         var signed = reader.readFlag();
-        var scale = Math.pow(2, Math.pow(2, reader.read(2) - 3));
+        var scale = StrictMath.pow(2, StrictMath.pow(2, reader.read(2) - 3));
         stream.parse(reader, false, false);
         var stride = 8 * ChannelStream.MAX_BANDS;
         Arrays.fill(gains, 0, stride, 1);
@@ -200,7 +200,7 @@ public final class CouplingChannel {
             }
             value >>= 1;
         }
-        return (float) (sign * Math.pow(scale, -value));
+        return (float) (sign * StrictMath.pow(scale, -value));
     }
 
     /**

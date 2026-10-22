@@ -519,14 +519,14 @@ final class RawHeaders {
         var shot = crwWords(records.get(0x102A), little);
         if (shot.length > 5) {
             if (shot[2] > 0) {
-                state.iso = Math.round(100 * Math.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
+                state.iso = Math.round(100 * StrictMath.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
             }
             if (shot[4] != Short.MIN_VALUE && shot[4] != 0) {
-                state.fNumber = Math.pow(2, shot[4] / 64.0);
+                state.fNumber = StrictMath.pow(2, shot[4] / 64.0);
             }
             if (shot[5] != Short.MIN_VALUE && shot[5] != 0) {
                 state.exposureNumerator = 1_000_000;
-                state.exposureDenominator = Math.max(1, Math.round(1_000_000 * Math.pow(2, shot[5] / 32.0)));
+                state.exposureDenominator = Math.max(1, Math.round(1_000_000 * StrictMath.pow(2, shot[5] / 32.0)));
             }
         }
         var camera = crwWords(records.get(0x102D), little);

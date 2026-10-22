@@ -1354,8 +1354,8 @@ public final class FrameEncoder {
      */
     private static float[] highPass(int sampleRate) {
         var omega = 2 * Math.PI * Math.min(8000, sampleRate * 0.4) / sampleRate;
-        var alpha = Math.sin(omega) / (2 * Math.sqrt(0.5));
-        var cos = Math.cos(omega);
+        var alpha = StrictMath.sin(omega) / (2 * Math.sqrt(0.5));
+        var cos = StrictMath.cos(omega);
         var a0 = 1 + alpha;
         return new float[]{(float) ((1 + cos) / 2 / a0), (float) (-(1 + cos) / a0), (float) ((1 + cos) / 2 / a0),
                 (float) (-2 * cos / a0), (float) ((1 - alpha) / a0)};
@@ -1866,7 +1866,7 @@ public final class FrameEncoder {
             BitAllocation.pointers(exponents[0][slot], start, endMantissa[0][slot], masks[0][slot], snr, floor,
                     Ac3Tables.HEBAP, pointers[0][slot]);
             var noise = hybridNoise(slot);
-            var exchange = Math.pow(10, -0.602 * saved / Math.max(1, codedCount));
+            var exchange = StrictMath.pow(10, -0.602 * saved / Math.max(1, codedCount));
             var after = (total - hybridPlainNoise[slot] + noise) * exchange;
             if (after < total) {
                 hybridFrame = true;

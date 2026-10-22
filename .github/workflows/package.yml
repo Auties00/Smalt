@@ -142,7 +142,10 @@ jobs:
           name: test-reports-${{ matrix.os }}
           path: |
             **/target/surefire-reports/
-            it/target/jit-guard/
+            */target/kernel-guard/*/*/result.tsv
+            */target/kernel-guard/*/*/vm.log
+            it/target/kernel-guard-self/
+            it/target/jit-stress/*/stdout.log
             */target/media-fixtures/
             target/skips-*.tsv
             oracle-versions.tsv

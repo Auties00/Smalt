@@ -17,8 +17,6 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
  */
 @DisplayName("warp kernels")
 class WarpKernelEquivalenceTest {
-    private static final int STRIDE = 40;
-
     private final WarpKernel vector = VectorWarpKernel.create();
     private final WarpKernel scalar = new ScalarWarpKernel();
 
@@ -39,17 +37,15 @@ class WarpKernelEquivalenceTest {
     @DisplayName("accumulating two and four taps and resolving match")
     void matches() {
         var random = new SplittableRandom(9);
-        var source = new int[STRIDE * 12];
-        for (var i = 0; i < source.length; i++) {
-            source[i] = random.nextInt();
-            if (random.nextInt(4) == 0) {
-                source[i] &= 0x00FFFFFF;
-            }
-        }
         for (var count = 1; count <= 70; count++) {
-            var base = new int[count];
-            for (var i = 0; i < count; i++) {
-                base[i] = random.nextInt(STRIDE * 8);
+            var taps = new int[4][count];
+            for (var tap : taps) {
+                for (var i = 0; i < count; i++) {
+                    tap[i] = random.nextInt();
+                    if (random.nextInt(4) == 0) {
+                        tap[i] &= 0x00FFFFFF;
+                    }
+                }
             }
             var w = new float[5][];
             for (var k = 0; k < 5; k++) {
@@ -62,12 +58,13 @@ class WarpKernelEquivalenceTest {
                     expected[k][i] = actual[k][i] = (float) random.nextDouble(0, 50);
                 }
             }
-            scalar.accumulate2(source, STRIDE, base, w[0], w[1], w[4], expected[0], expected[1], expected[2], expected[3], count);
-            vector.accumulate2(source, STRIDE, base, w[0], w[1], w[4], actual[0], actual[1], actual[2], actual[3], count);
-            scalar.accumulate4(source, 2 * STRIDE, base, w[0], w[1], w[2], w[3], w[4], expected[0], expected[1], expected[2],
-                    expected[3], count);
-            vector.accumulate4(source, 2 * STRIDE, base, w[0], w[1], w[2], w[3], w[4], actual[0], actual[1], actual[2],
-                    actual[3], count);
+            scalar.accumulate2(taps[0], taps[1], w[0], w[1], w[4], expected[0], expected[1], expected[2], expected[3],
+                    count);
+            vector.accumulate2(taps[0], taps[1], w[0], w[1], w[4], actual[0], actual[1], actual[2], actual[3], count);
+            scalar.accumulate4(taps[0], taps[1], taps[2], taps[3], w[0], w[1], w[2], w[3], w[4], expected[0], expected[1],
+                    expected[2], expected[3], count);
+            vector.accumulate4(taps[0], taps[1], taps[2], taps[3], w[0], w[1], w[2], w[3], w[4], actual[0], actual[1],
+                    actual[2], actual[3], count);
             for (var k = 0; k < 4; k++) {
                 assertArrayEquals(expected[k], actual[k], "sums " + k + ", count " + count);
             }

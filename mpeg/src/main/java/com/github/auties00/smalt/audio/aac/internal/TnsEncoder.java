@@ -222,7 +222,7 @@ public final class TnsEncoder {
             var best = 0;
             var bestError = Double.MAX_VALUE;
             for (var index = low; index <= high; index++) {
-                var reconstructed = Math.sin(index / (index >= 0 ? positive : negative));
+                var reconstructed = StrictMath.sin(index / (index >= 0 ? positive : negative));
                 var error = Math.abs(reconstructed - value);
                 if (error < bestError) {
                     bestError = error;
@@ -230,7 +230,7 @@ public final class TnsEncoder {
                 }
             }
             indexes[i] = best;
-            parcor[i] = (float) Math.sin(best / (best >= 0 ? positive : negative));
+            parcor[i] = (float) StrictMath.sin(best / (best >= 0 ? positive : negative));
         }
         stepUp(order);
         filter(spectrum, offset + start, end - start, order);

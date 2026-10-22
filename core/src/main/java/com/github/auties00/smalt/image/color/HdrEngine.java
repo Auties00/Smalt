@@ -88,7 +88,7 @@ final class HdrEngine implements ColorEngine {
         if (options.toneMapping() == ToneMapping.BT2390 && source.peak() > white) {
             gain = new float[Hdr.STEPS + 2];
             for (var k = 0; k <= Hdr.STEPS; k++) {
-                var nits = Math.pow((double) k / Hdr.STEPS, 2) * source.peak();
+                var nits = StrictMath.pow((double) k / Hdr.STEPS, 2) * source.peak();
                 gain[k] = nits > 0 ? (float) (Hdr.eetf(nits, source.peak(), white) / nits) : 1f;
             }
             gain[Hdr.STEPS + 1] = gain[Hdr.STEPS];

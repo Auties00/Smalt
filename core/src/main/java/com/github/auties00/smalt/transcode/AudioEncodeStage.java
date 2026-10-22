@@ -160,7 +160,7 @@ final class AudioEncodeStage implements Stage {
         this.dropRemaining = Rational.MICROSECONDS.rescale(startMicros, samples);
         this.dropAtStart = dropRemaining;
         this.keep = endMicros < 0 ? Long.MAX_VALUE : Rational.MICROSECONDS.rescale(endMicros - startMicros, samples);
-        this.gain = (float) Math.pow(10, options.gainDb() / 20);
+        this.gain = (float) StrictMath.pow(10, options.gainDb() / 20);
         this.block = new AudioBuffer(encoder.layout(), rate, BLOCK_FRAMES);
         this.declared = EncoderTail.track(encoder, outputId)
                 .language(source.language().orElse(null))
@@ -278,7 +278,7 @@ final class AudioEncodeStage implements Stage {
             }
         }
         LoudnessStats loudness = meter.stats();
-        gain = (float) Math.pow(10, normalization.gainDb(loudness) / 20);
+        gain = (float) StrictMath.pow(10, normalization.gainDb(loudness) / 20);
     }
 
     @Override

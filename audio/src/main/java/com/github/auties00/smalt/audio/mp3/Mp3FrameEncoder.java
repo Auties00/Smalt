@@ -359,7 +359,7 @@ final class Mp3FrameEncoder {
                 gains[i] = 0;
             } else {
                 var x = (f - (cutoff - transition)) / transition;
-                var c = Math.cos(x * Math.PI / 2);
+                var c = StrictMath.cos(x * Math.PI / 2);
                 gains[i] = (float) (c * c);
             }
         }
@@ -733,7 +733,7 @@ final class Mp3FrameEncoder {
         if (energy <= threshold) {
             return 0;
         }
-        return 0.5 * width * Math.log(energy / threshold) * 1.4426950408889634;
+        return 0.5 * width * StrictMath.log(energy / threshold) * 1.4426950408889634;
     }
 
     /**

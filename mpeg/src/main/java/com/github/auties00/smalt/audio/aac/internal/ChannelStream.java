@@ -807,7 +807,7 @@ public final class ChannelStream {
                 var negative = ((1 << (resolution - 1)) + 0.5) / (Math.PI / 2);
                 for (var i = 0; i < order; i++) {
                     var coefficient = reader.readSigned(bits);
-                    parcor[i] = (float) Math.sin(coefficient / (coefficient >= 0 ? positive : negative));
+                    parcor[i] = (float) StrictMath.sin(coefficient / (coefficient >= 0 ? positive : negative));
                 }
                 var lpc = tnsCoefficients;
                 var base = entry * TNS_STRIDE;

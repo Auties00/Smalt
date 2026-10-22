@@ -345,7 +345,7 @@ public final class DynamicRangeControl {
                 var value = reader.read(8);
                 used += 2;
                 compressionOn = (mode & 1) != 0;
-                compressionGain = Math.pow(10, (48.164 - 6.0206 * (value >> 4) - 0.4014 * (value & 15)) / 20);
+                compressionGain = StrictMath.pow(10, (48.164 - 6.0206 * (value >> 4) - 0.4014 * (value & 15)) / 20);
             }
         } else if (count >= 3) {
             used = 1;
@@ -371,7 +371,7 @@ public final class DynamicRangeControl {
      * @return the number of bands
      */
     private int computeGains(int channel) {
-        var normalization = targetLevel < 0 ? 1 : Math.pow(0.5, (targetLevel - programLevel) / 24.0);
+        var normalization = targetLevel < 0 ? 1 : StrictMath.pow(0.5, (targetLevel - programLevel) / 24.0);
         if (heavyOn()) {
             bandGains[0] = compressionGain * normalization;
             return 1;
@@ -379,7 +379,7 @@ public final class DynamicRangeControl {
         var bands = bandCounts[channel];
         for (var band = 0; band < bands; band++) {
             var gain = gains[channel][band];
-            var factor = !light ? 1 : Math.pow(2, (gain < 0 ? cut : boost) * gain / 24.0);
+            var factor = !light ? 1 : StrictMath.pow(2, (gain < 0 ? cut : boost) * gain / 24.0);
             bandGains[band] = factor * normalization;
         }
         return bands;

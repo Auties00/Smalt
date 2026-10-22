@@ -535,7 +535,7 @@ public final class SsrSynthesis {
         for (var j = 0; j < TAPS; j++) {
             var prototype = j < TAPS / 2 ? PROTOTYPE[j] : PROTOTYPE[TAPS - 1 - j];
             for (var index = 0; index < BANDS; index++) {
-                var value = prototype * Math.cos((2 * index + 1) * (2 * j - 3) * Math.PI / 16);
+                var value = prototype * StrictMath.cos((2 * index + 1) * (2 * j - 3) * Math.PI / 16);
                 filters[j % BANDS][index * PHASE_TAPS + j / BANDS] = (float) value;
             }
         }
@@ -550,7 +550,7 @@ public final class SsrSynthesis {
     private static float[] levels() {
         var table = new float[121];
         for (var k = 0; k < table.length; k++) {
-            table[k] = (float) Math.pow(2, (k - LEVEL_ZERO) / 8.0);
+            table[k] = (float) StrictMath.pow(2, (k - LEVEL_ZERO) / 8.0);
         }
         return table;
     }

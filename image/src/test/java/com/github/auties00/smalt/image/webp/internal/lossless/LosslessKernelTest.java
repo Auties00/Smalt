@@ -266,12 +266,14 @@ class LosslessKernelTest {
                 for (var width : new int[]{1, 7, 8, 17, 32}) {
                     var a = new int[256];
                     var b = new int[256];
-                    scalar.collectColorRedTransforms(argb, 41, 40, width, 5, multiplier, a);
-                    vector.collectColorRedTransforms(argb, 41, 40, width, 5, multiplier, b);
+                    scalar.collectColorRedTransforms(argb, 41, 40, width, 5, multiplier, a, new int[LosslessDsp.LANE_SCRATCH]);
+                    vector.collectColorRedTransforms(argb, 41, 40, width, 5, multiplier, b, new int[LosslessDsp.LANE_SCRATCH]);
                     assertArrayEquals(a, b, "red " + multiplier + " width " + width);
                     var other = -multiplier / 2 + 3;
-                    scalar.collectColorBlueTransforms(argb, 3, 40, width, 32, multiplier, other, a);
-                    vector.collectColorBlueTransforms(argb, 3, 40, width, 32, multiplier, other, b);
+                    scalar.collectColorBlueTransforms(argb, 3, 40, width, 32, multiplier, other, a,
+                            new int[LosslessDsp.LANE_SCRATCH]);
+                    vector.collectColorBlueTransforms(argb, 3, 40, width, 32, multiplier, other, b,
+                            new int[LosslessDsp.LANE_SCRATCH]);
                     assertArrayEquals(a, b, "blue " + multiplier + " width " + width);
                 }
             }

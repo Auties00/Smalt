@@ -184,8 +184,8 @@ final class AudioWorkloads {
         for (var i = 0; i < frames; i++) {
             var azimuth = 2 * Math.PI * i / (4.0 * 48000);
             var source = 0.5f * (music[0][i] + music[1][i]);
-            var x = (float) Math.cos(azimuth);
-            var y = (float) Math.sin(azimuth);
+            var x = (float) StrictMath.cos(azimuth);
+            var y = (float) StrictMath.sin(azimuth);
             planes[0][i] = source;
             planes[1][i] = y * source;
             planes[3][i] = x * source;

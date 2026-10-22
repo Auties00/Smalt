@@ -75,11 +75,25 @@ packages (`internal.*`) are exported only to the artifacts that need them.
   allocating path costs the codec thread directly. Every codec and kernel gets a workload in its artifact's
   `TrainingFamily` (`aot.internal.<Artifact>Workloads`), on synthetic content, in the coding modes, thread
   counts and options that select different kernels; workloads never model a particular application.
-  Follow the JIT-robustness rules enforced by `it`'s `JitRobustnessTest` (no vectors across loop back edges
-  or branch merges, kernels under about 2000 bytecodes, per-shape `lanewise`, and 256-bit or wider species,
-  gathers and scatters only behind `Simd.WIDE`: ARM NEON has 128-bit vectors and no gathers, so prefer
-  species that adapt to the width, `Simd.WIDE ? SPECIES_256 : SPECIES_128`). On x86,
-  `-Djit.childArgs=-XX:MaxVectorSize=16` runs the guard's children with NEON's vector width.
+  Follow the JIT-robustness rules the kernel lint enforces (`kernel-lint`, run in `it`'s verify; rule ids in
+  its `Rule` enum): a vector, mask or shuffle method is called only on a value of known exact class (cast
+  through the shape's class constant, `INTS.cast(v)`, and again inside a loop for a value carried into it or
+  merged from branches); no method takes or returns a vector, mask or shuffle (pass arrays and offsets);
+  kernels under about 2000 bytes of bytecode; operators are `VectorOperators` constants; scalar operands
+  other than shift counts are broadcast first; no shift by a vector of counts; and 256-bit or wider species,
+  gathers and scatters only behind
+  `Simd.WIDE` (ARM NEON has 128-bit vectors and no gathers, so prefer species that adapt to the width,
+  `Simd.WIDE ? SPECIES_256 : SPECIES_128`). A finding is accepted only by `internal.simd.KernelLintSuppress`
+  on the method, with a reason, or a row of the shrink-only `tools/lint/kernel-baseline.tsv`. forbidden-apis
+  bans, in verify, the Vector API convenience methods and `reinterpretAs*` (`tools/lint/forbidden-vector.txt`),
+  `jdk.incubator.vector` outside the `Vector*` classes, and the transcendental `java.lang.Math` methods
+  (`tools/lint/forbidden-math.txt`: use `StrictMath`, whose results do not depend on the CPU). Each module's
+  `jit.*KernelGuardTest` runs every kernel family (the `Vector*` classes and the equivalence tests that call
+  them) in child JVMs (`testkit.jit.KernelGuard`): after a fixed warm-up every kernel entry point must have C2
+  code, allocate nothing per call, report no failed vector intrinsic and match the scalar twin, under tiered,
+  C2-only, polluted-profile, stress-seed and narrower-width scenarios (`-Dsmalt.jit.scenarios=pr|nightly|<names>`,
+  `-Dsmalt.jit.families=<regex>`). A new kernel class needs an equivalence test, or the module's guard test
+  fails; a method that only builds tables is marked `internal.simd.KernelSetup` so the guard does not meter it.
 - **Correctness first.** Normative decoders stay bit-exact (conformance suites); encoders keep their output
   byte-identical unless a change is measured to be quality-neutral or better.
 - **Performance claims need JMH A/B** in the same session (3+ forks) against a frozen baseline.

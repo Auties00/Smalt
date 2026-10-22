@@ -147,6 +147,39 @@ real-time codecs, the transcoder and the picture operations for hours, checking 
 descriptors and allocation stay flat, and runs the [jcstress](https://github.com/openjdk/jcstress) tests of the
 shared thread pool and the codecs' wavefronts (`mvn -Pjcstress -pl it -am verify -DskipTests`).
 
+### Vector kernels and the JIT
+
+Every Vector API kernel has a scalar twin, and an equivalence test compares the two on the same inputs. A
+kernel the JIT compiler cannot compile still gives the right output, on the Vector API's allocating
+fallback, many times slower, so the tests alone do not show it; three checks do:
+
+- The kernel JIT guard (`testkit.jit.KernelGuard`, run by each module's `jit.*KernelGuardTest`) runs every
+  kernel family, its `Vector*` classes and the equivalence tests that call them, in child JVMs with
+  synchronous compilation and a fixed warm-up. Every kernel entry point must then have C2 code, allocate
+  nothing per call (thread allocation counter), print no failed vector intrinsic and match its scalar
+  twin; no failed compilation and no deoptimization of a kernel may happen in the measured round. It runs
+  under tiered compilation, C2 only, a profile polluted by every vector shape the codecs use, a fixed C2
+  stress seed and every vector width narrower than the machine's (AVX2 on AVX-512, 256 and 128 bits), and
+  natively on arm64 (NEON). There are no tolerances and no retries: a failure prints the command line that
+  reproduces it. `-Dsmalt.jit.scenarios=nightly` adds a polluted profile under C2 only and five more
+  stress seeds, `-Dsmalt.jit.families=<regex>` selects families; the `it` module's `KernelGuardSelfTest`
+  checks that the guard fails on broken and fragile kernels and when the Vector API intrinsics are turned off.
+  The `aot` scenario starts the child from a JDK AOT cache trained on the family; on JDK 26 the cache holds
+  no profiles with the Vector API (see [Start fast with an AOT cache](#start-fast-with-an-aot-cache)),
+  so the scenario is not in the matrix.
+- The kernel lint (`kernel-lint`, run in the `it` module's `verify`) reads the kernels' bytecode and fails
+  on what keeps C2 from compiling a Vector API operation (calls on vectors of unknown class, vectors in
+  and out of methods, operators that are not constants, oversized kernels, wide species outside
+  `Simd.WIDE`), printing `File.java:line` and a rule id; `internal.simd.KernelLintSuppress` with a reason,
+  or a row of the shrink-only `tools/lint/kernel-baseline.tsv`, accepts a finding. forbidden-apis bans the
+  Vector API's convenience methods, `jdk.incubator.vector` outside the `Vector*` classes and the
+  transcendental `java.lang.Math` methods, whose results may depend on the CPU (`StrictMath` does not).
+- Nightly, the bit-exact suites run with C1 only (`-XX:TieredStopAtLevel=1`, on the scalar twins: C1
+  leaves every Vector API operation on its fallback) and with C2 only (on the Vector API kernels), and
+  `JitStressTest` runs mixed codec workloads in fresh JVMs and fails on any allocation C2 code makes in
+  the Vector API fallback after warm-up (JFR allocation samples), naming the Smalt frame and the calls C2
+  did not inline; samples from the interpreter, from C1 code and from deoptimized code are printed.
+
 ### Generated kernels
 
 The most repetitive Vector API kernels (the VP9 and AV1 transforms, loop filters and motion compensation,
@@ -1727,8 +1760,9 @@ Some workloads do not speed up with threads, and some cost memory worth knowing 
   MPEG-4 Part 2 and H.263, VP9, AV1 (decoder and encoder) and VP8 encoder kernels, the VP8 decoder's
   transform, interpolation and normal loop filter, the JPEG DCTs and color conversion, the JPEG 2000
   wavelets, the ProRes and DNxHD block transforms, palette search and SILK's fixed-point filters. The kernels
-  that gather (the tap sums of rotations and affine warps, Vorbis's post-rotation) do the same on ARM NEON,
-  which has no gather instructions. The other vector kernels use 128-bit vectors there.
+  that gather (Vorbis's post-rotation) do the same on ARM NEON, which has no gather instructions. The other
+  vector kernels use 128-bit vectors there, the tap sums of rotations and affine warps included (their taps
+  are gathered by scalar code).
 - Until the JIT compiler has compiled them, Vector API kernels allocate on every call; three-layer
   error-resilient VP9 at speed 5, for example, allocates 0.2 to 0.8 MB per frame until its transform kernel
   is compiled. An AOT cache that stores compiled vector code removes that phase (see

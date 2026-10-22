@@ -289,9 +289,10 @@ public final class VectorRtDsp extends RtDsp {
     public void chromaIntraErrors(byte[] src, int srcOff, int srcStride, byte[] edges, int dcU, int dcV, int[] out) {
         var above = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, edges, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-        var corner = ShortVector.broadcast(S256, (short) (edges[32] & 0xFF))
+        var corner = SHORTS_16.cast(ShortVector.broadcast(S256, (short) (edges[32] & 0xFF)))
                 .blend(ShortVector.broadcast(S256, (short) (edges[33] & 0xFF)), UPPER_8);
-        var dc = ShortVector.broadcast(S256, (short) dcU).blend(ShortVector.broadcast(S256, (short) dcV), UPPER_8);
+        var dc = SHORTS_16.cast(ShortVector.broadcast(S256, (short) dcU))
+                .blend(ShortVector.broadcast(S256, (short) dcV), UPPER_8);
         var aboveMinusCorner = above.lanewise(VectorOperators.SUB, corner);
         var dcErrors = INTS_8.cast(IntVector.zero(I256));
         var verticalErrors = INTS_8.cast(IntVector.zero(I256));
@@ -300,7 +301,7 @@ public final class VectorRtDsp extends RtDsp {
         for (var r = 0; r < 8; r++) {
             var p = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, src, srcOff + r * srcStride))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-            var left = ShortVector.broadcast(S256, (short) (edges[16 + r] & 0xFF))
+            var left = SHORTS_16.cast(ShortVector.broadcast(S256, (short) (edges[16 + r] & 0xFF)))
                     .blend(ShortVector.broadcast(S256, (short) (edges[24 + r] & 0xFF)), UPPER_8);
             var tm = left.lanewise(VectorOperators.ADD, aboveMinusCorner).lanewise(VectorOperators.MAX, ShortVector.zero(S256))
                     .lanewise(VectorOperators.MIN, MAX_SAMPLE_16);
@@ -869,7 +870,7 @@ public final class VectorRtDsp extends RtDsp {
                     .convertShape(VectorOperators.I2S, S128, 0));
             narrow.lanewise(VectorOperators.OR, ShortVector.zero(S128)).intoArray(levels, levelsOff + n * LEVEL_STRIDE);
             INTS_8.cast(narrow.lanewise(VectorOperators.MUL, q).convertShape(VectorOperators.S2I, I256, 0)).intoArray(coef, at);
-            last = IntVector.zero(I256).blend(IntVector.broadcast(I256, n + 1),
+            last = INTS_8.cast(IntVector.zero(I256)).blend(IntVector.broadcast(I256, n + 1),
                     magnitude.compare(VectorOperators.NE, IntVector.zero(I256))).lanewise(VectorOperators.MAX, last);
         }
         if (first > 0) {
@@ -887,7 +888,7 @@ public final class VectorRtDsp extends RtDsp {
         narrow.lanewise(VectorOperators.OR, ShortVector.zero(S128)).intoArray(levels, levelsOff);
         INTS_8.cast(narrow.lanewise(VectorOperators.MUL, ShortVector.broadcast(S128, (short) m.q[0]))
                 .convertShape(VectorOperators.S2I, I256, 0)).intoArray(coef, coefOff);
-        INTS_8.cast(IntVector.zero(I256).blend(I_1, magnitude.compare(VectorOperators.NE, IntVector.zero(I256)))
+        INTS_8.cast(INTS_8.cast(IntVector.zero(I256)).blend(I_1, magnitude.compare(VectorOperators.NE, IntVector.zero(I256)))
                 .lanewise(VectorOperators.MAX, last)).intoArray(eob, eobOff);
     }
 

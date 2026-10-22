@@ -472,7 +472,7 @@ final class BmpChannels {
         static {
             for (var i = 0; i <= ONE; i++) {
                 var linear = (double) i / ONE;
-                var encoded = linear <= 0.0031308 ? 12.92 * linear : 1.055 * Math.pow(linear, 1 / 2.4) - 0.055;
+                var encoded = linear <= 0.0031308 ? 12.92 * linear : 1.055 * StrictMath.pow(linear, 1 / 2.4) - 0.055;
                 SRGB8[i] = (byte) Math.round(encoded * 255);
                 SRGB16[i] = (short) Math.round(encoded * 65535);
             }

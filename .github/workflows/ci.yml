@@ -3,6 +3,13 @@
 # Vector API, on Linux with the scalar twins, and the kernel suites on Linux arm64 (NEON); the skip baseline; the javadoc lints, the comment
 # lint, the generated-code check and the third-party notices check. The full conformance tier and the capture
 # devices run nightly (nightly.yml).
+#
+# The Vector API kernels are checked three ways in every Vector API job: each module's *KernelGuardTest runs its
+# kernel families in child JVMs under the scenario matrix of testkit.jit.KernelGuard (tiered, C2 only, a polluted
+# profile, a stress seed, and every vector width narrower than the runner's: AVX2 on an AVX-512 runner, 256 and 128
+# bits; NEON natively on arm64), requiring C2 code, no allocation and the scalar twin's output; verify runs the
+# forbidden-apis bans (tools/lint/forbidden-vector.txt, tools/lint/forbidden-math.txt) in every module and the kernel
+# lint (smalt-kernel-lint) in it.
 name: CI
 
 on:
@@ -46,11 +53,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Vector API kernels on x86 (AVX2/AVX-512) and on arm64 (NEON, macOS); the JIT guard runs in it.
+          # Vector API kernels on x86 (AVX2/AVX-512) and on arm64 (NEON, macOS); each module's kernel JIT guard
+          # (*KernelGuardTest) runs with its suite.
           - { os: ubuntu-latest, simd: vector, modules: '', tests: '', set: smoke }
           - { os: windows-latest, simd: vector, modules: '', tests: '', set: smoke }
           - { os: macos-latest, simd: vector, modules: '', tests: '', set: smoke }
-          # Scalar twins only. The it module is left out: its JIT guard forces the Vector API anyway.
+          # Scalar twins only. The it module is left out: its JIT tests (the guard's self-test, the stress test)
+          # need the Vector API.
           - { os: ubuntu-latest, simd: scalar, modules: '-pl !it', tests: '', set: smoke }
           # NEON on Linux, cheaply: the kernel suites that compare every Vector API kernel with its scalar twin
           # (the whole suite runs on Linux arm64 nightly).
@@ -113,7 +122,9 @@ jobs:
           name: test-reports-${{ matrix.os }}-${{ matrix.simd }}
           path: |
             **/target/surefire-reports/
-            it/target/jit-guard/
+            */target/kernel-guard/*/*/result.tsv
+            */target/kernel-guard/*/*/vm.log
+            it/target/kernel-guard-self/
             ~/Library/Logs/DiagnosticReports/
           retention-days: 7
 

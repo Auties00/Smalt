@@ -668,8 +668,8 @@ final class PsDecoder {
             im[offset + q] = new double[13];
             for (var n = 0; n < 13; n++) {
                 var angle = -2 * Math.PI / bands * (q + 0.5) * (n - 6);
-                re[offset + q][n] = prototype[n] * Math.cos(angle);
-                im[offset + q][n] = prototype[n] * Math.sin(angle);
+                re[offset + q][n] = prototype[n] * StrictMath.cos(angle);
+                im[offset + q][n] = prototype[n] * StrictMath.sin(angle);
             }
         }
     }
@@ -683,7 +683,7 @@ final class PsDecoder {
     private static double[] scales(double[] levels) {
         var result = new double[levels.length];
         for (var i = 0; i < levels.length; i++) {
-            result[i] = Math.sqrt(2 / (1 + Math.pow(10, levels[i] / 10)));
+            result[i] = Math.sqrt(2 / (1 + StrictMath.pow(10, levels[i] / 10)));
         }
         return result;
     }
@@ -1271,12 +1271,12 @@ final class PsDecoder {
                         + PHASE_COS[bandIpd[bin]];
                 var ipdIm = 0.25 * PHASE_SIN[ipdHistory2[bin]] + 0.5 * PHASE_SIN[ipdHistory1[bin]]
                         + PHASE_SIN[bandIpd[bin]];
-                var phase1 = Math.atan2(opdIm, opdRe);
-                var phase2 = phase1 - Math.atan2(ipdIm, ipdRe);
-                var cos1 = Math.cos(phase1);
-                var sin1 = Math.sin(phase1);
-                var cos2 = Math.cos(phase2);
-                var sin2 = Math.sin(phase2);
+                var phase1 = StrictMath.atan2(opdIm, opdRe);
+                var phase2 = phase1 - StrictMath.atan2(ipdIm, ipdRe);
+                var cos1 = StrictMath.cos(phase1);
+                var sin1 = StrictMath.sin(phase1);
+                var cos2 = StrictMath.cos(phase2);
+                var sin2 = StrictMath.sin(phase2);
                 targetRe[0][bin] = h11 * cos1;
                 targetIm[0][bin] = h11 * sin1;
                 targetRe[1][bin] = h12 * cos2;
@@ -1329,26 +1329,26 @@ final class PsDecoder {
             var scales = fine ? SCALE_FINE : SCALE_COARSE;
             var scaleRight = scales[steps + iidIndex];
             var scaleLeft = scales[steps - iidIndex];
-            var alpha = 0.5 * Math.acos(ICC_VALUES[iccIndex]);
+            var alpha = 0.5 * StrictMath.acos(ICC_VALUES[iccIndex]);
             var beta = alpha * (scaleRight - scaleLeft) / Math.sqrt(2);
-            h[0] = scaleLeft * Math.cos(beta + alpha);
-            h[1] = scaleRight * Math.cos(beta - alpha);
-            h[2] = scaleLeft * Math.sin(beta + alpha);
-            h[3] = scaleRight * Math.sin(beta - alpha);
+            h[0] = scaleLeft * StrictMath.cos(beta + alpha);
+            h[1] = scaleRight * StrictMath.cos(beta - alpha);
+            h[2] = scaleLeft * StrictMath.sin(beta + alpha);
+            h[3] = scaleRight * StrictMath.sin(beta - alpha);
         } else {
             var levels = fine ? IID_FINE : IID_COARSE;
-            var c = Math.pow(10, levels[steps + iidIndex] / 20);
+            var c = StrictMath.pow(10, levels[steps + iidIndex] / 20);
             var rho = Math.max(ICC_VALUES[iccIndex], 0.05);
-            var alpha = c == 1 ? Math.PI / 4 : 0.5 * Math.atan(2 * c * rho / (c * c - 1));
+            var alpha = c == 1 ? Math.PI / 4 : 0.5 * StrictMath.atan(2 * c * rho / (c * c - 1));
             alpha -= Math.floor(alpha / (Math.PI / 2)) * (Math.PI / 2);
             var sum = c + 1 / c;
             var mu = 1 + (4 * rho * rho - 4) / (sum * sum);
             var root = Math.sqrt(mu);
-            var gamma = Math.atan(Math.sqrt((1 - root) / (1 + root)));
-            h[0] = Math.sqrt(2) * Math.cos(alpha) * Math.cos(gamma);
-            h[1] = Math.sqrt(2) * Math.sin(alpha) * Math.cos(gamma);
-            h[2] = -Math.sqrt(2) * Math.sin(alpha) * Math.sin(gamma);
-            h[3] = Math.sqrt(2) * Math.cos(alpha) * Math.sin(gamma);
+            var gamma = StrictMath.atan(Math.sqrt((1 - root) / (1 + root)));
+            h[0] = Math.sqrt(2) * StrictMath.cos(alpha) * StrictMath.cos(gamma);
+            h[1] = Math.sqrt(2) * StrictMath.sin(alpha) * StrictMath.cos(gamma);
+            h[2] = -Math.sqrt(2) * StrictMath.sin(alpha) * StrictMath.sin(gamma);
+            h[3] = Math.sqrt(2) * StrictMath.cos(alpha) * StrictMath.sin(gamma);
         }
     }
 
@@ -1364,8 +1364,8 @@ final class PsDecoder {
 
     static {
         for (var i = 0; i < 8; i++) {
-            PHASE_COS[i] = Math.cos(i * Math.PI / 4);
-            PHASE_SIN[i] = Math.sin(i * Math.PI / 4);
+            PHASE_COS[i] = StrictMath.cos(i * Math.PI / 4);
+            PHASE_SIN[i] = StrictMath.sin(i * Math.PI / 4);
         }
     }
 
@@ -1885,12 +1885,12 @@ final class PsDecoder {
                     decay = qmf <= decayCutoff ? 1 : Math.max(0, 1 - 0.05 * (qmf - decayCutoff));
                 }
                 var angle = -Math.PI * PHASE_FRACTION * center;
-                phaseRe[k] = Math.cos(angle);
-                phaseIm[k] = Math.sin(angle);
+                phaseRe[k] = StrictMath.cos(angle);
+                phaseIm[k] = StrictMath.sin(angle);
                 for (var link = 0; link < 3; link++) {
                     var linkAngle = -Math.PI * LINK_FRACTIONS[link] * center;
-                    linkPhaseRe[link][k] = Math.cos(linkAngle);
-                    linkPhaseIm[link][k] = Math.sin(linkAngle);
+                    linkPhaseRe[link][k] = StrictMath.cos(linkAngle);
+                    linkPhaseIm[link][k] = StrictMath.sin(linkAngle);
                     linkDecay[link][k] = LINK_DECAYS[link] * decay;
                 }
             }

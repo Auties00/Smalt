@@ -133,7 +133,7 @@ public enum ResizeFilter {
                     yield 0;
                 }
                 var px = Math.PI * x;
-                yield Math.sin(px) / px * (0.54 + 0.46 * Math.cos(px));
+                yield StrictMath.sin(px) / px * (0.54 + 0.46 * StrictMath.cos(px));
             }
             case BICUBIC -> {
                 // Keys (1981) cubic convolution with a = -0.5
@@ -177,6 +177,6 @@ public enum ResizeFilter {
             return 0;
         }
         var px = Math.PI * x;
-        return lobes * Math.sin(px) * Math.sin(px / lobes) / (px * px);
+        return lobes * StrictMath.sin(px) * StrictMath.sin(px / lobes) / (px * px);
     }
 }

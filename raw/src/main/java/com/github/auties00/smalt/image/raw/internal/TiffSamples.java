@@ -526,7 +526,7 @@ final class TiffSamples {
             return mantissa != 0 ? Float.NaN : sign != 0 ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY;
         }
         if (exponent == 0) {
-            var value = mantissa / 65536.0f * (float) Math.pow(2, -62);
+            var value = mantissa / 65536.0f * (float) StrictMath.pow(2, -62);
             return sign != 0 ? -value : value;
         }
         return Float.intBitsToFloat((sign << 31) | ((exponent - 64 + 127) << 23) | (mantissa << 7));

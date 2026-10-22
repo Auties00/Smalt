@@ -19,8 +19,8 @@ package com.github.auties00.smalt.internal.simd;
  * 256-bit vectors, which then starts by delegating to the scalar kernel when {@link #WIDE} is
  * {@code false}. Gathers and scatters (loads and stores through an index map) follow the same rule:
  * they compile only on hardware with gather instructions, which every platform with 256-bit vectors
- * has (AVX2, SVE) and ARM NEON lacks. {@code JitRobustnessTest} checks that every method using a
- * 256-bit or wider species, a gather or a scatter is guarded one way or the other.
+ * has (AVX2, SVE) and ARM NEON lacks. The kernel lint (rule {@code wide-species}) checks that every
+ * method using a 256-bit or wider species, a gather or a scatter is guarded one way or the other.
  *
  * <p>Kernels select their implementation in a {@code static final} field, which the JIT treats as
  * a constant: the choice costs nothing after class initialization. The field calls the vector class
@@ -32,17 +32,26 @@ package com.github.auties00.smalt.internal.simd;
  *
  * <p>A JIT compiler that cannot compile a Vector API operation leaves it on its allocating Java
  * fallback, which then runs on every call for the life of the JVM; mixing many kernels in one JVM
- * makes that likelier. Vector kernels therefore follow these rules, which {@code JitRobustnessTest}
- * in the {@code it} module checks:
+ * makes that likelier. Vector kernels therefore follow these rules, which the build checks in
+ * {@code verify} (the {@code smalt-kernel-lint} step in the {@code it} module, whose rule ids are
+ * given here, and the forbidden-apis signatures under {@code tools/lint}):
  * <ul>
  *   <li>operations use the per-shape {@code lanewise} form, never a convenience method such as
- *       {@code add} or {@code fma};</li>
- *   <li>every {@code intoArray} and every {@code lanewise} with a scalar operand has a receiver of
- *       exact type, cast through the shape's vector class ({@code INTS.cast(v)});</li>
- *   <li>no vector crosses a loop back edge or a branch merge, a vector carried into or around a
- *       loop is cast again before each call on it, and no method takes or returns a vector;</li>
- *   <li>no kernel method exceeds about 2000 bytecodes.</li>
+ *       {@code add} or {@code fma}, and never {@code reinterpretAs*} (forbidden-apis);</li>
+ *   <li>every call on a vector, mask or shuffle has a receiver of exact type, cast through the
+ *       shape's vector class ({@code INTS.cast(v)}) ({@code exact-receiver}); a value carried into
+ *       or around a loop, or merged from branches, is cast again before each call on it
+ *       ({@code carried-receiver});</li>
+ *   <li>no method takes or returns a vector, a mask or a shuffle ({@code vector-helper});</li>
+ *   <li>operators are {@code VectorOperators} constants at the call ({@code vector-operator}), a
+ *       scalar operand other than a shift count is broadcast to a vector first
+ *       ({@code vector-scalar-operand}), and no shift takes a vector of counts
+ *       ({@code vector-shift-count});</li>
+ *   <li>no kernel method exceeds about 2000 bytes of bytecode ({@code kernel-size}).</li>
  * </ul>
+ * {@link KernelLintSuppress} on a method accepts a finding with a reason. The kernel JIT guard of
+ * each module's tests then checks, in child JVMs, that every kernel runs compiled by C2 without
+ * allocating and with its scalar twin's output.
  *
  * @implNote This implementation's selection rule was checked with {@code -Xlog:class+load} on a
  * JVM started without {@code --add-modules jdk.incubator.vector}: neither {@code VectorX.create()}

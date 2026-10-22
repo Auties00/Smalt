@@ -1,5 +1,6 @@
-# Nightly: the full conformance tier (every vector and clip in tools/testdata) with the oracle tools, the JIT
-# guard, the whole suite on Linux arm64, the next JDK's early-access build, and the capture devices on each OS
+# Nightly: the full conformance tier (every vector and clip in tools/testdata) with the oracle tools, the whole suite
+# on Linux arm64, the kernel JIT guard's nightly scenario matrix and the JIT stress test on every OS, the bit-exact
+# suites under C1 only and under C2 only, the next JDK's early-access build, and the capture devices on each OS
 # (capture.yml).
 name: Nightly
 
@@ -9,7 +10,7 @@ on:
   workflow_dispatch:
     inputs:
       jobs:
-        description: Which jobs run (all, conformance, arm64, early-access or capture)
+        description: Which jobs run (all, conformance, arm64, kernel-jit, jit-tiers, early-access or capture)
         default: all
 
 concurrency:
@@ -93,7 +94,8 @@ jobs:
           name: nightly-test-reports
           path: |
             **/target/surefire-reports/
-            it/target/jit-guard/
+            */target/kernel-guard/*/*/result.tsv
+            it/target/kernel-guard-self/
             target/skips-*.tsv
             oracle-versions.tsv
           retention-days: 14
@@ -142,9 +144,121 @@ jobs:
           name: arm64-test-reports
           path: |
             **/target/surefire-reports/
-            it/target/jit-guard/
+            */target/kernel-guard/*/*/result.tsv
+            it/target/kernel-guard-self/
             target/skips-*.tsv
             oracle-versions.tsv
+          retention-days: 14
+
+  # The kernel JIT guard under its nightly scenarios (the pull-request ones, a polluted profile under C2 only and five
+  # more stress seeds) on every OS, its self-test, and the JIT stress test: mixed codec workloads in fresh JVMs that
+  # may allocate nothing from the Vector API fallback after warm-up (JitStressTest; ffmpeg-made streams on Linux).
+  kernel-jit:
+    name: kernel JIT guard and stress (${{ matrix.os }})
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'kernel-jit') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+        if: runner.os == 'Linux'
+
+      - name: Guard, self-test and stress test
+        shell: bash
+        run: >
+          mvn -B -ntp -fae -pl kernel-lint,core,image,audio,video,mpeg,capture,raw,it verify
+          -Dtest='**/*KernelGuardTest,**/KernelGuardSelfTest,**/JitStressTest' -Dsurefire.failIfNoSpecifiedTests=false
+          -Dsmalt.jit.scenarios=nightly -Dsmalt.jit.stress=true
+
+      - name: Upload the guard's results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-jit-${{ matrix.os }}
+          path: |
+            **/target/surefire-reports/
+            */target/kernel-guard/*/*/result.tsv
+            */target/kernel-guard/*/*/vm.log
+            it/target/kernel-guard-self/
+            it/target/jit-stress/*/stdout.log
+          retention-days: 14
+
+  # The suites whose output is pinned bit for bit (conformance vectors, golden dumps, oracle differentials), once with
+  # C1 alone and once with C2 alone, compiling early: a codec whose output depends on the compiler tier fails one of
+  # them against the same expected output. C1 does not intrinsify the Vector API, so under C1 every kernel would run
+  # the API's allocating Java fallback, a hundred times slower (the AV1 encoder goldens alone outlast the job); the C1
+  # leg runs the scalar twins instead, and the C2 leg the Vector API kernels, whose equality with their scalar twins
+  # the kernel JIT guard checks on C2 code at every vector width.
+  jit-tiers:
+    name: bit-exact suites (${{ matrix.tier }})
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'jit-tiers') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tier: c1-only, flags: '-XX:TieredStopAtLevel=1', simd: false, skips: linux-x64-scalar-smoke }
+          - { tier: c2-only, flags: '-XX:-TieredCompilation -XX:CompileThresholdScaling=0.05', simd: true,
+              skips: linux-x64-vector-smoke }
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+      SMALT_SKIP_JOB: ${{ matrix.skips }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      - uses: ./.github/actions/testdata
+
+      - name: Bit-exact suites under ${{ matrix.tier }}
+        id: test
+        shell: bash
+        run: >
+          mvn -B -ntp -fae -pl core,image,audio,video,mpeg,raw verify
+          -Dtest='**/*Conformance*Test,**/*Golden*Test,**/*Behavior*Test,**/*Suite*Test,**/*Differential*Test,**/*Vectors*Test'
+          -Dsurefire.failIfNoSpecifiedTests=false -Dsmalt.test.simd=${{ matrix.simd }} "-Dsmalt.test.jvmArgs=${{ matrix.flags }}"
+
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jit-tiers-${{ matrix.tier }}
+          path: '**/target/surefire-reports/'
           retention-days: 14
 
   # Line and branch coverage of every module's tests on the smoke tier, as a map of the spec features no

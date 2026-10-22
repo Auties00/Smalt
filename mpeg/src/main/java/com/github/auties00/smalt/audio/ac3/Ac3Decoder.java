@@ -386,7 +386,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var samples = 256 * blocks;
         computeGains(header, lastDependent);
         var scale = options.dialogueNormalization()
-                ? (float) Math.pow(10, (normalizedDialnorm(header.dialogueNormalization[0]) - 31) / 20.0) : 1.0f;
+                ? (float) StrictMath.pow(10, (normalizedDialnorm(header.dialogueNormalization[0]) - 31) / 20.0) : 1.0f;
         AudioBuffer buffer;
         if (options.downmix() == Ac3Downmix.NONE) {
             buffer = nativeOutput(header, samples, scale, dependentCount > 0);
@@ -459,7 +459,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var mantissa = word & 0x1F;
         var gain = Math.scalb((32 + mantissa) / 64.0, exponent + 1);
         var scale = gain > 1 ? options.boostScale() : options.cutScale();
-        return (float) (scale == 1 ? gain : Math.pow(gain, scale));
+        return (float) (scale == 1 ? gain : StrictMath.pow(gain, scale));
     }
 
     /**

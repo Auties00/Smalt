@@ -1819,7 +1819,7 @@ public final class Vp9RtEncoder {
     private void setBlockThresholds() {
         for (var seg = 0; seg < 8; seg++) {
             var qindex = Math.clamp(segQindex(seg), 0, 255);
-            var q = Math.max((int) (Math.pow(Vp9EncTables.dcQuant(qindex, 0) / 4.0, 1.25) * 5.12), 8);
+            var q = Math.max((int) (StrictMath.pow(Vp9EncTables.dcQuant(qindex, 0) / 4.0, 1.25) * 5.12), 8);
             for (var bsize = 0; bsize < 13; bsize++) {
                 var t = q * RD_THRESH_BLOCK_SIZE_FACTOR[bsize];
                 var threshMax = Integer.MAX_VALUE / t;

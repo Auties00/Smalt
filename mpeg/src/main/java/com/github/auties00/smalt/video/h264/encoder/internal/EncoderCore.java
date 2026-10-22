@@ -460,7 +460,7 @@ public final class EncoderCore {
     /**
      * The reciprocal of the natural logarithm of 2.
      */
-    private static final double INVERSE_LOG2 = 1 / Math.log(2);
+    private static final double INVERSE_LOG2 = 1 / StrictMath.log(2);
 
     /**
      * The scratch per-macroblock adaptive quantization offsets.
@@ -1914,7 +1914,7 @@ public final class EncoderCore {
         var offsets = aqOffsets;
         double logSum = 0;
         for (var i = 0; i < count; i++) {
-            offsets[i] = Math.log(activity[i]) * INVERSE_LOG2;
+            offsets[i] = StrictMath.log(activity[i]) * INVERSE_LOG2;
             logSum += offsets[i];
         }
         var mean = logSum / count;

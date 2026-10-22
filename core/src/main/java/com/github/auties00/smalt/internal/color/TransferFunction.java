@@ -174,20 +174,20 @@ public final class TransferFunction {
     private double forward(double l) {
         return switch (transfer) {
             case BT709, UNSPECIFIED, SMPTE170M, BT2020_10, BT2020_12, IEC61966_2_4, BT1361 ->
-                    l < BT709_BETA ? 4.5 * l : BT709_ALPHA * Math.pow(l, 0.45) - (BT709_ALPHA - 1);
-            case GAMMA22 -> Math.pow(l, 1 / 2.2);
-            case GAMMA28 -> Math.pow(l, 1 / 2.8);
-            case SMPTE240M -> l < SMPTE240M_BETA ? 4.0 * l : SMPTE240M_ALPHA * Math.pow(l, 0.45) - (SMPTE240M_ALPHA - 1);
+                    l < BT709_BETA ? 4.5 * l : BT709_ALPHA * StrictMath.pow(l, 0.45) - (BT709_ALPHA - 1);
+            case GAMMA22 -> StrictMath.pow(l, 1 / 2.2);
+            case GAMMA28 -> StrictMath.pow(l, 1 / 2.8);
+            case SMPTE240M -> l < SMPTE240M_BETA ? 4.0 * l : SMPTE240M_ALPHA * StrictMath.pow(l, 0.45) - (SMPTE240M_ALPHA - 1);
             case LINEAR -> l;
-            case LOG100 -> l < 0.01 ? 0 : 1 + Math.log10(l) / 2;
-            case LOG316 -> l < Math.sqrt(10) / 1000 ? 0 : 1 + Math.log10(l) / 2.5;
-            case SRGB -> l < 0.0031308 ? 12.92 * l : 1.055 * Math.pow(l, 1 / 2.4) - 0.055;
+            case LOG100 -> l < 0.01 ? 0 : 1 + StrictMath.log10(l) / 2;
+            case LOG316 -> l < Math.sqrt(10) / 1000 ? 0 : 1 + StrictMath.log10(l) / 2.5;
+            case SRGB -> l < 0.0031308 ? 12.92 * l : 1.055 * StrictMath.pow(l, 1 / 2.4) - 0.055;
             case PQ -> {
-                var p = Math.pow(l, PQ_N);
-                yield Math.pow((PQ_C1 + PQ_C2 * p) / (1 + PQ_C3 * p), PQ_M);
+                var p = StrictMath.pow(l, PQ_N);
+                yield StrictMath.pow((PQ_C1 + PQ_C2 * p) / (1 + PQ_C3 * p), PQ_M);
             }
-            case SMPTE428 -> Math.pow(l / DCI_SCALE, 1 / 2.6);
-            case HLG -> l <= 1.0 / 12 ? Math.sqrt(3 * l) : HLG_A * Math.log(12 * l - HLG_B) + HLG_C;
+            case SMPTE428 -> StrictMath.pow(l / DCI_SCALE, 1 / 2.6);
+            case HLG -> l <= 1.0 / 12 ? Math.sqrt(3 * l) : HLG_A * StrictMath.log(12 * l - HLG_B) + HLG_C;
         };
     }
 
@@ -200,21 +200,21 @@ public final class TransferFunction {
     private double inverse(double v) {
         return switch (transfer) {
             case BT709, UNSPECIFIED, SMPTE170M, BT2020_10, BT2020_12, IEC61966_2_4, BT1361 ->
-                    v < 4.5 * BT709_BETA ? v / 4.5 : Math.pow((v + BT709_ALPHA - 1) / BT709_ALPHA, 1 / 0.45);
-            case GAMMA22 -> Math.pow(v, 2.2);
-            case GAMMA28 -> Math.pow(v, 2.8);
+                    v < 4.5 * BT709_BETA ? v / 4.5 : StrictMath.pow((v + BT709_ALPHA - 1) / BT709_ALPHA, 1 / 0.45);
+            case GAMMA22 -> StrictMath.pow(v, 2.2);
+            case GAMMA28 -> StrictMath.pow(v, 2.8);
             case SMPTE240M -> v < 4.0 * SMPTE240M_BETA ? v / 4.0
-                    : Math.pow((v + SMPTE240M_ALPHA - 1) / SMPTE240M_ALPHA, 1 / 0.45);
+                    : StrictMath.pow((v + SMPTE240M_ALPHA - 1) / SMPTE240M_ALPHA, 1 / 0.45);
             case LINEAR -> v;
-            case LOG100 -> v > 0 ? Math.pow(10, 2 * (v - 1)) : 0;
-            case LOG316 -> v > 0 ? Math.pow(10, 2.5 * (v - 1)) : 0;
-            case SRGB -> v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+            case LOG100 -> v > 0 ? StrictMath.pow(10, 2 * (v - 1)) : 0;
+            case LOG316 -> v > 0 ? StrictMath.pow(10, 2.5 * (v - 1)) : 0;
+            case SRGB -> v <= 0.04045 ? v / 12.92 : StrictMath.pow((v + 0.055) / 1.055, 2.4);
             case PQ -> {
-                var p = Math.pow(Math.min(v, 1), 1 / PQ_M);
-                yield Math.pow(Math.max(p - PQ_C1, 0) / (PQ_C2 - PQ_C3 * p), 1 / PQ_N);
+                var p = StrictMath.pow(Math.min(v, 1), 1 / PQ_M);
+                yield StrictMath.pow(Math.max(p - PQ_C1, 0) / (PQ_C2 - PQ_C3 * p), 1 / PQ_N);
             }
-            case SMPTE428 -> DCI_SCALE * Math.pow(v, 2.6);
-            case HLG -> v <= 0.5 ? v * v / 3 : (Math.exp((v - HLG_C) / HLG_A) + HLG_B) / 12;
+            case SMPTE428 -> DCI_SCALE * StrictMath.pow(v, 2.6);
+            case HLG -> v <= 0.5 ? v * v / 3 : (StrictMath.exp((v - HLG_C) / HLG_A) + HLG_B) / 12;
         };
     }
 }

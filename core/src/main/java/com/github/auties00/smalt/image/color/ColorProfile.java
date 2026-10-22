@@ -398,7 +398,7 @@ public final class ColorProfile {
             case LOG100, LOG316 -> new ColorProfile(IccWriter.rgb(description, c[0], c[1], c[2], c[3],
                     IccWriter.Curve.sampled(color.transfer())));
             case SMPTE428 -> new ColorProfile(IccWriter.rgb(description, c[0], c[1], c[2], c[3],
-                    new IccWriter.Curve(1, 2.6, Math.pow(52.37 / 48, 1 / 2.6), 0)));
+                    new IccWriter.Curve(1, 2.6, StrictMath.pow(52.37 / 48, 1 / 2.6), 0)));
             case PQ, HLG -> {
                 var spec = spec(color);
                 yield new ColorProfile(spec, "CICP " + spec.color().primaries() + " / " + color.transfer());

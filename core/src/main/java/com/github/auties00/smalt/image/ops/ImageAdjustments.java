@@ -180,7 +180,7 @@ public final class ImageAdjustments {
         var white = outWhite / 255.0;
         return curves(picture, ToneCurve.of(x -> {
             var t = (Math.clamp(x, low, high) - low) / (high - low);
-            return black + (white - black) * Math.pow(t, exponent);
+            return black + (white - black) * StrictMath.pow(t, exponent);
         }));
     }
 

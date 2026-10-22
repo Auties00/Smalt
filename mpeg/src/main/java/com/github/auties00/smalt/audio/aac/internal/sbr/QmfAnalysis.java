@@ -97,11 +97,11 @@ final class QmfAnalysis {
         }
         for (var k = 0; k < 32; k++) {
             var angle = -3 * Math.PI * (k + 0.5) / 128;
-            ROTATION_REAL[k] = (float) Math.cos(angle);
-            ROTATION_IMAGINARY[k] = (float) Math.sin(angle);
+            ROTATION_REAL[k] = (float) StrictMath.cos(angle);
+            ROTATION_IMAGINARY[k] = (float) StrictMath.sin(angle);
             var lowDelayAngle = -3 * Math.PI * (k + 0.5) / 2;
-            LOW_DELAY_ROTATION_REAL[k] = (float) Math.cos(lowDelayAngle);
-            LOW_DELAY_ROTATION_IMAGINARY[k] = (float) Math.sin(lowDelayAngle);
+            LOW_DELAY_ROTATION_REAL[k] = (float) StrictMath.cos(lowDelayAngle);
+            LOW_DELAY_ROTATION_IMAGINARY[k] = (float) StrictMath.sin(lowDelayAngle);
         }
         for (var j = 0; j < 5; j++) {
             for (var m = 0; m < 64; m++) {
@@ -112,13 +112,13 @@ final class QmfAnalysis {
         }
         for (var k = 0; k < 16; k++) {
             var angle = Math.PI * (k + 0.125) / 32;
-            TWIDDLE_COS[k] = (float) Math.cos(angle);
-            TWIDDLE_SIN[k] = (float) Math.sin(angle);
+            TWIDDLE_COS[k] = (float) StrictMath.cos(angle);
+            TWIDDLE_SIN[k] = (float) StrictMath.sin(angle);
             POSITIONS[k] = (k & 1) * 8 + (Integer.reverse(k >> 1) >>> 29);
         }
         for (var j = 0; j < 8; j++) {
-            RADIX2[j] = (float) Math.cos(-Math.PI * j / 8);
-            RADIX2[8 + j] = (float) Math.sin(-Math.PI * j / 8);
+            RADIX2[j] = (float) StrictMath.cos(-Math.PI * j / 8);
+            RADIX2[8 + j] = (float) StrictMath.sin(-Math.PI * j / 8);
         }
     }
 

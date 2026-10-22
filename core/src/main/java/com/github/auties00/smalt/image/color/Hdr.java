@@ -55,7 +55,7 @@ final class Hdr {
     /**
      * The HLG constant {@code c}.
      */
-    private static final double HLG_C = 0.5 - HLG_A * Math.log(4 * HLG_A);
+    private static final double HLG_C = 0.5 - HLG_A * StrictMath.log(4 * HLG_A);
 
     /**
      * The peak luminance of the PQ signal range, in candelas per square meter.
@@ -127,9 +127,9 @@ final class Hdr {
         if (!(signal > 0)) {
             return 0;
         }
-        var p = Math.pow(Math.min(signal, 1.0), 1.0 / M2);
+        var p = StrictMath.pow(Math.min(signal, 1.0), 1.0 / M2);
         var numerator = Math.max(p - C1, 0);
-        return PQ_PEAK * Math.pow(numerator / (C2 - C3 * p), 1.0 / M1);
+        return PQ_PEAK * StrictMath.pow(numerator / (C2 - C3 * p), 1.0 / M1);
     }
 
     /**
@@ -142,8 +142,8 @@ final class Hdr {
         if (!(nits > 0)) {
             return 0;
         }
-        var y = Math.pow(Math.min(nits / PQ_PEAK, 1.0), M1);
-        return Math.pow((C1 + C2 * y) / (1 + C3 * y), M2);
+        var y = StrictMath.pow(Math.min(nits / PQ_PEAK, 1.0), M1);
+        return StrictMath.pow((C1 + C2 * y) / (1 + C3 * y), M2);
     }
 
     /**
@@ -159,7 +159,7 @@ final class Hdr {
         if (signal <= 0.5) {
             return signal * signal / 3.0;
         }
-        return (Math.exp((Math.min(signal, 1.0) - HLG_C) / HLG_A) + HLG_B) / 12.0;
+        return (StrictMath.exp((Math.min(signal, 1.0) - HLG_C) / HLG_A) + HLG_B) / 12.0;
     }
 
     /**
@@ -176,7 +176,7 @@ final class Hdr {
         if (e <= 1.0 / 12.0) {
             return Math.sqrt(3 * e);
         }
-        return HLG_A * Math.log(12 * e - HLG_B) + HLG_C;
+        return HLG_A * StrictMath.log(12 * e - HLG_B) + HLG_C;
     }
 
     /**
@@ -186,7 +186,7 @@ final class Hdr {
      * @return the gamma, {@code 1.2} at 1000 candelas per square meter
      */
     static double hlgGamma(double peak) {
-        return 1.2 + 0.42 * Math.log10(peak / 1000.0);
+        return 1.2 + 0.42 * StrictMath.log10(peak / 1000.0);
     }
 
     /**
@@ -285,7 +285,7 @@ final class Hdr {
      */
     static double iccCurve(TransferCharacteristics transfer, double signal) {
         var nits = transfer == TransferCharacteristics.PQ ? pqToNits(signal)
-                : HLG_PEAK * Math.pow(hlgToScene(signal), HLG_GAMMA);
+                : HLG_PEAK * StrictMath.pow(hlgToScene(signal), HLG_GAMMA);
         return Math.min(eetf(nits, HLG_PEAK, REFERENCE_WHITE) / REFERENCE_WHITE, 1.0);
     }
 
@@ -395,8 +395,8 @@ final class Hdr {
             var gamma = hlgGamma(HLG_PEAK);
             var table = new float[STEPS + 2];
             for (var k = 0; k <= STEPS; k++) {
-                var ys = Math.pow((double) k / STEPS, 2);
-                table[k] = (float) (HLG_PEAK * Math.pow(ys, gamma - 1));
+                var ys = StrictMath.pow((double) k / STEPS, 2);
+                table[k] = (float) (HLG_PEAK * StrictMath.pow(ys, gamma - 1));
             }
             table[STEPS + 1] = table[STEPS];
             return table;

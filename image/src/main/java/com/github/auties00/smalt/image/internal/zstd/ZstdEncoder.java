@@ -816,7 +816,7 @@ public final class ZstdEncoder {
     }
 
     private static double log2(int value) {
-        return Math.log(value) / Math.log(2);
+        return StrictMath.log(value) / StrictMath.log(2);
     }
 
     /**

@@ -47,7 +47,7 @@ public final class Windows {
     public static float[] sine(int n) {
         var window = new float[n];
         for (var i = 0; i < n; i++) {
-            window[i] = (float) Math.sin(Math.PI / n * (i + 0.5));
+            window[i] = (float) StrictMath.sin(Math.PI / n * (i + 0.5));
         }
         return window;
     }
@@ -93,7 +93,7 @@ public final class Windows {
         var zeros = 3 * n / 16;
         var slope = n / 8;
         for (var i = 0; i < slope; i++) {
-            var value = (float) Math.sin(Math.PI * (i + 0.5) / (2 * slope));
+            var value = (float) StrictMath.sin(Math.PI * (i + 0.5) / (2 * slope));
             window[zeros + i] = value;
             window[n - 1 - zeros - i] = value;
         }

@@ -1284,10 +1284,10 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
         for (var y = 0; y < height; y++) {
             var s = srcOffset + y * srcStride;
             var d = dstOffset + y * dstStride;
-            var a = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, s))
+            var a = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, s))
                     .withLane(1, (int) INT_LE.get(srcCr, s)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
-            var b = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, s + 1))
+            var b = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, s + 1))
                     .withLane(1, (int) INT_LE.get(srcCr, s + 1)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
             var out = INTS_2.cast(BYTES_8.cast(a.lanewise(VectorOperators.MUL, ShortVector.broadcast(S128, (short) wa)).lanewise(VectorOperators.ADD, b.lanewise(VectorOperators.MUL, ShortVector.broadcast(S128, (short) wb))).lanewise(VectorOperators.ADD, S128_32).lanewise(VectorOperators.ASHR, 6)
@@ -1324,22 +1324,22 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
             var d = dstOffset + y * dstStride;
             var t = s + srcStride;
             var u = t + srcStride;
-            var a0 = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, s))
+            var a0 = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, s))
                     .withLane(1, (int) INT_LE.get(srcCr, s)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
-            var b0 = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, s + 1))
+            var b0 = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, s + 1))
                     .withLane(1, (int) INT_LE.get(srcCr, s + 1)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
-            var a1 = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, t))
+            var a1 = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, t))
                     .withLane(1, (int) INT_LE.get(srcCr, t)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
-            var b1 = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, t + 1))
+            var b1 = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, t + 1))
                     .withLane(1, (int) INT_LE.get(srcCr, t + 1)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
-            var a2 = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, u))
+            var a2 = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, u))
                     .withLane(1, (int) INT_LE.get(srcCr, u)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
-            var b2 = SHORTS_8.cast(BYTES_8.cast(IntVector.zero(I64).withLane(0, (int) INT_LE.get(srcCb, u + 1))
+            var b2 = SHORTS_8.cast(BYTES_8.cast(INTS_2.cast(IntVector.zero(I64)).withLane(0, (int) INT_LE.get(srcCb, u + 1))
                     .withLane(1, (int) INT_LE.get(srcCr, u + 1)).reinterpretShape(B64, 0))
                     .convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0));
             var first = INTS_2.cast(BYTES_8.cast(a0.lanewise(VectorOperators.MUL, ShortVector.broadcast(S128, (short) wa)).lanewise(VectorOperators.ADD, b0.lanewise(VectorOperators.MUL, ShortVector.broadcast(S128, (short) wb))).lanewise(VectorOperators.ADD, a1.lanewise(VectorOperators.MUL, ShortVector.broadcast(S128, (short) wc))).lanewise(VectorOperators.ADD, b1.lanewise(VectorOperators.MUL, ShortVector.broadcast(S128, (short) wd))).lanewise(VectorOperators.ADD, S128_32)
@@ -1473,16 +1473,16 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
         var row1 = dstOffset + dstStride;
         var row2 = row1 + dstStride;
         var row3 = row2 + dstStride;
-        var out0 = INTS_4.cast(BYTES_16.cast(IntVector.zero(I128).withLane(0, (int) INT_LE.get(dst, dstOffset)).reinterpretShape(B128, 0))
+        var out0 = INTS_4.cast(BYTES_16.cast(INTS_4.cast(IntVector.zero(I128)).withLane(0, (int) INT_LE.get(dst, dstOffset)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I128, 0))
                 .lanewise(VectorOperators.ADD, e.lanewise(VectorOperators.ADD, h).lanewise(VectorOperators.ADD, I128_32).lanewise(VectorOperators.ASHR, 6)).lanewise(VectorOperators.MAX, I128_0).lanewise(VectorOperators.MIN, I128_255);
-        var out1 = INTS_4.cast(BYTES_16.cast(IntVector.zero(I128).withLane(0, (int) INT_LE.get(dst, row1)).reinterpretShape(B128, 0))
+        var out1 = INTS_4.cast(BYTES_16.cast(INTS_4.cast(IntVector.zero(I128)).withLane(0, (int) INT_LE.get(dst, row1)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I128, 0))
                 .lanewise(VectorOperators.ADD, f.lanewise(VectorOperators.ADD, g).lanewise(VectorOperators.ADD, I128_32).lanewise(VectorOperators.ASHR, 6)).lanewise(VectorOperators.MAX, I128_0).lanewise(VectorOperators.MIN, I128_255);
-        var out2 = INTS_4.cast(BYTES_16.cast(IntVector.zero(I128).withLane(0, (int) INT_LE.get(dst, row2)).reinterpretShape(B128, 0))
+        var out2 = INTS_4.cast(BYTES_16.cast(INTS_4.cast(IntVector.zero(I128)).withLane(0, (int) INT_LE.get(dst, row2)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I128, 0))
                 .lanewise(VectorOperators.ADD, f.lanewise(VectorOperators.SUB, g).lanewise(VectorOperators.ADD, I128_32).lanewise(VectorOperators.ASHR, 6)).lanewise(VectorOperators.MAX, I128_0).lanewise(VectorOperators.MIN, I128_255);
-        var out3 = INTS_4.cast(BYTES_16.cast(IntVector.zero(I128).withLane(0, (int) INT_LE.get(dst, row3)).reinterpretShape(B128, 0))
+        var out3 = INTS_4.cast(BYTES_16.cast(INTS_4.cast(IntVector.zero(I128)).withLane(0, (int) INT_LE.get(dst, row3)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2I, I128, 0))
                 .lanewise(VectorOperators.ADD, e.lanewise(VectorOperators.SUB, h).lanewise(VectorOperators.ADD, I128_32).lanewise(VectorOperators.ASHR, 6)).lanewise(VectorOperators.MAX, I128_0).lanewise(VectorOperators.MIN, I128_255);
         INT_LE.set(dst, dstOffset, INTS_2.cast(BYTES_8.cast(out0.convertShape(VectorOperators.I2B, B64, 0)).reinterpretShape(I64, 0)).lane(0));
@@ -1575,8 +1575,8 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
         c[o + 16] = 0;
         c[o + 32] = 0;
         c[o + 48] = 0;
-        var upper = ShortVector.broadcast(S128, dc0).blend(ShortVector.broadcast(S128, (short) dc1), RIGHT_HALF_8);
-        var lower = ShortVector.broadcast(S128, dc2).blend(ShortVector.broadcast(S128, (short) dc3), RIGHT_HALF_8);
+        var upper = SHORTS_8.cast(ShortVector.broadcast(S128, dc0)).blend(ShortVector.broadcast(S128, (short) dc1), RIGHT_HALF_8);
+        var lower = SHORTS_8.cast(ShortVector.broadcast(S128, dc2)).blend(ShortVector.broadcast(S128, (short) dc3), RIGHT_HALF_8);
         for (var y = 0; y < 4; y++) {
             var row = dstOffset + y * dstStride;
             BYTES_8.cast(SHORTS_8.cast(BYTES_8.cast(ByteVector.fromArray(B64, dst, row)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S128, 0))
@@ -1608,7 +1608,7 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
         var row1 = dstOffset + dstStride;
         var row2 = row1 + dstStride;
         var row3 = row2 + dstStride;
-        var sum = SHORTS_16.cast(BYTES_16.cast(IntVector.zero(I128).withLane(0, (int) INT_LE.get(dst, dstOffset))
+        var sum = SHORTS_16.cast(BYTES_16.cast(INTS_4.cast(IntVector.zero(I128)).withLane(0, (int) INT_LE.get(dst, dstOffset))
                 .withLane(1, (int) INT_LE.get(dst, row1)).withLane(2, (int) INT_LE.get(dst, row2))
                 .withLane(3, (int) INT_LE.get(dst, row3)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0))
@@ -1638,7 +1638,7 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
         var q0 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, pix, q)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
         var q1 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, pix, q + stride)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
         var q2 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, pix, q + 2 * stride)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-        var tcBase = SHORTS_16.cast(BYTES_16.cast(IntVector.broadcast(I128, tc0).reinterpretShape(B128, 0))
+        var tcBase = SHORTS_16.cast(BYTES_16.cast(INTS_4.cast(IntVector.broadcast(I128, tc0)).reinterpretShape(B128, 0))
                 .rearrange(LUMA_TC_SPREAD).convertShape(VectorOperators.B2S, S256, 0));
         var b = (short) beta;
         var mask = p0.lanewise(VectorOperators.SUB, q0).lanewise(VectorOperators.ABS).compare(VectorOperators.LT, ShortVector.broadcast(S256, (short) alpha))
@@ -1873,7 +1873,7 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
         var q0 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, scratch, 16)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
         var q1 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, scratch, 48)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
         var q2 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, scratch, 80)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-        var tcBase = SHORTS_16.cast(BYTES_16.cast(IntVector.broadcast(I128, tc0).reinterpretShape(B128, 0))
+        var tcBase = SHORTS_16.cast(BYTES_16.cast(INTS_4.cast(IntVector.broadcast(I128, tc0)).reinterpretShape(B128, 0))
                 .rearrange(LUMA_TC_SPREAD).convertShape(VectorOperators.B2S, S256, 0));
         var b = SHORTS_16.cast(ShortVector.broadcast(S256, (short) beta));
         var mask = p0.lanewise(VectorOperators.SUB, q0).lanewise(VectorOperators.ABS).compare(VectorOperators.LT, ShortVector.broadcast(S256, (short) alpha))
@@ -2063,12 +2063,12 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
      */
     private static void chromaEdgeRows(byte[] cb, byte[] cr, int out, int stride, int[] params, int at,
                                        byte[] scratch, int first) {
-        var alpha = ShortVector.broadcast(S256, (short) (params[at] & 0xFF))
+        var alpha = SHORTS_16.cast(ShortVector.broadcast(S256, (short) (params[at] & 0xFF)))
                 .blend(ShortVector.broadcast(S256, (short) (params[at + 1] & 0xFF)), UPPER_HALF);
-        var beta = ShortVector.broadcast(S256, (short) ((params[at] >> 8) & 0xFF))
+        var beta = SHORTS_16.cast(ShortVector.broadcast(S256, (short) ((params[at] >> 8) & 0xFF)))
                 .blend(ShortVector.broadcast(S256, (short) ((params[at + 1] >> 8) & 0xFF)), UPPER_HALF);
-        var tcBase = SHORTS_16.cast(BYTES_16.cast(LongVector.broadcast(L128,
-                        (params[at + 2] & 0xFFFFFFFFL) | ((long) params[at + 3] << 32)).reinterpretShape(B128, 0))
+        var tcBase = SHORTS_16.cast(BYTES_16.cast(LONGS_2.cast(LongVector.broadcast(L128,
+                        (params[at + 2] & 0xFFFFFFFFL) | ((long) params[at + 3] << 32))).reinterpretShape(B128, 0))
                 .rearrange(CHROMA_TC_SPREAD).convertShape(VectorOperators.B2S, S256, 0));
         var p1 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, scratch, first)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
         var p0 = SHORTS_16.cast(BYTES_16.cast(ByteVector.fromArray(B128, scratch, first + 32)).convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
@@ -2122,24 +2122,24 @@ public final class VectorH264Dsp extends ScalarH264Dsp {
             super.chromaEdgeHorizontal(cb, cr, offset, stride, params, at);
             return;
         }
-        var p1 = SHORTS_16.cast(BYTES_16.cast(LongVector.zero(L128).withLane(0, (long) LONG_LE.get(cb, offset - 2 * stride))
+        var p1 = SHORTS_16.cast(BYTES_16.cast(LONGS_2.cast(LongVector.zero(L128)).withLane(0, (long) LONG_LE.get(cb, offset - 2 * stride))
                 .withLane(1, (long) LONG_LE.get(cr, offset - 2 * stride)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-        var p0 = SHORTS_16.cast(BYTES_16.cast(LongVector.zero(L128).withLane(0, (long) LONG_LE.get(cb, offset - stride))
+        var p0 = SHORTS_16.cast(BYTES_16.cast(LONGS_2.cast(LongVector.zero(L128)).withLane(0, (long) LONG_LE.get(cb, offset - stride))
                 .withLane(1, (long) LONG_LE.get(cr, offset - stride)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-        var q0 = SHORTS_16.cast(BYTES_16.cast(LongVector.zero(L128).withLane(0, (long) LONG_LE.get(cb, offset))
+        var q0 = SHORTS_16.cast(BYTES_16.cast(LONGS_2.cast(LongVector.zero(L128)).withLane(0, (long) LONG_LE.get(cb, offset))
                 .withLane(1, (long) LONG_LE.get(cr, offset)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-        var q1 = SHORTS_16.cast(BYTES_16.cast(LongVector.zero(L128).withLane(0, (long) LONG_LE.get(cb, offset + stride))
+        var q1 = SHORTS_16.cast(BYTES_16.cast(LONGS_2.cast(LongVector.zero(L128)).withLane(0, (long) LONG_LE.get(cb, offset + stride))
                 .withLane(1, (long) LONG_LE.get(cr, offset + stride)).reinterpretShape(B128, 0))
                 .convertShape(VectorOperators.ZERO_EXTEND_B2S, S256, 0));
-        var alpha = ShortVector.broadcast(S256, (short) (params[at] & 0xFF))
+        var alpha = SHORTS_16.cast(ShortVector.broadcast(S256, (short) (params[at] & 0xFF)))
                 .blend(ShortVector.broadcast(S256, (short) (params[at + 1] & 0xFF)), UPPER_HALF);
-        var beta = ShortVector.broadcast(S256, (short) ((params[at] >> 8) & 0xFF))
+        var beta = SHORTS_16.cast(ShortVector.broadcast(S256, (short) ((params[at] >> 8) & 0xFF)))
                 .blend(ShortVector.broadcast(S256, (short) ((params[at + 1] >> 8) & 0xFF)), UPPER_HALF);
-        var tcBase = SHORTS_16.cast(BYTES_16.cast(LongVector.broadcast(L128,
-                        (params[at + 2] & 0xFFFFFFFFL) | ((long) params[at + 3] << 32)).reinterpretShape(B128, 0))
+        var tcBase = SHORTS_16.cast(BYTES_16.cast(LONGS_2.cast(LongVector.broadcast(L128,
+                        (params[at + 2] & 0xFFFFFFFFL) | ((long) params[at + 3] << 32))).reinterpretShape(B128, 0))
                 .rearrange(CHROMA_TC_SPREAD).convertShape(VectorOperators.B2S, S256, 0));
         var mask = p0.lanewise(VectorOperators.SUB, q0).lanewise(VectorOperators.ABS).compare(VectorOperators.LT, alpha)
                 .and(p1.lanewise(VectorOperators.SUB, p0).lanewise(VectorOperators.ABS).compare(VectorOperators.LT, beta))

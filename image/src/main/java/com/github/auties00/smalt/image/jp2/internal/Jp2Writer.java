@@ -694,7 +694,7 @@ public final class Jp2Writer {
             var hi = max;
             var maxLength = budgets[layer] > 0.0f ? (long) Math.ceil(budgets[layer]) : Long.MAX_VALUE;
             var quality = rateMode ? 0.0 : config.qualities()[layer];
-            var target = distortion - (maxSquaredError / Math.pow(10.0f, (float) quality / 10));
+            var target = distortion - (maxSquaredError / StrictMath.pow(10.0f, (float) quality / 10));
             double threshold;
             if ((rateMode && budgets[layer] > 0.0f) || (!rateMode && quality > 0.0)) {
                 var current = 0.0;

@@ -244,7 +244,7 @@ final class VorbisMapping extends OggMapping {
      * @return the lookup value count
      */
     static long lookup1Values(int entries, int dimensions) {
-        var root = (long) Math.floor(Math.pow(entries, 1.0 / dimensions));
+        var root = (long) Math.floor(StrictMath.pow(entries, 1.0 / dimensions));
         while (root > 0 && power(root, dimensions) > entries) {
             root--;
         }

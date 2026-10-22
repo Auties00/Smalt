@@ -150,7 +150,7 @@ final class HdrTargetEngine implements ColorEngine {
         if (options.toneMapping() == ToneMapping.BT2390 && sourcePeak > targetLimit) {
             gain = new float[Hdr.STEPS + 2];
             for (var k = 0; k <= Hdr.STEPS; k++) {
-                var nits = Math.pow((double) k / Hdr.STEPS, 2) * sourcePeak;
+                var nits = StrictMath.pow((double) k / Hdr.STEPS, 2) * sourcePeak;
                 gain[k] = nits > 0 ? (float) (Hdr.eetf(nits, sourcePeak, targetLimit) / nits) : 1f;
             }
             gain[Hdr.STEPS + 1] = gain[Hdr.STEPS];
@@ -301,7 +301,7 @@ final class HdrTargetEngine implements ColorEngine {
             b *= inverse;
             var yd = targetLuminance[0] * r + targetLuminance[1] * g + targetLuminance[2] * b;
             // the inverse OOTF of a 1000-nit display: E = Yd^((1 - gamma) / gamma) * Fd, (1 - 1.2) / 1.2 = -1 / 6
-            var factor = yd > 0f ? (float) (1.0 / Math.sqrt(Math.cbrt(yd))) : 0f;
+            var factor = yd > 0f ? (float) (1.0 / Math.sqrt(StrictMath.cbrt(yd))) : 0f;
             light[0] = Hdr.lookupSqrt(encode, r * factor);
             light[1] = Hdr.lookupSqrt(encode, g * factor);
             light[2] = Hdr.lookupSqrt(encode, b * factor);

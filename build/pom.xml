@@ -61,6 +61,7 @@
         <build.helper.plugin.version>3.6.0</build.helper.plugin.version>
         <exec.plugin.version>3.1.0</exec.plugin.version>
         <jacoco.plugin.version>0.8.15</jacoco.plugin.version>
+        <forbiddenapis.plugin.version>3.11</forbiddenapis.plugin.version>
         <!-- false uploads and validates the release on the Central Portal, leaving the publish button to a human -->
         <central.autoPublish>true</central.autoPublish>
         <central.waitUntil>published</central.waitUntil>
@@ -103,6 +104,11 @@
                     <groupId>org.jacoco</groupId>
                     <artifactId>jacoco-maven-plugin</artifactId>
                     <version>${jacoco.plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>de.thetaphi</groupId>
+                    <artifactId>forbiddenapis</artifactId>
+                    <version>${forbiddenapis.plugin.version}</version>
                 </plugin>
                 <!--
                     Shared by the javadoc-check profile (reference lint) and the release profile (javadoc jars):

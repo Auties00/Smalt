@@ -147,7 +147,7 @@ public final class Downmix {
             }
         }
         if (header.lfe && header.lfeMixLevel >= 0) {
-            var lfeLevel = (float) Math.pow(10, (10 - header.lfeMixLevel - 4.5) / 20);
+            var lfeLevel = (float) StrictMath.pow(10, (10 - header.lfeMixLevel - 4.5) / 20);
             left[coded - 1] = lfeLevel;
             right[coded - 1] = lfeLevel;
         }

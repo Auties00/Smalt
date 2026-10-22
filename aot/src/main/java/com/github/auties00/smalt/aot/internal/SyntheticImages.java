@@ -59,7 +59,7 @@ final class SyntheticImages {
                 pixels[o] = (byte) luma;
                 pixels[o + 1] = (byte) ((luma + u) >> 1);
                 pixels[o + 2] = (byte) (255 - u);
-                var distance = Math.hypot(x - width / 2.0, y - height / 2.0);
+                var distance = StrictMath.hypot(x - width / 2.0, y - height / 2.0);
                 pixels[o + 3] = alpha ? (byte) Math.clamp((int) ((height / 2.0 - distance) * 3), 0, 255) : (byte) 255;
             }
         }
@@ -87,7 +87,7 @@ final class SyntheticImages {
                     pixels[o] = (byte) luma;
                     pixels[o + 1] = (byte) (255 - luma);
                     pixels[o + 2] = (byte) (luma ^ x);
-                    pixels[o + 3] = (byte) Math.clamp((int) ((half - 8 - Math.hypot(x - half, y - half)) * 4), 0, 255);
+                    pixels[o + 3] = (byte) Math.clamp((int) ((half - 8 - StrictMath.hypot(x - half, y - half)) * 4), 0, 255);
                 }
             }
             frames.add(RgbaPicture.of(size, size, size * 4, pixels, true));
@@ -168,7 +168,7 @@ final class SyntheticImages {
         var linear = new short[256];
         for (var value = 0; value < 256; value++) {
             var encoded = value / 255.0;
-            var decoded = encoded <= 0.04045 ? encoded / 12.92 : Math.pow((encoded + 0.055) / 1.055, 2.4);
+            var decoded = encoded <= 0.04045 ? encoded / 12.92 : StrictMath.pow((encoded + 0.055) / 1.055, 2.4);
             linear[value] = (short) Math.round(decoded * 8192);
         }
         for (var y = height - 1; y >= 0; y--) {
@@ -922,7 +922,7 @@ final class SyntheticImages {
         var mask = new byte[maskRow * height * 2];
         for (var y = 0; y < height * 2; y++) {
             for (var x = 0; x < width * 2; x++) {
-                if (Math.hypot(x - width, y - height) < Math.min(width, height) * 0.8) {
+                if (StrictMath.hypot(x - width, y - height) < Math.min(width, height) * 0.8) {
                     mask[y * maskRow + x / 8] |= (byte) (0x80 >>> (x & 7));
                 }
             }

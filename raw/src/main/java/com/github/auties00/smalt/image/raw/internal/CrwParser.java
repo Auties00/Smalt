@@ -454,13 +454,13 @@ final class CrwParser {
         var shot = words(reader, records.get(SHOT_INFO));
         if (shot.length > 5) {
             if (shot[2] > 0) {
-                file.iso = Math.round(100 * Math.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
+                file.iso = Math.round(100 * StrictMath.pow(2, (shot[2] - 160 + shot[1]) / 32.0));
             }
             if (shot[4] != Short.MIN_VALUE && shot[4] != 0) {
-                file.fNumber = Math.pow(2, shot[4] / 64.0);
+                file.fNumber = StrictMath.pow(2, shot[4] / 64.0);
             }
             if (shot[5] != Short.MIN_VALUE && shot[5] != 0) {
-                file.exposureTime = Math.pow(2, -shot[5] / 32.0);
+                file.exposureTime = StrictMath.pow(2, -shot[5] / 32.0);
             }
         }
         var camera = words(reader, records.get(CAMERA_SETTINGS));

@@ -120,13 +120,13 @@ final class QmfSynthesis {
         }
         for (var k = 0; k < 64; k++) {
             var angle = 3 * Math.PI * (k + 0.5) / 2;
-            LOW_DELAY_ROTATION_REAL[k] = (float) Math.cos(angle);
-            LOW_DELAY_ROTATION_IMAGINARY[k] = (float) Math.sin(angle);
+            LOW_DELAY_ROTATION_REAL[k] = (float) StrictMath.cos(angle);
+            LOW_DELAY_ROTATION_IMAGINARY[k] = (float) StrictMath.sin(angle);
         }
         for (var k = 0; k < 32; k++) {
             var angle = -Math.PI * (k + 0.5) / 128;
-            ROTATION_REAL[k] = (float) Math.cos(angle);
-            ROTATION_IMAGINARY[k] = (float) Math.sin(angle);
+            ROTATION_REAL[k] = (float) StrictMath.cos(angle);
+            ROTATION_IMAGINARY[k] = (float) StrictMath.sin(angle);
             POSITIONS_32[k] = (k & 3) * 8 + (Integer.reverse(k >> 2) >>> 29);
         }
         for (var k = 0; k < 16; k++) {
@@ -135,11 +135,11 @@ final class QmfSynthesis {
         for (var j = 0; j < 8; j++) {
             for (var m = 1; m <= 3; m++) {
                 var angle = -2 * Math.PI * m * j / 32;
-                RADIX4[(m - 1) * 8 + j] = (float) Math.cos(angle);
-                RADIX4[(m + 2) * 8 + j] = (float) Math.sin(angle);
+                RADIX4[(m - 1) * 8 + j] = (float) StrictMath.cos(angle);
+                RADIX4[(m + 2) * 8 + j] = (float) StrictMath.sin(angle);
             }
-            RADIX2[j] = (float) Math.cos(-Math.PI * j / 8);
-            RADIX2[8 + j] = (float) Math.sin(-Math.PI * j / 8);
+            RADIX2[j] = (float) StrictMath.cos(-Math.PI * j / 8);
+            RADIX2[8 + j] = (float) StrictMath.sin(-Math.PI * j / 8);
         }
     }
 
@@ -272,10 +272,10 @@ final class QmfSynthesis {
         this.postSin = new float[half];
         for (var k = 0; k < half; k++) {
             var angle = Math.PI * (k + 0.125) / bands;
-            preCos[k] = (float) (Math.cos(angle) / 64);
-            preSin[k] = (float) (Math.sin(angle) / 64);
-            postCos[k] = (float) Math.cos(angle);
-            postSin[k] = (float) Math.sin(angle);
+            preCos[k] = (float) (StrictMath.cos(angle) / 64);
+            preSin[k] = (float) (StrictMath.sin(angle) / 64);
+            postCos[k] = (float) StrictMath.cos(angle);
+            postSin[k] = (float) StrictMath.sin(angle);
         }
         var width = kernel.width();
         this.vector = new float[(HISTORY + SLOTS) * 2 * bands];

@@ -124,7 +124,7 @@ final class TransientPreNoise {
     private static float[] fadeOut(int length) {
         var weights = new float[length];
         for (var n = 0; n < length; n++) {
-            weights[n] = (float) (0.5 * (1 + Math.cos(Math.PI * (n + 0.5) / length)));
+            weights[n] = (float) (0.5 * (1 + StrictMath.cos(Math.PI * (n + 0.5) / length)));
         }
         return weights;
     }

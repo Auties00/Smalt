@@ -234,7 +234,7 @@ public final class SampleNormalizer {
         var re = signed(unsigned(src, bit, half, false), half);
         var im = signed(unsigned(src, bit + half, half, false), half);
         var limit = (double) ((1L << (half - 1)) - 1);
-        var magnitude = Math.min(Math.hypot(re, im), limit);
+        var magnitude = Math.min(StrictMath.hypot(re, im), limit);
         return (int) Math.round(Math.rint(magnitude) * 65535 / limit);
     }
 
@@ -249,7 +249,7 @@ public final class SampleNormalizer {
      */
     private float complexFloat(byte[] src, long bit, int width, boolean bigEndian) {
         var half = width / 2;
-        return (float) Math.hypot(real(src, bit, half, bigEndian), real(src, bit + half, half, bigEndian));
+        return (float) StrictMath.hypot(real(src, bit, half, bigEndian), real(src, bit + half, half, bigEndian));
     }
 
     /**

@@ -525,18 +525,18 @@ public final class SbrElement {
             for (var l = 0; l < level.envelopes; l++) {
                 var bands = tables.bands(level.resolution[l]);
                 for (var k = 0; k < bands; k++) {
-                    var base = 64 * Math.pow(2, level.envelope[l][k] / a + 1);
+                    var base = 64 * StrictMath.pow(2, level.envelope[l][k] / a + 1);
                     var right = balance.envelope[l][k];
-                    channels[0].envelopeEnergy[l][k] = base / (1 + Math.pow(2, (pan - right) / a));
-                    channels[1].envelopeEnergy[l][k] = base / (1 + Math.pow(2, (right - pan) / a));
+                    channels[0].envelopeEnergy[l][k] = base / (1 + StrictMath.pow(2, (pan - right) / a));
+                    channels[1].envelopeEnergy[l][k] = base / (1 + StrictMath.pow(2, (right - pan) / a));
                 }
             }
             for (var l = 0; l < level.noiseEnvelopes; l++) {
                 for (var k = 0; k < tables.noiseBands; k++) {
-                    var base = Math.pow(2, 6 - level.noise[l][k] + 1);
+                    var base = StrictMath.pow(2, 6 - level.noise[l][k] + 1);
                     var right = balance.noise[l][k];
-                    channels[0].noiseFloor[l][k] = base / (1 + Math.pow(2, 12 - right));
-                    channels[1].noiseFloor[l][k] = base / (1 + Math.pow(2, right - 12));
+                    channels[0].noiseFloor[l][k] = base / (1 + StrictMath.pow(2, 12 - right));
+                    channels[1].noiseFloor[l][k] = base / (1 + StrictMath.pow(2, right - 12));
                 }
             }
             return;
@@ -547,12 +547,12 @@ public final class SbrElement {
             for (var l = 0; l < frame.envelopes; l++) {
                 var bands = tables.bands(frame.resolution[l]);
                 for (var k = 0; k < bands; k++) {
-                    channels[c].envelopeEnergy[l][k] = 64 * Math.pow(2, frame.envelope[l][k] / a);
+                    channels[c].envelopeEnergy[l][k] = 64 * StrictMath.pow(2, frame.envelope[l][k] / a);
                 }
             }
             for (var l = 0; l < frame.noiseEnvelopes; l++) {
                 for (var k = 0; k < tables.noiseBands; k++) {
-                    channels[c].noiseFloor[l][k] = Math.pow(2, 6 - frame.noise[l][k]);
+                    channels[c].noiseFloor[l][k] = StrictMath.pow(2, 6 - frame.noise[l][k]);
                 }
             }
         }

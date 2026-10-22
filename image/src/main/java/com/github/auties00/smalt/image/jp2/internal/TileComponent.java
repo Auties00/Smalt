@@ -147,7 +147,7 @@ final class TileComponent {
                 var gain = (!encoder && !coding.reversible()) || orientation == 0 ? 0 : orientation == 3 ? 2 : 1;
                 var exponent = quantization.exponent(bandIndex);
                 var mantissa = quantization.mantissa(bandIndex);
-                var stepSize = (float) ((1.0 + mantissa / 2048.0) * Math.pow(2.0, precision + gain - exponent));
+                var stepSize = (float) ((1.0 + mantissa / 2048.0) * StrictMath.pow(2.0, precision + gain - exponent));
                 var bitPlanes = exponent + quantization.guardBits() - 1;
                 var empty = bx1 <= bx0 || by1 <= by0;
                 var precincts = new Precinct[(int) precinctCount];
