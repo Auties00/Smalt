@@ -10,6 +10,7 @@ import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.internal.plane.Narrow;
 import com.github.auties00.smalt.internal.plane.Planes;
+import com.github.auties00.smalt.internal.sei.FilmGrainSynthesizer;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -72,9 +73,22 @@ import java.util.function.Consumer;
  * leaves unspecified default to BT.709 for pictures wider than 1024 or taller than 576 samples
  * and to BT.601 (SMPTE 170M) otherwise, with limited range unless {@code video_full_range_flag}
  * is set; the chroma siting is the VUI's {@code chroma_sample_loc_type_top_field} when signaled,
- * and the mastering display and content light level come from the last SEI messages that carried
- * them. A frame is a keyframe when its picture is an IDR picture or an I picture carrying a
- * recovery point.
+ * the transfer function the one an alternative transfer characteristics SEI message of the coded
+ * video sequence prefers when present, and the mastering display and content light level come from
+ * the last SEI messages that carried them. A frame is a keyframe when its picture is an IDR picture
+ * or an I picture carrying a recovery point.
+ *
+ * <p>With {@link H264DecoderOptions#filmGrain()} set, the film grain a film grain characteristics
+ * SEI message describes (the frequency filtering model with additive blending) is added to the
+ * frames it applies to, before cropping; the samples are bit-exact with SMPTE RDD 5 for 8-bit 4:2:0
+ * frames, and other formats get the same grain extended to them. The display information of the
+ * picture timing ({@code pic_struct}), frame packing arrangement and display orientation SEI
+ * messages is reported in {@link VideoFrame#sideData()}; a frame woven from two field pictures
+ * reports the parity of the field shown first. Messages that persist (a repetition period above 0)
+ * apply to the frames output after them until a cancel, a later message of the same type or an IDR
+ * picture. A duration derived from the track's frame rate or the VUI timing is extended by the
+ * field periods {@code pic_struct} repeats: one and a half frame periods for the three-field
+ * structures, two for frame doubling and three for frame tripling.
  *
  * <p>Unsupported but valid streams raise {@link MediaException.Unsupported} naming the feature:
  * {@code "h264 sp/si slices"} and {@code "h264 data partitioning"}. NAL
@@ -201,6 +215,21 @@ public final class H264Decoder implements VideoDecoder {
      * keeps its carrier thread.
      */
     private final ParallelBands.Operation operation = new ParallelBands.Operation();
+
+    /**
+     * The film grain renderer, created with the first frame that carries grain.
+     */
+    private FilmGrainSynthesizer grainSynthesizer;
+
+    /**
+     * The recycled 8-bit planes of frames with film grain, by component.
+     */
+    private final byte[][] grainPlanes = new byte[3][];
+
+    /**
+     * The recycled 16-bit planes of frames with film grain, by component.
+     */
+    private final short[][] grainWidePlanes = new short[3][];
 
     private boolean closed;
 
@@ -536,6 +565,9 @@ public final class H264Decoder implements VideoDecoder {
      * @param frame the engine's frame
      */
     private void emit(H264DecoderEngine.OutputFrame frame) {
+        if (frame.filmGrain() != null && options.filmGrain()) {
+            frame = withFilmGrain(frame);
+        }
         var sps = frame.sps();
         var width = sps.croppedWidth();
         var height = sps.croppedHeight();
@@ -598,17 +630,19 @@ public final class H264Decoder implements VideoDecoder {
             }
             result = target;
         }
-        var duration = frame.duration() > 0 ? frame.duration() : frameDuration(sps);
+        var nominal = frame.duration() > 0 ? frame.duration() : frameDuration(sps);
         var pts = frame.pts();
-        if (pts == Packet.NO_TIMESTAMP && duration > 0) {
+        if (pts == Packet.NO_TIMESTAMP && nominal > 0) {
             if (lastPts == Packet.NO_TIMESTAMP) {
                 pts = 0;
             } else {
                 var step = pocStep == Integer.MAX_VALUE ? 2 : pocStep;
                 var frames = Math.max(1, (frame.poc() - lastPoc) / step);
-                pts = lastPts + frames * duration;
+                pts = lastPts + frames * nominal;
             }
         }
+        // the picture timing pic_struct shows the frame for extra field periods
+        var duration = frame.duration() > 0 ? nominal : nominal * (2 + frame.sideData().repeatedFields()) / 2;
         var pocDelta = frame.poc() - lastPoc;
         if (pocDelta > 0 && lastPts != Packet.NO_TIMESTAMP) {
             pocStep = Math.min(pocStep, pocDelta);
@@ -617,7 +651,8 @@ public final class H264Decoder implements VideoDecoder {
         if (pts != Packet.NO_TIMESTAMP) {
             lastPts = pts;
         }
-        var decoded = new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.keyframe());
+        var decoded = new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.keyframe(),
+                frame.sideData());
         if (checkedOutput != null) {
             try {
                 checkedOutput.accept(decoded, frame.damaged());
@@ -628,6 +663,66 @@ public final class H264Decoder implements VideoDecoder {
         } else {
             output.accept(decoded);
         }
+    }
+
+    /**
+     * Returns a frame whose planes hold the decoded samples of a frame plus the film grain its
+     * film grain characteristics message describes, rendered on the whole decoded frame before
+     * cropping, or the frame itself when the message is not one the renderer supports.
+     *
+     * @param frame the engine's frame, whose film grain message is not {@code null}
+     * @return the frame with grain, whose planes are recycled for the next frame with grain
+     */
+    private H264DecoderEngine.OutputFrame withFilmGrain(H264DecoderEngine.OutputFrame frame) {
+        var sps = frame.sps();
+        var params = frame.filmGrain();
+        if (!params.renderable(frame.bitDepthLuma(), frame.bitDepthChroma(), sps.videoFullRange,
+                sps.colorDescriptionPresent, sps.colorPrimaries, sps.transferCharacteristics, sps.matrixCoefficients)) {
+            return frame;
+        }
+        if (grainSynthesizer == null) {
+            grainSynthesizer = new FilmGrainSynthesizer();
+        }
+        var width = sps.codedWidth();
+        var height = sps.codedHeight();
+        var format = sps.chromaFormatIdc;
+        var chromaWidth = format == 3 ? width : width >> 1;
+        var chromaHeight = format == 1 ? height >> 1 : height;
+        var components = frame.hasChroma() ? 3 : 1;
+        var threads = Math.max(1, options.threads());
+        var offset = frame.grainOffset();
+        byte[][] planes8 = null;
+        short[][] planes16 = null;
+        for (var c = 0; c < components; c++) {
+            var w = c == 0 ? width : chromaWidth;
+            var h = c == 0 ? height : chromaHeight;
+            var stride = c == 0 ? frame.lumaStride() : frame.chromaStride();
+            var origin = c == 0 ? frame.lumaOrigin() : frame.chromaOrigin();
+            if (frame.wide()) {
+                planes16 = grainWidePlanes;
+                if (planes16[c] == null || planes16[c].length < w * h) {
+                    planes16[c] = new short[w * h];
+                }
+                var src = c == 0 ? frame.luma16() : c == 1 ? frame.cb16() : frame.cr16();
+                var depth = c == 0 ? frame.bitDepthLuma() : frame.bitDepthChroma();
+                grainSynthesizer.apply(params, offset, c, format, depth, src, origin, stride, planes16[c], 0, w, w, h,
+                        threads);
+            } else {
+                planes8 = grainPlanes;
+                if (planes8[c] == null || planes8[c].length < w * h) {
+                    planes8[c] = new byte[w * h];
+                }
+                var src = c == 0 ? frame.luma() : c == 1 ? frame.cb() : frame.cr();
+                grainSynthesizer.apply(params, offset, c, format, src, origin, stride, planes8[c], 0, w, w, h, threads);
+            }
+        }
+        var chroma = components == 3;
+        return new H264DecoderEngine.OutputFrame(planes8 != null ? planes8[0] : null,
+                planes8 != null && chroma ? planes8[1] : null, planes8 != null && chroma ? planes8[2] : null,
+                planes16 != null ? planes16[0] : null, planes16 != null && chroma ? planes16[1] : null,
+                planes16 != null && chroma ? planes16[2] : null, frame.bitDepthLuma(), frame.bitDepthChroma(), width,
+                chromaWidth, 0, 0, sps, frame.color(), frame.pts(), frame.duration(), frame.keyframe(), frame.poc(),
+                frame.damaged(), params, offset, frame.sideData(), frame.picStruct());
     }
 
     /**

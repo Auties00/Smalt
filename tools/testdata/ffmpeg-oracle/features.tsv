@@ -15,6 +15,7 @@ encoder	libvpx-vp9	VP9 fixtures
 encoder	libwebp	WebP fixtures
 encoder	libwebp_anim	animated WebP fixtures
 encoder	libx264	H.264 fixtures, 8 and 10 bits
+encoder	libx264rgb	RGB H.264 fixtures (4:4:4 GBR and lossless)
 encoder	libx265	HEVC fixtures, 8, 10 and 12 bits
 encoder	libxvid	MPEG-4 Part 2 fixtures (Xvid)
 encoder	libaom-av1	AV1 and AVIF fixtures

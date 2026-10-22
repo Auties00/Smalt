@@ -2,6 +2,7 @@ package com.github.auties00.smalt.mpeg.fuzz;
 
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
+import com.github.auties00.smalt.internal.sei.SeiWriter;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.HeifBuilder;
@@ -450,6 +451,60 @@ class FuzzSeedWriter {
 
     private static int nalType(byte[] stream, int start) {
         return (stream[start + (stream[start + 2] == 1 ? 3 : 4)] >> 1) & 0x3F;
+    }
+
+    @Test
+    @DisplayName("writes the H.264 and HEVC seeds of the film grain, frame packing and display orientation messages")
+    void displaySei() {
+        var h264 = Fixtures.read(ffmpeg("h264", video(64, 64, 4), "-c:v", "libx264", "-bf", "1", "-x264-params",
+                "frame-packing=3:colorprim=bt2020:transfer=bt2020-10:colormatrix=bt2020nc:"
+                        + "alternative-transfer=arib-std-b67"));
+        var grain = List.of(List.of(new SeiWriter.Interval(0, 255, 60, 8, 6)),
+                List.of(new SeiWriter.Interval(0, 127, 40, 6, 6), new SeiWriter.Interval(128, 255, 90, 12, 3)),
+                List.<SeiWriter.Interval>of());
+        var annotated = SeiWriter.insert(h264, false, false, picture -> List.of(
+                SeiWriter.nal(false, 19, SeiWriter.filmGrain(false, 3, picture == 0 ? 1 : 0, grain)),
+                SeiWriter.nal(false, 47, SeiWriter.displayOrientation(false, true, false, 16384, 1))));
+        write(MpegFuzzTest.class, "h264", "valid-sei-display-grain.bin",
+                FuzzPackets.video(0, 64, 64, null, h264AccessUnits(annotated)));
+        var hevc = Fixtures.read(ffmpeg("hevc", video(64, 64, 4), "-c:v", "libx265", "-x265-params",
+                "log-level=error:bframes=1"));
+        var annotatedHevc = SeiWriter.insert(hevc, true, false, picture -> List.of(
+                SeiWriter.nal(true, 19, SeiWriter.filmGrain(true, 3, picture == 0 ? 1 : 0, grain)),
+                SeiWriter.nal(true, 45, SeiWriter.framePacking(true, 0, 4, false, 1, false, false, false, false,
+                        true, true, new int[]{0, 0, 0, 0}, 1, false)),
+                SeiWriter.nal(true, 47, SeiWriter.displayOrientation(true, false, true, 32768, 0))));
+        write(MpegFuzzTest.class, "hevc", "valid-sei-display-grain.bin",
+                FuzzPackets.video(0, 64, 64, null, accessUnits(annotatedHevc, 6)));
+    }
+
+    /**
+     * Splits an Annex B H.264 stream into its access units, each from the start code of its first NAL unit; a new
+     * access unit starts at an SEI, parameter set or access unit delimiter NAL unit, or a first slice, once the
+     * current one holds a slice. Only the first is flagged as a keyframe.
+     */
+    private static List<FuzzPackets.Part> h264AccessUnits(byte[] stream) {
+        var starts = nalStarts(stream);
+        var boundaries = new ArrayList<Integer>();
+        var slice = false;
+        for (var start : starts) {
+            var header = start + (stream[start + 2] == 1 ? 3 : 4);
+            var type = stream[header] & 0x1F;
+            var vcl = type == 1 || type == 5;
+            var first = vcl && (stream[header + 1] & 0x80) != 0;
+            if (boundaries.isEmpty() || slice && (first || type == 6 || type == 7 || type == 8 || type == 9)) {
+                boundaries.add(start);
+                slice = false;
+            }
+            slice |= vcl;
+        }
+        boundaries.add(stream.length);
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var index = 0; index + 1 < boundaries.size(); index++) {
+            parts.add(new FuzzPackets.Part(Arrays.copyOfRange(stream, boundaries.get(index), boundaries.get(index + 1)),
+                    index == 0));
+        }
+        return parts;
     }
 
     private static void seed(String method, String name, Codec codec, Path file) {

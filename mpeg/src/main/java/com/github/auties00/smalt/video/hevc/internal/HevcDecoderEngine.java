@@ -589,6 +589,10 @@ public final class HevcDecoderEngine {
         var recoveryPoint = sei.recoveryPoint && recoveryCount >= -halfPocLsb && recoveryCount < halfPocLsb;
         var exactMatch = sei.recoveryExactMatch;
         var timing = sei.pictureTiming;
+        var filmGrain = sei.filmGrain;
+        var framePacking = sei.framePacking;
+        var orientation = sei.orientation;
+        var transferPending = sei.transferPending;
         sei.clearPictureMessages();
         skipping = false;
         var recoveryStart = false;
@@ -677,6 +681,11 @@ public final class HevcDecoderEngine {
         var beforeRecovery = recovering && poc < recoveryPoc;
         picOutput = header.picOutput && !beforeRecovery;
         hashVerifiable = !recovering || recoveryExact && !beforeRecovery;
+        var newSequence = irap && noRaslOutput || recoveryStart;
+        if (newSequence && !transferPending) {
+            // an alternative transfer characteristics message lasts until the end of its sequence
+            sei.preferredTransfer = -1;
+        }
         var frame = obtainFrame(sps);
         frame.reset(sps.sizeInCtbs);
         frame.id = nextId++;
@@ -684,6 +693,10 @@ public final class HevcDecoderEngine {
         frame.irap = irap;
         frame.recoveryPoint = recoveryPoint;
         frame.picStruct = sps.frameFieldInfoPresent && timing >= 0 ? timing >> 4 : -1;
+        frame.newSequence = newSequence;
+        frame.filmGrain = filmGrain;
+        frame.framePacking = framePacking;
+        frame.orientation = orientation;
         frame.sps = sps;
         frame.pts = packetPts;
         frame.duration = packetDuration;
@@ -1238,12 +1251,14 @@ public final class HevcDecoderEngine {
     }
 
     /**
-     * Finishes the current picture and outputs every picture still waiting.
+     * Finishes the current picture and outputs every picture still waiting. The SEI messages of an
+     * access unit whose picture never started are forgotten.
      */
     public void flush() {
         try {
             finishPicture();
         } finally {
+            sei.clearPictureMessages();
             awaitAllJobs();
             bumpAll();
             drainOutput(true);

@@ -2,6 +2,8 @@ package com.github.auties00.smalt.video.h264.internal;
 
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.internal.plane.Planes;
+import com.github.auties00.smalt.internal.sei.DisplaySei;
+import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 import java.util.Arrays;
@@ -463,6 +465,39 @@ final class DecoderFrame {
      * The color description of the frame.
      */
     ColorInfo color;
+
+    /**
+     * Whether every slice of the frame decoded so far is an I slice.
+     */
+    boolean allIntra;
+
+    /**
+     * The {@code PicOrderCnt_offset} of SMPTE RDD 5 1.5.2.1.1 for the frame: the
+     * {@code idr_pic_id} of the last IDR frame in decoding order, or 0 after a non-IDR frame made
+     * of I slices only.
+     */
+    int grainPocOffset;
+
+    /**
+     * The film grain characteristics message of the frame's access units, or {@code null}.
+     */
+    FilmGrainParameters filmGrain;
+
+    /**
+     * The frame packing arrangement message of the frame's access units, or {@code null}.
+     */
+    DisplaySei.FramePackingMessage framePacking;
+
+    /**
+     * The display orientation message of the frame's access units, or {@code null}.
+     */
+    DisplaySei.OrientationMessage orientation;
+
+    /**
+     * The {@code pic_struct} of the picture timing message of the frame's first access unit, or
+     * -1.
+     */
+    int picStruct = -1;
 
     /**
      * The sequence parameter set the frame was decoded with, which carries its cropping.

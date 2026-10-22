@@ -373,7 +373,7 @@ public final class VideoReader implements AutoCloseable {
                 if (frame.duration() <= 0 && pts <= dropBefore) {
                     var recycle = candidate != null ? candidate.picture() : spare.poll();
                     var held = PictureCopy.copy(frame.picture(), recycle);
-                    candidate = new VideoFrame(held, pts, frame.duration(), frame.keyframe());
+                    candidate = new VideoFrame(held, pts, frame.duration(), frame.keyframe(), frame.sideData());
                     return;
                 }
                 if (candidate != null) {
@@ -388,7 +388,7 @@ public final class VideoReader implements AutoCloseable {
             }
         }
         var copy = PictureCopy.copy(frame.picture(), spare.poll());
-        ready.add(new VideoFrame(copy, pts, frame.duration(), frame.keyframe()));
+        ready.add(new VideoFrame(copy, pts, frame.duration(), frame.keyframe(), frame.sideData()));
     }
 
     /**

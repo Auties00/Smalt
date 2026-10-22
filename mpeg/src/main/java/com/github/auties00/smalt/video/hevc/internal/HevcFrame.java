@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.video.hevc.internal;
 
+import com.github.auties00.smalt.internal.sei.DisplaySei;
+import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 import java.util.Arrays;
@@ -205,6 +207,27 @@ public final class HevcFrame {
     public int picStruct = -1;
 
     /**
+     * Whether the picture starts a coded video sequence: an IRAP picture with
+     * {@code NoRaslOutputFlag}, or the picture decoding started at.
+     */
+    public boolean newSequence;
+
+    /**
+     * The film grain characteristics message of the picture's access unit, or {@code null}.
+     */
+    public FilmGrainParameters filmGrain;
+
+    /**
+     * The frame packing arrangement message of the picture's access unit, or {@code null}.
+     */
+    public DisplaySei.FramePackingMessage framePacking;
+
+    /**
+     * The display orientation message of the picture's access unit, or {@code null}.
+     */
+    public DisplaySei.OrientationMessage orientation;
+
+    /**
      * Whether decoding the picture failed, so its samples are concealed.
      */
     public boolean damaged;
@@ -354,6 +377,10 @@ public final class HevcFrame {
         recoveryPoint = false;
         intraOnly = true;
         picStruct = -1;
+        newSequence = false;
+        filmGrain = null;
+        framePacking = null;
+        orientation = null;
         damaged = false;
         sliceCount = 0;
         Arrays.fill(ref0, (byte) -1);

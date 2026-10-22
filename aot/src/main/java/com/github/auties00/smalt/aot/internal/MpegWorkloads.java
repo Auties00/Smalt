@@ -89,6 +89,7 @@ final class MpegWorkloads {
                         () -> h264Encode(1, H264EncoderSpeed.FASTEST, H264Profile.CONSTRAINED_BASELINE)),
                 file("h264-decode-t1", () -> h264Decode(1, false)),
                 file("h264-decode-t2", () -> h264Decode(2, false)),
+                file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
                 file("aac-encode", () -> aacEncode(6)),
                 file("aac-decode", () -> aacDecode("aac-decode", false, false, 6)),
                 file("heaac-decode", () -> aacDecode("heaac-decode", true, false, 6)),
@@ -148,6 +149,51 @@ final class MpegWorkloads {
         var decoder = new H264Decoder(VideoStreams.track(Codec.H264, codecConfig.orElse(null)),
                 options.toBuilder().threads(threads).build());
         return VideoStreams.decode((realtime ? "h264-decode-rt-t" : "h264-decode-t") + threads, packets, decoder);
+    }
+
+    /**
+     * An H.264 SEI NAL unit (without start code) holding a film grain characteristics message for the
+     * current picture: frequency filtering with additive blending, {@code log2_scale_factor} 3, two
+     * intensity intervals per component with different cut frequencies.
+     */
+    private static final byte[] FILM_GRAIN_SEI = {
+            0x06, 0x13, 0x28, 0x00, (byte) 0xF8, 0x0A, 0x00, 0x78, 0x03, (byte) 0xC0, 0x40, 0x63, (byte) 0xCF,
+            (byte) 0xF8, 0x0C, (byte) 0x81, 0x01, 0x40, 0x14, 0x00, (byte) 0xFE, 0x05, 0x01, (byte) 0x83, 0x20,
+            0x3F, (byte) 0xC0, 0x5A, 0x06, 0x0C, 0x02, (byte) 0x80, 0x1F, (byte) 0xC0, 0x50, 0x18, 0x31, 0x01,
+            (byte) 0xFE, 0x0F, 0x02, (byte) 0x81, 0x48, (byte) 0x80
+    };
+
+    /**
+     * Returns a workload that decodes a High profile H.264 stream of the file encoder whose pictures
+     * carry a film grain characteristics SEI message, so the decoder renders the grain.
+     *
+     * @param threads the decoder threads
+     * @return the workload
+     */
+    private static TrainingWorkload h264FilmGrainDecode(int threads) {
+        var encoder = new H264Encoder(WIDTH, HEIGHT, fileOptions(H264Profile.HIGH, H264EncoderSpeed.FASTEST, 2));
+        var codecConfig = encoder.codecConfig().orElse(null);
+        // an avcC record means length-prefixed NAL units of its length size, otherwise Annex B
+        var lengthSize = codecConfig != null && codecConfig.length > 4 ? (codecConfig[4] & 3) + 1 : 0;
+        var packets = new ArrayList<Packet>();
+        for (var packet : VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                VideoStreams.DECODED_FRAMES / 4))) {
+            var prefix = new byte[(lengthSize == 0 ? 4 : lengthSize) + FILM_GRAIN_SEI.length];
+            if (lengthSize == 0) {
+                prefix[3] = 1;
+            } else {
+                for (var i = 0; i < lengthSize; i++) {
+                    prefix[i] = (byte) (FILM_GRAIN_SEI.length >>> (8 * (lengthSize - 1 - i)));
+                }
+            }
+            System.arraycopy(FILM_GRAIN_SEI, 0, prefix, prefix.length - FILM_GRAIN_SEI.length, FILM_GRAIN_SEI.length);
+            var data = Arrays.copyOf(prefix, prefix.length + packet.data().length);
+            System.arraycopy(packet.data(), 0, data, prefix.length, packet.data().length);
+            packets.add(packet.withData(data));
+        }
+        var decoder = new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
+                H264DecoderOptions.defaults().toBuilder().threads(threads).build());
+        return VideoStreams.decode("h264-decode-film-grain-t" + threads, packets, decoder);
     }
 
     /**

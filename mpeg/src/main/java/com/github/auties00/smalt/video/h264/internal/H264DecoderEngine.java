@@ -6,10 +6,16 @@ import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.internal.sei.DisplaySei;
+import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
+import com.github.auties00.smalt.internal.sei.SeiPersistence;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.video.FieldOrder;
+import com.github.auties00.smalt.video.FrameSideData;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -119,11 +125,18 @@ public final class H264DecoderEngine {
      * @param poc the picture order count
      * @param damaged whether the samples may differ from the encoder's reconstruction (see
      * {@link DecoderFrame#damaged})
+     * @param filmGrain the film grain characteristics message that applies to the frame, or
+     * {@code null}
+     * @param grainOffset the {@code pic_offset} of SMPTE RDD 5 1.5.2.1.1 that seeds the film grain
+     * of the frame
+     * @param sideData the display information of the frame
+     * @param picStruct the {@code pic_struct} of the frame's picture timing message, or -1
      */
     public record OutputFrame(byte[] luma, byte[] cb, byte[] cr, short[] luma16, short[] cb16, short[] cr16,
                               int bitDepthLuma, int bitDepthChroma, int lumaStride, int chromaStride, int lumaOrigin,
                               int chromaOrigin, H264Sps sps, ColorInfo color, long pts, long duration, boolean keyframe,
-                              int poc, boolean damaged) {
+                              int poc, boolean damaged, FilmGrainParameters filmGrain, int grainOffset,
+                              FrameSideData sideData, int picStruct) {
         /**
          * {@return whether the samples are in the 16-bit planes}
          */
@@ -410,6 +423,75 @@ public final class H264DecoderEngine {
      * Whether a recovery point SEI message was seen for the next picture.
      */
     private boolean recoveryPointPending;
+
+    /**
+     * The film grain characteristics message of the next picture's access unit, or {@code null}.
+     */
+    private FilmGrainParameters pendingFilmGrain;
+
+    /**
+     * The frame packing arrangement message of the next picture's access unit, or {@code null}.
+     */
+    private DisplaySei.FramePackingMessage pendingFramePacking;
+
+    /**
+     * The display orientation message of the next picture's access unit, or {@code null}.
+     */
+    private DisplaySei.OrientationMessage pendingOrientation;
+
+    /**
+     * The payload of the picture timing message of the next picture's access unit, followed by
+     * zero padding; parsed when the picture's sequence parameter set is known.
+     */
+    private byte[] pendingTiming = new byte[64 + H264BitReader.PADDING];
+
+    /**
+     * The size of {@link #pendingTiming}, or -1 when the next picture's access unit carried none.
+     */
+    private int pendingTimingSize = -1;
+
+    /**
+     * The {@code preferred_transfer_characteristics} of the alternative transfer characteristics
+     * message in effect for the coded video sequence, or -1.
+     */
+    private int preferredTransfer = -1;
+
+    /**
+     * Whether the next picture's access unit carried an alternative transfer characteristics
+     * message.
+     */
+    private boolean pendingTransfer;
+
+    /**
+     * The {@code PicOrderCnt_offset} of SMPTE RDD 5 1.5.2.1.1 after the last frame in decoding
+     * order.
+     */
+    private int grainPocOffset;
+
+    /**
+     * The value of {@link #grainPocOffset} when the current frame started.
+     */
+    private int grainPocOffsetAtFrameStart;
+
+    /**
+     * Which film grain characteristics message applies to each frame, in output order.
+     */
+    private final SeiPersistence<FilmGrainParameters> grainPersistence = new SeiPersistence<>();
+
+    /**
+     * Which frame packing arrangement message applies to each frame, in output order.
+     */
+    private final SeiPersistence<DisplaySei.FramePackingMessage> packingPersistence = new SeiPersistence<>();
+
+    /**
+     * Which display orientation message applies to each frame, in output order.
+     */
+    private final SeiPersistence<DisplaySei.OrientationMessage> orientationPersistence = new SeiPersistence<>();
+
+    /**
+     * The reader of SEI message payloads.
+     */
+    private final H264BitReader seiReader = new H264BitReader();
 
     /**
      * Whether the {@code frame_num} of the previous reference picture is known.
@@ -919,14 +1001,21 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Returns the color description of the pictures of a sequence, with the high-dynamic-range
-     * metadata of the last SEI messages that carried it.
+     * Returns the color description of the pictures of a sequence, with the transfer function an
+     * alternative transfer characteristics SEI message prefers and the high-dynamic-range metadata
+     * of the last SEI messages that carried it.
      *
      * @param sps the active sequence parameter set
      * @return the color description
      */
     private ColorInfo colorInfo(H264Sps sps) {
         var info = sps.colorInfo();
+        if (preferredTransfer >= 0) {
+            var preferred = TransferCharacteristics.of(preferredTransfer);
+            if (preferred != TransferCharacteristics.UNSPECIFIED) {
+                info = info.withTransfer(preferred);
+            }
+        }
         if (masteringDisplay != null) {
             info = info.withMasteringDisplay(masteringDisplay);
         }
@@ -937,11 +1026,14 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Scans an SEI message list for a recovery point (ITU-T H.264 D.1.8), a mastering display
-     * color volume (D.1.29) and a content light level (D.1.31).
+     * Scans an SEI message list for the messages the decoder uses: the picture timing (ITU-T H.264
+     * D.1.3), the recovery point (D.1.8), the film grain characteristics (D.1.21), the frame
+     * packing arrangement (D.1.26), the display orientation (D.1.27), the mastering display color
+     * volume (D.1.29), the content light level (D.1.31) and the alternative transfer
+     * characteristics (D.1.32).
      *
-     * <p>The high-dynamic-range metadata persists until an SEI message replaces it; a message too
-     * short for its syntax is ignored.
+     * <p>The messages apply to the next picture. The high-dynamic-range metadata persists until an
+     * SEI message replaces it; a message too short for its syntax, or malformed, is ignored.
      *
      * @param size the payload size in {@link #rbsp}
      */
@@ -967,15 +1059,84 @@ public final class H264DecoderEngine {
                 return;
             }
             payloadSize += rbsp[position++] & 0xFF;
-            if (payloadType == 6) {
-                recoveryPointPending = true;
-            } else if (payloadType == 137 && payloadSize >= 24 && position + 24 <= size) {
-                masteringDisplay = parseMasteringDisplay(position);
-            } else if (payloadType == 144 && payloadSize >= 4 && position + 4 <= size) {
-                contentLightLevel = new ContentLightLevel(u16(position), u16(position + 2));
+            // a message cut short by the end of the NAL unit is read as far as it goes
+            payloadSize = Math.min(payloadSize, size - position);
+            switch (payloadType) {
+                case 1 -> {
+                    if (pendingTiming.length < payloadSize + H264BitReader.PADDING) {
+                        pendingTiming = new byte[payloadSize + H264BitReader.PADDING];
+                    }
+                    System.arraycopy(rbsp, position, pendingTiming, 0, payloadSize);
+                    Arrays.fill(pendingTiming, payloadSize, payloadSize + H264BitReader.PADDING, (byte) 0);
+                    pendingTimingSize = payloadSize;
+                }
+                case 6 -> recoveryPointPending = true;
+                case 19 -> {
+                    seiReader.init(rbsp, position, payloadSize);
+                    var message = FilmGrainParameters.parse(seiReader, false);
+                    if (message != null) {
+                        pendingFilmGrain = message;
+                    }
+                }
+                case 45 -> {
+                    seiReader.init(rbsp, position, payloadSize);
+                    var message = DisplaySei.framePacking(seiReader, false);
+                    if (message != null) {
+                        pendingFramePacking = message;
+                    }
+                }
+                case 47 -> {
+                    seiReader.init(rbsp, position, payloadSize);
+                    var message = DisplaySei.displayOrientation(seiReader, false);
+                    if (message != null) {
+                        pendingOrientation = message;
+                    }
+                }
+                case 137 -> {
+                    if (payloadSize >= 24) {
+                        masteringDisplay = parseMasteringDisplay(position);
+                    }
+                }
+                case 144 -> {
+                    if (payloadSize >= 4) {
+                        contentLightLevel = new ContentLightLevel(u16(position), u16(position + 2));
+                    }
+                }
+                case 147 -> {
+                    if (payloadSize >= 1) {
+                        preferredTransfer = rbsp[position] & 0xFF;
+                        pendingTransfer = true;
+                    }
+                }
+                default -> {
+                }
             }
             position += payloadSize;
         }
+    }
+
+    /**
+     * Returns the {@code pic_struct} of the picture timing message of the next picture's access
+     * unit (ITU-T H.264 D.1.3), which follows the HRD delays when the sequence carries HRD
+     * parameters, and forgets the message.
+     *
+     * @param sps the active sequence parameter set
+     * @return the {@code pic_struct}, from 0 to 8, or -1 when the access unit carried no picture
+     * timing message, the sequence signals no {@code pic_struct}, or the value is reserved
+     */
+    private int takePicStruct(H264Sps sps) {
+        var size = pendingTimingSize;
+        pendingTimingSize = -1;
+        if (size < 0 || !sps.picStructPresent) {
+            return -1;
+        }
+        seiReader.init(pendingTiming, 0, size);
+        if (sps.cpbDpbDelaysPresent) {
+            seiReader.readBits(sps.cpbRemovalDelayLength);
+            seiReader.readBits(sps.dpbOutputDelayLength);
+        }
+        var picStruct = seiReader.readBits(4);
+        return seiReader.overrun() || picStruct > 8 ? -1 : picStruct;
     }
 
     /**
@@ -1053,6 +1214,7 @@ public final class H264DecoderEngine {
             if (!started) {
                 if (!slice.idr && !recoveryPointPending && slice.sliceType != H264SliceHeader.I) {
                     noteDamage();
+                    discardPictureMessages();
                     return;
                 }
                 started = true;
@@ -1065,7 +1227,52 @@ public final class H264DecoderEngine {
             header = swap;
             slice = pictureHeader;
         }
+        if (slice.sliceType != H264SliceHeader.I) {
+            current.allIntra = false;
+        }
         decodeSliceData(slice, size);
+    }
+
+    /**
+     * Moves the display messages of the access unit of a picture that starts onto its frame: the
+     * picture timing's {@code pic_struct} and the film grain characteristics, frame packing
+     * arrangement and display orientation messages. The second field of a frame only adds the
+     * messages its first field's access unit lacked.
+     *
+     * @param frame the frame of the picture
+     * @param sps the active sequence parameter set
+     * @param first whether the picture is a frame or the first field of a frame
+     */
+    private void takeDisplayMessages(DecoderFrame frame, H264Sps sps, boolean first) {
+        var picStruct = takePicStruct(sps);
+        if (first) {
+            frame.picStruct = picStruct;
+            frame.filmGrain = pendingFilmGrain;
+            frame.framePacking = pendingFramePacking;
+            frame.orientation = pendingOrientation;
+        } else {
+            if (frame.filmGrain == null) {
+                frame.filmGrain = pendingFilmGrain;
+            }
+            if (frame.framePacking == null) {
+                frame.framePacking = pendingFramePacking;
+            }
+            if (frame.orientation == null) {
+                frame.orientation = pendingOrientation;
+            }
+        }
+        discardPictureMessages();
+    }
+
+    /**
+     * Forgets the display messages of the next picture's access unit, for a picture that is not
+     * decoded.
+     */
+    private void discardPictureMessages() {
+        pendingTimingSize = -1;
+        pendingFilmGrain = null;
+        pendingFramePacking = null;
+        pendingOrientation = null;
     }
 
     /**
@@ -1162,6 +1369,8 @@ public final class H264DecoderEngine {
             frame.updatePoc();
             currentPoc = frame.fieldPoc(structure == DecoderFrame.BOTTOM ? 1 : 0);
             recoveryPointPending = false;
+            pendingTransfer = false;
+            takeDisplayMessages(frame, sps, false);
             if (frame.packet != packetSerial && frame.duration > 0 && pendingDuration > 0) {
                 frame.duration += pendingDuration;
             }
@@ -1192,9 +1401,17 @@ public final class H264DecoderEngine {
             frame.missingFieldFilled = false;
             frame.decodeIndex = ++decodeCount;
             frame.sps = sps;
+            if (slice.idr && !pendingTransfer) {
+                // an alternative transfer characteristics message lasts until the end of its sequence
+                preferredTransfer = -1;
+            }
+            pendingTransfer = false;
             frame.color = colorInfo(sps);
             frame.keyframe = slice.idr || (recoveryPointPending && slice.sliceType == H264SliceHeader.I);
             recoveryPointPending = false;
+            frame.allIntra = true;
+            grainPocOffsetAtFrameStart = grainPocOffset;
+            takeDisplayMessages(frame, sps, true);
             frame.pts = pendingPts;
             frame.duration = pendingDuration;
             frame.packet = packetSerial;
@@ -1797,6 +2014,14 @@ public final class H264DecoderEngine {
         var slice = pictureHeader;
         var structure = currentStructure;
         var second = secondField;
+        int offset;
+        if (frame.idr) {
+            offset = second ? frame.grainPocOffset : slice.idrPicId;
+        } else {
+            offset = frame.allIntra ? 0 : grainPocOffsetAtFrameStart;
+        }
+        frame.grainPocOffset = offset;
+        grainPocOffset = offset;
         if (!parallel) {
             var failure = inlineDecoder.finish();
             frame.publishDone(structure);
@@ -2400,10 +2625,19 @@ public final class H264DecoderEngine {
         } else {
             intactKey = Math.max(intactKey, 2 * frame.decodeIndex);
         }
+        var grain = grainPersistence.resolve(frame.idr, frame.filmGrain);
+        var packing = packingPersistence.resolve(frame.idr, frame.framePacking);
+        var orientation = orientationPersistence.resolve(frame.idr, frame.orientation);
+        var fieldOrder = DisplaySei.fieldOrder(frame.picStruct);
+        if (fieldOrder == null && frame.codingStruct == DecoderFrame.CODED_FIELDS) {
+            fieldOrder = frame.topPoc <= frame.bottomPoc ? FieldOrder.TOP_FIRST : FieldOrder.BOTTOM_FIRST;
+        }
+        var sideData = DisplaySei.sideData(fieldOrder, DisplaySei.repeatedFields(frame.picStruct), packing,
+                orientation);
         sink.output(new OutputFrame(frame.luma, frame.cb, frame.cr, frame.luma16, frame.cb16, frame.cr16,
                 frame.bitDepthLuma, frame.bitDepthChroma, frame.lumaStride, frame.chromaStride,
                 frame.lumaOrigin, frame.chromaOrigin, frame.sps, frame.color, frame.pts, frame.duration, frame.keyframe,
-                frame.poc, frame.damaged));
+                frame.poc, frame.damaged, grain, frame.poc + (frame.grainPocOffset << 5), sideData, frame.picStruct));
     }
 
     /**
@@ -2422,6 +2656,10 @@ public final class H264DecoderEngine {
         flushOutput(false);
         drainOutput(true);
         lastPictureValid = false;
+        discardPictureMessages();
+        grainPersistence.reset();
+        packingPersistence.reset();
+        orientationPersistence.reset();
     }
 
     /**

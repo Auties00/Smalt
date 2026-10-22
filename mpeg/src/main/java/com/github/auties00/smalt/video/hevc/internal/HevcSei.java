@@ -4,13 +4,16 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
+import com.github.auties00.smalt.internal.sei.DisplaySei;
+import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
 import com.github.auties00.smalt.video.h264.internal.H264BitReader;
 
 /**
  * Collects the supplemental enhancement information messages the decoder uses (ITU-T H.265 D.2):
- * the picture timing (D.3.3), the recovery point (D.3.8), the decoded picture hash (D.3.19), the
- * mastering display color volume (D.3.28), the content light level information (D.3.35) and the
- * alternative transfer characteristics (D.3.38).
+ * the picture timing (D.3.3), the recovery point (D.3.8), the film grain characteristics (D.3.13),
+ * the frame packing arrangement (D.3.16), the display orientation (D.3.17), the decoded picture
+ * hash (D.3.20), the mastering display color volume (D.3.28), the content light level information
+ * (D.3.35) and the alternative transfer characteristics (D.3.38).
  *
  * <p>A message too short for its syntax, or whose values are out of range, is ignored; every other
  * message is skipped.
@@ -42,10 +45,30 @@ public final class HevcSei {
     public ContentLightLevel contentLightLevel;
 
     /**
-     * The {@code preferred_transfer_characteristics} of the last alternative transfer
-     * characteristics message, or -1.
+     * The {@code preferred_transfer_characteristics} of the alternative transfer characteristics
+     * message in effect for the coded layer-wise video sequence, or -1.
      */
     public int preferredTransfer = -1;
+
+    /**
+     * Whether an alternative transfer characteristics message arrived for the next picture.
+     */
+    public boolean transferPending;
+
+    /**
+     * The film grain characteristics message of the next picture, or {@code null}.
+     */
+    public FilmGrainParameters filmGrain;
+
+    /**
+     * The frame packing arrangement message of the next picture, or {@code null}.
+     */
+    public DisplaySei.FramePackingMessage framePacking;
+
+    /**
+     * The display orientation message of the next picture, or {@code null}.
+     */
+    public DisplaySei.OrientationMessage orientation;
 
     /**
      * The hash type of the last decoded picture hash message, or -1 when none is pending.
@@ -137,6 +160,27 @@ public final class HevcSei {
                         }
                     }
                     case 6 -> parseRecoveryPoint(rbsp, position, payloadSize);
+                    case 19 -> {
+                        payloadReader.init(rbsp, position, payloadSize);
+                        var message = FilmGrainParameters.parse(payloadReader, true);
+                        if (message != null) {
+                            filmGrain = message;
+                        }
+                    }
+                    case 45 -> {
+                        payloadReader.init(rbsp, position, payloadSize);
+                        var message = DisplaySei.framePacking(payloadReader, true);
+                        if (message != null) {
+                            framePacking = message;
+                        }
+                    }
+                    case 47 -> {
+                        payloadReader.init(rbsp, position, payloadSize);
+                        var message = DisplaySei.displayOrientation(payloadReader, true);
+                        if (message != null) {
+                            orientation = message;
+                        }
+                    }
                     case 132 -> parseHash(rbsp, position, payloadSize, components);
                     case 137 -> {
                         if (payloadSize >= 24) {
@@ -151,6 +195,7 @@ public final class HevcSei {
                     case 147 -> {
                         if (payloadSize >= 1) {
                             preferredTransfer = rbsp[position] & 0xFF;
+                            transferPending = true;
                         }
                     }
                     default -> {
@@ -190,12 +235,17 @@ public final class HevcSei {
     }
 
     /**
-     * Forgets the messages that apply only to the next picture: the recovery point and the
-     * picture timing.
+     * Forgets the messages that apply only to the next picture: the recovery point, the picture
+     * timing, the film grain characteristics, the frame packing arrangement and the display
+     * orientation.
      */
     public void clearPictureMessages() {
         recoveryPoint = false;
         pictureTiming = -1;
+        transferPending = false;
+        filmGrain = null;
+        framePacking = null;
+        orientation = null;
     }
 
     /**

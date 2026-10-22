@@ -11,12 +11,18 @@ import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.internal.plane.Narrow;
 import com.github.auties00.smalt.internal.plane.Planes;
+import com.github.auties00.smalt.internal.sei.DisplaySei;
+import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
+import com.github.auties00.smalt.internal.sei.FilmGrainSynthesizer;
+import com.github.auties00.smalt.internal.sei.SeiPersistence;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.FieldOrder;
+import com.github.auties00.smalt.video.FrameSideData;
 import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.hevc.internal.HevcDecoderEngine;
@@ -74,6 +80,17 @@ import java.util.function.Consumer;
  * one an alternative transfer characteristics SEI message prefers when present, and the mastering
  * display and content light level come from the last SEI messages that carried them. A frame is a
  * keyframe when its picture is an IRAP picture or an I picture carrying a recovery point SEI message.
+ *
+ * <p>With {@link HevcDecoderOptions#filmGrain()} set, the film grain a film grain characteristics
+ * SEI message describes (the frequency filtering model with additive blending) is added to the
+ * pictures it applies to, before cropping, seeded by their picture order count; the samples follow
+ * SMPTE RDD 5 for 8-bit 4:2:0 pictures, and other formats get the same grain extended to them.
+ * Decoded picture hashes are checked on the samples without grain. The display information of the
+ * picture timing ({@code pic_struct}), frame packing arrangement and display orientation SEI
+ * messages is reported in {@link VideoFrame#sideData()}; a frame woven from two fields carries the
+ * messages of its first field and reports that field's parity. Messages with the persistence flag
+ * set apply to the pictures output after them until a cancel, a later message of the same type or
+ * the start of a coded video sequence.
  *
  * <p>The fields of a field coded sequence ({@code field_seq_flag}), and the pictures that their
  * picture timing SEI message's {@code pic_struct} marks as fields (1, 2 and 9 to 12), are woven into
@@ -198,6 +215,41 @@ public final class HevcDecoder implements VideoDecoder {
      * Whether the waiting field is a keyframe.
      */
     private boolean heldKeyframe;
+
+    /**
+     * The display information of the frame of the waiting field.
+     */
+    private FrameSideData heldSideData = FrameSideData.NONE;
+
+    /**
+     * The decoded samples of the picture being output.
+     */
+    private final Source decoded = new Source();
+
+    /**
+     * The samples of the picture being output with its film grain.
+     */
+    private final Source grained = new Source();
+
+    /**
+     * The film grain renderer, created with the first picture that carries grain.
+     */
+    private FilmGrainSynthesizer grainSynthesizer;
+
+    /**
+     * Which film grain characteristics message applies to each picture, in output order.
+     */
+    private final SeiPersistence<FilmGrainParameters> grainPersistence = new SeiPersistence<>();
+
+    /**
+     * Which frame packing arrangement message applies to each picture, in output order.
+     */
+    private final SeiPersistence<DisplaySei.FramePackingMessage> packingPersistence = new SeiPersistence<>();
+
+    /**
+     * Which display orientation message applies to each picture, in output order.
+     */
+    private final SeiPersistence<DisplaySei.OrientationMessage> orientationPersistence = new SeiPersistence<>();
 
     /**
      * The recycled 8-bit woven frame.
@@ -355,6 +407,9 @@ public final class HevcDecoder implements VideoDecoder {
                     engine.flush();
                 } finally {
                     releaseHeldField();
+                    grainPersistence.reset();
+                    packingPersistence.reset();
+                    orientationPersistence.reset();
                 }
             } catch (RuntimeException exception) {
                 throw handoff.translate("HEVC stream", exception);
@@ -421,11 +476,17 @@ public final class HevcDecoder implements VideoDecoder {
         var sps = frame.sps;
         window(sps);
         var keyframe = frame.irap || frame.recoveryPoint && frame.intraOnly;
+        var grain = grainPersistence.resolve(frame.newSequence, frame.filmGrain);
+        var packing = packingPersistence.resolve(frame.newSequence, frame.framePacking);
+        var orientation = orientationPersistence.resolve(frame.newSequence, frame.orientation);
+        var source = grain != null && options.filmGrain() ? withFilmGrain(frame, grain) : decoded.of(frame);
         if (sps.fieldSeq || isField(frame.picStruct)) {
-            emitField(frame, keyframe);
+            emitField(frame, source, keyframe, packing, orientation);
             return;
         }
         releaseHeldField();
+        var sideData = DisplaySei.sideData(DisplaySei.fieldOrder(frame.picStruct),
+                DisplaySei.repeatedFields(frame.picStruct), packing, orientation);
         var left = windowLeft;
         var top = windowTop;
         var width = windowWidth;
@@ -435,18 +496,18 @@ public final class HevcDecoder implements VideoDecoder {
         var depth = sps.pictureBitDepth();
         Picture result;
         var uncropped = left == 0 && top == 0;
-        if (uncropped && frame.eightBit()) {
+        if (uncropped && source.eightBit()) {
             var builder = YuvPicture.builder().size(width, height).chromaFormat(format).color(color)
-                    .luma(frame.y8, frame.width);
-            if (frame.cb8 != null) {
-                builder.chroma(frame.cb8, frame.cr8, frame.chromaWidth);
+                    .luma(source.y8, source.width);
+            if (source.cb8 != null) {
+                builder.chroma(source.cb8, source.cr8, source.chromaWidth);
             }
             result = builder.build();
         } else if (uncropped && depth > 8 && options.highBitDepth() && !sps.mixedBitDepth()) {
             var builder = Yuv16Picture.builder().size(width, height).chromaFormat(format).bitDepth(depth).color(color)
-                    .luma(frame.y, frame.width);
-            if (frame.cb != null) {
-                builder.chroma(frame.cb, frame.cr, frame.chromaWidth);
+                    .luma(source.y, source.width);
+            if (source.cb != null) {
+                builder.chroma(source.cb, source.cr, source.chromaWidth);
             }
             result = builder.build();
         } else if (depth > 8 && options.highBitDepth()) {
@@ -455,7 +516,7 @@ public final class HevcDecoder implements VideoDecoder {
                 target = Yuv16Picture.allocate(width, height, format, depth, false, color);
                 widePicture = target;
             }
-            copyWide(frame, sps, target, left, top, width, height, 0, 1);
+            copyWide(source, sps, target, left, top, width, height, 0, 1);
             result = target;
         } else {
             var target = picture;
@@ -463,12 +524,159 @@ public final class HevcDecoder implements VideoDecoder {
                 target = YuvPicture.allocate(width, height, format, false, color);
                 picture = target;
             }
-            copyNarrow(frame, sps, target, left, top, width, height, 0, 1);
+            copyNarrow(source, sps, target, left, top, width, height, 0, 1);
             result = target;
         }
         var duration = frame.duration > 0 ? frame.duration : repeated(frameDuration(sps), frame.picStruct);
         var pts = resolvePts(frame.pts, duration);
-        output.accept(new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe));
+        output.accept(new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe,
+                sideData));
+    }
+
+    /**
+     * Returns the samples of a picture with the film grain a film grain characteristics message
+     * describes, rendered on the whole decoded picture before any cropping, or its decoded samples
+     * when the message is not one the renderer supports.
+     *
+     * @param frame the engine's picture
+     * @param grain the film grain characteristics message that applies to the picture
+     * @return the samples, recycled for the next picture
+     */
+    private Source withFilmGrain(HevcFrame frame, FilmGrainParameters grain) {
+        var sps = frame.sps;
+        var described = sps.colorPrimaries != 2 || sps.transferCharacteristics != 2 || sps.matrixCoefficients != 2;
+        if (!grain.renderable(sps.bitDepthLuma, sps.bitDepthChroma, sps.fullRange, described, sps.colorPrimaries,
+                sps.transferCharacteristics, sps.matrixCoefficients)) {
+            return decoded.of(frame);
+        }
+        if (grainSynthesizer == null) {
+            grainSynthesizer = new FilmGrainSynthesizer();
+        }
+        var target = grained.fit(frame);
+        var threads = options.threads() == 0 ? ParallelBands.THREADS : options.threads();
+        var poc = frame.poc;
+        var format = sps.chromaFormatIdc;
+        var components = frame.chromaWidth > 0 ? 3 : 1;
+        for (var c = 0; c < components; c++) {
+            var w = c == 0 ? frame.width : frame.chromaWidth;
+            var h = c == 0 ? frame.height : frame.chromaHeight;
+            if (frame.eightBit()) {
+                var src = c == 0 ? frame.y8 : c == 1 ? frame.cb8 : frame.cr8;
+                var dst = c == 0 ? target.y8 : c == 1 ? target.cb8 : target.cr8;
+                grainSynthesizer.apply(grain, poc, c, format, src, 0, w, dst, 0, w, w, h, threads);
+            } else {
+                var src = c == 0 ? frame.y : c == 1 ? frame.cb : frame.cr;
+                var dst = c == 0 ? target.y : c == 1 ? target.cb : target.cr;
+                var depth = c == 0 ? sps.bitDepthLuma : sps.bitDepthChroma;
+                grainSynthesizer.apply(grain, poc, c, format, depth, src, 0, w, dst, 0, w, w, h, threads);
+            }
+        }
+        return target;
+    }
+
+    /**
+     * The sample planes of a picture being output: the engine's or a copy with film grain, laid
+     * out as the engine lays them out.
+     */
+    private static final class Source {
+        byte[] y8;
+
+        byte[] cb8;
+
+        byte[] cr8;
+
+        short[] y;
+
+        short[] cb;
+
+        short[] cr;
+
+        /**
+         * The luma row stride, the coded width.
+         */
+        int width;
+
+        /**
+         * The chroma row stride, or 0 without chroma.
+         */
+        int chromaWidth;
+
+        /**
+         * Points these planes at a picture's.
+         *
+         * @param frame the picture
+         * @return these planes
+         */
+        Source of(HevcFrame frame) {
+            y8 = frame.y8;
+            cb8 = frame.cb8;
+            cr8 = frame.cr8;
+            y = frame.y;
+            cb = frame.cb;
+            cr = frame.cr;
+            width = frame.width;
+            chromaWidth = frame.chromaWidth;
+            return this;
+        }
+
+        /**
+         * Makes these planes the size and sample size of a picture's, keeping the arrays that fit.
+         *
+         * @param frame the picture
+         * @return these planes
+         */
+        Source fit(HevcFrame frame) {
+            var lumaSize = frame.width * frame.height;
+            var chromaSize = frame.chromaWidth * frame.chromaHeight;
+            var chroma = frame.chromaWidth > 0;
+            if (frame.eightBit()) {
+                y8 = sized(y8, lumaSize);
+                cb8 = chroma ? sized(cb8, chromaSize) : null;
+                cr8 = chroma ? sized(cr8, chromaSize) : null;
+                y = null;
+                cb = null;
+                cr = null;
+            } else {
+                y = sized(y, lumaSize);
+                cb = chroma ? sized(cb, chromaSize) : null;
+                cr = chroma ? sized(cr, chromaSize) : null;
+                y8 = null;
+                cb8 = null;
+                cr8 = null;
+            }
+            width = frame.width;
+            chromaWidth = frame.chromaWidth;
+            return this;
+        }
+
+        /**
+         * {@return whether the samples are in the 8-bit planes}
+         */
+        boolean eightBit() {
+            return y8 != null;
+        }
+
+        /**
+         * Returns an 8-bit plane of at least a size, reusing a recycled one.
+         *
+         * @param plane the recycled plane, or {@code null}
+         * @param size the samples needed
+         * @return the plane
+         */
+        private static byte[] sized(byte[] plane, int size) {
+            return plane != null && plane.length >= size ? plane : new byte[size];
+        }
+
+        /**
+         * Returns a 16-bit plane of at least a size, reusing a recycled one.
+         *
+         * @param plane the recycled plane, or {@code null}
+         * @param size the samples needed
+         * @return the plane
+         */
+        private static short[] sized(short[] plane, int size) {
+            return plane != null && plane.length >= size ? plane : new short[size];
+        }
     }
 
     /**
@@ -482,11 +690,20 @@ public final class HevcDecoder implements VideoDecoder {
      * neither the waiting field is to pair with its previous field ({@code pic_struct} 9 or 10) nor
      * the new one with its next field (11 or 12).
      *
+     * <p>The woven frame carries the frame packing and display orientation of its first field, and
+     * the parity of that field as its scan.
+     *
      * @param frame the engine's picture of the field
+     * @param source the samples of the field
      * @param keyframe whether the field is a keyframe, which makes its frame one when it comes
      * first
+     * @param packing the frame packing arrangement message that applies to the field, or
+     * {@code null}
+     * @param orientation the display orientation message that applies to the field, or
+     * {@code null}
      */
-    private void emitField(HevcFrame frame, boolean keyframe) {
+    private void emitField(HevcFrame frame, Source source, boolean keyframe, DisplaySei.FramePackingMessage packing,
+                           DisplaySei.OrientationMessage orientation) {
         var sps = frame.sps;
         var picStruct = frame.picStruct;
         var parity = switch (picStruct) {
@@ -505,11 +722,11 @@ public final class HevcDecoder implements VideoDecoder {
         var color = frame.color;
         if (held != null) {
             if (!pairedWithNext && parity != heldParity && matches(held, width, height, format, depth, color)) {
-                writeField(frame, held, parity);
+                writeField(frame, source, held, parity);
                 var frameDuration = heldDuration > 0 && duration > 0 ? heldDuration + duration : Track.UNKNOWN_DURATION;
                 var result = held;
                 held = null;
-                output.accept(new VideoFrame(result, heldPts, frameDuration, heldKeyframe));
+                output.accept(new VideoFrame(result, heldPts, frameDuration, heldKeyframe, heldSideData));
                 return;
             }
             releaseHeldField();
@@ -526,10 +743,13 @@ public final class HevcDecoder implements VideoDecoder {
             }
             target = wovenPicture;
         }
-        writeField(frame, target, parity);
+        writeField(frame, source, target, parity);
+        var sideData = DisplaySei.sideData(parity == TOP ? FieldOrder.TOP_FIRST : FieldOrder.BOTTOM_FIRST, 0, packing,
+                orientation);
         if (pairedWithPrevious) {
             fillField(target, 1 - parity);
-            output.accept(new VideoFrame(target, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe));
+            output.accept(new VideoFrame(target, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe,
+                    sideData));
             return;
         }
         held = target;
@@ -537,6 +757,7 @@ public final class HevcDecoder implements VideoDecoder {
         heldPts = pts;
         heldDuration = duration;
         heldKeyframe = keyframe;
+        heldSideData = sideData;
     }
 
     /**
@@ -560,23 +781,24 @@ public final class HevcDecoder implements VideoDecoder {
         held = null;
         fillField(frame, 1 - heldParity);
         output.accept(new VideoFrame(frame, heldPts, heldDuration > 0 ? heldDuration : Track.UNKNOWN_DURATION,
-                heldKeyframe));
+                heldKeyframe, heldSideData));
     }
 
     /**
      * Copies the cropped samples of a field into the rows of one parity of a woven frame.
      *
      * @param frame the decoded field
+     * @param source the samples of the field
      * @param target the woven frame, a {@link YuvPicture} or a {@link Yuv16Picture}
      * @param parity {@link #TOP} for the even rows, {@link #BOTTOM} for the odd rows
      */
-    private void writeField(HevcFrame frame, Picture target, int parity) {
+    private void writeField(HevcFrame frame, Source source, Picture target, int parity) {
         var sps = frame.sps;
         window(sps);
         if (target instanceof Yuv16Picture wide) {
-            copyWide(frame, sps, wide, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
+            copyWide(source, sps, wide, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
         } else {
-            copyNarrow(frame, sps, (YuvPicture) target, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
+            copyNarrow(source, sps, (YuvPicture) target, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
         }
     }
 
@@ -743,7 +965,7 @@ public final class HevcDecoder implements VideoDecoder {
      * Copies the cropped samples of a picture into rows of an 8-bit picture, rounding deeper
      * samples to nearest.
      *
-     * @param frame the decoded picture
+     * @param frame the samples of the picture
      * @param sps its sequence parameter set
      * @param target the output picture
      * @param left the first kept column, in luma samples, a multiple of the chroma subsampling
@@ -753,7 +975,7 @@ public final class HevcDecoder implements VideoDecoder {
      * @param firstRow the output row receiving the first kept row, 0 or 1
      * @param rowStep the output rows per picture row: 1, or 2 to write the rows of a field
      */
-    private static void copyNarrow(HevcFrame frame, HevcSps sps, YuvPicture target, int left, int top, int width,
+    private static void copyNarrow(Source frame, HevcSps sps, YuvPicture target, int left, int top, int width,
                                    int height, int firstRow, int rowStep) {
         var yOffset = firstRow * target.yStride();
         var yStride = target.yStride() * rowStep;
@@ -785,7 +1007,7 @@ public final class HevcDecoder implements VideoDecoder {
      * Copies the cropped samples of a picture into rows of a high bit depth picture of the
      * picture's bit depth, shifting the samples of a shallower component up to it.
      *
-     * @param frame the decoded picture
+     * @param frame the samples of the picture
      * @param sps its sequence parameter set
      * @param target the output picture
      * @param left the first kept column, in luma samples, a multiple of the chroma subsampling
@@ -795,7 +1017,7 @@ public final class HevcDecoder implements VideoDecoder {
      * @param firstRow the output row receiving the first kept row, 0 or 1
      * @param rowStep the output rows per picture row: 1, or 2 to write the rows of a field
      */
-    private static void copyWide(HevcFrame frame, HevcSps sps, Yuv16Picture target, int left, int top, int width,
+    private static void copyWide(Source frame, HevcSps sps, Yuv16Picture target, int left, int top, int width,
                                  int height, int firstRow, int rowStep) {
         var depth = target.bitDepth();
         copyShifted(frame.y, top * frame.width + left, frame.width, target.y(), firstRow * target.yStride(),
