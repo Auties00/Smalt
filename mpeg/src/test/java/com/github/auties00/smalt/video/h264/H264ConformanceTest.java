@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.video.h264;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -20,17 +19,17 @@ import java.util.stream.Stream;
 import java.util.zip.ZipFile;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Decodes the ITU-T H.264.1 conformance bitstreams (JVT draft conformance suite, AVCv1 and
  * FRExt) and requires every frame to match the reference YUV byte for byte, progressive, field
- * and MBAFF streams alike, 4:2:0 and 4:2:2, 8 and 10 bits. Streams using tools the decoder does
- * not implement (SP/SI slices) must be rejected with the documented
- * {@link MediaException.Unsupported} feature name. The streams that come without a reference YUV
- * are checked by {@link H264HighBitDepthTest}, {@link H264Chroma422Test} and {@link H264Chroma444Test}. Each archive is
- * pinned by its SHA-256 and cached by {@link Conformance#fetch}.
+ * and MBAFF streams alike, 4:2:0 and 4:2:2, 8 and 10 bits, the Extended profile's SP slices
+ * included. The streams that come without a reference YUV are checked by
+ * {@link H264HighBitDepthTest}, {@link H264Chroma422Test} and {@link H264Chroma444Test}; the
+ * Extended profile tools the suite does not exercise (slice data partitioning, switching SP and
+ * SI slices) by {@link H264ExtendedProfileTest}. Each archive is pinned by its SHA-256 and cached
+ * by {@link Conformance#fetch}.
  */
 @DisplayName("H.264 conformance bitstreams (ITU-T H.264.1)")
 class H264ConformanceTest {
@@ -38,8 +37,7 @@ class H264ConformanceTest {
 
     /**
      * Name | directory | archive | SHA-256 | bitstream entry | reference entry | expectation
-     * ("frames:N", "frames16:N" for a reference of 16-bit little-endian samples, or
-     * "unsupported:feature").
+     * ("frames:N", or "frames16:N" for a reference of 16-bit little-endian samples).
      */
     private static final String MANIFEST = """
             AUD_MW_E|AVCv1|AUD_MW_E.zip|ecaed4a05d02c8ffc0ec7dd02a640f87ba9d9f8c2dab3273ef1d6da3d7f8568e|AUD_MW_E.264|AUD_MW_E_rec.qcif|frames:100
@@ -152,7 +150,7 @@ class H264ConformanceTest {
             NLMQ2_JVC_C|AVCv1|NLMQ2_JVC_C.zip|35ce821ebf67b4a4c706df90fc1a3a27a86b0d0fc3cd5fcc52624ef352b381f1|NLMQ2_JVC_C.264|NLMQ2_JVC_C.yuv|frames:30
             NRF_MW_E|AVCv1|NRF_MW_E.zip|c48f067fe8ac1309b99292d024324a0a7561bf28312a133995a42d7a98ae9835|NRF_MW_E.264|NRF_MW_E_rec.qcif|frames:100
             SL1_SVA_B|AVCv1|SL1_SVA_B.zip|60d61046c3aee6b9aa6b3dd4fad4081be9c959affec2bd641808632edffed1b2|SL1_SVA_B.264|SL1_SVA_B_rec.yuv|frames:33
-            SP1_BT_A|AVCv1|SP1_BT_A.zip|aa9a1fa4fedad3d0437b8d77caefbf1b3cfb60add57b231dc67ebbded60d9d8a|sp1_bt_a.h264||unsupported:h264 sp/si slices
+            SP1_BT_A|AVCv1|SP1_BT_A.zip|aa9a1fa4fedad3d0437b8d77caefbf1b3cfb60add57b231dc67ebbded60d9d8a|sp1_bt_a.h264|sp1_bt_a.yuv|frames:400
             SVA_BA1_B|AVCv1|SVA_BA1_B.zip|1d19e5339d677ba6920912e7ca2d0a2889ff61fe0c4bbf0167da371fa855061b|SVA_BA1_B.264|SVA_BA1_B_rec.yuv|frames:17
             SVA_BA2_D|AVCv1|SVA_BA2_D.zip|e0cefee7e9206d06cad7bbdbe1441b6566208d693bcebc4396fa896be3a2c8d4|SVA_BA2_D.264|SVA_BA2_D_rec.yuv|frames:17
             SVA_Base_B|AVCv1|SVA_Base_B.zip|0ab8582893c671db242d2a645745a96b45bd4e479ccce8b0a6d989ee87e259a7|SVA_Base_B.264|SVA_Base_B_rec.yuv|frames:17
@@ -176,7 +174,7 @@ class H264ConformanceTest {
             cavlc_mot_frm0_full_B|AVCv1|cavlc_mot_frm0_full_B.zip|42ce5e512d90ac77ec51f88a45baaf02e288dbb4b7b1237cdd8b18779000bfab|cvmp_mot_frm0_full_B.26l|cvmp_mot_frm0_full_rec_B.yuv|frames:30
             cavlc_mot_mbaff0_full_B|AVCv1|cavlc_mot_mbaff0_full_B.zip|23da6f6f4ebd5ccb0e122422f55f8a2897d53bb8b4fdaa8f4ad03b24d4a6c92f|cvmp_mot_mbaff0_full_B.26l|cvmp_mot_mbaff0_full_B_rec.yuv|frames:30
             cavlc_mot_picaff0_full_B|AVCv1|cavlc_mot_picaff0_full_B.zip|0bc97dac5b4977da638ffa7ec285e226289f6935468e71b4760ceaeffa8a3de3|cvmp_mot_picaff0_full_B.26l|cvmp_mot_picaff0_full_B_rec.yuv|frames:30
-            sp2_bt_b|AVCv1|sp2_bt_b.zip|61190770cec9376fe0ece9067670074570683f4547528d6a5fa6386af08a4b8a|H26L/BitstreamExchange/sp2_bt_b.h264||unsupported:h264 sp/si slices
+            sp2_bt_b|AVCv1|sp2_bt_b.zip|61190770cec9376fe0ece9067670074570683f4547528d6a5fa6386af08a4b8a|H26L/BitstreamExchange/sp2_bt_b.h264|H26L/BitstreamExchange/sp2_bt_b.yuv|frames:400
             FREXT01_JVC_D|FRExt|FREXT01_JVC_D.zip|60803de47692a4199b72c16cefb89f604568a12d4574e6565deb05837f947ffe|FREXT01_JVC_D.264|FREXT01_JVC_D.yuv|frames:16
             FREXT02_JVC_C|FRExt|FREXT02_JVC_C.zip|df73856939fd1d1576233c5b8d98bd17f4286f0c0e0a4cae6a96ddb1fcedbc86|FREXT02_JVC_C.264|FREXT02_JVC_C.yuv|frames:16
             FREXT1_TANDBERG_A|FRExt|FREXT1_TANDBERG_A.zip|b90fa06d0b498dcda5a16ac81857270543e5d0614c62387e649a559eda775bc5|FREXT1_TANDBERG_A.264|FREXT1_TANDBERG_A.yuv|frames:5
@@ -243,20 +241,12 @@ class H264ConformanceTest {
             return name;
         }
 
-        boolean supported() {
-            return expectation.startsWith("frames");
-        }
-
         boolean wide() {
             return expectation.startsWith("frames16:");
         }
 
         int frames() {
             return Integer.parseInt(expectation.substring(expectation.indexOf(':') + 1));
-        }
-
-        String feature() {
-            return expectation.substring("unsupported:".length());
         }
     }
 
@@ -270,7 +260,7 @@ class H264ConformanceTest {
     }
 
     static Stream<Vector> decodable() {
-        return vectors().stream().filter(Vector::supported);
+        return vectors().stream();
     }
 
     static Stream<Vector> threaded() {
@@ -278,11 +268,8 @@ class H264ConformanceTest {
                 "CABA3_Sony_C|CAPM3_Sony_D|MR4_TANDBERG_C|CVWP1_TOSHIBA_E|HCBP2_HHI_A|FRExt_MMCO4_Sony_B|HPCV_BRCM_A"
                         + "|freh12_b|MV1_BRCM_D|FM1_FT_E|CAPCM1_Sand_E|cabac_mot_frm0_full"
                         + "|CVPA1_TOSHIBA_B|CAPAMA3_Sand_F|CAMA3_Sand_E|CAMANL2_TOSHIBA_B|CVMP_MOT_FLD_L30_B"
-                        + "|cabac_mot_mbaff0_full|cavlc_mot_picaff0_full_B|FRExt2_Panasonic_C|HCAMFF1_HHI_B|MR9_BT_B"));
-    }
-
-    static Stream<Vector> unsupported() {
-        return vectors().stream().filter(vector -> !vector.supported());
+                        + "|cabac_mot_mbaff0_full|cavlc_mot_picaff0_full_B|FRExt2_Panasonic_C|HCAMFF1_HHI_B|MR9_BT_B"
+                        + "|SP1_BT_A|sp2_bt_b"));
     }
 
     @ParameterizedTest(name = "{0}")
@@ -307,25 +294,7 @@ class H264ConformanceTest {
         }
     }
 
-    @ParameterizedTest(name = "{0}")
-    @MethodSource("unsupported")
-    @DisplayName("rejects unsupported coding tools with a precise feature name")
-    void rejects(Vector vector) throws IOException {
-        var stream = bitstream(vector);
-        var failure = assertThrows(MediaException.Unsupported.class, () -> {
-            try (var decoder = new H264Decoder(track())) {
-                for (var nal : H264TestStreams.splitAnnexB(stream)) {
-                    decoder.decode(packet(nal), frame -> {
-                    });
-                }
-                decoder.flush(frame -> {
-                });
-            }
-        });
-        assertEquals(vector.feature(), failure.format());
-    }
-
-    private static void check(Vector vector, int threads) throws IOException {
+    static void check(Vector vector, int threads) throws IOException {
         var archive = Conformance.fetch("h264-" + vector.directory() + "-" + vector.archive(),
                 BASE + vector.directory() + "/" + vector.archive(), vector.sha256());
         byte[] stream;

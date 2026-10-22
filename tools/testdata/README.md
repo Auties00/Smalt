@@ -436,6 +436,25 @@ an MP4 file in memory (one `hvc1` sample per access unit, cut after each picture
 times in output order) and the intra separate-plane picture into an HEIC item, and compares the decodes with the
 golden dumps under `mpeg/src/test/resources/dumps/hevc/` and `dumps/heif-items/planes/`.
 
+## H.264 Extended profile vectors
+
+`H264ExtendedProfileTest` of `smalt-mpeg` decodes short Extended profile streams with slice data partitions,
+SP slices (switching ones included) and SI slices
+(`mpeg/src/test/resources/com/github/auties00/smalt/video/h264/extended/`), which the JVT conformance suite lacks
+apart from the SP streams SP1_BT_A and sp2_bt_b. Most are coded by the JM 19.1 reference encoder (ISO/IEC and
+ITU-T reference software, run as a black box) and their expected frame hashes are the output of the JM decoder,
+both built from the jvet/JM sources after `python -I tools/testdata/h264-extended/patch-jm.py <JM source tree>`,
+which fixes the MinGW build and the decoder's departures from ITU-T H.264 8.6, 8.3.1.1 and 7.3.5.1 (its docstring
+lists them; with them fixed, the decoder reproduces the reference YUV of SP1_BT_A and sp2_bt_b, which the unpatched
+one does not). `python -I tools/testdata/h264-extended/make-vectors.py <JM bin directory> <JM cfg directory>
+<output directory>` makes the inputs from ffmpeg's `testsrc2` pattern and writes every JM stream, the rows of
+`streams.tsv` and `frames.tsv`; the JM encoder's output is deterministic, so the streams' SHA-256 checksums are
+reproduced. The JM encoder never writes SI macroblocks, so `python -I
+tools/testdata/h264-extended/make-si-streams.py <output directory>` writes two small streams with SI macroblocks bit
+by bit and computes their expected frames with its own model of the standard's SI decoding, with which the patched
+JM decoder agrees where it applies. `streams.tsv` records how each stream was made and which of them the encoder's
+own reconstruction also matches.
+
 ## Aperio slide oracle files
 
 The same test decodes a pyramid level of two Aperio slides of the OpenSlide test data

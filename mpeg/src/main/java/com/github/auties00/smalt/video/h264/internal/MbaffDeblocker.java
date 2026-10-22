@@ -410,7 +410,7 @@ final class MbaffDeblocker {
         var types = frame.mbType;
         var typeP = types[mbP];
         var typeQ = types[mbQ];
-        if (((typeP | typeQ) & DecoderFrame.MB_INTRA) != 0) {
+        if (((typeP | typeQ) & (DecoderFrame.MB_INTRA | DecoderFrame.MB_SWITCHING)) != 0) {
             if (mbEdge && (vertical || ((typeP | typeQ) & DecoderFrame.MB_FIELD) == 0)) {
                 return 4;
             }

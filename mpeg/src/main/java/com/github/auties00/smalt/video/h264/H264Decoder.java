@@ -29,10 +29,13 @@ import java.util.function.Consumer;
  * Decodes an ITU-T H.264 / MPEG-4 AVC video track.
  *
  * <p>The decoder implements the Baseline (flexible macroblock ordering and arbitrary slice order
- * included), Main, High, High 10, High 4:2:2 and High 4:4:4 Predictive profiles (with High 10
- * Intra, High 4:2:2 Intra, High 4:4:4 Intra and CAVLC 4:4:4 Intra), for progressive and interlaced
- * 4:2:0, 4:2:2, 4:4:4 and 4:0:0 (monochrome) video of 8 to 14 bits, with independent luma and
- * chroma bit depths: CAVLC and CABAC, I, P and B slices, all partition sizes, I_PCM macroblocks,
+ * included), Extended, Main, High, High 10, High 4:2:2 and High 4:4:4 Predictive profiles (with
+ * High 10 Intra, High 4:2:2 Intra, High 4:4:4 Intra and CAVLC 4:4:4 Intra), for progressive and
+ * interlaced 4:2:0, 4:2:2, 4:4:4 and 4:0:0 (monochrome) video of 8 to 14 bits, with independent
+ * luma and chroma bit depths: CAVLC and CABAC, I, P and B slices, the SP and SI slices of the
+ * Extended profile (switching SP slices and SI macroblocks included), slice data partitioning
+ * (partitions A, B and C, which may arrive in separate packets and interleave across the slices of
+ * a picture), redundant coded pictures (which are skipped), all partition sizes, I_PCM macroblocks,
  * lossless macroblocks ({@code qpprime_y_zero_transform_bypass_flag}), weighted prediction, spatial
  * and temporal direct prediction, the 8x8 transform, scaling matrices, long-term references, every
  * memory management control operation, the deblocking filter, field pictures and
@@ -90,14 +93,21 @@ import java.util.function.Consumer;
  * field periods {@code pic_struct} repeats: one and a half frame periods for the three-field
  * structures, two for frame doubling and three for frame tripling.
  *
- * <p>Unsupported but valid streams raise {@link MediaException.Unsupported} naming the feature:
- * {@code "h264 sp/si slices"} and {@code "h264 data partitioning"}. NAL
- * units of the scalable and multiview extensions and auxiliary pictures are skipped, so the base
- * layer and primary pictures decode. A corrupt slice raises {@link MediaException.Malformed} for its packet after
- * the rest of the packet was processed; the missing area is concealed from the previous frame
- * and decoding continues with the next packet. A stream that starts on a non-IDR picture is
- * decoded from its first I picture or recovery point. An exception the frame consumer throws
- * reaches the caller unchanged.
+ * <p>Streams this decoder does not handle raise {@link MediaException.Unsupported} naming the
+ * feature: {@code "h264 cabac data partitioning"} for slice data partitions of a CABAC picture
+ * parameter set, which no profile allows, and {@code "h264 mvc"} for inter-view reference list
+ * modifications. NAL units of the scalable and multiview extensions and auxiliary pictures are
+ * skipped, so the base layer and primary pictures decode. When a slice data partition B or C is
+ * lost, the macroblocks whose residual or I_PCM samples it held are reconstructed without them
+ * (I_PCM macroblocks as mid-gray) and the picture is damaged; a partition B or C whose partition
+ * A is missing damages the picture as a lost slice does. The slice data of a slice coded as
+ * partitions is decoded once its partition C arrives or its picture ends, so its failures are
+ * reported by the {@link #decode(Packet, Consumer)} or {@link #flush(Consumer)} call during which
+ * that happens. A corrupt slice raises {@link MediaException.Malformed} for its packet after the
+ * rest of the packet was processed; the missing area is concealed from the previous frame and
+ * decoding continues with the next packet. A stream that starts on a non-IDR picture is decoded
+ * from its first I picture or recovery point. An exception the frame consumer throws reaches the
+ * caller unchanged.
  *
  * <p>With {@link H264DecoderOptions#threads()} above one, up to that many pictures are decoded
  * concurrently on the module's shared worker threads, each picture waiting only for the rows of

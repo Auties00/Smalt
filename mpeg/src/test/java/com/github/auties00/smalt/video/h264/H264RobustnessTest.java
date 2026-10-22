@@ -56,6 +56,9 @@ class H264RobustnessTest {
                 if (resource.startsWith("chroma444/")) {
                     return H264Chroma444Test.resource(resource.substring("chroma444/".length()));
                 }
+                if (resource.startsWith("extended/")) {
+                    return H264ExtendedProfileTest.resource(resource.substring("extended/".length()));
+                }
                 return H264HighBitDepthTest.resource(resource);
             }
             var output = new ArrayList<String>(List.of("-frames:v", "16", "-c:v", "libx264"));
@@ -112,7 +115,14 @@ class H264RobustnessTest {
                 new Source("jm separate planes 10-bit cabac mbaff pcm", List.of(), "chroma444/m10-cabac-mbaff-pcm-sep"),
                 new Source("jm separate planes 14-bit cavlc fields", List.of(), "chroma444/m14-cavlc-fields-sep"),
                 new Source("jm lossless 4:2:2 10-bit cabac", List.of(), "chroma444/l10-422-cabac"),
-                new Source("jm lossless 4:4:4 cavlc pcm", List.of(), "chroma444/l8-444-pcm")
+                new Source("jm lossless 4:4:4 cavlc pcm", List.of(), "chroma444/l8-444-pcm"),
+                // JM Extended profile streams: data partitions, SP, switching SP and SI slices
+                new Source("jm extended partitions slices", List.of(), "extended/dp-slices"),
+                new Source("jm extended partitions pcm", List.of(), "extended/dp-pcm"),
+                new Source("jm extended partitions mbaff", List.of(), "extended/dp-mbaff"),
+                new Source("jm extended sp partitions", List.of(), "extended/sp-dp-chroma"),
+                new Source("jm extended switching sp", List.of(), "extended/sp-switch"),
+                new Source("hand-built extended si", List.of(), "extended/si-model")
         );
     }
 
@@ -258,7 +268,7 @@ class H264RobustnessTest {
     void packetOrder(Source source, int threads) {
         runTrials(source, threads, 80, 4, (random, units) -> {
             var packets = new ArrayList<>(annexB(units));
-            for (var i = 0; i < 4; i++) {
+            for (var i = 0; i < 4 && packets.size() > 1; i++) {
                 switch (random.nextInt(3)) {
                     case 0 -> packets.remove(random.nextInt(packets.size()));
                     case 1 -> packets.add(random.nextInt(packets.size()), packets.get(random.nextInt(packets.size())));
@@ -344,7 +354,7 @@ class H264RobustnessTest {
     static Stream<H264ConformanceTest.Vector> conformanceVectors() {
         var names = List.of("FM1_FT_E", "FM2_SVA_C", "MR4_TANDBERG_C", "FRExt_MMCO4_Sony_B", "CAPM3_Sony_D", "HCBP2_HHI_A",
                 "CVSEFDFT3_Sony_E", "MR6_BT_B", "FI1_Sony_E", "CAMASL3_Sony_B", "CVMAQP3_Sony_D", "MR9_BT_B",
-                "CVMP_MOT_FLD_L30_B");
+                "CVMP_MOT_FLD_L30_B", "SP1_BT_A");
         return H264ConformanceTest.vectors().stream().filter(vector -> names.contains(vector.name()));
     }
 

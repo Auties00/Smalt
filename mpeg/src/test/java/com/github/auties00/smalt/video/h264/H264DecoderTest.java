@@ -409,9 +409,9 @@ class H264DecoderTest {
         }
 
         @ParameterizedTest(name = "profile {0}, constraint flags {1}: {2}")
-        @CsvSource({"66, 0x00, true", "77, 0x00, true", "88, 0x00, false", "88, 0x10, false", "88, 0x80, true",
+        @CsvSource({"66, 0x00, true", "77, 0x00, true", "88, 0x00, true", "88, 0x10, true", "88, 0x80, true",
                 "88, 0x40, true", "88, 0xC0, true"})
-        @DisplayName("reports Extended profile streams as supported only when they meet Baseline or Main")
+        @DisplayName("reports Baseline, Main and Extended profile streams as supported")
         void extended(int profile, String flags, boolean supported) {
             var info = H264StreamInfo.probe(sps(profile, Integer.decode(flags), 30));
             assertEquals(supported, info.decoderSupported());
@@ -440,24 +440,16 @@ class H264DecoderTest {
         }
 
         @Test
-        @DisplayName("raises Unsupported naming data partitioning for a slice data partition")
-        void dataPartitioning() {
+        @DisplayName("raises Unsupported naming CABAC data partitioning for a slice data partition of a CABAC picture "
+                + "parameter set")
+        void cabacDataPartitioning() {
+            var pps = H264BitWriter.nal(3, 8, new H264BitWriter().ue(0).ue(0).bit(1).bit(0).ue(0).ue(0).ue(0).bit(0)
+                    .bits(0, 2).se(0).se(0).se(0).bit(1).bit(0).bit(0).trailing());
             var partition = H264BitWriter.nal(2, 2, new H264BitWriter().ue(0).ue(2).ue(0).ue(0).bits(0, 7).trailing());
-            var stream = H264TestStreams.annexB(List.of(extendedSps(), H264BitWriter.pps(), partition));
+            var stream = H264TestStreams.annexB(List.of(extendedSps(), pps, partition));
             var failure = assertThrows(MediaException.Unsupported.class, () -> H264TestStreams.decode(ANNEX_B,
                     List.of(new Packet(1, stream, 0, Packet.NO_TIMESTAMP, 0, true)), 1));
-            assertEquals("h264 data partitioning", failure.format());
-        }
-
-        @ParameterizedTest(name = "slice_type {0}")
-        @CsvSource({"3", "4", "8", "9"})
-        @DisplayName("raises Unsupported naming SP and SI slices for those slice types")
-        void spSiSlices(int sliceType) {
-            var slice = H264BitWriter.nal(3, 1, new H264BitWriter().ue(0).ue(sliceType).ue(0).bits(0, 9).trailing());
-            var stream = H264TestStreams.annexB(List.of(extendedSps(), H264BitWriter.pps(), slice));
-            var failure = assertThrows(MediaException.Unsupported.class, () -> H264TestStreams.decode(ANNEX_B,
-                    List.of(new Packet(1, stream, 0, Packet.NO_TIMESTAMP, 0, true)), 1));
-            assertEquals("h264 sp/si slices", failure.format());
+            assertEquals("h264 cabac data partitioning", failure.format());
         }
 
         @Test

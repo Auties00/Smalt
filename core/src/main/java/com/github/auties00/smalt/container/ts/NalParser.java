@@ -574,7 +574,7 @@ final class NalParser extends ElementaryParser {
                 current.idr |= type >= 16 && type <= 23;
             } else {
                 current.idr |= type == 5;
-                if (current.intra && !isIntraSlice(data, offset, length)) {
+                if (current.intra && startsWithSliceHeader(type) && !isIntraSlice(data, offset, length)) {
                     current.intra = false;
                 }
             }
@@ -605,6 +605,18 @@ final class NalParser extends ElementaryParser {
     }
 
     /**
+     * Returns whether an H.264 VCL NAL unit type starts with a slice header: a coded slice or a
+     * slice data partition A. The slice data partitions B and C start with their
+     * {@code slice_id} and never begin an access unit (ITU-T H.264 7.3.2.9 and 7.4.1.2.4).
+     *
+     * @param type the NAL unit type
+     * @return {@code true} for NAL unit types 1, 2 and 5
+     */
+    private static boolean startsWithSliceHeader(int type) {
+        return type == 1 || type == 2 || type == 5;
+    }
+
+    /**
      * Returns whether a NAL unit starts a new access unit after a coded slice.
      *
      * @param type the NAL unit type
@@ -621,7 +633,7 @@ final class NalParser extends ElementaryParser {
             return (type >= 32 && type <= 35) || type == 39 || (type >= 41 && type <= 44) || (type >= 48 && type <= 55);
         }
         if (type >= 1 && type <= 5) {
-            return length > 1 && (data[offset + 1] & 0x80) != 0;
+            return startsWithSliceHeader(type) && length > 1 && (data[offset + 1] & 0x80) != 0;
         }
         return (type >= 6 && type <= 9) || (type >= 14 && type <= 18);
     }

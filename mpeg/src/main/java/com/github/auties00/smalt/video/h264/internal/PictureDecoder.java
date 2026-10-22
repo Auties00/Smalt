@@ -303,6 +303,13 @@ final class PictureDecoder {
         } catch (RuntimeException failure) {
             record(new MediaException.Malformed("corrupt slice data", failure));
         }
+        var partitionFailure = sliceDecoder.takePartitionFailure();
+        if (partitionFailure != null) {
+            record(partitionFailure);
+        }
+        if (sliceDecoder.takeResidualLoss()) {
+            frame.owner().damaged = true;
+        }
     }
 
     /**

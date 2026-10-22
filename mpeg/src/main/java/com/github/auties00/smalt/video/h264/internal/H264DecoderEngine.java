@@ -333,6 +333,35 @@ public final class H264DecoderEngine {
     private final ArrayDeque<PictureJob> inFlight = new ArrayDeque<>();
 
     /**
+     * The slices of the current picture coded as data partitions whose partition C has not
+     * arrived, in arrival order. Their partition A was processed; the partitions B and C that
+     * follow attach to them by {@code slice_id} and {@code colour_plane_id}. On a single thread
+     * they are decoded when their partition C arrives or the picture finishes; with several
+     * threads they already belong to the picture's job.
+     */
+    private final List<SliceTask> pendingPartitions = new ArrayList<>();
+
+    /**
+     * The slices whose partitions B and C are dropped silently, one bit per {@code slice_id} for
+     * each {@code colour_plane_id}: the partitions A dropped on purpose since the current picture
+     * started (a repeated slice, or a slice of a picture decoding does not start at) and the
+     * slices of the picture already complete, whose partitions may be repeated. A plane's words
+     * grow to hold the largest {@code slice_id} remembered.
+     */
+    private final long[][] droppedPartitions = {new long[0], new long[0], new long[0]};
+
+    /**
+     * Whether a bit of {@link #droppedPartitions} is set.
+     */
+    private boolean anyDroppedPartition;
+
+    /**
+     * The picture parameter set of the last slice header parsed, which describes the header of
+     * a partition B or C whose partition A is no longer waiting.
+     */
+    private H264Pps lastSlicePps;
+
+    /**
      * The job of the picture being received, not started yet, or {@code null}.
      */
     private PictureJob currentJob;
@@ -767,6 +796,7 @@ public final class H264DecoderEngine {
      * when no claimed picture can read them; afterwards no thread runs work of this engine.
      */
     public void close() {
+        pendingPartitions.clear();
         if (!parallel) {
             return;
         }
@@ -897,7 +927,8 @@ public final class H264DecoderEngine {
         var nalRefIdc = headerByte >> 5;
         var type = headerByte & 0x1F;
         switch (type) {
-            case H264Nal.SLICE, H264Nal.IDR_SLICE, H264Nal.SPS, H264Nal.PPS, H264Nal.SEI -> {
+            case H264Nal.SLICE, H264Nal.IDR_SLICE, H264Nal.SPS, H264Nal.PPS, H264Nal.SEI, H264Nal.SLICE_PARTITION_A,
+                 H264Nal.SLICE_PARTITION_B, H264Nal.SLICE_PARTITION_C -> {
                 var needed = length + H264BitReader.PADDING;
                 LimitChecks.checkAllocation(limits, needed);
                 if (rbsp.length < needed) {
@@ -910,6 +941,7 @@ public final class H264DecoderEngine {
                         case H264Nal.SPS -> handleSps(size);
                         case H264Nal.PPS -> handlePps(size);
                         case H264Nal.SEI -> handleSei(size);
+                        case H264Nal.SLICE_PARTITION_B, H264Nal.SLICE_PARTITION_C -> handlePartition(size, type);
                         default -> handleSlice(size, type, nalRefIdc);
                     }
                 } catch (MediaException.Malformed error) {
@@ -917,8 +949,6 @@ public final class H264DecoderEngine {
                     recordError(error);
                 }
             }
-            case H264Nal.SLICE_PARTITION_A, H264Nal.SLICE_PARTITION_B, H264Nal.SLICE_PARTITION_C ->
-                    throw new MediaException.Unsupported("h264 data partitioning", "slice data partitioning (Extended profile) is not supported");
             case H264Nal.AUD -> finishPicture();
             case H264Nal.END_OF_SEQUENCE, H264Nal.END_OF_STREAM -> {
                 finishPicture();
@@ -1191,8 +1221,13 @@ public final class H264DecoderEngine {
         slice.parseStart(reader);
         var pps = activatePps(slice.ppsId);
         var sps = pps.sps;
-        checkSupported(sps, slice);
+        lastSlicePps = pps;
+        if (nalType == H264Nal.SLICE_PARTITION_A && pps.cabac) {
+            throw new MediaException.Unsupported("h264 cabac data partitioning",
+                    "slice data partitioning with CABAC entropy coding belongs to no profile");
+        }
         slice.parseRest(reader, pps, nalType, nalRefIdc);
+        checkSwitching(sps, pps, slice);
 
         if (slice.redundantPicCnt > 0) {
             return;
@@ -1200,8 +1235,10 @@ public final class H264DecoderEngine {
         if (current != null) {
             if (isNewPicture(slice)) {
                 finishPicture();
-            } else if (parallel ? repeatsSliceStart(slice) : repeatsDecodedMacroblock(slice)) {
+            } else if (parallel ? repeatsSliceStart(slice)
+                    : repeatsDecodedMacroblock(slice) || repeatsPendingStart(slice)) {
                 if (slice.firstMbInSlice != 0) {
+                    dropped(slice);
                     return;
                 }
                 finishPicture();
@@ -1209,12 +1246,14 @@ public final class H264DecoderEngine {
         }
         if (current == null) {
             if (lastPictureValid && !isNewPicture(slice, lastPicture) && slice.firstMbInSlice != 0) {
+                dropped(slice);
                 return;
             }
             if (!started) {
-                if (!slice.idr && !recoveryPointPending && slice.sliceType != H264SliceHeader.I) {
+                if (!slice.idr && !recoveryPointPending && !slice.isIntra()) {
                     noteDamage();
                     discardPictureMessages();
+                    dropped(slice);
                     return;
                 }
                 started = true;
@@ -1276,15 +1315,172 @@ public final class H264DecoderEngine {
     }
 
     /**
-     * Rejects coding tools this decoder does not implement.
+     * Remembers a slice dropped on purpose when it is a partition A, so that its partitions B and
+     * C are dropped silently.
+     *
+     * @param slice the dropped slice
+     */
+    private void dropped(H264SliceHeader slice) {
+        if (slice.nalUnitType == H264Nal.SLICE_PARTITION_A) {
+            remember(slice);
+        }
+    }
+
+    /**
+     * Adds a slice to {@link #droppedPartitions}.
+     *
+     * @param slice the header of the slice's partition A
+     */
+    private void remember(H264SliceHeader slice) {
+        var plane = slice.colorPlaneId;
+        var word = slice.sliceId >>> 6;
+        var words = droppedPartitions[plane];
+        if (word >= words.length) {
+            words = Arrays.copyOf(words, Math.max(word + 1, 2 * words.length));
+            droppedPartitions[plane] = words;
+        }
+        words[word] |= 1L << slice.sliceId;
+        anyDroppedPartition = true;
+    }
+
+    /**
+     * Returns whether the partitions B and C of a slice are dropped silently.
+     *
+     * @param sliceId the {@code slice_id} of the partition, any value
+     * @param colorPlane the {@code colour_plane_id} of the partition, 0 to 3
+     * @return {@code true} when {@link #droppedPartitions} holds the slice
+     */
+    private boolean isDropped(int sliceId, int colorPlane) {
+        if (sliceId < 0 || colorPlane > 2) {
+            return false;
+        }
+        var words = droppedPartitions[colorPlane];
+        var word = sliceId >>> 6;
+        return word < words.length && (words[word] & 1L << sliceId) != 0;
+    }
+
+    /**
+     * Forgets every slice of {@link #droppedPartitions}, for a picture that starts.
+     */
+    private void clearDroppedPartitions() {
+        if (anyDroppedPartition) {
+            for (var words : droppedPartitions) {
+                Arrays.fill(words, 0);
+            }
+            anyDroppedPartition = false;
+        }
+    }
+
+    /**
+     * Rejects SP and SI slices outside the only configuration ITU-T H.264 8.6 defines them for:
+     * 8-bit 4:2:0 video with 4x4 transforms, the Extended profile's.
      *
      * @param sps the sequence parameter set
-     * @param slice the slice header, parsed up to {@code pic_parameter_set_id}
-     * @throws MediaException.Unsupported if a tool is not supported
+     * @param pps the picture parameter set
+     * @param slice the slice header
+     * @throws MediaException.Malformed if an SP or SI slice uses another configuration
      */
-    private static void checkSupported(H264Sps sps, H264SliceHeader slice) {
-        if (slice.sliceType == H264SliceHeader.SP || slice.sliceType == H264SliceHeader.SI) {
-            throw new MediaException.Unsupported("h264 sp/si slices", "SP and SI slices (Extended profile) are not supported");
+    private static void checkSwitching(H264Sps sps, H264Pps pps, H264SliceHeader slice) {
+        if (slice.sliceType != H264SliceHeader.SP && slice.sliceType != H264SliceHeader.SI) {
+            return;
+        }
+        if (sps.chromaArrayType() != 1 || sps.bitDepthLuma != 8 || sps.bitDepthChroma != 8 || sps.transformBypass
+                || pps.transform8x8Mode) {
+            throw new MediaException.Malformed("SP and SI slices are defined for 8-bit 4:2:0 video with 4x4 "
+                    + "transforms only");
+        }
+    }
+
+    /**
+     * Attaches a slice data partition B or C to the slice of its partition A (ITU-T H.264 7.3.2.9
+     * and 8.2.3), and decodes that slice when its last partition, C, arrives on a single thread.
+     *
+     * <p>A partition of a redundant coded picture is dropped with the picture, and the partitions
+     * of a partition A dropped on purpose are dropped with it. A partition whose partition A is
+     * missing damages the current picture, as a lost slice would; a repeated partition, of a
+     * slice still waiting or already complete, is ignored.
+     *
+     * @param size the payload size in {@link #rbsp}
+     * @param nalType {@link H264Nal#SLICE_PARTITION_B} or {@link H264Nal#SLICE_PARTITION_C}
+     * @throws MediaException.Malformed if the partition header is corrupt
+     */
+    private void handlePartition(int size, int nalType) {
+        var reader = new H264BitReader();
+        reader.init(rbsp, 0, size);
+        var sliceId = reader.readUe();
+        H264Pps pps = null;
+        for (var task : pendingPartitions) {
+            if (task.header.sliceId == sliceId) {
+                pps = task.header.pps;
+                break;
+            }
+        }
+        if (pps == null) {
+            pps = current != null ? pictureHeader.pps : lastSlicePps;
+        }
+        var colorPlane = 0;
+        var redundant = 0;
+        if (pps != null) {
+            if (pps.sps.separateColorPlane) {
+                colorPlane = reader.readBits(2);
+            }
+            if (pps.redundantPicCntPresent) {
+                redundant = reader.readUe();
+            }
+        }
+        if (reader.overrun()) {
+            throw new MediaException.Malformed("truncated slice data partition header");
+        }
+        if (redundant > 0) {
+            return;
+        }
+        SliceTask match = null;
+        for (var task : pendingPartitions) {
+            if (task.header.sliceId == sliceId && task.header.colorPlaneId == colorPlane) {
+                match = task;
+                break;
+            }
+        }
+        if (match == null) {
+            if (!isDropped(sliceId, colorPlane)) {
+                noteDamage();
+                if (current != null) {
+                    current.damaged = true;
+                }
+            }
+            return;
+        }
+        var category = nalType == H264Nal.SLICE_PARTITION_B ? 3 : 4;
+        if ((category == 3 ? match.partitionB : match.partitionC) != null) {
+            return;
+        }
+        if (packetIncomplete && current != null) {
+            current.damaged = true;
+        }
+        match.attachPartition(category, Arrays.copyOf(rbsp, size + H264BitReader.PADDING), size,
+                reader.bitPosition());
+        if (category == 4) {
+            pendingPartitions.remove(match);
+            remember(match.header);
+            if (!parallel) {
+                decodeInline(match);
+                if (current != null && inlineDecoder.complete()) {
+                    finishPicture();
+                }
+            }
+        }
+    }
+
+    /**
+     * Decodes a slice of the current picture on the calling thread, recording its failure.
+     *
+     * @param task the slice
+     */
+    private void decodeInline(SliceTask task) {
+        inlineDecoder.decodeSlice(task);
+        var failure = inlineDecoder.takeError();
+        if (failure != null) {
+            recordError(failure);
         }
     }
 
@@ -1332,6 +1528,7 @@ public final class H264DecoderEngine {
      * @param sps the sequence parameter set
      */
     private void startPicture(H264SliceHeader slice, H264Sps sps) {
+        clearDroppedPartitions();
         activateSps(sps, slice.idr);
         var structure = slice.fieldPic ? (slice.bottomField ? DecoderFrame.BOTTOM : DecoderFrame.TOP)
                 : DecoderFrame.FRAME;
@@ -1537,6 +1734,24 @@ public final class H264DecoderEngine {
         var index = PictureState.mbIndex((int) address, currentStructure, currentMbaff, width);
         return index < slices.length && slices[index] >= firstSliceNum;
     }
+    /**
+     * Returns whether a slice of the current picture starts at the first macroblock of a slice
+     * coded as data partitions that waits for its partitions, which makes it a repeat or the
+     * start of a new picture.
+     *
+     * @param slice the slice header, of the current picture
+     * @return {@code true} when a waiting slice of the same color plane starts at the same
+     * macroblock
+     */
+    private boolean repeatsPendingStart(H264SliceHeader slice) {
+        for (var task : pendingPartitions) {
+            if (task.header.firstMbInSlice == slice.firstMbInSlice && task.header.colorPlaneId == slice.colorPlaneId) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Returns the index of the first macroblock of a slice of the current picture.
      *
@@ -1975,6 +2190,7 @@ public final class H264DecoderEngine {
         }
         var sliceNum = nextSliceNum++;
         var map = pps.numSliceGroups > 1 ? sliceGroupMap : null;
+        var partitioned = slice.nalUnitType == H264Nal.SLICE_PARTITION_A;
         if (parallel) {
             var start = sliceStartIndex(slice);
             if (start >= 0) {
@@ -1983,6 +2199,15 @@ public final class H264DecoderEngine {
             var copy = SliceTask.copyOf(slice, rbsp, size, lists, listStructures, sliceNum, map);
             copy.captureReferences(currentPoc, current.topPoc, current.bottomPoc, slice.numRefIdxActive);
             currentJob.add(copy);
+            if (partitioned) {
+                pendingPartitions.add(copy);
+            }
+            return;
+        }
+        if (partitioned) {
+            var copy = SliceTask.copyOf(slice, rbsp, size, lists, listStructures, sliceNum, map);
+            copy.captureReferences(currentPoc, current.topPoc, current.bottomPoc, slice.numRefIdxActive);
+            pendingPartitions.add(copy);
             return;
         }
         var task = inlineTask;
@@ -2009,6 +2234,15 @@ public final class H264DecoderEngine {
         var frame = current;
         if (frame == null) {
             return;
+        }
+        try {
+            if (!parallel) {
+                for (var task : pendingPartitions) {
+                    decodeInline(task);
+                }
+            }
+        } finally {
+            pendingPartitions.clear();
         }
         current = null;
         var slice = pictureHeader;
@@ -2642,7 +2876,10 @@ public final class H264DecoderEngine {
 
     /**
      * Finishes the current picture and outputs every frame still buffered, for the end of the
-     * stream.
+     * stream, then rethrows the first failure recorded since the last packet ended, such as one
+     * of the slice coded as partitions that the end of the stream completed.
+     *
+     * @throws MediaException the first failure recorded since the last packet ended
      */
     public void flush() {
         finishPicture();
@@ -2660,6 +2897,11 @@ public final class H264DecoderEngine {
         grainPersistence.reset();
         packingPersistence.reset();
         orientationPersistence.reset();
+        var error = packetError;
+        packetError = null;
+        if (error != null) {
+            throw error;
+        }
     }
 
     /**

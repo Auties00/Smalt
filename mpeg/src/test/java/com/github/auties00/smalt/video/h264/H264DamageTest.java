@@ -118,6 +118,17 @@ class H264DamageTest {
         return name.equals("java-realtime") ? javaStream() : x264Stream();
     }
 
+    /**
+     * A CABAC picture parameter set 7 referring to sequence parameter set 0 and a slice data partition A
+     * referring to it, which the decoder rejects as Unsupported.
+     */
+    static List<byte[]> cabacPartition() {
+        var pps = H264BitWriter.nal(3, 8, new H264BitWriter().ue(7).ue(0).bit(1).bit(0).ue(0).ue(0).ue(0).bit(0)
+                .bits(0, 2).se(0).se(0).se(0).bit(1).bit(0).bit(0).trailing());
+        var partition = H264BitWriter.nal(2, 2, new H264BitWriter().ue(0).ue(0).ue(7).trailing());
+        return List.of(pps, partition);
+    }
+
     private static Packet packet(byte[] data, int index) {
         return new Packet(1, data, (long) index * TICKS, (long) index * TICKS, TICKS, false);
     }
@@ -569,10 +580,11 @@ class H264DamageTest {
         @Test
         @DisplayName("the consumer's exception thrown while a failed packet is abandoned propagates unchanged")
         void consumerFailureWhileAbandoning() {
-            // a data partition NAL unit after a cut slice fails the packet with Unsupported while the
-            // picture is still open, so the low-delay decoder outputs it while abandoning the packet
+            // a slice data partition of a CABAC picture parameter set after a cut slice fails the packet
+            // with Unsupported while the picture is still open, so the low-delay decoder outputs it while
+            // abandoning the packet
             var units = javaStream();
-            var partition = new byte[]{0, 0, 1, 0x62, (byte) 0x80};
+            var partition = H264TestStreams.annexB(cabacPartition());
             var partial = Arrays.copyOf(units.get(1), Math.max(8, units.get(1).length / 3));
             var data = Arrays.copyOf(partial, partial.length + partition.length);
             System.arraycopy(partition, 0, data, partial.length, partition.length);
@@ -611,10 +623,10 @@ class H264DamageTest {
             var file = Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30:duration=0.1"),
                     List.of("-c:v", "libx264", "-pix_fmt", "yuv420p", "-f", "h264"));
             var units = H264TestStreams.accessUnits(H264TestStreams.nalUnits(Fixtures.read(file)));
-            // a slice data partition A (Extended profile) ahead of the first picture's slices
+            // a slice data partition A of a CABAC picture parameter set, which belongs to no profile, ahead of
+            // the first picture's slices
             var first = new ArrayList<>(units.getFirst());
-            first.add(first.size() - 1, H264BitWriter.nal(2, 2, new H264BitWriter().ue(0).ue(2).ue(0).ue(0)
-                    .bits(0, 7).trailing()));
+            first.addAll(first.size() - 1, cabacPartition());
             try (var decoder = new H264Decoder(TRACK, H264DecoderOptions.forRealtime())) {
                 assertThrows(MediaException.Unsupported.class,
                         () -> decoder.decode(packet(H264TestStreams.annexB(first), 0), (frame, damaged) -> {

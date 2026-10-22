@@ -103,6 +103,18 @@ final class DecoderFrame {
     static final int MB_FIELD = 1 << 14;
 
     /**
+     * The macroblock is the SI macroblock of an SI slice, an Intra_4x4 macroblock that is also
+     * flagged {@link #MB_I4X4}.
+     */
+    static final int MB_SI = 1 << 15;
+
+    /**
+     * The macroblock belongs to an SP or SI slice, which the deblocking filter treats as intra
+     * coded (ITU-T H.264 8.7.2.1).
+     */
+    static final int MB_SWITCHING = 1 << 16;
+
+    /**
      * The top field, as a bit of a field set and as a picture structure.
      */
     static final int TOP = 1;

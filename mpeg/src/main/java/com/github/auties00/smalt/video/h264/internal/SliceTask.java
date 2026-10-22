@@ -38,6 +38,38 @@ final class SliceTask {
     int size;
 
     /**
+     * The unescaped payload of the slice data partition B of a slice coded as partitions,
+     * followed by zero padding, or {@code null} when that partition is absent.
+     */
+    byte[] partitionB;
+
+    /**
+     * The payload length of {@link #partitionB}.
+     */
+    int partitionBSize;
+
+    /**
+     * The bit position of the first bit of {@code slice_data()} in {@link #partitionB}.
+     */
+    long partitionBStart;
+
+    /**
+     * The unescaped payload of the slice data partition C, laid out as {@link #partitionB}, or
+     * {@code null} when that partition is absent.
+     */
+    byte[] partitionC;
+
+    /**
+     * The payload length of {@link #partitionC}.
+     */
+    int partitionCSize;
+
+    /**
+     * The bit position of the first bit of {@code slice_data()} in {@link #partitionC}.
+     */
+    long partitionCStart;
+
+    /**
      * The unique number of the slice.
      */
     int sliceNum;
@@ -140,6 +172,26 @@ final class SliceTask {
     }
 
     /**
+     * Attaches a slice data partition B or C to this task, which holds a partition A.
+     *
+     * @param category 3 for partition B, 4 for partition C
+     * @param rbsp the unescaped payload, owned by the task from now on
+     * @param size the payload length
+     * @param start the bit position of the partition's {@code slice_data()}
+     */
+    void attachPartition(int category, byte[] rbsp, int size, long start) {
+        if (category == 3) {
+            partitionB = rbsp;
+            partitionBSize = size;
+            partitionBStart = start;
+        } else {
+            partitionC = rbsp;
+            partitionCSize = size;
+            partitionCStart = start;
+        }
+    }
+
+    /**
      * Points this task at a header and returns it.
      *
      * @param header the slice header the task decodes
@@ -147,6 +199,8 @@ final class SliceTask {
      */
     SliceTask forHeader(H264SliceHeader header) {
         this.header = header;
+        partitionB = null;
+        partitionC = null;
         return this;
     }
 

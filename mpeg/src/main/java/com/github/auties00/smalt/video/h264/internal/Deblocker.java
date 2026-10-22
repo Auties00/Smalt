@@ -620,7 +620,7 @@ final class Deblocker {
         var types = frame.mbType;
         var type = types[mbAddr];
         var limit = verticalLimit;
-        if ((type & DecoderFrame.MB_INTRA) != 0) {
+        if ((type & (DecoderFrame.MB_INTRA | DecoderFrame.MB_SWITCHING)) != 0) {
             verticalStrengths = INTRA_STRENGTHS;
             horizontalStrengths = intraHorizontal;
             return;
@@ -666,7 +666,7 @@ final class Deblocker {
         if (left) {
             var a = mbAddr - 1;
             var typeA = types[a];
-            if ((typeA & DecoderFrame.MB_INTRA) != 0) {
+            if ((typeA & (DecoderFrame.MB_INTRA | DecoderFrame.MB_SWITCHING)) != 0) {
                 vertical |= 0x4444L;
             } else {
                 var edge = (nonZero & 0x1111) | ((pic.nonZero[a] >>> 3) & 0x1111);
@@ -678,7 +678,7 @@ final class Deblocker {
         if (top) {
             var b = mbAddr - mbStride;
             var typeB = types[b];
-            if ((typeB & DecoderFrame.MB_INTRA) != 0) {
+            if ((typeB & (DecoderFrame.MB_INTRA | DecoderFrame.MB_SWITCHING)) != 0) {
                 horizontal |= intraTopEdge;
             } else {
                 var coded = (nonZero | (pic.nonZero[b] >>> 12)) & 15;

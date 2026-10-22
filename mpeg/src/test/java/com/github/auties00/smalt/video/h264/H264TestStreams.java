@@ -66,7 +66,8 @@ final class H264TestStreams {
 
     /**
      * Groups NAL units into access units: a new unit starts at an AUD, SPS, PPS or SEI after a slice, or at a slice
-     * with first_mb_in_slice 0 (of the Y plane when the sequence codes its color planes separately).
+     * or slice data partition A with first_mb_in_slice 0 (of the Y plane when the sequence codes its color planes
+     * separately).
      */
     static List<List<byte[]>> accessUnits(List<byte[]> nals) {
         var units = new ArrayList<List<byte[]>>();
@@ -81,7 +82,7 @@ final class H264TestStreams {
             var boundary = false;
             if (type == 9 || ((type == 7 || type == 8 || type == 6) && sawSlice)) {
                 boundary = true;
-            } else if ((type == 1 || type == 5) && sawSlice && firstMbIsZero(nal)
+            } else if ((type == 1 || type == 2 || type == 5) && sawSlice && firstMbIsZero(nal)
                     && (!separatePlanes || colorPlane(nal) == 0)) {
                 boundary = true;
             }
@@ -91,7 +92,7 @@ final class H264TestStreams {
                 sawSlice = false;
             }
             current.add(nal);
-            if (type == 1 || type == 5) {
+            if (type >= 1 && type <= 5) {
                 sawSlice = true;
             }
         }

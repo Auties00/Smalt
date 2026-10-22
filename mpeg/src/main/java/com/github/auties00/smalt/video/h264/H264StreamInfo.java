@@ -399,16 +399,16 @@ public final class H264StreamInfo {
      *
      * <p>The decoder supports 4:2:0, 4:2:2, 4:4:4 (with the color planes coded together or
      * separately) and 4:0:0 streams of every bit depth from 8 to 14, progressive or interlaced
-     * (field pictures and MBAFF frames), with or without the lossless transform bypass.
-     * Extended profile streams (88) are reported as supported only when
-     * {@code constraint_set0_flag} or {@code constraint_set1_flag} says they also conform to the
-     * Baseline or Main profile, since otherwise they may use slice data partitioning or SP and SI
-     * slices.
+     * (field pictures and MBAFF frames), with or without the lossless transform bypass, and the
+     * Extended profile's slice data partitioning and SP and SI slices, so every configuration a
+     * sequence parameter set can describe is supported. The base layer or base view of a scalable
+     * or multiview stream is what decodes.
      *
-     * @return {@code true} when the decoder supports every picture this configuration allows
+     * @return {@code true} when the decoder supports every picture this configuration allows,
+     * which is always the case
      */
     public boolean decoderSupported() {
-        return profileIdc != 88 || (constraintFlags & (CONSTRAINT_SET0 | CONSTRAINT_SET1)) != 0;
+        return true;
     }
 
     @Override

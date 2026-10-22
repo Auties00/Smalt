@@ -425,6 +425,29 @@ class FuzzSeedWriter {
         return parts;
     }
 
+    @Test
+    @DisplayName("writes the H.264 seeds of the Extended profile tools from the JM test streams")
+    void extended() {
+        extendedSeed("dp-slices", "valid-extended-partitions.bin", 3, 176, 144);
+        extendedSeed("sp-switch", "valid-extended-switching-sp.bin", 4, 176, 144);
+        extendedSeed("si-model", "valid-extended-si.bin", 2, 32, 32);
+    }
+
+    /**
+     * Writes the first access units of a stream of the H.264 Extended profile test as a seed: slice data
+     * partitions, switching SP slices and SI macroblocks.
+     */
+    private static void extendedSeed(String stream, String name, int units, int width, int height) {
+        try {
+            var file = Path.of(FuzzSeedWriter.class.getResource(
+                    "/com/github/auties00/smalt/video/h264/extended/" + stream + ".264").toURI());
+            write(MpegFuzzTest.class, "h264", name, FuzzPackets.video(0, width, height, null,
+                    h264AccessUnits(Fixtures.read(file)).subList(0, units)));
+        } catch (URISyntaxException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
     private static Path separatePlanes() {
         try {
             return Path.of(FuzzSeedWriter.class.getResource(
@@ -576,8 +599,8 @@ class FuzzSeedWriter {
 
     /**
      * Splits an Annex B H.264 stream into its access units, each from the start code of its first NAL unit; a new
-     * access unit starts at an SEI, parameter set or access unit delimiter NAL unit, or a first slice, once the
-     * current one holds a slice. Only the first is flagged as a keyframe.
+     * access unit starts at an SEI, parameter set or access unit delimiter NAL unit, or a first slice or slice data
+     * partition A, once the current one holds a slice. Only the first is flagged as a keyframe.
      */
     private static List<FuzzPackets.Part> h264AccessUnits(byte[] stream) {
         var starts = nalStarts(stream);
@@ -586,13 +609,13 @@ class FuzzSeedWriter {
         for (var start : starts) {
             var header = start + (stream[start + 2] == 1 ? 3 : 4);
             var type = stream[header] & 0x1F;
-            var vcl = type == 1 || type == 5;
+            var vcl = type == 1 || type == 2 || type == 5;
             var first = vcl && (stream[header + 1] & 0x80) != 0;
             if (boundaries.isEmpty() || slice && (first || type == 6 || type == 7 || type == 8 || type == 9)) {
                 boundaries.add(start);
                 slice = false;
             }
-            slice |= vcl;
+            slice |= type >= 1 && type <= 5;
         }
         boundaries.add(stream.length);
         var parts = new ArrayList<FuzzPackets.Part>();
