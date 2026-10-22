@@ -89,7 +89,7 @@ public interface PaletteSearchKernel {
          *         narrower than the eight 32-bit lanes the kernel is written for
          */
         static PaletteSearchKernel create() {
-            return VectorPaletteSearchKernel.WIDE ? new VectorPaletteSearchKernel() : new ScalarPaletteSearchKernel();
+            return Simd.WIDE ? new VectorPaletteSearchKernel() : new ScalarPaletteSearchKernel();
         }
     }
 }

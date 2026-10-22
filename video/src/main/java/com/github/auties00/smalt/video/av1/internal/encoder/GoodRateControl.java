@@ -318,7 +318,7 @@ final class GoodRateControl {
      * @return the quantizer index
      */
     private int arf(int leaf, int gfuBoost) {
-        return arfImportance > 0 ? Math.clamp(TplModel.qindex(leaf, Math.pow(arfImportance, ARF_K)), minQindex, maxQindex)
+        return arfImportance > 0 ? Math.clamp(TplModel.qindex(leaf, StrictMath.pow(arfImportance, ARF_K)), minQindex, maxQindex)
                 : arfQindex(leaf, gfuBoost);
     }
 

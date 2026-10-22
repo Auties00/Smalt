@@ -3,6 +3,13 @@
 package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.PixelDensity;
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.tiff.TiffExif;
 
@@ -12,12 +19,15 @@ import java.util.Arrays;
 /**
  * Reads the boxes of a JP2 or JPX file (ISO/IEC 15444-1 annex I and ISO/IEC 15444-2 annex M) that
  * describe the image: the image header, the color specification, the palette, component mapping
- * and channel definitions, the location of the first contiguous codestream, and the EXIF and XMP
- * metadata of {@code uuid} and {@code xml } boxes.
+ * and channel definitions, the capture and display resolutions, the location of the first contiguous
+ * codestream, and the EXIF and XMP metadata of {@code uuid} and {@code xml } boxes.
  *
  * <p>A raw codestream (starting with the {@code SOC} and {@code SIZ} markers) is accepted too and
  * yields only the codestream location. Unknown boxes are skipped; of several color
  * specifications the first one with a method this reader understands is used, as I.5.3.3 asks.
+ * The methods are enumeration, the restricted and the any ICC methods, and the parameterized color
+ * space of JPH files (ISO/IEC 15444-15 D.4.3) for full-range R'G'B' samples of at least three
+ * components, which is read as the ICC profile of its primaries and transfer characteristics.
  *
  * @implNote This implementation follows OpenJPEG's {@code jp2.c} in its checks of the palette,
  * component mapping and channel definition boxes ({@code opj_jp2_check_color}).
@@ -65,6 +75,11 @@ public final class Jp2Boxes {
     private int method;
 
     /**
+     * The number of components the image header declares, 0 before it is read.
+     */
+    private int headerComponents;
+
+    /**
      * The enumerated color space, or {@code -1}.
      */
     private int enumeratedColorSpace = -1;
@@ -99,6 +114,16 @@ public final class Jp2Boxes {
      * The XMP packet of a {@code uuid} or {@code xml } box, or {@code null}.
      */
     private byte[] xmp;
+
+    /**
+     * The density of the first valid capture resolution box, or {@code null}.
+     */
+    private PixelDensity captureDensity;
+
+    /**
+     * The density of the first valid display resolution box, or {@code null}.
+     */
+    private PixelDensity displayDensity;
 
     /**
      * Holds a palette (I.5.3.4).
@@ -214,6 +239,7 @@ public final class Jp2Boxes {
                     if (size < 14) {
                         throw new MediaException.Malformed("truncated JPEG 2000 image header box");
                     }
+                    headerComponents = u16(content + 8);
                 }
                 case "colr" -> readColor(content, size);
                 case "pclr" -> {
@@ -235,6 +261,7 @@ public final class Jp2Boxes {
                         mapping[i] = new int[]{u16(at), data[at + 2] & 0xFF, data[at + 3] & 0xFF};
                     }
                 }
+                case "res " -> readResolution(content, box.end);
                 case "cdef" -> {
                     if (definitions != null) {
                         throw new MediaException.Malformed("duplicate JPEG 2000 channel definition box");
@@ -263,6 +290,73 @@ public final class Jp2Boxes {
     }
 
     /**
+     * Reads the capture ({@code resc}) and display ({@code resd}) boxes of a resolution superbox (ISO/IEC
+     * 15444-1 I.5.3.7); of each kind the first valid one is kept. Sub-boxes after one whose length is invalid
+     * are ignored, since the resolution is not needed to decode the image.
+     *
+     * @param position the index of its first sub-box
+     * @param end its end
+     */
+    private void readResolution(int position, int end) {
+        var steps = 0;
+        while (end - position >= 8 && steps++ < MAX_BOXES) {
+            Box box;
+            try {
+                box = box(position, end);
+            } catch (MediaException.Malformed exception) {
+                return;
+            }
+            var capture = box.type.equals("resc");
+            if ((capture || box.type.equals("resd")) && box.end - box.content >= 10) {
+                var density = resolution(box.content);
+                if (capture && captureDensity == null) {
+                    captureDensity = density;
+                } else if (!capture && displayDensity == null) {
+                    displayDensity = density;
+                }
+            }
+            if (box.end >= end) {
+                break;
+            }
+            position = box.end;
+        }
+    }
+
+    /**
+     * Reads the content of a capture or display resolution box: the vertical and horizontal numerators and
+     * denominators, then the vertical and horizontal signed decimal exponents, each resolution being
+     * {@code N / D * 10^E} grid points per meter.
+     *
+     * @param content the index of the content
+     * @return the density, or {@code null} when a numerator or denominator is zero
+     */
+    private PixelDensity resolution(int content) {
+        var vertical = gridResolution(u16(content), u16(content + 2), data[content + 8]);
+        var horizontal = gridResolution(u16(content + 4), u16(content + 6), data[content + 9]);
+        return vertical > 0 && horizontal > 0 && Double.isFinite(vertical) && Double.isFinite(horizontal)
+                ? PixelDensity.ofDotsPerMeter(horizontal, vertical) : null;
+    }
+
+    /**
+     * {@return the resolution {@code numerator / denominator * 10^exponent}, or {@code 0} when a term is zero}
+     *
+     * @param numerator the 16-bit numerator {@code N}
+     * @param denominator the 16-bit denominator {@code D}
+     * @param exponent the signed decimal exponent {@code E}
+     */
+    private static double gridResolution(int numerator, int denominator, int exponent) {
+        if (numerator == 0 || denominator == 0) {
+            return 0;
+        }
+        // powers of ten up to 10^22 are exact doubles, so small exponents round once
+        var scale = 1.0;
+        for (var i = 0; i < Math.abs(exponent); i++) {
+            scale *= 10;
+        }
+        return exponent >= 0 ? numerator * scale / denominator : numerator / (denominator * scale);
+    }
+
+    /**
      * Reads a color specification box, unless one was already read.
      *
      * @param content the index of its content
@@ -288,9 +382,45 @@ public final class Jp2Boxes {
                 method = meth;
                 iccProfile = Arrays.copyOfRange(data, content + 3, content + size);
             }
+            case 5 -> readParameterizedColor(content, size);
             default -> {
                 // I.5.3.3: a reader ignores color specifications with other methods
             }
+        }
+    }
+
+    /**
+     * Reads a parameterized color specification (ISO/IEC 15444-15 D.4.3): Rec. ITU-T H.273 code points of the
+     * primaries, transfer characteristics and matrix coefficients, and the full range flag. Full-range R'G'B'
+     * samples of at least three components become the ICC profile of their primaries and transfer
+     * characteristics, or the enumerated sRGB color space; any other specification is ignored, as a method this
+     * reader does not understand.
+     *
+     * @param content the index of the box's content
+     * @param size the content size
+     * @throws MediaException.Malformed if the box is too short
+     */
+    private void readParameterizedColor(int content, int size) {
+        if (size < 10) {
+            throw new MediaException.Malformed("truncated JPEG 2000 color specification box");
+        }
+        var primariesCode = u16(content + 3);
+        var transferCode = u16(content + 5);
+        var matrixCode = u16(content + 7);
+        var fullRange = (data[content + 9] & 0x80) != 0;
+        var primaries = ColorPrimaries.of(primariesCode);
+        var transfer = TransferCharacteristics.of(transferCode);
+        if (matrixCode != MatrixCoefficients.IDENTITY.code() || !fullRange || headerComponents < 3
+                || primaries.code() != primariesCode || transfer.code() != transferCode
+                || primaries == ColorPrimaries.UNSPECIFIED || transfer == TransferCharacteristics.UNSPECIFIED) {
+            return;
+        }
+        var profile = ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, primaries, transfer));
+        method = 5;
+        if (profile.isSrgb()) {
+            enumeratedColorSpace = 16;
+        } else {
+            iccProfile = profile.toByteArray();
         }
     }
 
@@ -561,5 +691,13 @@ public final class Jp2Boxes {
      */
     public byte[] xmp() {
         return xmp;
+    }
+
+    /**
+     * {@return the density of the capture resolution box or, without a valid one, of the display resolution
+     * box, in dots per meter, or {@code null} when neither is present and valid}
+     */
+    public PixelDensity density() {
+        return captureDensity != null ? captureDensity : displayDensity;
     }
 }

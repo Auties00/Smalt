@@ -99,7 +99,7 @@ final class TileDecoder {
             LimitChecks.checkAllocation(limits, data.bodyLength());
             body = data.body(codestream.data());
             readPackets(body, data.packedHeaders(), parameters, components, bounds, subsamplingX, subsamplingY,
-                    maxLayers, limits);
+                    maxLayers, codestream.mixedCoders(), limits);
         }
         return reconstruct(codestream, parameters, components, body, limits);
     }
@@ -115,15 +115,16 @@ final class TileDecoder {
      * @param subsamplingX the horizontal subsampling of each component
      * @param subsamplingY the vertical subsampling of each component
      * @param maxLayers the number of layers to decode
+     * @param mixable whether high-throughput tile-components may mix block coders
      * @param limits the resource bounds checked before every allocation
      */
     private static void readPackets(byte[] body, byte[] headers, TileParameters parameters, TileComponent[] components,
                                     int[] bounds, int[] subsamplingX, int[] subsamplingY, int maxLayers,
-                                    MediaLimits limits) {
+                                    boolean mixable, MediaLimits limits) {
         var progressions = PacketOrder.progressions(parameters, components.length);
         var order = new PacketOrder(bounds, components, subsamplingX, subsamplingY, parameters.layers(),
                 !parameters.progressions().isEmpty(), limits);
-        var packets = new PacketDecoder(body, headers, parameters.sopMarkers(), parameters.ephMarkers());
+        var packets = new PacketDecoder(body, headers, parameters.sopMarkers(), parameters.ephMarkers(), mixable);
         var layers = Math.min(maxLayers, parameters.layers());
         for (var progression : progressions) {
             var going = order.list(progression, (layer, resolution, component, precinct) -> {
@@ -303,17 +304,92 @@ final class TileDecoder {
         }
         var bands = ParallelBands.bands(jobs.size(), work);
         ParallelBands.run(bands, index -> {
-            var decoder = new Tier1Decoder();
+            Tier1Decoder decoder = null;
+            HtDecoder htDecoder = null;
             var end = ParallelBands.start(index + 1, bands, jobs.size());
             for (var j = ParallelBands.start(index, bands, jobs.size()); j < end; j++) {
                 var job = jobs.get(j);
                 var component = components[job.component];
                 var style = component.coding.codeBlockStyle();
                 var roi = parameters.roiShifts()[job.component];
-                decoder.decode(job.block, body, job.band.orientation(), roi, style);
-                store(decoder.data(), job, component, roi, integers[job.component], floats[job.component]);
+                int[] decoded;
+                if (job.block.coder == CodeBlock.LEGACY) {
+                    if (decoder == null) {
+                        decoder = new Tier1Decoder();
+                    }
+                    decoder.decode(job.block, body, job.band.orientation(), roi, style);
+                    decoded = decoder.data();
+                } else {
+                    if (htDecoder == null) {
+                        htDecoder = new HtDecoder();
+                    }
+                    decodeHighThroughput(htDecoder, job.block, body, job.band, roi, style);
+                    decoded = htDecoder.data();
+                }
+                store(decoded, job, component, roi, integers[job.component], floats[job.component]);
             }
         });
+    }
+
+    /**
+     * Decodes a high-throughput code-block: the last HT set whose cleanup segment holds data, with the refinement
+     * passes of that set that were read ({@code Z_blk} and {@code S_blk} of ISO/IEC 15444-15 B.3).
+     *
+     * @param decoder the high-throughput block decoder
+     * @param block the code-block with its codeword segments
+     * @param body the tile body holding the codeword chunks
+     * @param band the sub-band
+     * @param roi the region-of-interest shift
+     * @param style the code-block style flags
+     * @throws MediaException.Malformed if the HT set is invalid
+     * @throws MediaException.Unsupported if the sub-band has more than 30 magnitude bit-planes
+     */
+    private static void decodeHighThroughput(HtDecoder decoder, CodeBlock block, byte[] body, Band band, int roi,
+                                             int style) {
+        var width = block.width();
+        var height = block.height();
+        var segments = block.dataSegments;
+        var cleanup = -1;
+        var cleanupOffset = 0;
+        var offset = 0;
+        for (var s = 0; s < segments; s++) {
+            var passes = block.segmentDataPasses[s];
+            if (passes > 0 && block.segmentLengths[s] > 0 && (block.segmentStart[s] + passes - 1) % 3 == 0) {
+                cleanup = s;
+                cleanupOffset = offset;
+            }
+            offset += block.segmentLengths[s];
+        }
+        var magnitudeBits = band.bitPlanes() + roi;
+        if (cleanup < 0 || magnitudeBits == 0) {
+            decoder.clear(width, height);
+            return;
+        }
+        var set = (block.segmentStart[cleanup] + block.segmentDataPasses[cleanup] - 1) / 3;
+        var refinement = 0;
+        var refinementPasses = 0;
+        for (var s = cleanup + 1; s < segments && block.segmentStart[s] <= 3 * set + 2; s++) {
+            refinement += block.segmentLengths[s];
+            refinementPasses = block.segmentStart[s] + block.segmentDataPasses[s] - 1 - 3 * set;
+        }
+        var passes = refinement == 0 ? 1 : 1 + Math.min(refinementPasses, 2);
+        var skipped = band.bitPlanes() + 1 - block.bitPlanes + set;
+        var total = 0;
+        for (var i = 1; i < block.chunkEntries; i += 2) {
+            total += block.chunks[i];
+        }
+        var buffer = decoder.buffer(total);
+        var length = 0;
+        for (var i = 0; i < block.chunkEntries; i += 2) {
+            System.arraycopy(body, block.chunks[i], buffer, length, block.chunks[i + 1]);
+            length += block.chunks[i + 1];
+        }
+        var cleanupLength = block.segmentLengths[cleanup];
+        if (cleanupOffset > 0) {
+            System.arraycopy(buffer, cleanupOffset, buffer, 0, cleanupLength + refinement);
+        }
+        decoder.decode(cleanupLength, refinement, passes, magnitudeBits, skipped, width, height,
+                (style & ComponentCoding.VERTICALLY_CAUSAL) != 0);
     }
 
     /**

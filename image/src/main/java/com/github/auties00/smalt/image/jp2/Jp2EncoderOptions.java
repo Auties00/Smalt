@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.image.jp2;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
 
@@ -83,6 +83,8 @@ public final class Jp2EncoderOptions {
 
     private final Set<Jp2CodeBlockStyle> codeBlockStyles;
 
+    private final boolean highThroughput;
+
     private final boolean sopMarkers;
 
     private final boolean ephMarkers;
@@ -92,6 +94,8 @@ public final class Jp2EncoderOptions {
     private final ColorProfile colorProfile;
 
     private final String comment;
+
+    private final PixelDensity density;
 
     private Jp2EncoderOptions(Builder builder) {
         this.limits = builder.limits;
@@ -109,11 +113,13 @@ public final class Jp2EncoderOptions {
         this.progression = builder.progression;
         this.codeBlockStyles = builder.codeBlockStyles.isEmpty() ? Set.of()
                 : Set.copyOf(EnumSet.copyOf(builder.codeBlockStyles));
+        this.highThroughput = builder.highThroughput;
         this.sopMarkers = builder.sopMarkers;
         this.ephMarkers = builder.ephMarkers;
         this.colorTransform = builder.colorTransform;
         this.colorProfile = builder.colorProfile;
         this.comment = builder.comment;
+        this.density = builder.density;
     }
 
     /**
@@ -317,6 +323,23 @@ public final class Jp2EncoderOptions {
     }
 
     /**
+     * {@return whether code-blocks are coded with the high-throughput block coder of ISO/IEC 15444-15
+     * (HTJ2K) rather than that of ISO/IEC 15444-1; {@code false} by default}
+     *
+     * <p>The high-throughput coder decodes faster than the block coder of ISO/IEC 15444-1, and
+     * encodes faster when the last quality layer takes every pass, for a slightly larger file;
+     * meeting a lossy target of the last layer codes each code-block at every bit-plane before
+     * choosing one. It allows only {@link Jp2CodeBlockStyle#VERTICALLY_CAUSAL} among the code-block styles. A
+     * file is then a JPH file ({@code .jph}, ISO/IEC 15444-15 annex D) and a raw codestream an HTJ2K
+     * codestream ({@code .jhc}); decoders that implement only ISO/IEC 15444-1 cannot read them. Each
+     * code-block is coded once, at the precision the last quality layer needs: an earlier layer holds
+     * whole code-blocks, possibly without their refinement passes, or nothing of a code-block.
+     */
+    public boolean highThroughput() {
+        return highThroughput;
+    }
+
+    /**
      * {@return whether packets start with {@code SOP} marker segments; {@code false} by default}
      */
     public boolean sopMarkers() {
@@ -345,7 +368,8 @@ public final class Jp2EncoderOptions {
      * {@return the color profile embedded in a JP2 file, or empty to declare sRGB (or gray); empty
      * by default}
      *
-     * <p>A high-dynamic-range profile, which has no ICC form, is rejected.
+     * <p>A high-dynamic-range profile is written in its ICC form, whose {@code cicp} tag carries its PQ
+     * or HLG code points.
      */
     public Optional<ColorProfile> colorProfile() {
         return Optional.ofNullable(colorProfile);
@@ -359,6 +383,19 @@ public final class Jp2EncoderOptions {
         return Optional.ofNullable(comment);
     }
 
+    /**
+     * {@return the pixel density written in the capture resolution box of a JP2 file, or empty for none; empty
+     * by default}
+     *
+     * <p>The box holds grid points per meter, each resolution as {@code N / D * 10^E} with 16-bit {@code N}
+     * and {@code D}; the terms are chosen to represent the value as closely as they can, exactly for integers
+     * up to 65535 and for whole dots per inch or per centimeter. An aspect ratio is not written, since the
+     * box has no unitless form, and nothing is written into a raw codestream.
+     */
+    public Optional<PixelDensity> density() {
+        return Optional.ofNullable(density);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof Jp2EncoderOptions that && limits.equals(that.limits) && format == that.format
@@ -368,17 +405,19 @@ public final class Jp2EncoderOptions {
                 && tileHeight == that.tileHeight && codeBlockWidth == that.codeBlockWidth
                 && codeBlockHeight == that.codeBlockHeight && precinctWidth == that.precinctWidth
                 && precinctHeight == that.precinctHeight && progression == that.progression
-                && codeBlockStyles.equals(that.codeBlockStyles) && sopMarkers == that.sopMarkers
+                && codeBlockStyles.equals(that.codeBlockStyles) && highThroughput == that.highThroughput
+                && sopMarkers == that.sopMarkers
                 && ephMarkers == that.ephMarkers && colorTransform == that.colorTransform
-                && Objects.equals(colorProfile, that.colorProfile) && Objects.equals(comment, that.comment);
+                && Objects.equals(colorProfile, that.colorProfile) && Objects.equals(comment, that.comment)
+                && Objects.equals(density, that.density);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(limits, format, reversible, Arrays.hashCode(ratios), Arrays.hashCode(psnrTargets),
                 decompositionLevels, tileWidth, tileHeight, codeBlockWidth, codeBlockHeight, precinctWidth,
-                precinctHeight, progression, codeBlockStyles, sopMarkers, ephMarkers, colorTransform, colorProfile,
-                comment);
+                precinctHeight, progression, codeBlockStyles, highThroughput, sopMarkers, ephMarkers, colorTransform,
+                colorProfile, comment, density);
     }
 
     @Override
@@ -387,9 +426,10 @@ public final class Jp2EncoderOptions {
                 + (ratios != null ? ", ratios=" + Arrays.toString(ratios) : ", psnr=" + Arrays.toString(psnrTargets))
                 + ", levels=" + decompositionLevels + ", tiles=" + tileWidth + "x" + tileHeight + ", codeBlocks="
                 + codeBlockWidth + "x" + codeBlockHeight + ", precincts=" + precinctWidth + "x" + precinctHeight
-                + ", progression=" + progression + ", styles=" + codeBlockStyles + ", sop=" + sopMarkers + ", eph="
+                + ", progression=" + progression + ", styles=" + codeBlockStyles + ", highThroughput=" + highThroughput
+                + ", sop=" + sopMarkers + ", eph="
                 + ephMarkers + ", colorTransform=" + colorTransform + ", colorProfile=" + (colorProfile != null)
-                + ", comment=" + (comment != null) + "]";
+                + ", comment=" + (comment != null) + (density == null ? "" : ", density=" + density) + "]";
     }
 
     /**
@@ -438,6 +478,8 @@ public final class Jp2EncoderOptions {
 
         private Set<Jp2CodeBlockStyle> codeBlockStyles = EnumSet.noneOf(Jp2CodeBlockStyle.class);
 
+        private boolean highThroughput;
+
         private boolean sopMarkers;
 
         private boolean ephMarkers;
@@ -447,6 +489,8 @@ public final class Jp2EncoderOptions {
         private ColorProfile colorProfile;
 
         private String comment;
+
+        private PixelDensity density;
 
         private Builder() {
         }
@@ -467,11 +511,13 @@ public final class Jp2EncoderOptions {
             this.progression = options.progression;
             this.codeBlockStyles = options.codeBlockStyles.isEmpty() ? EnumSet.noneOf(Jp2CodeBlockStyle.class)
                     : EnumSet.copyOf(options.codeBlockStyles);
+            this.highThroughput = options.highThroughput;
             this.sopMarkers = options.sopMarkers;
             this.ephMarkers = options.ephMarkers;
             this.colorTransform = options.colorTransform;
             this.colorProfile = options.colorProfile;
             this.comment = options.comment;
+            this.density = options.density;
         }
 
         /**
@@ -636,6 +682,18 @@ public final class Jp2EncoderOptions {
         }
 
         /**
+         * Sets whether code-blocks are coded with the high-throughput block coder; see
+         * {@link Jp2EncoderOptions#highThroughput()}.
+         *
+         * @param highThroughput the value
+         * @return this builder
+         */
+        public Builder highThroughput(boolean highThroughput) {
+            this.highThroughput = highThroughput;
+            return this;
+        }
+
+        /**
          * Sets whether {@code SOP} segments are written; see {@link Jp2EncoderOptions#sopMarkers()}.
          *
          * @param sopMarkers the value
@@ -692,6 +750,27 @@ public final class Jp2EncoderOptions {
         }
 
         /**
+         * Sets the pixel density; see {@link Jp2EncoderOptions#density()}.
+         *
+         * @param density the value
+         * @return this builder
+         */
+        public Builder density(PixelDensity density) {
+            this.density = Objects.requireNonNull(density, "density");
+            return this;
+        }
+
+        /**
+         * Writes no resolution box; see {@link Jp2EncoderOptions#density()}.
+         *
+         * @return this builder
+         */
+        public Builder noDensity() {
+            this.density = null;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -699,9 +778,9 @@ public final class Jp2EncoderOptions {
          * target is negative or not finite, the decomposition levels are not in [0, 32], a tile
          * dimension is not positive, a code-block dimension is not a power of two in [4, 1024] or a
          * code-block holds more than 4096 samples, a precinct dimension is not a power of two in
-         * [2, 32768], or the comment is not Latin-1 text of at most 65531 characters
-         * @throws MediaException.Unsupported if the color profile has no ICC form (a
-         * high-dynamic-range profile)
+         * [2, 32768], the comment is not Latin-1 text of at most 65531 characters, or the
+         * high-throughput block coder is combined with a code-block style other than
+         * {@link Jp2CodeBlockStyle#VERTICALLY_CAUSAL}
          */
         public Jp2EncoderOptions build() {
             var layers = ratios != null ? ratios : psnrTargets;
@@ -726,13 +805,18 @@ public final class Jp2EncoderOptions {
                 throw new IllegalArgumentException("precinct size " + precinctWidth + "x" + precinctHeight
                         + " is not two powers of two in [2, 32768]");
             }
+            if (highThroughput) {
+                for (var style : codeBlockStyles) {
+                    if (style != Jp2CodeBlockStyle.VERTICALLY_CAUSAL) {
+                        throw new IllegalArgumentException("the high-throughput block coder does not allow the "
+                                + style + " code-block style");
+                    }
+                }
+            }
             if (comment != null && (comment.length() > MAX_COMMENT
                     || !StandardCharsets.ISO_8859_1.newEncoder().canEncode(comment))) {
                 throw new IllegalArgumentException("comment is not Latin-1 text of at most " + MAX_COMMENT
                         + " characters");
-            }
-            if (colorProfile != null && colorProfile.isHighDynamicRange()) {
-                throw new MediaException.Unsupported("icc", "a high-dynamic-range profile has no ICC form");
             }
             return new Jp2EncoderOptions(this);
         }
