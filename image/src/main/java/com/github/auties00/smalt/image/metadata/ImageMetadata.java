@@ -48,6 +48,9 @@ import java.util.Optional;
  *       structure of the {@code TTW} block;</li>
  *   <li>JPEG XL: the {@code Exif} and {@code xml } boxes of the container, also when compressed in
  *       {@code brob} boxes, and the ICC profile of the codestream;</li>
+ *   <li>JPEG 2000 (JP2 and JPX): the EXIF, XMP and IPTC {@code uuid} boxes, an {@code xml } box
+ *       holding an XMP packet, and the ICC profile of the color specification of the JP2 header
+ *       box; a raw codestream holds none;</li>
  *   <li>BMP: the ICC profile a V5 header embeds.</li>
  * </ul>
  *

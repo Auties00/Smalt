@@ -279,6 +279,28 @@ final class HtEncoder {
     }
 
     /**
+     * Saturates the loaded coefficients at a number of magnitude bit-planes, the most the sub-band of a lossy
+     * code-block holds.
+     *
+     * @param maxBitPlanes the number of magnitude bit-planes of the sub-band, positive
+     * @return the number of magnitude bit-planes of the largest coefficient, at most {@code maxBitPlanes}
+     */
+    int saturate(int maxBitPlanes) {
+        if (bitPlanes <= maxBitPlanes) {
+            return bitPlanes;
+        }
+        var limit = (int) Math.min((1L << (maxBitPlanes + fraction)) - 1, Integer.MAX_VALUE);
+        for (var i = 0; i < width * height; i++) {
+            var value = values[i];
+            if ((value & 0x7FFF_FFFF) > limit) {
+                values[i] = (value & 0x8000_0000) | limit;
+            }
+        }
+        bitPlanes = maxBitPlanes;
+        return bitPlanes;
+    }
+
+    /**
      * Quantizes the coefficients of the loaded code-block into {@link #values}, with a number of fractional bits,
      * as {@link Tier1Encoder} quantizes them.
      *

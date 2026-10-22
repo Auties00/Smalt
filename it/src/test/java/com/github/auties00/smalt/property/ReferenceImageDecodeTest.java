@@ -549,6 +549,13 @@ class ReferenceImageDecodeTest {
         }
 
         @Test
+        @DisplayName("JPEG 2000 edits, which add uuid boxes and rewrite the JP2 header, keep opj_decompress's pixels")
+        void jp2() {
+            var edit = EDIT.toBuilder().colorProfile(com.github.auties00.smalt.image.color.ColorProfile.srgb()).build();
+            check("jp2.jp2", Images.encode(source(false), ImageFormat.JP2), edit, ReferenceImageDecodeTest::opj);
+        }
+
+        @Test
         @DisplayName("BMP profile edits, which turn the header into a V5 one, keep ffmpeg's pixels")
         void bmp() {
             var edit = ImageMetadataEdit.builder().colorProfile(com.github.auties00.smalt.image.color.ColorProfile.srgb())

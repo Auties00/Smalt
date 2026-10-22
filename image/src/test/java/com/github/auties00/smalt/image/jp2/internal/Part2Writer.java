@@ -156,7 +156,7 @@ final class Part2Writer {
                                 shift = scaleBlock(integers[c], regionScales[c], offset, stride, block);
                             }
                             coder.encode(block, integers == null ? null : integers[c], floats == null ? null : floats[c],
-                                    offset, stride, band.orientation(), 0, band.stepSize(), integers != null, 0, 1.0);
+                                    offset, stride, band.orientation(), 0, band.stepSize(), integers != null, 0, 1.0, null, 0, 0);
                             if (block.bitPlanes - shift > band.bitPlanes()) {
                                 throw new IllegalStateException("a code-block has " + block.bitPlanes
                                         + " bit-planes, more than the " + band.bitPlanes() + " of its sub-band");

@@ -37,6 +37,13 @@ final class EncodedBlock {
     int bitPlanes;
 
     /**
+     * The number of bit-planes a region of interest adds above the sub-band's {@code Mb} in the block's count of
+     * zero bit-planes: the max-shift scaling of the tile-component when the block is coded in the scaled domain, 0
+     * otherwise.
+     */
+    int roiPlanes;
+
+    /**
      * The number of coding passes.
      */
     int totalPasses;

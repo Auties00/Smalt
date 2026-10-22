@@ -174,10 +174,16 @@ final class Tier1Encoder {
      * @param reversible  whether the 5-3 wavelet is used
      * @param style       the code-block style flags
      * @param weight      the component's weight in the distortion (its color transform norm)
+     * @param mask        the region of interest mask of the tile-component, nonzero for a coefficient scaled up by
+     *                    {@code shift}, in the layout of {@code samples}; or {@code null}
+     * @param shift       the max-shift scaling of the coefficients {@code mask} selects; the caller ensures that a
+     *                    scaled coefficient keeps at most 25 magnitude bits
+     * @param maxBitPlanes the number of magnitude bit-planes above which a coefficient saturates, or 0 for none
      * @return the block's total weighted distortion reduction
      */
     double encode(EncodedBlock block, int[] samples, float[] floats, int offset, int stride, int orientation,
-                  int level, float stepSize, boolean reversible, int style, double weight) {
+                  int level, float stepSize, boolean reversible, int style, double weight, byte[] mask, int shift,
+                  int maxBitPlanes) {
         var w = (int) (block.x1 - block.x0);
         var h = (int) (block.y1 - block.y0);
         allocate(w, h);
@@ -196,6 +202,15 @@ final class Tier1Encoder {
                     data[position++] = quantize(samples, floats, offset + r * stride + i, stepSize, reversible);
                 }
             }
+        }
+        if (maxBitPlanes > 0 && maxBitPlanes + Tier1Tables.NMSEDEC_FRACBITS < 31) {
+            var limit = (1 << (maxBitPlanes + Tier1Tables.NMSEDEC_FRACBITS)) - 1;
+            for (var i = 0; i < position; i++) {
+                data[i] = Math.clamp(data[i], -limit, limit);
+            }
+        }
+        if (mask != null && shift > 0) {
+            scale(mask, offset, stride, w, h, shift);
         }
         var max = 0;
         for (var i = 0; i < position; i++) {
@@ -299,6 +314,58 @@ final class Tier1Encoder {
         }
         block.data = Arrays.copyOfRange(out, 1, Math.max(bp, 1));
         return cumulative;
+    }
+
+    /**
+     * Scales up the quantized coefficients of a code-block that a region of interest mask selects, in the
+     * stripe-column order of {@link #data}: the integer part of each magnitude moves up by {@code shift} bits, and
+     * its fractional bits stay below the lowest bit-plane.
+     *
+     * @param mask the mask, in the layout of the coefficients
+     * @param offset the index of the block's first coefficient
+     * @param stride the row stride of the coefficients
+     * @param w the block width
+     * @param h the block height
+     * @param shift the scaling exponent
+     */
+    private void scale(byte[] mask, int offset, int stride, int w, int h, int shift) {
+        var position = 0;
+        var k = 0;
+        for (; k < (h & ~3); k += 4) {
+            for (var i = 0; i < w; i++) {
+                for (var r = 0; r < 4; r++) {
+                    if (mask[offset + (k + r) * stride + i] != 0) {
+                        data[position] = scaled(data[position], shift);
+                    }
+                    position++;
+                }
+            }
+        }
+        if (k < h) {
+            for (var i = 0; i < w; i++) {
+                for (var r = k; r < h; r++) {
+                    if (mask[offset + r * stride + i] != 0) {
+                        data[position] = scaled(data[position], shift);
+                    }
+                    position++;
+                }
+            }
+        }
+    }
+
+    /**
+     * Scales up the integer part of a fixed-point coefficient.
+     *
+     * @param value the signed fixed-point value
+     * @param shift the scaling exponent
+     * @return the scaled value
+     */
+    private static int scaled(int value, int shift) {
+        var magnitude = Math.abs(value);
+        var fraction = (1 << Tier1Tables.NMSEDEC_FRACBITS) - 1;
+        var result = ((magnitude >>> Tier1Tables.NMSEDEC_FRACBITS) << (shift + Tier1Tables.NMSEDEC_FRACBITS))
+                | (magnitude & fraction);
+        return value < 0 ? -result : result;
     }
 
     /**

@@ -84,6 +84,16 @@ public final class Codestream {
     static final int COM = 0xFF64;
 
     /**
+     * The tile-part lengths marker.
+     */
+    static final int TLM = 0xFF55;
+
+    /**
+     * The packet length, tile-part header, marker.
+     */
+    static final int PLT = 0xFF58;
+
+    /**
      * The start of tile-part marker.
      */
     static final int SOT = 0xFF90;

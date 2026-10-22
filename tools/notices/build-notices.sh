@@ -1137,9 +1137,12 @@ MQ coder (mqc.c, including the lookup tables), the tier-2 packet coder of t2.c,
 the packet iterators of pi.c, the tag trees of tgt.c, the bit I/O of bio.c,
 the wavelet transforms of dwt.c, the component transforms of mct.c, the rate
 allocation of tcd.c, the high-throughput (HTJ2K) block decoder of ht_dec.c,
-and the sYCC, e-sYCC and CMYK conversions of the opj_decompress tool
-(src/bin/common/color.c), including tables and constants taken from the C
-sources.
+the encoder's tile-part division, TLM and PLT writers, progression changes,
+region of interest segments, guard bits and the digital cinema and IMF
+profile parameters and checks of j2k.c, the coding options of the
+opj_compress tool (src/bin/jp2/opj_compress.c), and the sYCC, e-sYCC and CMYK
+conversions of the opj_decompress tool (src/bin/common/color.c), including
+tables and constants taken from the C sources.
 
 Copyright (as stated in the headers of the OpenJPEG source files the Java
 code derives from):

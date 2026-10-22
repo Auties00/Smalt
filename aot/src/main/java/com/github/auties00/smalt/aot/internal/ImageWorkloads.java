@@ -37,6 +37,8 @@ import com.github.auties00.smalt.image.jp2.Jp2DecoderOptions;
 import com.github.auties00.smalt.image.jp2.Jp2Encoder;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.jp2.Jp2Format;
+import com.github.auties00.smalt.image.jp2.Jp2RegionOfInterest;
+import com.github.auties00.smalt.image.jp2.Jp2TilePartDivision;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
@@ -853,15 +855,18 @@ final class ImageWorkloads {
     }
 
     /**
-     * Returns a workload that encodes a 384x256 picture as lossless and as layered lossy JPEG 2000,
-     * and decodes both, the lossy one also at half resolution and as raw channels, and codes a CMYK
-     * channel picture losslessly and decodes it back to its inks.
+     * Returns a workload that encodes a 384x256 picture as lossless and as layered lossy JPEG 2000
+     * (with a region of interest, a tile-part per resolution and their length markers), and decodes
+     * both, the lossy one also at half resolution and as raw channels, and codes a CMYK channel
+     * picture losslessly and decodes it back to its inks.
      *
      * @return the workload
      */
     private static TrainingWorkload jpeg2000() {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), false);
-        var lossy = Jp2EncoderOptions.lossy(20).toBuilder().compressionRatios(80, 40, 20).build();
+        var lossy = Jp2EncoderOptions.lossy(20).toBuilder().compressionRatios(80, 40, 20)
+                .regionOfInterest(new Jp2RegionOfInterest.Rectangle(96, 64, 192, 128))
+                .tilePartDivision(Jp2TilePartDivision.RESOLUTION).tlmMarkers(true).pltMarkers(true).build();
         var reduced = Jp2DecoderOptions.builder().reduction(1).build();
         var cmyk = Channel8Picture.of(192, 128, 192 * 4, Arrays.copyOf(picture.pixels(), 192 * 128 * 4),
                 PixelLayout.CMYK);

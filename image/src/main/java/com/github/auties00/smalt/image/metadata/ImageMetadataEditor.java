@@ -34,9 +34,10 @@ import java.util.Objects;
  * ICC property are rewritten while the coded image items and the tracks stay where they are or
  * move with their offsets corrected; TIFF, BigTIFF, DNG and the camera raw files with a TIFF
  * signature accept EXIF, XMP, IPTC and ICC changes; JPEG XL accepts EXIF and XMP changes, a bare
- * codestream being wrapped in a container to hold them; BMP accepts ICC changes, a new profile
- * giving the file a V5 header. The other camera raw files are read only. An edit a format cannot
- * store raises {@link MediaException.Unsupported}.
+ * codestream being wrapped in a container to hold them; JPEG 2000 (JP2 and JPX) files accept EXIF,
+ * XMP, IPTC and ICC changes, the codestream boxes copied byte for byte; BMP accepts ICC changes, a
+ * new profile giving the file a V5 header. The other camera raw files and raw JPEG 2000 codestreams
+ * are read only. An edit a format cannot store raises {@link MediaException.Unsupported}.
  *
  * <p>A TIFF edit rebuilds the first directory (IFD0) and, when the EXIF block changes, its Exif,
  * GPS and interoperability directories; the strips and tiles, the other pages and their

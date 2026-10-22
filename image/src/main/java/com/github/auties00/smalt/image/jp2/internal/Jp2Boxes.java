@@ -52,13 +52,19 @@ public final class Jp2Boxes {
     /**
      * The UUID of the box that holds an EXIF block, {@code JpgTiffExif->JP2}.
      */
-    private static final byte[] EXIF_UUID = {'J', 'p', 'g', 'T', 'i', 'f', 'f', 'E', 'x', 'i', 'f', '-', '>', 'J', 'P', '2'};
+    static final byte[] EXIF_UUID = {'J', 'p', 'g', 'T', 'i', 'f', 'f', 'E', 'x', 'i', 'f', '-', '>', 'J', 'P', '2'};
 
     /**
      * The UUID of the box that holds an XMP packet.
      */
-    private static final byte[] XMP_UUID = {(byte) 0xBE, 0x7A, (byte) 0xCF, (byte) 0xCB, (byte) 0x97, (byte) 0xA9, 0x42,
+    static final byte[] XMP_UUID = {(byte) 0xBE, 0x7A, (byte) 0xCF, (byte) 0xCB, (byte) 0x97, (byte) 0xA9, 0x42,
             (byte) 0xE8, (byte) 0x9C, 0x71, (byte) 0x99, (byte) 0x94, (byte) 0x91, (byte) 0xE3, (byte) 0xAF, (byte) 0xAC};
+
+    /**
+     * The UUID of the box that holds IPTC-IIM data sets, {@code 33C7A4D2-B81D-4723-A0BA-F1A3E097AD38}.
+     */
+    static final byte[] IPTC_UUID = {0x33, (byte) 0xC7, (byte) 0xA4, (byte) 0xD2, (byte) 0xB8, 0x1D, 0x47, 0x23,
+            (byte) 0xA0, (byte) 0xBA, (byte) 0xF1, (byte) 0xA3, (byte) 0xE0, (byte) 0x97, (byte) 0xAD, 0x38};
 
     /**
      * The largest number of boxes examined.

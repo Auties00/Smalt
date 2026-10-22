@@ -35,6 +35,23 @@ final class PacketOrder {
          * @return {@code false} to stop listing packets
          */
         boolean packet(int layer, int resolution, int component, int precinct);
+
+        /**
+         * Receives one packet with the reference grid position at which a position-driven order
+         * reaches its precinct.
+         *
+         * @implSpec The default implementation calls {@link #packet(int, int, int, int)}.
+         * @param layer the quality layer
+         * @param resolution the resolution level
+         * @param component the component index
+         * @param precinct the precinct index within the resolution
+         * @param x the horizontal position, or {@code -1} for the layer- and resolution-first orders
+         * @param y the vertical position, or {@code -1} for the layer- and resolution-first orders
+         * @return {@code false} to stop listing packets
+         */
+        default boolean packet(int layer, int resolution, int component, int precinct, long x, long y) {
+            return packet(layer, resolution, component, precinct);
+        }
     }
 
     /**
@@ -129,6 +146,15 @@ final class PacketOrder {
             listed = new long[(int) ((total + 63) >>> 6)];
         } else {
             listed = null;
+        }
+    }
+
+    /**
+     * Forgets the packets listed so far, so that the progressions can be listed again.
+     */
+    void reset() {
+        if (listed != null) {
+            Arrays.fill(listed, 0);
         }
     }
 
@@ -228,7 +254,7 @@ final class PacketOrder {
         var resolution = component.resolutions[r];
         var count = resolution.precinctsWide() * resolution.precinctsHigh();
         for (var p = 0; p < count; p++) {
-            if (first(l, r, c, p) && !visitor.packet(l, r, c, p)) {
+            if (first(l, r, c, p) && !visitor.packet(l, r, c, p, -1, -1)) {
                 return false;
             }
         }
@@ -499,7 +525,7 @@ final class PacketOrder {
             return true;
         }
         for (var l = 0; l < layerEnd; l++) {
-            if (first(l, r, c, precinct) && !visitor.packet(l, r, c, precinct)) {
+            if (first(l, r, c, precinct) && !visitor.packet(l, r, c, precinct, x, y)) {
                 return false;
             }
         }

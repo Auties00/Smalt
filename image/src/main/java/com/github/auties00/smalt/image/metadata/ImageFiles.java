@@ -51,6 +51,7 @@ final class ImageFiles {
             case RAW -> RawImageFile.open(source, limits, header);
             case BMP -> new BmpFile(source, limits);
             case JXL -> new JxlFile(source, limits);
+            case JP2 -> new Jp2File(source, limits);
             default -> throw new MediaException.Unsupported(format.name().toLowerCase(Locale.ROOT),
                     "metadata of " + format.name().toLowerCase(Locale.ROOT) + " files cannot be read");
         };
