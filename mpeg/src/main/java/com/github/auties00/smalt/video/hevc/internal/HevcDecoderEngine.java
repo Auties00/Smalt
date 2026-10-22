@@ -30,8 +30,12 @@ import java.util.function.Consumer;
  * <p>A picture is finished when the next access unit starts (a first slice segment, an access
  * unit delimiter, a parameter set, a prefix SEI or an end of sequence NAL unit), when
  * {@link #endAccessUnit()} is called, or on {@link #flush()}. Random access starts at the first
- * IRAP picture; the RASL pictures of an IRAP picture that starts a coded video sequence are
- * skipped, as the specification allows.
+ * IRAP picture or at the first picture carrying a recovery point SEI message (D.3.8) whose
+ * {@code recovery_poc_cnt} is in range, whichever comes first; the RASL pictures of an IRAP
+ * picture that starts a coded video sequence are skipped, as the specification allows. After a
+ * start at a recovery point, the missing references are generated (8.3.3.2) and the pictures that
+ * precede the recovery point in output order are decoded but not output, until the next IRAP
+ * picture that starts a coded video sequence.
  *
  * <p>Instances are not thread-safe.
  */
@@ -178,6 +182,29 @@ public final class HevcDecoderEngine {
      * {@code NoRaslOutputFlag} of the last IRAP picture.
      */
     private boolean irapNoRaslOutput;
+
+    /**
+     * Whether decoding started at a recovery point and no IRAP picture with
+     * {@code NoRaslOutputFlag} has started a coded video sequence since.
+     */
+    private boolean recovering;
+
+    /**
+     * The picture order count of the recovery point while {@link #recovering}: pictures before it
+     * in output order are not output.
+     */
+    private int recoveryPoc;
+
+    /**
+     * {@code exact_match_flag} of the recovery point decoding started at.
+     */
+    private boolean recoveryExact;
+
+    /**
+     * Whether the decoded picture hash of the current picture may be checked: not for a picture
+     * whose content the recovery point does not guarantee.
+     */
+    private boolean hashVerifiable;
 
     /**
      * Whether the slices of the current picture are being skipped.
@@ -430,6 +457,9 @@ public final class HevcDecoderEngine {
         if (!header.dependentSliceSegment) {
             independent = header;
         }
+        if (!header.isIntra()) {
+            current.intraOnly = false;
+        }
         activate(header.pps, header.sps);
         var unsupported = header.pps.unsupportedFeature();
         if (unsupported != null) {
@@ -554,10 +584,24 @@ public final class HevcDecoderEngine {
         if (irap) {
             noRaslOutput = HevcNal.isIdr(type) || HevcNal.isBla(type) || firstPicture || afterEndOfSequence;
         }
+        var recoveryCount = sei.recoveryPocCount;
+        var halfPocLsb = 1 << (sps.log2MaxPocLsb - 1);
+        var recoveryPoint = sei.recoveryPoint && recoveryCount >= -halfPocLsb && recoveryCount < halfPocLsb;
+        var exactMatch = sei.recoveryExactMatch;
+        var timing = sei.pictureTiming;
+        var filmGrain = sei.filmGrain;
+        var framePacking = sei.framePacking;
+        var orientation = sei.orientation;
+        var transferPending = sei.transferPending;
+        sei.clearPictureMessages();
         skipping = false;
+        var recoveryStart = false;
         if (!started && !irap) {
-            skipping = true;
-            return;
+            if (!recoveryPoint || HevcNal.isRasl(type)) {
+                skipping = true;
+                return;
+            }
+            recoveryStart = true;
         }
         if (HevcNal.isRasl(type) && irapNoRaslOutput) {
             skipping = true;
@@ -572,6 +616,10 @@ public final class HevcDecoderEngine {
         if (irap) {
             started = true;
             irapNoRaslOutput = noRaslOutput;
+        } else if (recoveryStart) {
+            started = true;
+            // the leading pictures of an IRAP picture that was never decoded cannot be decoded
+            irapNoRaslOutput = true;
         }
         if (activeSps != sps) {
             if (activeSps != null && !(irap && noRaslOutput) && !sps.sameLayout(activeSps)) {
@@ -581,7 +629,7 @@ public final class HevcDecoderEngine {
         }
         var maxPocLsb = 1 << sps.log2MaxPocLsb;
         int poc;
-        if (irap && noRaslOutput) {
+        if (irap && noRaslOutput || recoveryStart) {
             poc = header.pocLsb;
         } else {
             var prevLsb = prevTid0Poc & (maxPocLsb - 1);
@@ -596,7 +644,8 @@ public final class HevcDecoderEngine {
             }
             poc = msb + header.pocLsb;
         }
-        if (header.temporalId == 0 && !HevcNal.isRasl(type) && !HevcNal.isRadl(type)
+        // the picture decoding starts at anchors the picture order counts that follow it
+        if (recoveryStart || header.temporalId == 0 && !HevcNal.isRasl(type) && !HevcNal.isRadl(type)
                 && !HevcNal.isSubLayerNonReference(type)) {
             prevTid0Poc = poc;
         }
@@ -622,12 +671,32 @@ public final class HevcDecoderEngine {
         }
         firstPicture = false;
         afterEndOfSequence = false;
-        picOutput = header.picOutput;
+        if (irap && noRaslOutput) {
+            recovering = false;
+        } else if (recoveryStart) {
+            recovering = true;
+            recoveryPoc = poc + recoveryCount;
+            recoveryExact = exactMatch;
+        }
+        var beforeRecovery = recovering && poc < recoveryPoc;
+        picOutput = header.picOutput && !beforeRecovery;
+        hashVerifiable = !recovering || recoveryExact && !beforeRecovery;
+        var newSequence = irap && noRaslOutput || recoveryStart;
+        if (newSequence && !transferPending) {
+            // an alternative transfer characteristics message lasts until the end of its sequence
+            sei.preferredTransfer = -1;
+        }
         var frame = obtainFrame(sps);
         frame.reset(sps.sizeInCtbs);
         frame.id = nextId++;
         frame.poc = poc;
         frame.irap = irap;
+        frame.recoveryPoint = recoveryPoint;
+        frame.picStruct = sps.frameFieldInfoPresent && timing >= 0 ? timing >> 4 : -1;
+        frame.newSequence = newSequence;
+        frame.filmGrain = filmGrain;
+        frame.framePacking = framePacking;
+        frame.orientation = orientation;
         frame.sps = sps;
         frame.pts = packetPts;
         frame.duration = packetDuration;
@@ -1135,7 +1204,7 @@ public final class HevcDecoderEngine {
         var sps = frame.sps;
         var job = currentJob;
         currentJob = null;
-        if (checkHashes && pendingHash >= 0) {
+        if (checkHashes && pendingHash >= 0 && hashVerifiable) {
             job.hashType = pendingHash;
             job.hash = new byte[][]{sei.hash[0].clone(), sei.hash[1].clone(), sei.hash[2].clone()};
         }
@@ -1182,12 +1251,14 @@ public final class HevcDecoderEngine {
     }
 
     /**
-     * Finishes the current picture and outputs every picture still waiting.
+     * Finishes the current picture and outputs every picture still waiting. The SEI messages of an
+     * access unit whose picture never started are forgotten.
      */
     public void flush() {
         try {
             finishPicture();
         } finally {
+            sei.clearPictureMessages();
             awaitAllJobs();
             bumpAll();
             drainOutput(true);

@@ -45,7 +45,9 @@ class Mpeg4RobustnessTest {
                 new Sample("interlaced", "mp4", "mpeg4", "-bf 1 -flags +ildct+ilme", false),
                 new Sample("xvid global motion", "mp4", "libxvid", "-bf 1 -gmc 1 -flags +qpel", false),
                 new Sample("H.263 baseline", "3gp", "h263", "-flags +mv4 -obmc 1", true),
-                new Sample("H.263+", "mkv", "h263p", "-flags +aic+loop+mv4 -umv 1 -aiv 1 -structured_slices 1", true));
+                new Sample("H.263+", "mkv", "h263p", "-flags +aic+loop+mv4 -umv 1 -aiv 1 -structured_slices 1", true),
+                new Sample("H.263+ overlapped slices", "mkv", "h263p",
+                        "-flags +mv4 -obmc 1 -umv 1 -structured_slices 1 -ps 200", true));
     }
 
     @ParameterizedTest(name = "{0}")
