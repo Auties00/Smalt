@@ -4,6 +4,11 @@
 package com.github.auties00.smalt.image.jp2;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -22,21 +27,29 @@ import java.util.Objects;
 /**
  * Encodes pictures and channels as JPEG 2000 (ISO/IEC 15444-1): a JP2 file or a raw codestream,
  * lossless with the reversible 5-3 wavelet or lossy with the irreversible 9-7 wavelet, in one or
- * more quality layers, in one tile or many.
+ * more quality layers, in one tile or many, with the block coder of ISO/IEC 15444-1 or the
+ * high-throughput block coder of ISO/IEC 15444-15 (HTJ2K, {@link Jp2EncoderOptions#highThroughput()}).
  *
  * <p>A picture is coded as one component per channel at its own depth: an
  * {@link RgbaPicture} with 8 bits, an {@link Rgba16Picture} with 16 bits, a planar picture after
- * conversion to RGBA. A picture whose red, green and blue are equal everywhere is coded as one
+ * conversion to RGBA, a CMYK {@link ChannelPicture} as its four inks (8 bits for 8-bit samples, 16
+ * bits for 16-bit and floating-point ones) in the enumerated CMYK color space, followed by its alpha
+ * channel declared as opacity or premultiplied opacity and without its other extra channels, so that
+ * {@link Jp2Decoder} with {@link com.github.auties00.smalt.image.ImageDecoderOptions#keepChannels()}
+ * returns the same samples from a lossless file, and any other {@link ChannelPicture} after
+ * conversion to RGBA of 16 bits for 16-bit and floating-point samples, of 8 bits otherwise. A
+ * picture whose red, green and blue are equal everywhere is coded as one
  * gray component, an opaque picture without its alpha channel, and a picture with alpha with an
- * opacity channel the JP2 channel definitions declare. The JP2 file declares sRGB (or grayscale),
+ * opacity channel the JP2 channel definitions declare. The JP2 file declares sRGB (or grayscale or CMYK),
  * or embeds the options' color profile. {@link #encode(Jp2Image, Jp2EncoderOptions)} codes
  * channels of any precision from 1 to 31 bits, signed or unsigned and subsampled, such as the
- * channels {@link Jp2Decoder#decodeChannels} returns.
+ * channels {@link Jp2Decoder#decodeChannels} returns; the high-throughput block coder takes channels
+ * whose sub-bands need at most 30 magnitude bit-planes, as lossless channels of up to 27 bits do.
  *
  * <p>A codestream holds at most 65535 tiles and 16384 components; an image or options beyond
  * either are rejected with {@link IllegalArgumentException} before anything is coded. Lossless
- * output is byte-identical to OpenJPEG's {@code opj_compress} given the same parameters and
- * comment.
+ * output of the ISO/IEC 15444-1 block coder is byte-identical to OpenJPEG's {@code opj_compress}
+ * given the same parameters and comment.
  *
  * <p>This class is thread-safe.
  *
@@ -55,6 +68,11 @@ public final class Jp2Encoder {
      * The largest number of components of a codestream (ISO/IEC 15444-1 Table A.9).
      */
     private static final int MAX_COMPONENTS = 16384;
+
+    /**
+     * The {@code SPcod} code-block style bit of the high-throughput block coder (ISO/IEC 15444-15 A.4).
+     */
+    private static final int HIGH_THROUGHPUT = 0x40;
 
     /**
      * Prevents instantiation.
@@ -135,8 +153,10 @@ public final class Jp2Encoder {
      * @param options the encoding options
      * @param sink the sink receiving the JP2 file or codestream
      * @throws IllegalArgumentException if a channel does not cover the image, its samples exceed
-     * its precision, the image has more than 16384 channels, or the options' tiles divide it into
-     * more than 65535 tiles
+     * its precision, the image has more than 16384 channels, the options' tiles divide it into
+     * more than 65535 tiles, or the options select the high-throughput block coder and a sub-band
+     * of a channel needs more than 30 magnitude bit-planes (lossless channels deeper than 27 bits,
+     * or 29 bits without decomposition levels)
      * @throws MediaException.LimitExceeded if the image exceeds the options' limits, its channel
      * limit included
      * @throws MediaException.Io if writing fails
@@ -159,8 +179,10 @@ public final class Jp2Encoder {
      * @param options the encoding options
      * @return the JP2 file or codestream
      * @throws IllegalArgumentException if a channel does not cover the image, its samples exceed
-     * its precision, the image has more than 16384 channels, or the options' tiles divide it into
-     * more than 65535 tiles
+     * its precision, the image has more than 16384 channels, the options' tiles divide it into
+     * more than 65535 tiles, or the options select the high-throughput block coder and a sub-band
+     * of a channel needs more than 30 magnitude bit-planes (lossless channels deeper than 27 bits,
+     * or 29 bits without decomposition levels)
      * @throws MediaException.LimitExceeded if the image exceeds the options' limits, its channel
      * limit included
      */
@@ -217,7 +239,7 @@ public final class Jp2Encoder {
         try (var _ = ParallelBands.operation()) {
             return write(image.width(), image.height(), precisions, signed, dx, dy, planes,
                     count >= 3 && !subsampled && colorSpace != Jp2ColorSpace.SYCC.code(), colorSpace, icc,
-                    alpha, options);
+                    alpha, alpha >= 0 && channels.get(alpha).type() == Jp2ChannelType.PREMULTIPLIED_OPACITY, options);
         }
     }
 
@@ -233,6 +255,9 @@ public final class Jp2Encoder {
         var height = picture.height();
         LimitChecks.checkPicture(options.limits(), width, height);
         checkTiles(width, height, options);
+        if (picture instanceof ChannelPicture channels && channels.layout().colorModel() == ColorModel.CMYK) {
+            return encodeCmyk(channels, options);
+        }
         LimitChecks.checkAllocation(options.limits(), (long) width * height * 4 * 4);
         int[][] channels;
         int precision;
@@ -240,6 +265,9 @@ public final class Jp2Encoder {
         if (picture instanceof Rgba16Picture wide) {
             precision = 16;
             channels = split16(wide);
+        } else if (picture instanceof ChannelPicture deep && deep.bitDepth() > 8) {
+            precision = 16;
+            channels = split16(ImageOps.toRgba16(deep));
         } else {
             precision = 8;
             channels = split8(picture instanceof RgbaPicture rgba ? rgba : ImageOps.toRgba(picture));
@@ -262,7 +290,60 @@ public final class Jp2Encoder {
         var icc = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
         return write(width, height, precisions, new boolean[count], ones, ones, planes, !gray,
                 gray ? Jp2ColorSpace.GRAYSCALE.code() : Jp2ColorSpace.SRGB.code(), icc, alpha ? count - 1 : -1,
-                options);
+                false, options);
+    }
+
+    /**
+     * Encodes a CMYK channel picture as four ink components and, when its layout has one, an
+     * opacity component, declaring the enumerated CMYK color space.
+     *
+     * @param picture the CMYK picture; floating-point samples are first converted to 16 bits
+     * @param options the encoding options
+     * @return the JP2 file or codestream
+     */
+    private static byte[] encodeCmyk(ChannelPicture picture, Jp2EncoderOptions options) {
+        var width = picture.width();
+        var height = picture.height();
+        var layout = picture.layout();
+        var alphaIndex = layout.alphaIndex();
+        var count = alphaIndex >= 0 ? 5 : 4;
+        LimitChecks.checkAllocation(options.limits(), (long) width * height * count * 4);
+        var integer = picture instanceof ChannelFloatPicture ? ImageOps.toChannel16(picture) : picture;
+        var precision = integer instanceof Channel8Picture ? 8 : 16;
+        var planes = new int[count][width * height];
+        var stride = integer.stride();
+        var samples = layout.count();
+        var offsets = new int[]{0, 1, 2, 3, alphaIndex};
+        for (var c = 0; c < count; c++) {
+            var plane = planes[c];
+            var offset = offsets[c];
+            switch (integer) {
+                case Channel8Picture eight -> {
+                    var pixels = eight.pixels();
+                    for (var y = 0; y < height; y++) {
+                        for (int x = 0, at = y * stride + offset, i = y * width; x < width; x++, at += samples, i++) {
+                            plane[i] = pixels[at] & 0xFF;
+                        }
+                    }
+                }
+                case Channel16Picture sixteen -> {
+                    var pixels = sixteen.pixels();
+                    for (var y = 0; y < height; y++) {
+                        for (int x = 0, at = y * stride + offset, i = y * width; x < width; x++, at += samples, i++) {
+                            plane[i] = pixels[at] & 0xFFFF;
+                        }
+                    }
+                }
+                case ChannelFloatPicture _ -> throw new AssertionError();
+            }
+        }
+        var precisions = new int[count];
+        Arrays.fill(precisions, precision);
+        var ones = new int[count];
+        Arrays.fill(ones, 1);
+        var icc = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
+        return write(width, height, precisions, new boolean[count], ones, ones, planes, false,
+                Jp2ColorSpace.CMYK.code(), icc, alphaIndex >= 0 ? 4 : -1, layout.isAlphaPremultiplied(), options);
     }
 
     /**
@@ -394,12 +475,13 @@ public final class Jp2Encoder {
      * @param colorSpace the enumerated color space of a JP2 file
      * @param icc the ICC profile of a JP2 file, or {@code null}
      * @param alpha the opacity component, or {@code -1}
+     * @param premultiplied whether the opacity component is premultiplied opacity
      * @param options the encoding options
      * @return the JP2 file or codestream
      */
     private static byte[] write(int width, int height, int[] precisions, boolean[] signed, int[] dx, int[] dy,
                                 int[][] planes, boolean transform, int colorSpace, byte[] icc, int alpha,
-                                Jp2EncoderOptions options) {
+                                boolean premultiplied, Jp2EncoderOptions options) {
         LimitChecks.checkPicture(options.limits(), width, height);
         var resolutions = options.decompositionLevels() + 1;
         int[] precinctWidths = null;
@@ -413,7 +495,7 @@ public final class Jp2Encoder {
                 precinctHeights[r] = precinctExponent(options.precinctHeight() >> p, r);
             }
         }
-        var style = 0;
+        var style = options.highThroughput() ? HIGH_THROUGHPUT : 0;
         for (var option : options.codeBlockStyles()) {
             style |= option.bit();
         }
@@ -437,6 +519,6 @@ public final class Jp2Encoder {
         if (options.format() == Jp2Format.CODESTREAM) {
             return codestream;
         }
-        return Jp2Writer.jp2(codestream, config, colorSpace, icc, alpha);
+        return Jp2Writer.jp2(codestream, config, colorSpace, icc, alpha, premultiplied);
     }
 }

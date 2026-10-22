@@ -185,7 +185,7 @@ public final class JpegTransformOptions {
      * {@return whether the Huffman tables of a sequential output are optimized for the image rather
      * than taken from T.81 Annex K; {@code true} by default}
      *
-     * <p>A progressive output always has optimized tables.
+     * <p>A progressive or 12-bit output always has optimized tables.
      */
     public boolean optimizeHuffman() {
         return optimizeHuffman;

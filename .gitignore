@@ -19,3 +19,12 @@ Thumbs.db
 # Python (codegen scripts)
 __pycache__/
 *.pyc
+
+# Jazzer's JUnit fuzzing mode (tools/fuzz/README.md): its generated corpus and the findings it writes to the
+# module directory; saved findings live under src/test/resources/fuzz-regressions
+/*/.cifuzz-corpus/
+/*/crash-*
+/*/timeout-*
+/*/oom-*
+/*/slow-unit-*
+/*/leak-*
