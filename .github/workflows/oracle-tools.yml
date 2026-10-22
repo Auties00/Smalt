@@ -1,0 +1,69 @@
+# Fills the Actions caches of the oracle tools (.github/actions/oracles) on the given runners before the test jobs
+# start, so that the one-time builds (ffmpeg and its libraries from source take most of an hour) never count
+# against a test job's time limit, and checks that every runner has every pinned tool and every ffmpeg component
+# of tools/testdata/ffmpeg-oracle/features.tsv; and makes sure that the cache holds the clips of
+# tools/testdata/clips.tsv, derived on Linux x64 into their cross-OS entry, whatever the runners, because swscale's
+# arm64 kernels scale differently and the encoder golden tests pin the x86-64 clips. ci.yml, nightly.yml and
+# warm-caches.yml call it; it can also be run by hand to warm the caches of a branch (the pkg/* branches only
+# restore them, see .github/scripts/cache-policy.sh).
+name: Oracle tools
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: JSON list of runners
+        type: string
+        default: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+  workflow_dispatch:
+    inputs:
+      os:
+        description: JSON list of runners
+        default: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+
+permissions:
+  contents: read
+  # the cache listing of .github/scripts/cache-policy.sh
+  actions: read
+
+jobs:
+  install:
+    name: oracle tools (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      - name: Upload the oracle versions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-versions-${{ matrix.os }}
+          path: oracle-versions.tsv
+          retention-days: 14
+
+  clips:
+    name: clips (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/testdata
+        with:
+          vectors: 'false'
+          clips: fill

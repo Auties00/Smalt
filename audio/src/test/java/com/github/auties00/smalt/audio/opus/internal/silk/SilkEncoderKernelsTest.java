@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.audio.opus.internal.silk;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -25,7 +25,7 @@ class SilkEncoderKernelsTest {
         @CsvSource({"6,40", "8,97", "10,160", "12,23", "16,672", "16,16", "10,13"})
         @DisplayName("vector kernel matches the scalar kernel bit for bit")
         void matches(int order, int length) {
-            Assumptions.assumeTrue(Simd.ENABLED, "Vector API not enabled");
+            Skip.unlessVector(Simd.ENABLED);
             var random = new Random(order * 1000L + length);
             var s = new float[length + 5];
             var coef = new float[order + 2];
@@ -150,15 +150,20 @@ class SilkEncoderKernelsTest {
             var warping = 0.25f + random.nextFloat() * 0.1f;
             var expected = new float[4 * 25];
             var single = new float[25];
+            // The work arrays are shared and start dirty: the kernel must clear them on every call.
+            var state = new double[25];
+            var corr = new double[25];
+            java.util.Arrays.fill(state, 1e9);
+            java.util.Arrays.fill(corr, -1e9);
             for (var c = 0; c < 4; c++) {
-                SigProcFlp.warpedAutocorrelationFlp(single, input, c * stride, warping, length, order);
+                SigProcFlp.warpedAutocorrelationFlp(single, input, c * stride, warping, length, order, state, corr);
                 System.arraycopy(single, 0, expected, c * 25, order + 1);
             }
             var scalar = new float[4 * 25];
             var work = new double[SilkFlpKernels.warpedScratchLength(length)];
             new ScalarSilkFlpKernels().warpedAutocorrelation4(scalar, 25, input, stride, warping, length, order, work);
             assertArrayEquals(expected, scalar);
-            Assumptions.assumeTrue(Simd.ENABLED, "Vector API not enabled");
+            Skip.unlessVector(Simd.ENABLED);
             var vector = new float[4 * 25];
             VectorSilkFlpKernels.create().warpedAutocorrelation4(vector, 25, input, stride, warping, length, order, work);
             assertArrayEquals(expected, vector);
