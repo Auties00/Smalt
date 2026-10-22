@@ -22,4 +22,4 @@ python gen_vp9_dsp.py
 
 and run `python ../check.py` (CI runs it too), which fails when the committed file differs from the
 generators' output; edit a generator or the template, never the generated file. After a change, run
-`Vp9DspEquivalenceTest`, `Vp9ConformanceTest` and `JitRobustnessTest`.
+`Vp9DspEquivalenceTest`, `Vp9ConformanceTest` and `VideoKernelGuardTest`.

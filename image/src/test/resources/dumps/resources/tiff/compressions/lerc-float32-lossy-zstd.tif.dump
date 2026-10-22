@@ -1,0 +1,19 @@
+# image dump of resources/tiff/compressions/lerc-float32-lossy-zstd.tif; regenerate with -Dsmalt.test.updateDumps=true
+format TIFF
+info ImageInfo[format=TIFF, width=64, height=48, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 64x48 rgba8 alpha=false crc=bbd167c2
+  format=TIFF orientation=NORMAL source=64x48
+  icc=none exif=none xmp=none
+  profile=none
+scaled 16x12
+picture 64x48 rgba8 alpha=false crc=bbd167c2
+  format=TIFF orientation=NORMAL source=64x48
+  icc=none exif=none xmp=none
+  profile=none
+pages 1
+page 0 ImageInfo[format=TIFF, width=64, height=48, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 64x48 rgba8 alpha=false crc=bbd167c2
+  format=TIFF orientation=NORMAL source=64x48
+  icc=none exif=none xmp=none
+  profile=none

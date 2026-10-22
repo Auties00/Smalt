@@ -94,6 +94,10 @@ Contents
   37. Adobe Digital Negative (DNG) specification
   38. rawtoaces-data (camera spectral sensitivities)
   39. libdeflate
+  40. X3F tools
+  41. opusfile
+  42. libxaac
+  43. LERC (Limited Error Raster Compression)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -116,17 +120,23 @@ Derived Smalt packages:
   audio.opus.internal.silk
 
 Derivation: a port of the float build of libopus 1.5.2 (CELT, SILK, the
-Opus framing, multistream and repacketizer layers, the tonality analysis and
-its MLP), including tables copied from the C sources.
+Opus framing, multistream, projection and repacketizer layers, the
+ambisonic mixing and demixing matrices, the tonality analysis and its MLP),
+including tables copied from the C sources.
 
 Copyright:
   Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                       Jean-Marc Valin, Timothy B. Terriberry,
                       CSIRO, Gregory Maxwell, Mark Borgerding,
                       Erik de Castro Lopo, Mozilla, Amazon
+  Copyright (c) 2017 Google Inc. (src/mapping_matrix.c,
+                      src/opus_projection_encoder.c,
+                      src/opus_projection_decoder.c)
 EOF
 license_start "libopus license (COPYING)"
 cat "$LIC/opus-COPYING"
+license_start "License of the projection files (header of src/mapping_matrix.c)"
+cat "$LIC/opus-mapping_matrix.c"
 
 section "2. KISS FFT (as modified in libopus)"
 cat <<'EOF'
@@ -264,15 +274,24 @@ JpegTranscoder) port the jpegtran sample program: the coefficient
 rotations, flips, transpositions and crops of transupp.c, the transcoding
 of jctrans.c, the marker writer of jcmarker.c, the progressive Huffman
 encoder of jcphuff.c, the pass sequence of jcmaster.c, and the parameter
-handling of jpegtran.c. The accurate integer inverse DCT is also the inverse
-DCT of the MPEG-4 Part 2 and H.263 decoders.
+handling of jpegtran.c. The encoder's coding modes (in image.jpeg.internal,
+JpegEncoding, SampleRows, ComponentBands, DctFrameEncoder, WideFdct,
+ArithmeticEncoder and LosslessFrameEncoder) port the compression library:
+the preprocessing and downsampling controllers (jcprepct.c, jcsample.c),
+color conversion at 8 to 16 bits with the CMYK and YCCK transforms
+(jccolor.c, cmyk.h) and the PPM sample rescaling (rdppm.c), the 8-bit and
+12-bit forward DCT and quantization (jfdctint.c, jcdctmgr.c), the coefficient
+controller (jccoefct.c), the arithmetic encoder (jcarith.c, jaricom.c), the
+lossless compressor (jclossls.c, jcdiffct.c, jclhuff.c) and the parameter
+setup (jcparam.c, jcmaster.c). The accurate integer inverse DCT is also the
+inverse DCT of the MPEG-4 Part 2 and H.263 decoders.
 
 This software is based in part on the work of the Independent JPEG Group.
 
 Copyright (as stated in the headers of the libjpeg-turbo source files the
 Java code derives from):
 EOF
-for f in jdmarker.c jdapimin.c jdmaster.c jdhuff.c jdphuff.c jdarith.c jaricom.c jidctint.c jidctred.c jfdctint.c jchuff.c jcdctmgr.c jcparam.c jdcolor.c jccolor.c jdsample.c jcsample.c jdicc.c jutils.c transupp.c jctrans.c jcphuff.c jcmarker.c jcmaster.c jpegtran.c; do
+for f in jdmarker.c jdapimin.c jdmaster.c jdhuff.c jdphuff.c jdarith.c jaricom.c jidctint.c jidctred.c jfdctint.c jchuff.c jcdctmgr.c jcparam.c jdcolor.c jccolor.c jdsample.c jcsample.c jdicc.c jutils.c transupp.c jctrans.c jcphuff.c jcmarker.c jcmaster.c jpegtran.c jcarith.c jccoefct.c jcprepct.c jclossls.c jcdiffct.c jclhuff.c cmyk.h rdppm.c; do
   jt_header "$f"
 done
 license_start "libjpeg-turbo license overview (LICENSE.md)"
@@ -294,6 +313,7 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (HuffmanTables; BandLayout, EncoderChannel,
   EncoderEngine, TnsEncoder, TransientDetector)
+  container.internal (AacHuffmanTables)
 
 Derivation: the AAC Huffman codeword and length values are taken from the
 tables of aacenc/src/aac_rom.c. The encoder's psychoacoustic model, block
@@ -731,27 +751,33 @@ section "20. libavif"
 cat <<'EOF'
 Project:      libavif, the reference library of the AV1 Image File Format
 Source:       https://github.com/AOMediaCodec/libavif
-              (revision e4db889c6b574bf221a380e9bddde0273c942023)
+              (revision e4db889c6b574bf221a380e9bddde0273c942023; the sample
+              transforms at revision b1e4d339c1ff5b547664c85f1713279f4997d694)
 License text: LICENSE at the root of the repository
 License:      BSD 2-Clause License
 
 Derived Smalt packages:
   internal.heif (the HEIF item parser: the container rules it enforces, the
   clean aperture arithmetic and the loop count of image sequences; the
-  limited-range alpha expansion of the image canvas)
+  limited-range alpha expansion of the image canvas; the operators of the
+  sample transform expressions, HeifSampleTransform)
   image.avif, image.avif.internal (AvifDecoder: the choice between the primary
   item and the image sequence, the color, alpha and grid tile selection, the
   grid validation, the limited-range alpha expansion and the unpremultiplying
-  of premultiplied alpha; AvifEncoder: the box layout of still images, alpha
+  of premultiplied alpha, the choice of the sample transform item shown in
+  place of the primary item; AvifEncoder: the box layout of still images, alpha
   auxiliary items, grids, Exif and XMP items and image sequences, the quality
   scale, the automatic tiling, the orientation properties and the RGB to YUV
   conversion defaults)
 
 Derivation: the semantics of src/read.c, src/write.c, src/avif.c, src/alpha.c
-and src/reformat.c followed in Java; no code was translated line by line.
+and src/reformat.c followed in Java, and the operators of
+src/sampletransform.c (Copyright 2024 Google LLC) ported; no other code was
+translated line by line.
 
 Copyright:
   Copyright 2019 Joe Drago. All rights reserved.
+  Copyright 2024 Google LLC
 EOF
 license_start "libavif license (LICENSE)"
 cat "$LIC/libavif-LICENSE"
@@ -876,17 +902,21 @@ Derived Smalt packages:
   and old-style bit order of tif_lzw.c; Predictor: the horizontal and
   floating-point predictors of tif_predict.c; ThunderScan: ThunderDecode of
   tif_thunder.c; CcittFaxDecoder: the end-of-line and fill-bit handling of
-  tif_fax3.c; TiffPageDecoder and SampleConverter: the extra-sample, palette,
+  tif_fax3.c; CcittFaxEncoder: Fax3Encode1DRow, Fax3Encode2DRow, putspan,
+  Fax3PutEOL and the row alignment of tif_fax3.c; TiffPageDecoder and SampleConverter: the extra-sample, palette,
   CMYK and YCbCr rules of tif_getimage.c; TiffJpeg: the old-style JPEG stream
   reconstruction of tif_ojpeg.c; LabTables: TIFFCIELabToRGBInit,
   TIFFCIELab16ToXYZ and TIFFXYZToRGB of tif_color.c with the display_sRGB
   constants of tif_getimage.c; SgiLog: the LogL and LogLuv decoders and
-  conversions of tif_luv.c and the chromaticity table of uvcode.h)
+  conversions of tif_luv.c and the chromaticity table of uvcode.h;
+  PixarLog: PixarLogMakeTables and the horizontalAccumulate functions of
+  tif_pixarlog.c; NeXT: NeXTDecode of tif_next.c; TiffLerc: the mask, alpha
+  and byte-order conventions of tif_lerc.c)
 
 Derivation: the YCbCr tables, the CIE L*a*b* conversion, the SGILog decoders
-and conversions, the uvcode.h table and ThunderDecode translated to Java; the
-other listed functions followed for their algorithms and conventions, with the
-Java code structured differently.
+and conversions, the uvcode.h table, the PixarLog tables, NeXTDecode and
+ThunderDecode translated to Java; the other listed functions followed for their
+algorithms and conventions, with the Java code structured differently.
 
 Copyright:
   Copyright (c) 1988-1997 Sam Leffler
@@ -894,6 +924,9 @@ Copyright:
   Copyright (c) 1985, 1986 The Regents of the University of California
   (tif_lzw.c)
   Copyright (c) 1997 Greg Ward Larson (tif_luv.c, uvcode.h)
+  Copyright (c) 1996-1997 Sam Leffler, Copyright (c) 1996 Pixar
+  (tif_pixarlog.c)
+  Copyright (c) 2018 Even Rouault (tif_lerc.c)
 EOF
 license_start "LibTIFF license (LICENSE.md)"
 cat "$LIC/libtiff-LICENSE.md"
@@ -1003,8 +1036,10 @@ absent from the AMR-NB code, was added. In the AMR-WB decoder, the arithmetic
 of the basic operators, filters, excitation, concealment and comfort noise
 routines was then aligned with the 3GPP TS 26.173 fixed-point reference (the
 normative specification of AMR-WB, release 18) wherever opencore departs from
-it, so that the decoder passes the TS 26.174 test sequences; no 3GPP source
-text was copied. The source files carry this notice about their 3GPP origin:
+it, so that the decoder passes the TS 26.174 test sequences, and the muting of
+the AMR-NB comfort noise was aligned with the TS 26.073 reference, which does
+not clamp the muted energy; no 3GPP source text was copied. The source files
+carry this notice about their 3GPP origin:
 
   Portions of this file are derived from the following 3GPP standard:
       3GPP TS 26.073 (AMR-NB) / 3GPP TS 26.173 (AMR-WB)
@@ -1373,6 +1408,98 @@ Copyright:
 EOF
 license_start "X3F tools license (doc/copyright.txt)"
 cat "$LIC/x3f-tools-copyright.txt"
+
+section "41. opusfile"
+cat <<'EOF'
+Project:      opusfile, the Xiph.Org library for decoding Ogg Opus files,
+              version 0.12
+Home:         https://opus-codec.org/
+Source:       https://gitlab.xiph.org/xiph/opusfile
+License text: https://gitlab.xiph.org/xiph/opusfile/-/raw/v0.12/COPYING
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.opus (OpusDownmix)
+
+Derivation: the stereo downmix matrices of three to eight channels in the
+Vorbis order (OP_STEREO_DOWNMIX in src/opusfile.c) are copied.
+
+Copyright:
+  Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+EOF
+license_start "opusfile license (COPYING)"
+cat "$LIC/opusfile-COPYING"
+
+section "42. libxaac"
+cat <<'EOF'
+Project:      libxaac, the Android extended HE-AAC decoder and encoder, at
+              commit 2fbadd57bca46693b7a077bcf1513131106d960c
+Source:       https://github.com/ittiam-systems/libxaac
+              https://android.googlesource.com/platform/external/libxaac
+License text: https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/LICENSE
+NOTICE:       https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/NOTICE
+License:      Apache License, Version 2.0
+
+Derived Smalt packages:
+  audio.aac.internal (CodewordReordering, ReversibleScalefactors,
+  LowDelayWindows, SamplingTables)
+  audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData)
+
+Derivation: Huffman codeword reordering follows the codebook priorities,
+section sorting, segmentation and set-wise decoding of
+decoder/ixheaacd_huff_code_reorder.c; the RVLC and escape codeword tables
+and the decoding order of RVLC scalefactors are taken from
+decoder/ixheaacd_rev_vlc.c. The 512-sample AAC-ELD synthesis window is
+taken from low_delay_window_eld of encoder/ixheaace_rom.c, the CLD QMF
+prototype of low delay SBR from cld_fb_64_640 of encoder/ixheaace_sbr_rom.c,
+the scalefactor band offsets and TNS limits of 512- and 480-sample frames
+from decoder/ixheaacd_aac_rom.c, and the LD_TRAN envelope tables from
+decoder/ixheaacd_env_extr.c. The Java code is a new implementation; it is
+not a copy of the original files.
+
+Copyright:
+  Copyright (C) 2018, 2023 The Android Open Source Project
+  Ittiam Systems
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+EOF
+printf '\n'
+cat "$LIC/libxaac-NOTICE"
+license_start "Apache License, Version 2.0 (libxaac LICENSE)"
+cat "$LIC/libxaac-LICENSE"
+
+section "43. LERC (Limited Error Raster Compression)"
+cat <<'EOF'
+Project:      LERC, Esri's Limited Error Raster Compression library, version 4.2.0
+Source:       https://github.com/Esri/lerc
+License text: https://raw.githubusercontent.com/Esri/lerc/v4.2.0/LICENSE
+NOTICE:       https://raw.githubusercontent.com/Esri/lerc/v4.2.0/NOTICE
+License:      Apache License, Version 2.0, with the patent grant of its
+              clause 3 (see the NOTICE below)
+
+Derived Smalt packages:
+  image.internal.lerc (LercDecoder, BitStuffer, LercHuffman, LosslessFloat,
+  Lerc1)
+
+Derivation: the Lerc2 decoder of src/LercLib (Lerc.cpp, Lerc2.cpp, Lerc2.h,
+BitStuffer2.cpp, Huffman.cpp, BitMask.cpp, RLE.cpp), the lossless
+floating-point decoder of the fpl_ files (fpl_Lerc2Ext.cpp,
+fpl_EsriHuffman.cpp, fpl_Compression.cpp, fpl_Predictor.cpp,
+fpl_UnitTypes.cpp) and the Lerc1 decoder of src/LercLib/Lerc1Decode
+(CntZImage.cpp, BitStuffer.cpp) translated to Java.
+
+Copyright:
+  Copyright 2015-2026 Esri
+  Original coding 2021 Yuriy Yakimenko (the fpl_ files)
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+EOF
+printf '\n'
+cat "$LIC/lerc-NOTICE"
+license_start "Apache License, Version 2.0 (LERC LICENSE)"
+cat "$LIC/lerc-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"
