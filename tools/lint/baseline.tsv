@@ -11,11 +11,9 @@ param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/For
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/LocalSource.java	2
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/SegmentBacked.java	2
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/Jp2Image.java	1
-param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/EncodedBlock.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/Jp2Pictures.java	3
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/PacketBitWriter.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/TagTree.java	3
-param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/Tier1Encoder.java	3
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/VectorWaveletKernel.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/metadata/IptcData.java	3
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/metadata/JxlFile.java	1

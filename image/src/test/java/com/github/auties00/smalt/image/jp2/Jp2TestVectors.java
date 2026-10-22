@@ -17,6 +17,10 @@ final class Jp2TestVectors {
             + "39524bd3a601d90ed8e0177559400d23945f96a9/";
 
     private static final Map<String, String> HASHES = Map.ofEntries(
+            Map.entry("input/nonregression/htj2k/Bretagne1_ht.j2k", "fa82708024118771d58d90231e406ec40ad3eedf623927697c3659c123d89ec4"),
+            Map.entry("input/nonregression/htj2k/Bretagne1_ht_lossy.j2k", "372c5b8c5f136c8cabca266d1af7bd8078c0fee14441e7dc850f228d28152d2d"),
+            Map.entry("input/nonregression/htj2k/byte.jph", "87841874ed8f530babe1ea49aef3cbdf1a605f1984b9c06713fc9d9ca0fcd5a0"),
+            Map.entry("input/nonregression/htj2k/byte_causal.jhc", "8d4a48d1cfff47420203283f3eb1b5c48f92dd1a6c23916a18934a44f154002f"),
             Map.entry("baseline/conformance/a1_mono.ppm", "be285266a1c2f803f40b2d7deb7a449956a00882c4923fc4d26a988696081c7f"),
             Map.entry("baseline/conformance/a2_colr.ppm", "22d53aea0bd3005724f08f0fad01e20716bea433fe5d2befa8d3466ce1404145"),
             Map.entry("baseline/conformance/a3_mono.ppm", "be285266a1c2f803f40b2d7deb7a449956a00882c4923fc4d26a988696081c7f"),

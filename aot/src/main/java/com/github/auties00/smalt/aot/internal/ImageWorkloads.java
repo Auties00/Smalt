@@ -31,6 +31,7 @@ import com.github.auties00.smalt.image.ico.AniStep;
 import com.github.auties00.smalt.image.ico.IcoDecoder;
 import com.github.auties00.smalt.image.ico.IcoEncoder;
 import com.github.auties00.smalt.image.ico.IcoEncoderOptions;
+import com.github.auties00.smalt.image.jp2.Jp2CodeBlockStyle;
 import com.github.auties00.smalt.image.jp2.Jp2Decoder;
 import com.github.auties00.smalt.image.jp2.Jp2DecoderOptions;
 import com.github.auties00.smalt.image.jp2.Jp2Encoder;
@@ -80,6 +81,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -154,6 +156,7 @@ final class ImageWorkloads {
                 file("webp-animation-c2", () -> webpAnimation(2, 4)),
                 file("tiff", ImageWorkloads::tiff),
                 file("jpeg2000", ImageWorkloads::jpeg2000),
+                file("htj2k", ImageWorkloads::highThroughputJpeg2000),
                 file("ico-bmp", ImageWorkloads::icoBmp),
                 file("bmp", ImageWorkloads::bmp),
                 file("image-metadata", ImageWorkloads::metadata));
@@ -791,6 +794,28 @@ final class ImageWorkloads {
             Blackhole.consume(Jp2Decoder.decodeChannels(MediaSource.of(layered), reduced).hashCode());
             var inks = Jp2Encoder.encode(cmyk, Jp2EncoderOptions.lossless());
             Blackhole.consume(Jp2Decoder.decode(MediaSource.of(inks), keep).picture().width());
+        });
+    }
+
+    /**
+     * Returns a workload that encodes a 384x256 picture with the high-throughput block coder of
+     * JPEG 2000 (HTJ2K), losslessly and as layered lossy coding with vertically causal contexts, and
+     * decodes both, the lossy one also at half resolution and as raw channels.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload highThroughputJpeg2000() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), false);
+        var lossless = Jp2EncoderOptions.lossless().toBuilder().highThroughput(true).build();
+        var lossy = Jp2EncoderOptions.lossy(20).toBuilder().compressionRatios(60, 20).highThroughput(true)
+                .codeBlockStyles(Set.of(Jp2CodeBlockStyle.VERTICALLY_CAUSAL)).build();
+        var reduced = Jp2DecoderOptions.builder().reduction(1).build();
+        return TrainingWorkload.of("htj2k", () -> {
+            var exact = Jp2Encoder.encode(picture, lossless);
+            var layered = Jp2Encoder.encode(picture, lossy);
+            Blackhole.consume(Jp2Decoder.decode(MediaSource.of(exact), ImageDecoderOptions.defaults()).picture().width());
+            Blackhole.consume(Jp2Decoder.decode(MediaSource.of(layered), ImageDecoderOptions.defaults()).picture().width());
+            Blackhole.consume(Jp2Decoder.decodeChannels(MediaSource.of(layered), reduced).hashCode());
         });
     }
 

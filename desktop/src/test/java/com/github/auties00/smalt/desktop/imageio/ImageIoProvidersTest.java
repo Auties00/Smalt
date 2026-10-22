@@ -65,6 +65,8 @@ class ImageIoProvidersTest {
         assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("ani"));
         assertTrue(names.contains("jpeg2000"));
         assertTrue(names.contains("jp2"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).containsAll(List.of("jph", "jhc")));
+        assertTrue(Arrays.asList(provider.getMIMETypes()).containsAll(List.of("image/jph", "image/jphc")));
         assertTrue(names.contains("dng"));
         assertTrue(names.contains("raw"));
         assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("nef"));

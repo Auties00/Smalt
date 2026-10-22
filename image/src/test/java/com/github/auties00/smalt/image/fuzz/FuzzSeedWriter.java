@@ -13,6 +13,10 @@ import com.github.auties00.smalt.image.ico.AniStep;
 import com.github.auties00.smalt.image.ico.IcoEncoderOptions;
 import com.github.auties00.smalt.image.internal.CompressionSamples;
 import com.github.auties00.smalt.image.internal.zstd.ZstdEncoder;
+import com.github.auties00.smalt.image.jp2.Jp2CodeBlockStyle;
+import com.github.auties00.smalt.image.jp2.Jp2Encoder;
+import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
+import com.github.auties00.smalt.image.jp2.Jp2Format;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
 import com.github.auties00.smalt.image.metadata.IptcData;
@@ -39,6 +43,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 import java.util.zip.ZipInputStream;
 
 import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.copy;
@@ -102,6 +107,24 @@ class FuzzSeedWriter {
                 ColorProfile.displayP3().toByteArray()),
                 XMP.getBytes(StandardCharsets.UTF_8));
         write(ImageMetadataFuzzTest.class, "webpContainer", "valid-metadata.webp", tagged);
+    }
+
+    @Test
+    @DisplayName("writes the HTJ2K seeds of the JPEG 2000 targets, coded with Jp2Encoder")
+    void highThroughput() {
+        var picture = seedPicture(40, 3);
+        var lossless = Jp2EncoderOptions.lossless().toBuilder().highThroughput(true).decompositionLevels(2)
+                .codeBlockSize(16, 16).build();
+        var codestream = Jp2Encoder.encode(picture, lossless.toBuilder().format(Jp2Format.CODESTREAM).build());
+        var jph = Jp2Encoder.encode(picture, lossless);
+        var layered = Jp2Encoder.encode(picture, Jp2EncoderOptions.lossy(6).toBuilder().highThroughput(true)
+                .compressionRatios(24, 6).decompositionLevels(2).codeBlockSize(16, 16)
+                .codeBlockStyles(Set.of(Jp2CodeBlockStyle.VERTICALLY_CAUSAL)).format(Jp2Format.CODESTREAM).build());
+        for (var target : List.of("jp2", "jp2Channels")) {
+            write(ImageFuzzTest.class, target, "valid-ht-codestream.j2k", codestream);
+            write(ImageFuzzTest.class, target, "valid-ht.jph", jph);
+            write(ImageFuzzTest.class, target, "valid-ht-layered.j2k", layered);
+        }
     }
 
     @Test

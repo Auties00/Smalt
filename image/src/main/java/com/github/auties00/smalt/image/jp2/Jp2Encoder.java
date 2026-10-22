@@ -27,7 +27,8 @@ import java.util.Objects;
 /**
  * Encodes pictures and channels as JPEG 2000 (ISO/IEC 15444-1): a JP2 file or a raw codestream,
  * lossless with the reversible 5-3 wavelet or lossy with the irreversible 9-7 wavelet, in one or
- * more quality layers, in one tile or many.
+ * more quality layers, in one tile or many, with the block coder of ISO/IEC 15444-1 or the
+ * high-throughput block coder of ISO/IEC 15444-15 (HTJ2K, {@link Jp2EncoderOptions#highThroughput()}).
  *
  * <p>A picture is coded as one component per channel at its own depth: an
  * {@link RgbaPicture} with 8 bits, an {@link Rgba16Picture} with 16 bits, a planar picture after
@@ -42,12 +43,13 @@ import java.util.Objects;
  * opacity channel the JP2 channel definitions declare. The JP2 file declares sRGB (or grayscale or CMYK),
  * or embeds the options' color profile. {@link #encode(Jp2Image, Jp2EncoderOptions)} codes
  * channels of any precision from 1 to 31 bits, signed or unsigned and subsampled, such as the
- * channels {@link Jp2Decoder#decodeChannels} returns.
+ * channels {@link Jp2Decoder#decodeChannels} returns; the high-throughput block coder takes channels
+ * whose sub-bands need at most 30 magnitude bit-planes, as lossless channels of up to 27 bits do.
  *
  * <p>A codestream holds at most 65535 tiles and 16384 components; an image or options beyond
  * either are rejected with {@link IllegalArgumentException} before anything is coded. Lossless
- * output is byte-identical to OpenJPEG's {@code opj_compress} given the same parameters and
- * comment.
+ * output of the ISO/IEC 15444-1 block coder is byte-identical to OpenJPEG's {@code opj_compress}
+ * given the same parameters and comment.
  *
  * <p>This class is thread-safe.
  *
@@ -66,6 +68,11 @@ public final class Jp2Encoder {
      * The largest number of components of a codestream (ISO/IEC 15444-1 Table A.9).
      */
     private static final int MAX_COMPONENTS = 16384;
+
+    /**
+     * The {@code SPcod} code-block style bit of the high-throughput block coder (ISO/IEC 15444-15 A.4).
+     */
+    private static final int HIGH_THROUGHPUT = 0x40;
 
     /**
      * Prevents instantiation.
@@ -146,8 +153,10 @@ public final class Jp2Encoder {
      * @param options the encoding options
      * @param sink the sink receiving the JP2 file or codestream
      * @throws IllegalArgumentException if a channel does not cover the image, its samples exceed
-     * its precision, the image has more than 16384 channels, or the options' tiles divide it into
-     * more than 65535 tiles
+     * its precision, the image has more than 16384 channels, the options' tiles divide it into
+     * more than 65535 tiles, or the options select the high-throughput block coder and a sub-band
+     * of a channel needs more than 30 magnitude bit-planes (lossless channels deeper than 27 bits,
+     * or 29 bits without decomposition levels)
      * @throws MediaException.LimitExceeded if the image exceeds the options' limits, its channel
      * limit included
      * @throws MediaException.Io if writing fails
@@ -170,8 +179,10 @@ public final class Jp2Encoder {
      * @param options the encoding options
      * @return the JP2 file or codestream
      * @throws IllegalArgumentException if a channel does not cover the image, its samples exceed
-     * its precision, the image has more than 16384 channels, or the options' tiles divide it into
-     * more than 65535 tiles
+     * its precision, the image has more than 16384 channels, the options' tiles divide it into
+     * more than 65535 tiles, or the options select the high-throughput block coder and a sub-band
+     * of a channel needs more than 30 magnitude bit-planes (lossless channels deeper than 27 bits,
+     * or 29 bits without decomposition levels)
      * @throws MediaException.LimitExceeded if the image exceeds the options' limits, its channel
      * limit included
      */
@@ -484,7 +495,7 @@ public final class Jp2Encoder {
                 precinctHeights[r] = precinctExponent(options.precinctHeight() >> p, r);
             }
         }
-        var style = 0;
+        var style = options.highThroughput() ? HIGH_THROUGHPUT : 0;
         for (var option : options.codeBlockStyles()) {
             style |= option.bit();
         }

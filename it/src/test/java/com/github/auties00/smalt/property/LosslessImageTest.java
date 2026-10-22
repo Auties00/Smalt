@@ -10,6 +10,8 @@ import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.jp2.Jp2Encoder;
+import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.tiff.TiffCompression;
 import com.github.auties00.smalt.image.tiff.TiffEncoder;
@@ -127,6 +129,16 @@ class LosslessImageTest {
             var picture = picture(test);
             assertIdentity(format + " " + test, picture, Images.encode(picture, format, ImageEncoderOptions.lossless()),
                     true);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessImageTest#allDepths")
+        @DisplayName("JPEG 2000 with the high-throughput block coder returns every sample of every layout and depth")
+        void highThroughput(Case test) {
+            var picture = picture(test);
+            var options = Jp2EncoderOptions.lossless().toBuilder().highThroughput(true)
+                    .codeBlockSize(4 << Math.floorMod(test.seed(), 4), 64).build();
+            assertIdentity("JPEG 2000 HTJ2K " + test, picture, Jp2Encoder.encode(picture, options), true);
         }
 
         @ParameterizedTest(name = "{0}")

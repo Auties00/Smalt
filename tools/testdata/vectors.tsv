@@ -3688,3 +3688,8 @@ smoke	dash-schema-cc941bd-DASH-MPD.xsd	61005	d2cb1b300c6f45e902d129bdaf13496dca2
 smoke	dash-schema-cc941bd-DASH-MPD-UP.xsd	1771	7a3c7820b6ead75abfe338d5cdf151a1e4cc1fa8ee4a6d43ad7d71e6605477ea	https://raw.githubusercontent.com/MPEGGroup/DASHSchema/cc941bd4e2e4fb3ea6c7b1c37d3d5edf2ef3fbfe/DASH-MPD-UP.xsd
 smoke	w3c-xlink-2008-06.xsd	9386	c83df86c7fdc16eb9c862b83dfb53fc1b1a4bcafd6e1d1217199e0188b82f24a	https://www.w3.org/XML/2008/06/xlink.xsd
 smoke	w3c-xml-2001.xsd	8836	61960fb3131e38022caad5360e2f33a3382578ab3c80cd58bd74320ede61b20c	https://www.w3.org/2001/xml.xsd
+full	jp2-15444-4-ed4-electronic_insert.zip	131660076	ac04b52e1fe38404912036c14f215099ea9a785f38644fbe76ae8f3d1523c86d	https://standards.iso.org/iso-iec/15444/-4/ed-4/en/electronic_insert.zip
+smoke	opj-Bretagne1_ht.j2k	392635	fa82708024118771d58d90231e406ec40ad3eedf623927697c3659c123d89ec4	https://raw.githubusercontent.com/uclouvain/openjpeg-data/39524bd3a601d90ed8e0177559400d23945f96a9/input/nonregression/htj2k/Bretagne1_ht.j2k
+smoke	opj-Bretagne1_ht_lossy.j2k	235021	372c5b8c5f136c8cabca266d1af7bd8078c0fee14441e7dc850f228d28152d2d	https://raw.githubusercontent.com/uclouvain/openjpeg-data/39524bd3a601d90ed8e0177559400d23945f96a9/input/nonregression/htj2k/Bretagne1_ht_lossy.j2k
+smoke	opj-byte.jph	990	87841874ed8f530babe1ea49aef3cbdf1a605f1984b9c06713fc9d9ca0fcd5a0	https://raw.githubusercontent.com/uclouvain/openjpeg-data/39524bd3a601d90ed8e0177559400d23945f96a9/input/nonregression/htj2k/byte.jph
+smoke	opj-byte_causal.jhc	568	8d4a48d1cfff47420203283f3eb1b5c48f92dd1a6c23916a18934a44f154002f	https://raw.githubusercontent.com/uclouvain/openjpeg-data/39524bd3a601d90ed8e0177559400d23945f96a9/input/nonregression/htj2k/byte_causal.jhc

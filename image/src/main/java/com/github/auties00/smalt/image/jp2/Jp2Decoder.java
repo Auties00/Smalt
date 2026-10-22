@@ -23,7 +23,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Decodes JPEG 2000 images (ISO/IEC 15444-1): JP2 and JPX files and raw codestreams.
+ * Decodes JPEG 2000 images (ISO/IEC 15444-1 and the high-throughput block coder of ISO/IEC
+ * 15444-15, HTJ2K): JP2, JPX and JPH files and raw codestreams.
  *
  * <p>Supported:
  * <ul>
@@ -41,6 +42,10 @@ import java.util.Optional;
  *       scalar derived or expounded quantization, the reversible 5-3 and irreversible 9-7
  *       wavelets with up to 32 decomposition levels, the reversible and irreversible component
  *       transforms, and regions of interest coded with the maxshift method;</li>
+ *   <li>the whole of HTJ2K coding: HT code-blocks with their cleanup, SigProp and MagRef passes,
+ *       placeholder passes and any number of HT sets (the last one is decoded), HT and ISO/IEC
+ *       15444-1 code-blocks mixed in one tile-component, regions of interest, and JPH files,
+ *       including their parameterized color specification for full-range R'G'B' samples;</li>
  *   <li>decoding at a reduced resolution, which discards whole resolution levels and so decodes
  *       large images several times faster, and decoding the first quality layers only.</li>
  * </ul>
@@ -60,18 +65,21 @@ import java.util.Optional;
  * or to 16 bits as for the RGBA output; its color profile is the embedded profile when that is a
  * four-channel one.
  *
- * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: the
- * high-throughput block coder of Part 15 (HTJ2K), Part 2 coding extensions (arbitrary wavelets,
+ * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: HTJ2K
+ * code-blocks of sub-bands with more than 30 magnitude bit-planes, Part 2 coding extensions (arbitrary wavelets,
  * multiple component transforms, trellis quantization, region-of-interest styles other than
  * maxshift), codestreams stored in JPX fragment tables, precisions above 31 bits, reference grids
  * larger than 2^31, and the conversion of CIE L*a*b*, CIECAM02 J*a*b*, YCCK and PhotoYCC samples
  * to a picture (their channels still decode).
  *
  * <p>Damaged codestreams decode as far as their data goes: a truncated tile leaves its missing
- * code-block data at zero, and a missing tile is uniformly mid-gray. An invalid main header is
- * {@link MediaException.Malformed}. The decoded samples are bit-identical to OpenJPEG's
- * {@code opj_decompress} for both wavelets, as built without fast floating-point optimizations: the irreversible
- * wavelet is float arithmetic, which {@code -ffast-math} and fused multiply-adds reorder.
+ * code-block data at zero, and a missing tile is uniformly mid-gray. An invalid main header, or an
+ * HTJ2K code-block whose segments are not a valid HT set, is {@link MediaException.Malformed}. The
+ * decoded samples are bit-identical to OpenJPEG's {@code opj_decompress} for both wavelets and both
+ * block coders, wherever OpenJPEG decodes the codestream (it decodes no HTJ2K placeholder passes,
+ * second HT sets, mixed block coders or regions of interest), as built without fast floating-point
+ * optimizations: the irreversible wavelet is float arithmetic, which {@code -ffast-math} and fused
+ * multiply-adds reorder.
  *
  * <p>This class is thread-safe.
  *

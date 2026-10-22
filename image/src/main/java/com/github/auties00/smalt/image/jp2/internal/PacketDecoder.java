@@ -1,3 +1,7 @@
+/* Ports OpenJPEG 2.5.3 (t2.c) and OpenHTJ2K (source/core/coding/coding_units.cpp, the HT codeword lengths of
+   j2k_precinct_subband::parse_packet_header). Copyright (c) 2002-2014, Universite catholique de Louvain (UCL),
+   Belgium, and the OpenJPEG authors; BSD 2-Clause License. Copyright (c) 2019 - 2021, Osamu Watanabe; BSD 3-Clause
+   License. Modified for Smalt. */
 package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -8,13 +12,16 @@ import com.github.auties00.smalt.MediaException;
  * bytes in the packet body.
  *
  * <p>Packet headers are read from the tile body, or from the packed headers of {@code PPM} or
- * {@code PPT} segments. A body shorter than its header declares marks the code-blocks it fails
- * to cover as corrupted and ends the tile's data, so a truncated codestream decodes as far as its
- * data goes.
+ * {@code PPT} segments. The codeword lengths of high-throughput code-blocks follow the segment boundaries of
+ * ISO/IEC 15444-15 B.2, with placeholder passes and, where the codestream may mix block coders, the classification
+ * of each code-block from its first non-empty codeword segment (A.4). A body shorter than its header declares
+ * marks the code-blocks it fails to cover as corrupted and ends the tile's data, so a truncated codestream decodes
+ * as far as its data goes.
  *
  * @implNote This implementation follows OpenJPEG's {@code t2.c} decoder
  * ({@code opj_t2_read_packet_header}, {@code opj_t2_read_packet_data} and
- * {@code opj_t2_skip_packet_data}) in its non-strict mode.
+ * {@code opj_t2_skip_packet_data}) in its non-strict mode. High-throughput lengths are read as OpenHTJ2K's
+ * {@code j2k_precinct_subband::parse_packet_header} reads them.
  */
 final class PacketDecoder {
     /**
@@ -38,6 +45,12 @@ final class PacketDecoder {
     private final boolean eph;
 
     /**
+     * Whether high-throughput tile-components whose style allows both block coders may mix them (the codestream's
+     * {@code CAP} segment does not exclude it).
+     */
+    private final boolean mixable;
+
+    /**
      * The header bit reader.
      */
     private final PacketBits bits = new PacketBits();
@@ -59,12 +72,14 @@ final class PacketDecoder {
      * @param headers the packed packet headers, or {@code null}
      * @param sop whether {@code SOP} markers may be present
      * @param eph whether {@code EPH} markers are present
+     * @param mixable whether tile-components styled for both block coders may mix them
      */
-    PacketDecoder(byte[] body, byte[] headers, boolean sop, boolean eph) {
+    PacketDecoder(byte[] body, byte[] headers, boolean sop, boolean eph, boolean mixable) {
         this.body = body;
         this.headers = headers;
         this.sop = sop;
         this.eph = eph;
+        this.mixable = mixable;
     }
 
     /**
@@ -103,9 +118,13 @@ final class PacketDecoder {
                     area.inclusion.reset();
                     area.zeroPlanes.reset();
                 }
+                var coder = (style & ComponentCoding.HIGH_THROUGHPUT) != 0 ? CodeBlock.HT_PLACEHOLDER
+                        : CodeBlock.LEGACY;
                 for (var block : area.codeBlocks) {
                     block.segments = 0;
                     block.dataSegments = 0;
+                    block.passes = 0;
+                    block.coder = coder;
                 }
             }
         }
@@ -118,7 +137,8 @@ final class PacketDecoder {
         bits.init(source, start, source.length);
         var present = bits.bit() != 0;
         if (present) {
-            readHeader(level, precinct, layer, style);
+            var mixed = mixable && (style & ComponentCoding.MIXED) == ComponentCoding.MIXED;
+            readHeader(level, precinct, layer, style, mixed);
         }
         bits.align();
         var end = start + bits.consumed();
@@ -155,8 +175,9 @@ final class PacketDecoder {
      * @param precinct the precinct index
      * @param layer the quality layer, from 0
      * @param style the code-block style flags
+     * @param mixed whether high-throughput and legacy code-blocks may be mixed
      */
-    private void readHeader(Resolution level, int precinct, int layer, int style) {
+    private void readHeader(Resolution level, int precinct, int layer, int style, boolean mixed) {
         for (var band : level.bands()) {
             if (band.empty()) {
                 continue;
@@ -165,6 +186,7 @@ final class PacketDecoder {
             var blocks = area.codeBlocks;
             for (var index = 0; index < blocks.length; index++) {
                 var block = blocks[index];
+                block.newSegments = 0;
                 boolean included;
                 if (block.segments == 0) {
                     included = area.inclusion.decode(bits, index, layer + 1);
@@ -195,33 +217,193 @@ final class PacketDecoder {
                     }
                 }
                 block.lengthBits += increment;
-                var segment = 0;
-                if (block.segments == 0) {
-                    block.startSegment(0, style, true);
+                if (block.coder == CodeBlock.LEGACY) {
+                    readLegacyLengths(block, style);
                 } else {
-                    segment = block.segments - 1;
-                    if (block.segmentPasses[segment] == block.segmentMaxPasses[segment]) {
-                        segment++;
-                        block.startSegment(segment, style, false);
-                    }
+                    readHtLengths(block, style, mixed);
                 }
-                var remaining = block.newPasses;
-                do {
-                    var passes = Math.min(block.segmentMaxPasses[segment] - block.segmentPasses[segment], remaining);
-                    block.segmentNewPasses[segment] = passes;
-                    var bitCount = block.lengthBits + floorLog2(passes);
-                    if (bitCount > 32) {
-                        throw new MediaException.Malformed("invalid JPEG 2000 codeword length size " + bitCount);
-                    }
-                    block.segmentNewLengths[segment] = bits.read(bitCount);
-                    remaining -= passes;
-                    if (remaining > 0) {
-                        segment++;
-                        block.startSegment(segment, style, false);
-                    }
-                } while (remaining > 0);
             }
         }
+    }
+
+    /**
+     * Reads the codeword lengths of a contribution of a legacy code-block (B.10.7).
+     *
+     * @param block the code-block, with its new pass count read
+     * @param style the code-block style flags
+     */
+    private void readLegacyLengths(CodeBlock block, int style) {
+        var segment = 0;
+        if (block.segments == 0) {
+            block.startSegment(0, style, true);
+        } else {
+            segment = block.segments - 1;
+            if (block.segmentPasses[segment] == block.segmentMaxPasses[segment]) {
+                segment++;
+                block.startSegment(segment, style, false);
+            }
+        }
+        block.firstNewSegment = segment;
+        var remaining = block.newPasses;
+        do {
+            var passes = Math.min(block.segmentMaxPasses[segment] - block.segmentPasses[segment], remaining);
+            block.segmentNewPasses[segment] = passes;
+            block.segmentNewLengths[segment] = bits.read(lengthBits(block.lengthBits + floorLog2(passes)));
+            remaining -= passes;
+            if (remaining > 0) {
+                segment++;
+                block.startSegment(segment, style, false);
+            }
+        } while (remaining > 0);
+        block.newSegments = segment - block.firstNewSegment + 1;
+        block.passes += block.newPasses;
+    }
+
+    /**
+     * Reads the codeword lengths of a contribution of a high-throughput code-block (ISO/IEC 15444-15 B.3).
+     *
+     * <p>Before the first HT cleanup pass, a contribution holds placeholder passes, whose single length is zero, or
+     * ends with that pass; after it, the contribution's segments end at each cleanup pass and after each pair of
+     * refinement passes. In a tile-component that mixes block coders, a first non-empty segment that does not meet
+     * the constraints of A.4 makes the block a legacy one.
+     *
+     * @param block the code-block, with its new pass count read
+     * @param style the code-block style flags
+     * @param mixed whether the block may be a legacy one
+     * @throws MediaException.Malformed if placeholder passes have data or a first cleanup segment is too short
+     */
+    private void readHtLengths(CodeBlock block, int style, boolean mixed) {
+        var start = block.passes;
+        var count = block.newPasses;
+        var segment = block.segments;
+        block.firstNewSegment = segment;
+        var next = 2;
+        int passes;
+        int length;
+        if (block.coder == CodeBlock.HT_PLACEHOLDER) {
+            passes = count - (start + count - 1) % 3;
+            var full = block.lengthBits + floorLog2(count);
+            if (passes < 1) {
+                length = bits.read(lengthBits(full));
+                if (length != 0) {
+                    becomeLegacy(block, style, mixed, count, length);
+                    return;
+                }
+                addHtSegment(block, segment, start, count, 0);
+                block.passes += count;
+                return;
+            }
+            var width = block.lengthBits + floorLog2(passes);
+            length = bits.read(lengthBits(width));
+            if (length == 0) {
+                for (var w = width; w < full; w++) {
+                    length = (length << 1) | bits.bit();
+                }
+                if (length != 0) {
+                    becomeLegacy(block, style, mixed, count, length);
+                    return;
+                }
+                addHtSegment(block, segment, start, count, 0);
+                block.passes += count;
+                return;
+            }
+            if (mixed && (block.lengthBits <= 3 || length < 2 || (length >>> (width - 1)) != 0)) {
+                for (var w = width; w < full; w++) {
+                    length = (length << 1) | bits.bit();
+                }
+                becomeLegacy(block, style, true, count, length);
+                return;
+            }
+            if (length < 2) {
+                throw new MediaException.Malformed("JPEG 2000 HT cleanup segment of " + length + " byte");
+            }
+            block.coder = CodeBlock.HT;
+        } else {
+            var phase = start % 3;
+            if (phase == 0) {
+                passes = 1;
+            } else {
+                passes = count > 1 ? 3 - phase : 1;
+                next = 1;
+            }
+            length = bits.read(lengthBits(block.lengthBits + passes - 1));
+        }
+        addHtSegment(block, segment++, start, passes, length);
+        var remaining = count - passes;
+        var position = start + passes;
+        while (remaining > 0) {
+            passes = remaining > 1 ? next : 1;
+            next = 3 - next;
+            length = bits.read(lengthBits(block.lengthBits + passes - 1));
+            addHtSegment(block, segment++, position, passes, length);
+            remaining -= passes;
+            position += passes;
+        }
+        block.passes += count;
+    }
+
+    /**
+     * Turns a high-throughput block whose contributions so far hold no data into a legacy one, its earlier passes
+     * joining its first codeword segment.
+     *
+     * @param block the code-block
+     * @param style the code-block style flags
+     * @param mixed whether the block may be a legacy one
+     * @param count the current contribution's pass count
+     * @param length the current contribution's length
+     * @throws MediaException.Malformed if the block may not be a legacy one, or its passes exceed one codeword
+     * segment
+     */
+    private static void becomeLegacy(CodeBlock block, int style, boolean mixed, int count, int length) {
+        if (!mixed) {
+            throw new MediaException.Malformed("JPEG 2000 HT placeholder passes with " + length + " bytes");
+        }
+        var earlier = block.passes;
+        block.coder = CodeBlock.LEGACY;
+        block.segments = 0;
+        block.dataSegments = 0;
+        block.chunkEntries = 0;
+        block.startSegment(0, style, true);
+        if (earlier + count > block.segmentMaxPasses[0]) {
+            throw new MediaException.Malformed("JPEG 2000 codeword segment of " + (earlier + count) + " passes");
+        }
+        block.segmentPasses[0] = earlier;
+        block.segmentDataPasses[0] = earlier;
+        block.segmentNewPasses[0] = count;
+        block.segmentNewLengths[0] = length;
+        block.firstNewSegment = 0;
+        block.newSegments = 1;
+        block.passes += count;
+    }
+
+    /**
+     * Starts a codeword segment of a high-throughput block for the current packet.
+     *
+     * @param block the code-block
+     * @param segment the segment index
+     * @param start the index of its first pass
+     * @param passes the number of passes
+     * @param length the length in bytes
+     */
+    private static void addHtSegment(CodeBlock block, int segment, int start, int passes, int length) {
+        block.startHtSegment(segment, start);
+        block.segmentNewPasses[segment] = passes;
+        block.segmentNewLengths[segment] = length;
+        block.newSegments = segment - block.firstNewSegment + 1;
+    }
+
+    /**
+     * Checks the size of a codeword length field.
+     *
+     * @param bitCount the number of bits
+     * @return {@code bitCount}
+     * @throws MediaException.Malformed if the field is wider than 32 bits
+     */
+    private static int lengthBits(int bitCount) {
+        if (bitCount > 32) {
+            throw new MediaException.Malformed("invalid JPEG 2000 codeword length size " + bitCount);
+        }
+        return bitCount;
     }
 
     /**
@@ -245,8 +427,9 @@ final class PacketDecoder {
                     block.corrupted = true;
                     continue;
                 }
-                var segment = currentSegment(block);
-                do {
+                var first = block.firstNewSegment;
+                var end = first + block.newSegments;
+                for (var segment = first; segment < end; segment++) {
                     var length = block.segmentNewLengths[segment];
                     if (length < 0 || length > body.length - bodyPosition) {
                         partial = true;
@@ -258,13 +441,9 @@ final class PacketDecoder {
                     bodyPosition += length;
                     block.segmentLengths[segment] += length;
                     block.segmentPasses[segment] += block.segmentNewPasses[segment];
-                    block.newPasses -= block.segmentNewPasses[segment];
                     block.segmentDataPasses[segment] = block.segmentPasses[segment];
-                    if (block.newPasses > 0) {
-                        segment++;
-                        block.segments++;
-                    }
-                } while (block.newPasses > 0);
+                    block.segments = Math.max(block.segments, segment + 1);
+                }
                 block.dataSegments = block.segments;
             }
         }
@@ -288,8 +467,9 @@ final class PacketDecoder {
                 if (block.newPasses == 0) {
                     continue;
                 }
-                var segment = currentSegment(block);
-                do {
+                var first = block.firstNewSegment;
+                var end = first + block.newSegments;
+                for (var segment = first; segment < end; segment++) {
                     var length = block.segmentNewLengths[segment];
                     if (length < 0 || length > body.length - bodyPosition) {
                         bodyPosition = body.length;
@@ -297,33 +477,10 @@ final class PacketDecoder {
                     }
                     bodyPosition += length;
                     block.segmentPasses[segment] += block.segmentNewPasses[segment];
-                    block.newPasses -= block.segmentNewPasses[segment];
-                    if (block.newPasses > 0) {
-                        segment++;
-                        block.segments++;
-                    }
-                } while (block.newPasses > 0);
+                    block.segments = Math.max(block.segments, segment + 1);
+                }
             }
         }
-    }
-
-    /**
-     * Selects the segment a packet's first new passes go to, counting it as started.
-     *
-     * @param block the code-block
-     * @return the segment index
-     */
-    private static int currentSegment(CodeBlock block) {
-        if (block.segments == 0) {
-            block.segments = 1;
-            return 0;
-        }
-        var segment = block.segments - 1;
-        if (block.segmentPasses[segment] == block.segmentMaxPasses[segment]) {
-            segment++;
-            block.segments++;
-        }
-        return segment;
     }
 
     /**

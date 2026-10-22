@@ -1,6 +1,6 @@
 /**
- * The JPEG 2000 decoder and encoder, for JP2, JPX and raw J2K codestreams ({@link Jp2Decoder},
- * {@link Jp2Encoder}).
+ * The JPEG 2000 decoder and encoder, for JP2, JPX and JPH files and raw J2K and HTJ2K codestreams
+ * ({@link Jp2Decoder}, {@link Jp2Encoder}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

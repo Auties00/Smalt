@@ -403,6 +403,17 @@ def build(row, target):
                  'opj_dump'], env=env)
             for tool in ('opj_compress', 'opj_decompress', 'opj_dump'):
                 shutil.copy2(find_file(build_dir, tool + EXE), os.path.join(out, tool + EXE))
+        elif name == 'openjph':
+            tree = source_tree(row, work)
+            build_dir = os.path.join(work, 'build')
+            # The scalar kernels give every platform the same arithmetic; TIFF input and output are left out: the
+            # tests exchange PGM, PPM and raw codestreams with the tools.
+            run(configure(tree, build_dir, target) + ['-DBUILD_SHARED_LIBS=OFF', '-DOJPH_ENABLE_TIFF_SUPPORT=OFF',
+                                                      '-DOJPH_BUILD_TESTS=OFF', '-DOJPH_BUILD_EXECUTABLES=ON',
+                                                      '-DOJPH_DISABLE_SIMD=ON'], env=env)
+            build_all(build_dir, target, env, 'ojph_compress', 'ojph_expand')
+            for tool in ('ojph_compress', 'ojph_expand'):
+                shutil.copy2(find_file(build_dir, tool + EXE), os.path.join(out, tool + EXE))
         elif name == 'libjxl':
             tree = source_tree(row, work)
             build_dir = os.path.join(work, 'build')

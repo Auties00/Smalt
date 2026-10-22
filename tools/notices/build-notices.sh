@@ -98,6 +98,8 @@ Contents
   41. opusfile
   42. libxaac
   43. LERC (Limited Error Raster Compression)
+  44. OpenJPH
+  45. OpenHTJ2K
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1118,9 +1120,10 @@ tile geometry and coding pipeline of tcd.c, the tier-1 coder of t1.c and its
 MQ coder (mqc.c, including the lookup tables), the tier-2 packet coder of t2.c,
 the packet iterators of pi.c, the tag trees of tgt.c, the bit I/O of bio.c,
 the wavelet transforms of dwt.c, the component transforms of mct.c, the rate
-allocation of tcd.c, and the sYCC, e-sYCC and CMYK conversions of the
-opj_decompress tool (src/bin/common/color.c), including tables and constants
-taken from the C sources.
+allocation of tcd.c, the high-throughput (HTJ2K) block decoder of ht_dec.c,
+and the sYCC, e-sYCC and CMYK conversions of the opj_decompress tool
+(src/bin/common/color.c), including tables and constants taken from the C
+sources.
 
 Copyright (as stated in the headers of the OpenJPEG source files the Java
 code derives from):
@@ -1141,6 +1144,9 @@ code derives from):
   Copyright (c) 2012, CS Systemes d'Information, France
   Copyright (c) 2012, Carl Hetherington
   Copyright (c) 2017, IntoPIX SA <support@intopix.com>
+  Copyright (c) 2021, Aous Naman (ht_dec.c)
+  Copyright (c) 2021, Kakadu Software Pty Ltd, Australia (ht_dec.c)
+  Copyright (c) 2021, The University of New South Wales, Australia (ht_dec.c)
 EOF
 license_start "OpenJPEG license (LICENSE)"
 cat "$LIC/openjpeg-LICENSE"
@@ -1491,6 +1497,56 @@ printf '\n'
 cat "$LIC/lerc-NOTICE"
 license_start "Apache License, Version 2.0 (LERC LICENSE)"
 cat "$LIC/lerc-LICENSE"
+
+section "44. OpenJPH"
+cat <<'EOF'
+Project:      OpenJPH, an implementation of HTJ2K (JPEG 2000 Part 15),
+              version 0.21.3
+Home:         https://github.com/aous72/OpenJPH
+Source:       https://github.com/aous72/OpenJPH (src/core/coding)
+License text: https://raw.githubusercontent.com/aous72/OpenJPH/0.21.3/LICENSE
+License:      BSD 2-Clause License
+
+Derived Smalt packages:
+  image.jp2.internal (HtEncoder, HtTables)
+
+Derivation: the HT cleanup pass encoder of ojph_block_encoder.cpp
+(ojph_encode_codeblock32 with its MEL, VLC and MagSgn writers and the
+termination of their byte-streams) translated to Java, and the CxtVLC tables
+of table0.h and table1.h with the decoding and encoding lookup tables built
+from them as ojph_block_common.cpp and ojph_block_encoder.cpp build them.
+
+Copyright:
+  Copyright (c) 2019, Aous Naman
+  Copyright (c) 2019, Kakadu Software Pty Ltd, Australia
+  Copyright (c) 2019, The University of New South Wales, Sydney, Australia
+EOF
+license_start "OpenJPH license (LICENSE)"
+cat "$LIC/openjph-LICENSE"
+
+section "45. OpenHTJ2K"
+cat <<'EOF'
+Project:      OpenHTJ2K, an HTJ2K (JPEG 2000 Part 15) codec
+              (commit dacb452ecb21f50e88a74bf860c60f4aafa8a602)
+Home:         https://github.com/osamu620/OpenHTJ2K
+Source:       https://github.com/osamu620/OpenHTJ2K (source/core/coding)
+License text: LICENSE at the root of the repository
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  image.jp2.internal (PacketDecoder)
+
+Derivation: the reading of the codeword lengths of HT code-blocks in packet
+headers follows j2k_precinct_subband::parse_packet_header of coding_units.cpp:
+the placeholder passes before the first HT cleanup pass and the
+classification of the code-blocks of a tile-component that mixes block
+coders.
+
+Copyright:
+  Copyright (c) 2019 - 2021, Osamu Watanabe
+EOF
+license_start "OpenHTJ2K license (LICENSE)"
+cat "$LIC/openhtj2k-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

@@ -8,6 +8,8 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.jp2.Jp2Encoder;
+import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.io.MediaSource;
@@ -68,6 +70,15 @@ public final class ThreadDigest {
                         .build()).picture();
                 digests.put(name + "-reduced", sha256(ImageOps.toRgba(reduced).pixels()));
             }
+        }
+        for (var lossless : new boolean[]{false, true}) {
+            var options = (lossless ? Jp2EncoderOptions.lossless() : Jp2EncoderOptions.lossy(12)).toBuilder()
+                    .highThroughput(true).build();
+            var encoded = Jp2Encoder.encode(picture, options);
+            var name = "jp2-ht" + (lossless ? "-lossless" : "");
+            digests.put(name + "-encode", sha256(encoded));
+            digests.put(name + "-decode", sha256(ImageOps.toRgba(Images.decode(MediaSource.of(encoded)).picture())
+                    .pixels()));
         }
         for (var filter : ResizeFilter.values()) {
             digests.put("resize-" + filter.name().toLowerCase(),

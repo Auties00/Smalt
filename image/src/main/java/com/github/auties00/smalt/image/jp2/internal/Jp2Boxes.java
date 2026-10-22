@@ -3,6 +3,12 @@
 package com.github.auties00.smalt.image.jp2.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.tiff.TiffExif;
 
@@ -18,6 +24,9 @@ import java.util.Arrays;
  * <p>A raw codestream (starting with the {@code SOC} and {@code SIZ} markers) is accepted too and
  * yields only the codestream location. Unknown boxes are skipped; of several color
  * specifications the first one with a method this reader understands is used, as I.5.3.3 asks.
+ * The methods are enumeration, the restricted and the any ICC methods, and the parameterized color
+ * space of JPH files (ISO/IEC 15444-15 D.4.3) for full-range R'G'B' samples of at least three
+ * components, which is read as the ICC profile of its primaries and transfer characteristics.
  *
  * @implNote This implementation follows OpenJPEG's {@code jp2.c} in its checks of the palette,
  * component mapping and channel definition boxes ({@code opj_jp2_check_color}).
@@ -63,6 +72,11 @@ public final class Jp2Boxes {
      * The color specification method, 0 when none was read.
      */
     private int method;
+
+    /**
+     * The number of components the image header declares, 0 before it is read.
+     */
+    private int headerComponents;
 
     /**
      * The enumerated color space, or {@code -1}.
@@ -214,6 +228,7 @@ public final class Jp2Boxes {
                     if (size < 14) {
                         throw new MediaException.Malformed("truncated JPEG 2000 image header box");
                     }
+                    headerComponents = u16(content + 8);
                 }
                 case "colr" -> readColor(content, size);
                 case "pclr" -> {
@@ -288,9 +303,45 @@ public final class Jp2Boxes {
                 method = meth;
                 iccProfile = Arrays.copyOfRange(data, content + 3, content + size);
             }
+            case 5 -> readParameterizedColor(content, size);
             default -> {
                 // I.5.3.3: a reader ignores color specifications with other methods
             }
+        }
+    }
+
+    /**
+     * Reads a parameterized color specification (ISO/IEC 15444-15 D.4.3): Rec. ITU-T H.273 code points of the
+     * primaries, transfer characteristics and matrix coefficients, and the full range flag. Full-range R'G'B'
+     * samples of at least three components become the ICC profile of their primaries and transfer
+     * characteristics, or the enumerated sRGB color space; any other specification is ignored, as a method this
+     * reader does not understand.
+     *
+     * @param content the index of the box's content
+     * @param size the content size
+     * @throws MediaException.Malformed if the box is too short
+     */
+    private void readParameterizedColor(int content, int size) {
+        if (size < 10) {
+            throw new MediaException.Malformed("truncated JPEG 2000 color specification box");
+        }
+        var primariesCode = u16(content + 3);
+        var transferCode = u16(content + 5);
+        var matrixCode = u16(content + 7);
+        var fullRange = (data[content + 9] & 0x80) != 0;
+        var primaries = ColorPrimaries.of(primariesCode);
+        var transfer = TransferCharacteristics.of(transferCode);
+        if (matrixCode != MatrixCoefficients.IDENTITY.code() || !fullRange || headerComponents < 3
+                || primaries.code() != primariesCode || transfer.code() != transferCode
+                || primaries == ColorPrimaries.UNSPECIFIED || transfer == TransferCharacteristics.UNSPECIFIED) {
+            return;
+        }
+        var profile = ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, primaries, transfer));
+        method = 5;
+        if (profile.isSrgb()) {
+            enumeratedColorSpace = 16;
+        } else {
+            iccProfile = profile.toByteArray();
         }
     }
 

@@ -97,6 +97,23 @@ public final class Codestream {
     static final int EOC = 0xFFD9;
 
     /**
+     * The extended capabilities marker ({@code CAP}), whose {@code Pcap} flags the parts of ISO/IEC 15444 a
+     * codestream needs.
+     */
+    static final int CAP = 0xFF50;
+
+    /**
+     * The {@code Pcap} flag of ISO/IEC 15444-15 (HTJ2K): bit 15, counted from the most significant bit as 1.
+     */
+    static final int PCAP_PART15 = 1 << (32 - 15);
+
+    /**
+     * The {@code Ccap15} bits that, both set, declare that high-throughput and legacy code-blocks may share a
+     * tile-component (ISO/IEC 15444-15 A.3.2).
+     */
+    static final int CCAP15_MIXED = 0xC000;
+
+    /**
      * The largest number of components a codestream may declare.
      */
     private static final int MAX_COMPONENTS = 16384;
@@ -205,6 +222,12 @@ public final class Codestream {
      * The {@code PPM} segments by {@code Zppm}, or {@code null} when the main header has none.
      */
     private TreeMap<Integer, byte[]> ppm;
+
+    /**
+     * The {@code Ccap15} field of the {@code CAP} segment, or {@code -1} when the main header declares no
+     * ISO/IEC 15444-15 capabilities.
+     */
+    private int htCapabilities = -1;
 
     /**
      * Constructs a parser over a codestream.
@@ -569,10 +592,47 @@ public final class Codestream {
                     throw new MediaException.Malformed("duplicate JPEG 2000 PPM segment " + index);
                 }
             }
+            case CAP -> {
+                if (mainHeader) {
+                    readCap(position, end);
+                }
+            }
             default -> {
-                // COM, TLM, PLM, PLT, CRG, CAP, CPF and the Part 2 segments carry nothing the decoder needs
+                // COM, TLM, PLM, PLT, CRG, CPF and the Part 2 segments carry nothing the decoder needs
             }
         }
+    }
+
+    /**
+     * Reads a {@code CAP} segment, keeping its {@code Ccap15} field.
+     *
+     * @param position the index of its first field ({@code Pcap})
+     * @param end the end of the segment
+     * @throws MediaException.Malformed if the segment is shorter than its {@code Pcap} declares
+     */
+    private void readCap(int position, int end) {
+        if (end - position < 4) {
+            throw new MediaException.Malformed("truncated JPEG 2000 CAP segment");
+        }
+        var pcap = (int) u32(position);
+        if (end - position < 4 + 2 * Integer.bitCount(pcap)) {
+            throw new MediaException.Malformed("truncated JPEG 2000 CAP segment");
+        }
+        if ((pcap & PCAP_PART15) != 0) {
+            var index = Integer.bitCount(pcap >>> (32 - 14));
+            htCapabilities = u16(position + 4 + 2 * index);
+        }
+    }
+
+    /**
+     * Returns whether a tile-component whose code-block style allows both block coders may mix them: the
+     * {@code CAP} segment declares the MIXED set of ISO/IEC 15444-15, or there is no {@code Ccap15} field to exclude
+     * it.
+     *
+     * @return whether code-blocks may be classified individually
+     */
+    boolean mixedCoders() {
+        return htCapabilities < 0 || (htCapabilities & CCAP15_MIXED) == CCAP15_MIXED;
     }
 
     /**

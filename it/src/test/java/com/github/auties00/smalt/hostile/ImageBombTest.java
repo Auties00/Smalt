@@ -6,6 +6,8 @@ import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.jp2.Jp2Encoder;
+import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.tiff.TiffEncoder;
 import com.github.auties00.smalt.image.tiff.TiffEncoderOptions;
 import com.github.auties00.smalt.io.MediaSink;
@@ -78,6 +80,7 @@ class ImageBombTest {
                 new Bomb("ICO", () -> encode(ImageFormat.ICO, true), ImageBombTest::ico),
                 new Bomb("ANI", () -> encode(ImageFormat.ANI, true), ImageBombTest::ani),
                 new Bomb("JPEG 2000", () -> encode(ImageFormat.JP2, false), ImageBombTest::jp2),
+                new Bomb("JPEG 2000 HTJ2K", ImageBombTest::highThroughput, ImageBombTest::jp2),
                 new Bomb("AVIF", () -> avif(16, 16), (file, width, height) -> avif(width, height), false),
                 new Bomb("HEIC", () -> heic(16, 16), (file, width, height) -> heic(width, height), false),
                 new Bomb("JPEG XL", () -> jxl(16, 16), (file, width, height) -> jxl(width, height), false),
@@ -474,6 +477,16 @@ class ImageBombTest {
         var data = file.clone();
         System.arraycopy(icon, 0, data, start, size);
         return data;
+    }
+
+    /** Returns a 16x16 JPH file, coded with the high-throughput block coder. */
+    static byte[] highThroughput() {
+        var picture = RgbaPicture.allocate(16, 16, false);
+        var pixels = picture.pixels();
+        for (var index = 0; index < pixels.length; index++) {
+            pixels[index] = (byte) (index % 4 == 3 ? 0xFF : index * 37 + (index >> 6) * 11);
+        }
+        return Jp2Encoder.encode(picture, Jp2EncoderOptions.lossless().toBuilder().highThroughput(true).build());
     }
 
     static byte[] jp2(byte[] file, int width, int height) {

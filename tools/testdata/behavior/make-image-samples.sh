@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the image samples of the I/O behavior harness (image/src/test/resources/samples) with
-# ffmpeg 7.1 and libtiff's tiffcp from ffmpeg's synthetic testsrc2 source. As for make-samples.sh, the
-# committed files are the reference their golden dumps are tied to.
+# ffmpeg 7.1, libtiff's tiffcp and OpenJPH's ojph_compress from ffmpeg's synthetic testsrc2 source. As for
+# make-samples.sh, the committed files are the reference their golden dumps are tied to.
 #
 #   bash tools/testdata/behavior/make-image-samples.sh [output directory]
 set -euo pipefail
@@ -66,5 +66,10 @@ ff -f lavfi -i "$still" -frames:v 1 -pix_fmt rgba64be "$out/png/rgba16.png"
 
 ff -f lavfi -i "$still" -frames:v 1 -c:v jpeg2000 -format jp2 -tile_width 16 -tile_height 16 -pix_fmt rgb24 \
     "$out/jp2/tiles.jp2"
+# an HTJ2K codestream (ISO/IEC 15444-15), coded by OpenJPH's ojph_compress
+ht="$(mktemp -d)"
+ff -f lavfi -i "$still" -frames:v 1 -pix_fmt rgb24 "$ht/still.ppm"
+ojph_compress -i "$ht/still.ppm" -o "$out/jp2/ht.j2c" -reversible true -num_decomps 3 -block_size "{16,16}"
+rm -rf "$ht"
 ff -f lavfi -i "$still" -frames:v 1 -c:v mjpeg -q:v 4 -pix_fmt yuvj420p "$out/jpeg/yuv420.jpg"
 ff -f lavfi -i "$still" -frames:v 1 -c:v mjpeg -q:v 4 -pix_fmt yuvj444p "$out/jpeg/yuv444.jpg"

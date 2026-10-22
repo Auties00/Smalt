@@ -56,6 +56,7 @@ image/src/test/resources/samples/gif/icc.gif	1874	85731bf328842189df6d795789923d
 image/src/test/resources/samples/gif/still.gif	1377	37f085f4562d9a07dfea8f5a584940e6318d4dc8730210855a5a5b3b77130253	make-image-samples.sh
 image/src/test/resources/samples/ico/animated.ani	5388	8e15df8c8f86459f0275c6d92d54ba6036dff0cdfec7cea7305b71eac628a011	make-image-samples.sh
 image/src/test/resources/samples/ico/icon.ico	441	34fa1490c8ced7fd5e222d151e981abefe52ab85088ae179f707065cf177342b	make-image-samples.sh
+image/src/test/resources/samples/jp2/ht.j2c	2974	63311bb99fe901ef23b6ce020b695432fe3c4a6dbfbeb9a174585d0dc23c3b23	make-image-samples.sh
 image/src/test/resources/samples/jp2/tiles.jp2	3301	bf1dc37f2538d3de94d234e2e53cc440e2410cd8408e2669a341147950ac30c9	make-image-samples.sh
 image/src/test/resources/samples/jpeg/yuv420.jpg	866	e71065390dc21de9eac0802c7c71660c5594316ddc42e0695d6a7580a79dad6c	make-image-samples.sh
 image/src/test/resources/samples/jpeg/yuv444.jpg	1148	99b9071a7768624337665b9adfe7dcd8e646683b1e88621ec25ba0ea740777c4	make-image-samples.sh
