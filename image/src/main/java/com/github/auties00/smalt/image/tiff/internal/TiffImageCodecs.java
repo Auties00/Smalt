@@ -160,9 +160,9 @@ final class TiffImageCodecs {
     /**
      * Decodes a JPEG 2000 strip or tile, a codestream or a JP2 file.
      *
-     * <p>Sample {@code i} of each pixel takes channel {@code i} of the image, as stored (neither
-     * scaled to {@code bits} nor offset); a subsampled channel gives each pixel its nearest
-     * sample to the upper left. When {@code ycbcr} is set the first three channels are Y, Cb and
+     * <p>Sample {@code i} of each pixel takes the low {@code bits} bits of channel {@code i} of the
+     * image, as stored (neither scaled to {@code bits} nor offset); a subsampled channel gives each
+     * pixel its nearest sample to the upper left. When {@code ycbcr} is set the first three channels are Y, Cb and
      * Cr, converted to 8-bit red, green and blue.
      *
      * @param data the JPEG 2000 data
@@ -197,13 +197,15 @@ final class TiffImageCodecs {
         var values = scratch.length < count ? new int[count] : scratch;
         var mask = bits == 32 ? -1 : (int) ((1L << bits) - 1);
         for (var row = 0; row < copyRows; row++) {
-            var y = image.y0() + row;
+            var y = (int) (image.y0() + row);
             for (var sample = 0; sample < samples; sample++) {
                 var channel = channels.get(sample);
                 var plane = channel.samples();
+                var wide = channel.wideSamples();
                 var line = rowStart(channel, y);
                 for (var x = 0; x < copyColumns; x++) {
-                    values[x * samples + sample] = plane[line + column(channel, image.x0() + x)] & mask;
+                    var at = line + column(channel, (int) (image.x0() + x));
+                    values[x * samples + sample] = (wide != null ? (int) wide[at] : plane[at]) & mask;
                 }
             }
             if (ycbcr != null) {
@@ -227,7 +229,7 @@ final class TiffImageCodecs {
      * @return the index into the channel's samples
      */
     private static int rowStart(Jp2Channel channel, int y) {
-        var row = Math.clamp(y / channel.subsamplingY() - channel.y0(), 0, channel.height() - 1);
+        var row = Math.clamp((long) y / channel.subsamplingY() - channel.y0(), 0, channel.height() - 1);
         return row * channel.width();
     }
 
@@ -239,7 +241,7 @@ final class TiffImageCodecs {
      * @return the column within the channel
      */
     private static int column(Jp2Channel channel, int x) {
-        return Math.clamp(x / channel.subsamplingX() - channel.x0(), 0, channel.width() - 1);
+        return Math.clamp((long) x / channel.subsamplingX() - channel.x0(), 0, channel.width() - 1);
     }
 
     /**

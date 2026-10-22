@@ -53,7 +53,8 @@ class DeepNestingTest {
                 new Input("JPEG with an XMP structure nested 3000 values deep", DeepNestingTest::jpegXmpStructure),
                 new Input("TIFF whose sub directories nest 2000 deep", () -> tiffChain(2000, false)),
                 new Input("DNG whose sub directories nest 2000 deep", () -> tiffChain(2000, true)),
-                new Input("HEIF whose grids derive from grids 300 deep", () -> heifChain(300)));
+                new Input("HEIF whose grids derive from grids 300 deep", () -> heifChain(300)),
+                new Input("JPX whose multiple codestream boxes nest " + DEPTH + " deep", DeepNestingTest::jpx));
     }
 
     static Stream<Input> containers() {
@@ -212,6 +213,21 @@ class DeepNestingTest {
             previous = at;
         }
         return data;
+    }
+
+    static byte[] jpx() {
+        var file = ImageBombTest.encode(ImageFormat.JP2, false);
+        var chain = new ByteArrayOutputStream();
+        for (var level = 0; level < DEPTH; level++) {
+            var header = new byte[8];
+            be32(header, 0, 8L * (DEPTH - level));
+            System.arraycopy("j2cx".getBytes(StandardCharsets.ISO_8859_1), 0, header, 4, 4);
+            chain.writeBytes(header);
+        }
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(file);
+        out.writeBytes(chain.toByteArray());
+        return out.toByteArray();
     }
 
     static byte[] heifChain(int depth) {

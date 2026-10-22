@@ -7,6 +7,9 @@
  *   smalt-lcmsdump gray <profile>          transforms the gray ramp (k * 257, k * 257, k * 257), k = 0..255, from
  *                                          the profile to Little CMS's built-in sRGB, 16 bits in and out, perceptual
  *                                          intent, default flags, and prints "k r g b" per line
+ *   smalt-lcmsdump lab                     reads "L a b" triplets (D50 CIE L*a*b*) from standard input and prints
+ *                                          "r g b" per line: the 16-bit sRGB of Little CMS's built-in profiles,
+ *                                          relative colorimetric intent, unoptimized
  *   smalt-lcmsdump write <pq|hlg> <out>    writes a version 4.4 RGB profile with the BT.2020 primaries, a D65 white,
  *                                          tone curves of 1024 entries holding the PQ EOTF over 10000 cd/m2 or the
  *                                          HLG inverse OETF, and a cicp tag (9, 16 or 18, 0, 1)
@@ -139,7 +142,32 @@ static int write_profile(const char *kind, const char *path) {
     return 0;
 }
 
+static int lab(void) {
+    cmsHPROFILE profile = cmsCreateLab4Profile(NULL);
+    cmsHPROFILE srgb = cmsCreate_sRGBProfile();
+    cmsHTRANSFORM transform;
+    double in[3];
+    cmsUInt16Number out[3];
+    transform = cmsCreateTransform(profile, TYPE_Lab_DBL, srgb, TYPE_RGB_16, INTENT_RELATIVE_COLORIMETRIC,
+                                   cmsFLAGS_NOCACHE | cmsFLAGS_NOOPTIMIZE);
+    if (transform == NULL) {
+        fprintf(stderr, "cannot link the Lab profile\n");
+        return 1;
+    }
+    while (scanf("%lf %lf %lf", &in[0], &in[1], &in[2]) == 3) {
+        cmsDoTransform(transform, in, out, 1);
+        printf("%u %u %u\n", out[0], out[1], out[2]);
+    }
+    cmsDeleteTransform(transform);
+    cmsCloseProfile(srgb);
+    cmsCloseProfile(profile);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc == 2 && strcmp(argv[1], "lab") == 0) {
+        return lab();
+    }
     if (argc == 3 && strcmp(argv[1], "info") == 0) {
         return info(argv[2]);
     }
@@ -149,6 +177,6 @@ int main(int argc, char **argv) {
     if (argc == 4 && strcmp(argv[1], "write") == 0) {
         return write_profile(argv[2], argv[3]);
     }
-    fprintf(stderr, "usage: smalt-lcmsdump info|gray <profile> | write pq|hlg <out>\n");
+    fprintf(stderr, "usage: smalt-lcmsdump info|gray <profile> | lab | write pq|hlg <out>\n");
     return 2;
 }

@@ -32,22 +32,22 @@ final class CodeBlock {
     /**
      * The left edge in sub-band coordinates.
      */
-    final int x0;
+    final long x0;
 
     /**
      * The top edge in sub-band coordinates.
      */
-    final int y0;
+    final long y0;
 
     /**
      * The right edge in sub-band coordinates (exclusive).
      */
-    final int x1;
+    final long x1;
 
     /**
      * The bottom edge in sub-band coordinates (exclusive).
      */
-    final int y1;
+    final long y1;
 
     /**
      * The number of magnitude bit-planes coded, once the block is first included.
@@ -154,7 +154,7 @@ final class CodeBlock {
      * @param x1 the right edge
      * @param y1 the bottom edge
      */
-    CodeBlock(int x0, int y0, int x1, int y1) {
+    CodeBlock(long x0, long y0, long x1, long y1) {
         this.x0 = x0;
         this.y0 = y0;
         this.x1 = x1;
@@ -167,7 +167,7 @@ final class CodeBlock {
      * @return the width in samples
      */
     int width() {
-        return x1 - x0;
+        return (int) (x1 - x0);
     }
 
     /**
@@ -176,7 +176,7 @@ final class CodeBlock {
      * @return the height in samples
      */
     int height() {
-        return y1 - y0;
+        return (int) (y1 - y0);
     }
 
     /**

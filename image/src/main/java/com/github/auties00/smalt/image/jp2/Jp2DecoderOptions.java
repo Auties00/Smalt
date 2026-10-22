@@ -26,10 +26,13 @@ public final class Jp2DecoderOptions {
      */
     private final int qualityLayers;
 
+    private final int compositingLayer;
+
     private Jp2DecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.reduction = builder.reduction;
         this.qualityLayers = builder.allQualityLayers ? 0 : builder.qualityLayers;
+        this.compositingLayer = builder.compositingLayer;
     }
 
     /**
@@ -90,23 +93,34 @@ public final class Jp2DecoderOptions {
         return qualityLayers == 0 ? OptionalInt.empty() : OptionalInt.of(qualityLayers);
     }
 
+    /**
+     * {@return the compositing layer of a JPX file to decode, at least 0; 0 (the first layer) by default}
+     *
+     * <p>A JP2 file or a raw codestream has one compositing layer; a JPX file has one per compositing layer header
+     * box, or one per codestream without them. Decoding a layer the file does not have fails.
+     */
+    public int compositingLayer() {
+        return compositingLayer;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof Jp2DecoderOptions that
                 && limits.equals(that.limits)
                 && reduction == that.reduction
-                && qualityLayers == that.qualityLayers;
+                && qualityLayers == that.qualityLayers
+                && compositingLayer == that.compositingLayer;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, reduction, qualityLayers);
+        return Objects.hash(limits, reduction, qualityLayers, compositingLayer);
     }
 
     @Override
     public String toString() {
         return "Jp2DecoderOptions[limits=" + limits + ", reduction=" + reduction + ", qualityLayers="
-                + (qualityLayers == 0 ? "all" : qualityLayers) + "]";
+                + (qualityLayers == 0 ? "all" : qualityLayers) + ", compositingLayer=" + compositingLayer + "]";
     }
 
     /**
@@ -124,6 +138,8 @@ public final class Jp2DecoderOptions {
 
         private boolean allQualityLayers = true;
 
+        private int compositingLayer;
+
         private Builder() {
         }
 
@@ -132,6 +148,7 @@ public final class Jp2DecoderOptions {
             this.reduction = options.reduction;
             this.qualityLayers = options.qualityLayers;
             this.allQualityLayers = options.qualityLayers == 0;
+            this.compositingLayer = options.compositingLayer;
         }
 
         /**
@@ -180,14 +197,26 @@ public final class Jp2DecoderOptions {
         }
 
         /**
+         * Sets the compositing layer to decode; see {@link Jp2DecoderOptions#compositingLayer()}.
+         *
+         * @param compositingLayer the value
+         * @return this builder
+         */
+        public Builder compositingLayer(int compositingLayer) {
+            this.compositingLayer = compositingLayer;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the reduction is negative or the quality layer count is
-         * not positive
+         * @throws IllegalArgumentException if the reduction or the compositing layer is negative or the quality
+         * layer count is not positive
          */
         public Jp2DecoderOptions build() {
             Checks.nonNegative("reduction", reduction);
+            Checks.nonNegative("compositing layer", compositingLayer);
             if (!allQualityLayers) {
                 Checks.positive("quality layer count", qualityLayers);
             }

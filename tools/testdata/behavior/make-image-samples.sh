@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Regenerates the image samples of the I/O behavior harness (image/src/test/resources/samples) with
-# ffmpeg 7.1, libtiff's tiffcp and OpenJPH's ojph_compress from ffmpeg's synthetic testsrc2 source. As for
+# ffmpeg 7.1, libtiff's tiffcp, OpenJPH's ojph_compress and
+# OpenJPEG's opj_compress from ffmpeg's synthetic testsrc2 source. As for
 # make-samples.sh, the committed files are the reference their golden dumps are tied to.
 #
 #   bash tools/testdata/behavior/make-image-samples.sh [output directory]
@@ -70,6 +71,16 @@ ff -f lavfi -i "$still" -frames:v 1 -c:v jpeg2000 -format jp2 -tile_width 16 -ti
 ht="$(mktemp -d)"
 ff -f lavfi -i "$still" -frames:v 1 -pix_fmt rgb24 "$ht/still.ppm"
 ojph_compress -i "$ht/still.ppm" -o "$out/jp2/ht.j2c" -reversible true -num_decomps 3 -block_size "{16,16}"
+# an ISO/IEC 15444-2 codestream with an irreversible array-based multiple component transformation, and a JPX file
+# of two codestreams (one in a fragment table), two compositing layers and a composition, by OpenJPEG 2.5.3's
+# opj_compress and assemble-samples.py (opj_compress 2.5.3 cannot write the
+# segments itself)
+opj_compress -i "$ht/still.ppm" -o "$ht/plain.j2k" -I -mct 0 -n 3 -r 4
+python -I "$here/assemble-samples.py" mct "$ht/plain.j2k" "$out/jp2/mct.j2k"
+ff -f lavfi -i "$moving" -vf "trim=start_frame=3,setpts=PTS-STARTPTS" -frames:v 1 -pix_fmt rgb24 "$ht/moved.ppm"
+opj_compress -i "$ht/still.ppm" -o "$ht/first.j2k" -n 3
+opj_compress -i "$ht/moved.ppm" -o "$ht/second.j2k" -n 3 -r 8
+python -I "$here/assemble-samples.py" jpx "$ht/first.j2k" "$ht/second.j2k" "$out/jp2/layers.jpx"
 rm -rf "$ht"
 ff -f lavfi -i "$still" -frames:v 1 -c:v mjpeg -q:v 4 -pix_fmt yuvj420p "$out/jpeg/yuv420.jpg"
 ff -f lavfi -i "$still" -frames:v 1 -c:v mjpeg -q:v 4 -pix_fmt yuvj444p "$out/jpeg/yuv444.jpg"

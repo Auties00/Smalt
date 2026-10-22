@@ -36,6 +36,7 @@ import com.github.auties00.smalt.image.jp2.Jp2Decoder;
 import com.github.auties00.smalt.image.jp2.Jp2DecoderOptions;
 import com.github.auties00.smalt.image.jp2.Jp2Encoder;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
+import com.github.auties00.smalt.image.jp2.Jp2Format;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
@@ -76,7 +77,9 @@ import com.github.auties00.smalt.video.vp8.Vp8Encoder;
 import com.github.auties00.smalt.video.vp8.Vp8EncoderOptions;
 import com.github.auties00.smalt.video.vp8.Vp8EncoderSpeed;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -158,6 +161,7 @@ final class ImageWorkloads {
                 file("tiff", ImageWorkloads::tiff),
                 file("jpeg2000", ImageWorkloads::jpeg2000),
                 file("htj2k", ImageWorkloads::highThroughputJpeg2000),
+                file("jpeg2000-part2", ImageWorkloads::part2Jpeg2000),
                 file("ico-bmp", ImageWorkloads::icoBmp),
                 file("bmp", ImageWorkloads::bmp),
                 file("image-metadata", ImageWorkloads::metadata));
@@ -859,6 +863,155 @@ final class ImageWorkloads {
             var inks = Jp2Encoder.encode(cmyk, Jp2EncoderOptions.lossless());
             Blackhole.consume(Jp2Decoder.decode(MediaSource.of(inks), keep).picture().width());
         });
+    }
+
+    /**
+     * Returns a workload that decodes ISO/IEC 15444-2 codestreams and a JPX file made from 384x256 pictures coded by
+     * {@link Jp2Encoder}: a lossy one given an irreversible multiple component transformation, a lossless one whose
+     * 5-3 wavelet is signalled as an arbitrary transformation kernel, and both in a JPX file whose composition is
+     * rendered as an animation.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload part2Jpeg2000() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), false);
+        var lossy = Jp2EncoderOptions.lossy(20).toBuilder().colorTransform(false).format(Jp2Format.CODESTREAM)
+                .build();
+        var lossless = Jp2EncoderOptions.lossless().toBuilder().format(Jp2Format.CODESTREAM).build();
+        return TrainingWorkload.of("jpeg2000-part2", () -> {
+            var transformed = part2(Jp2Encoder.encode(picture, lossy), 0x8100, 2, -1, multipleComponentSegments());
+            // the 5-3 wavelet as a reversible arbitrary kernel of two lifting steps of 8-bit coefficients
+            var atk = segment(0xFF79, new byte[]{0x50, 0x02, 2, 0, 1, 1, 2, -1, -1, -1, 2, 2, 2, 1, 1});
+            var kernel = part2(Jp2Encoder.encode(picture, lossless), 0x8040, -1, 2, atk);
+            Blackhole.consume(Jp2Decoder.decode(MediaSource.of(transformed), ImageDecoderOptions.defaults()).picture()
+                    .width());
+            Blackhole.consume(Jp2Decoder.decodeChannels(MediaSource.of(kernel)).hashCode());
+            try (var animation = Jp2Decoder.openAnimation(MediaSource.of(jpx(transformed, kernel)))) {
+                for (var frame = animation.read(); frame != null; frame = animation.read()) {
+                    Blackhole.consume(frame.picture().width());
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns the segments of an irreversible YCbCr to RGB decorrelation over three components (ISO/IEC 15444-2
+     * A.3.6 to A.3.9).
+     *
+     * @return the CBD, MCT, MCC and MCO segments
+     */
+    private static byte[] multipleComponentSegments() {
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(segment(0xFF78, new byte[]{0, 3, 7, 7, 7}));
+        var matrix = new float[]{1, 0, 1.402f, 1, -0.344136f, -0.714136f, 1, 1.772f, 0};
+        var array = ByteBuffer.allocate(6 + 4 * matrix.length).putShort((short) 0).putShort((short) 0x0901)
+                .putShort((short) 0);
+        for (var value : matrix) {
+            array.putFloat(value);
+        }
+        out.writeBytes(segment(0xFF74, array.array()));
+        out.writeBytes(segment(0xFF74, ByteBuffer.allocate(12).putShort((short) 0).putShort((short) 0x0202)
+                .putShort((short) 0).putShort((short) 0).putShort((short) 128).putShort((short) 128).array()));
+        out.writeBytes(segment(0xFF75, new byte[]{0, 0, 1, 0, 0, 0, 1, 1, 0, 3, 0, 1, 2, 0, 3, 0, 1, 2, 0, 2, 1}));
+        out.writeBytes(segment(0xFF77, new byte[]{1, 1}));
+        return out.toByteArray();
+    }
+
+    /**
+     * Writes a marker segment.
+     *
+     * @param marker the marker code
+     * @param body the segment's fields
+     * @return the segment
+     */
+    private static byte[] segment(int marker, byte[] body) {
+        return ByteBuffer.allocate(4 + body.length).putShort((short) marker).putShort((short) (body.length + 2))
+                .put(body).array();
+    }
+
+    /**
+     * Turns a codestream into an ISO/IEC 15444-2 one: sets {@code Rsiz}, optionally the multiple component
+     * transformation and wavelet of the {@code COD} segment, and inserts segments at the end of the main header.
+     *
+     * @param codestream the Part 1 codestream
+     * @param rsiz the new {@code Rsiz}
+     * @param transform the new {@code SGcod} transformation, or {@code -1} to keep it
+     * @param wavelet the new {@code SPcod} wavelet, or {@code -1} to keep it
+     * @param segments the segments to insert
+     * @return the new codestream
+     */
+    private static byte[] part2(byte[] codestream, int rsiz, int transform, int wavelet, byte[] segments) {
+        var position = 2;
+        var cod = -1;
+        while ((codestream[position] & 0xFF) != 0xFF || (codestream[position + 1] & 0xFF) != 0x90) {
+            if ((codestream[position + 1] & 0xFF) == 0x52) {
+                cod = position;
+            }
+            position += 2 + ((codestream[position + 2] & 0xFF) << 8 | (codestream[position + 3] & 0xFF));
+        }
+        var out = new ByteArrayOutputStream();
+        out.write(codestream, 0, position);
+        out.writeBytes(segments);
+        out.write(codestream, position, codestream.length - position);
+        var result = out.toByteArray();
+        result[6] = (byte) (rsiz >> 8);
+        result[7] = (byte) rsiz;
+        if (transform >= 0) {
+            result[cod + 8] = (byte) transform;
+        }
+        if (wavelet >= 0) {
+            result[cod + 13] = (byte) wavelet;
+        }
+        return result;
+    }
+
+    /**
+     * Writes a JPX file of two codestreams, the second in a fragment table, and a composition that shows each.
+     *
+     * @param first the first codestream
+     * @param second the second codestream
+     * @return the file
+     */
+    private static byte[] jpx(byte[] first, byte[] second) {
+        var start = new ByteArrayOutputStream();
+        start.writeBytes(new byte[]{0, 0, 0, 12, 'j', 'P', ' ', ' ', 0x0D, 0x0A, (byte) 0x87, 0x0A});
+        start.writeBytes(box("ftyp", new byte[]{'j', 'p', 'x', ' ', 0, 0, 0, 0, 'j', 'p', 'x', ' '}));
+        start.writeBytes(box("jp2h", box("ihdr", ByteBuffer.allocate(14).putInt(256).putInt(384).putShort((short) 3)
+                .put((byte) 7).put((byte) 7).array()), box("colr", new byte[]{1, 0, 1, 0, 0, 0, 16})));
+        start.writeBytes(box("jp2c", first));
+        var instructions = ByteBuffer.allocate(8 + 2 * 16).putShort((short) 9).putShort((short) 0).putInt(40);
+        instructions.putInt(0).putInt(0).putInt(0x80000001).putInt(0);
+        instructions.putInt(96).putInt(64).putInt(1).putInt(0);
+        var composition = box("comp", box("copt", ByteBuffer.allocate(9).putInt(256).putInt(384).put((byte) 0)
+                .array()), box("inst", instructions.array()));
+        // the fragment list points into the media data box after the fragment table and the composition
+        var table = 8 + 8 + 2 + 14;
+        var offset = start.size() + table + composition.length + 8;
+        var list = ByteBuffer.allocate(16).putShort((short) 1).putLong(offset).putInt(second.length)
+                .putShort((short) 0).array();
+        start.writeBytes(box("ftbl", box("flst", list)));
+        start.writeBytes(composition);
+        start.writeBytes(box("mdat", second));
+        return start.toByteArray();
+    }
+
+    /**
+     * Writes a box.
+     *
+     * @param type the box type
+     * @param contents the boxes or bytes of its contents
+     * @return the box
+     */
+    private static byte[] box(String type, byte[]... contents) {
+        var body = new ByteArrayOutputStream();
+        for (var content : contents) {
+            body.writeBytes(content);
+        }
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(ByteBuffer.allocate(4).putInt(8 + body.size()).array());
+        out.writeBytes(type.getBytes(StandardCharsets.ISO_8859_1));
+        out.writeBytes(body.toByteArray());
+        return out.toByteArray();
     }
 
     /**

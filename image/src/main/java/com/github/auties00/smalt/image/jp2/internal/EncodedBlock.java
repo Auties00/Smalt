@@ -14,22 +14,22 @@ final class EncodedBlock {
     /**
      * The left edge in sub-band coordinates.
      */
-    final int x0;
+    final long x0;
 
     /**
      * The top edge in sub-band coordinates.
      */
-    final int y0;
+    final long y0;
 
     /**
      * The right edge in sub-band coordinates (exclusive).
      */
-    final int x1;
+    final long x1;
 
     /**
      * The bottom edge in sub-band coordinates (exclusive).
      */
-    final int y1;
+    final long y1;
 
     /**
      * The number of magnitude bit-planes coded; zero or negative when the block is all zero.
@@ -150,7 +150,7 @@ final class EncodedBlock {
      * @param x1 the right edge
      * @param y1 the bottom edge
      */
-    EncodedBlock(int x0, int y0, int x1, int y1) {
+    EncodedBlock(long x0, long y0, long x1, long y1) {
         this.x0 = x0;
         this.y0 = y0;
         this.x1 = x1;

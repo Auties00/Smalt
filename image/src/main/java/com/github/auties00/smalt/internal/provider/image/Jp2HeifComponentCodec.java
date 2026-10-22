@@ -174,7 +174,7 @@ public final class Jp2HeifComponentCodec implements HeifComponentCodec {
      * @return the plane
      */
     private static HeifComponents.Plane plane(String name, Jp2Channel channel,
-                                              int type, int x0, int y0) {
+                                              int type, long x0, long y0) {
         if (channel.signed()) {
             throw new MediaException.Unsupported(name, "JPEG 2000 items with signed samples");
         }

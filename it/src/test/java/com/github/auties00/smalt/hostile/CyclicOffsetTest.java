@@ -57,7 +57,10 @@ class CyclicOffsetTest {
                 new Input("AVIF overlays that use themselves and each other", () -> avifDerived("iovl")),
                 new Input("AVIF sample transforms preferred to their own input", () -> avifDerived("sato")),
                 new Input("OS/2 bitmap array whose last entry is its own successor", () -> bitmapArray(true)),
-                new Input("OS/2 bitmap array whose third entry links back to the second", () -> bitmapArray(false)));
+                new Input("OS/2 bitmap array whose third entry links back to the second", () -> bitmapArray(false)),
+                new Input("JPX composition repeating forever on the layer it reserves for itself",
+                        CyclicOffsetTest::jpxLoop),
+                new Input("JPX cross-reference box whose fragment is itself", CyclicOffsetTest::jpxSelfReference));
     }
 
     static Stream<Input> containers() {
@@ -269,6 +272,48 @@ class CyclicOffsetTest {
         out.writeBytes(segment.toByteArray());
         out.write(jpeg, 2, jpeg.length - 2);
         return out.toByteArray();
+    }
+
+    private static byte[] jp2Box(String type, byte[]... contents) {
+        var body = new ByteArrayOutputStream();
+        for (var content : contents) {
+            body.writeBytes(content);
+        }
+        var header = new byte[8];
+        Hostile.be32(header, 0, 8 + body.size());
+        System.arraycopy(type.getBytes(StandardCharsets.ISO_8859_1), 0, header, 4, 4);
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(header);
+        out.writeBytes(body.toByteArray());
+        return out.toByteArray();
+    }
+
+    static byte[] jpxLoop() {
+        var file = ImageBombTest.encode(com.github.auties00.smalt.image.ImageFormat.JP2, false);
+        var options = new byte[9];
+        Hostile.be32(options, 0, 16);
+        Hostile.be32(options, 4, 16);
+        options[8] = (byte) 255;
+        // Ityp 9 (XO, YO, LIFE, N): repeat 65535 (forever), one tick of 1 ms; the instruction persists, lives one
+        // tick and reserves its layer for the next instruction, which is itself on the next repetition
+        var instructions = new byte[8 + 16];
+        Hostile.be16(instructions, 0, 9);
+        Hostile.be16(instructions, 2, 65535);
+        Hostile.be32(instructions, 4, 1);
+        Hostile.be32(instructions, 16, 0x80000001L);
+        Hostile.be32(instructions, 20, 1);
+        return Hostile.concat(file, jp2Box("comp", jp2Box("copt", options), jp2Box("inst", instructions)));
+    }
+
+    static byte[] jpxSelfReference() {
+        var file = ImageBombTest.encode(com.github.auties00.smalt.image.ImageFormat.JP2, false);
+        // jpch (8) -> cref (8 + 4) -> flst (8 + 2 + 14): the fragment covers the cross-reference box itself
+        var list = new byte[2 + 14];
+        Hostile.be16(list, 0, 1);
+        Hostile.be32(list, 6, file.length + 8);
+        Hostile.be32(list, 10, 8 + 4 + 8 + list.length);
+        var reference = jp2Box("cref", "pclr".getBytes(StandardCharsets.ISO_8859_1), jp2Box("flst", list));
+        return Hostile.concat(file, jp2Box("jpch", reference));
     }
 
     static byte[] heifGrid(boolean self) {

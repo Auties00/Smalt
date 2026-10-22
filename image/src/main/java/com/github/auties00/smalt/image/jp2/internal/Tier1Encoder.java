@@ -178,8 +178,8 @@ final class Tier1Encoder {
      */
     double encode(EncodedBlock block, int[] samples, float[] floats, int offset, int stride, int orientation,
                   int level, float stepSize, boolean reversible, int style, double weight) {
-        var w = block.x1 - block.x0;
-        var h = block.y1 - block.y0;
+        var w = (int) (block.x1 - block.x0);
+        var h = (int) (block.y1 - block.y0);
         allocate(w, h);
         var position = 0;
         var k = 0;

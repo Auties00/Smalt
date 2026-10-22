@@ -10,7 +10,6 @@ param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/Arr
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/ForwardOnlySource.java	4
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/LocalSource.java	2
 param-restates-name	core/src/main/java/com/github/auties00/smalt/internal/io/SegmentBacked.java	2
-param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/Jp2Image.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/Jp2Pictures.java	3
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/PacketBitWriter.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/TagTree.java	3

@@ -564,7 +564,7 @@ public final class Jp2Writer {
             forwardTransform(integers, floats, config.reversible());
         }
         for (var c = 0; c < count; c++) {
-            var stride = components[c].x1 - components[c].x0;
+            var stride = (int) (components[c].x1 - components[c].x0);
             if (stride == 0 || components[c].y1 == components[c].y0) {
                 continue;
             }
@@ -589,8 +589,8 @@ public final class Jp2Writer {
         allocate(config, components, bounds, budgets, distortion, limits);
         var out = new ByteArrayOutputStream();
         var packets = new PacketEncoder(config.sop(), config.eph());
-        var order = new PacketOrder(bounds, components, config.subsamplingX(), config.subsamplingY(), layers, false,
-                limits);
+        var order = new PacketOrder(widen(bounds), components, config.subsamplingX(), config.subsamplingY(), layers,
+                false, limits);
         order.list(new ProgressionChange(0, 0, layers, ComponentCoding.MAX_RESOLUTIONS, count, config.progression()),
                 (layer, resolution, component, precinct) -> {
                     packets.write(components[component], resolution, precinct, layer, out);
@@ -714,15 +714,9 @@ public final class Jp2Writer {
                 var band = job.band();
                 var block = job.block();
                 var component = components[c];
-                var x = block.x0 - band.x0();
-                var y = block.y0 - band.y0();
-                if ((band.orientation() & 1) != 0) {
-                    x += component.resolutions[r - 1].width();
-                }
-                if ((band.orientation() & 2) != 0) {
-                    y += component.resolutions[r - 1].height();
-                }
-                var stride = component.x1 - component.x0;
+                var x = (int) (block.x0 - band.x0()) + band.offsetX();
+                var y = (int) (block.y0 - band.y0()) + band.offsetY();
+                var stride = (int) (component.x1 - component.x0);
                 var weight = transform && c < 3 ? (config.reversible() ? RCT_NORMS : ICT_NORMS)[c] : 1.0;
                 distortions[j] = coder.encode(block, integers[c], floats[c], y * stride + x, stride, band.orientation(),
                         component.resolutions.length - 1 - r, band.stepSize(), config.reversible(),
@@ -866,21 +860,15 @@ public final class Jp2Writer {
         var band = job.band();
         var block = job.block();
         var component = components[c];
-        var x = block.x0 - band.x0();
-        var y = block.y0 - band.y0();
-        if ((band.orientation() & 1) != 0) {
-            x += component.resolutions[r - 1].width();
-        }
-        if ((band.orientation() & 2) != 0) {
-            y += component.resolutions[r - 1].height();
-        }
-        var stride = component.x1 - component.x0;
+        var x = (int) (block.x0 - band.x0()) + band.offsetX();
+        var y = (int) (block.y0 - band.y0()) + band.offsetY();
+        var stride = (int) (component.x1 - component.x0);
         var weight = transform && c < 3 ? (config.reversible() ? RCT_NORMS : ICT_NORMS)[c] : 1.0;
         var level = component.resolutions.length - 1 - r;
         var scale = Tier1Encoder.distortionScale(level, band.orientation(), config.reversible(), band.stepSize(),
                 weight);
-        var planes = coder.load(integers[c], floats[c], y * stride + x, stride, block.x1 - block.x0,
-                block.y1 - block.y0, band.stepSize(), config.reversible(), scale,
+        var planes = coder.load(integers[c], floats[c], y * stride + x, stride, (int) (block.x1 - block.x0),
+                (int) (block.y1 - block.y0), band.stepSize(), config.reversible(), scale,
                 (config.codeBlockStyle() & ComponentCoding.VERTICALLY_CAUSAL) != 0);
         return planes;
     }
@@ -1209,8 +1197,8 @@ public final class Jp2Writer {
     private static long measure(EncoderConfig config, TileComponent[] components, int[] bounds, int layers, long limit,
                                 MediaLimits limits) {
         var packets = new PacketEncoder(config.sop(), config.eph());
-        var order = new PacketOrder(bounds, components, config.subsamplingX(), config.subsamplingY(), config.layers(),
-                false, limits);
+        var order = new PacketOrder(widen(bounds), components, config.subsamplingX(), config.subsamplingY(),
+                config.layers(), false, limits);
         var total = new long[1];
         order.list(new ProgressionChange(0, 0, layers, ComponentCoding.MAX_RESOLUTIONS, components.length,
                 config.progression()), (layer, resolution, component, precinct) -> {
@@ -1291,6 +1279,16 @@ public final class Jp2Writer {
             });
         }
         return same[0];
+    }
+
+    /**
+     * Copies a tile's bounds into longs.
+     *
+     * @param bounds the left, top, right and bottom edges
+     * @return the same edges as longs
+     */
+    private static long[] widen(int[] bounds) {
+        return new long[]{bounds[0], bounds[1], bounds[2], bounds[3]};
     }
 
     /**
