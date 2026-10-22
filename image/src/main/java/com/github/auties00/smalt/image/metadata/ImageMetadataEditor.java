@@ -29,11 +29,14 @@ import java.util.Objects;
  * its offset and zeroes what it removes.
  *
  * <p>JPEG, PNG and WebP accept every kind of change (IPTC only in JPEG, comments in JPEG and PNG,
- * text in PNG); GIF accepts XMP, ICC and comment changes; HEIC and AVIF accept EXIF and XMP, whose items are
- * rewritten while the coded image items stay where they are or move with their offsets corrected;
- * TIFF and BigTIFF accept EXIF, XMP, IPTC and ICC changes; BMP accepts ICC changes, a new profile
- * giving the file a V5 header. An edit a format cannot store raises
- * {@link MediaException.Unsupported}.
+ * text in PNG); GIF accepts XMP, ICC and comment changes; HEIC and AVIF accept EXIF, XMP and ICC
+ * changes, still images and image sequences alike: the EXIF and XMP items and the primary item's
+ * ICC property are rewritten while the coded image items and the tracks stay where they are or
+ * move with their offsets corrected; TIFF, BigTIFF, DNG and the camera raw files with a TIFF
+ * signature accept EXIF, XMP, IPTC and ICC changes; JPEG XL accepts EXIF and XMP changes, a bare
+ * codestream being wrapped in a container to hold them; BMP accepts ICC changes, a new profile
+ * giving the file a V5 header. The other camera raw files are read only. An edit a format cannot
+ * store raises {@link MediaException.Unsupported}.
  *
  * <p>A TIFF edit rebuilds the first directory (IFD0) and, when the EXIF block changes, its Exif,
  * GPS and interoperability directories; the strips and tiles, the other pages and their

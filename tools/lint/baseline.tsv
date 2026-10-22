@@ -16,7 +16,6 @@ param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/inte
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/TagTree.java	3
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/jp2/internal/VectorWaveletKernel.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/metadata/IptcData.java	3
-param-restates-name	image/src/main/java/com/github/auties00/smalt/image/metadata/JxlFile.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/metadata/PhotoshopResources.java	5
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/tiff/internal/LabTables.java	1
 param-restates-name	image/src/main/java/com/github/auties00/smalt/image/tiff/internal/LzwEncoder.java	2

@@ -216,8 +216,11 @@ public final class JpegTransformOptions {
     }
 
     /**
-     * {@return whether the JPEG thumbnail of a copied EXIF segment is transformed with the image
-     * (rotated, flipped or made grayscale, not cropped); {@code true} by default}
+     * {@return whether the thumbnail of a copied EXIF segment, JPEG or uncompressed, is transformed
+     * with the image (rotated, flipped or made grayscale, not cropped); {@code true} by default}
+     *
+     * <p>A thumbnail that cannot be transformed (an uncompressed one whose samples are not 8 or 16
+     * bits, or are subsampled YCbCr) is removed.
      */
     public boolean transformThumbnail() {
         return transformThumbnail;

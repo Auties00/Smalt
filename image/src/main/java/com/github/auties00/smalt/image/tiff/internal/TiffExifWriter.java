@@ -116,7 +116,8 @@ public final class TiffExifWriter {
     }
 
     /**
-     * Adds an EXIF value to a directory.
+     * Adds an EXIF value to a directory; a sub-directory offset (type {@code IFD}), which points at
+     * data the page does not hold, is left out.
      *
      * @param directory the directory, updated
      * @param tag the tag number
@@ -124,6 +125,9 @@ public final class TiffExifWriter {
      * @param little whether values are little-endian
      */
     private static void put(IfdBuilder directory, int tag, ExifValue value, boolean little) {
+        if (value.type() == ExifValue.Type.IFD) {
+            return;
+        }
         var bytes = encode(value, little);
         directory.raw(tag, value.type().code(), bytes.length / value.type().size(), bytes);
     }
@@ -139,6 +143,10 @@ public final class TiffExifWriter {
         return switch (value) {
             case ExifValue.Ascii ascii -> {
                 var text = ascii.value().getBytes(StandardCharsets.ISO_8859_1);
+                yield Arrays.copyOf(text, text.length + 1);
+            }
+            case ExifValue.Utf8 utf8 -> {
+                var text = utf8.value().getBytes(StandardCharsets.UTF_8);
                 yield Arrays.copyOf(text, text.length + 1);
             }
             case ExifValue.Undefined undefined -> undefined.bytes();

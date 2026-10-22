@@ -199,7 +199,7 @@ final class TiffRewriter {
         if (target.exif() instanceof Change.Replace) {
             exif = ExifReader.parse(target.exifBytes());
             if (exif.thumbnail().isPresent()) {
-                throw ImageFiles.unsupported(ImageFormat.TIFF, "an EXIF thumbnail");
+                throw ImageFiles.unsupported(file.format, "an EXIF thumbnail");
             }
         }
         var tables = new ArrayList<Table>();
@@ -290,7 +290,8 @@ final class TiffRewriter {
         for (var entry : exif.ifd0().entrySet()) {
             var tag = entry.getKey();
             if (tag < 0 || tag > 0xFFFF || TiffFile.isStructural(tag) || TiffFile.isOwned(tag)
-                    || tag == ExifData.EXIF_IFD_POINTER || tag == ExifData.GPS_IFD_POINTER) {
+                    || tag == ExifData.EXIF_IFD_POINTER || tag == ExifData.GPS_IFD_POINTER
+                    || entry.getValue().type() == ExifValue.Type.IFD) {
                 continue;
             }
             ifd0.entries.put(tag, value(ExifData.Directory.IFD0, tag, entry.getValue()));
@@ -326,7 +327,7 @@ final class TiffRewriter {
         var table = new Table(file.directory(kind).ifd(), 0);
         for (var entry : entries.entrySet()) {
             var tag = entry.getKey();
-            if (tag >= 0 && tag <= 0xFFFF && !computed.contains(tag)) {
+            if (tag >= 0 && tag <= 0xFFFF && !computed.contains(tag) && entry.getValue().type() != ExifValue.Type.IFD) {
                 table.entries.put(tag, value(kind, tag, entry.getValue()));
             }
         }

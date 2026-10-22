@@ -20,6 +20,7 @@ import com.github.auties00.smalt.image.jp2.Jp2Format;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
 import com.github.auties00.smalt.image.metadata.IptcData;
+import com.github.auties00.smalt.image.metadata.MetadataSeeds;
 import com.github.auties00.smalt.image.tiff.TiffVariantSamples;
 import com.github.auties00.smalt.image.webp.WebpContainer;
 import com.github.auties00.smalt.internal.io.ByteArrays;
@@ -411,6 +412,27 @@ class FuzzSeedWriter {
                 VECTORS.resolve("jpeg/cjpeg/33x65-yuv422-progressive-arithmetic.jpg"));
         copy(ImageMetadataFuzzTest.class, "jpegTransform", "valid-baseline-411-restart.jpg",
                 VECTORS.resolve("jpeg/cjpeg/227x149-yuv411-baseline-rst3.jpg"));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the raw, JPEG XL, HEIF sequence and extended EXIF metadata layouts")
+    void extendedMetadata() {
+        write(ImageMetadataFuzzTest.class, "exif", "valid-extended-big-endian.tiff",
+                MetadataSeeds.extendedExif(ByteOrder.BIG_ENDIAN));
+        write(ImageMetadataFuzzTest.class, "exif", "valid-extended-little-endian.tiff",
+                MetadataSeeds.extendedExif(ByteOrder.LITTLE_ENDIAN));
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-raw-orf.orf", MetadataSeeds.orf());
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-raw-rw2.rw2", MetadataSeeds.rw2());
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-raw-raf.raf", MetadataSeeds.raf());
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-raw-cr3.cr3", MetadataSeeds.cr3());
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-raw-mrw.mrw", MetadataSeeds.mrw());
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-raw-tiff.nef", MetadataSeeds.tiffRaw());
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-dng.dng", MetadataSeeds.dng());
+        write(ImageMetadataFuzzTest.class, "metadata", "valid-heif-sequence.avif", MetadataSeeds.heifSequence());
+        write(ImageMetadataFuzzTest.class, "jpegTransform", "valid-uncompressed-thumbnail.jpg",
+                MetadataSeeds.uncompressedThumbnailJpeg());
+        copy(ImageMetadataFuzzTest.class, "metadata", "valid-jxl-reconstruction.jxl",
+                VECTORS.resolve("jxl/reconstruction/tagged.jxl"));
     }
 
     @Test

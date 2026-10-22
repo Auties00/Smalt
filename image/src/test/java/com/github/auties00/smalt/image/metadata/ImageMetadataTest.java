@@ -476,8 +476,9 @@ class ImageMetadataTest {
                     .toBuilder().xmp(XmpPacket.empty().with(XmpPacket.DC, "title", "Fresh")).build());
             assertEquals("Fresh", MetadataSupport.exiftoolRead(added, "added.avif").get("XMP-dc:Title"));
             assertArrayEquals(primaryItem(avif), primaryItem(added));
-            assertThrows(MediaException.Unsupported.class, () -> ImageMetadataEditor.apply(image,
-                    ImageMetadataEdit.keepAll().toBuilder().removeIccProfile().build()));
+            // the file has no ICC profile to remove
+            assertSame(image, ImageMetadataEditor.apply(image, ImageMetadataEdit.keepAll().toBuilder().removeIccProfile()
+                    .build()));
         }
 
         static byte[] primaryItem(byte[] heif) {

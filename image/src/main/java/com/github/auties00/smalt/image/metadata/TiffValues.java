@@ -24,10 +24,11 @@ final class TiffValues {
      * Returns the {@link ExifValue} type of a field type code.
      *
      * @param code the field type code of an entry
-     * @return the type, or {@code null} when the code is not a TIFF 6.0 type
+     * @return the type, or {@code null} when the code is neither a TIFF 6.0 type nor the EXIF 3.0
+     * {@code UTF-8} type
      */
     static ExifValue.Type type(int code) {
-        return code >= 1 && code <= 12 ? ExifValue.Type.of(code) : null;
+        return (code >= 1 && code <= 12) || code == ExifValue.Type.UTF8.code() ? ExifValue.Type.of(code) : null;
     }
 
     /**
@@ -48,8 +49,15 @@ final class TiffValues {
                 }
                 yield new ExifValue.Ascii(new String(data, 0, end, StandardCharsets.ISO_8859_1));
             }
+            case UTF8 -> {
+                var end = 0;
+                while (end < data.length && data[end] != 0) {
+                    end++;
+                }
+                yield new ExifValue.Utf8(new String(data, 0, end, StandardCharsets.UTF_8));
+            }
             case UNDEFINED -> new ExifValue.Undefined(data);
-            case BYTE, SBYTE, SHORT, SSHORT, LONG, SLONG -> {
+            case BYTE, SBYTE, SHORT, SSHORT, LONG, SLONG, IFD -> {
                 var values = new long[count];
                 for (var i = 0; i < count; i++) {
                     values[i] = switch (type) {
@@ -57,7 +65,7 @@ final class TiffValues {
                         case SBYTE -> data[i];
                         case SHORT -> ByteArrays.u16(data, 2 * i, little);
                         case SSHORT -> (short) ByteArrays.u16(data, 2 * i, little);
-                        case LONG -> ByteArrays.u32(data, 4 * i, little);
+                        case LONG, IFD -> ByteArrays.u32(data, 4 * i, little);
                         default -> (int) ByteArrays.u32(data, 4 * i, little);
                     };
                 }
@@ -97,6 +105,10 @@ final class TiffValues {
         return switch (value) {
             case ExifValue.Ascii ascii -> {
                 var text = ascii.value().getBytes(StandardCharsets.ISO_8859_1);
+                yield Arrays.copyOf(text, text.length + 1);
+            }
+            case ExifValue.Utf8 utf8 -> {
+                var text = utf8.value().getBytes(StandardCharsets.UTF_8);
                 yield Arrays.copyOf(text, text.length + 1);
             }
             case ExifValue.Undefined undefined -> undefined.bytes();

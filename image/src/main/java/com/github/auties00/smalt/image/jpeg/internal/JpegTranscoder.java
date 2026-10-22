@@ -265,7 +265,11 @@ public final class JpegTranscoder {
             if (options.transformThumbnail() && thumbnailChange) {
                 var exif = ExifReader.parse(edited);
                 var thumbnail = exif.thumbnail();
-                if (thumbnail.isPresent()) {
+                if (exif.hasUncompressedThumbnail()) {
+                    var updated = UncompressedThumbnail.transform(exif, options.transform(), options.grayscale(),
+                            edited[0] == 'I');
+                    edited = ExifWriter.rewrite(edited, updated != null ? updated : exif.withoutThumbnail());
+                } else if (thumbnail.isPresent()) {
                     var thumbnailOptions = options.toBuilder()
                             .noCrop()
                             .markerCopy(JpegMarkerCopy.NONE)

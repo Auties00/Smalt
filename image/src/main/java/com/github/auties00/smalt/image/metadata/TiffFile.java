@@ -28,7 +28,9 @@ import java.util.Set;
 
 /**
  * Reads the metadata of a TIFF or BigTIFF file, whose first directory (IFD0) is itself an EXIF
- * directory, and plans the edits of it.
+ * directory, and plans the edits of it; also reads and edits that of DNG files and of the camera raw
+ * files that have a TIFF signature, and reads that of the Olympus and Panasonic raw files, whose
+ * TIFF structure starts with a signature of their own.
  *
  * <p>The descriptive entries of IFD0, with the Exif, GPS and interoperability directories, form
  * the EXIF block; the entries that lay out and describe the coded image ({@link #isStructural(int)})
@@ -103,6 +105,23 @@ final class TiffFile implements ImageFile {
     private static final int DNG_LAST = 52600;
 
     /**
+     * The format the file was detected as: {@link ImageFormat#TIFF}, {@link ImageFormat#DNG} or
+     * {@link ImageFormat#RAW}.
+     */
+    final ImageFormat format;
+
+    /**
+     * Whether the file has a TIFF signature, without which it is read only.
+     */
+    private final boolean editable;
+
+    /**
+     * Whether the IFD0 tags below 254, which a Panasonic raw file uses for its sensor data, are
+     * structural.
+     */
+    private final boolean vendorLowTags;
+
+    /**
      * The file.
      */
     final MediaSource source;
@@ -139,7 +158,7 @@ final class TiffFile implements ImageFile {
     final Map<ExifData.Directory, Directory> directories;
 
     /**
-     * Reads the header and the metadata directories of a file.
+     * Reads the header and the metadata directories of a TIFF or BigTIFF file.
      *
      * @param source the TIFF or BigTIFF file
      * @param limits the resource bounds
@@ -147,10 +166,32 @@ final class TiffFile implements ImageFile {
      * @throws MediaException.LimitExceeded if the metadata values exceed the allocation limit
      */
     TiffFile(MediaSource source, MediaLimits limits) {
+        this(source, limits, ImageFormat.TIFF, null);
+    }
+
+    /**
+     * Reads the header and the metadata directories of a TIFF-structured file.
+     *
+     * @param source the file
+     * @param limits the resource bounds
+     * @param format the format detected: {@link ImageFormat#TIFF}, {@link ImageFormat#DNG} or
+     * {@link ImageFormat#RAW}
+     * @param header the header of a raw file whose signature is not a TIFF one (Olympus or
+     * Panasonic), which makes the file read only, or {@code null} to read a TIFF header
+     * @throws MediaException.Malformed if the header is invalid or IFD0 cannot be read
+     * @throws MediaException.LimitExceeded if the metadata values exceed the allocation limit
+     */
+    TiffFile(MediaSource source, MediaLimits limits, ImageFormat format, TiffHeader header) {
         this.source = source;
         this.limits = limits;
+        this.format = format;
+        this.editable = header == null;
         this.input = TiffInput.of(source);
-        var header = TiffHeader.read(input, 0);
+        var head = ImageFiles.readAvailable(source, 0, 4);
+        this.vendorLowTags = head.length == 4 && head[0] == 'I' && head[1] == 'I' && head[2] == 'U' && head[3] == 0;
+        if (header == null) {
+            header = TiffHeader.read(input, 0);
+        }
         if (header == null) {
             throw new MediaException.Malformed("not a TIFF file: missing byte order mark or version");
         }
@@ -226,20 +267,23 @@ final class TiffFile implements ImageFile {
             }
         }
         var iptc = iptc();
-        return new ImageMetadata(ImageFormat.TIFF, exif, xmp, iptc != null && !iptc.isEmpty() ? iptc : null, owned(ICC),
+        return new ImageMetadata(format, exif, xmp, iptc != null && !iptc.isEmpty() ? iptc : null, owned(ICC),
                 List.of(), Map.of());
     }
 
     @Override
     public EditPlan plan(Resolved target) {
         if (target.comments() instanceof ImageMetadataEdit.Change.Replace && !target.commentList().isEmpty()) {
-            throw ImageFiles.unsupported(ImageFormat.TIFF, "comments");
+            throw ImageFiles.unsupported(format, "comments");
         }
         if (target.text() instanceof ImageMetadataEdit.Change.Replace && !target.textEntries().isEmpty()) {
-            throw ImageFiles.unsupported(ImageFormat.TIFF, "text");
+            throw ImageFiles.unsupported(format, "text");
         }
         if (target.keepsAll()) {
             return EditPlan.builder().copy(0, source.size()).build();
+        }
+        if (!editable) {
+            throw RawImageFile.notEditable();
         }
         return new TiffRewriter(this, target).plan();
     }
@@ -402,7 +446,7 @@ final class TiffFile implements ImageFile {
         var seen = new HashSet<Integer>();
         for (var index = 0; index < ifd.count(); index++) {
             var tag = ifd.tag(index);
-            if (!seen.add(tag) || (kind == ExifData.Directory.IFD0 && isStructural(tag))) {
+            if (!seen.add(tag) || (kind == ExifData.Directory.IFD0 && (isStructural(tag) || (vendorLowTags && tag < 254)))) {
                 continue;
             }
             var ownedTag = kind == ExifData.Directory.IFD0 && isOwned(tag);
