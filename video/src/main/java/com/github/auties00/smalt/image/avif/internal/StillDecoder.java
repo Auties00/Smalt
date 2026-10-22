@@ -28,7 +28,7 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Reconstructs the primary image of an AVIF file from a {@link StillPlan}: decodes its coded
+ * Reconstructs a coded image item of an AVIF file from a {@link StillPlan}: decodes its coded
  * items, stitches the tiles of its grids, adds its alpha plane and applies its clean aperture.
  *
  * <p>The tiles of a grid decode in parallel on the module's helper threads, each helper with its
@@ -37,7 +37,7 @@ import java.util.concurrent.atomic.AtomicInteger;
  * parallelism. Neither changes the samples. Alpha of another size or bit depth than the color
  * is resampled and rescaled to it.
  */
-public final class StillDecoder {
+final class StillDecoder {
     /**
      * The format name of failure messages.
      */
@@ -65,7 +65,7 @@ public final class StillDecoder {
     }
 
     /**
-     * Reconstructs the primary image.
+     * Reconstructs a coded image item and applies its clean aperture.
      *
      * @param source the file
      * @param file the parsed file
@@ -76,8 +76,42 @@ public final class StillDecoder {
      * @throws MediaException.Malformed if an item is corrupt or the items do not fit together
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
-    public static HeifStill decode(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
-                                boolean highBitDepth) {
+    static HeifStill decode(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                            boolean highBitDepth) {
+        return decode(source, file, plan, limits, highBitDepth, true);
+    }
+
+    /**
+     * Reconstructs a coded image item before its transformative properties, as a derived image
+     * takes it as an input.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param plan the reconstruction plan
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @return the picture, uncropped
+     * @throws MediaException.Malformed if an item is corrupt or the items do not fit together
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    static Picture reconstruct(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                               boolean highBitDepth) {
+        return decode(source, file, plan, limits, highBitDepth, false).picture();
+    }
+
+    /**
+     * Reconstructs a coded image item, optionally applying its clean aperture.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param plan the reconstruction plan
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param crop whether to apply the clean aperture
+     * @return the image
+     */
+    private static HeifStill decode(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                                    boolean highBitDepth, boolean crop) {
         Canvas canvas;
         SequenceHeader sequence;
         MasteringDisplay mastering;
@@ -88,7 +122,7 @@ public final class StillDecoder {
             var decoder = new ItemDecoder(limits, true);
             var frame = decoder.decodeItem(plan.config(), payload, StillPlan.operatingPoint(item), StillPlan.layer(item));
             try {
-                var matrix = colorInfo(plan.primary(), frame.seqHdr, null, null).matrix();
+                var matrix = colorInfo(plan.item(), frame.seqHdr, null, null).matrix();
                 canvas = new Canvas(limits, frame.w, frame.h, SequenceHeader.chromaFormat(frame.layout), frame.bpc,
                         frame.bpc > 8 && (highBitDepth || Colors.reducesToRgb(matrix, frame.bpc)), plan.hasAlpha());
                 canvas.writeColor(frame, 0, 0, frame.w, frame.h, true);
@@ -115,7 +149,7 @@ public final class StillDecoder {
             var tileHeight = HeifStills.checkedSize(FORMAT, extent.height());
             grid.validate(tileWidth, tileHeight, format.shiftX() > 0, format.shiftY() > 0);
             var depth = config.bitDepth();
-            var nclx = plan.primary().property(HeifProperty.ColorNclx.class);
+            var nclx = plan.item().property(HeifProperty.ColorNclx.class);
             var wide = depth > 8 && (highBitDepth
                     || nclx != null && Colors.reducesToRgb(MatrixCoefficients.of(nclx.matrix()), depth));
             var first = new SequenceHeader[1];
@@ -123,7 +157,7 @@ public final class StillDecoder {
             canvas = decodeGrid(source, file, plan, limits, format, width, height, tileWidth, tileHeight, wide, first,
                     hdr);
             if (!wide && nclx == null
-                    && Colors.reducesToRgb(colorInfo(plan.primary(), first[0], null, null).matrix(), depth)) {
+                    && Colors.reducesToRgb(colorInfo(plan.item(), first[0], null, null).matrix(), depth)) {
                 // without an nclx box the matrix comes from the tiles, known only once they are decoded
                 canvas = decodeGrid(source, file, plan, limits, format, width, height, tileWidth, tileHeight, true,
                         first, hdr);
@@ -135,10 +169,10 @@ public final class StillDecoder {
         if (plan.hasAlpha()) {
             decodeAlpha(source, file, plan, limits, canvas);
         }
-        var color = colorInfo(plan.primary(), sequence, mastering, lightLevel);
+        var color = colorInfo(plan.item(), sequence, mastering, lightLevel);
         var picture = canvas.toPicture(color);
-        var geometry = HeifGeometry.resolve(plan.primary().properties(), canvas.width, canvas.height);
-        if (geometry.crops(canvas.width, canvas.height)) {
+        var geometry = HeifGeometry.resolve(plan.item().properties(), canvas.width, canvas.height);
+        if (crop && geometry.crops(canvas.width, canvas.height)) {
             picture = HeifPictures.crop(picture, geometry.x(), geometry.y(), geometry.width(), geometry.height());
         }
         if (plan.premultiplied()) {

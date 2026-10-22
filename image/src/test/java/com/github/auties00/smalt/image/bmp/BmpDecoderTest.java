@@ -417,4 +417,25 @@ class BmpDecoderTest {
         assertEquals(seeds.size() * RasterTesting.mutationsPerSeed(150), stats.variants());
         System.out.println("BMP mutations: " + stats);
     }
+
+    @Test
+    @DisplayName("Images.openAnimation presents a BMP as one seekable frame shown for zero microseconds")
+    void stillAnimationSeeks() {
+        var data = Fixtures.read(Fixtures.testImage("bmp", 16, 8, List.of("-pix_fmt", "bgr24")));
+        try (var reader = com.github.auties00.smalt.image.Images.openAnimation(MediaSource.of(data))) {
+            assertTrue(reader.isSeekable());
+            var first = assertInstanceOf(RgbaPicture.class, reader.read().picture());
+            assertNull(reader.read());
+            reader.seek(0);
+            assertNull(reader.read());
+            reader.seek(-1);
+            var again = reader.read();
+            assertNotNull(again);
+            assertEquals(0, again.timestampMicros());
+            assertSame(first, again.picture());
+            assertNull(reader.read());
+            reader.seek(Long.MIN_VALUE);
+            assertNotNull(reader.read());
+        }
+    }
 }

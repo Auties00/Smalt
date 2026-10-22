@@ -419,23 +419,9 @@ public final class StillDecoder {
         var picture = output(alpha, true, depth + 1);
         var limited = switch (picture) {
             case RgbaPicture _, Rgba16Picture _ -> false;
-            default -> colorOf(picture).range() == ColorRange.LIMITED;
+            default -> HeifPictures.colorOf(picture).range() == ColorRange.LIMITED;
         };
         canvas.writeAlpha(HeifPictures.resampleAlpha(picture, canvas.width(), canvas.height()), limited);
-    }
-
-    /**
-     * {@return the color description of a planar picture, {@link ColorInfo#JPEG} for another
-     * picture}
-     *
-     * @param picture the reconstructed picture
-     */
-    private static ColorInfo colorOf(Picture picture) {
-        return switch (picture) {
-            case YuvPicture yuv -> yuv.color();
-            case Yuv16Picture yuv -> yuv.color();
-            default -> ColorInfo.JPEG;
-        };
     }
 
     /**
@@ -693,7 +679,7 @@ public final class StillDecoder {
                 tileWidth = picture.width();
                 tileHeight = picture.height();
                 grid.validateCoverage(tileWidth, tileHeight);
-                color = Colors.override(colorOf(picture), item);
+                color = Colors.override(HeifPictures.colorOf(picture), item);
             } else if (picture.width() != tileWidth || picture.height() != tileHeight) {
                 throw new MediaException.Malformed("heic: the inputs of grid item " + item.id() + " differ in size");
             }
@@ -702,8 +688,9 @@ public final class StillDecoder {
             var w = Math.min(tileWidth, width - x);
             var h = Math.min(tileHeight, height - y);
             if (packed != null) {
-                packed = place(packed, isPacked(picture) ? picture
-                        : withColor(picture, Colors.override(colorOf(picture), item)), x, y, w, h);
+                var input = HeifPictures.isPacked(picture) ? picture
+                        : HeifPictures.withColor(picture, Colors.override(HeifPictures.colorOf(picture), item));
+                packed = HeifPictures.place(packed, input, x, y, w, h);
                 continue;
             }
             if (canvas == null) {
@@ -732,7 +719,7 @@ public final class StillDecoder {
             var deep = packed instanceof Rgba16Picture;
             var plane = new HeifCanvas(FORMAT, limits, width, height, ChromaFormat.MONOCHROME, deep ? 16 : 8, deep, true);
             attachAlpha(plane, alpha, depth);
-            replaceAlpha(packed, plane.toPicture(ColorInfo.JPEG));
+            HeifPictures.replaceAlpha(packed, plane.toPicture(ColorInfo.JPEG));
         }
         return packed;
     }
@@ -781,120 +768,6 @@ public final class StillDecoder {
     private boolean premultiplied(HeifItem item) {
         var alpha = alphaOf(file, item);
         return alpha != null && item.references("prem", alpha.id());
-    }
-
-    /**
-     * {@return whether a picture is packed RGBA}
-     *
-     * @param picture the reconstructed input
-     */
-    private static boolean isPacked(Picture picture) {
-        return picture instanceof RgbaPicture || picture instanceof Rgba16Picture;
-    }
-
-    /**
-     * {@return whether a picture stores samples of more than 8 bits}
-     *
-     * @param picture the reconstructed input
-     */
-    private static boolean isDeep(Picture picture) {
-        return picture instanceof Yuv16Picture || picture instanceof Rgba16Picture;
-    }
-
-    /**
-     * {@return a planar picture with another color description, sharing its planes}
-     *
-     * @param picture the planar picture
-     * @param color the color description
-     */
-    private static Picture withColor(Picture picture, ColorInfo color) {
-        return switch (picture) {
-            case YuvPicture yuv -> yuv.toBuilder().color(color).build();
-            case Yuv16Picture yuv -> yuv.toBuilder().color(color).build();
-            default -> picture;
-        };
-    }
-
-    /**
-     * Copies the top-left region of a picture into a region of a packed grid canvas, converted to
-     * RGBA at the canvas depth, an input of 8 bits converted at 8 bits and widened as {@code v * 257};
-     * the pixels of a picture without alpha become opaque.
-     *
-     * @param canvas the packed canvas, an {@link RgbaPicture} or an {@link Rgba16Picture} with alpha
-     * @param picture the input picture
-     * @param x the left edge of the region
-     * @param y the top edge of the region
-     * @param w the region width
-     * @param h the region height
-     * @return the canvas, promoted to 16 bits when it was 8-bit and the input is deeper
-     */
-    private static Picture place(Picture canvas, Picture picture, int x, int y, int w, int h) {
-        if (canvas instanceof RgbaPicture narrow && isDeep(picture)) {
-            canvas = ImageOps.toSixteenBit(narrow);
-        }
-        switch (canvas) {
-            case Rgba16Picture target -> {
-                var source = isDeep(picture) ? ImageOps.toRgba16(picture) : ImageOps.toSixteenBit(ImageOps.toRgba(picture));
-                var opaque = !source.hasAlpha();
-                for (var row = 0; row < h; row++) {
-                    var out = (y + row) * target.stride() + 4 * x;
-                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(), out, 4 * w);
-                    if (opaque) {
-                        for (var col = 0; col < w; col++) {
-                            target.pixels()[out + 4 * col + 3] = (short) 0xFFFF;
-                        }
-                    }
-                }
-            }
-            case RgbaPicture target -> {
-                var source = ImageOps.toRgba(picture);
-                var opaque = !source.hasAlpha();
-                for (var row = 0; row < h; row++) {
-                    var out = (y + row) * target.stride() + 4 * x;
-                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(), out, 4 * w);
-                    if (opaque) {
-                        for (var col = 0; col < w; col++) {
-                            target.pixels()[out + 4 * col + 3] = (byte) 0xFF;
-                        }
-                    }
-                }
-            }
-            default -> throw new IllegalStateException("unexpected " + canvas.getClass().getSimpleName());
-        }
-        return canvas;
-    }
-
-    /**
-     * Replaces the alpha channel of a packed grid canvas.
-     *
-     * @param canvas the packed canvas
-     * @param alpha a monochrome picture of the canvas size and depth whose alpha plane holds the
-     * full-range alpha
-     */
-    private static void replaceAlpha(Picture canvas, Picture alpha) {
-        switch (canvas) {
-            case Rgba16Picture target -> {
-                var plane = (Yuv16Picture) alpha;
-                for (var row = 0; row < target.height(); row++) {
-                    var out = row * target.stride() + 3;
-                    var in = row * plane.alphaStride();
-                    for (var col = 0; col < target.width(); col++) {
-                        target.pixels()[out + 4 * col] = plane.alpha()[in + col];
-                    }
-                }
-            }
-            case RgbaPicture target -> {
-                var plane = (YuvPicture) alpha;
-                for (var row = 0; row < target.height(); row++) {
-                    var out = row * target.stride() + 3;
-                    var in = row * plane.alphaStride();
-                    for (var col = 0; col < target.width(); col++) {
-                        target.pixels()[out + 4 * col] = plane.alpha()[in + col];
-                    }
-                }
-            }
-            default -> throw new IllegalStateException("unexpected " + canvas.getClass().getSimpleName());
-        }
     }
 
     /**

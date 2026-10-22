@@ -13,6 +13,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
@@ -408,7 +409,7 @@ public final class HeicFiles {
      * @param limits the bounds
      * @param highBitDepth whether frames of a source deeper than 8 bits are 16-bit RGBA
      * @return the reader: the sequence when the file has an HEVC color track, otherwise the
-     * shown still image as one frame shown for zero microseconds and played once
+     * shown still image as one frame shown for zero microseconds and played once; both can seek
      */
     public static AnimationReader openAnimation(MediaSource source, MediaLimits limits, boolean highBitDepth) {
         var file = HeifFile.parse(source, limits, false);
@@ -417,11 +418,20 @@ public final class HeicFiles {
         }
         var primary = primary(file);
         var info = stillInfo(source, file, primary, limits);
-        return new StillReader(info.width(), info.height(), () -> {
-            var picture = StillDecoder.decode(source, file, primary, limits, highBitDepth).picture();
-            return picture instanceof Yuv16Picture || picture instanceof Rgba16Picture ? ImageOps.toRgba16(picture)
-                    : ImageOps.toRgba(picture);
-        });
+        var frame = new Supplier<Picture>() {
+            private Picture decoded;
+
+            @Override
+            public Picture get() {
+                if (decoded == null) {
+                    var picture = StillDecoder.decode(source, file, primary, limits, highBitDepth).picture();
+                    decoded = picture instanceof Yuv16Picture || picture instanceof Rgba16Picture
+                            ? ImageOps.toRgba16(picture) : ImageOps.toRgba(picture);
+                }
+                return decoded;
+            }
+        };
+        return SeekableAnimationReader.of(() -> new StillReader(info.width(), info.height(), frame));
     }
 
     /**
@@ -439,7 +449,7 @@ public final class HeicFiles {
         private final int height;
 
         /**
-         * Decodes the image.
+         * Decodes the image, once for every reader sharing it.
          */
         private final Supplier<Picture> decoder;
 

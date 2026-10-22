@@ -668,5 +668,26 @@ public final class Images {
             consumed = true;
             return new AnimationFrame(frame, 0, 0);
         }
+
+        /**
+         * {@inheritDoc}
+         *
+         * @return {@code true}
+         */
+        @Override
+        public boolean isSeekable() {
+            return true;
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * <p>The frame is shown for zero microseconds from time zero, so a time before zero selects
+         * it and any other time is past the end.
+         */
+        @Override
+        public void seek(long micros) {
+            consumed = micros >= 0;
+        }
     }
 }

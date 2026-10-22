@@ -70,3 +70,5 @@ image/src/test/resources/samples/tiff/packbits-gray.tif	892	c670ff6a3e495d828656
 image/src/test/resources/samples/tiff/pages.tif	5340	e76f8600aa44902d078c77a4f4cef08d01e693003d692ef3cde4d7657a664707	make-image-samples.sh
 image/src/test/resources/samples/tiff/tiled.tif	1446	5bb8759064ab10606a186b8c5a4371a68d3661138082cc1a89f2d02f61d48717	make-image-samples.sh
 image/src/test/resources/samples/webp/animated.webp	1164	05adaa95cc75e7ba66c0f761486897491247fd5dab78df8d82428867206fd233	make-image-samples.sh
+video/src/test/resources/samples/avif/derived.avif	1589	b6447f18ae0b7ff8dad3a1548998c8f0be5b8988ddca14930407d148c814c9dd	make-avif-samples.py
+video/src/test/resources/samples/avif/sato.avif	1533	62ea90ee3ed5a6c31973bfc58bead9f8ee5bddf3a38f1d4248f39d7d3b5502bb	make-avif-samples.py

@@ -28,6 +28,7 @@ public final class HeifSequenceBuilder {
         List<byte[]> samples;
         int delta;
         Map<String, int[]> references = new TreeMap<>();
+        int[] syncSamples;
     }
 
     private final String majorBrand;
@@ -82,6 +83,19 @@ public final class HeifSequenceBuilder {
      */
     public HeifSequenceBuilder reference(String type, int from, int... to) {
         tracks.get(from - 1).references.put(type, to.clone());
+        return this;
+    }
+
+    /**
+     * Marks the sync samples of a track with an {@code stss} box; without one every sample is a
+     * sync sample.
+     *
+     * @param track the track identifier
+     * @param indexes the zero-based indexes of the sync samples, increasing
+     * @return this builder
+     */
+    public HeifSequenceBuilder syncSamples(int track, int... indexes) {
+        tracks.get(track - 1).syncSamples = indexes.clone();
         return this;
     }
 
@@ -240,7 +254,15 @@ public final class HeifSequenceBuilder {
         for (var offset : offsets) {
             u32(stco, offset);
         }
+        var stss = new ByteArrayOutputStream();
+        if (track.syncSamples != null) {
+            u32(stss, track.syncSamples.length);
+            for (var index : track.syncSamples) {
+                u32(stss, index + 1L);
+            }
+        }
         return box("stbl", concat(fullBox("stsd", 0, 0, stsd.toByteArray()), fullBox("stts", 0, 0, stts.toByteArray()),
+                track.syncSamples == null ? new byte[0] : fullBox("stss", 0, 0, stss.toByteArray()),
                 fullBox("stsc", 0, 0, stsc.toByteArray()), fullBox("stsz", 0, 0, stsz.toByteArray()),
                 fullBox("stco", 0, 0, stco.toByteArray())));
     }

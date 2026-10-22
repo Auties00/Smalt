@@ -78,7 +78,9 @@ import java.util.function.Supplier;
  * its alpha track, every frame converted to RGBA (16-bit RGBA when
  * {@link ImageDecoderOptions#highBitDepth()} is set and the sequence has more than 8 bits), with
  * the loop count of the edit list (a track
- * without an edit list loops forever); a picture the edit list does not show is skipped.
+ * without an edit list loops forever); a picture the edit list does not show is skipped. The
+ * reader seeks: it restarts the decoding at the last sync sample at or before the requested time
+ * and decodes up to the picture shown then, which is the picture a decode from the start shows.
  * {@link #decode} returns the primary image, or the first frame of the sequence of a file without
  * a primary item.
  *
@@ -184,8 +186,8 @@ public final class HeicDecoder {
      * Opens a reader over the frames of a HEIC image sequence.
      *
      * <p>A file without a sequence is presented as an animation of its primary image: one frame
-     * shown for zero microseconds that plays once. Frames are RGBA pictures in the stored
-     * orientation: {@link com.github.auties00.smalt.image.Rgba16Picture} pictures when
+     * shown for zero microseconds that plays once. Either reader can seek. Frames are RGBA pictures
+     * in the stored orientation: {@link com.github.auties00.smalt.image.Rgba16Picture} pictures when
      * {@link ImageDecoderOptions#highBitDepth()} is set and the source has more than 8 bits,
      * {@link RgbaPicture} pictures otherwise.
      *

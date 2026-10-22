@@ -167,6 +167,19 @@ public final class HeifSequence {
     }
 
     /**
+     * Seeks the demuxer and drops the samples held back, so that the next samples of both tracks
+     * are the ones the demuxer restarts at (see {@link Demuxer#seek(long)}).
+     *
+     * @param micros the presentation time the demuxer seeks to, in microseconds
+     * @throws MediaException.Malformed if the index needed to seek is corrupt
+     */
+    public void seek(long micros) {
+        demuxer.seek(micros);
+        clear();
+        drained = false;
+    }
+
+    /**
      * Returns the next sample of one track, reading ahead until it arrives.
      *
      * @param queue the samples held back for the track

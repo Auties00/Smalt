@@ -29,7 +29,8 @@ import java.util.zip.Inflater;
  * reads the {@code meta} box into memory and resolves its {@code hdlr} (which must be
  * {@code pict}), {@code pitm}, {@code iinf}, {@code iloc} (versions 0 to 2, every construction
  * method), {@code iprp} ({@code ipco} and every {@code ipma}), {@code iref} (versions 0 and 1)
- * and {@code idat} children into {@link HeifItem}s. It stops as soon as the boxes the brands
+ * and {@code idat} children into {@link HeifItem}s, and its {@code grpl} child into
+ * {@link EntityGroup}s. It stops as soon as the boxes the brands
  * require are seen: the {@code meta} box for the {@code avif}, {@code mif1} and HEIC brands and
  * the {@code moov} box for the sequence brands ({@code avis}, {@code msf1}, {@code heis}). Item
  * data is read on demand with {@link #readItem(MediaSource, HeifItem, MediaLimits)}.
@@ -119,6 +120,11 @@ public final class HeifFile {
     private final boolean hasMeta;
 
     /**
+     * The entity groups of the {@code grpl} box, in file order.
+     */
+    private final List<EntityGroup> groups;
+
+    /**
      * The file offset of the {@code moov} box payload, or {@code -1} when absent.
      */
     private final long movieOffset;
@@ -136,17 +142,19 @@ public final class HeifFile {
      * @param primaryItemId the primary item identifier, or {@code 0}
      * @param items the items by identifier
      * @param idat the {@code idat} payload
+     * @param groups the entity groups
      * @param hasMeta whether a {@code meta} box was found
      * @param movieOffset the offset of the {@code moov} payload, or {@code -1}
      * @param movieSize the size of the {@code moov} payload
      */
     private HeifFile(String majorBrand, List<String> brands, int primaryItemId, Map<Integer, HeifItem> items,
-                     byte[] idat, boolean hasMeta, long movieOffset, long movieSize) {
+                     byte[] idat, List<EntityGroup> groups, boolean hasMeta, long movieOffset, long movieSize) {
         this.majorBrand = majorBrand;
         this.brands = brands;
         this.primaryItemId = primaryItemId;
         this.items = items;
         this.idat = idat;
+        this.groups = groups;
         this.hasMeta = hasMeta;
         this.movieOffset = movieOffset;
         this.movieSize = movieSize;
@@ -174,11 +182,15 @@ public final class HeifFile {
      * two deviations that HEIF writers produce and that do not make a file ambiguous: transformative
      * properties ({@code clap}, {@code irot}, {@code imir}) and AV1 selectors that are not marked
      * essential (and an essential {@code a1lx}), and a {@code dimg} reference that names the same
-     * input twice, which an image overlay may legitimately do.
+     * input twice, which an image overlay may legitimately do. A lenient parse also never rejects a
+     * file for its {@code grpl} box, which no image needs to be shown: it reads the first such box
+     * only, accepts repeated group identifiers and entities, and keeps the groups before the first
+     * truncated one.
      *
      * @param source the file
      * @param limits the bounds of the {@code meta} box
-     * @param strict whether to enforce the rules on essential properties and repeated inputs
+     * @param strict whether to enforce the rules on essential properties, repeated inputs and the
+     * entity groups
      * @return the parsed file
      * @throws MediaException.Malformed if the file is not a valid HEIF file
      * @throws MediaException.LimitExceeded if the {@code meta} box exceeds the limits
@@ -277,7 +289,8 @@ public final class HeifFile {
             throw new MediaException.Malformed("heif: empty input");
         }
         if (meta == null) {
-            return new HeifFile(majorBrand, brands, 0, Map.of(), new byte[0], false, movieOffset, movieSize);
+            return new HeifFile(majorBrand, brands, 0, Map.of(), new byte[0], List.of(), false, movieOffset,
+                    movieSize);
         }
         return parseMeta(majorBrand, brands, meta, movieOffset, movieSize, strict);
     }
@@ -338,6 +351,7 @@ public final class HeifFile {
         BoxCursor iprp = null;
         BoxCursor iref = null;
         BoxCursor idat = null;
+        BoxCursor grpl = null;
         while (box.hasBox()) {
             var child = box.nextBox();
             var type = FourCc.toString(child.type());
@@ -349,6 +363,7 @@ public final class HeifFile {
                 case "iprp" -> iprp = unique(iprp, child);
                 case "iref" -> iref = unique(iref, child);
                 case "idat" -> idat = unique(idat, child);
+                case "grpl" -> grpl = strict ? unique(grpl, child) : grpl == null ? child : grpl;
                 default -> {
                 }
             }
@@ -372,7 +387,84 @@ public final class HeifFile {
             primary = version == 0 ? pitm.u16() : (int) pitm.u32();
         }
         return new HeifFile(majorBrand, brands, primary, Collections.unmodifiableMap(items),
-                idat == null ? new byte[0] : idat.rest(), true, movieOffset, movieSize);
+                idat == null ? new byte[0] : idat.rest(), grpl == null ? List.of() : parseGroups(grpl, strict), true,
+                movieOffset, movieSize);
+    }
+
+    /**
+     * Parses the groups list box (ISO/IEC 14496-12 clause 8.18.3): one {@code EntityToGroupBox} per
+     * child, whose group-specific fields after the entity identifiers are skipped.
+     *
+     * <p>A lenient parse keeps the groups before the first truncated one and accepts repeated group
+     * identifiers and entities.
+     *
+     * @param grpl the cursor over the {@code grpl} payload
+     * @param strict whether a defect rejects the file
+     * @return the groups in file order
+     * @throws MediaException.Malformed in a strict parse, if a group is truncated, declares more
+     * entities than its box holds, names an entity twice or reuses the identifier of another group
+     */
+    private static List<EntityGroup> parseGroups(BoxCursor grpl, boolean strict) {
+        var groups = new ArrayList<EntityGroup>();
+        try {
+            parseGroups(grpl, strict, groups);
+        } catch (MediaException.Malformed exception) {
+            if (strict) {
+                throw exception;
+            }
+        }
+        return List.copyOf(groups);
+    }
+
+    /**
+     * Parses the groups of a groups list box into a list, which holds the groups parsed before a
+     * failure.
+     *
+     * @param grpl the cursor over the {@code grpl} payload
+     * @param strict whether repeated group identifiers and entities are rejected
+     * @param groups receives the groups in file order
+     * @throws MediaException.Malformed if a group is truncated or declares more entities than its
+     * box holds, or, in a strict parse, names an entity twice or reuses the identifier of another
+     * group
+     */
+    private static void parseGroups(BoxCursor grpl, boolean strict, List<EntityGroup> groups) {
+        var groupIds = new HashSet<Long>();
+        while (grpl.hasBox()) {
+            var group = grpl.nextBox();
+            var type = FourCc.toString(group.type());
+            group.fullBoxHeader();
+            var groupId = group.u32();
+            var count = group.u32();
+            if (count > group.remaining() / 4) {
+                throw new MediaException.Malformed("heif: entity group '" + type + "' declares " + count
+                        + " entities in " + group.remaining() + " bytes");
+            }
+            if (!groupIds.add(groupId) && strict) {
+                throw new MediaException.Malformed("heif: two entity groups have the identifier " + groupId);
+            }
+            var entities = new int[(int) count];
+            var distinct = new HashSet<Long>();
+            for (var i = 0; i < entities.length; i++) {
+                var entity = group.u32();
+                if (!distinct.add(entity) && strict) {
+                    throw new MediaException.Malformed("heif: entity group " + groupId + " names entity " + entity
+                            + " twice");
+                }
+                entities[i] = entity > Integer.MAX_VALUE ? -1 : (int) entity;
+            }
+            groups.add(new EntityGroup(type, groupId, entities));
+        }
+    }
+
+    /**
+     * Describes one entity group of the {@code grpl} box.
+     *
+     * @param type the grouping type, for example {@code "altr"} for alternatives
+     * @param id the group identifier
+     * @param entities the item or track identifiers of the group in box order, {@code -1} for an
+     * identifier beyond the largest {@code int}
+     */
+    public record EntityGroup(String type, long id, int[] entities) {
     }
 
     /**
@@ -695,6 +787,45 @@ public final class HeifFile {
      */
     public List<HeifItem> items() {
         return List.copyOf(items.values());
+    }
+
+    /**
+     * Returns the entity groups of the {@code grpl} box.
+     *
+     * @return the groups in file order, unmodifiable
+     */
+    public List<EntityGroup> entityGroups() {
+        return groups;
+    }
+
+    /**
+     * Returns the items the file prefers to an item: the items listed before it in the alternatives
+     * group ({@code altr}) that holds it, most preferred first (ISO/IEC 14496-12 clause 8.18.3.3).
+     *
+     * <p>Only the first {@code altr} group that lists the item counts, since an entity belongs to
+     * one such group at most.
+     *
+     * @param id the item identifier
+     * @return the preferred items, empty when the item is in no alternatives group or is listed
+     * first
+     */
+    public List<HeifItem> preferredAlternatives(int id) {
+        for (var group : groups) {
+            if (!group.type().equals("altr")) {
+                continue;
+            }
+            var preferred = new ArrayList<HeifItem>();
+            for (var entity : group.entities()) {
+                if (entity == id) {
+                    return List.copyOf(preferred);
+                }
+                var item = items.get(entity);
+                if (item != null) {
+                    preferred.add(item);
+                }
+            }
+        }
+        return List.of();
     }
 
     /**

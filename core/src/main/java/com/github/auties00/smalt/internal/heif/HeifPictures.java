@@ -289,6 +289,135 @@ public final class HeifPictures {
     }
 
     /**
+     * {@return whether a picture is packed RGBA}
+     *
+     * @param picture the decoded or composed picture
+     */
+    public static boolean isPacked(Picture picture) {
+        return picture instanceof RgbaPicture || picture instanceof Rgba16Picture;
+    }
+
+    /**
+     * {@return whether a picture stores samples of more than 8 bits}
+     *
+     * @param picture the decoded or composed picture
+     */
+    public static boolean isDeep(Picture picture) {
+        return picture instanceof Yuv16Picture || picture instanceof Rgba16Picture;
+    }
+
+    /**
+     * {@return the color description of a planar picture, {@link ColorInfo#JPEG} for another
+     * picture}
+     *
+     * @param picture the decoded or composed picture
+     */
+    public static ColorInfo colorOf(Picture picture) {
+        return switch (picture) {
+            case YuvPicture yuv -> yuv.color();
+            case Yuv16Picture yuv -> yuv.color();
+            default -> ColorInfo.JPEG;
+        };
+    }
+
+    /**
+     * {@return a planar picture with another color description, sharing its planes, or a packed
+     * picture unchanged}
+     *
+     * @param picture the planar picture to relabel, or a packed one
+     * @param color the color description
+     */
+    public static Picture withColor(Picture picture, ColorInfo color) {
+        return switch (picture) {
+            case YuvPicture yuv -> yuv.toBuilder().color(color).build();
+            case Yuv16Picture yuv -> yuv.toBuilder().color(color).build();
+            default -> picture;
+        };
+    }
+
+    /**
+     * Copies the top-left region of a picture into a region of a packed canvas, converted to RGBA
+     * at the canvas depth, an input of 8 bits converted at 8 bits and widened as {@code v * 257};
+     * the pixels of a picture without alpha become opaque.
+     *
+     * @param canvas the packed canvas, an {@link RgbaPicture} or an {@link Rgba16Picture} with alpha
+     * @param picture the input picture, at least {@code w} by {@code h}
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     * @return the canvas, promoted to 16 bits when it was 8-bit and the input is deeper
+     */
+    public static Picture place(Picture canvas, Picture picture, int x, int y, int w, int h) {
+        if (canvas instanceof RgbaPicture narrow && isDeep(picture)) {
+            canvas = ImageOps.toSixteenBit(narrow);
+        }
+        switch (canvas) {
+            case Rgba16Picture target -> {
+                var source = isDeep(picture) ? ImageOps.toRgba16(picture) : ImageOps.toSixteenBit(ImageOps.toRgba(picture));
+                var opaque = !source.hasAlpha();
+                for (var row = 0; row < h; row++) {
+                    var out = (y + row) * target.stride() + 4 * x;
+                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(), out, 4 * w);
+                    if (opaque) {
+                        for (var col = 0; col < w; col++) {
+                            target.pixels()[out + 4 * col + 3] = (short) 0xFFFF;
+                        }
+                    }
+                }
+            }
+            case RgbaPicture target -> {
+                var source = ImageOps.toRgba(picture);
+                var opaque = !source.hasAlpha();
+                for (var row = 0; row < h; row++) {
+                    var out = (y + row) * target.stride() + 4 * x;
+                    System.arraycopy(source.pixels(), row * source.stride(), target.pixels(), out, 4 * w);
+                    if (opaque) {
+                        for (var col = 0; col < w; col++) {
+                            target.pixels()[out + 4 * col + 3] = (byte) 0xFF;
+                        }
+                    }
+                }
+            }
+            default -> throw new IllegalStateException("unexpected " + canvas.getClass().getSimpleName());
+        }
+        return canvas;
+    }
+
+    /**
+     * Replaces the alpha channel of a packed canvas.
+     *
+     * @param canvas the packed canvas
+     * @param alpha a monochrome picture of the canvas size and depth whose alpha plane holds the
+     * full-range alpha
+     */
+    public static void replaceAlpha(Picture canvas, Picture alpha) {
+        switch (canvas) {
+            case Rgba16Picture target -> {
+                var plane = (Yuv16Picture) alpha;
+                for (var row = 0; row < target.height(); row++) {
+                    var out = row * target.stride() + 3;
+                    var in = row * plane.alphaStride();
+                    for (var col = 0; col < target.width(); col++) {
+                        target.pixels()[out + 4 * col] = plane.alpha()[in + col];
+                    }
+                }
+            }
+            case RgbaPicture target -> {
+                var plane = (YuvPicture) alpha;
+                for (var row = 0; row < target.height(); row++) {
+                    var out = row * target.stride() + 3;
+                    var in = row * plane.alphaStride();
+                    for (var col = 0; col < target.width(); col++) {
+                        target.pixels()[out + 4 * col] = plane.alpha()[in + col];
+                    }
+                }
+            }
+            default -> throw new IllegalStateException("unexpected " + canvas.getClass().getSimpleName());
+        }
+    }
+
+    /**
      * Divides the colors of an 8-bit packed picture by their alpha, in place.
      *
      * @param rgba the picture with premultiplied color

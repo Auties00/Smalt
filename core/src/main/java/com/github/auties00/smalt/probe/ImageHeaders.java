@@ -11,6 +11,7 @@ import com.github.auties00.smalt.internal.heif.HeifGrid;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
+import com.github.auties00.smalt.internal.heif.HeifSampleTransform;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.io.SlicedSource;
@@ -719,7 +720,9 @@ final class ImageHeaders {
      * whose major brand is {@code avis}) shows.
      *
      * <p>The size is that of the image the AVIF and HEIC decoders return: after the clean aperture
-     * and before the orientation the rotation and mirroring properties compose to.
+     * and before the orientation the rotation and mirroring properties compose to. The bit depth is
+     * that of the sample transform ({@code sato}) the alternatives group of the primary item prefers
+     * to it, when there is one, and an image overlay always has alpha.
      *
      * @param source the input
      * @return the header
@@ -772,18 +775,50 @@ final class ImageHeaders {
         result.width = geometry.width();
         result.height = geometry.height();
         result.orientation = geometry.orientation();
-        result.alpha = hasAlpha(file, primary);
+        result.alpha = hasAlpha(file, primary) || primary.type().equals("iovl");
         var coded = primary;
         for (var depth = 0; coded != null && depth < 8 && !coded.type().equals("av01") && !coded.type().equals("hvc1");
              depth++) {
             var inputs = coded.references("dimg");
             coded = inputs.length == 0 ? null : file.item(inputs[0]);
         }
+        if (coded != null && coded.type().equals("av01")) {
+            for (var alternative : file.preferredAlternatives(primary.id())) {
+                if (isShownTransform(source, file, alternative, limits)) {
+                    result.bitDepth = depthOf(alternative.properties());
+                    return result;
+                }
+            }
+        }
         result.bitDepth = depthOf(primary.properties());
         if (result.bitDepth == 0 && coded != null) {
             result.bitDepth = depthOf(coded.properties());
         }
         return result;
+    }
+
+    /**
+     * Returns whether the AVIF decoder may show an alternative of the primary item in its place: a
+     * sample transform that is not a thumbnail, declares its depth and whose expression has a
+     * version and tokens the decoder knows.
+     *
+     * @param source the input
+     * @param file the parsed file
+     * @param item the alternative
+     * @param limits the bounds of the payload read
+     * @return {@code true} for such a sample transform item
+     */
+    private static boolean isShownTransform(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        if (!item.type().equals("sato") || item.references("thmb").length > 0 || depthOf(item.properties()) == 0
+                || !item.isLocated() || item.size() == 0 || item.size() > HeifSampleTransform.MAX_PAYLOAD) {
+            return false;
+        }
+        try {
+            HeifSampleTransform.parse(file.readItem(source, item, limits), item.references("dimg").length);
+            return true;
+        } catch (MediaException.Unsupported | MediaException.Malformed exception) {
+            return false;
+        }
     }
 
     /**

@@ -7,7 +7,7 @@ picture 1280x720 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=aa2750e0 u=95cbf4c
   icc=none exif=58:8c5ec556 xmp=none
   profile=none
 scaled 320x180
-picture 1280x720 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=aa2750e0 u=95cbf4cf v=d8b14893
+picture 320x180 yuv8 YUV420 color=BT709/LIMITED/BT709/SRGB y=ebdb8501 u=05ca1f08 v=1d7e622c
   format=AVIF orientation=NORMAL source=1280x720
   icc=none exif=58:8c5ec556 xmp=none
   profile=none

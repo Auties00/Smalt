@@ -422,6 +422,77 @@ public final class HeifBuilder {
         return out.toByteArray();
     }
 
+    /** Builds an image overlay payload with 16-bit or, when {@code wide}, 32-bit sizes and offsets. */
+    public static byte[] overlay(boolean wide, int[] fill, int width, int height, int[]... offsets) {
+        var out = new ByteArrayOutputStream();
+        out.write(0);
+        out.write(wide ? 1 : 0);
+        for (var value : fill) {
+            u16(out, value);
+        }
+        for (var value : new int[]{width, height}) {
+            if (wide) {
+                u32(out, value & 0xFFFFFFFFL);
+            } else {
+                u16(out, value);
+            }
+        }
+        for (var offset : offsets) {
+            for (var value : offset) {
+                if (wide) {
+                    u32(out, value & 0xFFFFFFFFL);
+                } else {
+                    u16(out, value & 0xFFFF);
+                }
+            }
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Builds a sample transform payload ({@code sato}) of version 0. {@code tokens} lists the token values in
+     * order; each constant token, value 0, is followed in the array by its constant, written with
+     * {@code 8 << bitDepthCode} bits.
+     */
+    public static byte[] sato(int bitDepthCode, long... tokens) {
+        var body = new ByteArrayOutputStream();
+        var count = 0;
+        for (var i = 0; i < tokens.length; i++, count++) {
+            body.write((int) tokens[i]);
+            if (tokens[i] == 0) {
+                var constant = tokens[++i];
+                for (var shift = (8 << bitDepthCode) - 8; shift >= 0; shift -= 8) {
+                    body.write((int) (constant >>> shift));
+                }
+            }
+        }
+        var out = new ByteArrayOutputStream();
+        out.write(bitDepthCode & 3);
+        out.write(count);
+        out.writeBytes(body.toByteArray());
+        return out.toByteArray();
+    }
+
+    /** Builds a {@code grpl} box holding entity groups built with {@link #entityGroup}. */
+    public static byte[] grpl(byte[]... groups) {
+        var out = new ByteArrayOutputStream();
+        for (var group : groups) {
+            out.writeBytes(group);
+        }
+        return box("grpl", out.toByteArray());
+    }
+
+    /** Builds an {@code EntityToGroupBox}, such as an {@code altr} group. */
+    public static byte[] entityGroup(String type, long groupId, int... entities) {
+        var out = new ByteArrayOutputStream();
+        u32(out, groupId);
+        u32(out, entities.length);
+        for (var entity : entities) {
+            u32(out, entity);
+        }
+        return fullBox(type, 0, 0, out.toByteArray());
+    }
+
     /** Writes a big-endian 16-bit value. */
     public static void u16(ByteArrayOutputStream out, int value) {
         out.write(value >>> 8);

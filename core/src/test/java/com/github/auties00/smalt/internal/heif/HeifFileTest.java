@@ -458,4 +458,96 @@ class HeifFileTest {
                     () -> HeifMovie.parse(source, file, MediaLimits.builder().maxFrames(4).build())));
         }
     }
+
+    @Nested
+    @DisplayName("entity groups")
+    class EntityGroups {
+        private static byte[] grouped(byte[]... groups) {
+            var builder = new HeifBuilder();
+            var primary = builder.item("av01", new byte[]{1}, plain(HeifBuilder.ispe(8, 8)),
+                    essential(HeifBuilder.av1C(AV1C)));
+            builder.item("sato", HeifBuilder.sato(2, 1), plain(HeifBuilder.ispe(8, 8)));
+            builder.item("av01", new byte[]{2}, plain(HeifBuilder.ispe(8, 8)), essential(HeifBuilder.av1C(AV1C)));
+            builder.reference("dimg", 2, 1).primary(primary);
+            if (groups.length > 0) {
+                builder.metaBox(HeifBuilder.grpl(groups));
+            }
+            return builder.build();
+        }
+
+        @Test
+        @DisplayName("lists the groups and the alternatives preferred to an item")
+        void alternatives() {
+            var file = parse(grouped(HeifBuilder.entityGroup("ster", 7, 1, 3),
+                    HeifBuilder.entityGroup("altr", 8, 2, 3, 1)));
+            assertEquals(2, file.entityGroups().size());
+            assertEquals("ster", file.entityGroups().getFirst().type());
+            assertEquals(8, file.entityGroups().get(1).id());
+            assertArrayEquals(new int[]{2, 3, 1}, file.entityGroups().get(1).entities());
+            assertEquals(List.of(2, 3), file.preferredAlternatives(1).stream().map(HeifItem::id).toList());
+            assertEquals(List.of(), file.preferredAlternatives(2));
+            assertEquals(List.of(), parse(grouped()).preferredAlternatives(1));
+            assertEquals(List.of(), parse(grouped(HeifBuilder.entityGroup("ster", 7, 2, 1))).preferredAlternatives(1));
+        }
+
+        @Test
+        @DisplayName("skips the group-specific fields after the entity identifiers")
+        void groupFields() {
+            var group = HeifBuilder.entityGroup("altr", 1, 2, 1);
+            var extended = Arrays.copyOf(group, group.length + 4);
+            extended[3] += 4;
+            assertEquals(List.of(2), parse(grouped(extended)).preferredAlternatives(1).stream().map(HeifItem::id)
+                    .toList());
+        }
+
+        @Test
+        @DisplayName("rejects truncated groups, repeated group identifiers, repeated entities and two grpl boxes")
+        void malformed() {
+            var group = HeifBuilder.entityGroup("altr", 1, 2, 1);
+            var truncated = Arrays.copyOf(group, group.length - 4);
+            truncated[3] -= 4;
+            assertThrows(MediaException.Malformed.class, () -> parse(grouped(truncated)));
+            assertThrows(MediaException.Malformed.class, () -> parse(grouped(HeifBuilder.entityGroup("altr", 1, 2, 1),
+                    HeifBuilder.entityGroup("ster", 1, 3))));
+            assertThrows(MediaException.Malformed.class, () -> parse(grouped(HeifBuilder.entityGroup("altr", 1, 2, 2))));
+            var builder = new HeifBuilder();
+            builder.primary(builder.item("av01", new byte[]{1}, plain(HeifBuilder.ispe(8, 8)),
+                    essential(HeifBuilder.av1C(AV1C))));
+            builder.metaBox(HeifBuilder.grpl()).metaBox(HeifBuilder.grpl());
+            assertThrows(MediaException.Malformed.class, () -> parse(builder.build()));
+        }
+
+        private static HeifFile lenient(byte[] data) {
+            return HeifFile.parse(MediaSource.of(data), MediaLimits.DEFAULT, false);
+        }
+
+        private static List<Integer> preferred(HeifFile file) {
+            return file.preferredAlternatives(1).stream().map(HeifItem::id).toList();
+        }
+
+        @Test
+        @DisplayName("a lenient parse keeps the groups before a truncated one and accepts repeated identifiers")
+        void lenient() {
+            var altr = HeifBuilder.entityGroup("altr", 1, 2, 1);
+            var truncated = HeifBuilder.entityGroup("ster", 9, 3, 1);
+            truncated = Arrays.copyOf(truncated, truncated.length - 4);
+            truncated[3] -= 4;
+            var kept = lenient(grouped(altr, truncated));
+            assertEquals(1, kept.entityGroups().size());
+            assertEquals(List.of(2), preferred(kept));
+            assertEquals(List.of(), lenient(grouped(truncated, altr)).entityGroups());
+            var repeated = lenient(grouped(HeifBuilder.entityGroup("ster", 1, 3, 3),
+                    HeifBuilder.entityGroup("altr", 1, 2, 2, 1)));
+            assertEquals(2, repeated.entityGroups().size());
+            assertArrayEquals(new int[]{2, 2, 1}, repeated.entityGroups().get(1).entities());
+            assertEquals(List.of(2, 2), preferred(repeated));
+            var builder = new HeifBuilder();
+            var primary = builder.item("av01", new byte[]{1}, plain(HeifBuilder.ispe(8, 8)),
+                    essential(HeifBuilder.av1C(AV1C)));
+            builder.item("av01", new byte[]{2}, plain(HeifBuilder.ispe(8, 8)), essential(HeifBuilder.av1C(AV1C)));
+            builder.primary(primary).metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 5, 2, 1)))
+                    .metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 6, 1, 2)));
+            assertEquals(List.of(2), preferred(lenient(builder.build())));
+        }
+    }
 }

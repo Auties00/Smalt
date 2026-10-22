@@ -13,6 +13,8 @@ import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.color.YcgcoR;
+import com.github.auties00.smalt.internal.heif.HeifItem;
+import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 
@@ -75,6 +77,34 @@ final class Colors {
                 .withChromaSiting(siting)
                 .withMasteringDisplay(mastering)
                 .withContentLightLevel(lightLevel);
+    }
+
+    /**
+     * Applies the color properties of a derived image item to the color description of its input.
+     *
+     * @param base the description of the input samples
+     * @param item the derived item
+     * @return {@code base} with the code points and range of the item's {@code nclx} property and its
+     * {@code clli} and {@code mdcv} properties applied, where present
+     */
+    static ColorInfo override(ColorInfo base, HeifItem item) {
+        var result = base;
+        var nclx = item.property(HeifProperty.ColorNclx.class);
+        if (nclx != null) {
+            result = result.withMatrix(MatrixCoefficients.of(nclx.matrix()))
+                    .withRange(nclx.fullRange() ? ColorRange.FULL : ColorRange.LIMITED)
+                    .withPrimaries(ColorPrimaries.of(nclx.primaries()))
+                    .withTransfer(TransferCharacteristics.of(nclx.transfer()));
+        }
+        var lightLevel = item.property(HeifProperty.ContentLightLevel.class);
+        if (lightLevel != null) {
+            result = result.withContentLightLevel(HeifPictures.contentLightLevel(lightLevel));
+        }
+        var mastering = item.property(HeifProperty.MasteringDisplay.class);
+        if (mastering != null) {
+            result = result.withMasteringDisplay(HeifPictures.masteringDisplay(mastering));
+        }
+        return result;
     }
 
     /**

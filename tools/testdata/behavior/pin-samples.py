@@ -9,12 +9,14 @@ shows up as a reviewed change of this manifest.
 import hashlib
 import os
 
-ROOTS = ["core/src/test/resources/samples", "image/src/test/resources/samples"]
+ROOTS = ["core/src/test/resources/samples", "image/src/test/resources/samples", "video/src/test/resources/samples"]
 
 
 def generator(root, relative):
     if root.startswith("image/"):
         return "make-image-samples.sh"
+    if root.startswith("video/"):
+        return "make-avif-samples.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
     return "make-samples.sh"

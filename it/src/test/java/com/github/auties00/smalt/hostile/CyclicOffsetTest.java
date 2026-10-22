@@ -53,6 +53,9 @@ class CyclicOffsetTest {
                 new Input("HEIF grid that is its own tile", () -> heifGrid(true)),
                 new Input("HEIF grids that are each other's tile", () -> heifGrid(false)),
                 new Input("HEIF image that is its own thumbnail and alpha", CyclicOffsetTest::heifSelfReferences),
+                new Input("AVIF identity derivations that are each other's input", () -> avifDerived("iden")),
+                new Input("AVIF overlays that use themselves and each other", () -> avifDerived("iovl")),
+                new Input("AVIF sample transforms preferred to their own input", () -> avifDerived("sato")),
                 new Input("OS/2 bitmap array whose last entry is its own successor", () -> bitmapArray(true)),
                 new Input("OS/2 bitmap array whose third entry links back to the second", () -> bitmapArray(false)));
     }
@@ -279,6 +282,30 @@ class CyclicOffsetTest {
             builder.reference("dimg", first, second);
             builder.reference("dimg", second, first);
         }
+        return builder.primary(first).build();
+    }
+
+    static byte[] avifDerived(String type) {
+        var builder = new HeifBuilder();
+        var single = type.equals("iden");
+        var data = switch (type) {
+            case "iovl" -> HeifBuilder.overlay(false, new int[4], 32, 32, new int[]{0, 0}, new int[]{0, 0});
+            case "sato" -> HeifBuilder.sato(2, 1, 2, 128);
+            default -> new byte[0];
+        };
+        var first = builder.idatItem(type, data, HeifBuilder.plain(HeifBuilder.ispe(32, 32)),
+                HeifBuilder.plain(HeifBuilder.pixi(16)));
+        var second = builder.idatItem(type, data, HeifBuilder.plain(HeifBuilder.ispe(32, 32)),
+                HeifBuilder.plain(HeifBuilder.pixi(16)));
+        if (single) {
+            builder.reference("dimg", first, second).reference("dimg", second, first);
+        } else {
+            builder.reference("dimg", first, second, first).reference("dimg", second, first, second);
+        }
+        if (!type.equals("sato")) {
+            builder.reference("thmb", second, first);
+        }
+        builder.metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 1, second, first)));
         return builder.primary(first).build();
     }
 

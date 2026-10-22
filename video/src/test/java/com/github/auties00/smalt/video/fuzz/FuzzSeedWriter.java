@@ -17,7 +17,9 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
 /**
  * Writes the committed seeds of the video fuzz targets (tools/fuzz/README.md): a few frames encoded by ffmpeg and
  * converted to the packet format through Smalt's demuxers, and still AVIF images. Runs only with
- * {@code -Dsmalt.fuzz.writeSeeds=true}.
+ * {@code -Dsmalt.fuzz.writeSeeds=true}. The AVIF seeds of derived images and sample transforms,
+ * {@code valid-derived.avif} and {@code valid-sato.avif}, are written with the behavior samples by
+ * {@code tools/testdata/behavior/make-avif-samples.py}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")

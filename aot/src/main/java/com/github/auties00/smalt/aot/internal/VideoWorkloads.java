@@ -310,9 +310,10 @@ final class VideoWorkloads {
 
     /**
      * Returns a workload that probes and decodes AVIF images: a lossy picture with alpha, a 10-bit
-     * 4:4:4 picture at its full depth, a 10-bit animation with alpha played as 16-bit frames, and
-     * the triangle-filter resampling of 8-bit and 10-bit alpha planes that alpha images of another
-     * size than their color take.
+     * 4:4:4 picture at its full depth, an image overlay of an identity derivation, a 16-bit sample
+     * transform, a 10-bit animation with alpha played as 16-bit frames and sought back, and the
+     * triangle-filter resampling of 8-bit and 10-bit alpha planes that alpha images of another size
+     * than their color take.
      *
      * @return the workload
      */
@@ -336,14 +337,23 @@ final class VideoWorkloads {
                 .color(luma.color()).luma(luma.y(), luma.yStride()).build();
         var alpha10 = ImageOps.toBitDepth(alpha8, 10);
         var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        var tiles = SyntheticVideo.natural(96, 64, 2);
+        var first = SyntheticAvif.Coded.of(AvifEncoder.encode(tiles.getFirst(), AvifEncoderOptions.lossy(70)));
+        var second = SyntheticAvif.Coded.of(AvifEncoder.encode(tiles.getLast(), AvifEncoderOptions.lossy(70)));
+        var overlay = SyntheticAvif.overlay(first, second);
+        var transform = SyntheticAvif.sampleTransform(first, second);
         return TrainingWorkload.of("avif-decode", () -> {
             Blackhole.consume(AvifDecoder.probe(MediaSource.of(lossy)).hashCode());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(lossy), ImageDecoderOptions.defaults()).picture().width());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(deep), highBitDepth).picture().width());
+            Blackhole.consume(AvifDecoder.decode(MediaSource.of(overlay)).picture().width());
+            Blackhole.consume(AvifDecoder.decode(MediaSource.of(transform), highBitDepth).picture().width());
             try (var reader = AvifDecoder.openAnimation(MediaSource.of(animated), highBitDepth)) {
                 for (var frame = reader.read(); frame != null; frame = reader.read()) {
                     Blackhole.consume(frame.picture().width());
                 }
+                reader.seek(40_000);
+                Blackhole.consume(reader.read().picture().width());
             }
             Blackhole.consume(ImageOps.resize(alpha8, 192, 128, ResizeFilter.BILINEAR).width());
             Blackhole.consume(ImageOps.resize(alpha10, 48, 32, ResizeFilter.BILINEAR).width());
