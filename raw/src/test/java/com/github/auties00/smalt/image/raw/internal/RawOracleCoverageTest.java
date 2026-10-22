@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
@@ -15,7 +16,6 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks every raw sample that has an Adobe DNG Converter oracle file in the coverage directory
@@ -55,7 +55,7 @@ class RawOracleCoverageTest {
     @MethodSource("samples")
     @DisplayName("the decoder reproduces every photosite the converter stores for the sample")
     void sample(String oracleName) {
-        assumeTrue(!oracleName.equals(NONE), "no oracle files in " + ORACLE + "; run tools/testdata/raw-oracle.py --coverage");
+        Skip.unless(!oracleName.equals(NONE), "data:raw-oracle-coverage", "no oracle files in " + ORACLE + "; run tools/testdata/raw-oracle.py --coverage");
         var base = oracleName.substring(0, oracleName.length() - 4);
         var raw = Stream.of(".orf", ".rw2", ".rwl")
                 .map(extension -> Conformance.directory().resolve(base + extension))

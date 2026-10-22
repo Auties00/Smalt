@@ -115,7 +115,7 @@ class ReaderSeekTest {
         @Test
         @DisplayName("rejects seeking a container that cannot seek")
         void unsupported() {
-            var file = Fixtures.tone("opus", 440, 48_000, 1, 0.2, List.of("-c:a", "libopus", "-f", "ogg"));
+            var file = Fixtures.tone("aac", 440, 48_000, 1, 0.2, List.of("-c:a", "aac", "-f", "adts"));
             try (var demuxer = Containers.openDemuxer(new UnsizedSource(Fixtures.read(file), 4096))) {
                 assertFalse(demuxer.isSeekable());
                 assertThrows(MediaException.Unsupported.class, () -> demuxer.seek(0));
