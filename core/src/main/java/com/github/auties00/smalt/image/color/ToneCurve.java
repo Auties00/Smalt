@@ -2,10 +2,12 @@
 package com.github.auties00.smalt.image.color;
 
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.PriorityQueue;
 
 /**
- * Maps one channel through a one-dimensional transfer function: an ICC parametric curve or a
- * table of 16-bit samples.
+ * Maps one channel through a one-dimensional transfer function: an ICC parametric curve, a
+ * table of 16-bit samples, or a segmented curve of a {@code multiProcessElementType} curve set.
  *
  * <p>Parametric curves use the Little CMS numbering: types {@code 1} to {@code 5} are the ICC
  * {@code parametricCurveType} functions {@code 0} to {@code 4}, and a negative type is the
@@ -19,12 +21,20 @@ import java.util.Arrays;
  * </ul>
  * A tabulated curve interpolates linearly between its samples, which span {@code 0..1} evenly.
  *
+ * <p>A segmented curve ({@code segmentedCurveType}, ICC.1:2022 section 11.2.2) is evaluated in floating point
+ * over the whole real line, split at its breakpoints: segment {@code i} covers {@code x0 < x <= x1}, from
+ * {@link #MINUS_INFINITY} to {@link #PLUS_INFINITY}, and is either a formula ({@link Segment#type()} {@code 6} to
+ * {@code 8}, the ICC formula types {@code 0} to {@code 2}) or a sampled curve interpolated linearly. Its 16-bit
+ * operations (inversion, linearity and slope checks) use 4096 samples of it.
+ *
  * <p>Instances are immutable and thread-safe.
  *
  * @implNote This implementation follows Little CMS 2.17 ({@code cmsgamma.c}): parametric curves are evaluated in double
  * precision and returned as {@code float}, tabulated curves quantize their input to 16 bits and interpolate in 16.16
  * fixed point, and a tabulated curve is inverted into a 4096-sample table by searching the interval that holds each
- * output, exactly as {@code cmsReverseToneCurveEx} does.
+ * output, exactly as {@code cmsReverseToneCurveEx} does. Segmented curves follow {@code EvalSegmentedFn} and
+ * {@code cmsBuildSegmentedToneCurve}, including the 4096 samples taken while the implicit first point of every
+ * sampled segment is still zero, as {@code ReadSegmentedCurve} ({@code cmstypes.c}) leaves them.
  */
 final class ToneCurve {
     /**
@@ -38,9 +48,125 @@ final class ToneCurve {
     private static final int[] PARAMETERS = {1, 3, 4, 5, 7};
 
     /**
+     * The number of samples of the 16-bit table of a segmented curve.
+     */
+    private static final int SEGMENTED_SAMPLES = 4096;
+
+    /**
+     * The start of the first segment of a segmented curve, and the value of a segmented curve outside its segments.
+     */
+    static final float MINUS_INFINITY = -1e22f;
+
+    /**
+     * The end of the last segment of a segmented curve, and the value of a segmented curve that overflows.
+     */
+    static final float PLUS_INFINITY = 1e22f;
+
+    /**
+     * The number of parameters of the segment formulas {@code 6} to {@code 8}, indexed by {@code type - 6}.
+     */
+    static final int[] SEGMENT_PARAMETERS = {4, 5, 5};
+
+    /**
      * The identity curve.
      */
     static final ToneCurve IDENTITY = parametric(1, new double[]{1.0});
+
+    /**
+     * Describes one segment of a segmented curve, covering {@code x0 < x <= x1}.
+     *
+     * @param x0 the start of the domain, exclusive
+     * @param x1 the end of the domain, inclusive
+     * @param type {@code 0} for a sampled segment, or {@code 6}, {@code 7} or {@code 8} for the formulas
+     * {@code Y = (aX + b)^g + c}, {@code Y = a log10(b X^g + c) + d} and {@code Y = a b^(cX + d) + e}
+     * @param parameters the formula parameters in file order ({@code g, a, b, c}, {@code g, a, b, c, d} or
+     * {@code a, b, c, d, e}), or {@code null} for a sampled segment
+     * @param samples the samples of a sampled segment, from {@code x0} to {@code x1} evenly; the first is the value
+     * of the previous segment at {@code x0}, filled in by {@link #segmented}; {@code null} for a formula
+     */
+    record Segment(float x0, float x1, int type, double[] parameters, float[] samples) {
+    }
+
+    /**
+     * Finds the segment of a segmented curve that applies to an input in logarithmic time.
+     *
+     * <p>The distinct breakpoints of all segments, sorted, split the line into elementary intervals
+     * {@code bounds[k] < x <= bounds[k + 1]}; every segment domain is a union of them, so the last segment whose
+     * domain holds an input is the one recorded for its interval.
+     *
+     * @param bounds the distinct breakpoints of the segments in ascending order, NaN excluded
+     * @param owners the index of the segment applying to each elementary interval, or {@code -1} for none;
+     * {@code bounds.length - 1} entries
+     */
+    private record SegmentIndex(float[] bounds, int[] owners) {
+        /**
+         * Builds the index of segments, sweeping the elementary intervals in ascending order with a heap, ordered
+         * by segment index, of the segments that start at or before the current interval.
+         *
+         * @param segments the segments, at least one
+         * @return the index
+         */
+        static SegmentIndex of(Segment[] segments) {
+            var points = new float[segments.length * 2];
+            var count = 0;
+            for (var segment : segments) {
+                if (!Float.isNaN(segment.x0()) && !Float.isNaN(segment.x1())) {
+                    points[count++] = segment.x0();
+                    points[count++] = segment.x1();
+                }
+            }
+            Arrays.sort(points, 0, count);
+            var distinct = 0;
+            for (var i = 0; i < count; i++) {
+                if (distinct == 0 || points[i] != points[distinct - 1]) {
+                    points[distinct++] = points[i];
+                }
+            }
+            var bounds = Arrays.copyOf(points, distinct);
+            var owners = new int[Math.max(0, distinct - 1)];
+            var order = new Integer[segments.length];
+            for (var i = 0; i < order.length; i++) {
+                order[i] = i;
+            }
+            Arrays.sort(order, (a, b) -> Float.compare(segments[a].x0(), segments[b].x0()));
+            var active = new PriorityQueue<Integer>(Comparator.reverseOrder());
+            var next = 0;
+            for (var k = 0; k < owners.length; k++) {
+                while (next < order.length && segments[order[next]].x0() <= bounds[k]) {
+                    if (!Float.isNaN(segments[order[next]].x1())) {
+                        active.add(order[next]);
+                    }
+                    next++;
+                }
+                while (!active.isEmpty() && segments[active.peek()].x1() < bounds[k + 1]) {
+                    active.poll();
+                }
+                owners[k] = active.isEmpty() ? -1 : active.peek();
+            }
+            return new SegmentIndex(bounds, owners);
+        }
+
+        /**
+         * Returns the segment that applies to an input.
+         *
+         * @param r the input
+         * @return the index of the last segment whose domain holds {@code r}, or {@code -1} when none does, NaN
+         * included
+         */
+        int find(double r) {
+            var low = 0;
+            var high = bounds.length;
+            while (low < high) {
+                var middle = (low + high) >>> 1;
+                if (r <= bounds[middle]) {
+                    high = middle;
+                } else {
+                    low = middle + 1;
+                }
+            }
+            return low == 0 || low == bounds.length ? -1 : owners[low - 1];
+        }
+    }
 
     /**
      * The parametric type, or {@code 0} for a tabulated curve.
@@ -53,10 +179,20 @@ final class ToneCurve {
     private final double[] parameters;
 
     /**
-     * The 16-bit samples of a tabulated curve, or of a parametric curve sampled at 4096 points
+     * The 16-bit samples of a tabulated curve, or of a parametric or segmented curve sampled at 4096 points
      * (2 for the identity), which decide whether the curve descends.
      */
     private final int[] table;
+
+    /**
+     * The segments of a segmented curve, or {@code null}.
+     */
+    private final Segment[] segments;
+
+    /**
+     * The index that finds the segment of a segmented curve applying to an input, or {@code null}.
+     */
+    private final SegmentIndex index;
 
     /**
      * Constructs a curve.
@@ -64,11 +200,15 @@ final class ToneCurve {
      * @param type the parametric type, or {@code 0}
      * @param parameters the parameters, or {@code null}
      * @param table the 16-bit samples
+     * @param segments the segments of a segmented curve, or {@code null}
+     * @param index the index of the segments, or {@code null}
      */
-    private ToneCurve(int type, double[] parameters, int[] table) {
+    private ToneCurve(int type, double[] parameters, int[] table, Segment[] segments, SegmentIndex index) {
         this.type = type;
         this.parameters = parameters;
         this.table = table;
+        this.segments = segments;
+        this.index = index;
     }
 
     /**
@@ -90,7 +230,7 @@ final class ToneCurve {
         for (var i = 0; i < samples; i++) {
             table[i] = ColorMath.saturateWord(evaluate(type, copy, (double) i / (samples - 1)) * 65535.0);
         }
-        return new ToneCurve(type, copy, table);
+        return new ToneCurve(type, copy, table, null, null);
     }
 
     /**
@@ -114,13 +254,143 @@ final class ToneCurve {
         if (samples.length < 2) {
             throw new IllegalArgumentException("a tabulated curve needs at least two samples");
         }
-        return new ToneCurve(0, null, samples.clone());
+        return new ToneCurve(0, null, samples.clone(), null, null);
+    }
+
+    /**
+     * Creates a segmented curve.
+     *
+     * <p>The first sample of every sampled segment is replaced by the value of the curve at the start of that
+     * segment, the end of the previous one.
+     *
+     * @param segments the segments with ascending domains, at least one, the first starting at
+     * {@link #MINUS_INFINITY} and the last ending at {@link #PLUS_INFINITY}; copied
+     * @return the curve
+     * @throws IllegalArgumentException if a segment type is unknown, a formula lacks parameters or a sampled
+     * segment has no samples
+     */
+    static ToneCurve segmented(Segment[] segments) {
+        if (segments.length == 0) {
+            throw new IllegalArgumentException("a segmented curve needs a segment");
+        }
+        var copy = new Segment[segments.length];
+        for (var i = 0; i < segments.length; i++) {
+            var segment = segments[i];
+            if (segment.type() == 0) {
+                if (segment.samples() == null || segment.samples().length == 0) {
+                    throw new IllegalArgumentException("sampled segment without samples");
+                }
+                var samples = segment.samples().clone();
+                samples[0] = 0;
+                copy[i] = new Segment(segment.x0(), segment.x1(), 0, null, samples);
+            } else {
+                if (segment.type() < 6 || segment.type() > 8 || segment.parameters() == null
+                        || segment.parameters().length < SEGMENT_PARAMETERS[segment.type() - 6]) {
+                    throw new IllegalArgumentException("invalid curve segment of type " + segment.type());
+                }
+                copy[i] = new Segment(segment.x0(), segment.x1(), segment.type(), segment.parameters().clone(), null);
+            }
+        }
+        var index = SegmentIndex.of(copy);
+        var table = new int[SEGMENTED_SAMPLES];
+        for (var i = 0; i < SEGMENTED_SAMPLES; i++) {
+            var value = evaluateSegments(copy, index, (double) i / (SEGMENTED_SAMPLES - 1));
+            table[i] = ColorMath.saturateWord(value * 65535.0);
+        }
+        for (var segment : copy) {
+            if (segment.type() == 0) {
+                segment.samples()[0] = (float) evaluateSegments(copy, index, segment.x0());
+            }
+        }
+        return new ToneCurve(0, null, table, copy, index);
+    }
+
+    /**
+     * Evaluates segments ({@code EvalSegmentedFn}): the last segment whose domain holds the input applies.
+     *
+     * @param segments the segments of the curve
+     * @param index the index of the segments
+     * @param r the input
+     * @return the output; {@link #PLUS_INFINITY} for an infinite result of either sign, {@link #MINUS_INFINITY}
+     * when no segment covers the input
+     */
+    private static double evaluateSegments(Segment[] segments, SegmentIndex index, double r) {
+        var owner = index.find(r);
+        if (owner < 0) {
+            return MINUS_INFINITY;
+        }
+        var segment = segments[owner];
+        double out;
+        if (segment.type() == 0) {
+            var r1 = (float) (r - segment.x0()) / (segment.x1() - segment.x0());
+            out = interpolate(segment.samples(), r1);
+        } else {
+            out = formula(segment.type(), segment.parameters(), r);
+        }
+        return Double.isInfinite(out) ? PLUS_INFINITY : out;
+    }
+
+    /**
+     * Interpolates evenly spaced samples linearly in single precision ({@code LinLerp1Dfloat}).
+     *
+     * @param samples the samples over {@code 0..1}
+     * @param value the input, clamped to {@code 0..1}
+     * @return the output
+     */
+    private static float interpolate(float[] samples, float value) {
+        var domain = samples.length - 1;
+        var clamped = clamp(value);
+        if (clamped == 1.0f || domain == 0) {
+            return samples[domain];
+        }
+        clamped *= domain;
+        var cell0 = (int) Math.floor(clamped);
+        var cell1 = (int) Math.ceil(clamped);
+        var rest = clamped - cell0;
+        var y0 = samples[cell0];
+        var y1 = samples[cell1];
+        return y0 + (y1 - y0) * rest;
+    }
+
+    /**
+     * Clamps a value to {@code 0..1}, mapping NaN and values below {@code 1e-9} to zero ({@code fclamp}).
+     *
+     * @param value the value to clamp
+     * @return the clamped value
+     */
+    static float clamp(float value) {
+        return value < 1.0e-9f || Float.isNaN(value) ? 0.0f : (value > 1.0f ? 1.0f : value);
+    }
+
+    /**
+     * Evaluates a segment formula.
+     *
+     * @param type the formula, {@code 6} to {@code 8}
+     * @param p the parameters in file order
+     * @param r the input
+     * @return the output
+     */
+    private static double formula(int type, double[] p, double r) {
+        return switch (type) {
+            case 6 -> {
+                var e = p[1] * r + p[2];
+                if (p[0] == 1.0) {
+                    yield e + p[3];
+                }
+                yield e < 0 ? p[3] : Math.pow(e, p[0]) + p[3];
+            }
+            case 7 -> {
+                var e = p[2] * Math.pow(r, p[0]) + p[3];
+                yield e <= 0 ? p[4] : p[1] * Math.log10(e) + p[4];
+            }
+            default -> p[0] * Math.pow(p[1], p[2] * r + p[3]) + p[4];
+        };
     }
 
     /**
      * Returns the parametric type.
      *
-     * @return the Little CMS type, or {@code 0} for a tabulated curve
+     * @return the Little CMS type, or {@code 0} for a tabulated or segmented curve
      */
     int type() {
         return type;
@@ -172,6 +442,9 @@ final class ToneCurve {
      * @return the output
      */
     float evaluate(float value) {
+        if (segments != null) {
+            return (float) evaluateSegments(segments, index, value);
+        }
         if (type == 0) {
             return (float) (evaluate16(ColorMath.saturateWord(value * 65535.0)) / 65535.0);
         }
@@ -214,7 +487,7 @@ final class ToneCurve {
     /**
      * Returns the inverse of this curve.
      *
-     * <p>A parametric curve inverts analytically. A tabulated curve inverts into 4096 samples:
+     * <p>A parametric curve inverts analytically. A tabulated or segmented curve inverts its samples into 4096:
      * each output is found in the last interval (scanning from the top for an ascending curve)
      * whose samples bracket it, and interpolated linearly inside it.
      *
@@ -245,7 +518,7 @@ final class ToneCurve {
             }
             samples[i] = ColorMath.saturateWord(a * y + b);
         }
-        return new ToneCurve(0, null, samples);
+        return new ToneCurve(0, null, samples, null, null);
     }
 
     /**

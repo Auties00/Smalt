@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.jp2;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
@@ -345,7 +344,8 @@ public final class Jp2EncoderOptions {
      * {@return the color profile embedded in a JP2 file, or empty to declare sRGB (or gray); empty
      * by default}
      *
-     * <p>A high-dynamic-range profile, which has no ICC form, is rejected.
+     * <p>A high-dynamic-range profile is written in its ICC form, whose {@code cicp} tag carries its PQ
+     * or HLG code points.
      */
     public Optional<ColorProfile> colorProfile() {
         return Optional.ofNullable(colorProfile);
@@ -700,8 +700,6 @@ public final class Jp2EncoderOptions {
          * dimension is not positive, a code-block dimension is not a power of two in [4, 1024] or a
          * code-block holds more than 4096 samples, a precinct dimension is not a power of two in
          * [2, 32768], or the comment is not Latin-1 text of at most 65531 characters
-         * @throws MediaException.Unsupported if the color profile has no ICC form (a
-         * high-dynamic-range profile)
          */
         public Jp2EncoderOptions build() {
             var layers = ratios != null ? ratios : psnrTargets;
@@ -730,9 +728,6 @@ public final class Jp2EncoderOptions {
                     || !StandardCharsets.ISO_8859_1.newEncoder().canEncode(comment))) {
                 throw new IllegalArgumentException("comment is not Latin-1 text of at most " + MAX_COMMENT
                         + " characters");
-            }
-            if (colorProfile != null && colorProfile.isHighDynamicRange()) {
-                throw new MediaException.Unsupported("icc", "a high-dynamic-range profile has no ICC form");
             }
             return new Jp2EncoderOptions(this);
         }

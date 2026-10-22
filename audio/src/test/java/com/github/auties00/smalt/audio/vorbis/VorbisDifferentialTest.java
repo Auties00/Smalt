@@ -68,7 +68,10 @@ class VorbisDifferentialTest {
             energy += (double) value * value;
         }
         if (energy == 0) {
-            assertArrayEquals(reference, ours, "silence");
+            // silence compares by value: ffmpeg's aarch64 build decodes some zero samples as -0.0
+            for (var i = 0; i < ours.length; i++) {
+                assertEquals(0.0f, Math.abs(ours[i]), "silence at sample " + i);
+            }
             return;
         }
         var snr = Quality.snr(reference, ours);

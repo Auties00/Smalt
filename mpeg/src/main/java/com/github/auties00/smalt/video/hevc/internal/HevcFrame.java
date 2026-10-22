@@ -189,6 +189,22 @@ public final class HevcFrame {
     public boolean irap;
 
     /**
+     * Whether the picture's access unit carried a recovery point SEI message.
+     */
+    public boolean recoveryPoint;
+
+    /**
+     * Whether every slice of the picture is an I slice.
+     */
+    public boolean intraOnly;
+
+    /**
+     * {@code pic_struct} of the picture timing SEI message of the picture's access unit, or -1
+     * when none was signaled.
+     */
+    public int picStruct = -1;
+
+    /**
      * Whether decoding the picture failed, so its samples are concealed.
      */
     public boolean damaged;
@@ -335,6 +351,9 @@ public final class HevcFrame {
         latencyCount = 0;
         generated = false;
         irap = false;
+        recoveryPoint = false;
+        intraOnly = true;
+        picStruct = -1;
         damaged = false;
         sliceCount = 0;
         Arrays.fill(ref0, (byte) -1);

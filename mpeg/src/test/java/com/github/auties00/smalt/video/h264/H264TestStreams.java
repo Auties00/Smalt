@@ -64,17 +64,25 @@ final class H264TestStreams {
         return starts;
     }
 
-    /** Groups NAL units into access units: a new unit starts at an AUD, SPS, PPS or SEI after a slice, or at a slice with first_mb_in_slice 0. */
+    /**
+     * Groups NAL units into access units: a new unit starts at an AUD, SPS, PPS or SEI after a slice, or at a slice
+     * with first_mb_in_slice 0 (of the Y plane when the sequence codes its color planes separately).
+     */
     static List<List<byte[]>> accessUnits(List<byte[]> nals) {
         var units = new ArrayList<List<byte[]>>();
         var current = new ArrayList<byte[]>();
         var sawSlice = false;
+        var separatePlanes = false;
         for (var nal : nals) {
             var type = nal[0] & 0x1F;
+            if (type == 7) {
+                separatePlanes = separatePlanes(nal);
+            }
             var boundary = false;
             if (type == 9 || ((type == 7 || type == 8 || type == 6) && sawSlice)) {
                 boundary = true;
-            } else if ((type == 1 || type == 5) && sawSlice && firstMbIsZero(nal)) {
+            } else if ((type == 1 || type == 5) && sawSlice && firstMbIsZero(nal)
+                    && (!separatePlanes || colorPlane(nal) == 0)) {
                 boundary = true;
             }
             if (boundary && !current.isEmpty()) {
@@ -95,6 +103,45 @@ final class H264TestStreams {
 
     private static boolean firstMbIsZero(byte[] nal) {
         return nal.length > 1 && (nal[1] & 0x80) != 0;
+    }
+
+    /** Returns separate_colour_plane_flag of an SPS NAL unit (false for profiles without chroma_format_idc). */
+    private static boolean separatePlanes(byte[] nal) {
+        var profile = nal[1] & 0xFF;
+        if (profile != 100 && profile != 110 && profile != 122 && profile != 244 && profile != 44 && profile != 83
+                && profile != 86 && profile != 118 && profile != 128 && profile != 138 && profile != 139
+                && profile != 134 && profile != 135) {
+            return false;
+        }
+        var position = new int[]{32};
+        ue(nal, position);
+        return ue(nal, position) == 3 && bit(nal, position) == 1;
+    }
+
+    /** Returns colour_plane_id of a slice NAL unit of a sequence that codes its color planes separately. */
+    private static int colorPlane(byte[] nal) {
+        var position = new int[]{8};
+        ue(nal, position);
+        ue(nal, position);
+        ue(nal, position);
+        return (bit(nal, position) << 1) | bit(nal, position);
+    }
+
+    private static int bit(byte[] data, int[] position) {
+        var at = position[0]++;
+        return at >> 3 < data.length ? (data[at >> 3] >> (7 - (at & 7))) & 1 : 0;
+    }
+
+    private static int ue(byte[] data, int[] position) {
+        var zeros = 0;
+        while (zeros < 32 && bit(data, position) == 0) {
+            zeros++;
+        }
+        var value = 0;
+        for (var i = 0; i < zeros; i++) {
+            value = (value << 1) | bit(data, position);
+        }
+        return (1 << zeros) - 1 + value;
     }
 
     /** Concatenates NAL units with four-byte start codes. */
