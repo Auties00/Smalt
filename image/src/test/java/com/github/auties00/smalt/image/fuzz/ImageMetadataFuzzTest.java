@@ -9,6 +9,7 @@ import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifReader;
 import com.github.auties00.smalt.image.exif.ExifWriter;
+import com.github.auties00.smalt.image.jpeg.JpegFill;
 import com.github.auties00.smalt.image.jpeg.JpegTransformOptions;
 import com.github.auties00.smalt.image.jpeg.JpegTransforms;
 import com.github.auties00.smalt.image.metadata.ImageMetadata;
@@ -189,8 +190,22 @@ class ImageMetadataFuzzTest {
             run.skip("not a JPEG");
             return;
         }
-        for (var options : TRANSFORMS) {
-            run.value("transform " + options, () -> JpegTransforms.transform(MediaSource.of(data), options))
+        var options = new ArrayList<>(TRANSFORMS);
+        var info = run.value("probe", () -> Images.probe(MediaSource.of(data)));
+        if (info.isPresent() && info.get().width() <= 2048 && info.get().height() <= 2048) {
+            // the geometry of the extensions follows the image, so none of them is an argument error
+            var width = info.get().width();
+            var height = info.get().height();
+            options.add(JpegTransformOptions.builder().crop(new Region(16, 8, width + 32, height + 16))
+                    .fill(JpegFill.REFLECT).arithmetic(true).restartRows(1).build());
+            options.add(JpegTransformOptions.builder().wipe(new Region(0, 0, Math.max(1, width / 2), height))
+                    .fill(JpegFill.REFLECT).build());
+            options.add(JpegTransformOptions.builder().wipe(new Region(width / 3, height / 3, Math.max(1, width / 3),
+                    Math.max(1, height / 3))).fill(JpegFill.FLAT).progressive(true).build());
+            options.add(JpegTransformOptions.builder().drop(data, 0, 0).requantizeDrop(true).build());
+        }
+        for (var option : options) {
+            run.value("transform " + option, () -> JpegTransforms.transform(MediaSource.of(data), option))
                     .ifPresent(output -> {
                         try {
                             Images.decode(MediaSource.of(output), ImageDecoderOptions.builder().limits(Fuzz.LIMITS)

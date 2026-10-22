@@ -125,6 +125,24 @@ for file in 227x149-yuv420-baseline.jpg 227x149-yuv422-progressive.jpg 33x65-yuv
         fi
     done
 done
+# The arithmetic, restart-row, crop-extension, wipe and drop switches; a drop image is named relative to cjpeg12/.
+for file in 227x149-yuv420-baseline.jpg 227x149-yuv422-progressive.jpg 33x65-yuv411-progressive-arithmetic.jpg \
+        227x149-monochrome-arithmetic.jpg 64x48-rgb-baseline-q100.jpg 64x48-yuv444-arithmetic-q100.jpg; do
+    for switches in "-arithmetic" "-arithmetic -progressive -rotate 90" "-arithmetic -grayscale -restart 3B" \
+            "-restart 1" "-progressive -restart 2" "-crop 260x170+16+8" "-crop 260fx170+16+8" \
+            "-crop 260rx40+24+0" "-crop 20fx18f+9+5" "-wipe 20x18+9+5" "-wipe 20fx18+9+5" "-wipe 16rx48+0+0" \
+            "-wipe 40rx65+24+0" "-drop +16+8 64x48-yuv420-progressive-q100.jpg" \
+            "-drop +32+16 64x48-yuv420-progressive-q100.jpg -trim" \
+            "-drop +8+8 33x65-monochrome-baseline.jpg -arithmetic"; do
+        # shellcheck disable=SC2086
+        if md5=$(cd "$OUT" && jpegtran $switches "$file" 2>/dev/null | md5sum | cut -d' ' -f1) \
+                && (cd "$OUT" && jpegtran $switches "$file" > /dev/null 2>&1); then
+            echo "$file;$switches;$md5" >> "$TRAN"
+        else
+            echo "$file;$switches;fails" >> "$TRAN"
+        fi
+    done
+done
 
 # JPEG-compressed 12-bit TIFF files (tiff12.py) and the MD5 of the uncompressed samples libtiff 4.7.1 decodes
 # from them (tiffcp -c none -s, which converts YCbCr to RGB through libjpeg). libtiff drops the last sample of

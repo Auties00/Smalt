@@ -230,9 +230,10 @@ the same on every run.
 
 The 12-bit JPEG tests of `smalt-image` read vectors kept with the tests (`image/src/test/resources`): the
 `cjpeg -precision 12` files in `jpeg/cjpeg12/` with the MD5 of `djpeg -dct int -scale 1/N` for each
-(`jpeg/djpeg12-md5.csv`), the MD5 of `jpegtran` transforms of some of them (`jpeg/jpegtran12-md5.csv`), a
-Motion-JPEG AVI muxed by ffmpeg (`jpeg/mjpeg12.avi`), and JPEG-compressed 12-bit TIFF files (`tiff/jpeg12/`)
-with the MD5 of the samples libtiff decodes from them (`tiff/jpeg12.csv`). `bash
+(`jpeg/djpeg12-md5.csv`), the MD5 of `jpegtran` transforms of some of them, crop extension, `-wipe`, `-drop`,
+`-arithmetic` and restart rows included (`jpeg/jpegtran12-md5.csv`), a Motion-JPEG AVI muxed by ffmpeg
+(`jpeg/mjpeg12.avi`), and JPEG-compressed 12-bit TIFF files (`tiff/jpeg12/`) with the MD5 of the samples libtiff
+decodes from them (`tiff/jpeg12.csv`). `bash
 tools/testdata/jpeg12/make-vectors.sh <testorig12.jpg> <checkout>` regenerates them all from libjpeg-turbo's
 testorig12.jpg (`ljt-testorig12.jpg` in `vectors.tsv`) and a synthetic pattern, with libjpeg-turbo 3.1.3,
 libtiff 4.7.1, ffmpeg 7.1 and Python 3; the output is deterministic and `cjpeg12.sha256` and `jpeg12.sha256`

@@ -40,6 +40,8 @@ import com.github.auties00.smalt.image.jp2.Jp2Format;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
+import com.github.auties00.smalt.image.jpeg.JpegFill;
+import com.github.auties00.smalt.image.jpeg.JpegTransformOptions;
 import com.github.auties00.smalt.image.jpeg.JpegTransforms;
 import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
 import com.github.auties00.smalt.image.jpeg.MjpegEncoder;
@@ -50,6 +52,7 @@ import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
 import com.github.auties00.smalt.image.ops.Dithering;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.QuantizeMethod;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.image.png.ApngEncoder;
 import com.github.auties00.smalt.image.png.PngDecoder;
@@ -439,16 +442,25 @@ final class ImageWorkloads {
 
     /**
      * Returns a workload that transforms a 1280x720 JPEG losslessly (a quarter turn, progressive
-     * recoding and grayscale) and decodes the progressive result.
+     * recoding, grayscale, arithmetic recoding with restart rows, a reflecting crop extension, a flat
+     * wipe and a drop) and decodes the progressive result.
      *
      * @return the workload
      */
     private static TrainingWorkload jpegTransform() {
         var photo = JpegEncoder.encode(SyntheticVideo.natural(1280, 720, 1).getFirst(),
                 JpegEncoderOptions.ofQuality(90));
+        var stamp = JpegEncoder.encode(SyntheticVideo.natural(256, 128, 1).getFirst(),
+                JpegEncoderOptions.ofQuality(60));
         return TrainingWorkload.of("jpeg-transform", () -> {
             Blackhole.consume(JpegTransforms.rotate(MediaSource.of(photo), 90).length);
             Blackhole.consume(JpegTransforms.grayscale(MediaSource.of(photo)).length);
+            Blackhole.consume(JpegTransforms.transform(MediaSource.of(photo), JpegTransformOptions.builder()
+                    .arithmetic(true).restartRows(2).crop(new Region(64, 0, 1408, 720)).fill(JpegFill.REFLECT)
+                    .build()).length);
+            Blackhole.consume(JpegTransforms.transform(MediaSource.of(photo), JpegTransformOptions.builder()
+                    .wipe(new Region(300, 200, 400, 200)).fill(JpegFill.FLAT).build()).length);
+            Blackhole.consume(JpegTransforms.drop(MediaSource.of(photo), MediaSource.of(stamp), 640, 320).length);
             var progressive = JpegTransforms.progressive(MediaSource.of(photo));
             Blackhole.consume(JpegDecoder.decode(MediaSource.of(progressive), ImageDecoderOptions.defaults())
                     .picture().width());

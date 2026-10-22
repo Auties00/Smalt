@@ -47,10 +47,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tests the lossless JPEG transforms: byte identity with libjpeg-turbo's {@code jpegtran} (when it
- * is on {@code PATH}) over every transform, crop, trim, grayscale, progressive, Huffman, copy and
- * restart switch and a range of subsamplings, sizes and source codings; algebraic identities of the
- * transforms; the EXIF orientation and thumbnail handling of {@link JpegTransforms#autoOrient};
- * and robustness against hostile input.
+ * is on {@code PATH}) over every transform, crop (with crop extension and its flags), wipe, trim,
+ * grayscale, progressive, arithmetic, Huffman, copy and restart switch and a range of subsamplings,
+ * sizes and source codings; algebraic identities of the transforms; the EXIF orientation and thumbnail
+ * handling of {@link JpegTransforms#autoOrient}; and robustness against hostile input. The drop switch
+ * and the coefficient-level checks of the extensions are in {@link JpegTransformEditsTest}.
  */
 class JpegTransformsTest {
     private static final Path SCRATCH = scratch();
@@ -67,7 +68,7 @@ class JpegTransformsTest {
         return Oracle.find(name);
     }
 
-    private static byte[] run(String name, List<String> arguments, byte[] input) {
+    static byte[] run(String name, List<String> arguments, byte[] input) {
         var executable = tool(name);
         Oracle.assume(name);
         try {
@@ -76,7 +77,17 @@ class JpegTransformsTest {
             Files.write(in, input);
             var command = new ArrayList<String>();
             command.add(executable.get().toString());
-            command.addAll(arguments);
+            var drops = new ArrayList<Path>();
+            for (var argument : arguments) {
+                if (argument.startsWith("drop:") || argument.endsWith(".jpg")) {
+                    var drop = Files.createTempFile(SCRATCH, "drop", ".jpg");
+                    Files.write(drop, JpegtranSwitches.dropImage(argument));
+                    drops.add(drop);
+                    command.add(drop.toString());
+                } else {
+                    command.add(argument);
+                }
+            }
             command.add("-outfile");
             command.add(out.toString());
             command.add(in.toString());
@@ -92,6 +103,9 @@ class JpegTransformsTest {
             var result = Files.readAllBytes(out);
             Files.delete(in);
             Files.delete(out);
+            for (var drop : drops) {
+                Files.delete(drop);
+            }
             return result;
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);
@@ -101,13 +115,13 @@ class JpegTransformsTest {
         }
     }
 
-    private static final class ToolFailure extends RuntimeException {
+    static final class ToolFailure extends RuntimeException {
         ToolFailure(String message) {
             super(message);
         }
     }
 
-    private static RgbaPicture picture(int width, int height, int seed) {
+    static RgbaPicture picture(int width, int height, int seed) {
         var random = new Random(seed);
         var picture = RgbaPicture.allocate(width, height, false);
         for (var y = 0; y < height; y++) {
@@ -123,8 +137,12 @@ class JpegTransformsTest {
         return picture;
     }
 
-    private static byte[] encode(int width, int height, ChromaFormat format, int restart) {
-        var options = JpegEncoderOptions.ofQuality(88).toBuilder().chromaFormat(format).optimizeHuffman(false)
+    static byte[] encode(int width, int height, ChromaFormat format, int restart) {
+        return encode(width, height, format, restart, 88);
+    }
+
+    static byte[] encode(int width, int height, ChromaFormat format, int restart, int quality) {
+        var options = JpegEncoderOptions.ofQuality(quality).toBuilder().chromaFormat(format).optimizeHuffman(false)
                 .restartInterval(restart).build();
         return JpegEncoder.encode(picture(width, height, width * 31 + height), options);
     }
@@ -213,52 +231,82 @@ class JpegTransformsTest {
             List.of("-copy", "all", "-crop", "20x18+9+5"),
             List.of("-copy", "none"),
             List.of("-copy", "icc", "-flip", "horizontal"),
-            List.of("-perfect", "-rotate", "180")
+            List.of("-perfect", "-rotate", "180"),
+            List.of("-arithmetic"),
+            List.of("-arithmetic", "-progressive"),
+            List.of("-arithmetic", "-rotate", "90", "-restart", "2"),
+            List.of("-arithmetic", "-grayscale", "-restart", "3B"),
+            List.of("-arithmetic", "-progressive", "-transverse", "-trim", "-restart", "1"),
+            List.of("-restart", "1"),
+            List.of("-restart", "2", "-progressive"),
+            List.of("-restart", "1", "-grayscale", "-progressive", "-optimize"),
+            List.of("-restart", "3", "-crop", "20x18+9+5", "-transverse"),
+            List.of("-restart", "65535"),
+            List.of("-restart", "2", "-restart", "5B"),
+            List.of("-restart", "5B", "-restart", "2"),
+            List.of("-restart", "5B", "-restart", "0"),
+            List.of("-restart", "2", "-restart", "0B"),
+            List.of("-crop", "300x200+16+8"),
+            List.of("-crop", "300fx200+16+8"),
+            List.of("-crop", "300rx200+40+8"),
+            List.of("-crop", "300rx20+40+3"),
+            List.of("-crop", "300fx20f+33+3"),
+            List.of("-crop", "20x240+9+24"),
+            List.of("-crop", "20rx240+9+24"),
+            List.of("-crop", "20fx240+9+24"),
+            List.of("-crop", "20fx18f+9+5"),
+            List.of("-crop", "20x18f+9+5"),
+            List.of("-crop", "20fx18+9+5", "-rotate", "270"),
+            List.of("-crop", "21x19f+1+17", "-transverse", "-trim"),
+            List.of("-crop", "300x200+16+8", "-rotate", "90"),
+            List.of("-crop", "300x200+120+8"),
+            List.of("-crop", "300rx200+40+8", "-progressive", "-arithmetic"),
+            List.of("-crop", "300fx200+16+8", "-grayscale", "-copy", "all"),
+            List.of("-wipe", "20x18+9+5"),
+            List.of("-wipe", "20fx18+9+5"),
+            List.of("-wipe", "17fx13+0+16"),
+            List.of("-wipe", "20rx18+9+5"),
+            List.of("-wipe", "20fx18+9+5", "-grayscale", "-progressive"),
+            List.of("-wipe", "20x18+9+5", "-arithmetic", "-restart", "1"),
+            List.of("-wipe", "20x18+9+5", "-rotate", "90"),
+            List.of("-wipe", "20x18+9+5", "-crop", "8x8+0+0"),
+            List.of("-wipe", "300x18+9+5")
     );
+
+    // switches whose geometry depends on the image size: reflections that need the full height and an
+    // edge, flat wipes against one edge, multi-period reflections and one-pixel extensions
+    private static List<List<String>> sized(int width, int height) {
+        return List.of(
+                List.of("-wipe", "16rx" + height + "+0+0"),
+                List.of("-wipe", (width - 24) + "rx" + height + "+24+0"),
+                List.of("-wipe", (width - 9) + "rx" + height + "+9+0", "-grayscale"),
+                List.of("-wipe", "8rx" + (height - 8) + "+0+8"),
+                List.of("-wipe", "16fx" + height + "+0+0"),
+                List.of("-wipe", (width - 16) + "fx8+16+0"),
+                List.of("-wipe", width + "fx" + height + "+0+0"),
+                List.of("-crop", (width + 40) + "rx" + height + "+40+0"),
+                List.of("-crop", (3 * width) + "rx" + (height + 8) + "+" + width + "+8"),
+                List.of("-crop", (2 * width + 8) + "fx" + (height + 16) + "+" + width + "+16"),
+                List.of("-crop", width + "x" + height + "+0+0"),
+                List.of("-crop", (width + 1) + "x" + height + "+1+0"),
+                List.of("-crop", (width + 1) + "fx" + (height + 1) + "+0+1", "-progressive"));
+    }
 
     static Stream<Arguments> pairs() {
         var list = new ArrayList<Arguments>();
         for (var entry : sources().entrySet()) {
-            for (var switches : SWITCHES) {
+            var info = JpegDecoder.probe(MediaSource.of(entry.getValue()));
+            var switchLists = new ArrayList<>(SWITCHES);
+            switchLists.addAll(sized(info.width(), info.height()));
+            for (var switches : switchLists) {
                 list.add(Arguments.of(entry.getKey() + " " + String.join(" ", switches), entry.getValue(), switches));
             }
         }
         return list.stream();
     }
 
-    private static JpegTransformOptions options(List<String> switches) {
-        var options = JpegTransformOptions.jpegtran();
-        for (var i = 0; i < switches.size(); i++) {
-            switch (switches.get(i)) {
-                case "-optimize" -> options = options.toBuilder().optimizeHuffman(true).build();
-                case "-progressive" -> options = options.toBuilder().progressive(true).build();
-                case "-trim" -> options = options.toBuilder().trim(true).build();
-                case "-perfect" -> options = options.toBuilder().perfect(true).build();
-                case "-grayscale" -> options = options.toBuilder().grayscale(true).build();
-                case "-transpose" -> options = options.toBuilder().transform(Orientation.TRANSPOSE).build();
-                case "-transverse" -> options = options.toBuilder().transform(Orientation.TRANSVERSE).build();
-                case "-rotate" -> options = options.toBuilder()
-                        .transform(Orientation.ofRotation(Integer.parseInt(switches.get(++i)), false)).build();
-                case "-flip" -> options = options.toBuilder().transform(switches.get(++i).equals("horizontal")
-                        ? Orientation.FLIP_HORIZONTAL : Orientation.FLIP_VERTICAL).build();
-                case "-restart" -> options = options.toBuilder().restartInterval(Integer.parseInt(switches.get(++i)
-                        .replace("B", ""))).build();
-                case "-copy" -> options = options.toBuilder().markerCopy(switch (switches.get(++i)) {
-                    case "all" -> JpegMarkerCopy.ALL;
-                    case "none" -> JpegMarkerCopy.NONE;
-                    case "icc" -> JpegMarkerCopy.ICC;
-                    default -> JpegMarkerCopy.COMMENTS;
-                }).build();
-                case "-crop" -> {
-                    var spec = switches.get(++i).split("[x+]");
-                    options = options.toBuilder()
-                            .crop(new Region(Integer.parseInt(spec[2]), Integer.parseInt(spec[3]),
-                            Integer.parseInt(spec[0]), Integer.parseInt(spec[1]))).build();
-                }
-                default -> throw new AssertionError(switches.get(i));
-            }
-        }
-        return options;
+    static JpegTransformOptions options(List<String> switches) {
+        return JpegtranSwitches.options(switches);
     }
 
     static Stream<Arguments> recordedTwelveBit() {
@@ -286,7 +334,12 @@ class JpegTransformsTest {
         void identical(String name, String file, List<String> switches, String md5) {
             var source = twelveBit(file);
             if (md5.equals("fails")) {
-                assertThrows(MediaException.class, () -> JpegTransforms.transform(MediaSource.of(source), options(switches)));
+                if (JpegTransformEditsTest.jpegtranCannotDrop(source, switches)) {
+                    return;
+                }
+                var thrown = assertThrows(RuntimeException.class,
+                        () -> JpegTransforms.transform(MediaSource.of(source), options(switches)));
+                assertTrue(thrown instanceof MediaException || thrown instanceof IllegalArgumentException, thrown.toString());
                 return;
             }
             var actual = JpegTransforms.transform(MediaSource.of(source), options(switches));
@@ -529,7 +582,7 @@ class JpegTransformsTest {
         return Arrays.copyOf(buffer.array(), buffer.position());
     }
 
-    private static byte[] withExif(byte[] jpeg, int orientation, boolean thumbnail) {
+    static byte[] withExif(byte[] jpeg, int orientation, boolean thumbnail) {
         var info = JpegDecoder.probe(MediaSource.of(jpeg));
         var thumb = thumbnail ? encode(24, 16, ChromaFormat.YUV420, 0) : null;
         var block = tiff(orientation, info.width(), info.height(), thumb);

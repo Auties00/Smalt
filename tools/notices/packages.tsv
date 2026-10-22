@@ -73,6 +73,7 @@ image.gif.internal	image
 image.heic	mpeg
 image.heic.internal	mpeg
 image.ico	image
+image.internal.density	image
 image.internal.jbig	image
 image.internal.lerc	image
 image.internal.xz	image

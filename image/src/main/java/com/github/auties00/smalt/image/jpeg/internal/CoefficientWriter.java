@@ -1,3 +1,6 @@
+/* Ports libjpeg-turbo (jctrans.c, jcmarker.c, jchuff.c, jcphuff.c, jcmaster.c, jcparam.c). Copyright (C)
+   1991-2019, Thomas G. Lane, Guido Vollbeding; Copyright (C) 2009-2024, D. R. Commander; IJG License. Modified
+   for Smalt. */
 package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -204,9 +207,14 @@ final class CoefficientWriter {
     private final byte[] correctionBits = new byte[MAX_CORRECTION_BITS];
 
     /**
-     * The restart interval in MCUs, or {@code 0}.
+     * The restart interval in MCUs of the current scan, or {@code 0}.
      */
-    private final int restartInterval;
+    private int restartInterval;
+
+    /**
+     * The restart interval in MCU rows of every scan, or {@code 0} to keep {@link #restartInterval}.
+     */
+    private final int restartRows;
 
     /**
      * The number of MCUs left before the next restart marker.
@@ -275,6 +283,24 @@ final class CoefficientWriter {
      */
     CoefficientWriter(int width, int height, Component[] components, int[][] quantTables, int restartInterval,
                       int precision) {
+        this(width, height, components, quantTables, restartInterval, 0, precision);
+    }
+
+    /**
+     * Creates a writer whose restart interval may be given in MCU rows.
+     *
+     * @param width the image width
+     * @param height the image height
+     * @param components the components, at most four
+     * @param quantTables the natural-order quantization table of each slot the components use
+     * @param restartInterval the number of MCUs between restart markers, or {@code 0}; ignored when
+     * {@code restartRows} is not {@code 0}
+     * @param restartRows the number of MCU rows between restart markers, from 0 to 65535, which sets
+     * each scan's interval to that many rows of its MCUs, at most 65535; or {@code 0}
+     * @param precision the sample precision in bits, 8 or 12
+     */
+    CoefficientWriter(int width, int height, Component[] components, int[][] quantTables, int restartInterval,
+                      int restartRows, int precision) {
         this.width = width;
         this.height = height;
         this.precision = precision;
@@ -282,6 +308,7 @@ final class CoefficientWriter {
         this.components = components;
         this.quantTables = quantTables;
         this.restartInterval = restartInterval;
+        this.restartRows = restartRows;
         var maxX = 1;
         var maxY = 1;
         for (var component : components) {
@@ -300,15 +327,17 @@ final class CoefficientWriter {
      * @param markers the marker segments to copy after the file header
      * @param progressive whether to write the progressive scan script instead of one sequential
      * scan
+     * @param arithmetic whether the scans are arithmetic coded
      * @param optimize whether to optimize the Huffman tables; always the case for a progressive or
-     * 12-bit file
+     * 12-bit Huffman file, and meaningless for arithmetic coding
      * @param ycbcr whether the components are YCbCr, which selects the progressive script
      * @return the file
      * @throws MediaException.Malformed if a coefficient is too large for the precision
      */
-    byte[] write(Header header, List<MarkerSegment> markers, boolean progressive, boolean optimize, boolean ycbcr) {
+    byte[] write(Header header, List<MarkerSegment> markers, boolean progressive, boolean arithmetic,
+                 boolean optimize, boolean ycbcr) {
         var scans = progressive ? progressiveScript(components.length, ycbcr) : List.of(sequentialScan());
-        return write(header, markers, scans, progressive, false, optimize);
+        return write(header, markers, scans, progressive, arithmetic, optimize);
     }
 
     /**
@@ -343,6 +372,9 @@ final class CoefficientWriter {
         }
         for (var index = 0; index < scans.size(); index++) {
             var scan = scans.get(index);
+            if (restartRows != 0) {
+                restartInterval = (int) Math.min((long) restartRows * mcusPerRow(scan), 0xFFFF);
+            }
             if (optimized && (scan.ss != 0 || scan.ah == 0)) {
                 gatherPass(scan, progressive);
             }
@@ -354,6 +386,18 @@ final class CoefficientWriter {
         }
         out.writeMarker(0xD9);
         return out.toByteArray();
+    }
+
+    /**
+     * Returns the number of MCUs in one MCU row of a scan: the blocks per row of its component, or the
+     * MCU columns of the frame for an interleaved scan.
+     *
+     * @param scan the scan, of one component or interleaved
+     * @return the number of MCUs per row
+     */
+    private int mcusPerRow(Scan scan) {
+        return scan.components.length == 1 ? components[scan.components[0]].blocksWide
+                : JpegFrame.ceilDiv(width, maxSamplingX * 8);
     }
 
     /**
