@@ -1,0 +1,57 @@
+# audio decode dump of vectors/flac-cellar-subset-38.flac; regenerate with -Dsmalt.test.updateDumps=true
+format FLAC
+duration 3814286
+seekable true
+track 0 FLAC rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER]
+0 frames=4096 crc16=59c93061
+1 frames=4096 crc16=d4697b6f
+2 frames=4096 crc16=0e5ab314
+3 frames=4096 crc16=80c6f897
+4 frames=4096 crc16=62efae39
+5 frames=4096 crc16=411fd14e
+6 frames=4096 crc16=a94d4ed4
+7 frames=4096 crc16=edad7b31
+8 frames=4096 crc16=c7bf255f
+9 frames=4096 crc16=6ebed2ee
+10 frames=4096 crc16=6ebed2ee
+11 frames=4096 crc16=b02eccb9
+12 frames=4096 crc16=56f141b9
+13 frames=4096 crc16=da94650f
+14 frames=4096 crc16=c60ff462
+15 frames=4096 crc16=cfdc4b9e
+16 frames=4096 crc16=6786dd0b
+17 frames=4096 crc16=ab76827d
+18 frames=4096 crc16=a14efe8f
+19 frames=4096 crc16=6ebed2ee
+20 frames=4096 crc16=6ebed2ee
+21 frames=4096 crc16=6ebed2ee
+22 frames=4096 crc16=eb1fc824
+23 frames=4096 crc16=3308e3c4
+24 frames=4096 crc16=1f06ea0b
+25 frames=4096 crc16=8258a5d3
+26 frames=4096 crc16=1113b816
+27 frames=4096 crc16=42cd3f1b
+28 frames=4096 crc16=9df46ff4
+29 frames=4096 crc16=9d3a39b8
+30 frames=4096 crc16=6ebed2ee
+31 frames=4096 crc16=6ebed2ee
+32 frames=4096 crc16=6ebed2ee
+33 frames=4096 crc16=6ebed2ee
+34 frames=4096 crc16=6ebed2ee
+35 frames=4096 crc16=6ebed2ee
+36 frames=4096 crc16=6ebed2ee
+37 frames=4096 crc16=6ebed2ee
+38 frames=4096 crc16=6ebed2ee
+39 frames=4096 crc16=6ebed2ee
+40 frames=4096 crc16=6ebed2ee
+41 frames=274 crc16=f86acfda
+seek 0: @sample 0
+seek 1271428: @sample 56070
+seek 2542857: @sample 112140
+seek 3814286: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format FLAC
+  duration 3814286
+  seekable false
+  track 0 FLAC rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER]

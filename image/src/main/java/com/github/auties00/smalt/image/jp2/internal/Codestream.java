@@ -97,6 +97,39 @@ public final class Codestream {
     static final int EOC = 0xFFD9;
 
     /**
+     * The first marker of the ISO/IEC 15444-2 segments that change the reconstruction: variable DC offset
+     * ({@code DCO}), visual masking ({@code VMS}), downsampling factor style ({@code DFS}) and arbitrary
+     * decomposition style ({@code ADS}), at {@code 0xFF70} to {@code 0xFF73}.
+     */
+    static final int DCO = 0xFF70;
+
+    /**
+     * The last of {@link #DCO}'s run of Part 2 reconstruction segments ({@code ADS}).
+     */
+    static final int ADS = 0xFF73;
+
+    /**
+     * The extended capabilities marker ({@code CAP}), whose {@code Pcap} flags the parts of ISO/IEC 15444 a
+     * codestream needs.
+     */
+    static final int CAP = 0xFF50;
+
+    /**
+     * The {@code Pcap} flag of ISO/IEC 15444-15 (HTJ2K): bit 15, counted from the most significant bit as 1.
+     */
+    private static final int PCAP_PART15 = 1 << (32 - 15);
+
+    /**
+     * The non-linearity point transformation marker of ISO/IEC 15444-2.
+     */
+    static final int NLT = 0xFF76;
+
+    /**
+     * The arbitrary transformation kernels marker of ISO/IEC 15444-2.
+     */
+    static final int ATK = 0xFF79;
+
+    /**
      * The largest number of components a codestream may declare.
      */
     private static final int MAX_COMPONENTS = 16384;
@@ -512,7 +545,9 @@ public final class Codestream {
                 }
                 var transform = data[position + 4] & 0xFF;
                 if (transform > 1) {
-                    if (transform == 2) {
+                    // ISO/IEC 15444-2 extends the field to flags: 2 selects array-based, 4 wavelet-based multiple
+                    // component transforms, together 6 (the mct files of ISO/IEC 15444-4:2024 use each)
+                    if (transform <= 7) {
                         // TODO: decode the multiple component transforms of ISO/IEC 15444-2 (MCT, MCC, MCO segments)
                         throw new MediaException.Unsupported("JPEG 2000", "Part 2 multiple component transforms");
                     }
@@ -569,8 +604,29 @@ public final class Codestream {
                     throw new MediaException.Malformed("duplicate JPEG 2000 PPM segment " + index);
                 }
             }
+            case CAP -> {
+                if (end - position >= 4 && (u32(position) & PCAP_PART15) != 0) {
+                    // an HTJ2K codestream may use fields Part 1 does not define before its first HT code-block
+                    throw new MediaException.Unsupported("JPEG 2000", "the high-throughput block coder (HTJ2K)");
+                }
+            }
+            case NLT -> {
+                // TODO: apply the non-linearity point transformations of ISO/IEC 15444-2 (nlt1.j2k and float.jpx of
+                //  ISO/IEC 15444-4:2024)
+                throw new MediaException.Unsupported("JPEG 2000", "Part 2 non-linearity point transformations");
+            }
+            case ATK -> {
+                // TODO: decode the arbitrary wavelet kernels of ISO/IEC 15444-2
+                throw new MediaException.Unsupported("JPEG 2000", "Part 2 arbitrary transformation kernels");
+            }
             default -> {
-                // COM, TLM, PLM, PLT, CRG, CAP, CPF and the Part 2 segments carry nothing the decoder needs
+                if (marker >= DCO && marker <= ADS) {
+                    // TODO: decode the variable DC offsets, visual masking and arbitrary decompositions of ISO/IEC
+                    //  15444-2
+                    throw new MediaException.Unsupported("JPEG 2000", String.format("Part 2 segment 0x%04X", marker));
+                }
+                // COM, TLM, PLM, PLT, CRG, CAP, CPF and the multiple component transform segments (MCT, MCC, MCO, CBD,
+                // whose transforms the COD segment selects) carry nothing the decoder needs
             }
         }
     }

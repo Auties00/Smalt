@@ -1,0 +1,73 @@
+# Installs the black-box oracle tools pinned by tools/testdata/oracles.tsv for the runner's platform, puts them on
+# PATH and sets SMALT_TEST_REQUIRE_ORACLES, so that a test whose oracle is missing fails instead of skipping.
+# Downloads and built tools are cached, the ffmpeg built from source (tools/testdata/ffmpeg-oracle/build.py) in an
+# entry of its own keyed by its build script; both entries are saved as soon as the tools are installed, so a
+# failing test run still keeps them. Package-manager tools are installed on every run. The tool versions, and
+# whether ffmpeg has, and can run, every component of tools/testdata/ffmpeg-oracle/features.tsv, go to the job
+# summary and to oracle-versions.tsv in the workspace; a missing tool or component fails the step.
+name: Oracle tools
+description: Installs and pins the oracle tools of the tests
+runs:
+  using: composite
+  steps:
+    - name: Restore the oracle tools
+      id: tools
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.smalt/oracles
+        key: oracles-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv', 'tools/testdata/oracles.py', 'tools/testdata/png-oracle/*.c', 'tools/testdata/icc-hdr/*.c', 'tools/testdata/mpeg4-oracle/build.py', 'tools/testdata/gif-oracle/*.c') }}
+
+    - name: Restore the ffmpeg build
+      id: ffmpeg
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.smalt/ffmpeg-*
+        key: ffmpeg-oracle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/ffmpeg-oracle/build.py', 'tools/testdata/ffmpeg-oracle/quarantine.c') }}
+
+    - name: Install the oracle tools
+      shell: bash
+      run: python tools/testdata/oracles.py install --github
+
+    # Pillow is the oracle of tools/testdata/bmp-oracle/pillow-bmp-dump.py, which the tests run with the first python3
+    # or python on PATH, the Python of setup-python. A Python without a Pillow wheel leaves that test to skip.
+    - name: Install Pillow
+      shell: bash
+      continue-on-error: true
+      run: |
+        python -m pip install --quiet --only-binary=:all: "pillow>=12,<14"
+
+    - name: Save the oracle tools
+      if: steps.tools.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/oracles
+        key: ${{ steps.tools.outputs.cache-primary-key }}
+
+    # The ffmpeg build is saved once it finished, even when a later tool failed to install; the build writes its
+    # .build-sha256 stamp last, so an interrupted build is never saved.
+    - name: Check the ffmpeg build
+      id: built
+      if: always() && steps.ffmpeg.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if ls ~/.smalt/ffmpeg-*/.build-sha256 > /dev/null 2>&1; then echo "complete=true" >> "$GITHUB_OUTPUT"; fi
+
+    - name: Save the ffmpeg build
+      if: always() && steps.built.outputs.complete == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/ffmpeg-*
+        key: ${{ steps.ffmpeg.outputs.cache-primary-key }}
+
+    - name: Record the oracle versions
+      shell: bash
+      run: |
+        status=0
+        python tools/testdata/oracles.py versions --out oracle-versions.tsv || status=$?
+        {
+          echo "### Oracle tools (${{ runner.os }} ${{ runner.arch }})"
+          echo '```'
+          cat oracle-versions.tsv
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+        exit $status

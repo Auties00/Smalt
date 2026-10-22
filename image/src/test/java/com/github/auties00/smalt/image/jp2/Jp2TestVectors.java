@@ -5,12 +5,16 @@ import com.github.auties00.smalt.testkit.Conformance;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 /**
  * Pins the files of the OpenJPEG test data repository (uclouvain/openjpeg-data) the JPEG 2000
  * tests use: the ISO/IEC 15444-4 conformance codestreams and JP2 files with their reference
- * decodes, and the Kakadu and Richter conformance files.
+ * decodes, and the Kakadu and Richter conformance files; and the electronic insert of ISO/IEC 15444-4:2024, which
+ * adds the high fidelity, HTJ2K, Part 2 and JPX test files.
  */
 final class Jp2TestVectors {
     private static final String BASE = "https://raw.githubusercontent.com/uclouvain/openjpeg-data/"
@@ -212,5 +216,35 @@ final class Jp2TestVectors {
     /** Returns whether a path is pinned. */
     static boolean pinned(String path) {
         return HASHES.containsKey(path);
+    }
+
+    /**
+     * Returns a file of the ISO/IEC 15444-4:2024 (Rec. ITU-T T.803 (02/2024)) electronic insert, by its path in the
+     * archive ({@code files/codestreams_profile1/hifi_p1_02.j2k}).
+     */
+    static byte[] edition4(String path) {
+        var archive = Conformance.fetchListed("jp2-15444-4-ed4-electronic_insert.zip");
+        try (var zip = new ZipFile(archive.toFile())) {
+            var entry = zip.getEntry(path);
+            if (entry == null) {
+                throw new IllegalArgumentException("no " + path + " in " + archive);
+            }
+            try (var input = zip.getInputStream(entry)) {
+                return input.readAllBytes();
+            }
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+    }
+
+    /** Returns the paths of the electronic insert's files under a directory that end with a suffix. */
+    static List<String> edition4Files(String directory, String suffix) {
+        var archive = Conformance.fetchListed("jp2-15444-4-ed4-electronic_insert.zip");
+        try (var zip = new ZipFile(archive.toFile())) {
+            return zip.stream().map(ZipEntry::getName).filter(name -> name.startsWith(directory) && name.endsWith(suffix))
+                    .sorted().toList();
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
     }
 }

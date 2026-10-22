@@ -26,10 +26,10 @@ abstract class EncDsp {
     static final EncDsp SCALAR = new ScalarEncDsp();
 
     /**
-     * The kernels every frame is analyzed with: {@link VectorEncDsp} when {@link Simd#ENABLED},
-     * {@link #SCALAR} otherwise.
+     * The kernels every frame is analyzed with: {@link VectorEncDsp}, written for 256-bit vectors,
+     * when {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final EncDsp FIXED = Simd.ENABLED ? new VectorEncDsp() : SCALAR;
+    private static final EncDsp FIXED = Simd.WIDE ? new VectorEncDsp() : SCALAR;
 
     /**
      * Creates a kernel set.

@@ -171,6 +171,8 @@ public final class Jp2Boxes {
             switch (box.type) {
                 case "jp2h" -> readHeader(box.content, box.end);
                 case "jp2c" -> {
+                    // TODO: decode the codestreams of a JPX file's further compositing layers (multi_img.jpx of
+                    //  ISO/IEC 15444-4:2024); the first codestream is the JP2-compatible image
                     if (codestreamStart < 0) {
                         codestreamStart = box.content;
                         codestreamEnd = box.end;

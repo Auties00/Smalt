@@ -1,0 +1,257 @@
+# Fills the Actions caches of the oracle tools (.github/actions/oracles) on the given runners before the test jobs
+# start, so that the one-time builds (ffmpeg and its libraries from source take most of an hour) never count
+# against a test job's time limit, and checks that every runner has every pinned tool and every ffmpeg component
+# of tools/testdata/ffmpeg-oracle/features.tsv; and derives the clips of tools/testdata/clips.tsv on Linux x64 into
+# their cross-OS cache entry, whatever the runners, because swscale's arm64 kernels scale differently and the
+# encoder golden tests pin the x86-64 clips (and, with clips-artifact, uploads them for the jobs of the run that
+# find the entry evicted from the 10 GB cache, as data-artifact does for the oracle data files); and writes the
+# oracle data files that scripted black boxes produce (tools/testdata/raw-oracle.py and nef-oracle.py with Adobe
+# DNG Converter, eld-sbr-oracle.py with libxaac and FDK AAC, and svs-oracle.py with OpenSlide and imagecodecs, all
+# on Windows) into cross-OS cache entries keyed by their script, which
+# .github/actions/oracle-data restores on every test runner. ci.yml, nightly.yml and package.yml call it; it can also
+# be run by hand to warm the caches of a branch.
+name: Oracle tools
+
+on:
+  workflow_call:
+    inputs:
+      os:
+        description: JSON list of runners
+        type: string
+        default: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+      data:
+        description: Also write the oracle data files that are not cached yet
+        type: boolean
+        default: true
+      clips-artifact:
+        description: Also upload the clips as the testdata-clips artifact, for the jobs of the run whose cache entry was evicted
+        type: boolean
+        default: false
+      data-artifact:
+        description: Also upload the oracle data files as oracle-data-* artifacts, for the jobs of the run whose cache entries were evicted
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      os:
+        description: JSON list of runners
+        default: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+
+permissions:
+  contents: read
+
+jobs:
+  install:
+    name: oracle tools (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.os) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      - name: Upload the oracle versions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-versions-${{ matrix.os }}
+          path: oracle-versions.tsv
+          retention-days: 14
+
+  clips:
+    name: clips (ubuntu-latest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      - uses: ./.github/actions/testdata
+        with:
+          vectors: 'false'
+
+      - name: Upload the clips
+        if: inputs.clips-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: testdata-clips
+          path: ~/.smalt/cache/clips/*.yuv
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error
+
+  # Adobe DNG Converter is a Windows program: its uncompressed DNG files are the oracle of the raw module's sensor
+  # values. The cache paths are relative to the workspace, so that every operating system restores them alike.
+  data-windows:
+    name: oracle data (Adobe DNG Converter, libxaac, FDK AAC)
+    if: inputs.data != false
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      # 3.14: the AAC-ELD script reads the zstd-compressed MSYS2 package of FDK AAC with tarfile.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: Look up the raw oracle files
+        id: raw
+        uses: actions/cache/restore@v4
+        with:
+          path: .oracle-data/raw-oracle
+          key: oracle-data-raw-${{ hashFiles('tools/testdata/raw-oracle.py') }}
+          enableCrossOsArchive: true
+          lookup-only: ${{ !inputs.data-artifact }}
+
+      - name: Convert the raw samples
+        if: steps.raw.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -I tools/testdata/raw-oracle.py
+          mkdir -p .oracle-data
+          cp -r ~/.smalt/cache/conformance/raw-oracle .oracle-data/raw-oracle
+
+      - name: Save the raw oracle files
+        if: steps.raw.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .oracle-data/raw-oracle
+          key: oracle-data-raw-${{ hashFiles('tools/testdata/raw-oracle.py') }}
+          enableCrossOsArchive: true
+
+      - name: Look up the NEF oracle files
+        id: nef
+        uses: actions/cache/restore@v4
+        with:
+          path: .oracle-data/nef-oracle
+          key: oracle-data-nef-${{ hashFiles('tools/testdata/nef-oracle.py') }}
+          enableCrossOsArchive: true
+          lookup-only: ${{ !inputs.data-artifact }}
+
+      - name: Convert the NEF samples
+        if: steps.nef.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -I tools/testdata/nef-oracle.py
+          mkdir -p .oracle-data
+          cp -r ~/.smalt/cache/conformance/nef-oracle .oracle-data/nef-oracle
+
+      - name: Save the NEF oracle files
+        if: steps.nef.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .oracle-data/nef-oracle
+          key: oracle-data-nef-${{ hashFiles('tools/testdata/nef-oracle.py') }}
+          enableCrossOsArchive: true
+
+      # libxaac, built from its pinned commit with MSYS2's gcc (the toolchain that pinned the encoded streams), and
+      # the pinned FDK AAC DLL decode the AAC-ELD low delay SBR streams.
+      - name: Look up the AAC-ELD oracle files
+        id: eld
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .oracle-data/eld-sbr-oracle
+            .oracle-data/eld-sbr-fdk
+          key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+          enableCrossOsArchive: true
+          lookup-only: ${{ !inputs.data-artifact }}
+
+      - name: Decode the AAC-ELD streams with libxaac and FDK AAC
+        if: steps.eld.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          /c/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-cmake \
+            mingw-w64-ucrt-x86_64-ninja
+          export PATH="/c/msys64/ucrt64/bin:$PATH"
+          python -I tools/testdata/eld-sbr-oracle.py "$RUNNER_TEMP/eld" --fdk
+          mkdir -p .oracle-data
+          cp -r ~/.smalt/cache/conformance/eld-sbr-oracle .oracle-data/eld-sbr-oracle
+          cp -r ~/.smalt/cache/conformance/eld-sbr-fdk .oracle-data/eld-sbr-fdk
+
+      - name: Save the AAC-ELD oracle files
+        if: steps.eld.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .oracle-data/eld-sbr-oracle
+            .oracle-data/eld-sbr-fdk
+          key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+          enableCrossOsArchive: true
+
+      - name: Upload the oracle data files
+        if: inputs.data-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-data-windows
+          path: .oracle-data/
+          include-hidden-files: true
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error
+
+  # OpenSlide and imagecodecs render the Aperio slides, on Windows: the OpenJPEG that imagecodecs' Linux wheel
+  # bundles rounds the irreversible component transform of one sample of the 33005 slide otherwise.
+  data-openslide:
+    name: oracle data (OpenSlide)
+    if: inputs.data != false
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Look up the Aperio slide oracle files
+        id: svs
+        uses: actions/cache/restore@v4
+        with:
+          path: .oracle-data/svs-oracle
+          key: oracle-data-svs-${{ hashFiles('tools/testdata/svs-oracle.py') }}
+          enableCrossOsArchive: true
+          lookup-only: ${{ !inputs.data-artifact }}
+
+      - name: Render the Aperio slides with OpenSlide
+        if: steps.svs.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          python -m pip install --quiet openslide-python==1.4.6 openslide-bin==4.0.1.2 tifffile==2026.10.15 \
+            imagecodecs==2026.10.10 numpy
+          python -I tools/testdata/svs-oracle.py
+          mkdir -p .oracle-data
+          cp -r ~/.smalt/cache/conformance/svs-oracle .oracle-data/svs-oracle
+
+      - name: Save the Aperio slide oracle files
+        if: steps.svs.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .oracle-data/svs-oracle
+          key: oracle-data-svs-${{ hashFiles('tools/testdata/svs-oracle.py') }}
+          enableCrossOsArchive: true
+
+      - name: Upload the oracle data files
+        if: inputs.data-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: oracle-data-openslide
+          path: .oracle-data/
+          include-hidden-files: true
+          retention-days: 1
+          compression-level: 1
+          if-no-files-found: error
