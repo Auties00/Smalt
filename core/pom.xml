@@ -13,8 +13,50 @@
     <name>${project.groupId}:${project.artifactId}</name>
     <description>Smalt core: the media model, the codec registries, every container, image and audio processing, loudness, subtitles, PCM, tag editing and XMP</description>
 
+    <dependencies>
+        <dependency>
+            <groupId>com.code-intelligence</groupId>
+            <artifactId>jazzer-junit</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
     <build>
         <plugins>
+            <!--
+                The test kit's DASH validator reads the MPD and its schema with java.xml, which the core module does
+                not require; its tests, patched into the module, read it through this flag. The other modules' tests
+                load the test kit from the test jar on the class path, which reads every module.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>default-testCompile</id>
+                        <configuration>
+                            <compilerArgs>
+                                <arg>--add-modules</arg>
+                                <arg>java.xml</arg>
+                                <arg>--add-reads</arg>
+                                <arg>com.github.auties00.smalt=java.xml</arg>
+                            </compilerArgs>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>${smalt.test.argLine} --add-modules java.xml --add-reads com.github.auties00.smalt=java.xml</argLine>
+                </configuration>
+            </plugin>
             <!--
                 The test jar carries the test kit (oracles, fixtures, conformance vectors, quality metrics and
                 the shared test helpers) that the other modules' tests use; core's own tests stay out of it.

@@ -40,12 +40,13 @@ final class TsTesting {
         return Fixtures.tone(extension, 440, rate, channels, seconds, output);
     }
 
-    /** Writes bytes under {@code target/ts-output}. */
+    /** Writes bytes under {@code target/ts-output} and validates them with the test kit's container validators. */
     static Path save(String name, byte[] data) {
         try {
             Files.createDirectories(OUTPUT);
             var file = OUTPUT.resolve(name);
             Files.write(file, data);
+            com.github.auties00.smalt.testkit.validate.Validators.assertValid(file);
             return file;
         } catch (IOException exception) {
             throw new UncheckedIOException(exception);

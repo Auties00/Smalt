@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.validate.Validators;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
 
@@ -21,10 +22,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Shared helpers of the muxer tests: demuxing bytes, muxing a demuxed input into memory, a
- * stream or a file, and validating the output with ffmpeg.
+ * stream or a file, and validating the output with the container validators of the test kit
+ * (every output of {@link #toMemory} and {@link #toStream}) and with ffmpeg.
  */
 public final class MuxSupport {
     private static final Path DIRECTORY = Path.of("target", "mux-output");
+
+    /** Numbers the outputs written for the validators. */
+    private static final java.util.concurrent.atomic.AtomicInteger OUTPUTS = new java.util.concurrent.atomic.AtomicInteger();
 
     private MuxSupport() {
         throw new AssertionError();
@@ -50,7 +55,9 @@ public final class MuxSupport {
     public static byte[] toMemory(List<Track> tracks, List<Packet> packets, Function<MediaSink, Muxer> factory) {
         var sink = MediaSink.memory();
         mux(tracks, packets, factory.apply(sink));
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        Validators.assertValid("memory-" + OUTPUTS.incrementAndGet() + ".bin", data);
+        return data;
     }
 
     /** Muxes into a non-seekable stream. */
@@ -59,7 +66,15 @@ public final class MuxSupport {
         try (var sink = MediaSink.of(stream)) {
             mux(tracks, packets, factory.apply(sink));
         }
-        return stream.toByteArray();
+        var data = stream.toByteArray();
+        Validators.assertValid("stream-" + OUTPUTS.incrementAndGet() + ".bin", data);
+        return data;
+    }
+
+    /** Validates muxed bytes with the container validators of the test kit and returns them. */
+    public static byte[] validated(String name, byte[] data) {
+        Validators.assertValid(name + "-" + OUTPUTS.incrementAndGet() + ".bin", data);
+        return data;
     }
 
     /** Writes bytes to a file under {@code target/mux-output} for the external tools. */
@@ -74,10 +89,12 @@ public final class MuxSupport {
         }
     }
 
-    /** Asserts that ffmpeg decodes every stream of the output without an error. */
+    /** Asserts that the container validators accept the output and ffmpeg decodes every stream of it without an error. */
     public static void assertFfmpegClean(String name, byte[] data) {
+        var file = save(name, data);
+        Validators.assertValid(file);
         Oracle.assume(Oracle.Tool.FFMPEG);
-        Oracle.assertDecodesCleanly(save(name, data));
+        Oracle.assertFfmpegDecodes(file);
     }
 
     /**
