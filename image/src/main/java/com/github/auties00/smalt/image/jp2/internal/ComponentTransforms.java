@@ -739,6 +739,8 @@ final class ComponentTransforms {
      */
     private static Plane[] wavelet(Plane[] inputs, Collection collection, Map<Integer, double[]> arrays,
                                    Map<Integer, LiftingKernel> kernels) {
+        // FIXME: the mct1 and mct2 codestreams of ISO/IEC 15444-4:2024 decode with a peak error of 255 and an MSE of
+        //  about 1e4 against their references (Jp2ConformanceTest.Edition4.waveletBased)
         var m = inputs.length;
         var kernel = switch (collection.transform()) {
             case 0 -> LiftingKernel.IRREVERSIBLE_97;

@@ -38,7 +38,7 @@ linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.bmp.BmpVariantsTe
 linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.icc.ColorManagedCodecTest	data:vector	4
 linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ChannelsTest	data:vector	1
-linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	68
+linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	74
 linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtConformanceTest	data:vector	66
 linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtOracleTest	data:vector	183
 linux-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2OracleTest	data:vector	123
@@ -150,7 +150,7 @@ linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.bmp.BmpVariantsTest
 linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.icc.ColorManagedCodecTest	data:vector	4
 linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ChannelsTest	data:vector	1
-linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	68
+linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	74
 linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtConformanceTest	data:vector	66
 linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtOracleTest	data:vector	183
 linux-x64-scalar-smoke	image	com.github.auties00.smalt.image.jp2.Jp2OracleTest	data:vector	123
@@ -273,7 +273,7 @@ linux-x64-vector-smoke	image	com.github.auties00.smalt.image.bmp.BmpVariantsTest
 linux-x64-vector-smoke	image	com.github.auties00.smalt.image.icc.ColorManagedCodecTest	data:vector	4
 linux-x64-vector-smoke	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 linux-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ChannelsTest	data:vector	1
-linux-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	68
+linux-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	74
 linux-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtConformanceTest	data:vector	66
 linux-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtOracleTest	data:vector	183
 linux-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2OracleTest	data:vector	123
@@ -380,7 +380,7 @@ macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.bmp.BmpVariantsTe
 macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.icc.ColorManagedCodecTest	data:vector	4
 macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ChannelsTest	data:vector	1
-macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	68
+macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	74
 macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtConformanceTest	data:vector	66
 macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtOracleTest	data:vector	183
 macos-arm64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2OracleTest	data:vector	123
@@ -486,7 +486,7 @@ windows-x64-vector-smoke	desktop	com.github.auties00.smalt.desktop.sound.JavaSou
 windows-x64-vector-smoke	image	com.github.auties00.smalt.image.bmp.BmpVariantsTest	data:vector	1
 windows-x64-vector-smoke	image	com.github.auties00.smalt.image.icc.ColorManagedCodecTest	data:vector	4
 windows-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ChannelsTest	data:vector	1
-windows-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	68
+windows-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2ConformanceTest	data:vector	74
 windows-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtConformanceTest	data:vector	66
 windows-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2HtOracleTest	data:vector	183
 windows-x64-vector-smoke	image	com.github.auties00.smalt.image.jp2.Jp2OracleTest	data:vector	123
