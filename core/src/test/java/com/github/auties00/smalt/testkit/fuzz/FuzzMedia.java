@@ -26,12 +26,15 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoFrame;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
+import java.util.function.BiFunction;
 import java.util.function.Consumer;
 
 /**
@@ -128,7 +131,22 @@ public final class FuzzMedia {
      * @return the run
      */
     public static FuzzRun video(Codec codec, byte[] data) {
-        var run = Fuzz.start(codec.name());
+        return video(codec, codec.name(), data, null);
+    }
+
+    /**
+     * Decodes a video stream in the {@link FuzzPackets} format with a decoder the target opens itself, as
+     * {@link #video(Codec, byte[])} does with the registry's decoder.
+     *
+     * @param codec the codec of the track
+     * @param name the name of the target
+     * @param data the input
+     * @param open opens the decoder of the track from the options byte of the header, or {@code null} for the
+     *             registry's decoder
+     * @return the run
+     */
+    public static FuzzRun video(Codec codec, String name, byte[] data, BiFunction<VideoTrack, Integer, VideoDecoder> open) {
+        var run = Fuzz.start(name);
         var input = FuzzPackets.parse(data, FuzzPackets.VIDEO_FIELDS);
         var header = input.header();
         var track = VideoTrack.builder()
@@ -142,7 +160,13 @@ public final class FuzzMedia {
         for (var index = 0; index < input.packets().size(); index++) {
             packets.add(packet(input.packets().get(index), index));
         }
-        decode(run, track.build(), (header.options() & 1) != 0, packets);
+        if (open == null) {
+            decode(run, track.build(), (header.options() & 1) != 0, packets);
+        } else {
+            var built = track.build();
+            var options = header.options();
+            decode(run, run.value("open", () -> open.apply(built, options)), packets);
+        }
         return run;
     }
 
@@ -161,7 +185,18 @@ public final class FuzzMedia {
                 .threads(1)
                 .highBitDepth(highBitDepth)
                 .build();
-        var decoder = run.value("open", () -> VideoDecoders.create(track, options));
+        decode(run, run.value("open", () -> VideoDecoders.create(track, options)), packets);
+    }
+
+    /**
+     * Decodes packets with a decoder that may have failed to open: a packet the decoder rejects is skipped and
+     * decoding goes on with the next one.
+     *
+     * @param run the run to add the steps to
+     * @param decoder the decoder, empty when it could not be opened
+     * @param packets the packets, in decoding order
+     */
+    private static void decode(FuzzRun run, Optional<? extends VideoDecoder> decoder, List<Packet> packets) {
         if (decoder.isEmpty()) {
             return;
         }

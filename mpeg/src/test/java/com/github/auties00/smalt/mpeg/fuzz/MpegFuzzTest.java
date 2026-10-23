@@ -17,6 +17,8 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.h264.H264StreamInfo;
+import com.github.auties00.smalt.video.hevc.HevcDecoder;
+import com.github.auties00.smalt.video.hevc.HevcDecoderOptions;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4ElementaryStream;
 
 import java.io.ByteArrayOutputStream;
@@ -28,8 +30,9 @@ import java.util.Optional;
 /**
  * Fuzz targets of the video and audio decoders of this module, fed streams in the
  * {@link com.github.auties00.smalt.testkit.fuzz.FuzzPackets} format (see {@link FuzzMedia#video} and
- * {@link FuzzMedia#audio}), of the HEIC image decoder (see {@link FuzzMedia#image}), of the MPEG-4 Part 2 and
- * H.263 elementary stream reader and of the H.264 parameter set parser.
+ * {@link FuzzMedia#audio}), among them the HEVC decoder decoding the layers of an output layer set, of the HEIC
+ * image decoder (see {@link FuzzMedia#image}), of the MPEG-4 Part 2 and H.263 elementary stream reader and of the
+ * H.264 parameter set parser.
  */
 class MpegFuzzTest {
     /** The packets of an elementary stream that are decoded after it is split. */
@@ -43,6 +46,29 @@ class MpegFuzzTest {
     @FuzzTest
     void hevc(byte[] data) {
         FuzzMedia.video(Codec.HEVC, data);
+    }
+
+    /**
+     * Decodes HEVC streams with the layers of an output layer set: bit 0 of the options asks for high-bit-depth
+     * output, bits 1 to 3 give the output layer set index (7 for the last one) and bit 4 leaves the alpha layers
+     * undecoded.
+     */
+    @FuzzTest
+    void hevcLayers(byte[] data) {
+        FuzzMedia.video(Codec.HEVC, "hevcLayers", data, (track, options) -> {
+            var builder = HevcDecoderOptions.builder()
+                    .limits(Fuzz.LIMITS)
+                    .threads(1)
+                    .highBitDepth((options & 1) != 0)
+                    .alpha((options & 16) == 0);
+            var outputLayerSet = (options >> 1) & 7;
+            if (outputLayerSet == 7) {
+                builder.lastOutputLayerSet();
+            } else {
+                builder.outputLayerSet(outputLayerSet);
+            }
+            return new HevcDecoder(track, builder.build());
+        });
     }
 
     @FuzzTest

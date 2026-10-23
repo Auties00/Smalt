@@ -36,6 +36,15 @@ final class PropertyParser {
             }
             case "av1C" -> HeifProperty.Av1Configuration.parse(box);
             case "hvcC" -> new HeifProperty.HevcConfiguration(box.rest());
+            case "lhvC" -> new HeifProperty.LayeredHevcConfiguration(box.rest());
+            case "tols" -> {
+                box.fullBoxHeader();
+                yield new HeifProperty.TargetOutputLayerSet(box.u16());
+            }
+            case "oinf" -> {
+                box.fullBoxHeader();
+                yield new HeifProperty.OperatingPointsInformation(box.rest());
+            }
             case "avcC" -> new HeifProperty.AvcConfiguration(box.rest());
             case "jpgC" -> new HeifProperty.JpegConfiguration(box.rest());
             case "j2kH" -> parseJpeg2000Header(box);

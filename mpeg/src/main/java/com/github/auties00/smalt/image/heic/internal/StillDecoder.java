@@ -42,8 +42,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * <ul>
  *   <li>for a coded item, its decoded picture: an HEVC-coded ({@code hvc1}) or AVC-coded
  *       ({@code avc1}) item after the items it is predicted from ({@code pred} references) are
- *       decoded, a JPEG ({@code jpeg}), JPEG 2000 ({@code j2k1}) or uncompressed ({@code unci})
- *       item as {@link PictureItems} decodes it, with the alpha plane it carries itself;</li>
+ *       decoded; a layered HEVC item ({@code lhv1}) the same way, decoding the layers of its target
+ *       output layer set ({@code tols}) and showing the picture of its selected layer
+ *       ({@code lsel}) or else of its highest output layer, with the picture of the AVC-coded item
+ *       it references with {@code exbl} as the external base layer when it has one; a JPEG
+ *       ({@code jpeg}), JPEG 2000 ({@code j2k1}) or uncompressed ({@code unci}) item as
+ *       {@link PictureItems} decodes it, with the alpha plane it carries itself;</li>
  *   <li>for an image grid ({@code grid}), its input images placed edge to edge and cropped to the
  *       output size. Inputs that are coded items without transformative properties, the grids of
  *       cameras, decode in parallel on the module's shared helper threads, each written straight
@@ -75,18 +79,19 @@ public final class StillDecoder {
      * The property types this decoder implements; an item with another essential property is not
      * decodable.
      */
-    static final Set<String> SUPPORTED_PROPERTIES = Set.of("ispe", "pixi", "hvcC", "avcC", "jpgC", "j2kH", "uncC",
-            "cmpd", "cmpC", "cloc", "colr", "pasp", "clap", "irot", "imir", "auxC", "clli", "mdcv", "rref");
+    static final Set<String> SUPPORTED_PROPERTIES = Set.of("ispe", "pixi", "hvcC", "avcC", "lhvC", "tols", "lsel",
+            "oinf", "jpgC", "j2kH", "uncC", "cmpd", "cmpC", "cloc", "colr", "pasp", "clap", "irot", "imir", "auxC",
+            "clli", "mdcv", "rref");
 
     /**
      * The types of the coded items this decoder decodes.
      */
-    static final Set<String> CODED_TYPES = Set.of("hvc1", "avc1", "jpeg", "j2k1", "unci");
+    static final Set<String> CODED_TYPES = Set.of("hvc1", "lhv1", "avc1", "jpeg", "j2k1", "unci");
 
     /**
      * The item reference types this decoder follows when an {@code rref} property requires them.
      */
-    private static final Set<String> SUPPORTED_REFERENCES = Set.of("pred", "dimg");
+    private static final Set<String> SUPPORTED_REFERENCES = Set.of("pred", "dimg", "exbl");
 
     /**
      * The deepest nesting of derived images followed.
@@ -232,7 +237,10 @@ public final class StillDecoder {
      * @param item the coded item to test
      */
     private static boolean isNal(HeifItem item) {
-        return item.type().equals("hvc1") || item.type().equals("avc1");
+        return switch (item.type()) {
+            case "hvc1", "lhv1", "avc1" -> true;
+            default -> false;
+        };
     }
 
     /**
@@ -383,6 +391,7 @@ public final class StillDecoder {
             return frame;
         }
         var avc = item.type().equals("avc1");
+        var layered = item.type().equals("lhv1");
         var chain = new ArrayList<HeifItem>();
         collectChain(item, chain, new HashSet<>(), 0);
         var configurations = new ArrayList<byte[]>(chain.size());
@@ -393,6 +402,12 @@ public final class StillDecoder {
                 var config = coded.property(HeifProperty.AvcConfiguration.class);
                 if (config == null) {
                     throw new MediaException.Malformed("heic: item " + coded.id() + " has no avcC property");
+                }
+                record = config.record();
+            } else if (layered) {
+                var config = coded.property(HeifProperty.LayeredHevcConfiguration.class);
+                if (config == null) {
+                    throw new MediaException.Malformed("heic: item " + coded.id() + " has no lhvC property");
                 }
                 record = config.record();
             } else {
@@ -408,8 +423,52 @@ public final class StillDecoder {
             configurations.add(record);
             payloads.add(file.readItem(source, coded, limits));
         }
+        if (layered) {
+            return decodeLayered(decoders, item, configurations, payloads, chain.size());
+        }
         var frame = decoders.nal(avc).decodeItem(configurations, payloads);
         charge((long) frame.width() * frame.height() * chain.size());
+        return frame;
+    }
+
+    /**
+     * Decodes a layered HEVC item ({@code lhv1}) after the items it is predicted from, with the
+     * AVC-coded item it references with {@code exbl} as its external base layer.
+     *
+     * @param decoders the decoders to use
+     * @param item the layered item
+     * @param configurations the {@code lhvC} record of each payload
+     * @param payloads the payloads in decoding order, the item's own payload last
+     * @param pictures the number of coded items in the prediction chain
+     * @return the decoded picture, valid until the next call on {@code decoders}
+     */
+    private CodedFrame decodeLayered(Decoders decoders, HeifItem item, List<byte[]> configurations,
+                                     List<byte[]> payloads, int pictures) {
+        var target = item.property(HeifProperty.TargetOutputLayerSet.class);
+        if (target == null) {
+            throw new MediaException.Malformed("heic: item " + item.id() + " has no tols property");
+        }
+        var selector = item.property(HeifProperty.LayerSelector.class);
+        // a selector of every layer (0xFFFF) shows the highest output layer, as no selector does
+        var layer = selector == null || selector.layer() == 0xFFFF ? -1 : selector.layer();
+        CodedBaseLayer base = null;
+        var external = item.references("exbl");
+        if (external.length > 0) {
+            if (external.length > 1) {
+                throw new MediaException.Malformed("heic: item " + item.id() + " has " + external.length
+                        + " external base layers");
+            }
+            var baseItem = file.item(external[0]);
+            if (baseItem == null || !baseItem.type().equals("avc1")) {
+                throw new MediaException.Unsupported(FORMAT, "item " + item.id()
+                        + " has an external base layer that is not an AVC-coded item");
+            }
+            requireSupported(baseItem);
+            base = new CodedBaseLayer(decodeCoded(decoders, baseItem), limits);
+        }
+        var hevc = (HevcItemDecoder) decoders.nal(false);
+        var frame = hevc.decodeLayered(configurations, payloads, target.outputLayerSet(), layer, base);
+        charge((long) frame.width() * frame.height() * pictures);
         return frame;
     }
 
@@ -858,7 +917,7 @@ public final class StillDecoder {
         }
         return switch (item.type()) {
             case "iovl" -> true;
-            case "hvc1", "avc1", "jpeg", "j2k1", "unci" -> premultiplied(item);
+            case "hvc1", "lhv1", "avc1", "jpeg", "j2k1", "unci" -> premultiplied(item);
             case "iden" -> {
                 var ids = item.references("dimg");
                 yield ids.length == 1 && reconstructsPacked(file.item(ids[0]), depth + 1);

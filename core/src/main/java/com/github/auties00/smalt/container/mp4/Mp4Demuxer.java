@@ -68,8 +68,10 @@ import java.util.Set;
  * {@link Codec#DATA}. Each WebVTT sample is returned as one packet per cue it shows (none for an
  * empty sample), all with the sample's timing, in the {@link Codec#WEBVTT} packet form; every
  * other sample is one packet. Codec
- * configurations follow {@link Track#codecConfig()}: the {@code avcC}, {@code hvcC} and {@code av1C} payloads, the
- * {@code vpcC} record without its full box header, the AAC {@code AudioSpecificConfig} and the
+ * configurations follow {@link Track#codecConfig()}: the {@code avcC}, {@code hvcC} and {@code av1C} payloads (an
+ * {@code hvcC} followed by the arrays of the {@code lhvC} record of a multi-layer HEVC entry, which carries the
+ * parameter sets of the layers above the base layer), the {@code vpcC} record without its full box header, the
+ * AAC {@code AudioSpecificConfig} and the
  * MPEG-4 Part 2 decoder specific info from {@code esds}, an {@code OpusHead} synthesized from
  * {@code dOps}, {@code fLaC} followed by the metadata blocks of {@code dfLa}, the 24-byte
  * {@code ALACSpecificConfig}, and for data tracks the sample entry payload after its reserved

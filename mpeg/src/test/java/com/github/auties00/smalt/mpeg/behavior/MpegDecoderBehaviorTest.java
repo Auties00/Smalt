@@ -18,8 +18,9 @@ import java.nio.file.Path;
  * Runs the H.264, HEVC, MPEG-4 Part 2 and H.263 video decoders and the AAC, AC-3, E-AC-3 and AMR audio decoders
  * ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
  * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
- * vectors, the HEIF fuzz seeds of AVC and uncompressed items and the HEVC screen content coding and separate color
- * plane vectors ({@link HevcSamples}), comparing each with its golden dump under {@code src/test/resources/dumps}.
+ * vectors, the HEIF fuzz seeds of AVC, uncompressed and layered HEVC items, the HEVC screen content coding and
+ * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), comparing each with its golden
+ * dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("MPEG and Dolby decoder I/O behaviors")
 class MpegDecoderBehaviorTest {
@@ -65,7 +66,8 @@ class MpegDecoderBehaviorTest {
     }
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"valid-avc.heic", "valid-unci-rgb3.heic", "valid-unci-v210.heic", "valid-unci-zlib.heic"})
+    @ValueSource(strings = {"valid-avc.heic", "valid-unci-rgb3.heic", "valid-unci-v210.heic", "valid-unci-zlib.heic",
+            "valid-lhv1.heic"})
     @DisplayName("HEIF items of other codecs (the HEIC fuzz seeds): identical pictures under every source behavior")
     void heifItems(String name) throws IOException {
         ImageDecoderAsserts.of("heif-items/" + name, Files.readAllBytes(HEIF_SEEDS.resolve(name))).run();
@@ -80,6 +82,15 @@ class MpegDecoderBehaviorTest {
         var stream = Files.readAllBytes(HEVC_VECTORS.resolve(vector));
         ReaderAsserts.video("hevc/" + vector + ".mp4", HevcSamples.mp4(stream, width, height, chromaFormatIdc,
                 bitDepth)).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({"multilayer/shvc-2x-ld.hevc, 64, 48", "multilayer/mvhevc-ld.hevc, 128, 96",
+            "multilayer/alpha-ld.hevc, 128, 96"})
+    @DisplayName("multi-layer HEVC in MP4: identical base layer frames, alpha attached, under every source behavior")
+    void hevcLayers(String vector, int width, int height) throws IOException {
+        var stream = Files.readAllBytes(HEVC_VECTORS.resolve(vector));
+        ReaderAsserts.video("hevc/" + vector + ".mp4", HevcSamples.mp4Layered(stream, width, height)).run();
     }
 
     @ParameterizedTest(name = "{0}")

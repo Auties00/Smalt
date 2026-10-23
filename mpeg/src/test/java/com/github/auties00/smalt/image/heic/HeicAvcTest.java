@@ -12,6 +12,7 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.heic.HeicReference.Planes;
+import com.github.auties00.smalt.image.heic.internal.StillDecoder;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.io.MediaSource;
@@ -204,7 +205,9 @@ class HeicAvcTest {
             var primary = file.primaryItem();
             assertEquals("avc1", primary.type());
             var expected = HeicReference.item(source, file, primary, 1024, 512, ChromaFormat.YUV420, 8);
-            HeicStructureTest.assertPlanes(expected, planes(HeicDecoder.decode(source).picture()));
+            // the decoder shows the layered enhancement the alternatives group prefers; the base item on its own
+            var decoded = StillDecoder.decode(source, file, primary, MediaLimits.DEFAULT, false).picture();
+            HeicStructureTest.assertPlanes(expected, planes(decoded));
         }
     }
 

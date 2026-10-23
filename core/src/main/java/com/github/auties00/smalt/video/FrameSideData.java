@@ -7,12 +7,13 @@ import java.util.Optional;
 
 /**
  * Holds the display information a decoder attaches to one {@link VideoFrame}: how the frame's
- * fields are scanned and repeated, whether it packs the two views of a stereoscopic pair, and how
- * to orient it for display.
+ * fields are scanned and repeated, whether it packs the two views of a stereoscopic pair, how
+ * to orient it for display, and which layer of a multi-layer stream it shows.
  *
  * <p>Decoders fill the entries from the messages the stream carries (for H.264 and HEVC, the
- * picture timing, frame packing arrangement and display orientation SEI messages) and leave the
- * others absent; a frame the stream says nothing about carries {@link #NONE}.
+ * picture timing, frame packing arrangement and display orientation SEI messages, and for HEVC
+ * the layers its video parameter set describes) and leave the others absent; a frame the stream
+ * says nothing about carries {@link #NONE}.
  *
  * <p>Instances are immutable and thread-safe.
  */
@@ -20,7 +21,7 @@ public final class FrameSideData {
     /**
      * The side data of a frame that carries none.
      */
-    public static final FrameSideData NONE = new FrameSideData(null, 0, null, null);
+    public static final FrameSideData NONE = new FrameSideData(null, 0, null, null, null);
 
     /**
      * The scan of the frame, or {@code null}.
@@ -43,19 +44,26 @@ public final class FrameSideData {
     private final Orientation orientation;
 
     /**
+     * The layer of the frame, or {@code null}.
+     */
+    private final VideoLayer layer;
+
+    /**
      * Constructs side data from validated components.
      *
      * @param fieldOrder the scan, or {@code null}
      * @param repeatedFields the extra field periods, from 0 to 4
      * @param framePacking the packing, or {@code null}
      * @param orientation the orientation, or {@code null}
+     * @param layer the layer, or {@code null}
      */
     private FrameSideData(FieldOrder fieldOrder, int repeatedFields, FramePacking framePacking,
-                          Orientation orientation) {
+                          Orientation orientation, VideoLayer layer) {
         this.fieldOrder = fieldOrder;
         this.repeatedFields = repeatedFields;
         this.framePacking = framePacking;
         this.orientation = orientation;
+        this.layer = layer;
     }
 
     /**
@@ -78,6 +86,7 @@ public final class FrameSideData {
         builder.repeatedFields = repeatedFields;
         builder.framePacking = framePacking;
         builder.orientation = orientation;
+        builder.layer = layer;
         return builder;
     }
 
@@ -134,30 +143,44 @@ public final class FrameSideData {
     }
 
     /**
+     * Returns the layer of a multi-layer stream that the frame shows.
+     *
+     * <p>An HEVC decoder sets it on every frame when it outputs more than the base layer of a
+     * stream with several layers, and leaves it absent otherwise.
+     *
+     * @return the layer, or empty when the frame comes from a single layer stream or only its base
+     * layer is output
+     */
+    public Optional<VideoLayer> layer() {
+        return Optional.ofNullable(layer);
+    }
+
+    /**
      * Returns whether this side data carries nothing.
      *
      * @return whether every entry is absent or zero
      */
     public boolean isEmpty() {
-        return fieldOrder == null && repeatedFields == 0 && framePacking == null && orientation == null;
+        return fieldOrder == null && repeatedFields == 0 && framePacking == null && orientation == null
+                && layer == null;
     }
 
     @Override
     public boolean equals(Object other) {
         return other instanceof FrameSideData that && fieldOrder == that.fieldOrder
                 && repeatedFields == that.repeatedFields && Objects.equals(framePacking, that.framePacking)
-                && orientation == that.orientation;
+                && orientation == that.orientation && Objects.equals(layer, that.layer);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(fieldOrder, repeatedFields, framePacking, orientation);
+        return Objects.hash(fieldOrder, repeatedFields, framePacking, orientation, layer);
     }
 
     @Override
     public String toString() {
         return "FrameSideData[fieldOrder=" + fieldOrder + ", repeatedFields=" + repeatedFields
-                + ", framePacking=" + framePacking + ", orientation=" + orientation + ']';
+                + ", framePacking=" + framePacking + ", orientation=" + orientation + ", layer=" + layer + ']';
     }
 
     /**
@@ -174,6 +197,8 @@ public final class FrameSideData {
         private FramePacking framePacking;
 
         private Orientation orientation;
+
+        private VideoLayer layer;
 
         /**
          * Constructs an empty builder.
@@ -260,15 +285,37 @@ public final class FrameSideData {
         }
 
         /**
+         * Sets the layer of the frame; see {@link FrameSideData#layer()}.
+         *
+         * @param layer the value
+         * @return this builder
+         */
+        public Builder layer(VideoLayer layer) {
+            this.layer = Objects.requireNonNull(layer, "layer");
+            return this;
+        }
+
+        /**
+         * Removes the layer of the frame; see {@link FrameSideData#layer()}.
+         *
+         * @return this builder
+         */
+        public Builder noLayer() {
+            this.layer = null;
+            return this;
+        }
+
+        /**
          * Builds the side data, {@link FrameSideData#NONE} when every entry is absent.
          *
          * @return the side data
          */
         public FrameSideData build() {
-            if (fieldOrder == null && repeatedFields == 0 && framePacking == null && orientation == null) {
+            if (fieldOrder == null && repeatedFields == 0 && framePacking == null && orientation == null
+                    && layer == null) {
                 return NONE;
             }
-            return new FrameSideData(fieldOrder, repeatedFields, framePacking, orientation);
+            return new FrameSideData(fieldOrder, repeatedFields, framePacking, orientation, layer);
         }
     }
 }

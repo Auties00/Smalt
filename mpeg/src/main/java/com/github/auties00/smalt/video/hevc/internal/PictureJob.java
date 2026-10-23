@@ -39,6 +39,32 @@ final class PictureJob implements Runnable {
     }
 
     /**
+     * The derivation of an inter-layer reference picture the slices of the picture read, run
+     * before them once the reference layer picture is decoded.
+     *
+     * @param reference the reference layer picture
+     * @param target the inter-layer reference picture to fill
+     * @param geometry the spatial relation of the layers
+     * @param mapping the colour mapping table to apply, or {@code null}
+     * @param samples whether inter-layer sample prediction is enabled
+     * @param motion whether inter-layer motion prediction is enabled
+     */
+    record InterLayer(HevcFrame reference, HevcFrame target, InterLayerPicture.Geometry geometry,
+                      HevcPps.ColourMapping mapping, boolean samples, boolean motion) {
+    }
+
+    /**
+     * The inter-layer reference pictures to derive before the slices are decoded.
+     */
+    final List<InterLayer> interLayers = new ArrayList<>();
+
+    /**
+     * The idle working memories of the inter-layer derivations, shared by the jobs of one engine,
+     * or {@code null} when the engine derives none.
+     */
+    Queue<InterLayerPicture.Scratch> scratches;
+
+    /**
      * The picture being decoded.
      */
     final HevcFrame frame;
@@ -186,6 +212,7 @@ final class PictureJob implements Runnable {
     public void run() {
         var decoder = borrow();
         try {
+            deriveInterLayers();
             error = decoder.decode(this);
         } catch (MediaException failure) {
             frame.damaged = true;
@@ -197,6 +224,29 @@ final class PictureJob implements Runnable {
             slices.clear();
             frame.publishDone();
             release(decoder);
+        }
+    }
+
+    /**
+     * Derives the inter-layer reference pictures of the picture, each once its reference layer
+     * picture is decoded; a job only waits for a job started before it.
+     */
+    private void deriveInterLayers() {
+        if (interLayers.isEmpty()) {
+            return;
+        }
+        var scratch = scratches.poll();
+        if (scratch == null) {
+            scratch = new InterLayerPicture.Scratch();
+        }
+        try {
+            for (var task : interLayers) {
+                task.reference().awaitDone();
+                InterLayerPicture.derive(task.reference(), task.target(), task.geometry(), task.mapping(),
+                        task.samples(), task.motion(), scratch);
+            }
+        } finally {
+            scratches.add(scratch);
         }
     }
 }

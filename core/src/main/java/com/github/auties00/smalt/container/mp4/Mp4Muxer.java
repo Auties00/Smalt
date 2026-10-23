@@ -361,7 +361,8 @@ public final class Mp4Muxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The codecs are those {@link #supports} lists for the brand. H.264 and HEVC need their
-     * {@code avcC}/{@code hvcC} configuration; VP8, VP9 and AV1 (written as {@code vp08},
+     * {@code avcC}/{@code hvcC} configuration (the parameter sets of HEVC layers above the base
+     * layer an {@code hvcC} holds are written to an {@code lhvC} box); VP8, VP9 and AV1 (written as {@code vp08},
      * {@code vp09} and {@code av01}) take their {@code vpcC}/{@code av1C} record from the track or,
      * when it has none, derive it from the first key frame's headers; MPEG-4 Part 2 is an
      * {@code mp4v} entry whose {@code esds} holds the track's decoder configuration or the headers

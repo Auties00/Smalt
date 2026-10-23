@@ -170,6 +170,13 @@ public final class HevcFrame {
     public int poc;
 
     /**
+     * {@code PicOrderCntVal} when the picture was output: a picture order count reset that
+     * decrements {@link #poc} after the picture left for output, while it is still referenced or
+     * still being decoded, leaves this one alone.
+     */
+    public int outputPoc;
+
+    /**
      * Whether the picture is marked "used for short-term reference".
      */
     public boolean shortTerm;
@@ -255,6 +262,55 @@ public final class HevcFrame {
      * The sequence parameter set the picture was decoded with.
      */
     public HevcSps sps;
+
+    /**
+     * The {@code nuh_layer_id} of the picture.
+     */
+    public int layerId;
+
+    /**
+     * The {@code ViewId} of the picture's layer, 0 for a single layer stream.
+     */
+    public int viewId;
+
+    /**
+     * The {@code AuxId} of the picture's layer, 0 for a primary picture.
+     */
+    public int auxId;
+
+    /**
+     * Whether the decoder outputs several layers or a layer other than the base layer, so that the
+     * frame of the picture names its layer.
+     */
+    public boolean layered;
+
+    /**
+     * {@code PicOutputFlag} of a picture of a multi-layer stream, which its access unit's end turns
+     * into the "needed for output" marking.
+     */
+    public boolean picOutputFlag;
+
+    /**
+     * The alpha auxiliary picture of the same access unit attached to this primary picture while
+     * it is output, or {@code null}.
+     */
+    public HevcFrame alpha;
+
+    /**
+     * The alpha channel information that applies to this alpha auxiliary picture, or {@code null}.
+     */
+    public HevcSei.AlphaChannel alphaChannel;
+
+    /**
+     * {@code discardable_flag}: the picture is no reference for later pictures.
+     */
+    public boolean discardable;
+
+    /**
+     * Whether the picture is a base layer picture supplied from outside the stream, which the
+     * decoder never recycles.
+     */
+    public boolean externalPoc;
 
     /**
      * The color description of the picture.
@@ -437,6 +493,10 @@ public final class HevcFrame {
         framePacking = null;
         orientation = null;
         damaged = false;
+        picOutputFlag = false;
+        discardable = false;
+        alpha = null;
+        alphaChannel = null;
         sliceCount = 0;
         Arrays.fill(ref0, (byte) -1);
         Arrays.fill(ref1, (byte) -1);
@@ -462,9 +522,31 @@ public final class HevcFrame {
         for (var plane : planes) {
             plane.id = id;
             plane.poc = poc;
+            plane.layerId = layerId;
             plane.sps = sps;
             plane.generated = generated;
             plane.damaged = damaged;
+        }
+    }
+
+    /**
+     * Lowers the picture order count of this picture and of the references its slices recorded by
+     * a decrement, as a picture order count reset of its layer does (F.8.3.1).
+     *
+     * @param delta {@code DeltaPocVal}
+     */
+    public void decrementPoc(int delta) {
+        poc -= delta;
+        for (var slice = 0; slice < sliceCount; slice++) {
+            var pocs = sliceRefPoc[slice];
+            for (var k = 0; k < pocs.length; k++) {
+                pocs[k] -= delta;
+            }
+        }
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.decrementPoc(delta);
+            }
         }
     }
 

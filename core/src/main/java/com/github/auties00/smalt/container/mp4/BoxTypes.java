@@ -297,6 +297,12 @@ final class BoxTypes {
     static final int HVCC = 0x68766343;
 
     /**
+     * The layered HEVC decoder configuration box ({@code lhvC}, ISO/IEC 14496-15 clause 9.6.3),
+     * holding the parameter sets of the layers above the base layer.
+     */
+    static final int LHVC = 0x6C687643;
+
+    /**
      * The VP8 sample entry ({@code vp08}).
      */
     static final int VP08 = 0x76703038;

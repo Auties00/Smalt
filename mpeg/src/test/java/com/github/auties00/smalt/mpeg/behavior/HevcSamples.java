@@ -24,7 +24,8 @@ import static com.github.auties00.smalt.testkit.HeifBuilder.plain;
 /**
  * Packages the HEVC Annex B vectors of the screen content coding and separate color plane tests, whose pictures each
  * end with a decoded picture hash (a suffix SEI message), into an MP4 file (one sample per picture, presentation
- * times in output order) or an HEIC item.
+ * times in output order) or an HEIC item, and the multi-layer vectors into an MP4 file of one sample per access unit
+ * whose configuration carries the parameter sets of every layer.
  */
 final class HevcSamples {
     /**
@@ -45,7 +46,23 @@ final class HevcSamples {
      * @param bitDepth the bit depth of the stream
      */
     static byte[] mp4(byte[] stream, int width, int height, int chromaFormatIdc, int bitDepth) {
-        var pictures = pictures(nalUnits(stream));
+        return mp4(pictures(nalUnits(stream)), width, height, chromaFormatIdc, bitDepth);
+    }
+
+    /**
+     * Returns an MP4 file holding a multi-layer Annex B stream as one {@code hvc1} track: one sample per access unit
+     * holding the pictures of every layer, the parameter sets of the layers above the base layer in the {@code lhvC}
+     * record the muxer splits off the configuration.
+     *
+     * @param stream the stream
+     * @param width the base layer's picture width
+     * @param height the base layer's picture height
+     */
+    static byte[] mp4Layered(byte[] stream, int width, int height) {
+        return mp4(accessUnits(nalUnits(stream)), width, height, 1, 8);
+    }
+
+    private static byte[] mp4(List<List<byte[]>> pictures, int width, int height, int chromaFormatIdc, int bitDepth) {
         var sets = new ArrayList<byte[]>();
         for (var nal : pictures.getFirst()) {
             if (type(nal) >= 32 && type(nal) <= 34) {
@@ -137,6 +154,34 @@ final class HevcSamples {
             result[i] = ranks.get((long) i);
         }
         return result;
+    }
+
+    /**
+     * Groups the NAL units of a multi-layer stream into access units, each starting at a parameter set, delimiter,
+     * prefix SEI message or first slice segment of the base layer that follows a slice.
+     */
+    private static List<List<byte[]>> accessUnits(List<byte[]> nals) {
+        var units = new ArrayList<List<byte[]>>();
+        var current = new ArrayList<byte[]>();
+        var slice = false;
+        for (var nal : nals) {
+            var type = type(nal);
+            var baseLayer = (nal[0] & 1) == 0 && (nal[1] & 0xF8) == 0;
+            // parameter sets, delimiters and prefix SEI messages start an access unit; end of sequence and end of
+            // bitstream units end one
+            var starts = type >= 32 && type <= 35 || type == 39 || type < 32 && (nal[2] & 0x80) != 0;
+            if (slice && baseLayer && starts) {
+                units.add(current);
+                current = new ArrayList<>();
+                slice = false;
+            }
+            current.add(nal);
+            slice |= type < 32;
+        }
+        if (!current.isEmpty()) {
+            units.add(current);
+        }
+        return units;
     }
 
     /**

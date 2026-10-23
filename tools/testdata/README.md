@@ -529,6 +529,30 @@ by bit and computes their expected frames with its own model of the standard's S
 JM decoder agrees where it applies. `streams.tsv` records how each stream was made and which of them the encoder's
 own reconstruction also matches.
 
+## HEVC multi-layer vectors
+
+`HevcMultilayerConformanceTest` of `smalt-mpeg` decodes the JCT-VC SHVC and JCT-3V MV-HEVC conformance streams
+(`hevc-shvc-*.zip` and `hevc-mvhevc-*.zip` in `vectors.tsv`, fetched because their licence is unstated) and compares
+every output layer set with the archive's output picture log, or each layer's whole output with its MD5.
+`HevcMultilayerVectorTest` decodes short streams the SHM reference encoder of the scalable and multiview extensions
+coded from ffmpeg's `testsrc` pattern (`mpeg/src/test/resources/com/github/auties00/smalt/video/hevc/multilayer/`):
+spatial scalability at 2x (low delay) and 1.5x (random access with a CRA picture), quality scalability from an 8-bit
+base to a 10-bit enhancement, two MV-HEVC views (which ffmpeg's MV-HEVC decoder must decode to the same pictures),
+an alpha auxiliary layer with an alpha channel information SEI message, and a 2x enhancement over an external AVC
+base layer coded by x264. `python -I tools/testdata/hevc-multilayer/make-vectors.py <SHM bin> <SHM cfg> <that
+directory>` codes them with SHM-12.4 (BSD-3-Clause, compiled with g++ as a black box), fails unless SHM's decoder
+verifies every MD5 picture hash of every layer and decodes the encoder's reconstruction, and records the SHA-256 of
+each stream and the MD5 of every output frame of each layer in `multilayer.tsv`.
+
+`HeicMultilayerTest` decodes the layered `lhv1` items of Nokia's multilayer001, 004 (an AVC base item referenced
+with `exbl`) and 005 (MV-HEVC with a layer selector) conformance files, whose expected pictures
+`python -I tools/testdata/hevc-multilayer/make-references.py <TAppDecoder> <directory of the files>` prints: the
+item's `lhvC` parameter sets and data turned into an Annex B stream, decoded by SHM with the item's target output
+layer set (with ffmpeg's decode of the AVC base item as SHM's external base layer pictures, and ffmpeg's MV-HEVC
+decoder cross-checking the views). It also builds `lhv1` items around the first access unit of the SHM streams above.
+`HevcAppleAlphaTest` runs on macOS only: avconvert's `PresetHEVCHighestQualityWithAlpha` codes an ffmpeg-made ProRes
+4444 clip with alpha, and the test keeps the result in `target/media-fixtures/apple-hevc-alpha.mov`.
+
 ## Aperio slide oracle files
 
 The same test decodes a pyramid level of two Aperio slides of the OpenSlide test data

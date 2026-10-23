@@ -120,6 +120,48 @@ public sealed interface HeifProperty {
     }
 
     /**
+     * The layered HEVC codec configuration ({@code lhvC}, ISO/IEC 14496-15 clause 9.6.3) of a layered
+     * HEVC image item ({@code lhv1}), kept as the raw record: the parameter sets the item's layers
+     * need.
+     *
+     * @param record the {@code LHEVCDecoderConfigurationRecord}
+     */
+    record LayeredHevcConfiguration(byte[] record) implements HeifProperty {
+        @Override
+        public String type() {
+            return "lhvC";
+        }
+    }
+
+    /**
+     * The target output layer set of a layered HEVC image item ({@code tols}, ISO/IEC 23008-12): the
+     * output layer set its reconstruction decodes.
+     *
+     * @param outputLayerSet {@code target_ols_idx}
+     */
+    record TargetOutputLayerSet(int outputLayerSet) implements HeifProperty {
+        @Override
+        public String type() {
+            return "tols";
+        }
+    }
+
+    /**
+     * The operating points information of a layered image item ({@code oinf}, ISO/IEC 14496-15
+     * clause 9.6.2), kept as the raw payload: the profile, tier and level of each operating point
+     * and the layers it holds. The bitstream's video parameter set carries the same information,
+     * so the reconstruction does not need it.
+     *
+     * @param payload the box payload after the full box header
+     */
+    record OperatingPointsInformation(byte[] payload) implements HeifProperty {
+        @Override
+        public String type() {
+            return "oinf";
+        }
+    }
+
+    /**
      * The AVC codec configuration ({@code avcC}, ISO/IEC 14496-15 clause 5.3.3), kept as the raw
      * record.
      *

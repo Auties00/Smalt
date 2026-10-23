@@ -51,6 +51,35 @@ class FrameSideDataTest {
     }
 
     @Test
+    @DisplayName("the layer entry round-trips, takes part in equality and is cleared by noLayer")
+    void layer() {
+        var layer = new VideoLayer(1, 2, VideoLayer.Type.PRIMARY);
+        var data = FrameSideData.builder().layer(layer).build();
+        assertFalse(data.isEmpty());
+        assertEquals(layer, data.layer().orElseThrow());
+        assertEquals(data, data.toBuilder().build());
+        assertEquals(data.hashCode(), data.toBuilder().build().hashCode());
+        assertNotEquals(data, data.toBuilder().layer(new VideoLayer(1, 2, VideoLayer.Type.ALPHA)).build());
+        assertTrue(data.toString().contains("PRIMARY"), data.toString());
+        assertSame(FrameSideData.NONE, data.toBuilder().noLayer().build());
+        assertTrue(FrameSideData.NONE.layer().isEmpty());
+        assertThrows(NullPointerException.class, () -> FrameSideData.builder().layer(null));
+    }
+
+    @Test
+    @DisplayName("a layer names an identifier from 0 to 63, a non-negative view and a type")
+    void videoLayer() {
+        var layer = new VideoLayer(63, 0, VideoLayer.Type.DEPTH);
+        assertEquals(63, layer.id());
+        assertEquals(0, layer.viewId());
+        assertEquals(VideoLayer.Type.DEPTH, layer.type());
+        assertThrows(IllegalArgumentException.class, () -> new VideoLayer(64, 0, VideoLayer.Type.PRIMARY));
+        assertThrows(IllegalArgumentException.class, () -> new VideoLayer(-1, 0, VideoLayer.Type.PRIMARY));
+        assertThrows(IllegalArgumentException.class, () -> new VideoLayer(0, -1, VideoLayer.Type.PRIMARY));
+        assertThrows(NullPointerException.class, () -> new VideoLayer(0, 0, null));
+    }
+
+    @Test
     @DisplayName("the builder rejects nulls and repeated fields outside 0 to 4")
     void validation() {
         var builder = FrameSideData.builder();

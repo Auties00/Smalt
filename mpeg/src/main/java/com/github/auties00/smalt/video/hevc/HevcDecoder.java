@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
+import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.internal.plane.Narrow;
@@ -25,9 +26,12 @@ import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.FrameSideData;
 import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.VideoLayer;
 import com.github.auties00.smalt.video.hevc.internal.HevcDecoderEngine;
 import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
+import com.github.auties00.smalt.video.hevc.internal.HevcSei;
 import com.github.auties00.smalt.video.hevc.internal.HevcSps;
+import com.github.auties00.smalt.video.hevc.internal.HevcVps;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -55,12 +59,26 @@ import java.util.function.Consumer;
  * motion vector resolution and disabled intra boundary filtering. Output is bit-exact with the
  * normative decoding process.
  *
+ * <p>Streams of several layers (ITU-T H.265 Annexes F, G and H) are decoded too: the multiview
+ * extension (MV-HEVC, the Multiview Main profile, such as stereoscopic video), the scalable extension
+ * (SHVC, the Scalable Main, Scalable Main 10 and Scalable Monochrome profiles: spatial, quality, bit
+ * depth and color gamut scalability with the resampling of inter-layer reference pictures, their
+ * motion and the colour mapping table), and auxiliary alpha and depth layers. Which layers are output
+ * follows {@link HevcDecoderOptions#outputLayerSet()}, by default the base layer alone; the pictures
+ * of an access unit are output one after the other in increasing layer order, all with the same
+ * timestamp, each frame naming its layer in {@link FrameSideData#layer()} when more than the base
+ * layer is output. With {@link HevcDecoderOptions#alpha()}, the alpha auxiliary layer of an output
+ * layer is attached to the layer's frames as their alpha plane. A layer that uses the 3D-HEVC
+ * extension raises {@link MediaException.Unsupported} naming the feature {@code "hevc 3D extension"};
+ * a stream whose base layer is coded outside it, with another codec, raises it naming
+ * {@code "hevc external base layer"}.
+ *
  * <p>Packet format follows the track: when {@link VideoTrack#codecConfig()} holds an
  * {@code HEVCDecoderConfigurationRecord} ({@code hvcC}), packets are NAL units prefixed by their
  * big-endian length and the record's parameter sets are loaded at construction; otherwise packets
  * are Annex B byte streams with start codes, which may split access units arbitrarily. Parameter
- * sets carried in packets are honored in both cases. NAL units of reserved types and of layers
- * other than the base layer are ignored.
+ * sets carried in packets are honored in both cases. NAL units of reserved types and of layers that
+ * are not decoded are ignored.
  *
  * <p>Frames reach the consumer in output order as {@link YuvPicture}s cropped by the sequence's
  * conformance window (and by the VUI's default display window inside it when
@@ -75,16 +93,27 @@ import java.util.function.Consumer;
  * samples of the shallower component are scaled to that depth by a left shift.
  * Each frame carries the timestamp of the packet in which its picture's first slice arrived. When
  * that packet had no timestamp and a frame duration is known (from the packet, the track's frame
- * rate or the stream's VUI timing), the timestamp continues from the end of the previous frame. A
- * duration taken from the track or the VUI is scaled by the picture timing SEI message's
- * {@code pic_struct}: one and a half times for the three-field structures (5 and 6), twice for frame
- * doubling (7) and three times for frame tripling (8). The color
+ * rate or the stream's VUI timing), the timestamp continues from the end of the previous frame of
+ * its layer. A duration taken from the track or the VUI is scaled by the picture timing SEI
+ * message's {@code pic_struct}: one and a half times for the three-field structures (5 and 6),
+ * twice for frame doubling (7) and three times for frame tripling (8). The color
  * description comes from the VUI; components the VUI leaves unspecified default to BT.709 for
  * pictures wider than 1024 or taller than 576 samples and to BT.601 otherwise. The chroma siting
  * is the VUI's {@code chroma_sample_loc_type_top_field} when signaled, the transfer function the
  * one an alternative transfer characteristics SEI message prefers when present, and the mastering
  * display and content light level come from the last SEI messages that carried them. A frame is a
  * keyframe when its picture is an IRAP picture or an I picture carrying a recovery point SEI message.
+ *
+ * <p>An attached alpha plane has the frame's size and straight semantics: the alpha picture is
+ * cropped by its conformance window and, when its size differs from the frame's, resized to it; its
+ * samples are interpreted as the alpha channel information SEI message of the alpha layer says
+ * (its transparent and opaque values, increment and clipping), scaled to the full range of the
+ * frame's bit depth, or, without such a message, taken at full scale unless the alpha layer's VUI
+ * says its range is limited. An access unit without an alpha picture keeps the alpha of the last one
+ * of the coded video sequence. When the message says the frame's color is premultiplied by the
+ * alpha, the frame is an {@link com.github.auties00.smalt.image.RgbaPicture RgbaPicture} (or an
+ * {@link com.github.auties00.smalt.image.Rgba16Picture Rgba16Picture} with
+ * {@link HevcDecoderOptions#highBitDepth()}) with the color divided back by the alpha.
  *
  * <p>With {@link HevcDecoderOptions#filmGrain()} set, the film grain a film grain characteristics
  * SEI message describes (the frequency filtering model with additive blending) is added to the
@@ -94,8 +123,8 @@ import java.util.function.Consumer;
  * picture timing ({@code pic_struct}), frame packing arrangement and display orientation SEI
  * messages is reported in {@link VideoFrame#sideData()}; a frame woven from two fields carries the
  * messages of its first field and reports that field's parity. Messages with the persistence flag
- * set apply to the pictures output after them until a cancel, a later message of the same type or
- * the start of a coded video sequence.
+ * set apply to the pictures of their layer output after them until a cancel, a later message of the
+ * same type or the start of a coded video sequence.
  *
  * <p>The fields of a field coded sequence ({@code field_seq_flag}), and the pictures that their
  * picture timing SEI message's {@code pic_struct} marks as fields (1, 2 and 9 to 12), are woven into
@@ -106,7 +135,8 @@ import java.util.function.Consumer;
  * alternate, the first field of each frame taken as the top field. A field left without a pair is
  * output as a frame whose other field is mid-gray ({@code 1 << (d - 1)} at bit depth {@code d}).
  * A woven frame carries the timestamp of its first field and, when both durations are known, the
- * sum of the durations of its fields; the conformance and display windows crop each field.
+ * sum of the durations of its fields; the conformance and display windows crop each field. The
+ * fields of each layer are woven apart.
  *
  * <p>Decoding starts at the first IRAP picture or at the first picture carrying a recovery point SEI
  * message, whichever comes first; the RASL pictures of a CRA picture that starts the stream are
@@ -115,7 +145,8 @@ import java.util.function.Consumer;
  * (nor their picture hashes checked), until an IRAP picture starts a new coded video sequence;
  * the hashes of the later pictures are checked only when the message promises an exact match. A
  * recovery point message that is truncated, or whose {@code recovery_poc_cnt} lies outside
- * {@code -MaxPicOrderCntLsb / 2} to {@code MaxPicOrderCntLsb / 2 - 1}, is ignored.
+ * {@code -MaxPicOrderCntLsb / 2} to {@code MaxPicOrderCntLsb / 2 - 1}, is ignored. The layers
+ * above the base layer start at their own IRAP pictures once their reference layers have started.
  * A base layer whose parameter sets carry the 3D-HEVC extension raises
  * {@link MediaException.Unsupported} naming the feature {@code "hevc 3D extension"}.
  * Every profile of version 1, of the range extensions and of the screen content coding extensions
@@ -170,26 +201,6 @@ public final class HevcDecoder implements VideoDecoder {
     private ConsumerFailure<VideoFrame> output;
 
     /**
-     * The recycled 8-bit output picture.
-     */
-    private YuvPicture picture;
-
-    /**
-     * The recycled high bit depth output picture.
-     */
-    private Yuv16Picture widePicture;
-
-    /**
-     * The timestamp of the last frame or field output, or {@link Packet#NO_TIMESTAMP}.
-     */
-    private long lastPts = Packet.NO_TIMESTAMP;
-
-    /**
-     * The duration of the last frame or field output, or 0 when unknown.
-     */
-    private long lastDuration;
-
-    /**
      * The parity of a top field, whose rows are the even rows of its frame.
      */
     private static final int TOP = 0;
@@ -200,35 +211,9 @@ public final class HevcDecoder implements VideoDecoder {
     private static final int BOTTOM = 1;
 
     /**
-     * The woven frame holding the field that waits for its pair, or {@code null} when no field
-     * waits.
+     * The output state of each layer, by layer identifier, created with the layer's first frame.
      */
-    private Picture held;
-
-    /**
-     * The parity of the waiting field, {@link #TOP} or {@link #BOTTOM}.
-     */
-    private int heldParity;
-
-    /**
-     * The timestamp of the waiting field.
-     */
-    private long heldPts;
-
-    /**
-     * The duration of the waiting field, or 0 when unknown.
-     */
-    private long heldDuration;
-
-    /**
-     * Whether the waiting field is a keyframe.
-     */
-    private boolean heldKeyframe;
-
-    /**
-     * The display information of the frame of the waiting field.
-     */
-    private FrameSideData heldSideData = FrameSideData.NONE;
+    private final LayerOutput[] layerOutputs = new LayerOutput[64];
 
     /**
      * The decoded samples of the picture being output.
@@ -244,31 +229,6 @@ public final class HevcDecoder implements VideoDecoder {
      * The film grain renderer, created with the first picture that carries grain.
      */
     private FilmGrainSynthesizer grainSynthesizer;
-
-    /**
-     * Which film grain characteristics message applies to each picture, in output order.
-     */
-    private final SeiPersistence<FilmGrainParameters> grainPersistence = new SeiPersistence<>();
-
-    /**
-     * Which frame packing arrangement message applies to each picture, in output order.
-     */
-    private final SeiPersistence<DisplaySei.FramePackingMessage> packingPersistence = new SeiPersistence<>();
-
-    /**
-     * Which display orientation message applies to each picture, in output order.
-     */
-    private final SeiPersistence<DisplaySei.OrientationMessage> orientationPersistence = new SeiPersistence<>();
-
-    /**
-     * The recycled 8-bit woven frame.
-     */
-    private YuvPicture wovenPicture;
-
-    /**
-     * The recycled high bit depth woven frame.
-     */
-    private Yuv16Picture wovenWidePicture;
 
     /**
      * The left edge of the window {@link #window(HevcSps)} computed last, in luma samples.
@@ -302,6 +262,137 @@ public final class HevcDecoder implements VideoDecoder {
     private boolean closed;
 
     /**
+     * The state of the frames of one layer between outputs: its timestamps, the field waiting
+     * for its pair, the persistence of its SEI messages and its recycled pictures.
+     */
+    private static final class LayerOutput {
+        /**
+         * The timestamp of the last frame or field output, or {@link Packet#NO_TIMESTAMP}.
+         */
+        long lastPts = Packet.NO_TIMESTAMP;
+
+        /**
+         * The duration of the last frame or field output, or 0 when unknown.
+         */
+        long lastDuration;
+
+        /**
+         * The woven frame holding the field that waits for its pair, or {@code null} when no field
+         * waits.
+         */
+        Picture held;
+
+        /**
+         * The parity of the waiting field, {@link #TOP} or {@link #BOTTOM}.
+         */
+        int heldParity;
+
+        /**
+         * The timestamp of the waiting field.
+         */
+        long heldPts;
+
+        /**
+         * The duration of the waiting field, or 0 when unknown.
+         */
+        long heldDuration;
+
+        /**
+         * Whether the waiting field is a keyframe.
+         */
+        boolean heldKeyframe;
+
+        /**
+         * The display information of the frame of the waiting field.
+         */
+        FrameSideData heldSideData = FrameSideData.NONE;
+
+        /**
+         * Which film grain characteristics message applies to each picture, in output order.
+         */
+        final SeiPersistence<FilmGrainParameters> grainPersistence = new SeiPersistence<>();
+
+        /**
+         * Which frame packing arrangement message applies to each picture, in output order.
+         */
+        final SeiPersistence<DisplaySei.FramePackingMessage> packingPersistence = new SeiPersistence<>();
+
+        /**
+         * Which display orientation message applies to each picture, in output order.
+         */
+        final SeiPersistence<DisplaySei.OrientationMessage> orientationPersistence = new SeiPersistence<>();
+
+        /**
+         * The recycled 8-bit output picture.
+         */
+        YuvPicture picture;
+
+        /**
+         * The recycled high bit depth output picture.
+         */
+        Yuv16Picture widePicture;
+
+        /**
+         * The recycled 8-bit woven frame.
+         */
+        YuvPicture wovenPicture;
+
+        /**
+         * The recycled high bit depth woven frame.
+         */
+        Yuv16Picture wovenWidePicture;
+
+        /**
+         * The 8-bit alpha plane of the last frame with alpha, its window size, or {@code null}.
+         */
+        byte[] alpha8;
+
+        /**
+         * The high bit depth alpha plane of the last frame with alpha, or {@code null}.
+         */
+        short[] alpha16;
+
+        /**
+         * The width of the alpha planes, or 0 when no alpha persists.
+         */
+        int alphaWidth;
+
+        /**
+         * The height of the alpha planes.
+         */
+        int alphaHeight;
+
+        /**
+         * Whether the last alpha planes are of a premultiplied picture.
+         */
+        boolean alphaPremultiplied;
+
+        /**
+         * The alpha value of every decoded alpha sample under the last interpretation, or {@code null}.
+         */
+        int[] alphaLut;
+
+        /**
+         * The values and depths the table of alpha values was computed for.
+         */
+        long alphaLutKey;
+
+        /**
+         * The alpha channel information message the table of alpha values was computed for, or {@code null}.
+         */
+        HevcSei.AlphaChannel alphaLutInfo;
+
+        /**
+         * Forgets the persistence of the SEI messages.
+         */
+        void resetPersistence() {
+            grainPersistence.reset();
+            packingPersistence.reset();
+            orientationPersistence.reset();
+        }
+    }
+
+    /**
      * Constructs a decoder for a track with the {@linkplain HevcDecoderOptions#defaults() default}
      * options.
      *
@@ -331,7 +422,8 @@ public final class HevcDecoder implements VideoDecoder {
         // TODO: decode the tiles of a picture concurrently too; pictures and wavefront rows already
         // overlap when options.threads() allows it
         this.engine = new HevcDecoderEngine(options.limits(), options.hashVerification(),
-                options.threads() == 0 ? ParallelBands.THREADS : options.threads(), this::emit);
+                options.threads() == 0 ? ParallelBands.THREADS : options.threads(),
+                options.outputLayerSet().orElse(-1), options.alpha(), this::emit);
         this.timeBase = track.timeBase();
         this.trackFrameDuration = track.frameRate()
                 .map(rate -> Math.max(0, rate.invert().rescale(1, timeBase)))
@@ -415,10 +507,13 @@ public final class HevcDecoder implements VideoDecoder {
                 try {
                     engine.flush();
                 } finally {
-                    releaseHeldField();
-                    grainPersistence.reset();
-                    packingPersistence.reset();
-                    orientationPersistence.reset();
+                    for (var layer : layerOutputs) {
+                        if (layer != null) {
+                            releaseHeldField(layer);
+                            layer.resetPersistence();
+                            layer.alphaWidth = 0;
+                        }
+                    }
                 }
             } catch (RuntimeException exception) {
                 throw handoff.translate("HEVC stream", exception);
@@ -434,7 +529,7 @@ public final class HevcDecoder implements VideoDecoder {
             return;
         }
         closed = true;
-        held = null;
+        Arrays.fill(layerOutputs, null);
         try (var _ = ParallelBands.operation(operation)) {
             engine.close();
         }
@@ -469,6 +564,21 @@ public final class HevcDecoder implements VideoDecoder {
     }
 
     /**
+     * Returns the output state of a layer, creating it with the layer's first frame.
+     *
+     * @param layerId the layer identifier
+     * @return the state
+     */
+    private LayerOutput layerOutput(int layerId) {
+        var layer = layerOutputs[layerId];
+        if (layer == null) {
+            layer = new LayerOutput();
+            layerOutputs[layerId] = layer;
+        }
+        return layer;
+    }
+
+    /**
      * Converts a decoded picture into a {@link VideoFrame} and hands it to the consumer, or, for a
      * field of a sequence of fields, weaves it into the frame of its pair.
      *
@@ -482,20 +592,24 @@ public final class HevcDecoder implements VideoDecoder {
      * @param frame the engine's picture
      */
     private void emit(HevcFrame frame) {
+        var layer = layerOutput(frame.layerId);
         var sps = frame.sps;
         window(sps);
         var keyframe = frame.irap || frame.recoveryPoint && frame.intraOnly;
-        var grain = grainPersistence.resolve(frame.newSequence, frame.filmGrain);
-        var packing = packingPersistence.resolve(frame.newSequence, frame.framePacking);
-        var orientation = orientationPersistence.resolve(frame.newSequence, frame.orientation);
+        var grain = layer.grainPersistence.resolve(frame.newSequence, frame.filmGrain);
+        var packing = layer.packingPersistence.resolve(frame.newSequence, frame.framePacking);
+        var orientation = layer.orientationPersistence.resolve(frame.newSequence, frame.orientation);
         var source = grain != null && options.filmGrain() ? withFilmGrain(frame, grain) : decoded.of(frame);
+        var view = frame.layered ? layerOf(frame) : null;
+        var depthOut = options.highBitDepth() && sps.pictureBitDepth() > 8 ? sps.pictureBitDepth() : 8;
+        var hasAlpha = prepareAlpha(layer, frame, windowWidth, windowHeight, depthOut);
         if (sps.fieldSeq || isField(frame.picStruct)) {
-            emitField(frame, source, keyframe, packing, orientation);
+            emitField(layer, frame, source, keyframe, packing, orientation, view, hasAlpha);
             return;
         }
-        releaseHeldField();
-        var sideData = DisplaySei.sideData(DisplaySei.fieldOrder(frame.picStruct),
-                DisplaySei.repeatedFields(frame.picStruct), packing, orientation);
+        releaseHeldField(layer);
+        var sideData = sideData(DisplaySei.sideData(DisplaySei.fieldOrder(frame.picStruct),
+                DisplaySei.repeatedFields(frame.picStruct), packing, orientation), view);
         var left = windowLeft;
         var top = windowTop;
         var width = windowWidth;
@@ -511,6 +625,9 @@ public final class HevcDecoder implements VideoDecoder {
             if (source.cb8 != null) {
                 builder.chroma(source.cb8, source.cr8, source.chromaWidth);
             }
+            if (hasAlpha) {
+                builder.alpha(layer.alpha8, width);
+            }
             result = builder.build();
         } else if (uncropped && depth > 8 && options.highBitDepth() && !sps.mixedBitDepth()) {
             var builder = Yuv16Picture.builder().size(width, height).chromaFormat(format).bitDepth(depth).color(color)
@@ -518,28 +635,209 @@ public final class HevcDecoder implements VideoDecoder {
             if (source.cb != null) {
                 builder.chroma(source.cb, source.cr, source.chromaWidth);
             }
+            if (hasAlpha) {
+                builder.alpha(layer.alpha16, width);
+            }
             result = builder.build();
         } else if (depth > 8 && options.highBitDepth()) {
-            var target = widePicture;
-            if (!matches(target, width, height, format, depth, color)) {
-                target = Yuv16Picture.allocate(width, height, format, depth, false, color);
-                widePicture = target;
+            var target = layer.widePicture;
+            if (!matches(target, width, height, format, depth, color, hasAlpha)) {
+                target = Yuv16Picture.allocate(width, height, format, depth, hasAlpha, color);
+                layer.widePicture = target;
             }
             copyWide(source, sps, target, left, top, width, height, 0, 1);
+            if (hasAlpha) {
+                Planes.copy(layer.alpha16, 0, width, target.alpha(), 0, target.alphaStride(), width, height);
+            }
             result = target;
         } else {
-            var target = picture;
-            if (!matches(target, width, height, format, 0, color)) {
-                target = YuvPicture.allocate(width, height, format, false, color);
-                picture = target;
+            var target = layer.picture;
+            if (!matches(target, width, height, format, 0, color, hasAlpha)) {
+                target = YuvPicture.allocate(width, height, format, hasAlpha, color);
+                layer.picture = target;
             }
             copyNarrow(source, sps, target, left, top, width, height, 0, 1);
+            if (hasAlpha) {
+                Planes.copy(layer.alpha8, 0, width, target.alpha(), 0, target.alphaStride(), width, height);
+            }
             result = target;
         }
+        if (hasAlpha && layer.alphaPremultiplied) {
+            result = HeifPictures.unpremultiply(result);
+        }
         var duration = frame.duration > 0 ? frame.duration : repeated(frameDuration(sps), frame.picStruct);
-        var pts = resolvePts(frame.pts, duration);
+        var pts = resolvePts(layer, frame.pts, duration);
         output.accept(new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe,
                 sideData));
+    }
+
+    /**
+     * Returns the layer a frame names in its side data.
+     *
+     * @param frame the engine's picture
+     * @return the layer
+     */
+    private static VideoLayer layerOf(HevcFrame frame) {
+        var type = switch (frame.auxId) {
+            case 0 -> VideoLayer.Type.PRIMARY;
+            case HevcVps.AUX_ALPHA -> VideoLayer.Type.ALPHA;
+            case HevcVps.AUX_DEPTH -> VideoLayer.Type.DEPTH;
+            default -> VideoLayer.Type.AUXILIARY;
+        };
+        return new VideoLayer(frame.layerId, Math.max(0, frame.viewId), type);
+    }
+
+    /**
+     * Adds the layer of a frame to its display information.
+     *
+     * @param sideData the display information of the SEI messages
+     * @param view the layer, or {@code null} when the frame does not name one
+     * @return the display information
+     */
+    private static FrameSideData sideData(FrameSideData sideData, VideoLayer view) {
+        return view == null ? sideData : sideData.toBuilder().layer(view).build();
+    }
+
+    /**
+     * Computes the alpha plane of a frame from the alpha picture attached to it, into the layer's
+     * recycled alpha planes, or keeps the alpha of the last frame of its coded video sequence when
+     * the access unit has no alpha picture.
+     *
+     * @param layer the output state of the frame's layer
+     * @param frame the engine's picture
+     * @param width the width of the frame's window
+     * @param height the height of the frame's window
+     * @param depth the bit depth of the output picture: 8, or the depth of a {@link Yuv16Picture}
+     * @return whether the frame has an alpha plane
+     */
+    private boolean prepareAlpha(LayerOutput layer, HevcFrame frame, int width, int height, int depth) {
+        var alpha = frame.alpha;
+        if (alpha == null) {
+            if (frame.newSequence) {
+                layer.alphaWidth = 0;
+            }
+            return layer.alphaWidth == width && layer.alphaHeight == height && (depth > 8) == (layer.alpha16 != null);
+        }
+        var sps = alpha.sps;
+        var left = sps.cropLeft;
+        var top = sps.cropTop;
+        var alphaWidth = sps.width - sps.cropLeft - sps.cropRight;
+        var alphaHeight = sps.height - sps.cropTop - sps.cropBottom;
+        var sourceDepth = sps.bitDepthLuma;
+        // the alpha picture is read in place when it has the size of the frame's window, the usual case
+        byte[] samples8 = alpha.eightBit() ? alpha.y8 : null;
+        short[] samples16 = alpha.eightBit() ? null : alpha.y;
+        var origin = top * alpha.width + left;
+        var stride = alpha.width;
+        if (alphaWidth != width || alphaHeight != height) {
+            Picture luma;
+            if (alpha.eightBit()) {
+                luma = HeifPictures.lumaPicture(alpha.y8, origin, alpha.width, alphaWidth, alphaHeight);
+            } else {
+                luma = HeifPictures.lumaPicture(alpha.y, origin, alpha.width, alphaWidth, alphaHeight, sourceDepth);
+            }
+            switch (HeifPictures.resampleAlpha(luma, width, height)) {
+                case YuvPicture yuv -> {
+                    samples8 = yuv.y();
+                    samples16 = null;
+                    stride = yuv.yStride();
+                }
+                case Yuv16Picture yuv -> {
+                    samples8 = null;
+                    samples16 = yuv.y();
+                    stride = yuv.yStride();
+                }
+                default -> throw new IllegalStateException("resampled alpha is not a luma picture");
+            }
+            origin = 0;
+        }
+        var info = alpha.alphaChannel;
+        var maxIn = (1 << sourceDepth) - 1;
+        int transparent;
+        int opaque;
+        if (info != null) {
+            transparent = info.transparent();
+            opaque = info.opaque();
+        } else if (sps.videoSignalTypePresent && !sps.fullRange) {
+            transparent = 16 << (sourceDepth - 8);
+            opaque = 235 << (sourceDepth - 8);
+        } else {
+            transparent = 0;
+            opaque = maxIn;
+        }
+        var size = width * height;
+        if (depth > 8) {
+            if (layer.alpha16 == null || layer.alpha16.length < size) {
+                layer.alpha16 = new short[size];
+            }
+            layer.alpha8 = null;
+        } else {
+            if (layer.alpha8 == null || layer.alpha8.length < size) {
+                layer.alpha8 = new byte[size];
+            }
+            layer.alpha16 = null;
+        }
+        var lut = alphaLut(layer, info, transparent, opaque, sourceDepth, depth);
+        var last = lut.length - 1;
+        for (var y = 0; y < height; y++) {
+            var row = origin + y * stride;
+            var target = y * width;
+            if (depth > 8) {
+                var plane = layer.alpha16;
+                for (var x = 0; x < width; x++) {
+                    var sample = samples8 != null ? samples8[row + x] & 0xFF : samples16[row + x] & 0xFFFF;
+                    plane[target + x] = (short) lut[Math.min(sample, last)];
+                }
+            } else {
+                var plane = layer.alpha8;
+                for (var x = 0; x < width; x++) {
+                    var sample = samples8 != null ? samples8[row + x] & 0xFF : samples16[row + x] & 0xFFFF;
+                    plane[target + x] = (byte) lut[Math.min(sample, last)];
+                }
+            }
+        }
+        layer.alphaWidth = width;
+        layer.alphaHeight = height;
+        layer.alphaPremultiplied = info != null && info.useIdc() == 1;
+        return true;
+    }
+
+    /**
+     * Returns the alpha value of every decoded alpha sample, kept by the layer while the
+     * interpretation stays the same: the interpretation value of the alpha channel information
+     * message, mapped from the transparent value (0) to the opaque value (full scale) with rounding
+     * and clamped, every sample full scale when the two values are equal.
+     *
+     * @param layer the output state of the frame's layer, which keeps the table
+     * @param info the alpha channel information message, or {@code null}
+     * @param transparent the sample value that is transparent
+     * @param opaque the sample value that is opaque
+     * @param sourceDepth the bit depth of the alpha samples
+     * @param depth the bit depth of the alpha plane
+     * @return the table, indexed by decoded sample
+     */
+    private static int[] alphaLut(LayerOutput layer, HevcSei.AlphaChannel info, int transparent, int opaque,
+                                  int sourceDepth, int depth) {
+        var key = ((long) transparent << 34) | ((long) opaque << 16) | (sourceDepth << 8) | depth;
+        if (layer.alphaLut != null && layer.alphaLutKey == key && Objects.equals(layer.alphaLutInfo, info)) {
+            return layer.alphaLut;
+        }
+        var maxOut = (1 << depth) - 1;
+        var range = opaque - transparent;
+        var lut = new int[1 << sourceDepth];
+        for (var sample = 0; sample < lut.length; sample++) {
+            var interpreted = info != null ? info.interpret(sample) : sample;
+            if (range == 0) {
+                lut[sample] = maxOut;
+            } else {
+                var numerator = (long) (interpreted - transparent) * maxOut;
+                lut[sample] = (int) Math.clamp(Math.floorDiv(2 * numerator + range, 2L * range), 0, maxOut);
+            }
+        }
+        layer.alphaLut = lut;
+        layer.alphaLutKey = key;
+        layer.alphaLutInfo = info;
+        return lut;
     }
 
     /**
@@ -563,7 +861,7 @@ public final class HevcDecoder implements VideoDecoder {
         }
         var target = grained.fit(frame);
         var threads = options.threads() == 0 ? ParallelBands.THREADS : options.threads();
-        var poc = frame.poc;
+        var poc = frame.outputPoc;
         var format = sps.chromaFormatIdc;
         var components = frame.chromaWidth > 0 ? 3 : 1;
         for (var c = 0; c < components; c++) {
@@ -689,8 +987,8 @@ public final class HevcDecoder implements VideoDecoder {
     }
 
     /**
-     * Weaves a field into a frame: the field waits for the next field in output order when the two
-     * pair up, and a field without a pair is output alone, its missing field mid-gray.
+     * Weaves a field into a frame: the field waits for the next field of its layer in output order
+     * when the two pair up, and a field without a pair is output alone, its missing field mid-gray.
      *
      * <p>The parity of a field is the {@code pic_struct} of its picture timing SEI message: top for
      * 1, 9 and 11, bottom for 2, 10 and 12. Without one, the field takes the parity opposite to
@@ -702,6 +1000,7 @@ public final class HevcDecoder implements VideoDecoder {
      * <p>The woven frame carries the frame packing and display orientation of its first field, and
      * the parity of that field as its scan.
      *
+     * @param layer the output state of the field's layer
      * @param frame the engine's picture of the field
      * @param source the samples of the field
      * @param keyframe whether the field is a keyframe, which makes its frame one when it comes
@@ -710,63 +1009,86 @@ public final class HevcDecoder implements VideoDecoder {
      * {@code null}
      * @param orientation the display orientation message that applies to the field, or
      * {@code null}
+     * @param view the layer the frame names, or {@code null}
+     * @param hasAlpha whether the field has an alpha plane in the layer's alpha planes
      */
-    private void emitField(HevcFrame frame, Source source, boolean keyframe, DisplaySei.FramePackingMessage packing,
-                           DisplaySei.OrientationMessage orientation) {
+    private void emitField(LayerOutput layer, HevcFrame frame, Source source, boolean keyframe,
+                           DisplaySei.FramePackingMessage packing, DisplaySei.OrientationMessage orientation,
+                           VideoLayer view, boolean hasAlpha) {
         var sps = frame.sps;
         var picStruct = frame.picStruct;
         var parity = switch (picStruct) {
             case 1, 9, 11 -> TOP;
             case 2, 10, 12 -> BOTTOM;
-            default -> held != null ? 1 - heldParity : TOP;
+            default -> layer.held != null ? 1 - layer.heldParity : TOP;
         };
         var pairedWithPrevious = picStruct == 9 || picStruct == 10;
         var pairedWithNext = picStruct == 11 || picStruct == 12;
         var duration = frame.duration > 0 ? frame.duration : frameDuration(sps);
-        var pts = resolvePts(frame.pts, duration);
+        var pts = resolvePts(layer, frame.pts, duration);
         var width = windowWidth;
         var height = windowHeight * 2;
         var format = chromaFormat(sps);
         var depth = options.highBitDepth() && sps.pictureBitDepth() > 8 ? sps.pictureBitDepth() : 0;
         var color = frame.color;
-        if (held != null) {
-            if (!pairedWithNext && parity != heldParity && matches(held, width, height, format, depth, color)) {
-                writeField(frame, source, held, parity);
-                var frameDuration = heldDuration > 0 && duration > 0 ? heldDuration + duration : Track.UNKNOWN_DURATION;
-                var result = held;
-                held = null;
-                output.accept(new VideoFrame(result, heldPts, frameDuration, heldKeyframe, heldSideData));
+        if (layer.held != null) {
+            if (!pairedWithNext && parity != layer.heldParity
+                    && matches(layer.held, width, height, format, depth, color, hasAlpha)) {
+                writeField(layer, frame, source, layer.held, parity, hasAlpha);
+                var frameDuration = layer.heldDuration > 0 && duration > 0 ? layer.heldDuration + duration
+                        : Track.UNKNOWN_DURATION;
+                var result = layer.held;
+                layer.held = null;
+                output.accept(new VideoFrame(finish(layer, result), layer.heldPts, frameDuration, layer.heldKeyframe,
+                        layer.heldSideData));
                 return;
             }
-            releaseHeldField();
+            releaseHeldField(layer);
         }
         Picture target;
         if (depth > 0) {
-            if (!matches(wovenWidePicture, width, height, format, depth, color)) {
-                wovenWidePicture = Yuv16Picture.allocate(width, height, format, depth, false, color);
+            if (!matches(layer.wovenWidePicture, width, height, format, depth, color, hasAlpha)) {
+                layer.wovenWidePicture = Yuv16Picture.allocate(width, height, format, depth, hasAlpha, color);
             }
-            target = wovenWidePicture;
+            target = layer.wovenWidePicture;
         } else {
-            if (!matches(wovenPicture, width, height, format, 0, color)) {
-                wovenPicture = YuvPicture.allocate(width, height, format, false, color);
+            if (!matches(layer.wovenPicture, width, height, format, 0, color, hasAlpha)) {
+                layer.wovenPicture = YuvPicture.allocate(width, height, format, hasAlpha, color);
             }
-            target = wovenPicture;
+            target = layer.wovenPicture;
         }
-        writeField(frame, source, target, parity);
-        var sideData = DisplaySei.sideData(parity == TOP ? FieldOrder.TOP_FIRST : FieldOrder.BOTTOM_FIRST, 0, packing,
-                orientation);
+        writeField(layer, frame, source, target, parity, hasAlpha);
+        var sideData = sideData(DisplaySei.sideData(parity == TOP ? FieldOrder.TOP_FIRST : FieldOrder.BOTTOM_FIRST,
+                0, packing, orientation), view);
         if (pairedWithPrevious) {
             fillField(target, 1 - parity);
-            output.accept(new VideoFrame(target, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, keyframe,
-                    sideData));
+            output.accept(new VideoFrame(finish(layer, target), pts, duration > 0 ? duration : Track.UNKNOWN_DURATION,
+                    keyframe, sideData));
             return;
         }
-        held = target;
-        heldParity = parity;
-        heldPts = pts;
-        heldDuration = duration;
-        heldKeyframe = keyframe;
-        heldSideData = sideData;
+        layer.held = target;
+        layer.heldParity = parity;
+        layer.heldPts = pts;
+        layer.heldDuration = duration;
+        layer.heldKeyframe = keyframe;
+        layer.heldSideData = sideData;
+    }
+
+    /**
+     * Returns a woven frame as it is output: divided back into straight-alpha RGBA when its color
+     * is premultiplied by its alpha, as it is otherwise.
+     *
+     * @param layer the output state of the frame's layer
+     * @param picture the woven frame
+     * @return the picture to output
+     */
+    private static Picture finish(LayerOutput layer, Picture picture) {
+        var alpha = switch (picture) {
+            case YuvPicture yuv -> yuv.hasAlpha();
+            case Yuv16Picture yuv -> yuv.alpha() != null;
+            default -> false;
+        };
+        return alpha && layer.alphaPremultiplied ? HeifPictures.unpremultiply(picture) : picture;
     }
 
     /**
@@ -780,40 +1102,57 @@ public final class HevcDecoder implements VideoDecoder {
     }
 
     /**
-     * Outputs the field waiting for its pair, if any, as a frame whose other field is mid-gray.
+     * Outputs the field of a layer waiting for its pair, if any, as a frame whose other field is
+     * mid-gray.
+     *
+     * @param layer the output state of the layer
      */
-    private void releaseHeldField() {
-        var frame = held;
+    private void releaseHeldField(LayerOutput layer) {
+        var frame = layer.held;
         if (frame == null) {
             return;
         }
-        held = null;
-        fillField(frame, 1 - heldParity);
-        output.accept(new VideoFrame(frame, heldPts, heldDuration > 0 ? heldDuration : Track.UNKNOWN_DURATION,
-                heldKeyframe, heldSideData));
+        layer.held = null;
+        fillField(frame, 1 - layer.heldParity);
+        output.accept(new VideoFrame(finish(layer, frame), layer.heldPts,
+                layer.heldDuration > 0 ? layer.heldDuration : Track.UNKNOWN_DURATION, layer.heldKeyframe,
+                layer.heldSideData));
     }
 
     /**
-     * Copies the cropped samples of a field into the rows of one parity of a woven frame.
+     * Copies the cropped samples of a field, and its alpha, into the rows of one parity of a woven
+     * frame.
      *
+     * @param layer the output state of the field's layer, holding its alpha planes
      * @param frame the decoded field
      * @param source the samples of the field
      * @param target the woven frame, a {@link YuvPicture} or a {@link Yuv16Picture}
      * @param parity {@link #TOP} for the even rows, {@link #BOTTOM} for the odd rows
+     * @param hasAlpha whether the field has an alpha plane
      */
-    private void writeField(HevcFrame frame, Source source, Picture target, int parity) {
+    private void writeField(LayerOutput layer, HevcFrame frame, Source source, Picture target, int parity,
+                            boolean hasAlpha) {
         var sps = frame.sps;
         window(sps);
         if (target instanceof Yuv16Picture wide) {
             copyWide(source, sps, wide, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
+            if (hasAlpha && wide.alpha() != null) {
+                Planes.copy(layer.alpha16, 0, windowWidth, wide.alpha(), parity * wide.alphaStride(),
+                        2 * wide.alphaStride(), windowWidth, windowHeight);
+            }
         } else {
-            copyNarrow(source, sps, (YuvPicture) target, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
+            var narrow = (YuvPicture) target;
+            copyNarrow(source, sps, narrow, windowLeft, windowTop, windowWidth, windowHeight, parity, 2);
+            if (hasAlpha && narrow.hasAlpha()) {
+                Planes.copy(layer.alpha8, 0, windowWidth, narrow.alpha(), parity * narrow.alphaStride(),
+                        2 * narrow.alphaStride(), windowWidth, windowHeight);
+            }
         }
     }
 
     /**
      * Fills the rows of one parity of a woven frame with mid-gray: {@code 1 << (d - 1)} at bit
-     * depth {@code d}.
+     * depth {@code d}; its alpha rows become opaque.
      *
      * @param target the woven frame, a {@link YuvPicture} or a {@link Yuv16Picture}
      * @param parity {@link #TOP} for the even rows, {@link #BOTTOM} for the odd rows
@@ -826,6 +1165,10 @@ public final class HevcDecoder implements VideoDecoder {
                 fillRows(wide.u(), wide.uvStride(), wide.chromaWidth(), wide.chromaHeight(), parity, gray);
                 fillRows(wide.v(), wide.uvStride(), wide.chromaWidth(), wide.chromaHeight(), parity, gray);
             }
+            if (wide.alpha() != null) {
+                fillRows(wide.alpha(), wide.alphaStride(), wide.width(), wide.height(), parity,
+                        (short) ((1 << wide.bitDepth()) - 1));
+            }
             return;
         }
         var narrow = (YuvPicture) target;
@@ -833,6 +1176,9 @@ public final class HevcDecoder implements VideoDecoder {
         if (narrow.u() != null) {
             fillRows(narrow.u(), narrow.uvStride(), narrow.chromaWidth(), narrow.chromaHeight(), parity, (byte) 128);
             fillRows(narrow.v(), narrow.uvStride(), narrow.chromaWidth(), narrow.chromaHeight(), parity, (byte) 128);
+        }
+        if (narrow.hasAlpha()) {
+            fillRows(narrow.alpha(), narrow.alphaStride(), narrow.width(), narrow.height(), parity, (byte) 255);
         }
     }
 
@@ -869,7 +1215,8 @@ public final class HevcDecoder implements VideoDecoder {
     }
 
     /**
-     * Returns whether a recycled picture has the given size, format, sample depth and color.
+     * Returns whether a recycled picture has the given size, format, sample depth, color and
+     * alpha.
      *
      * @param picture the recycled picture, or {@code null}
      * @param width the required width
@@ -877,17 +1224,19 @@ public final class HevcDecoder implements VideoDecoder {
      * @param format the chroma format
      * @param depth the bit depth of a {@link Yuv16Picture}, or 0 for a {@link YuvPicture}
      * @param color the color description
+     * @param alpha whether the picture needs an alpha plane
      * @return {@code true} when the picture can be reused
      */
     private static boolean matches(Picture picture, int width, int height, ChromaFormat format, int depth,
-                                   ColorInfo color) {
+                                   ColorInfo color, boolean alpha) {
         if (picture == null || picture.width() != width || picture.height() != height) {
             return false;
         }
         return switch (picture) {
             case Yuv16Picture wide -> depth > 0 && wide.bitDepth() == depth && wide.chromaFormat() == format
-                    && wide.color().equals(color);
-            case YuvPicture narrow -> depth == 0 && narrow.chromaFormat() == format && narrow.color().equals(color);
+                    && wide.color().equals(color) && (wide.alpha() != null) == alpha;
+            case YuvPicture narrow -> depth == 0 && narrow.chromaFormat() == format && narrow.color().equals(color)
+                    && narrow.hasAlpha() == alpha;
             default -> false;
         };
     }
@@ -933,21 +1282,23 @@ public final class HevcDecoder implements VideoDecoder {
     }
 
     /**
-     * Returns the timestamp of the next frame or field: its packet's, or, when the packet had none
-     * and the duration is known, the end of the previous frame or field (0 for the first), where a
-     * previous one of unknown duration lasts as long as this one.
+     * Returns the timestamp of the next frame or field of a layer: its packet's, or, when the
+     * packet had none and the duration is known, the end of the previous frame or field of the
+     * layer (0 for the first), where a previous one of unknown duration lasts as long as this one.
      *
+     * @param layer the output state of the layer
      * @param pts the timestamp of the picture's packet, or {@link Packet#NO_TIMESTAMP}
      * @param duration the duration of the picture, or 0 when unknown
      * @return the timestamp, or {@link Packet#NO_TIMESTAMP}
      */
-    private long resolvePts(long pts, long duration) {
+    private static long resolvePts(LayerOutput layer, long pts, long duration) {
         if (pts == Packet.NO_TIMESTAMP && duration > 0) {
-            pts = lastPts == Packet.NO_TIMESTAMP ? 0 : lastPts + (lastDuration > 0 ? lastDuration : duration);
+            pts = layer.lastPts == Packet.NO_TIMESTAMP ? 0
+                    : layer.lastPts + (layer.lastDuration > 0 ? layer.lastDuration : duration);
         }
         if (pts != Packet.NO_TIMESTAMP) {
-            lastPts = pts;
-            lastDuration = duration;
+            layer.lastPts = pts;
+            layer.lastDuration = duration;
         }
         return pts;
     }

@@ -18,6 +18,7 @@ import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
@@ -265,7 +266,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (format == BoxTypes.ENCV) {
             throw new MediaException.Unsupported("mp4 encryption", "the video track is encrypted (encv)");
         }
-        byte[] avcC = null, hvcC = null, vpcC = null, av1C = null, jp2h = null;
+        byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null;
         EsDescriptor esds = null;
         ColorInfo color = null;
         MasteringDisplay mastering = null;
@@ -277,6 +278,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             switch (box.type()) {
                 case BoxTypes.AVCC -> avcC = body.rest();
                 case BoxTypes.HVCC -> hvcC = body.rest();
+                case BoxTypes.LHVC -> lhvC = body.rest();
                 case BoxTypes.VPCC -> {
                     if (body.remaining() >= 4) {
                         body.skip(4);
@@ -315,7 +317,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
             case BoxTypes.HVC1, BoxTypes.HEV1, BoxTypes.DVH1, BoxTypes.DVHE -> {
                 codec = Codec.HEVC;
-                config = hvcC;
+                // the parameter sets of the other layers of a multi-layer track join the base layer's
+                config = hvcC != null && lhvC != null ? NalRecords.appendLayeredHevc(hvcC, lhvC) : hvcC;
             }
             case BoxTypes.VP08 -> {
                 codec = Codec.VP8;

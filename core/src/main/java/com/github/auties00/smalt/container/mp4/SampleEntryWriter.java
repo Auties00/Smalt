@@ -12,6 +12,7 @@ import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.subtitle.TimedText;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -117,7 +118,7 @@ final class SampleEntryWriter {
         var described = index == 0 ? track.track : describe(track.track, config);
         switch (track.codec()) {
             case H264 -> writeVisual(writer, BoxTypes.AVC1, BoxTypes.AVCC, false, (VideoTrack) described, config);
-            case HEVC -> writeVisual(writer, BoxTypes.HVC1, BoxTypes.HVCC, false, (VideoTrack) described, config);
+            case HEVC -> writeHevc(writer, (VideoTrack) described, config);
             case VP8 -> writeVisual(writer, BoxTypes.VP08, BoxTypes.VPCC, true, (VideoTrack) described, config);
             case VP9 -> writeVisual(writer, BoxTypes.VP09, BoxTypes.VPCC, true, (VideoTrack) described, config);
             case AV1 -> writeVisual(writer, BoxTypes.AV01, BoxTypes.AV1C, false, (VideoTrack) described, config);
@@ -233,6 +234,33 @@ final class SampleEntryWriter {
         }
         writer.bytes(config);
         writer.end();
+        writeVisualTrailer(writer, video);
+    }
+
+    /**
+     * Writes an {@code hvc1} sample entry: the {@code hvcC} box of the base layer's parameter sets
+     * and, when the configuration also carries parameter sets of other layers, an {@code lhvC} box
+     * holding those.
+     *
+     * @param writer the destination
+     * @param video the track
+     * @param config the {@code hvcC} configuration, which may hold the parameter sets of every layer
+     */
+    private static void writeHevc(BoxWriter writer, VideoTrack video, byte[] config) {
+        if (config == null) {
+            throw new IllegalStateException(video.codec().displayName() + " track " + video.id()
+                    + " has no codec configuration and no key frame it can be derived from");
+        }
+        var records = NalRecords.splitLayeredHevc(config);
+        writeVisualHeader(writer, BoxTypes.HVC1, video, null);
+        writer.begin(BoxTypes.HVCC);
+        writer.bytes(records[0]);
+        writer.end();
+        if (records[1] != null) {
+            writer.begin(BoxTypes.LHVC);
+            writer.bytes(records[1]);
+            writer.end();
+        }
         writeVisualTrailer(writer, video);
     }
 

@@ -446,9 +446,10 @@ public final class MotionPredictor {
             for (var combIdx = 0; combIdx < original * (original - 1) && count < max; combIdx++) {
                 var l0 = L0_CAND[combIdx];
                 var l1 = L1_CAND[combIdx];
+                // 8.5.3.2.4 compares the references by picture order count alone, so two inter-layer
+                // references of one access unit count as the same picture
                 if (candRef0[l0] >= 0 && candRef1[l1] >= 0
                         && (refPoc[0][candRef0[l0]] != refPoc[1][candRef1[l1]]
-                        || refList[0][candRef0[l0]] != refList[1][candRef1[l1]]
                         || candMv0[l0] != candMv1[l1])) {
                     candMv0[count] = candMv0[l0];
                     candRef0[count] = candRef0[l0];
@@ -793,7 +794,9 @@ public final class MotionPredictor {
             mvCol = listCol == 0 ? col.mv0[block] : col.mv1[block];
             refIdxCol = listCol == 0 ? r0 : r1;
         }
-        var ctb = (yCol >> header.sps.log2CtbSize) * header.sps.widthInCtbs + (xCol >> header.sps.log2CtbSize);
+        // the collocated picture may be an inter-layer reference picture of another coding tree block size
+        var colSps = col.sps;
+        var ctb = (yCol >> colSps.log2CtbSize) * colSps.widthInCtbs + (xCol >> colSps.log2CtbSize);
         if (col.ctbSlice == null || ctb >= col.ctbSlice.length) {
             return false;
         }

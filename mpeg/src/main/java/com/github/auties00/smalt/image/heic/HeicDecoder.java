@@ -45,7 +45,13 @@ import java.util.function.Supplier;
  * <ul>
  *   <li>the primary item is a coded item, or a derived image. A coded item is HEVC-coded
  *       ({@code hvc1}) or AVC-coded ({@code avc1}, ISO/IEC 23008-12 Annex E), possibly predicted
- *       from other coded items ({@code pred} references); JPEG-coded ({@code jpeg}, Annex H, its
+ *       from other coded items ({@code pred} references); layered HEVC-coded ({@code lhv1}: the
+ *       scalable or multiview layers of its target output layer set {@code tols}, showing the
+ *       layer its {@code lsel} property selects or else the highest output layer, over the
+ *       picture of the AVC-coded item it references with {@code exbl} when its base layer is coded
+ *       outside it), which the file shows in place of the primary item when the alternatives
+ *       group ({@code altr}) of the primary item lists it first and it can be reconstructed;
+ *       JPEG-coded ({@code jpeg}, Annex H, its
  *       {@code jpgC} property preceding its data); JPEG 2000-coded ({@code j2k1}, ISO/IEC
  *       15444-16, with the channel definition, component mapping and palette of its {@code j2kH}
  *       property); or uncompressed ({@code unci}, ISO/IEC 23001-17, with its {@code uncC},
@@ -102,7 +108,8 @@ import java.util.function.Supplier;
  * reader seeks: it restarts the decoding at the last sync sample at or before the requested time
  * and decodes up to the picture shown then, which is the picture a decode from the start shows.
  * {@link #decode} returns the primary image, or the first frame of the sequence of a file without
- * a primary item.
+ * a primary item; {@link #decodeStereoView} returns either view of the stereo pair the primary
+ * image belongs to.
  *
  * <p>Every size the file declares is checked against the {@link MediaLimits} of the options
  * before the corresponding allocation, and the pictures decoded for one image total at most four
@@ -329,6 +336,56 @@ public final class HeicDecoder {
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("malformed HEIC file", exception);
         }
+    }
+
+    /**
+     * Decodes one view of the stereo pair of a HEIC file with the
+     * {@linkplain ImageDecoderOptions#defaults() default} options.
+     *
+     * @param source the file
+     * @param view 0 for the left view, 1 for the right view
+     * @return the decoded view, or empty when the image the file shows belongs to no stereo pair
+     * @throws IllegalArgumentException if {@code view} is neither 0 nor 1
+     * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
+     * @throws MediaException.Unsupported if the view uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeStereoView(MediaSource, int, ImageDecoderOptions)
+     */
+    public static Optional<DecodedImage> decodeStereoView(MediaSource source, int view) {
+        return decodeStereoView(source, view, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes one view of the stereo pair of a HEIC file, such as the two eyes of a spatial photo
+     * or of a multiview (MV-HEVC) image.
+     *
+     * <p>The pair is the stereo pair entity group ({@code ster}, ISO/IEC 23008-12) that holds the
+     * primary image, or the image the file shows in its place; it lists the left view, then the
+     * right view, each an image item of any kind {@link #decode} reconstructs, such as a grid or a
+     * layered HEVC item ({@code lhv1}) whose layer selector names one view of a multiview stream.
+     * The view decodes as {@link #decode} decodes the primary image, with the view's own
+     * orientation, thumbnails and metadata.
+     *
+     * @param source the file
+     * @param view 0 for the left view, 1 for the right view
+     * @param options the limits, the bit depth choice, the reduced-size hint and the color
+     * conversion
+     * @return the decoded view with its orientation, ICC profile, color profile, EXIF block and XMP
+     * packet, or empty when the image the file shows belongs to no stereo pair
+     * @throws IllegalArgumentException if {@code view} is neither 0 nor 1
+     * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
+     * @throws MediaException.Unsupported if the view uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static Optional<DecodedImage> decodeStereoView(MediaSource source, int view, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        if (view != 0 && view != 1) {
+            throw new IllegalArgumentException("stereo view must be 0 (left) or 1 (right): " + view);
+        }
+        return guarded("decoding a HEIC stereo view", () -> HeicFiles.decodeStereoView(source, view, options));
     }
 
     /**

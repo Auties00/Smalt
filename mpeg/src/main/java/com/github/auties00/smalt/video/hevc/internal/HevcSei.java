@@ -13,7 +13,8 @@ import com.github.auties00.smalt.video.h264.internal.H264BitReader;
  * the picture timing (D.3.3), the recovery point (D.3.8), the film grain characteristics (D.3.13),
  * the frame packing arrangement (D.3.16), the display orientation (D.3.17), the decoded picture
  * hash (D.3.20), the mastering display color volume (D.3.28), the content light level information
- * (D.3.35) and the alternative transfer characteristics (D.3.38).
+ * (D.3.35), the alternative transfer characteristics (D.3.38) and the alpha channel
+ * information (F.14.2.8).
  *
  * <p>A message too short for its syntax, or whose values are out of range, is ignored; every other
  * message is skipped.
@@ -102,6 +103,59 @@ public final class HevcSei {
      * is set, or -1 when none arrived.
      */
     public int pictureTiming = -1;
+
+    /**
+     * The alpha channel information message in effect for the layer (F.14.2.8), or {@code null}
+     * when none arrived or the last one was a cancel.
+     */
+    public AlphaChannel alphaChannel;
+
+    /**
+     * Whether an alpha channel information message arrived for the next picture.
+     */
+    public boolean alphaChannelPending;
+
+    /**
+     * The interpretation of the samples of an alpha auxiliary picture that an alpha channel
+     * information message gives (F.14.3.8).
+     *
+     * @param useIdc {@code alpha_channel_use_idc}: 0 when the primary samples are to be multiplied
+     * by the alpha, 1 when they already are (premultiplied), 2 when unspecified
+     * @param bitDepth {@code alpha_channel_bit_depth_minus8 + 8}
+     * @param transparent {@code alpha_transparent_value}
+     * @param opaque {@code alpha_opaque_value}
+     * @param increment {@code alpha_channel_incr_flag}
+     * @param clip {@code alpha_channel_clip_flag}
+     * @param clipType {@code alpha_channel_clip_type_flag}
+     */
+    public record AlphaChannel(int useIdc, int bitDepth, int transparent, int opaque, boolean increment, boolean clip,
+                               boolean clipType) {
+        /**
+         * Returns the interpretation sample value of a decoded alpha sample, after the increment
+         * and the clipping the message asks for.
+         *
+         * @param sample the decoded sample
+         * @return the interpretation value
+         */
+        public int interpret(int sample) {
+            var low = Math.min(transparent, opaque);
+            var high = Math.max(transparent, opaque);
+            var value = sample;
+            if (increment && value > low) {
+                value++;
+            }
+            if (clip) {
+                if (!clipType) {
+                    value = value > (opaque + transparent) / 2 ? high : low;
+                } else if (value > high) {
+                    value = high;
+                } else if (value <= low) {
+                    value = low;
+                }
+            }
+            return value;
+        }
+    }
 
     /**
      * The reader of message payloads coded with Exp-Golomb codes.
@@ -198,6 +252,7 @@ public final class HevcSei {
                             transferPending = true;
                         }
                     }
+                    case 165 -> parseAlphaChannel(rbsp, position, payloadSize);
                     default -> {
                     }
                 }
@@ -235,12 +290,44 @@ public final class HevcSei {
     }
 
     /**
+     * Parses an alpha channel information message (F.14.2.8).
+     *
+     * @param rbsp the payload buffer, followed by at least {@link H264BitReader#PADDING} bytes
+     * @param position the index of the message payload
+     * @param size the message payload size
+     */
+    private void parseAlphaChannel(byte[] rbsp, int position, int size) {
+        if (size < 1) {
+            return;
+        }
+        payloadReader.init(rbsp, position, size);
+        if (payloadReader.readFlag()) {
+            alphaChannel = null;
+            alphaChannelPending = true;
+            return;
+        }
+        var use = payloadReader.readBits(3);
+        var depth = payloadReader.readBits(3) + 8;
+        var transparent = payloadReader.readBits(depth + 1);
+        var opaque = payloadReader.readBits(depth + 1);
+        var increment = payloadReader.readFlag();
+        var clip = payloadReader.readFlag();
+        var clipType = clip && payloadReader.readFlag();
+        if (payloadReader.overrun() || depth > 15) {
+            return;
+        }
+        alphaChannel = new AlphaChannel(use, depth, transparent, opaque, increment, clip, clipType);
+        alphaChannelPending = true;
+    }
+
+    /**
      * Forgets the messages that apply only to the next picture: the recovery point, the picture
      * timing, the film grain characteristics, the frame packing arrangement and the display
      * orientation.
      */
     public void clearPictureMessages() {
         recoveryPoint = false;
+        alphaChannelPending = false;
         pictureTiming = -1;
         transferPending = false;
         filmGrain = null;

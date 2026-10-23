@@ -6,6 +6,7 @@ import com.github.auties00.smalt.internal.sei.SeiWriter;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.HeifBuilder;
+import com.github.auties00.smalt.testkit.HevcAccessUnit;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
@@ -520,6 +521,36 @@ class FuzzSeedWriter {
         // the first slice segment of every plane starts a part, so 18 parts hold six pictures
         write(MpegFuzzTest.class, "hevc", "valid-separate-planes-annexb.bin", FuzzPackets.video(1, 128, 96, null,
                 accessUnits(Fixtures.read(vectors.resolve("planes").resolve("planes-ra-10.bit")), 18)));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the multi-layer HEVC target and a layered HEIC image")
+    void hevcLayers() {
+        var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "hevc",
+                "multilayer");
+        // the options select an output layer set in bits 1 to 3 (7 for the last one); bit 0 asks for high bit depth
+        write(MpegFuzzTest.class, "hevcLayers", "valid-shvc-2x.bin", FuzzPackets.video(2, 128, 96, null,
+                accessUnits(Fixtures.read(vectors.resolve("shvc-2x-ld.hevc")), 8)));
+        write(MpegFuzzTest.class, "hevcLayers", "valid-shvc-1.5x-ra.bin", FuzzPackets.video(14, 96, 72, null,
+                accessUnits(Fixtures.read(vectors.resolve("shvc-1.5x-ra.hevc")), 10)));
+        write(MpegFuzzTest.class, "hevcLayers", "valid-shvc-snr-8-10.bin", FuzzPackets.video(3, 128, 96, null,
+                accessUnits(Fixtures.read(vectors.resolve("shvc-snr-8-10.hevc")), 6)));
+        write(MpegFuzzTest.class, "hevcLayers", "valid-mvhevc.bin", FuzzPackets.video(2, 128, 96, null,
+                accessUnits(Fixtures.read(vectors.resolve("mvhevc-ld.hevc")), 6)));
+        // output layer set 0 with the alpha layer attached to the primary pictures
+        write(MpegFuzzTest.class, "hevcLayers", "valid-alpha.bin", FuzzPackets.video(0, 128, 96, null,
+                accessUnits(Fixtures.read(vectors.resolve("alpha-ld.hevc")), 6)));
+        var unit = HevcAccessUnit.first(Fixtures.read(vectors.resolve("shvc-2x-ld.hevc")));
+        var builder = new HeifBuilder().brands("heic", "heic", "mif1");
+        var base = builder.item("hvc1", HevcAccessUnit.lengthPrefixed(unit.slices(layer -> layer == 0)),
+                HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                HeifBuilder.essential(HeifBuilder.box("hvcC", unit.hvcC())));
+        var layered = builder.item("lhv1", HevcAccessUnit.lengthPrefixed(unit.slices(layer -> true)),
+                HeifBuilder.plain(HeifBuilder.ispe(128, 96)),
+                HeifBuilder.essential(HeifBuilder.box("lhvC", unit.lhvC())),
+                HeifBuilder.essential(HeifBuilder.fullBox("tols", 0, 0, new byte[]{0, 1})));
+        builder.metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 100, layered, base))).primary(base);
+        write(MpegFuzzTest.class, "heic", "valid-lhv1.heic", builder.build());
     }
 
     /**
