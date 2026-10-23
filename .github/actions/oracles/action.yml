@@ -4,7 +4,9 @@
 # entry of its own keyed by its build script; both entries are saved as soon as the tools are installed, so a
 # failing test run still keeps them. Which runs save an entry they missed is .github/scripts/cache-policy.sh's
 # rule: the default branch owns the entries (warm-caches.yml fills them) and the pkg/* branches only restore them.
-# Package-manager tools are installed on every run. The tool versions, and whether ffmpeg has, and can run, every
+# Package-manager tools are installed on every run; on Linux the archives apt downloads for them are cached too, in
+# an entry keyed by oracles.tsv, so that a slow Ubuntu mirror (it has served them at about 100 kB/s, 13 min for
+# 90 MB) delays only the run that saves the entry. The tool versions, and whether ffmpeg has, and can run, every
 # component of tools/testdata/ffmpeg-oracle/features.tsv, go to the job summary and to oracle-versions.tsv in the
 # workspace; a missing tool or component fails the step.
 name: Oracle tools
@@ -30,9 +32,28 @@ runs:
         path: ~/.smalt/ffmpeg-*
         key: ffmpeg-oracle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/ffmpeg-oracle/build.py', 'tools/testdata/ffmpeg-oracle/quarantine.c') }}
 
+    # An older entry is restored too: apt then downloads only the packages whose version changed since.
+    - name: Restore the apt archives
+      id: apt
+      if: runner.os == 'Linux'
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.smalt/apt
+        key: oracle-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv') }}
+        restore-keys: oracle-apt-${{ runner.os }}-${{ runner.arch }}-
+
+    - name: Keep the apt archives
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        mkdir -p ~/.smalt/apt/archives/partial
+        # The _apt download user cannot enter the runner's home directory, so apt downloads as root.
+        printf 'Dir::Cache::Archives "%s";\nAPT::Keep-Downloaded-Packages "true";\nBinary::apt::APT::Keep-Downloaded-Packages "true";\nAPT::Sandbox::User "root";\n' \
+          "$HOME/.smalt/apt/archives" | sudo tee /etc/apt/apt.conf.d/90smalt-archives > /dev/null
+
     - name: Decide which missing entries to save
       id: policy
-      if: steps.tools.outputs.cache-hit != 'true' || steps.ffmpeg.outputs.cache-hit != 'true'
+      if: steps.tools.outputs.cache-hit != 'true' || steps.ffmpeg.outputs.cache-hit != 'true' || (runner.os == 'Linux' && steps.apt.outputs.cache-hit != 'true')
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -44,6 +65,9 @@ runs:
         fi
         if [ '${{ steps.ffmpeg.outputs.cache-hit }}' != 'true' ]; then
           bash $policy ffmpeg '${{ inputs.save }}' '${{ steps.ffmpeg.outputs.cache-primary-key }}' 'ffmpeg-oracle-${{ runner.os }}-${{ runner.arch }}-'
+        fi
+        if [ '${{ runner.os }}' = Linux ] && [ '${{ steps.apt.outputs.cache-hit }}' != 'true' ]; then
+          bash $policy apt '${{ inputs.save }}' '${{ steps.apt.outputs.cache-primary-key }}' 'oracle-apt-${{ runner.os }}-${{ runner.arch }}-'
         fi
 
     - name: Install the oracle tools
@@ -57,6 +81,21 @@ runs:
       continue-on-error: true
       run: |
         python -m pip install --quiet --only-binary=:all: "pillow>=12,<14"
+
+    # apt leaves its lock and the downloads in progress root-owned and unreadable to the cache's tar.
+    - name: Prepare the apt archives for the cache
+      if: steps.policy.outputs.apt == 'true'
+      shell: bash
+      run: |
+        sudo rm -rf ~/.smalt/apt/archives/lock ~/.smalt/apt/archives/partial
+        sudo chown -R "$(id -u):$(id -g)" ~/.smalt/apt
+
+    - name: Save the apt archives
+      if: steps.policy.outputs.apt == 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.smalt/apt
+        key: ${{ steps.apt.outputs.cache-primary-key }}
 
     - name: Save the oracle tools
       if: steps.policy.outputs.tools == 'true'
