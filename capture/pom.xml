@@ -18,8 +18,10 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
+                <!-- One JVM: the device tests share the cameras, microphones and screens of the machine -->
                 <configuration>
                     <argLine>${smalt.test.argLine} --enable-native-access=com.github.auties00.smalt.capture</argLine>
+                    <forkCount>1</forkCount>
                 </configuration>
             </plugin>
         </plugins>
@@ -38,6 +40,12 @@
             <groupId>${project.groupId}</groupId>
             <artifactId>smalt-core</artifactId>
             <type>test-jar</type>
+            <scope>test</scope>
+        </dependency>
+        <!-- The kernel JIT guard runs the equivalence tests in its child JVMs through the launcher -->
+        <dependency>
+            <groupId>org.junit.platform</groupId>
+            <artifactId>junit-platform-launcher</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

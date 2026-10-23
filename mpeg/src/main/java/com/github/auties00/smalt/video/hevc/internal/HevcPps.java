@@ -240,13 +240,61 @@ public final class HevcPps {
     public int log2SaoOffsetScaleChroma;
 
     /**
-     * Whether the set carries a 3D or screen content coding extension.
+     * Whether the set carries a 3D extension, which this decoder does not parse.
      *
      * <p>A multilayer extension is ignored: it only affects the layers above the base layer, which
      * this decoder skips, so a version 1 decoder decodes the base layer of a scalable or multiview
      * stream.
      */
-    public boolean otherExtensions;
+    public boolean extension3d;
+
+    /**
+     * {@code pps_curr_pic_ref_enabled_flag}: whether the pictures of the set may reference
+     * themselves (intra block copy).
+     */
+    public boolean currPicRefEnabled;
+
+    /**
+     * {@code residual_adaptive_colour_transform_enabled_flag}.
+     */
+    public boolean actEnabled;
+
+    /**
+     * {@code pps_slice_act_qp_offsets_present_flag}.
+     */
+    public boolean sliceActQpOffsetsPresent;
+
+    /**
+     * {@code PpsActQpOffsetY}, {@code PpsActQpOffsetCb} and {@code PpsActQpOffsetCr}.
+     */
+    public final int[] actQpOffset = {-5, -5, -3};
+
+    /**
+     * {@code pps_palette_predictor_initializers_present_flag}.
+     */
+    public boolean paletteInitializersPresent;
+
+    /**
+     * {@code pps_palette_predictor_initializer}, indexed {@code [comp][i]}: one component with
+     * {@code monochrome_palette_flag}, three otherwise, {@code pps_num_palette_predictor_initializers}
+     * entries each (none when that is 0).
+     */
+    public int[][] paletteInitializers = new int[0][];
+
+    /**
+     * {@code pps_num_palette_predictor_initializers}.
+     */
+    public int numPaletteInitializers;
+
+    /**
+     * {@code luma_bit_depth_entry_minus8 + 8}, or 0 without initializers.
+     */
+    public int paletteLumaBitDepth;
+
+    /**
+     * {@code chroma_bit_depth_entry_minus8 + 8}, or 0 without chroma initializers.
+     */
+    public int paletteChromaBitDepth;
 
     /**
      * The sequence parameter set the derived arrays below were computed for.
@@ -377,7 +425,10 @@ public final class HevcPps {
                 pps.log2SaoOffsetScaleLuma = reader.readUe(6, "log2_sao_offset_scale_luma");
                 pps.log2SaoOffsetScaleChroma = reader.readUe(6, "log2_sao_offset_scale_chroma");
             }
-            pps.otherExtensions = extension3d || sccExtension;
+            pps.extension3d = extension3d;
+            if (sccExtension && !extension3d) {
+                parseSccExtension(reader, pps);
+            }
         }
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated picture parameter set");
@@ -392,10 +443,60 @@ public final class HevcPps {
      * @return the feature name for {@link MediaException.Unsupported}, or {@code null}
      */
     public String unsupportedFeature() {
-        if (otherExtensions) {
-            return "hevc screen content coding";
+        if (extension3d) {
+            // TODO: the 3D-HEVC extension of a base layer picture parameter set (Annex I)
+            return "hevc 3D extension";
         }
         return null;
+    }
+
+    /**
+     * Parses a {@code pps_scc_extension()} structure (ITU-T H.265 7.3.2.3.3).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @param pps the picture parameter set being parsed
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private static void parseSccExtension(H264BitReader reader, HevcPps pps) {
+        pps.currPicRefEnabled = reader.readFlag();
+        pps.actEnabled = reader.readFlag();
+        if (pps.actEnabled) {
+            pps.sliceActQpOffsetsPresent = reader.readFlag();
+            pps.actQpOffset[0] = reader.readSe(-7, 17, "pps_act_y_qp_offset_plus5") - 5;
+            pps.actQpOffset[1] = reader.readSe(-7, 17, "pps_act_cb_qp_offset_plus5") - 5;
+            pps.actQpOffset[2] = reader.readSe(-9, 15, "pps_act_cr_qp_offset_plus3") - 3;
+        }
+        pps.paletteInitializersPresent = reader.readFlag();
+        if (pps.paletteInitializersPresent) {
+            pps.numPaletteInitializers = reader.readUe(128, "pps_num_palette_predictor_initializers");
+            if (pps.numPaletteInitializers > 0) {
+                var monochrome = reader.readFlag();
+                pps.paletteLumaBitDepth = reader.readUe(8, "luma_bit_depth_entry_minus8") + 8;
+                if (!monochrome) {
+                    pps.paletteChromaBitDepth = reader.readUe(8, "chroma_bit_depth_entry_minus8") + 8;
+                }
+                var components = monochrome ? 1 : 3;
+                pps.paletteInitializers = new int[components][pps.numPaletteInitializers];
+                for (var c = 0; c < components; c++) {
+                    var bits = c == 0 ? pps.paletteLumaBitDepth : pps.paletteChromaBitDepth;
+                    for (var i = 0; i < pps.numPaletteInitializers; i++) {
+                        pps.paletteInitializers[c][i] = reader.readBits(bits);
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Returns {@code TwoVersionsOfCurrDecPicFlag} (equation 7-40): whether the pictures of the set
+     * reference themselves before in-loop filtering while in-loop filters may change their
+     * samples.
+     *
+     * @param sps the active sequence parameter set
+     * @return {@code true} when the current picture exists in two versions
+     */
+    public boolean twoVersions(HevcSps sps) {
+        return currPicRefEnabled && (sps.saoEnabled || !deblockingDisabled || deblockingOverrideEnabled);
     }
 
     /**
@@ -414,7 +515,8 @@ public final class HevcPps {
      * per sequence parameter set (ITU-T H.265 6.5.1 and 6.5.2).
      *
      * @param sps the active sequence parameter set
-     * @throws MediaException.Malformed if the tile layout does not fit the picture
+     * @throws MediaException.Malformed if the tile layout does not fit the picture, or a range or
+     *                                  screen content extension field does not fit the sequence
      */
     public void activate(HevcSps sps) {
         if (activeFor == sps) {
@@ -430,6 +532,15 @@ public final class HevcPps {
                 || (crossComponentPrediction && sps.chromaArrayType != 3)
                 || (chromaQpOffsetList && sps.chromaArrayType == 0)) {
             throw new MediaException.Malformed("picture parameter set range extension does not fit its sequence");
+        }
+        if ((actEnabled && sps.chromaArrayType != 3)
+                || (currPicRefEnabled && !sps.currPicRefEnabled)
+                || (numPaletteInitializers > 0 && (!sps.paletteModeEnabled
+                || numPaletteInitializers > sps.paletteMaxPredictorSize
+                || paletteInitializers.length < (sps.chromaArrayType == 0 ? 1 : 3)
+                || paletteLumaBitDepth != sps.bitDepthLuma
+                || (sps.chromaArrayType != 0 && paletteChromaBitDepth != sps.bitDepthChroma)))) {
+            throw new MediaException.Malformed("picture parameter set screen content extension does not fit its sequence");
         }
         var widthCtbs = sps.widthInCtbs;
         var heightCtbs = sps.heightInCtbs;

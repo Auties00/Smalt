@@ -20,6 +20,7 @@ import com.github.auties00.smalt.internal.io.SegmentBacked;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
+import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -62,26 +63,61 @@ import java.util.Set;
  * and auxiliary video ({@code auxv}) tracks of HEIF and AVIF sequences are video tracks too. Every
  * other handler (text, subtitles, timecode, timed metadata, hint) becomes a
  * {@link com.github.auties00.smalt.track.DataTrack}: 3GPP timed text ({@code tx3g}) is
- * {@link Codec#MOV_TEXT} and WebVTT ({@code wvtt}) is {@link Codec#WEBVTT}, except in the chapter
- * tracks a {@code chap} reference names, which stay {@link Codec#DATA}. Each WebVTT sample is
- * returned as one packet per cue it shows (none for an empty sample), all with the sample's
- * timing, in the {@link Codec#WEBVTT} packet form; every other sample is one packet. Codec
+ * {@link Codec#MOV_TEXT}, WebVTT ({@code wvtt}) is {@link Codec#WEBVTT} and TTML ({@code stpp}) is
+ * {@link Codec#TTML}, except in the chapter tracks a {@code chap} reference names, which stay
+ * {@link Codec#DATA}. Each WebVTT sample is returned as one packet per cue it shows (none for an
+ * empty sample), all with the sample's timing, in the {@link Codec#WEBVTT} packet form; every
+ * other sample is one packet. Codec
  * configurations follow {@link Track#codecConfig()}: the {@code avcC}, {@code hvcC} and {@code av1C} payloads, the
  * {@code vpcC} record without its full box header, the AAC {@code AudioSpecificConfig} and the
  * MPEG-4 Part 2 decoder specific info from {@code esds}, an {@code OpusHead} synthesized from
  * {@code dOps}, {@code fLaC} followed by the metadata blocks of {@code dfLa}, the 24-byte
  * {@code ALACSpecificConfig}, and for data tracks the sample entry payload after its reserved
- * fields and data reference index.
+ * fields and data reference index. A visual sample entry's {@code colr}, {@code pasp} and
+ * QuickTime {@code fiel} boxes give the track's color, sample aspect ratio and scan
+ * ({@link com.github.auties00.smalt.track.VideoTrack#sampleAspectRatio()},
+ * {@link com.github.auties00.smalt.track.VideoTrack#interlacing()}), and its {@code mdcv} and
+ * {@code clli} boxes the mastering display and content light level of that color; an entry with
+ * either box but no {@code colr} gets a color of unspecified matrix, primaries and transfer
+ * characteristics, in the limited range, that carries them.
  *
  * <p>Timestamps are in each track's media timescale ({@code 1/timescale}). Decoding times come
  * from {@code stts} or the fragment runs, presentation times add the {@code ctts} or {@code trun}
- * composition offsets (both versions, negative offsets allowed), and the first edit of the edit
- * list shifts both: empty edits delay the track, and the media time
- * of the first non-empty edit becomes timestamp zero for video and data, and
+ * composition offsets (both versions, negative offsets allowed), and an edit list of empty edits
+ * followed by one media edit shifts both: the empty edits delay the track, and the media time of
+ * the media edit becomes timestamp zero for video and data, and
  * {@link AudioTrack#skipSamples()} for audio (whose timestamps are left unshifted, so the first
  * kept sample has the timestamp of the first packet). Negative composition offsets lower the
  * decoding timestamps of their track so that no sample is decoded after it is presented. Without
  * an edit list, an iTunes {@code iTunSMPB} tag provides the audio skip.
+ *
+ * <p>Any other edit list (ISO/IEC 14496-12 clause 8.6.6: several media edits, empty edits between
+ * them, dwell edits of media rate zero) makes the track's packets those of its presentation: each
+ * edit returns the samples it presents with timestamps on the presentation timeline, preceded by
+ * the samples a decoder needs before them (from the key frame at or before them for video and
+ * data; for audio, the packets that rebuild the codec's state, every packet up to an edit that
+ * does not go back in the media for an AAC object type that predicts from the start of the stream,
+ * whose output only converges after an edit that does), which are flagged
+ * {@link PacketFlag#DISCARD}; a sample several edits present is returned once per edit. A video
+ * or data sample straddling an edit boundary is cut to the edit, and a discarded video sample has
+ * a presentation timestamp no presented sample of its track has. An audio packet cut by its edit
+ * keeps its timestamp and carries the samples outside the edit as its
+ * {@link PacketSideData#discardStart()} and {@link PacketSideData#discardEnd()}, its duration
+ * excluding the end. A dwell edit presents the video or data sample shown at its media time for its
+ * duration, and nothing for audio; every other edit plays at normal speed, whatever its media rate.
+ * Decoding timestamps never decrease, so the pre-roll of an edit that goes back in the media takes
+ * the decoding time of the packet before it. Such a track declares no audio skip, and its duration
+ * is that of its edits. The image sequence and auxiliary video tracks of HEIF and AVIF files
+ * ({@code pict} and {@code auxv} handlers) are the exception: their timestamps follow the first
+ * media edit as in the simple form, and each of their samples is returned once.
+ *
+ * <p>Every sample description of a track is read. The public track describes the one of its first
+ * sample; a sample of another description (chosen by {@code stsc}, or by the {@code tfhd} or
+ * {@code trex} of a fragment) whose codec configuration differs from the one of the track's previous
+ * packet carries the new configuration as its {@link PacketSideData#newCodecConfig()}, and so does
+ * the first packet after a seek when its description is not the track's. A description of another
+ * codec raises {@link MediaException.Unsupported}, and one that does not parse
+ * {@link MediaException.Malformed}, when a sample using it is read.
  *
  * <p>An AAC track whose sample entry declares the rate of the AAC core while spectral band
  * replication doubles it (HE-AAC, signaled explicitly or only inside the raw data blocks), or
@@ -92,11 +128,18 @@ import java.util.Set;
  *
  * <p>Every size read from the file is checked against the {@link MediaLimits} before allocating:
  * the {@code moov}, each {@code moof}, each sample, and the number of samples per track.
- * Encrypted tracks ({@code encv}, {@code enca}) raise {@link MediaException.Unsupported}.
+ * Encrypted tracks ({@code encv}, {@code enca}) raise {@link MediaException.Unsupported}. The
+ * compressed boxes of ISO/IEC 14496-12 clause 8.20 are read in place of the boxes they replace: a
+ * compressed movie box ({@code !mov}) as the {@code moov} and compressed movie fragments
+ * ({@code !mof}) as {@code moof} boxes, each decompressed size checked against the byte limit too.
+ * Their offsets count in the file as it would be with every compressed box uncompressed, compressed
+ * segment indexes ({@code !six}, {@code !ssx}) included, and are mapped into the file as it is.
  *
  * <p>Cover pictures ({@code covr} items) become {@link #attachedPictures()}; chapters come from a
  * Nero {@code chpl} box or, without one, from the first QuickTime chapter text track a track
- * references through {@code tref}/{@code chap}, whose samples hold the titles. Seeking uses the
+ * references through {@code tref}/{@code chap}, whose samples hold the titles; the chapter track
+ * is also preferred when it completes the chapters or titles a full {@code chpl} box had to cut
+ * (255 chapters, 255-byte titles). Seeking uses the
  * sample index, as {@link #seek(long)} describes.
  *
  * <p>A source that is not in memory is read forwards as far as the layout allows: a file whose
@@ -109,9 +152,10 @@ import java.util.Set;
  * and the {@code moof} boxes of a fragmented file are then read as the demux reaches them rather
  * than at construction, so a fast-start or fragmented file is read with a bounded window while a
  * file whose {@code moov} follows its media data keeps that media data until the {@code moov} is
- * read. {@link #seek(long)} and the sample statistics read every remaining fragment first. A
- * track of such a fragmented file whose duration would be measured from its samples reports an
- * unknown duration, since the fragments not yet read would lengthen it.
+ * read. {@link #seek(long)} and the sample statistics read every remaining fragment first, and so
+ * does the constructor when an edit list needs the presentation index. A track of such a
+ * fragmented file whose duration would be measured from its samples reports an unknown duration,
+ * since the fragments not yet read would lengthen it.
  *
  * @implNote This implementation reads the payloads of the {@code moov} and {@code moof} boxes
  * together with their headers during the top-level walk, up to {@value #PREFETCH_BUDGET} bytes of
@@ -155,9 +199,20 @@ public final class Mp4Demuxer implements Demuxer {
     private static final byte[] EMPTY = new byte[0];
 
     /**
-     * The flags of a WebVTT cue packet: every cue is a random access point.
+     * The flags of a WebVTT cue packet, every cue being a random access point, and of any other
+     * sync sample that carries side data.
      */
     private static final Set<PacketFlag> KEY_FLAGS = Set.of(PacketFlag.KEY);
+
+    /**
+     * The flags of a sample decoded only so that later samples decode.
+     */
+    private static final Set<PacketFlag> DISCARD_FLAGS = Set.of(PacketFlag.DISCARD);
+
+    /**
+     * The flags of a sync sample decoded only so that later samples decode.
+     */
+    private static final Set<PacketFlag> KEY_DISCARD_FLAGS = Set.of(PacketFlag.KEY, PacketFlag.DISCARD);
 
     /**
      * The source being demuxed.
@@ -239,9 +294,26 @@ public final class Mp4Demuxer implements Demuxer {
     private final List<Mp4Track> fragmentTracks;
 
     /**
+     * The compressed boxes walked so far, which map the offsets the file stores to offsets in the
+     * file, or {@code null} while none was met.
+     */
+    private CompressedBoxes compression;
+
+    /**
      * The index of the next sample of each active track.
      */
     private final int[] cursors;
+
+    /**
+     * The sample description whose codec configuration the packets of each active track last
+     * established: the track's own until a sample of another description is returned.
+     */
+    private final int[] descriptions;
+
+    /**
+     * The movie timescale, in which the edit lists of the tracks count.
+     */
+    private final long movieTimescale;
 
     /**
      * A binary min-heap of active track indices ordered by the file offset of their next sample.
@@ -335,27 +407,64 @@ public final class Mp4Demuxer implements Demuxer {
             var scan = TopLevelScan.scan(source, forwardOnly,
                     SegmentBacked.isInMemory(source) ? 0 : Math.min(PREFETCH_BUDGET, limits.maxBytes()));
             this.fastStart = scan.isFastStart();
-            if (scan.moovOffset < 0) {
+            var moov = scan.moovPayload;
+            scan.moovPayload = null;
+            var compressedMovie = scan.moovOffset < 0 && scan.compressedMoov != null;
+            if (compressedMovie) {
+                var box = scan.compressedMoov;
+                var payload = scan.compressedMoovPayload;
+                scan.compressedMoovPayload = null;
+                moov = CompressedBoxes.inflate(payload != null ? payload : readBox(box[0], (int) box[1], box[2], "!mov"),
+                        "!mov", limits);
+            } else if (scan.moovOffset < 0) {
                 throw new MediaException.Malformed("no moov box");
             }
             var parser = new MovieParser(limits);
-            var moov = scan.moovPayload;
-            scan.moovPayload = null;
             parser.parse(BoxCursor.of(moov != null ? moov : readBox(scan.moovOffset, scan.moovHeader, scan.moovSize, "moov"),
                     BoxTypes.MOOV));
-            for (var track : parser.tracks) {
+            var movieSamples = new int[parser.tracks.size()];
+            for (var index = 0; index < movieSamples.length; index++) {
+                var track = parser.tracks.get(index);
+                movieSamples[index] = track.samples.count;
                 var samples = track.samples;
                 track.nextFragmentDts = samples.count == 0 ? 0
                         : samples.dts[samples.count - 1] + Integer.toUnsignedLong(samples.durations[samples.count - 1]);
             }
-            for (var index = 0; index < scan.fragments.size(); index++) {
-                var fragment = scan.fragments.get(index);
-                var payload = scan.fragmentPayloads.set(index, null);
-                FragmentParser.parse(BoxCursor.of(payload != null ? payload : readBox(fragment[0], (int) fragment[1], fragment[2], "moof"),
-                                BoxTypes.MOOF),
-                        fragment[0], parser.tracks);
+            // the compressed boxes are added to the map in file order, each fragment parsed after the boxes before it
+            var indexes = scan.compressedIndexes;
+            var nextIndex = 0;
+            var movieAdded = !compressedMovie;
+            for (var index = 0; index <= scan.fragments.size(); index++) {
+                var fragment = index < scan.fragments.size() ? scan.fragments.get(index) : null;
+                var position = fragment != null ? fragment[0] : Long.MAX_VALUE;
+                while (true) {
+                    var indexAt = nextIndex < indexes.size() ? indexes.get(nextIndex)[0] : Long.MAX_VALUE;
+                    var movieAt = movieAdded ? Long.MAX_VALUE : scan.compressedMoov[0];
+                    var next = Math.min(indexAt, movieAt);
+                    if (next == Long.MAX_VALUE || next > position) {
+                        break;
+                    }
+                    if (movieAt < indexAt) {
+                        compressed().add(movieAt, scan.compressedMoov[2], CompressedBoxes.boxSize(moov.length));
+                        movieAdded = true;
+                    } else {
+                        addCompressedIndex(indexes.get(nextIndex++));
+                    }
+                }
+                if (fragment != null) {
+                    parseFragment(fragment, scan.fragmentPayloads.set(index, null), parser.tracks);
+                }
+            }
+            if (compression != null) {
+                for (var index = 0; index < movieSamples.length; index++) {
+                    compression.relocate(parser.tracks.get(index).samples, 0, movieSamples[index]);
+                }
             }
             var lazy = forwardOnly && parser.fragmented && scan.next >= 0;
+            if (lazy && parser.tracks.stream().anyMatch(track -> !track.hasSimpleEdits())) {
+                indexFragments(scan.next, parser.tracks);
+                lazy = false;
+            }
             this.fragmentScan = lazy ? scan.next : -1;
             this.fragmentTracks = lazy ? parser.tracks : null;
             var publicTracks = new ArrayList<Track>();
@@ -371,12 +480,14 @@ public final class Mp4Demuxer implements Demuxer {
             }
             var webVtt = new HashSet<Integer>();
             for (var track : parser.tracks) {
-                if (track.entry != null && track.entry.codec().isSubtitle() && chapterIds.contains(track.fileId)) {
+                track.selectBaseEntry();
+                if (track.entry != null && (track.entry.codec().isSubtitle() || track.entry.codec() == Codec.TTML)
+                        && chapterIds.contains(track.fileId)) {
                     track.entry = track.entry.withCodec(Codec.DATA);
                 }
                 refineMpegAudio(track);
                 var audio = track.kind() == TrackKind.AUDIO;
-                track.resolveTiming(parser.movieTimescale, audio && !gaplessUsed ? parser.gapless : null);
+                track.resolveTiming(parser.movieTimescale, audio && !gaplessUsed ? parser.gapless : null, limits);
                 gaplessUsed |= audio;
                 if (lazy && track.durationFromSamples) {
                     track.duration = -1;
@@ -385,6 +496,7 @@ public final class Mp4Demuxer implements Demuxer {
                 if (described instanceof AudioTrack sound && AacExtensions.mayRefine(sound)) {
                     described = AacExtensions.refine(sound, firstSample(track));
                 }
+                track.publicConfig = described.codecConfig().orElse(null);
                 publicTracks.add(described);
                 if (described.codec() == Codec.WEBVTT) {
                     webVtt.add(described.id());
@@ -401,12 +513,16 @@ public final class Mp4Demuxer implements Demuxer {
             this.dataEnd = dataEnd(active);
             this.cursors = new int[active.length];
             this.heap = new int[active.length];
+            this.descriptions = new int[active.length];
+            this.movieTimescale = parser.movieTimescale;
             this.allTracks = parser.tracks.toArray(new Mp4Track[0]);
             var annotations = parser.movieMetadata.annotations;
             if (!parser.movieMetadata.neroChapters) {
                 readChapterTrack(annotations);
+                this.chapters = annotations.chapters(durationMicros);
+            } else {
+                this.chapters = completeNeroChapters(annotations.chapters(durationMicros));
             }
-            this.chapters = annotations.chapters(durationMicros);
             this.pictures = annotations.pictures();
             rewind();
         } catch (MediaException exception) {
@@ -463,6 +579,23 @@ public final class Mp4Demuxer implements Demuxer {
         }
     }
 
+    /**
+     * Returns the chapters of a Nero {@code chpl} box, or those of the QuickTime chapter track when they complete
+     * chapters or titles the box had to cut ({@link Mp4ChapterTrack#supersedes(List, List)}).
+     *
+     * @param nero the chapters of the {@code chpl} box
+     * @return the chapters to report
+     */
+    private List<Chapter> completeNeroChapters(List<Chapter> nero) {
+        if (!Mp4ChapterTrack.mayBeCut(nero)) {
+            return nero;
+        }
+        var track = new Annotations();
+        readChapterTrack(track);
+        var chapters = track.chapters(durationMicros);
+        return Mp4ChapterTrack.supersedes(chapters, nero) ? chapters : nero;
+    }
+
     @Override
     public List<Chapter> chapters() {
         return chapters;
@@ -475,7 +608,7 @@ public final class Mp4Demuxer implements Demuxer {
 
     /**
      * Returns the number of samples of a track, as the sample tables and fragment runs index
-     * them, without reading the samples.
+     * them, without reading the samples: each media sample once, whatever its edit list presents.
      *
      * @param trackId the identifier of the track
      * @return the sample count, or {@code -1} for an unknown track
@@ -484,7 +617,7 @@ public final class Mp4Demuxer implements Demuxer {
         loadAllFragments();
         for (var track : allTracks) {
             if (track.id == trackId) {
-                return track.samples.count;
+                return track.media.count;
             }
         }
         return -1;
@@ -502,13 +635,101 @@ public final class Mp4Demuxer implements Demuxer {
         for (var track : allTracks) {
             if (track.id == trackId) {
                 var total = 0L;
-                for (var index = 0; index < track.samples.count; index++) {
-                    total += Math.max(0, track.samples.sizes[index]);
+                for (var index = 0; index < track.media.count; index++) {
+                    total += Math.max(0, track.media.sizes[index]);
                 }
                 return total;
             }
         }
         return -1;
+    }
+
+    /**
+     * Returns the map of the compressed boxes, creating it when the first one is met.
+     *
+     * @return the map
+     */
+    private CompressedBoxes compressed() {
+        if (compression == null) {
+            compression = new CompressedBoxes();
+        }
+        return compression;
+    }
+
+    /**
+     * Adds a compressed segment index box ({@code !six}, {@code !ssx}) to the map of the compressed boxes;
+     * the demuxer ignores segment indexes, but the size of their uncompressed forms moves the offsets after
+     * them. A box that runs past the end of the file is left out, as no offset lies after it.
+     *
+     * @param box the offset, header size, size and type of the box
+     * @throws MediaException.Malformed if the box is damaged or is not a gzip stream
+     */
+    private void addCompressedIndex(long[] box) {
+        if (sourceSize >= 0 && box[0] + box[2] > sourceSize) {
+            return;
+        }
+        var name = (int) box[3] == BoxTypes.COMPRESSED_SIDX ? "!six" : "!ssx";
+        var payload = CompressedBoxes.inflate(readBox(box[0], (int) box[1], box[2], name), name, limits);
+        compressed().add(box[0], box[2], CompressedBoxes.boxSize(payload.length));
+    }
+
+    /**
+     * Indexes the samples of a movie fragment box, {@code moof} or its compressed form {@code !mof}.
+     *
+     * <p>The offsets of a fragment count in the file with every compressed box uncompressed, so once
+     * a compressed box has been met the fragment is parsed at its offset in that file and the offsets
+     * of its samples are mapped back into the file.
+     *
+     * @param box the offset, header size, size and type of the box
+     * @param payload the prefetched payload of the box, or {@code null} to read it
+     * @param tracks every track of the movie
+     * @throws MediaException.Malformed if the box is corrupt or a compressed one is not a gzip stream
+     * @throws MediaException.LimitExceeded if the box exceeds the byte limit
+     */
+    private void parseFragment(long[] box, byte[] payload, List<Mp4Track> tracks) {
+        var position = box[0];
+        var packed = (int) box[3] == BoxTypes.COMPRESSED_MOOF;
+        var name = packed ? "!mof" : "moof";
+        var data = payload != null ? payload : readBox(position, (int) box[1], box[2], name);
+        if (!packed && compression == null) {
+            FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), position, tracks);
+            return;
+        }
+        if (packed) {
+            data = CompressedBoxes.inflate(data, name, limits);
+        }
+        var map = compressed();
+        var start = map.uncompressed(position);
+        if (packed) {
+            map.add(position, box[2], CompressedBoxes.boxSize(data.length));
+        }
+        var counts = new int[tracks.size()];
+        for (var index = 0; index < counts.length; index++) {
+            counts[index] = tracks.get(index).samples.count;
+        }
+        FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), start, tracks);
+        for (var index = 0; index < counts.length; index++) {
+            var samples = tracks.get(index).samples;
+            map.relocate(samples, counts[index], samples.count);
+        }
+    }
+
+    /**
+     * Handles a top-level box of a forward-only source that the top-level scan stopped before: a movie
+     * fragment is indexed and a compressed segment index added to the map of the compressed boxes.
+     *
+     * @param position the offset of the box
+     * @param box the header size, the size and the type of the box, as {@link TopLevelScan#readHeader} reads them
+     * @param tracks every track of the movie
+     */
+    private void walkLater(long position, long[] box, List<Mp4Track> tracks) {
+        var type = (int) box[2];
+        var entry = new long[]{position, box[0], box[1], type};
+        if (type == BoxTypes.MOOF || type == BoxTypes.COMPRESSED_MOOF) {
+            parseFragment(entry, null, tracks);
+        } else if (type == BoxTypes.COMPRESSED_SIDX || type == BoxTypes.COMPRESSED_SSIX) {
+            addCompressedIndex(entry);
+        }
     }
 
     /**
@@ -678,6 +899,7 @@ public final class Mp4Demuxer implements Demuxer {
                 starts[index] = startSample(active[index], micros);
             }
             System.arraycopy(starts, 0, cursors, 0, starts.length);
+            resetDescriptions();
             heapSize = 0;
             for (var index = 0; index < active.length; index++) {
                 if (cursors[index] < active[index].samples.count) {
@@ -775,8 +997,79 @@ public final class Mp4Demuxer implements Demuxer {
         var decode = samples.dts[index] + track.shift;
         var pts = decode + samples.ctsOffsets[index];
         var dts = decode - track.compositionShift;
-        return new Packet(track.id, data, pts, dts, Integer.toUnsignedLong(samples.durations[index]),
-                samples.isKeyframe(index));
+        var duration = Integer.toUnsignedLong(samples.durations[index]);
+        var config = configChange(trackIndex, index);
+        var trim = track.trimOf(index);
+        if (config == null && trim < 0 && !samples.isDiscarded(index)) {
+            return new Packet(track.id, data, pts, dts, duration, samples.isKeyframe(index));
+        }
+        var flags = samples.isKeyframe(index) ? samples.isDiscarded(index) ? KEY_DISCARD_FLAGS : KEY_FLAGS
+                : samples.isDiscarded(index) ? DISCARD_FLAGS : Set.<PacketFlag>of();
+        var sideData = PacketSideData.builder().newCodecConfig(config);
+        if (trim >= 0) {
+            sideData.discard(track.trimAmounts[trim * 2], track.trimAmounts[trim * 2 + 1]);
+        }
+        return new Packet(track.id, data, pts, dts, duration, flags, sideData.build());
+    }
+
+    /**
+     * Returns the codec configuration a sample establishes when its sample description differs
+     * from the one the track's previous packets established, and records it.
+     *
+     * @param trackIndex the active index of the sample's track
+     * @param index the index of the sample in its track
+     * @return the configuration to signal, or {@code null} when it does not change
+     * @throws MediaException.Malformed if the sample's description failed to parse
+     * @throws MediaException.Unsupported if the sample's description cannot follow the track's
+     */
+    private byte[] configChange(int trackIndex, int index) {
+        var track = active[trackIndex];
+        var description = track.samples.description(index);
+        var current = descriptions[trackIndex];
+        if (description == current) {
+            return null;
+        }
+        var next = track.configOf(description);
+        var previous = track.configOf(current);
+        descriptions[trackIndex] = description;
+        return Arrays.equals(previous, next) ? null : next;
+    }
+
+    /**
+     * Makes every active track's own sample description the established one, as it is for a
+     * decoder created from the track after a seek.
+     */
+    private void resetDescriptions() {
+        for (var index = 0; index < active.length; index++) {
+            descriptions[index] = active[index].baseDescription;
+        }
+    }
+
+    /**
+     * Makes the demuxer return the media samples of a track whose edit list was expanded into a
+     * presentation index: every sample once, in decoding order, with its media timestamps (the
+     * composition shift applied, the edit list not), for a writer that copies the edit list
+     * itself; then rewinds.
+     *
+     * @param trackId the identifier of the track
+     * @return the track's edit list as {@link Mp4Track#editsInMediaUnits(long)} returns it, or
+     * {@code null} when the track's edit list was not expanded
+     */
+    long[][] useMediaSamples(int trackId) {
+        for (var track : active) {
+            if (track.id == trackId && track.expanded) {
+                track.samples = track.media;
+                track.expanded = false;
+                track.shift = 0;
+                track.compositionShift = track.mediaCompositionShift;
+                track.trimIndex = new int[0];
+                track.trimAmounts = new long[0];
+                dataEnd = Math.max(dataEnd, dataEnd(active));
+                rewind();
+                return track.editsInMediaUnits(movieTimescale);
+            }
+        }
+        return null;
     }
 
     /**
@@ -833,6 +1126,12 @@ public final class Mp4Demuxer implements Demuxer {
         boolean keyframe;
 
         /**
+         * The codec configuration the sample establishes, or {@code null} when it keeps the one
+         * of the track's previous sample.
+         */
+        byte[] newConfig;
+
+        /**
          * The array holding the sample bytes, filled by {@link #readSample(SampleInfo)} only.
          */
         byte[] data;
@@ -854,10 +1153,12 @@ public final class Mp4Demuxer implements Demuxer {
         if (heapSize == 0) {
             return false;
         }
-        var track = active[heap[0]];
+        var trackIndex = heap[0];
+        var track = active[trackIndex];
         var index = advance();
         var samples = track.samples;
         var decode = samples.dts[index] + track.shift;
+        info.newConfig = configChange(trackIndex, index);
         info.trackId = track.id;
         info.size = samples.sizes[index];
         info.pts = decode + samples.ctsOffsets[index];
@@ -886,11 +1187,13 @@ public final class Mp4Demuxer implements Demuxer {
             if (heapSize == 0) {
                 return false;
             }
-            var track = active[heap[0]];
+            var trackIndex = heap[0];
+            var track = active[trackIndex];
             var index = advance();
             var samples = track.samples;
             locateSample(samples.offsets[index], samples.sizes[index], info);
             releaseConsumed();
+            info.newConfig = configChange(trackIndex, index);
             var decode = samples.dts[index] + track.shift;
             info.trackId = track.id;
             info.size = samples.sizes[index];
@@ -966,6 +1269,7 @@ public final class Mp4Demuxer implements Demuxer {
      */
     void rewind() {
         Arrays.fill(cursors, 0);
+        resetDescriptions();
         heapSize = 0;
         for (var index = 0; index < active.length; index++) {
             if (active[index].samples.count > 0) {
@@ -983,6 +1287,26 @@ public final class Mp4Demuxer implements Demuxer {
         if (forwardOnly) {
             var next = heapSize > 0 ? active[heap[0]].samples.offsets[cursors[heap[0]]] : Long.MAX_VALUE;
             ForwardOnlySource.release(source, fragmentScan >= 0 ? Math.min(next, fragmentScan) : next);
+        }
+    }
+
+    /**
+     * Indexes every fragment from a top-level offset on, at construction, for a forward-only
+     * source whose edit lists need the whole sample index.
+     *
+     * @param from the offset of the first top-level box after the ones already walked
+     * @param tracks every track of the movie
+     * @throws MediaException.Malformed if a {@code moof} is corrupt
+     */
+    private void indexFragments(long from, List<Mp4Track> tracks) {
+        var position = from;
+        while (position >= 0) {
+            var box = TopLevelScan.readHeader(source, position, sourceSize);
+            if (box == null || box[1] < 0 || (sourceSize >= 0 && position + box[1] > sourceSize)) {
+                return;
+            }
+            walkLater(position, box, tracks);
+            position += box[1];
         }
     }
 
@@ -1018,7 +1342,8 @@ public final class Mp4Demuxer implements Demuxer {
      * walk resumes after the media data of the fragment and the bytes before its first sample are
      * not kept while the samples are read.
      *
-     * @throws MediaException.Malformed if the {@code moof} is corrupt
+     * @throws MediaException.Malformed if the {@code moof} is corrupt, or a compressed box is not a
+     * gzip stream
      */
     private void loadFragment() {
         while (fragmentScan >= 0) {
@@ -1029,15 +1354,18 @@ public final class Mp4Demuxer implements Demuxer {
             } else {
                 fragmentScan = position + box[1];
             }
-            if (box == null || (int) box[2] != BoxTypes.MOOF || box[1] < 0) {
+            if (box == null || box[1] < 0) {
+                continue;
+            }
+            if ((int) box[2] != BoxTypes.MOOF && (int) box[2] != BoxTypes.COMPRESSED_MOOF) {
+                walkLater(position, box, fragmentTracks);
                 continue;
             }
             var counts = new int[active.length];
             for (var index = 0; index < active.length; index++) {
                 counts[index] = active[index].samples.count;
             }
-            FragmentParser.parse(BoxCursor.of(readBox(position, (int) box[0], box[1], "moof"), BoxTypes.MOOF), position,
-                    fragmentTracks);
+            walkLater(position, box, fragmentTracks);
             if (fragmentScan >= 0) {
                 var data = TopLevelScan.readHeader(source, fragmentScan, sourceSize);
                 if (data != null && (int) data[2] == BoxTypes.MDAT) {
