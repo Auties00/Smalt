@@ -108,6 +108,14 @@ public final class ImageOps {
     private static final long COLOR_WORK = 8;
 
     /**
+     * Selects libjpeg's {@code h1v2} fancy (triangle) vertical upsampling of 4:4:0 chroma: the upper
+     * pixel row of a chroma row is {@code (3 * near + above + 1) >> 2} and the lower one
+     * {@code (3 * near + below + 2) >> 2}, rows outside the plane clamped to its ends; a mode of
+     * {@link #yuvToRgbaRows} beside the {@link ColorKernel} ones, which are 0 to 3.
+     */
+    private static final int CHROMA_FANCY_V = 4;
+
+    /**
      * Prevents instantiation.
      */
     private ImageOps() {
@@ -202,8 +210,8 @@ public final class ImageOps {
      * matrix and range, only the chroma planes are resampled: reduced by box averaging (weighted
      * by the alpha plane with {@link ChromaDownsampling#ALPHA_WEIGHTED}) and enlarged with the
      * triangle filter. With only the range changed, every sample is remapped exactly between the
-     * ranges. With the matrix changed (and the range changed or not) in an unchanged 4:2:0, 4:2:2 or
-     * 4:4:4 layout, and neither matrix {@link MatrixCoefficients#IDENTITY}, the samples are converted
+     * ranges. With the matrix changed (and the range changed or not) in an unchanged 4:2:0, 4:2:2,
+     * 4:4:0 or 4:4:4 layout, and neither matrix {@link MatrixCoefficients#IDENTITY}, the samples are converted
      * directly in Y'CbCr: the chroma planes sample by sample at their own resolution, each luma sample
      * from itself and the chroma at its position (reconstructed with the triangle filter), rounded
      * once. For colors inside the R'G'B' cube this is within one code value of a conversion through
@@ -495,10 +503,10 @@ public final class ImageOps {
      *
      * <p>{@link Orientation#NORMAL} returns the input. The quarter-turn transforms swap width and
      * height. Planes of a {@link YuvPicture} are transformed independently; a 4:2:0 picture stays
-     * 4:2:0 and a 4:4:4 or monochrome picture keeps its layout, but a 4:2:2 picture turned by a
-     * quarter turn becomes 4:4:4, because its chroma, halved horizontally, would end up halved
-     * vertically, a layout {@link ChromaFormat} cannot describe: its chroma is first widened by
-     * replicating each sample, which loses nothing (averaging the pairs back restores it).
+     * 4:2:0 and a 4:4:4 or monochrome picture keeps its layout, but a 4:2:2 or 4:4:0 picture turned
+     * by a quarter turn becomes 4:4:4: its chroma, halved along one axis, would end up halved along
+     * the other, so it is first widened by replicating each sample, which loses nothing (averaging
+     * the pairs back restores it).
      *
      * @param picture the picture to transform
      * @param orientation the transform to apply
@@ -913,7 +921,7 @@ public final class ImageOps {
      * Mirrors a picture across its top-left to bottom-right diagonal, swapping rows and columns.
      *
      * @param picture the picture to mirror
-     * @return a new picture with the input's representation and depth (a 4:2:2 picture becomes 4:4:4, as
+     * @return a new picture with the input's representation and depth (a 4:2:2 or 4:4:0 picture becomes 4:4:4, as
      * {@link #orient} describes)
      * @see #orient(Picture, Orientation)
      */
@@ -925,7 +933,7 @@ public final class ImageOps {
      * Mirrors a picture across its top-right to bottom-left diagonal.
      *
      * @param picture the picture to mirror
-     * @return a new picture with the input's representation and depth (a 4:2:2 picture becomes 4:4:4, as
+     * @return a new picture with the input's representation and depth (a 4:2:2 or 4:4:0 picture becomes 4:4:4, as
      * {@link #orient} describes)
      * @see #orient(Picture, Orientation)
      */
@@ -1817,8 +1825,10 @@ public final class ImageOps {
         if (!format.hasChroma()) {
             mode = -1;
         } else if (format.shiftX() == 0) {
-            mode = ColorKernel.CHROMA_FULL;
-        } else if (upsampling == ChromaUpsampling.NEAREST) {
+            mode = format.shiftY() == 1 && upsampling != ChromaUpsampling.NEAREST ? CHROMA_FANCY_V
+                    : ColorKernel.CHROMA_FULL;
+        } else if (upsampling == ChromaUpsampling.NEAREST || yuv.chromaWidth() <= 2) {
+            // libjpeg replicates the chroma of a plane at most 2 samples wide (jdsample.c, jinit_upsampler)
             mode = ColorKernel.CHROMA_NEAREST;
         } else {
             mode = format.shiftY() == 1 ? ColorKernel.CHROMA_FANCY_HV : ColorKernel.CHROMA_FANCY_H;
@@ -1833,7 +1843,8 @@ public final class ImageOps {
      * Converts the rows {@code [top, bottom)} of a planar picture to packed RGBA.
      *
      * @param yuv the picture
-     * @param mode the chroma sampling mode of {@link ColorKernel}, or {@code -1} for a monochrome picture
+     * @param mode the chroma sampling mode of {@link ColorKernel}, {@link #CHROMA_FANCY_V} for 4:4:0
+     * chroma upsampled vertically, or {@code -1} for a monochrome picture
      * @param matrix the conversion coefficients
      * @param out the RGBA destination
      * @param top the first row
@@ -1852,6 +1863,24 @@ public final class ImageOps {
         }
         var shiftY = yuv.chromaFormat().shiftY();
         var chromaHeight = yuv.chromaHeight();
+        if (mode == CHROMA_FANCY_V) {
+            var u = new byte[width];
+            var v = new byte[width];
+            for (var row = top; row < bottom; row++) {
+                var near = (row >> 1) * yuv.uvStride();
+                var even = (row & 1) == 0;
+                var far = (even ? Math.max((row >> 1) - 1, 0) : Math.min((row >> 1) + 1, chromaHeight - 1))
+                        * yuv.uvStride();
+                var bias = even ? 1 : 2;
+                for (var x = 0; x < width; x++) {
+                    u[x] = (byte) ((3 * (yuv.u()[near + x] & 0xFF) + (yuv.u()[far + x] & 0xFF) + bias) >> 2);
+                    v[x] = (byte) ((3 * (yuv.v()[near + x] & 0xFF) + (yuv.v()[far + x] & 0xFF) + bias) >> 2);
+                }
+                kernel.yuvToRgba(yuv.y(), row * yuv.yStride(), u, v, 0, 0, alpha, row * yuv.alphaStride(), pixels,
+                        row * out.stride(), width, ColorKernel.CHROMA_FULL, matrix);
+            }
+            return;
+        }
         for (var row = top; row < bottom; row++) {
             var near = row >> shiftY;
             var far = near;

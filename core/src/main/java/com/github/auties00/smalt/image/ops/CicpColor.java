@@ -436,7 +436,8 @@ final class CicpColor {
         Reader(Planes planes, ChromaUpsampling upsampling) {
             this.planes = planes;
             this.codec = new Codec(planes.color, planes.depth);
-            this.nearest = upsampling == ChromaUpsampling.NEAREST;
+            this.nearest = upsampling == ChromaUpsampling.NEAREST
+                    || planes.format.shiftX() == 1 && planes.chromaWidth <= 2;
             var width = planes.width;
             this.left = new int[width];
             this.right = new int[width];

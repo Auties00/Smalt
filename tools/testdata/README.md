@@ -467,6 +467,21 @@ records the SHA-256 of each stream and of aomdec's raw output in `superres.tsv` 
 MSYS2 UCRT64 package `mingw-w64-ucrt-x86_64-aom` 3.15.2-1, BSD-2-Clause, used as black boxes, on `PATH`); with
 aomdec on `PATH` the test also compares with it directly.
 
+## AV1 scalability, Annex B and large scale tile references
+
+`Av1LayersTest` of `smalt-video` decodes the libaom scalability vectors (`av1-1-b8-22-svc-*`, from `vectors.tsv`)
+at every operating point and with and without every spatial layer, against the size and MD5 of every frame
+aomdec writes for the same settings (`video/src/test/resources/com/github/auties00/smalt/video/av1/layers/layers.tsv`,
+written by `python -I tools/testdata/av1-layers/make-references.py <aomdec> <conformance cache> <that directory>`).
+`Av1AnnexBTest` decodes short streams libaom's aomenc wrote in the length-delimited format of Annex B
+(`.../av1/annexb/`, `python -I tools/testdata/av1-annexb/make-vectors.py <libaom build> <that directory>`, which
+records the SHA-256 of each stream and of `aomdec --annexb --rawvideo` in `annexb.tsv`). `Av1LargeScaleTileTest`
+decodes light fields coded with libaom's light field examples (`.../av1/lightfield/`,
+`python -I tools/testdata/av1-lightfield/make-vectors.py <libaom build> <that directory>`, which checks that
+`lightfield_tile_list_decoder` and `lightfield_decoder` agree and records the SHA-256 of the tile list decoder's
+output in `lightfield.tsv`). All three use libaom 3.13.1 (BSD-2-Clause, the v3.13.1 tag built with CMake, MSYS2
+UCRT64 gcc and nasm, with its examples) as a black box; the streams and references are kept with the tests.
+
 ## HEVC decoded picture hash vectors
 
 `HevcPictureHashTest` of `smalt-mpeg` verifies the MD5, CRC and checksum SEI messages of short streams coded by the
@@ -623,12 +638,14 @@ Without these files the comparisons are skipped.
 
 ## Conformance suites read from remote archives
 
-- Argon AV1 coverage streams (AOMedia, version 2.1.1, licence unstated: used for testing only): 19 archive sets
+- Argon AV1 coverage streams (AOMedia, version 2.1.1, licence unstated: used for testing only): 25 archive sets
   `argon-av1-<group>` (`full` tier, never in the nightly's cache) for `Av1ArgonTest` (`smalt-video`, JUnit tag
   `argon`, excluded unless `-Dsmalt.test.excludedGroups=none -Dgroups=argon`; `-Dsmalt.test.argon=<groups>` picks
   groups). Each stream must decode to its `md5_ref` (aomdec's raw output), to `md5_no_film_grain` without film
   grain, and to the reference of every operating point its sequence header declares; the error groups must decode
-  or fail with a `MediaException`. The nightly runs the groups in seven shards with a 12 GB heap.
+  or fail with a `MediaException`; the streams of the six large scale tile groups are decoded as their reference
+  command, libaom's `lightfield_tile_list_decoder`, does, and their tiles must have the reference MD5. The
+  nightly runs the groups in eight shards with a 12 GB heap.
 - DASH-IF livesim-content (Apache-2.0): 16 sets `dash-livesim-<presentation>-<representation>`, initialization
   segment and the first eight media segments, with the `_data.json.gz` segment lists in `vectors.tsv`, for
   `DashTestVectorsTest` (`smalt-core`).

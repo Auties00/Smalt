@@ -405,6 +405,8 @@ public final class JpegLsEncoderOptions {
      */
     public record PresetParameters(int threshold1, int threshold2, int threshold3, int reset) {
         /**
+         * Creates preset parameters, checking that each value fits the 16 bits of its marker segment field.
+         *
          * @throws IllegalArgumentException if a value is negative or above 65535
          */
         public PresetParameters {

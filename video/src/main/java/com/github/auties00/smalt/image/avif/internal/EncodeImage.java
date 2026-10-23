@@ -386,6 +386,9 @@ public record EncodeImage(int width, int height, ChromaFormat format, int bitDep
      * @return the image
      */
     private static EncodeImage fromYuv(YuvPicture yuv, ChromaFormat format, int depth) {
+        if (format == null && yuv.chromaFormat() == ChromaFormat.YUV440) {
+            format = ChromaFormat.YUV444;
+        }
         if (depth != 8 && YcgcoR.applies(yuv.color().matrix())) {
             return fromYuv16(ImageOps.toBitDepth(yuv, depth), format, depth);
         }
@@ -453,7 +456,7 @@ public record EncodeImage(int width, int height, ChromaFormat format, int bitDep
         var w = yuv.width();
         var h = yuv.height();
         var source = yuv.chromaFormat();
-        var target = format == null ? source : format;
+        var target = format != null ? format : source == ChromaFormat.YUV440 ? ChromaFormat.YUV444 : source;
         var planes = new short[3][];
         planes[0] = copy(yuv.y(), yuv.yStride(), w, h);
         if (target.hasChroma()) {

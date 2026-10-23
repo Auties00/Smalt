@@ -26,7 +26,7 @@ import java.util.function.Supplier;
  * sequences.
  *
  * <p>The primary image decodes to its native planar representation: a {@link YuvPicture} in the
- * chroma layout of its payload (4:2:0, 4:2:2, 4:4:4 or monochrome), with an alpha plane when
+ * chroma layout of its payload (4:2:0, 4:2:2, 4:4:4, 4:4:0 for a JPEG item, or monochrome), with an alpha plane when
  * the file has an alpha auxiliary image or the payload carries alpha itself. RGB payloads (JPEG
  * 2000 and uncompressed items with red, green and blue components, and RGB-coded JPEG) decode to
  * 4:4:4 planes with the identity matrix, green in the luma plane and blue and red in the chroma

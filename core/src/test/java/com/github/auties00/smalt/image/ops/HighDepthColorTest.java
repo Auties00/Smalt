@@ -266,7 +266,8 @@ class HighDepthColorTest {
                     var actual = Pictures.tight(ImageOps.toEightBit(deep));
                     // the 8-bit kernel rounds the interpolated chroma before the matrix, which a color
                     // difference coefficient of up to 2.1 amplifies
-                    var tolerance = upsampling == ChromaUpsampling.TRIANGLE && format.shiftX() > 0 ? 2 : 1;
+                    var tolerance = upsampling == ChromaUpsampling.TRIANGLE && format.shiftX() + format.shiftY() > 0
+                            ? 2 : 1;
                     for (var i = 0; i < expected.length; i++) {
                         assertEquals(expected[i] & 0xFF, actual[i] & 0xFF, tolerance, format + " " + upsampling + " sample " + i);
                     }

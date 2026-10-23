@@ -33,8 +33,9 @@ import java.util.function.Consumer;
  * YCbCr, coded with a DCT process or with a lossless process (SOF3, SOF11). Frames that omit their
  * Huffman tables, as Motion-JPEG allows, use the tables of T.81 Annex K. A frame decodes to a
  * {@link YuvPicture} with {@link ColorInfo#JPEG} in its stored subsampling
- * ({@link ChromaFormat#MONOCHROME}, {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422} or
- * {@link ChromaFormat#YUV444}); other layouts are upsampled to {@link ChromaFormat#YUV444}. The
+ * ({@link ChromaFormat#MONOCHROME}, {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422},
+ * {@link ChromaFormat#YUV444} or {@link ChromaFormat#YUV440}); other layouts are upsampled to
+ * {@link ChromaFormat#YUV444}. The
  * planes of a frame that is not woven from fields may be padded, so their strides may exceed the
  * width. A frame of a precision {@code P} other than 8 (12-bit DCT, or a lossless precision from 2
  * to 16) decodes to the same layout with every sample {@code v} rescaled to 8 bits as

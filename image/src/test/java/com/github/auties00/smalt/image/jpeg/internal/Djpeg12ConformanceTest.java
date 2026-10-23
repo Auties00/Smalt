@@ -134,11 +134,12 @@ class Djpeg12ConformanceTest {
         var expected = switch (layout) {
             case "YUV420" -> ChromaFormat.YUV420;
             case "YUV422" -> ChromaFormat.YUV422;
+            case "YUV440" -> ChromaFormat.YUV440;
             case "MONOCHROME" -> ChromaFormat.MONOCHROME;
             default -> ChromaFormat.YUV444;
         };
         assertEquals(expected, picture.chromaFormat());
-        if (layout.equals("YUV440") || layout.equals("YUV411")) {
+        if (layout.equals("YUV411")) {
             // upsampled to 4:4:4 by the decoder, which is what libjpeg's upsampler computes
             assertEquals(md5, md5(Djpeg12Support.djpegOutput(picture, true)));
             return;
@@ -176,7 +177,7 @@ class Djpeg12ConformanceTest {
             case "RGB" -> assertInstanceOf(RgbaPicture.class, image.picture());
             default -> {
                 var picture = assertInstanceOf(YuvPicture.class, image.picture());
-                if (!layout.equals("YUV440") && !layout.equals("YUV411")) {
+                if (!layout.equals("YUV411")) {
                     for (var y = 0; y < picture.height(); y++) {
                         for (var x = 0; x < picture.width(); x++) {
                             assertEquals(narrow.plane(0)[y * narrow.stride(0) + x], picture.y()[y * picture.yStride() + x]);

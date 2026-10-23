@@ -234,8 +234,8 @@ public final class AvifEncoderOptions {
     /**
      * {@return the chroma format of the coded image, or empty for automatic; empty by default}
      *
-     * <p>Automatic is the picture's own format for a planar picture, 4:2:0 for a lossy RGB picture
-     * and 4:4:4 for a lossless one.
+     * <p>Automatic is the picture's own format for a planar picture (4:4:4 for a 4:4:0 one, a format
+     * AV1 cannot code), 4:2:0 for a lossy RGB picture and 4:4:4 for a lossless one.
      */
     public Optional<ChromaFormat> chromaFormat() {
         return Optional.ofNullable(chromaFormat);
@@ -772,9 +772,12 @@ public final class AvifEncoderOptions {
          * @throws IllegalArgumentException if the quality or the alpha quality is not in [0, 100],
          * the speed is not in [0, 10], the bit depth is not 8, 10 or 12, a tile logarithm is not in
          * [0, 6], the grid image side is not an even number in [64, 16384], the thread count is
-         * negative, or the loop count is negative
+         * negative, the loop count is negative, or the chroma format is 4:4:0, which AV1 cannot code
          */
         public AvifEncoderOptions build() {
+            if (chromaFormat == ChromaFormat.YUV440) {
+                throw new IllegalArgumentException("AV1 cannot code 4:4:0 chroma");
+            }
             Checks.inRange("quality", quality, 0, 100);
             Checks.inRange("alpha quality", alphaQuality, 0, 100);
             Checks.inRange("speed", speed, 0, 10);

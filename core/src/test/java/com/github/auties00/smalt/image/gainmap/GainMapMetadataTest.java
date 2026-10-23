@@ -218,6 +218,32 @@ class GainMapMetadataTest {
         }
 
         @Test
+        @DisplayName("writes back every value a fraction of its fields holds")
+        void fractionValues() {
+            var random = new Random(214961);
+            var values = new double[20001];
+            // a headroom a fuzzer read, whose denominator bound n / v rounds up to 769 although 769 * v > 2^32 - 1
+            values[0] = 5585133.0234070225;
+            for (var i = 1; i < values.length; i++) {
+                var numerator = i % 2 == 0 ? 0xFFFFFFFFL - random.nextInt(4096) : random.nextLong(1, 0x1_0000_0000L);
+                var denominator = i % 4 < 2 ? 1 + random.nextInt(4096) : random.nextLong(1, 0x1_0000_0000L);
+                values[i] = (double) numerator / denominator;
+            }
+            for (var value : values) {
+                var metadata = new GainMapMetadata(value, 0, List.of(GainMapChannel.of(0, 1)), false);
+                var read = GainMapMetadata.parse(metadata.toByteArray());
+                assertEquals(value, read.baseHeadroom(), 1e-6 * Math.max(1, value), "headroom " + value);
+                if (value <= Integer.MAX_VALUE) {
+                    var channel = new GainMapChannel(-value, value, 1, 0, 0);
+                    var signed = new GainMapMetadata(0, 0, List.of(channel), false);
+                    var back = GainMapMetadata.parse(signed.toByteArray()).channel(0);
+                    assertEquals(-value, back.minimum(), 1e-6 * Math.max(1, value), "minimum " + value);
+                    assertEquals(value, back.maximum(), 1e-6 * Math.max(1, value), "maximum " + value);
+                }
+            }
+        }
+
+        @Test
         @DisplayName("never throws an unchecked exception on random input")
         void random() {
             var random = new Random(7);

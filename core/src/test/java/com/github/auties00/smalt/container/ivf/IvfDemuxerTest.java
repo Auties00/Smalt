@@ -129,6 +129,29 @@ class IvfDemuxerTest {
     }
 
     @Test
+    @DisplayName("flags Annex B AV1 units by their sequence header, even when a size byte reads as one")
+    void annexBKeyframes() {
+        // temporal_unit_size 10: a frame unit of 9 bytes, a temporal delimiter and a 5-byte frame OBU; the first
+        // byte, read as a low-overhead OBU header, would be a sequence header
+        var small = new byte[]{0x0A, 0x09, 0x01, 0x10, 0x06, 0x30, 1, 2, 3, 4, 5};
+        // temporal_unit_size 136 (0x88 0x01), whose first byte also reads as a sequence header OBU header
+        var large = new byte[138];
+        large[0] = (byte) 0x88;
+        large[1] = 0x01;
+        large[2] = (byte) 0x86;
+        large[3] = 0x01;
+        large[4] = 0x01;
+        large[5] = 0x10;
+        large[6] = (byte) 0x82;
+        large[7] = 0x01;
+        large[8] = 0x30;
+        // a frame unit holding a temporal delimiter and a sequence header OBU without obu_size
+        var key = new byte[]{0x06, 0x05, 0x01, 0x10, 0x02, 0x08, 0x00};
+        var data = ivf("AV01", 64, 64, 30, 1, small, large, key);
+        assertEquals(List.of(false, false, true), packets(data).stream().map(Packet::keyframe).toList());
+    }
+
+    @Test
     @DisplayName("takes the frame rate of a 90 kHz clock time base from the step of the frame timestamps")
     void clockRate() {
         var frames = 3;

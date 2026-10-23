@@ -2309,7 +2309,8 @@ License:      BSD 2-Clause License
 
 Derived Smalt packages:
   video.av1, video.av1.internal.encoder (Av1Encoder, and the intra-only still
-  encoder behind AvifEncoder and its animations)
+  encoder behind AvifEncoder and its animations), video.av1.internal (the
+  large scale tile decoding of Av1Decoder)
 
 Derivation: the real-time AV1 encoder is a port of libaom 3.12.1's one-pass
 real-time path at speeds 7 to 10 (av1/encoder: nonrd_pickmode.c, nonrd_opt.c,
@@ -2354,6 +2355,12 @@ filter (mcomp.c), the choice of the motion mode of a block by its coded cost
 (rdopt.c, motion_mode_rd), the compound mode set of the mode search (rdopt.c)
 and the speed features that widen the all-intra searches of key frames
 (speed_features.c).
+
+The large scale tile decoding of the AV1 decoder follows libaom 3.13.1's
+decoding of tile list OBUs (av1/decoder/obu.c: read_and_decode_one_tile_list,
+copy_decoded_tile_to_tile_list_buffer; av1/decoder/decodeframe.c: the tiles
+of large scale tile mode decoded without CDF adaptation; av1/av1_dx_iface.c:
+the output frame of a tile list without film grain).
 
 Copyright:
   Copyright (c) 2016, Alliance for Open Media. All rights reserved.

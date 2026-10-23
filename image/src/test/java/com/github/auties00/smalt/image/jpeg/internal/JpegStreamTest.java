@@ -187,7 +187,8 @@ class JpegStreamTest {
                     .sequential(new int[]{0, 1, 2}));
             var expected = lh == ch && lv == cv ? ChromaFormat.YUV444
                     : lh == 2 * ch && lv == cv && lh == hMax ? ChromaFormat.YUV422
-                    : lh == 2 * ch && lv == 2 * cv ? ChromaFormat.YUV420 : ChromaFormat.YUV444;
+                    : lh == 2 * ch && lv == 2 * cv ? ChromaFormat.YUV420
+                    : lh == ch && lv == 2 * cv && lv == vMax ? ChromaFormat.YUV440 : ChromaFormat.YUV444;
             assertEquals(expected, picture.chromaFormat());
             assertEquals(WIDTH, picture.width());
             assertEquals(HEIGHT, picture.height());

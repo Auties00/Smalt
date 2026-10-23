@@ -169,7 +169,7 @@ class HeicJpegJpeg2000Test {
         }
 
         @ParameterizedTest(name = "{0}")
-        @EnumSource(value = ChromaFormat.class, names = {"MONOCHROME", "YUV422", "YUV444"})
+        @EnumSource(value = ChromaFormat.class, names = {"MONOCHROME", "YUV422", "YUV444", "YUV440"})
         @DisplayName("an item of another chroma format decodes to the planes of the JPEG decoder")
         void chromaFormats(ChromaFormat format) {
             var jpeg = JpegEncoder.encode(pattern(33, 21, 7, false), JpegEncoderOptions.builder().chromaFormat(format)

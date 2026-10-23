@@ -23,7 +23,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  *
  * <p>Gray and YCbCr frames become a {@link YuvPicture} with {@link ColorInfo#JPEG}. The planes are
  * handed out without copying when the sampling factors map onto a {@link ChromaFormat} (luma at the
- * largest factors, both chroma components equal, and a ratio of 1x1, 2x1 or 2x2); any other layout
+ * largest factors, both chroma components equal, and a ratio of 1x1, 2x1, 2x2 or 1x2); any other layout
  * is upsampled to {@link ChromaFormat#YUV444}. RGB, CMYK and YCCK frames become an opaque
  * {@link RgbaPicture}. CMYK samples are taken as stored inverted, the convention of Adobe
  * applications, so a pixel is {@code R = C * K / 255} (rounded) and likewise for G and B; YCCK is
@@ -414,6 +414,9 @@ public final class JpegOutput {
         }
         if (rx == 2 && ry == 2) {
             return ChromaFormat.YUV420;
+        }
+        if (rx == 1 && ry == 2) {
+            return ChromaFormat.YUV440;
         }
         return null;
     }

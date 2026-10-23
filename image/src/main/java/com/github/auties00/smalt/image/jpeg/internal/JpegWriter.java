@@ -653,7 +653,9 @@ public final class JpegWriter {
     }
 
     /**
-     * Downsamples one chroma row with libjpeg's box filter and alternating rounding bias.
+     * Downsamples one chroma row with libjpeg's box filter: the alternating rounding bias of its
+     * {@code h2v1} and {@code h2v2} downsamplers, and the constant bias of its general
+     * downsampler for chroma halved vertically only.
      *
      * @param rows the two most recent full-resolution rows
      * @param slot the index in {@code rows} of the most recent row
@@ -665,8 +667,15 @@ public final class JpegWriter {
      */
     private static void downsample(byte[][] rows, int slot, byte[] band, int offset, int count, int factorX, int factorY) {
         var current = rows[slot];
-        if (factorX == 1) {
+        if (factorX == 1 && factorY == 1) {
             System.arraycopy(current, 0, band, offset, count);
+            return;
+        }
+        if (factorX == 1) {
+            var upper = rows[slot ^ 1];
+            for (var i = 0; i < count; i++) {
+                band[offset + i] = (byte) (((upper[i] & 0xFF) + (current[i] & 0xFF) + 1) >> 1);
+            }
             return;
         }
         if (factorY == 1) {

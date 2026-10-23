@@ -169,8 +169,9 @@ public final class JpegDecoder {
      *
      * <p>Gray and YCbCr images decode to a {@link YuvPicture} with {@link ColorInfo#JPEG} in their
      * stored subsampling ({@link ChromaFormat#MONOCHROME}, {@link ChromaFormat#YUV420},
-     * {@link ChromaFormat#YUV422} or {@link ChromaFormat#YUV444}); layouts that match none of these
-     * (4:1:1, 4:4:0, unusual factors, chroma components sampled differently) are upsampled to
+     * {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV444} or {@link ChromaFormat#YUV440}); layouts
+     * that match none of these (4:1:1, unusual factors, chroma components sampled differently) are
+     * upsampled to
      * {@link ChromaFormat#YUV444} with libjpeg's triangle filter. Images coded as RGB (an Adobe
      * transform of 0, or component identifiers {@code R}, {@code G}, {@code B}), CMYK and YCCK
      * decode to an opaque {@link RgbaPicture}; CMYK samples follow the inverted Adobe convention.
@@ -184,7 +185,7 @@ public final class JpegDecoder {
      * {@link com.github.auties00.smalt.image.Yuv16Picture Yuv16Picture} of bit depth {@code P} with
      * {@link ColorInfo#JPEG}, holding the samples as decoded (in its stored subsampling, or upsampled
      * to 4:4:4 at 12 bits, for a 12-bit image; with tight strides for a lossless one, in its stored
-     * subsampling when that is 4:2:0 or 4:2:2 and with its components replicated to 4:4:4
+     * subsampling when that is 4:2:0, 4:2:2 or 4:4:0 and with its components replicated to 4:4:4
      * otherwise), and an RGB image to an opaque
      * {@link com.github.auties00.smalt.image.Rgba16Picture Rgba16Picture}, every sample rescaled as
      * {@code round(v * 65535 / (2^P - 1))}; a CMYK or YCCK image is still reduced to 8 bits, except

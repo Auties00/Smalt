@@ -534,7 +534,8 @@ final class DeepColor {
             }
             this.grayScale = (float) (255 / matrix.scales[0]);
             var format = picture.chromaFormat();
-            this.nearest = upsampling == ChromaUpsampling.NEAREST;
+            this.nearest = upsampling == ChromaUpsampling.NEAREST
+                    || format.shiftX() == 1 && picture.chromaWidth() <= 2;
             var width = picture.width();
             this.left = new int[width];
             this.right = new int[width];

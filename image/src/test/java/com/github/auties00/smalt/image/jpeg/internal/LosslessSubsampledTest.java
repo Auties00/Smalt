@@ -136,7 +136,7 @@ class LosslessSubsampledTest {
 
     @ParameterizedTest(name = "{0}")
     @MethodSource("directLayouts")
-    @DisplayName("JpegDecoder hands out 4:2:0 and 4:2:2 YCbCr frames in their stored subsampling with the samples as coded")
+    @DisplayName("JpegDecoder hands out 4:2:0, 4:2:2 and 4:4:0 YCbCr frames in their stored subsampling with the samples as coded")
     void stillDecoder(ChromaFormat format, int[][] factors) {
         var width = 37;
         var height = 29;
@@ -163,7 +163,8 @@ class LosslessSubsampledTest {
 
     static Stream<Arguments> directLayouts() {
         return Stream.of(Arguments.of(ChromaFormat.YUV420, new int[][]{{2, 2}, {1, 1}, {1, 1}}),
-                Arguments.of(ChromaFormat.YUV422, new int[][]{{2, 1}, {1, 1}, {1, 1}}));
+                Arguments.of(ChromaFormat.YUV422, new int[][]{{2, 1}, {1, 1}, {1, 1}}),
+                Arguments.of(ChromaFormat.YUV440, new int[][]{{1, 2}, {1, 1}, {1, 1}}));
     }
 
     @Test
@@ -171,7 +172,7 @@ class LosslessSubsampledTest {
     void replicated() {
         var width = 21;
         var height = 13;
-        var factors = new int[][]{{1, 2}, {1, 1}, {1, 1}};
+        var factors = new int[][]{{4, 1}, {1, 1}, {1, 1}};
         var source = planes(width, height, factors, 10, 5);
         var jpeg = withJfif(Lj92Encoder.encodeSampled(source, width, height, factors, 10, 2, 0, 0));
         var picture = assertInstanceOf(Yuv16Picture.class, JpegDecoder.decode(MediaSource.of(jpeg), WIDE).picture());
@@ -180,8 +181,8 @@ class LosslessSubsampledTest {
         for (var y = 0; y < height; y++) {
             for (var x = 0; x < width; x++) {
                 assertEquals(source[0][y * width + x], picture.y()[y * picture.yStride() + x]);
-                assertEquals(source[1][(y / 2) * chromaWidth + x], picture.u()[y * picture.uvStride() + x]);
-                assertEquals(source[2][(y / 2) * chromaWidth + x], picture.v()[y * picture.uvStride() + x]);
+                assertEquals(source[1][y * chromaWidth + x / 4], picture.u()[y * picture.uvStride() + x]);
+                assertEquals(source[2][y * chromaWidth + x / 4], picture.v()[y * picture.uvStride() + x]);
             }
         }
     }

@@ -1151,7 +1151,9 @@ public final class TiffEncoderOptions {
          * {@link TiffEncoderOptions#compression()} lists, the compression level is not in [1, 9], the rows
          * per strip are not positive or, for JPEG or subsampled Y'CbCr pages, not a multiple of the row
          * group {@link TiffEncoderOptions#rowsPerStrip()} describes, a tile dimension is not a positive
-         * multiple of 16, the chroma format is {@code MONOCHROME}, the layout is {@code PALETTE},
+         * multiple of 16, the chroma format is {@code MONOCHROME} or {@code YUV440} (TIFF never
+         * subsamples chroma more vertically than horizontally), the JPEG settings ask for
+         * {@code YUV440} with JPEG compression, the layout is {@code PALETTE},
          * {@code BILEVEL} or {@code YCBCR} with a depth they do not take, the compression does not take the
          * layout, the depth or separate planes, as {@link TiffEncoderOptions#compression()} describes, or the
          * JPEG settings ask for more than {@link TiffEncoderOptions#jpegOptions()} takes
@@ -1167,6 +1169,10 @@ public final class TiffEncoderOptions {
             Checks.inRange("compression level", compressionLevel, 1, 9);
             if (chromaFormat == ChromaFormat.MONOCHROME) {
                 throw new IllegalArgumentException("a Y'CbCr page needs chroma; use the GRAY layout instead");
+            }
+            if (chromaFormat == ChromaFormat.YUV440
+                    || compression == TiffCompression.JPEG && jpegOptions.chromaFormat() == ChromaFormat.YUV440) {
+                throw new IllegalArgumentException("TIFF cannot subsample chroma vertically only (4:4:0)");
             }
             var fixedDepth = layout == Layout.PALETTE || layout == Layout.BILEVEL || layout == Layout.YCBCR;
             if (fixedDepth && depth != Depth.AUTO && !(layout == Layout.YCBCR && depth == Depth.EIGHT)) {

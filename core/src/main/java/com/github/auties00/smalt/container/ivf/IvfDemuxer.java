@@ -33,8 +33,10 @@ import java.util.Optional;
  * header's time base inverted, as the reference tools count frames in it; a time base finer than a
  * millisecond is a clock rate instead, and the frame rate is then that rate divided by the step between
  * the first two frame timestamps. A packet is flagged as a keyframe
- * when its data starts a VP8 or VP9 key frame or, for AV1, carries a sequence header OBU. A truncated
- * last frame ends the stream.
+ * when its data starts a VP8 or VP9 key frame or, for AV1, carries a sequence header OBU, its temporal unit
+ * read in the length-delimited format of the AV1 specification's Annex B, which aomenc writes into IVF files on
+ * request, when its size fields describe exactly its bytes, and in the low-overhead format otherwise. A
+ * truncated last frame ends the stream.
  *
  * <p>A source that reads its input once, front to back (a stream), is told after every frame which
  * bytes are no longer needed.
@@ -423,12 +425,25 @@ public final class IvfDemuxer implements Demuxer {
     }
 
     /**
-     * Returns whether an AV1 temporal unit carries a sequence header OBU.
+     * Returns whether an AV1 temporal unit carries a sequence header OBU, in the format of Annex B
+     * when it is a well-formed length-delimited unit (every size field consistent with the unit's
+     * length), in the low-overhead format otherwise.
      *
      * @param data the temporal unit
      * @return {@code true} when one of its OBUs is a sequence header
      */
     private static boolean av1HasSequenceHeader(byte[] data) {
+        var annexB = annexBSequenceHeader(data);
+        return annexB < 0 ? lowOverheadSequenceHeader(data) : annexB == 1;
+    }
+
+    /**
+     * Returns whether a temporal unit of low-overhead OBUs carries a sequence header OBU.
+     *
+     * @param data the temporal unit
+     * @return {@code true} when one of its OBUs is a sequence header
+     */
+    private static boolean lowOverheadSequenceHeader(byte[] data) {
         var pos = 0;
         while (pos < data.length) {
             var header = data[pos] & 0xFF;
@@ -456,5 +471,68 @@ public final class IvfDemuxer implements Demuxer {
             pos += (int) size;
         }
         return false;
+    }
+
+    /**
+     * Returns whether a length-delimited temporal unit ({@code temporal_unit_size}, then frame units
+     * of OBUs, each preceded by its size) carries a sequence header OBU; data whose size fields do not
+     * add up to its length is not such a unit.
+     *
+     * @param data the temporal unit
+     * @return 1 when the data is a length-delimited unit with a sequence header OBU, 0 when it is one
+     * without, or -1 when it is not such a unit
+     */
+    private static int annexBSequenceHeader(byte[] data) {
+        var field = leb128(data, 0, data.length);
+        if (field < 0 || field >>> 4 != data.length - (field & 15)) {
+            return -1;
+        }
+        var found = false;
+        var pos = (int) (field & 15);
+        while (pos < data.length) {
+            field = leb128(data, pos, data.length);
+            if (field < 0) {
+                return -1;
+            }
+            pos += (int) (field & 15);
+            if (field >>> 4 > data.length - pos) {
+                return -1;
+            }
+            var frameEnd = pos + (int) (field >>> 4);
+            while (pos < frameEnd) {
+                field = leb128(data, pos, frameEnd);
+                if (field < 0) {
+                    return -1;
+                }
+                pos += (int) (field & 15);
+                if (field >>> 4 == 0 || field >>> 4 > frameEnd - pos) {
+                    return -1;
+                }
+                found |= ((data[pos] >> 3) & 15) == 1;
+                pos += (int) (field >>> 4);
+            }
+        }
+        return found ? 1 : 0;
+    }
+
+    /**
+     * Reads a {@code leb128()} value of at most 8 bytes.
+     *
+     * @param data the buffer
+     * @param pos the first byte of the value
+     * @param end the end of the readable bytes
+     * @return the value shifted left by 4 bits with the number of bytes it took in the low 4 bits, or
+     * {@code -1} when it runs past {@code end} or past 8 bytes
+     */
+    private static long leb128(byte[] data, int pos, int end) {
+        long value = 0;
+        for (var i = 0; i < 8 && pos + i < end; i++) {
+            var b = data[pos + i] & 0xFF;
+            value |= (long) (b & 0x7F) << (7 * i);
+            if ((b & 0x80) == 0) {
+                return value << 4 | (i + 1);
+            }
+        }
+        return -1;
     }
 }

@@ -362,6 +362,7 @@ macos-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAl
 macos-arm64-vector-full	core	com.github.auties00.smalt.internal.task.ParallelTasksTest	env:threads	1
 macos-arm64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 macos-arm64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
+macos-arm64-vector-full	it	com.github.auties00.smalt.jit.JitStressTest	opt-in:jit-stress	1
 macos-arm64-vector-full	it	com.github.auties00.smalt.soak.SoakTest	opt-in:soak	1
 macos-arm64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 macos-arm64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	opt-in:fuzz-seeds	1
@@ -470,6 +471,7 @@ windows-x64-vector-full	audio	com.github.auties00.smalt.audio.alac.AlacEncoderIn
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
 windows-x64-vector-full	core	com.github.auties00.smalt.SkipTest	platform:unix	1
 windows-x64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
+windows-x64-vector-full	it	com.github.auties00.smalt.jit.JitStressTest	opt-in:jit-stress	1
 windows-x64-vector-full	it	com.github.auties00.smalt.soak.SoakTest	opt-in:soak	1
 windows-x64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 windows-x64-vector-full	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	opt-in:fuzz-seeds	1

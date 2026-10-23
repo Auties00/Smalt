@@ -133,7 +133,8 @@ final class CodedBaseLayer implements HevcDecoderEngine.ExternalBaseLayer {
     }
 
     /**
-     * {@return the {@code chroma_format_idc} of a chroma format}
+     * {@return the {@code chroma_format_idc} of a chroma format, or -1 for 4:4:0, which HEVC
+     * cannot represent}
      *
      * @param format the chroma format
      */
@@ -142,6 +143,7 @@ final class CodedBaseLayer implements HevcDecoderEngine.ExternalBaseLayer {
             case MONOCHROME -> 0;
             case YUV422 -> 2;
             case YUV444 -> 3;
+            case YUV440 -> -1;
             default -> 1;
         };
     }

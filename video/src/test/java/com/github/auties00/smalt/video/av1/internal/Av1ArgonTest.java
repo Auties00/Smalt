@@ -35,14 +35,19 @@ import static org.junit.jupiter.api.Assertions.fail;
  * libaom's {@code aomdec --rawvideo --all-layers} writes them (8-bit samples for 8-bit streams, 16-bit little-endian
  * ones otherwise, luma only for monochrome streams), with film grain and, where the stream carries grain, without it;
  * and the output of every other operating point the sequence header declares. The streams of the {@code error}
- * groups must decode or fail with a {@link MediaException}, never another exception.
+ * groups must decode or fail with a {@link MediaException}, never another exception. Streams in the length-delimited
+ * format of Annex B are decoded as such, one temporal unit per call.
+ *
+ * <p>The large scale tile groups are decoded as libaom's {@code examples/lightfield_tile_list_decoder} decodes them,
+ * with the arguments of their reference command: the frame each of the first temporal units shows (without film
+ * grain) becomes an anchor frame, the next temporal unit is the camera frame header, and the tiles of the tile lists
+ * that follow, each tile's luma rows then its Cb and Cr rows, must have the reference MD5.
  *
  * <p>The suite is several gigabytes (licence unstated: it is downloaded, never redistributed), so it runs only when
  * asked for: the tests carry the {@code argon} tag, which the build excludes unless {@code smalt.test.excludedGroups}
  * is overridden, and {@code smalt.test.argon} names the groups to decode (comma-separated, every supported group by
  * default). Each group is an archive set of {@code tools/testdata/archives.tsv}, fetched by range requests from the
- * suite's ZIP archive. The large-scale tile groups are left out: they need an application's tile list decoding
- * ({@code examples/lightfield_tile_list_decoder}), which the decoder does not implement.
+ * suite's ZIP archive.
  */
 @Tag("argon")
 @DisplayName("Argon AV1 coverage streams")
@@ -57,7 +62,13 @@ class Av1ArgonTest {
             "profile1_error", "profile1_stress",
             "profile2_core", "profile2_core_special", "profile2_not_annexb", "profile2_not_annexb_special",
             "profile2_error", "profile2_stress",
-            "profile_switching");
+            "profile_switching",
+            "profile0_large_scale_tile", "profile0_large_scale_tile_special",
+            "profile1_large_scale_tile", "profile1_large_scale_tile_special",
+            "profile2_large_scale_tile", "profile2_large_scale_tile_special");
+
+    private static final Pattern TILE_LIST_COMMAND = Pattern.compile(
+            "lightfield_tile_list_decoder\\s+\\S+\\s+\\S+\\s+(\\d+)\\s+(\\d+)");
 
     private static final Pattern STREAM = Pattern.compile("/streams/([^/]+)\\.obu$");
 
@@ -94,6 +105,7 @@ class Av1ArgonTest {
                         (int) (Runtime.getRuntime().maxMemory() / (3L << 30)))));
         var executor = Executors.newFixedThreadPool(parallelism,
                 Thread.ofPlatform().daemon().name("argon-", 0).factory());
+        var serial = Executors.newSingleThreadExecutor(Thread.ofPlatform().daemon().name("argon-serial").factory());
         var tests = new ArrayList<DynamicTest>();
         for (var group : groups) {
             var archive = Conformance.archive("argon-av1-" + group);
@@ -107,7 +119,9 @@ class Av1ArgonTest {
             var memberSet = new java.util.HashSet<>(members);
             for (var stream : streams) {
                 var name = stream.substring(stream.lastIndexOf('/') + 1, stream.length() - 4);
-                Future<Verdict> verdict = executor.submit(() -> check(archive, memberSet, group, name));
+                // the anchor frames of a large scale tile special stream can fill most of the heap on their own
+                var pool = group.contains("large_scale_tile_special") ? serial : executor;
+                Future<Verdict> verdict = pool.submit(() -> check(archive, memberSet, group, name));
                 tests.add(DynamicTest.dynamicTest(group + "/" + name, () -> {
                     try {
                         var problems = verdict.get(TIMEOUT_MINUTES, TimeUnit.MINUTES).problems();
@@ -127,7 +141,11 @@ class Av1ArgonTest {
             }
         }
         executor.shutdown();
-        return tests.stream().onClose(executor::shutdownNow);
+        serial.shutdown();
+        return tests.stream().onClose(() -> {
+            executor.shutdownNow();
+            serial.shutdownNow();
+        });
     }
 
     private static Verdict check(Conformance.Archive archive, java.util.Set<String> members, String group, String name)
@@ -136,12 +154,15 @@ class Av1ArgonTest {
         var stream = Files.readAllBytes(archive.fetch(base + "streams/" + name + ".obu"));
         var command = new String(Files.readAllBytes(archive.fetch(base + "ref_cmd/" + name + ".sh")),
                 StandardCharsets.UTF_8);
+        var threading = threading(name);
+        if (group.contains("large_scale_tile")) {
+            return checkTileLists(stream, command, md5(archive.fetch(base + "md5_ref/" + name + ".md5")), threading);
+        }
         var annexB = command.contains("--annexb");
         var units = annexB ? annexBUnits(stream) : sectionFiveUnits(stream);
-        var threading = threading(name);
         if (group.endsWith("_error")) {
             try {
-                decode(units, 0, true, threading);
+                decode(units, annexB, 0, true, threading);
             } catch (MediaException expected) {
                 // an error stream may be rejected, as long as it is rejected as media
             }
@@ -149,7 +170,7 @@ class Av1ArgonTest {
         }
         var problems = new ArrayList<String>();
         var reference = md5(archive.fetch(base + "md5_ref/" + name + ".md5"));
-        var decoded = decode(units, 0, true, threading);
+        var decoded = decode(units, annexB, 0, true, threading);
         if (!reference.equals(decoded.md5())) {
             problems.add("operating point 0: MD5 " + decoded.md5() + ", reference " + reference);
         }
@@ -157,7 +178,7 @@ class Av1ArgonTest {
         if (members.contains(plain)) {
             var withoutGrain = md5(archive.fetch(plain));
             if (!withoutGrain.equals(reference)) {
-                var ungrained = decode(units, 0, false, threading).md5();
+                var ungrained = decode(units, annexB, 0, false, threading).md5();
                 if (!withoutGrain.equals(ungrained)) {
                     problems.add("without film grain: MD5 " + ungrained + ", reference " + withoutGrain);
                 }
@@ -176,7 +197,7 @@ class Av1ArgonTest {
                 }
                 continue;
             }
-            var actual = decode(units, point, true, threading).md5();
+            var actual = decode(units, annexB, point, true, threading).md5();
             if (!expected.equals(actual)) {
                 problems.add("operating point " + point + ": MD5 " + actual + ", reference " + expected);
             }
@@ -205,7 +226,7 @@ class Av1ArgonTest {
     private record Decoded(String md5, int operatingPoints) {
     }
 
-    private static Decoded decode(List<byte[]> units, int operatingPoint, boolean filmGrain,
+    private static Decoded decode(List<byte[]> units, boolean annexB, int operatingPoint, boolean filmGrain,
                                   Av1Context.Threading threading) {
         MessageDigest digest;
         try {
@@ -215,6 +236,7 @@ class Av1ArgonTest {
         }
         var context = new Av1Context(LIMITS);
         context.threading(threading);
+        context.annexB(annexB);
         context.operatingPoint(operatingPoint);
         context.allLayers(true);
         context.filmGrain(filmGrain);
@@ -314,52 +336,185 @@ class Av1ArgonTest {
     }
 
     /**
-     * Converts a length-delimited bitstream (AV1 specification annex B) into low-overhead temporal units: every
-     * OBU gets {@code obu_has_size_field} and its size.
+     * Splits a length-delimited bitstream (AV1 specification Annex B) into its temporal units, each with its
+     * {@code temporal_unit_size}. From a size field the splitter cannot read or a size past the end, as the streams of
+     * the error groups have, the rest of the stream is one last unit, for the decoder to judge.
      */
     static List<byte[]> annexBUnits(byte[] data) {
         var units = new ArrayList<byte[]>();
         var position = 0;
         while (position < data.length) {
-            var unitSize = annexBSize(data, position);
-            var unitEnd = Math.toIntExact(unitSize[1] + unitSize[0]);
-            var unit = new java.io.ByteArrayOutputStream();
-            var frame = (int) unitSize[1];
-            while (frame < unitEnd) {
-                var frameSize = annexBSize(data, frame);
-                var frameEnd = Math.toIntExact(frameSize[1] + frameSize[0]);
-                var obu = (int) frameSize[1];
-                while (obu < frameEnd) {
-                    var obuSize = annexBSize(data, obu);
-                    var obuStart = (int) obuSize[1];
-                    var obuEnd = Math.toIntExact(obuStart + obuSize[0]);
-                    var header = data[obuStart] & 0xFF;
-                    var headerLength = 1 + ((header & 0x4) != 0 ? 1 : 0);
-                    if ((header & 0x2) != 0) {
-                        unit.write(data, obuStart, obuEnd - obuStart);
-                    } else {
-                        unit.write(header | 0x2);
-                        unit.write(data, obuStart + 1, headerLength - 1);
-                        writeLeb128(unit, obuEnd - obuStart - headerLength);
-                        unit.write(data, obuStart + headerLength, obuEnd - obuStart - headerLength);
-                    }
-                    obu = obuEnd;
-                }
-                frame = frameEnd;
+            var size = leb128(data, position);
+            if (size == null || size[1] + size[0] > data.length) {
+                units.add(Arrays.copyOfRange(data, position, data.length));
+                break;
             }
-            units.add(unit.toByteArray());
-            position = unitEnd;
+            var end = Math.toIntExact(size[1] + size[0]);
+            units.add(Arrays.copyOfRange(data, position, end));
+            position = end;
         }
         return units;
     }
 
-    /** Reads a size field of an annex B stream, failing when the stream ends inside it. */
-    private static long[] annexBSize(byte[] data, int position) {
-        var size = leb128(data, position);
-        if (size == null || size[1] + size[0] > data.length) {
-            throw new IllegalStateException("annex B size field at " + position + " runs past the end of the stream");
+    /**
+     * Decodes a large scale tile stream as {@code lightfield_tile_list_decoder <stream> <output> <anchors> <lists>}
+     * does and compares the MD5 of the tiles it writes with the reference.
+     */
+    private static Verdict checkTileLists(byte[] stream, String command, String reference,
+                                          Av1Context.Threading threading) {
+        var arguments = TILE_LIST_COMMAND.matcher(command);
+        if (!arguments.find()) {
+            throw new IllegalStateException("not a tile list decoder command: " + command);
         }
-        return size;
+        var anchorCount = Integer.parseInt(arguments.group(1));
+        var listCount = Integer.parseInt(arguments.group(2));
+        var annexB = !(stream.length > 1 && stream[0] == 0x12 && stream[1] == 0x00);
+        var units = annexB ? annexBUnits(stream) : sectionFiveUnits(stream);
+        if (units.size() < anchorCount + 1 + listCount) {
+            return new Verdict(List.of("the stream holds " + units.size() + " temporal units, the command decodes "
+                    + (anchorCount + 1 + listCount)));
+        }
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("MD5");
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException(exception);
+        }
+        var context = new Av1Context(LIMITS);
+        context.threading(threading);
+        context.annexB(annexB);
+        context.filmGrain(false);
+        var anchors = new Av1Picture[anchorCount];
+        var out = new ArrayList<Av1Picture>();
+        for (var i = 0; i < anchorCount; i++) {
+            out.clear();
+            context.decode(units.get(i), 0, units.get(i).length, i, 0, out);
+            if (out.isEmpty()) {
+                return new Verdict(List.of("anchor temporal unit " + i + " shows no frame"));
+            }
+            var shown = out.getLast();
+            var anchor = Av1Picture.allocate(shown.w, shown.h, shown.layout, shown.bpc);
+            for (var plane = 0; plane < 3; plane++) {
+                if (shown.data[plane] != null) {
+                    System.arraycopy(shown.data[plane], 0, anchor.data[plane], 0,
+                            Math.min(shown.data[plane].length, anchor.data[plane].length));
+                }
+            }
+            anchors[i] = anchor;
+            for (var picture : out) {
+                picture.release();
+            }
+        }
+        context.anchorFrames(anchors);
+        out.clear();
+        context.decode(units.get(anchorCount), 0, units.get(anchorCount).length, 0, 0, out);
+        if (!out.isEmpty()) {
+            return new Verdict(List.of("the camera frame header shows a frame"));
+        }
+        for (var list = 0; list < listCount; list++) {
+            var unit = units.get(anchorCount + 1 + list);
+            var layout = tileListLayout(unit, annexB);
+            out.clear();
+            context.decode(unit, 0, unit.length, list, 0, out);
+            if (out.size() != 1) {
+                return new Verdict(List.of("tile list " + list + " yields " + out.size() + " frames"));
+            }
+            writeTiles(out.getFirst(), layout, digest);
+            out.getFirst().release();
+        }
+        var actual = HexFormat.of().formatHex(digest.digest());
+        return new Verdict(actual.equals(reference) ? List.of()
+                : List.of("tiles: MD5 " + actual + ", reference " + reference));
+    }
+
+    /**
+     * Returns the output frame width and height in tiles and the tile count of the first tile list OBU of a temporal
+     * unit.
+     */
+    private static int[] tileListLayout(byte[] unit, boolean annexB) {
+        if (!annexB) {
+            var position = 0;
+            while (position < unit.length) {
+                var header = unit[position] & 0xFF;
+                var size = leb128(unit, position + ((header & 0x4) != 0 ? 2 : 1));
+                var end = Math.toIntExact(size[1] + size[0]);
+                var layout = tileListAt(unit, position);
+                if (layout != null) {
+                    return layout;
+                }
+                position = end;
+            }
+        } else {
+            var position = (int) leb128(unit, 0)[1];
+            while (position < unit.length) {
+                var frame = leb128(unit, position);
+                var frameEnd = Math.toIntExact(frame[1] + frame[0]);
+                var obu = (int) frame[1];
+                while (obu < frameEnd) {
+                    var length = leb128(unit, obu);
+                    var start = (int) length[1];
+                    var layout = tileListAt(unit, start);
+                    if (layout != null) {
+                        return layout;
+                    }
+                    obu = Math.toIntExact(start + length[0]);
+                }
+                position = frameEnd;
+            }
+        }
+        throw new IllegalStateException("no tile list OBU");
+    }
+
+    /** Returns the layout of the OBU at an index when it is a tile list, or {@code null} for another OBU. */
+    private static int[] tileListAt(byte[] unit, int start) {
+        var header = unit[start] & 0xFF;
+        if (((header >> 3) & 0xF) != Obu.OBU_TILE_LIST) {
+            return null;
+        }
+        var payload = start + ((header & 0x4) != 0 ? 2 : 1);
+        if ((header & 0x2) != 0) {
+            payload = (int) leb128(unit, payload)[1];
+        }
+        return new int[]{(unit[payload] & 0xFF) + 1, (unit[payload + 1] & 0xFF) + 1,
+                ((unit[payload + 2] & 0xFF) << 8 | (unit[payload + 3] & 0xFF)) + 1};
+    }
+
+    /** Hashes the tiles of a tile list's output frame as {@code lightfield_tile_list_decoder} writes them. */
+    private static void writeTiles(Av1Picture picture, int[] layout, MessageDigest digest) {
+        var columns = layout[0];
+        var rows = layout[1];
+        var count = layout[2];
+        var tileWidth = picture.w / columns;
+        var tileHeight = picture.h / rows;
+        var ssH = picture.layout == SequenceHeader.LAYOUT_I444 ? 0 : 1;
+        var ssV = picture.layout == SequenceHeader.LAYOUT_I420 ? 1 : 0;
+        var wide = picture.bpc > 8;
+        var row = new byte[2 * tileWidth];
+        for (var tile = 0; tile < count; tile++) {
+            var x0 = (tile % columns) * tileWidth;
+            var y0 = (tile / columns) * tileHeight;
+            for (var plane = 0; plane < 3; plane++) {
+                var w = plane == 0 ? tileWidth : tileWidth >> ssH;
+                var h = plane == 0 ? tileHeight : tileHeight >> ssV;
+                var x = plane == 0 ? x0 : x0 >> ssH;
+                var y = plane == 0 ? y0 : y0 >> ssV;
+                var stride = picture.stride[plane == 0 ? 0 : 1];
+                var samples = Objects.requireNonNull(picture.data[plane], "plane " + plane);
+                for (var r = 0; r < h; r++) {
+                    var offset = (y + r) * stride + x;
+                    for (var c = 0; c < w; c++) {
+                        var value = samples[offset + c];
+                        if (wide) {
+                            row[2 * c] = (byte) value;
+                            row[2 * c + 1] = (byte) (value >> 8);
+                        } else {
+                            row[c] = (byte) value;
+                        }
+                    }
+                    digest.update(row, 0, wide ? 2 * w : w);
+                }
+            }
+        }
     }
 
     /** Reads a leb128 value: returns {value, index after it}, or {@code null} past the end or past 8 bytes. */
@@ -373,13 +528,5 @@ class Av1ArgonTest {
             }
         }
         return null;
-    }
-
-    private static void writeLeb128(java.io.ByteArrayOutputStream out, long value) {
-        do {
-            var b = (int) (value & 0x7F);
-            value >>>= 7;
-            out.write(value != 0 ? b | 0x80 : b);
-        } while (value != 0);
     }
 }

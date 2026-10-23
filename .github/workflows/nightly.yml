@@ -217,12 +217,32 @@ jobs:
       - uses: ./.github/actions/oracles
         if: runner.os == 'Linux'
 
+      # The JIT stress test is opt-in elsewhere, so its outcomes here are the evidence the skip cover check of ci.yml
+      # needs for the skips of the other jobs.
+      - name: Name the job for the skip tools
+        shell: bash
+        run: echo "SMALT_SKIP_JOB=$(echo '${{ runner.os }}-${{ runner.arch }}-kernel-jit' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
       - name: Guard, self-test and stress test
+        id: test
         shell: bash
         run: >
           mvn -B -ntp -fae -pl kernel-lint,core,image,audio,video,mpeg,capture,raw,it verify
           -Dtest='**/*KernelGuardTest,**/KernelGuardSelfTest,**/JitStressTest' -Dsurefire.failIfNoSpecifiedTests=false
           -Dsmalt.jit.scenarios=nightly -Dsmalt.jit.stress=true
+
+      - name: Record the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
 
       - name: Upload the guard's results
         if: always()
@@ -450,6 +470,7 @@ jobs:
           - { shard: profile0-stress, groups: 'profile0_stress' }
           - { shard: profile1-stress, groups: 'profile1_stress' }
           - { shard: profile2-stress, groups: 'profile2_stress' }
+          - { shard: large-scale-tile, groups: 'profile0_large_scale_tile,profile1_large_scale_tile,profile2_large_scale_tile,profile0_large_scale_tile_special,profile1_large_scale_tile_special,profile2_large_scale_tile_special' }
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
       SMALT_SKIP_JOB: linux-x64-argon-${{ matrix.shard }}

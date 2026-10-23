@@ -216,12 +216,7 @@ class AvifEncoderTest {
         @DisplayName("deep pictures keep their depth and format")
         @CsvSource({"YUV420, 10", "YUV444, 10", "YUV422, 12", "MONOCHROME, 10"})
         void deep(ChromaFormat format, int depth) {
-            var planes = StillTesting.convert(StillTesting.foreman(0), switch (format) {
-                case MONOCHROME -> SequenceHeader.LAYOUT_I400;
-                case YUV420 -> SequenceHeader.LAYOUT_I420;
-                case YUV422 -> SequenceHeader.LAYOUT_I422;
-                case YUV444 -> SequenceHeader.LAYOUT_I444;
-            }, depth);
+            var planes = StillTesting.convert(StillTesting.foreman(0), SequenceHeader.layoutOf(format), depth);
             var builder = Yuv16Picture.builder().size(352, 288).chromaFormat(format).bitDepth(depth)
                     .color(ColorInfo.BT709_LIMITED).luma(planes.data()[0], planes.strides()[0]);
             if (format != ChromaFormat.MONOCHROME) {

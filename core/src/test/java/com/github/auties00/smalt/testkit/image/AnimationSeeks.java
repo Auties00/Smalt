@@ -73,7 +73,8 @@ public final class AnimationSeeks {
     /**
      * Seeks a reader to every frame start, the middle and the last microsecond of every frame, times before zero
      * and at or past the end, and random times in random order, each followed by up to two reads, comparing every
-     * frame with a read from the start.
+     * frame with a read from the start. A second read from the start must return the same frames, so that a
+     * decoder whose output depends on thread scheduling fails here rather than as a seek mismatch.
      *
      * @param opener opens the animation from its start
      * @param seed the seed of the random times and order
@@ -84,6 +85,16 @@ public final class AnimationSeeks {
             expected = sequential(reader);
         }
         assertTrue(expected.size() > 1, "the animation has several frames");
+        try (var reader = opener.get()) {
+            var again = sequential(reader);
+            assertEquals(expected.size(), again.size(), "frames of a second read from the start");
+            for (var i = 0; i < expected.size(); i++) {
+                if (!samePixels(expected.get(i).pixels(), again.get(i).pixels())) {
+                    fail("frame " + i + " of a second read from the start differs from the first: "
+                            + difference(expected.get(i).pixels(), again.get(i).pixels(), expected));
+                }
+            }
+        }
         var last = expected.getLast();
         var end = last.timestamp() + last.duration();
         var times = new ArrayList<Long>(List.of(-1_000_000L, -1L, end, end + 1, end + 1_000_000L));
@@ -117,7 +128,8 @@ public final class AnimationSeeks {
                     assertEquals(want.timestamp(), actual.timestamp(), "timestamp of frame " + index + " at " + time);
                     assertEquals(want.duration(), actual.duration(), "duration of frame " + index + " at " + time);
                     if (!samePixels(want.pixels(), actual.pixels())) {
-                        fail("frame " + index + " after a seek to " + time + " us differs from a read from the start");
+                        fail("frame " + index + " after a seek to " + time + " us differs from a read from the start: "
+                                + difference(want.pixels(), actual.pixels(), expected));
                     }
                 }
             }
@@ -159,7 +171,8 @@ public final class AnimationSeeks {
                     var actual = copy(frame);
                     assertEquals(expected.get(index).timestamp(), actual.timestamp(), "timestamp of frame " + index);
                     if (!samePixels(expected.get(index).pixels(), actual.pixels())) {
-                        fail("frame " + index + " after seek " + pass + " differs from the intact animation");
+                        fail("frame " + index + " after seek " + pass + " differs from the intact animation: "
+                                + difference(expected.get(index).pixels(), actual.pixels(), expected));
                     }
                 }
                 assertNull(reader.read());
@@ -179,6 +192,57 @@ public final class AnimationSeeks {
             }
         }
         return -1;
+    }
+
+    /**
+     * Describes how a frame differs from the one expected: the number of differing samples, the first of them with
+     * its pixel, channel and both values, and the frames read from the start whose pixels the frame has instead.
+     */
+    private static String difference(Object expected, Object actual, List<Frame> frames) {
+        var want = samples(expected);
+        var got = samples(actual);
+        if (want.length != got.length) {
+            return got.length + " samples instead of " + want.length;
+        }
+        var count = 0;
+        var first = -1;
+        for (var i = 0; i < want.length; i++) {
+            if (want[i] != got[i]) {
+                count++;
+                if (first < 0) {
+                    first = i;
+                }
+            }
+        }
+        var matches = new ArrayList<Integer>();
+        for (var i = 0; i < frames.size(); i++) {
+            if (samePixels(frames.get(i).pixels(), actual)) {
+                matches.add(i);
+            }
+        }
+        return count + " of " + want.length + " samples differ, the first at pixel " + first / 4 + " channel "
+                + "RGBA".charAt(first % 4) + " (" + want[first] + " expected, " + got[first] + " read); the frame equals "
+                + (matches.isEmpty() ? "no frame" : "frames " + matches) + " of the read from the start";
+    }
+
+    private static int[] samples(Object pixels) {
+        return switch (pixels) {
+            case byte[] bytes -> {
+                var out = new int[bytes.length];
+                for (var i = 0; i < bytes.length; i++) {
+                    out[i] = bytes[i] & 0xFF;
+                }
+                yield out;
+            }
+            case short[] shorts -> {
+                var out = new int[shorts.length];
+                for (var i = 0; i < shorts.length; i++) {
+                    out[i] = shorts[i] & 0xFFFF;
+                }
+                yield out;
+            }
+            default -> throw new IllegalArgumentException("not a sample array: " + pixels);
+        };
     }
 
     private static boolean samePixels(Object expected, Object actual) {

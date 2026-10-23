@@ -237,12 +237,18 @@ final class PictureDecoder {
         this.mbaff = mbaff;
         this.progressive = structure == DecoderFrame.FRAME && !mbaff;
         this.pictureRows = structure == DecoderFrame.FRAME ? frame.mbHeight : frame.mbHeight / 2;
+        var previousFirstSliceNum = this.firstSliceNum;
         this.firstSliceNum = firstSliceNum;
         this.concealSliceNum = concealSliceNum;
         this.concealSource = concealSource;
         this.error = null;
         if (state == null || state.mbWidth != frame.mbWidth || state.mbHeight != frame.mbHeight) {
             state = new PictureState(frame.mbWidth, frame.mbHeight);
+        } else if (previousFirstSliceNum >= firstSliceNum) {
+            // Picture jobs take idle decoders in any order, so the state may hold the slice numbers of a later
+            // picture, which would pass for this picture's own: its slices would be dropped as repeats and its
+            // macroblocks left unconcealed.
+            Arrays.fill(state.sliceNum, -1);
         }
         if (rowDecoded.length != frame.mbHeight) {
             rowDecoded = new int[frame.mbHeight];

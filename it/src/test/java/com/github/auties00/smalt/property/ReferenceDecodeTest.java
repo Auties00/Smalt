@@ -276,6 +276,7 @@ class ReferenceDecodeTest {
                     case YUV420 -> "420p";
                     case YUV422 -> "422p";
                     case YUV444 -> "444p";
+                    case YUV440 -> "440p";
                 };
                 var full = yuv.color().range() == com.github.auties00.smalt.image.ColorRange.FULL;
                 yield name.equals("gray") ? name : (yuv.hasAlpha() ? "yuva" : full ? "yuvj" : "yuv") + name;
@@ -286,6 +287,7 @@ class ReferenceDecodeTest {
                     case YUV420 -> "yuv420p";
                     case YUV422 -> "yuv422p";
                     case YUV444 -> "yuv444p";
+                    case YUV440 -> "yuv440p";
                 };
                 if (yuv.hasAlpha()) {
                     name = name.replace("yuv", "yuva");

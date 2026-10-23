@@ -1,12 +1,17 @@
 package com.github.auties00.smalt.video.fuzz;
 
+import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.Arrays;
 
 import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.args;
 import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.copy;
@@ -16,7 +21,8 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
 
 /**
  * Writes the committed seeds of the video fuzz targets (tools/fuzz/README.md): a few frames encoded by ffmpeg and
- * converted to the packet format through Smalt's demuxers, and still AVIF images. Runs only with
+ * converted to the packet format through Smalt's demuxers, still AVIF images, and the seeds of the AV1 Annex B and
+ * tile list targets, the temporal units of the streams of the AV1 tests. Runs only with
  * {@code -Dsmalt.fuzz.writeSeeds=true}. The AVIF seeds of derived images and sample transforms,
  * {@code valid-derived.avif} and {@code valid-sato.avif}, are written with the behavior samples by
  * {@code tools/testdata/behavior/make-avif-samples.py}.
@@ -87,6 +93,59 @@ class FuzzSeedWriter {
                 .build();
         write(VideoFuzzTest.class, "dnxhd", name, FuzzSeeds.packets(track, 0,
                 java.util.List.of(new com.github.auties00.smalt.testkit.fuzz.FuzzPackets.Part(packet.data(), true))));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the AV1 Annex B and tile list targets from the AV1 test streams")
+    void av1Seeds() {
+        var annexB = "/com/github/auties00/smalt/video/av1/annexb/";
+        ivfSeed("av1AnnexB", "valid-8bit-tiles.bin", 0, annexB + "annexb-8bit-tiles.ivf");
+        ivfSeed("av1AnnexB", "valid-10bit-444.bin", 1, annexB + "annexb-10bit-444.ivf");
+        var raw = resource(annexB + "annexb-raw.obu");
+        var units = new ArrayList<FuzzPackets.Part>();
+        for (var position = 0; position < raw.length; ) {
+            long value = 0;
+            var start = position;
+            for (var i = 0; ; i++) {
+                var b = raw[position + i] & 0xFF;
+                value |= (long) (b & 0x7F) << (7 * i);
+                if ((b & 0x80) == 0) {
+                    start = position + i + 1;
+                    break;
+                }
+            }
+            var end = Math.toIntExact(start + value);
+            units.add(new FuzzPackets.Part(Arrays.copyOfRange(raw, position, end), units.isEmpty()));
+            position = end;
+        }
+        write(VideoFuzzTest.class, "av1AnnexB", "valid-raw-all-layers.bin", FuzzPackets.video(8, 0, 0, null, units));
+        var lightField = "/com/github/auties00/smalt/video/av1/lightfield/";
+        ivfSeed("av1TileList", "valid-testsrc2.bin", 4 << 4, lightField + "lightfield-testsrc2.ivf");
+        ivfSeed("av1TileList", "valid-mandelbrot.bin", 3 << 4, lightField + "lightfield-mandelbrot.ivf");
+    }
+
+    /** Writes a seed of the frames of an IVF resource, as they are, with the size of its header. */
+    private static void ivfSeed(String method, String name, int options, String resource) {
+        var data = resource(resource);
+        var width = (data[12] & 0xFF) | (data[13] & 0xFF) << 8;
+        var height = (data[14] & 0xFF) | (data[15] & 0xFF) << 8;
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var position = (data[6] & 0xFF) | (data[7] & 0xFF) << 8; position + 12 <= data.length; ) {
+            var size = (data[position] & 0xFF) | (data[position + 1] & 0xFF) << 8 | (data[position + 2] & 0xFF) << 16
+                    | (data[position + 3] & 0xFF) << 24;
+            position += 12;
+            parts.add(new FuzzPackets.Part(Arrays.copyOfRange(data, position, position + size), parts.isEmpty()));
+            position += size;
+        }
+        write(VideoFuzzTest.class, method, name, FuzzPackets.video(options, width, height, null, parts));
+    }
+
+    private static byte[] resource(String name) {
+        try (var input = FuzzSeedWriter.class.getResourceAsStream(name)) {
+            return input.readAllBytes();
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
     }
 
     private static void seed(String method, String name, Codec codec, int options, Path file) {

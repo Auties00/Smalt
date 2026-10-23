@@ -178,7 +178,8 @@ public final class JpegEncoderOptions {
     /**
      * {@return the chroma subsampling of a {@link ColorSpace#YCBCR} or {@link ColorSpace#YCCK} output:
      * {@link ChromaFormat#MONOCHROME} for a luma-only (grayscale) file, {@link ChromaFormat#YUV420},
-     * {@link ChromaFormat#YUV422} or {@link ChromaFormat#YUV444}; {@code YUV420} by default}
+     * {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV440} or {@link ChromaFormat#YUV444};
+     * {@code YUV420} by default}
      *
      * <p>A YCCK output samples its black component like luma. {@link #samplingFactors()}, when set,
      * replaces the factors this implies; an {@link ColorSpace#RGB} or {@link ColorSpace#CMYK} output

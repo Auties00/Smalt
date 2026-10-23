@@ -411,8 +411,8 @@ public final class FlacDecoder implements AudioDecoder {
      * {@link MediaException.Malformed}. A 32-bit frame keeps the low 32 bits of such a sample, as
      * its float output does.
      *
-     * @throws MediaException.Malformed {@inheritDoc}
-     * @throws MediaException.Unsupported {@inheritDoc}
+     * @throws MediaException.Malformed if the packet is corrupt
+     * @throws MediaException.Unsupported if the packet uses a coding tool this decoder lacks
      */
     @Override
     public void decodeIntegers(Packet packet, Consumer<IntegerAudioBuffer> output) {

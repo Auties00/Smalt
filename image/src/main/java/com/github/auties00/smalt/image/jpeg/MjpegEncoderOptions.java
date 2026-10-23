@@ -119,8 +119,8 @@ public final class MjpegEncoderOptions {
 
     /**
      * {@return the chroma subsampling of the frames: {@link ChromaFormat#MONOCHROME} for luma only,
-     * {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422} or {@link ChromaFormat#YUV444};
-     * {@code YUV420} by default}
+     * {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422}, {@link ChromaFormat#YUV440} or
+     * {@link ChromaFormat#YUV444}; {@code YUV420} by default}
      */
     public ChromaFormat chromaFormat() {
         return chromaFormat;

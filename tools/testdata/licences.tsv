@@ -42,6 +42,7 @@ https://www.3gpp.org/ftp/Specs/	3GPP specification archives (AMR, AMR-WB test ve
 https://www.gstatic.com/webp/	Google WebP gallery samples: CC-BY 3.0 (WebP gallery)
 https://www.itu.int/wftp3/av-arch/	ITU-T conformance bitstreams (H.264, H.265, T.800 series): ITU terms of the free download; used for testing only, never redistributed
 https://www.itu.int/wftp3/Public/t/testsignal/SpeImage/T83/	ITU-T T.83 (ISO/IEC 10918-2) compliance test data from the ITU test signal server: no licence stated; used for testing only, never redistributed
+https://www.itu.int/wftp3/Public/t/testsignal/SpeImage/T87/	ITU-T T.87 (ISO/IEC 14495-1) conformance data set from the ITU test signal server (HP's images for testing product conformance): no licence stated; used for testing only, never redistributed
 https://raw.githubusercontent.com/AOMediaCodec/libavif/	libavif test data: BSD-2-Clause (the repository's LICENSE); used for testing only, never redistributed
 https://raw.githubusercontent.com/MPEGGroup/DASHSchema/	MPEG-DASH MPD schema of ISO/IEC 23009-1 (MPEGGroup/DASHSchema): use subject to the ISO/IEC Directives; used for testing only, never redistributed
 https://www.w3.org/	W3C XLink and XML schemas: W3C Document License

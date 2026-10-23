@@ -185,6 +185,18 @@ final class InputConverter {
                     }
                 }
             }
+            case YUV440 -> {
+                for (var y = 0; y < chromaHeight; y++) {
+                    var row = y * yuv.uvStride();
+                    var d = frame.chromaOrigin + y * frame.chromaStride;
+                    for (var x = 0; x < chromaWidth; x++) {
+                        var x0 = row + 2 * x;
+                        var x1 = row + Math.min(2 * x + 1, width - 1);
+                        frame.u[d + x] = (byte) (((yuv.u()[x0] & 0xFF) + (yuv.u()[x1] & 0xFF) + 1) >> 1);
+                        frame.v[d + x] = (byte) (((yuv.v()[x0] & 0xFF) + (yuv.v()[x1] & 0xFF) + 1) >> 1);
+                    }
+                }
+            }
             case YUV444 -> {
                 for (var y = 0; y < chromaHeight; y++) {
                     var row0 = Math.min(2 * y, height - 1) * yuv.uvStride();

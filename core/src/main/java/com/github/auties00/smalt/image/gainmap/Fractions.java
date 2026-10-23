@@ -6,7 +6,9 @@ package com.github.auties00.smalt.image.gainmap;
  * Converts the real values of gain map metadata to the 32-bit fractions ISO 21496-1 stores.
  *
  * @implNote This implementation bounds the denominator by the numerator limit for values below 1 too, where
- * libultrahdr lets a signed fraction overflow its numerator and fail.
+ * libultrahdr lets a signed fraction overflow its numerator and fail, and checks that bound against the product of
+ * the value and the denominator rather than only the floating-point quotient, so that every value a fraction of the
+ * fields holds is written back.
  */
 final class Fractions {
     /**
@@ -70,6 +72,10 @@ final class Fractions {
             throw new IllegalArgumentException("cannot store " + value + " as a 32-bit fraction");
         }
         var maxDenominator = value <= 0 ? UINT32_MAX : Math.min(UINT32_MAX, (long) Math.floor(maxNumerator / value));
+        // the quotient can round up to an integer whose product with the value exceeds the numerator limit
+        while (maxDenominator > 1 && maxDenominator * value > maxNumerator) {
+            maxDenominator--;
+        }
         long denominator = 1;
         long previousDenominator = 0;
         long numerator;

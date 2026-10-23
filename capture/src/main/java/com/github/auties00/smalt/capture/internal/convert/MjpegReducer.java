@@ -75,7 +75,7 @@ public final class MjpegReducer {
                 Arrays.fill(v, 0, samples, (byte) 128);
                 yield wrap(decoded, width, height, u, v, chromaWidth);
             }
-            case YUV444 -> {
+            case YUV444, YUV440 -> {
                 var reduced = ImageOps.toYuv(decoded, ChromaFormat.YUV420, decoded.color());
                 yield wrap(reduced, width, height, reduced.u(), reduced.v(), reduced.uvStride());
             }
