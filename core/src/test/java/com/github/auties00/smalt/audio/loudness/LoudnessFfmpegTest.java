@@ -24,7 +24,6 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Compares the meter with ffmpeg used as a black box: its {@code ebur128} filter (integrated
@@ -36,8 +35,6 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  */
 @DisplayName("Loudness against ffmpeg")
 class LoudnessFfmpegTest {
-    private static final Path CORPUS = Conformance.directory();
-
     private static final Pattern EBUR128_I = Pattern.compile("I:\\s+(-?[0-9.]+|-inf) LUFS");
 
     private static final Pattern EBUR128_LRA = Pattern.compile("LRA:\\s+(-?[0-9.]+) LU");
@@ -49,7 +46,7 @@ class LoudnessFfmpegTest {
     static Stream<Arguments> inputs() {
         var inputs = new ArrayList<Arguments>();
         for (var name : List.of("24", "25", "26", "27", "53", "55", "28", "33", "21", "41")) {
-            inputs.add(Arguments.of("music " + name, CORPUS.resolve("flac-cellar-subset-" + name + ".flac")));
+            inputs.add(Arguments.of("music " + name, "flac-cellar-subset-" + name + ".flac"));
         }
         inputs.add(Arguments.of("speech-like 48 kHz mono", null));
         return inputs.stream();
@@ -58,13 +55,13 @@ class LoudnessFfmpegTest {
     @ParameterizedTest(name = "{0}")
     @MethodSource("inputs")
     @DisplayName("agrees on integrated loudness, loudness range and true peak")
-    void agrees(String name, Path source, @TempDir Path directory) throws IOException {
+    void agrees(String name, String vector, @TempDir Path directory) throws IOException {
         Oracle.assume(Oracle.Tool.FFMPEG);
         var wav = directory.resolve("input.wav");
-        if (source == null) {
+        if (vector == null) {
             Files.write(wav, Signals.wav(speechLike(), 48_000));
         } else {
-            assumeTrue(Files.isRegularFile(source), source + " is not cached");
+            var source = Conformance.fetchListed(vector);
             run(List.of("-v", "error", "-y", "-i", source.toString(), "-c:a", "pcm_f32le", wav.toString()));
         }
         var stats = Loudness.measure(MediaSource.of(wav));

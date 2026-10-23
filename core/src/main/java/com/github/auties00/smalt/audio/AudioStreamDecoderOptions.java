@@ -13,16 +13,21 @@ import java.util.OptionalInt;
  */
 public final class AudioStreamDecoderOptions {
     private static final AudioStreamDecoderOptions DEFAULTS =
-            new AudioStreamDecoderOptions(0, null, MediaLimits.DEFAULT);
+            new AudioStreamDecoderOptions(0, null, MediaLimits.DEFAULT, SampleFormat.FLOAT, false);
 
     private final int sampleRate;
     private final ChannelLayout layout;
     private final MediaLimits limits;
+    private final SampleFormat sampleFormat;
+    private final boolean verifyIntegrity;
 
-    private AudioStreamDecoderOptions(int sampleRate, ChannelLayout layout, MediaLimits limits) {
+    private AudioStreamDecoderOptions(int sampleRate, ChannelLayout layout, MediaLimits limits,
+                                      SampleFormat sampleFormat, boolean verifyIntegrity) {
         this.sampleRate = sampleRate;
         this.layout = layout;
         this.limits = limits;
+        this.sampleFormat = sampleFormat;
+        this.verifyIntegrity = verifyIntegrity;
     }
 
     /**
@@ -86,23 +91,46 @@ public final class AudioStreamDecoderOptions {
         return limits;
     }
 
+    /**
+     * {@return the representation of the output samples; {@link SampleFormat#FLOAT} by default}
+     *
+     * <p>{@link SampleFormat#INTEGER} and {@link SampleFormat#DOUBLE} output the codec's own rate and
+     * layout, so they cannot be combined with a {@link #sampleRate()} or {@link #layout()} that
+     * differs from the codec's, and {@code INTEGER} needs a codec with integer output.
+     */
+    public SampleFormat sampleFormat() {
+        return sampleFormat;
+    }
+
+    /**
+     * {@return whether the codec checks the whole-stream checksum the stream carries; {@code false}
+     * by default}
+     *
+     * @see AudioDecoderOptions#verifyIntegrity()
+     */
+    public boolean verifyIntegrity() {
+        return verifyIntegrity;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof AudioStreamDecoderOptions that
                 && sampleRate == that.sampleRate
                 && Objects.equals(layout, that.layout)
-                && limits.equals(that.limits);
+                && limits.equals(that.limits)
+                && sampleFormat == that.sampleFormat
+                && verifyIntegrity == that.verifyIntegrity;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sampleRate, layout, limits);
+        return Objects.hash(sampleRate, layout, limits, sampleFormat, verifyIntegrity);
     }
 
     @Override
     public String toString() {
         return "AudioStreamDecoderOptions[sampleRate=" + sampleRate + ", layout=" + layout + ", limits=" + limits
-                + "]";
+                + ", sampleFormat=" + sampleFormat + ", verifyIntegrity=" + verifyIntegrity + "]";
     }
 
     /**
@@ -115,11 +143,15 @@ public final class AudioStreamDecoderOptions {
         private OptionalInt sampleRate;
         private ChannelLayout layout;
         private MediaLimits limits;
+        private SampleFormat sampleFormat;
+        private boolean verifyIntegrity;
 
         private Builder(AudioStreamDecoderOptions options) {
             this.sampleRate = options.sampleRate();
             this.layout = options.layout;
             this.limits = options.limits;
+            this.sampleFormat = options.sampleFormat;
+            this.verifyIntegrity = options.verifyIntegrity;
         }
 
         /**
@@ -176,6 +208,30 @@ public final class AudioStreamDecoderOptions {
         }
 
         /**
+         * Sets the representation of the output samples; see
+         * {@link AudioStreamDecoderOptions#sampleFormat()}.
+         *
+         * @param format the value
+         * @return this builder
+         */
+        public Builder sampleFormat(SampleFormat format) {
+            this.sampleFormat = Objects.requireNonNull(format, "format");
+            return this;
+        }
+
+        /**
+         * Sets whether the whole-stream checksum is checked; see
+         * {@link AudioStreamDecoderOptions#verifyIntegrity()}.
+         *
+         * @param verify the value
+         * @return this builder
+         */
+        public Builder verifyIntegrity(boolean verify) {
+            this.verifyIntegrity = verify;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -183,7 +239,7 @@ public final class AudioStreamDecoderOptions {
          */
         public AudioStreamDecoderOptions build() {
             var rate = sampleRate.isPresent() ? Checks.positive("sample rate", sampleRate.getAsInt()) : 0;
-            return new AudioStreamDecoderOptions(rate, layout, limits);
+            return new AudioStreamDecoderOptions(rate, layout, limits, sampleFormat, verifyIntegrity);
         }
     }
 }
