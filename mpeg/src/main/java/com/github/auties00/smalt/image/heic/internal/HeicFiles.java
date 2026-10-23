@@ -9,8 +9,11 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Orientation;
-import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
@@ -36,7 +39,7 @@ import java.util.function.Supplier;
  *
  * <p>A file shows its primary item when it has one, the image HEIF designates for display, and
  * the first frame of its image sequence otherwise. An
- * animation is opened over the sequence whenever the file has an HEVC color track, and over the
+ * animation is opened over the sequence whenever the file has an HEVC or AVC color track, and over the
  * primary image as a single frame otherwise.
  */
 public final class HeicFiles {
@@ -64,7 +67,7 @@ public final class HeicFiles {
     }
 
     /**
-     * Returns whether the sequence of a file has an HEVC color track.
+     * Returns whether the sequence of a file has an HEVC or AVC color track.
      *
      * @param source the file
      * @param file the parsed file
@@ -109,15 +112,12 @@ public final class HeicFiles {
         var file = HeifFile.parse(source, limits, false);
         if (showsSequence(file)) {
             var movie = HeifMovie.parse(source, file, limits);
-            var color = SequenceReader.colorTrack(movie);
-            if (color == null) {
-                throw new MediaException.Malformed("heic: the sequence has no HEVC color track");
-            }
+            var color = SequenceReader.requireColorTrack(movie);
             var frames = (int) Math.min(Integer.MAX_VALUE, color.sampleCount());
             Orientation orientation;
             int width;
             int height;
-            try (var reader = new SequenceReader(source, file, limits)) {
+            try (var reader = new SequenceReader(source, file, limits, false)) {
                 orientation = reader.orientation();
                 width = reader.width();
                 height = reader.height();
@@ -152,10 +152,11 @@ public final class HeicFiles {
      *
      * @param file the parsed file
      * @param item the image item
-     * @return {@code true} when an alpha auxiliary image is found, or for an overlay
+     * @return {@code true} when the item or a grid tile carries alpha of its own, an alpha auxiliary
+     * image is found for the item or for every tile of a grid, or for an overlay
      */
     private static boolean hasAlpha(HeifFile file, HeifItem item) {
-        if (StillDecoder.alphaOf(file, item) != null || item.type().equals("iovl")) {
+        if (StillDecoder.alphaOf(file, item) != null || StillDecoder.hasOwnAlpha(item) || item.type().equals("iovl")) {
             return true;
         }
         if (item.type().equals("grid")) {
@@ -163,13 +164,15 @@ public final class HeicFiles {
             if (ids.length == 0) {
                 return false;
             }
+            var every = true;
             for (var id : ids) {
                 var tile = file.item(id);
-                if (tile == null || StillDecoder.alphaOf(file, tile) == null) {
-                    return false;
+                if (tile != null && StillDecoder.hasOwnAlpha(tile)) {
+                    return true;
                 }
+                every &= tile != null && StillDecoder.alphaOf(file, tile) != null;
             }
-            return true;
+            return every;
         }
         return false;
     }
@@ -221,7 +224,7 @@ public final class HeicFiles {
         var file = HeifFile.parse(source, limits, false);
         DecodedImage image;
         if (showsSequence(file)) {
-            try (var reader = new SequenceReader(source, file, limits)) {
+            try (var reader = new SequenceReader(source, file, limits, options.highBitDepth())) {
                 var picture = reader.readFirstPicture(options.highBitDepth());
                 image = new DecodedImage(picture, ImageFormat.HEIC, reader.orientation(), picture.width(),
                         picture.height(), Optional.empty(), Optional.empty(), HeifPictures.colorProfile(null, picture));
@@ -249,6 +252,8 @@ public final class HeicFiles {
         if (options.minWidth() > 0 || options.minHeight() > 0) {
             try {
                 full = geometry(source, file, primary, limits);
+            } catch (MediaException.Io exception) {
+                throw exception;
             } catch (MediaException exception) {
                 full = null;
             }
@@ -275,7 +280,7 @@ public final class HeicFiles {
         var profile = HeifPictures.colorProfile(icc, picture);
         return new DecodedImage(picture, ImageFormat.HEIC, orientation, sourceWidth, sourceHeight,
                 Optional.ofNullable(icc == null ? null : icc.clone()), Optional.ofNullable(exif(source, file, primary, limits)),
-                profile);
+                Optional.ofNullable(file.xmpOf(source, primary, limits)), profile);
     }
 
     /**
@@ -304,6 +309,8 @@ public final class HeicFiles {
             HeifGeometry geometry;
             try {
                 geometry = geometry(source, file, candidate, options.limits());
+            } catch (MediaException.Io exception) {
+                throw exception;
             } catch (MediaException exception) {
                 continue;
             }
@@ -374,7 +381,6 @@ public final class HeicFiles {
      * @return the TIFF structure, or {@code null} when there is none
      */
     private static byte[] exif(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
-        // TODO: expose the XMP item (a 'mime' item of type application/rdf+xml) once DecodedImage has a place for it
         var current = item;
         for (var depth = 0; current != null && depth <= MAX_LINEAGE; depth++) {
             for (var description : file.descriptionsOf(current.id())) {
@@ -401,20 +407,31 @@ public final class HeicFiles {
      *
      * @param source the file
      * @param limits the bounds
-     * @return the reader: the sequence when the file has an HEVC color track, otherwise the
-     * shown still image as one frame shown for zero microseconds and played once
+     * @param highBitDepth whether frames of a source deeper than 8 bits are 16-bit RGBA
+     * @return the reader: the sequence when the file has an HEVC or AVC color track, otherwise the
+     * shown still image as one frame shown for zero microseconds and played once; both can seek
      */
-    public static AnimationReader openAnimation(MediaSource source, MediaLimits limits) {
+    public static AnimationReader openAnimation(MediaSource source, MediaLimits limits, boolean highBitDepth) {
         var file = HeifFile.parse(source, limits, false);
         if (file.hasMovie() && hasColorTrack(source, file, limits)) {
-            return new SequenceReader(source, file, limits);
+            return new SequenceReader(source, file, limits, highBitDepth);
         }
         var primary = primary(file);
         var info = stillInfo(source, file, primary, limits);
-        return new StillReader(info.width(), info.height(), () -> {
-            var result = StillDecoder.decode(source, file, primary, limits, false);
-            return ImageOps.toRgba(result.picture());
-        });
+        var frame = new Supplier<Picture>() {
+            private Picture decoded;
+
+            @Override
+            public Picture get() {
+                if (decoded == null) {
+                    var picture = StillDecoder.decode(source, file, primary, limits, highBitDepth).picture();
+                    decoded = picture instanceof Yuv16Picture || picture instanceof Rgba16Picture
+                            ? ImageOps.toRgba16(picture) : ImageOps.toRgba(picture);
+                }
+                return decoded;
+            }
+        };
+        return SeekableAnimationReader.of(() -> new StillReader(info.width(), info.height(), frame));
     }
 
     /**
@@ -432,9 +449,9 @@ public final class HeicFiles {
         private final int height;
 
         /**
-         * Decodes the image.
+         * Decodes the image, once for every reader sharing it.
          */
-        private final Supplier<RgbaPicture> decoder;
+        private final Supplier<Picture> decoder;
 
         /**
          * Whether the frame was read.
@@ -448,7 +465,7 @@ public final class HeicFiles {
          * @param height the image height
          * @param decoder decodes the image
          */
-        private StillReader(int width, int height, Supplier<RgbaPicture> decoder) {
+        private StillReader(int width, int height, Supplier<Picture> decoder) {
             this.width = width;
             this.height = height;
             this.decoder = decoder;

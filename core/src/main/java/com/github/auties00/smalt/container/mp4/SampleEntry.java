@@ -14,10 +14,13 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Interlacing;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.util.ArrayList;
@@ -25,12 +28,12 @@ import java.util.Arrays;
 import java.util.List;
 
 /**
- * Describes the first sample description of a track: the codec, its configuration, and the
- * picture or sound parameters the sample entry declares.
+ * Describes one sample description of a track: the codec, its configuration, and the picture or
+ * sound parameters the sample entry declares.
  *
- * <p>{@link #parse(BoxCursor, int, MediaLimits)} reads the {@code stsd} box. Visual entries follow
- * ISO/IEC 14496-12 clause 12.1.3, audio entries clause 12.2.3 together with the QuickTime sound
- * description versions 1 and 2, and codec-specific child boxes follow their bindings (ISO/IEC
+ * <p>{@link #parseAll(BoxCursor, int, MediaLimits, boolean[], List)} reads the {@code stsd} box.
+ * Visual entries follow ISO/IEC 14496-12 clause 12.1.3, audio entries clause 12.2.3 together with
+ * the QuickTime sound description versions 1 and 2, and codec-specific child boxes follow their bindings (ISO/IEC
  * 14496-14 {@code esds}, 14496-15 {@code avcC}/{@code hvcC}, the Opus, FLAC, VP and AV1 ISO base
  * media encapsulations, 3GPP TS 26.244 for AMR and H.263, ISO/IEC 23003-5 for PCM).
  *
@@ -42,15 +45,20 @@ import java.util.List;
  * @param width the coded width of a visual entry, or {@code 0}
  * @param height the coded height of a visual entry, or {@code 0}
  * @param color the color description of a visual entry ({@code colr}, with the {@code mdcv} and
- * {@code clli} metadata when present), or {@code null} without a {@code colr} box
+ * {@code clli} metadata when present; unspecified matrix, primaries and transfer in the limited
+ * range when only {@code mdcv} or {@code clli} is present), or {@code null} without any of them
+ * @param sampleAspect the sample aspect ratio of a visual entry ({@code pasp}), or {@code null} without a valid
+ * {@code pasp} box
+ * @param interlacing the scan of a visual entry (QuickTime {@code fiel}), or {@code null} without a {@code fiel} box
  * @param channels the channel count of an audio entry, or {@code 0}
  * @param sampleRate the sampling rate of an audio entry in hertz, or {@code 0}
  * @param layout the declared channel layout of an audio entry, or {@code null}
  * @param bitsPerSample the sample size of a PCM entry, or {@code 0}
  * @param frameBytes the size of one PCM frame (one sample of every channel), or {@code 0}
  */
-record SampleEntry(int format, Codec codec, byte[] config, int width, int height, ColorInfo color, int channels,
-                   int sampleRate, ChannelLayout layout, int bitsPerSample, int frameBytes) {
+record SampleEntry(int format, Codec codec, byte[] config, int width, int height, ColorInfo color,
+                   Rational sampleAspect, Interlacing interlacing, int channels, int sampleRate, ChannelLayout layout,
+                   int bitsPerSample, int frameBytes) {
     /**
      * The size of the fields of a visual sample entry that precede its child boxes.
      */
@@ -82,49 +90,141 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     static final int WVTT = 0x77767474;
 
     /**
+     * The XML subtitle sample entry type of TTML ({@code stpp}).
+     */
+    static final int STPP = 0x73747070;
+
+    /**
      * The WebVTT configuration box type ({@code vttC}).
      */
     static final int VTT_CONFIG = 0x76747443;
 
     /**
-     * The speakers of the ISO/IEC 23001-8 {@code OutputChannelPosition} codes 0 to 14, as used
-     * by the {@code chnl} box.
+     * The speakers of the ISO/IEC 23091-3 (formerly 23001-8) {@code OutputChannelPosition} codes 0
+     * to 31, as used by the {@code chnl} box: the surround pair (Ls, Rs) and the side surround pairs
+     * are the side speakers, the rear surround pair (Lsr, Rsr) the back speakers; codes 30 and 31
+     * have no speaker.
      */
     private static final Speaker[] ISO_POSITIONS = {
             Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY,
-            Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER,
-            Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.BACK_CENTER, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT,
-            Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT
+            Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER,
+            Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.BACK_CENTER, Speaker.SURROUND_DIRECT_LEFT,
+            Speaker.SURROUND_DIRECT_RIGHT, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.WIDE_LEFT,
+            Speaker.WIDE_RIGHT, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT, Speaker.TOP_FRONT_CENTER,
+            Speaker.TOP_BACK_LEFT, Speaker.TOP_BACK_RIGHT, Speaker.TOP_BACK_CENTER, Speaker.TOP_SIDE_LEFT,
+            Speaker.TOP_SIDE_RIGHT, Speaker.TOP_CENTER, Speaker.LOW_FREQUENCY_2, Speaker.BOTTOM_FRONT_LEFT,
+            Speaker.BOTTOM_FRONT_RIGHT, Speaker.BOTTOM_FRONT_CENTER, Speaker.UNKNOWN, Speaker.UNKNOWN
     };
 
     /**
-     * Parses the first sample description of an {@code stsd} box.
+     * The largest number of sample descriptions read from one {@code stsd} box; a sample that
+     * references a later one, like any sample description index out of range, uses the first.
+     */
+    static final int MAX_DESCRIPTIONS = 1024;
+
+    /**
+     * Parses every sample description of an {@code stsd} box, up to {@value #MAX_DESCRIPTIONS}.
+     *
+     * <p>The first description must parse: its failure is thrown. A later description that fails
+     * leaves {@code null} at its index and the failure at the same index of {@code errors}, so that
+     * only the samples using it fail.
      *
      * @param stsd the payload of the {@code stsd} box
      * @param handler the track's handler type
      * @param limits the limits bounding picture sizes and channel counts
-     * @return the description
-     * @throws MediaException.Malformed if the box holds no entry or the entry is truncated
-     * @throws MediaException.Unsupported if the entry is encrypted
-     * @throws MediaException.LimitExceeded if the declared channel count exceeds the limits
+     * @param selfContained whether each data reference of the track is self-contained, or
+     * {@code null} when the track has no {@code dref}
+     * @param errors receives the failure of each description, {@code null} for one that parsed
+     * @return the descriptions, in the order of their one-based sample description index
+     * @throws MediaException.Malformed if the box holds no entry or the first is truncated
+     * @throws MediaException.Unsupported if the first entry is encrypted or stored in another file
+     * @throws MediaException.LimitExceeded if the first entry's channel count exceeds the limits
      */
-    static SampleEntry parse(BoxCursor stsd, int handler, MediaLimits limits) {
+    static SampleEntry[] parseAll(BoxCursor stsd, int handler, MediaLimits limits, boolean[] selfContained,
+                                  List<MediaException> errors) {
         stsd.fullBoxHeader();
         var count = stsd.u32();
         if (count == 0 || !stsd.hasBox()) {
             throw new MediaException.Malformed("stsd holds no sample description");
         }
-        var entry = stsd.nextBox();
         var kind = switch (handler) {
             case BoxTypes.VIDE, BoxTypes.PICT, BoxTypes.AUXV -> TrackKind.VIDEO;
             case BoxTypes.SOUN -> TrackKind.AUDIO;
             default -> TrackKind.DATA;
         };
-        return switch (kind) {
-            case VIDEO -> parseVisual(entry.type(), entry);
-            case AUDIO -> parseAudio(entry.type(), entry, limits);
-            case DATA -> parseData(entry.type(), entry);
-        };
+        var entries = new ArrayList<SampleEntry>();
+        while (entries.size() < Math.min(count, MAX_DESCRIPTIONS)) {
+            BoxCursor entry;
+            try {
+                if (!stsd.hasBox()) {
+                    break;
+                }
+                entry = stsd.nextBox();
+            } catch (MediaException.Malformed exception) {
+                if (entries.isEmpty()) {
+                    throw exception;
+                }
+                break;
+            }
+            try {
+                checkDataReference(entry, selfContained);
+                entries.add(switch (kind) {
+                    case VIDEO -> parseVisual(entry.type(), entry);
+                    case AUDIO -> parseAudio(entry.type(), entry, limits);
+                    case DATA -> parseData(entry.type(), entry);
+                });
+                errors.add(null);
+            } catch (MediaException exception) {
+                if (entries.isEmpty()) {
+                    throw exception;
+                }
+                entries.add(null);
+                errors.add(exception);
+            }
+        }
+        return entries.toArray(new SampleEntry[0]);
+    }
+
+    /**
+     * Rejects a sample entry whose data reference points to another file.
+     *
+     * @param entry a cursor over the entry payload, not moved
+     * @param selfContained whether each data reference is self-contained, or {@code null}
+     * @throws MediaException.Unsupported if the samples are stored in another file
+     */
+    private static void checkDataReference(BoxCursor entry, boolean[] selfContained) {
+        if (selfContained == null || entry.remaining() < 8) {
+            return;
+        }
+        var cursor = entry.duplicate();
+        cursor.skip(6);
+        var index = cursor.u16();
+        if (index >= 1 && index <= selfContained.length && !selfContained[index - 1]) {
+            throw new MediaException.Unsupported("mp4 external data reference",
+                    "the samples of a '" + FourCc.printable(entry.type()) + "' description are stored in another file");
+        }
+    }
+
+    /**
+     * Returns whether the samples of another description of the same track can follow the
+     * samples of this one, signaled to a decoder by at most a new codec configuration.
+     *
+     * <p>The codec must be the same; an audio description without a codec configuration must
+     * also keep the sampling rate and channel count, and a description with a configuration
+     * cannot be followed by one without.
+     *
+     * @param other the other description
+     * @return {@code true} when a decoder of this description can continue with {@code other}
+     */
+    boolean canSwitchTo(SampleEntry other) {
+        if (other.codec != codec) {
+            return false;
+        }
+        if (other.config == null) {
+            return config == null && (codec.kind() != TrackKind.AUDIO
+                    || (other.sampleRate == sampleRate && other.channels == channels && other.frameBytes == frameBytes));
+        }
+        return true;
     }
 
     /**
@@ -134,8 +234,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * @return the modified description
      */
     SampleEntry withCodec(Codec replacement) {
-        return new SampleEntry(format, replacement, config, width, height, color, channels, sampleRate, layout,
-                bitsPerSample, frameBytes);
+        return new SampleEntry(format, replacement, config, width, height, color, sampleAspect, interlacing, channels,
+                sampleRate, layout, bitsPerSample, frameBytes);
     }
 
     /**
@@ -165,11 +265,13 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (format == BoxTypes.ENCV) {
             throw new MediaException.Unsupported("mp4 encryption", "the video track is encrypted (encv)");
         }
-        byte[] avcC = null, hvcC = null, vpcC = null, av1C = null;
+        byte[] avcC = null, hvcC = null, vpcC = null, av1C = null, jp2h = null;
         EsDescriptor esds = null;
         ColorInfo color = null;
         MasteringDisplay mastering = null;
         ContentLightLevel lightLevel = null;
+        Rational sampleAspect = null;
+        Interlacing interlacing = null;
         for (var box : children(payload)) {
             var body = box;
             switch (box.type()) {
@@ -182,6 +284,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     }
                 }
                 case BoxTypes.AV1C -> av1C = body.rest();
+                case BoxTypes.JP2H -> jp2h = withHeader(BoxTypes.JP2H, body.rest());
                 case BoxTypes.ESDS -> esds = parseEsds(body);
                 case BoxTypes.COLR -> {
                     if (color == null) {
@@ -190,9 +293,15 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 }
                 case BoxTypes.MDCV -> mastering = parseMastering(body);
                 case BoxTypes.CLLI -> lightLevel = parseLightLevel(body);
+                case BoxTypes.PASP -> sampleAspect = parseAspect(body);
+                case BoxTypes.FIEL -> interlacing = parseFields(body);
                 default -> {
                 }
             }
+        }
+        if (color == null && (mastering != null || lightLevel != null)) {
+            color = new ColorInfo(MatrixCoefficients.UNSPECIFIED, ColorRange.LIMITED, ColorPrimaries.UNSPECIFIED,
+                    TransferCharacteristics.UNSPECIFIED);
         }
         if (color != null) {
             color = color.withMasteringDisplay(mastering).withContentLightLevel(lightLevel);
@@ -225,6 +334,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 codec = switch (objectType) {
                     case 0x21 -> Codec.H264;
                     case 0x6C -> Codec.MJPEG;
+                    case 0x6E -> Codec.JPEG2000;
                     case 0x20 -> Codec.MPEG4_PART2;
                     default -> Codec.UNKNOWN_VIDEO;
                 };
@@ -232,6 +342,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
             case BoxTypes.S263, BoxTypes.H263 -> codec = Codec.H263;
             case BoxTypes.JPEG, BoxTypes.MJPA, BoxTypes.MJPB -> codec = Codec.MJPEG;
+            case BoxTypes.MJP2 -> {
+                codec = Codec.JPEG2000;
+                config = Jp2Frames.isHeader(jp2h) ? jp2h : null;
+            }
             case BoxTypes.APCH, BoxTypes.APCN, BoxTypes.APCS, BoxTypes.APCO, BoxTypes.AP4H, BoxTypes.AP4X -> {
                 codec = Codec.PRORES;
                 config = fourCc(format);
@@ -242,7 +356,29 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
             default -> codec = Codec.UNKNOWN_VIDEO;
         }
-        return new SampleEntry(format, codec, config, width, height, color, 0, 0, null, 0, 0);
+        return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, 0, 0, null, 0, 0);
+    }
+
+    /**
+     * Rebuilds a box from its type and contents.
+     *
+     * @param type the box type
+     * @param contents the box contents
+     * @return the box, with a 32-bit size field
+     */
+    private static byte[] withHeader(int type, byte[] contents) {
+        var box = new byte[8 + contents.length];
+        var size = box.length;
+        box[0] = (byte) (size >>> 24);
+        box[1] = (byte) (size >>> 16);
+        box[2] = (byte) (size >>> 8);
+        box[3] = (byte) size;
+        box[4] = (byte) (type >>> 24);
+        box[5] = (byte) (type >>> 16);
+        box[6] = (byte) (type >>> 8);
+        box[7] = (byte) type;
+        System.arraycopy(contents, 0, box, 8, contents.length);
+        return box;
     }
 
     /**
@@ -268,6 +404,41 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         } catch (MediaException.Malformed exception) {
             return null;
         }
+    }
+
+    /**
+     * Parses a {@code pasp} box (ISO/IEC 14496-12 clause 12.1.4).
+     *
+     * @param body the box payload
+     * @return {@code hSpacing / vSpacing} in lowest terms, or {@code null} for a truncated box or a zero spacing
+     */
+    private static Rational parseAspect(BoxCursor body) {
+        if (body.remaining() < 8) {
+            return null;
+        }
+        var horizontal = body.u32();
+        var vertical = body.u32();
+        return horizontal > 0 && vertical > 0 ? new Rational(horizontal, vertical).reduce() : null;
+    }
+
+    /**
+     * Parses a QuickTime {@code fiel} box: a field count of 1 (progressive) or 2, then the field
+     * order of an interlaced entry.
+     *
+     * @param body the box payload
+     * @return the scan, or {@code null} for a truncated box or another field count
+     */
+    private static Interlacing parseFields(BoxCursor body) {
+        if (body.remaining() < 2) {
+            return null;
+        }
+        var count = body.u8();
+        var order = body.u8();
+        return switch (count) {
+            case 1 -> Interlacing.PROGRESSIVE;
+            case 2 -> order == 0 ? Interlacing.INTERLACED : Interlacing.ofCode(order);
+            default -> null;
+        };
     }
 
     /**
@@ -367,6 +538,9 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         }
         var audio = new AudioChildren();
         audio.read(payload, 0);
+        if (audio.sampleRate > 0) {
+            sampleRate = audio.sampleRate;
+        }
         Codec codec = Codec.UNKNOWN_AUDIO;
         byte[] config = null;
         var bits = 0;
@@ -393,6 +567,9 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         var aac = AudioConfigs.parseAac(config);
                         if (aac.channels() > 0) {
                             channels = aac.channels();
+                        }
+                        if (audio.layout == null) {
+                            audio.layout = aac.layout();
                         }
                         if (sampleRate == 0) {
                             sampleRate = aac.outputRate();
@@ -498,9 +675,6 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (codec.isPcm()) {
             bits = codec.pcmBitsPerSample().orElse(0);
         }
-        if (sampleRate == 0 && audio.sampleRate > 0) {
-            sampleRate = audio.sampleRate;
-        }
         if (channels > 0) {
             LimitChecks.checkChannels(limits, channels);
         }
@@ -515,7 +689,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (frameBytes == 0 && bytesPerFrame > 0 && codec.isPcm()) {
             frameBytes = bytesPerFrame;
         }
-        return new SampleEntry(format, codec, config, 0, 0, null, channels, sampleRate, layout, bits, frameBytes);
+        return new SampleEntry(format, codec, config, 0, 0, null, null, null, channels, sampleRate, layout, bits,
+                frameBytes);
     }
 
     /**
@@ -563,9 +738,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     /**
      * Parses a sample entry of a track that is neither video nor audio.
      *
-     * <p>A 3GPP timed text entry ({@code tx3g}) is {@link Codec#MOV_TEXT}, and a WebVTT entry
+     * <p>A 3GPP timed text entry ({@code tx3g}) is {@link Codec#MOV_TEXT}, a WebVTT entry
      * ({@code wvtt}, ISO/IEC 14496-30) is {@link Codec#WEBVTT} whose configuration is the text of
-     * its {@code vttC} box; every other entry is {@link Codec#DATA}.
+     * its {@code vttC} box, and an XML subtitle entry ({@code stpp}) whose namespace, schema
+     * location and auxiliary MIME type fields are well formed is {@link Codec#TTML}; every other
+     * entry is {@link Codec#DATA}.
      *
      * @param format the entry type
      * @param payload the entry payload
@@ -577,6 +754,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         var codec = switch (format) {
             case TX3G -> Codec.MOV_TEXT;
             case WVTT -> Codec.WEBVTT;
+            case STPP -> Codec.TTML;
             default -> Codec.DATA;
         };
         if (payload.remaining() > 8) {
@@ -591,7 +769,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 config = payload.rest();
             }
         }
-        return new SampleEntry(format, codec, config, 0, 0, null, 0, 0, null, 0, 0);
+        if (codec == Codec.TTML && (config == null || TtmlEntries.problem(config) != null)) {
+            codec = Codec.DATA;
+        }
+        return new SampleEntry(format, codec, config, 0, 0, null, null, null, 0, 0, null, 0, 0);
     }
 
     /**
@@ -669,7 +850,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         private boolean pcmLittleEndian;
 
         /**
-         * The sampling rate declared by an {@code srat} box, or {@code 0}.
+         * The sampling rate declared by an {@code srat} box, or {@code 0}; it replaces the rate of
+         * the entry's 16.16 field, which cannot hold rates above 65535 Hz.
          */
         private int sampleRate;
 
@@ -802,6 +984,19 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             case 16 -> Speaker.TOP_BACK_LEFT;
             case 17 -> Speaker.TOP_BACK_CENTER;
             case 18 -> Speaker.TOP_BACK_RIGHT;
+            case 35 -> Speaker.WIDE_LEFT;
+            case 36 -> Speaker.WIDE_RIGHT;
+            case 37 -> Speaker.LOW_FREQUENCY_2;
+            case 49 -> Speaker.TOP_SIDE_LEFT;
+            case 51 -> Speaker.TOP_SIDE_RIGHT;
+            case 52 -> Speaker.TOP_BACK_LEFT;
+            case 53 -> Speaker.TOP_BACK_CENTER;
+            case 54 -> Speaker.TOP_BACK_RIGHT;
+            case 55 -> Speaker.SIDE_LEFT;
+            case 56 -> Speaker.SIDE_RIGHT;
+            case 57 -> Speaker.BOTTOM_FRONT_LEFT;
+            case 58 -> Speaker.BOTTOM_FRONT_RIGHT;
+            case 59 -> Speaker.BOTTOM_FRONT_CENTER;
             default -> Speaker.UNKNOWN;
         };
     }

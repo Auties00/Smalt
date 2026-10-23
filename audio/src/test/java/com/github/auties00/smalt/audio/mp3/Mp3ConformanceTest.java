@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.audio.mp3;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -14,12 +15,20 @@ import static org.junit.jupiter.api.Assertions.fail;
 /**
  * Decodes the ISO/IEC 11172-4 (MPEG-1 Layers I, II, III) and ISO/IEC 13818-4 (MPEG-2 Layer III)
  * compliance bitstreams, plus the "illegal stream" and robustness vectors that minimp3 ships,
- * and compares them with their reference PCM using minimp3's criterion: 16-bit PSNR of at least
- * 96 dB. Layer III reference files are allowed to lack one or two trailing frames (the reference
+ * and compares them with their reference PCM, rounded to 16 bits like the reference, by the full
+ * accuracy limits of ISO/IEC 11172-4 (an RMS difference below 2^-15/sqrt(12) of full scale, no
+ * sample off by more than 2^-14) and by minimp3's criterion, a PSNR of at least 96 dB. Layer III
+ * reference files are allowed to lack one or two trailing frames (the reference
  * decoder drops a truncated final frame) and the leading frames whose bit reservoir precedes the
  * stream (which this decoder conceals as silence); Layer I and II references are zero-padded.
  */
 class Mp3ConformanceTest {
+    /** The ISO/IEC 11172-4 full accuracy class a compliant decoder meets on these streams. */
+    private static final Tolerance COMPLIANCE = Tolerance.iso11172(Tolerance.Iso11172Accuracy.FULL);
+
+    /** minimp3's acceptance criterion over the same streams. */
+    private static final Tolerance MINIMP3 = Tolerance.psnr(96);
+
     private static void assertCompliant(String name, boolean layer3, boolean strictLength) {
         var decoded = Mp3Vectors.decode(Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit")));
         var ours = Mp3Vectors.toS16(decoded.interleaved());
@@ -37,7 +46,13 @@ class Mp3ConformanceTest {
         for (var i = 0; i < bestSkip * frame; i++) {
             assertEquals(0, ours[i], "a skipped leading frame is not concealment silence");
         }
-        assertTrue(bestPsnr >= 96, name + ": PSNR " + bestPsnr + " dB below 96 dB");
+        var start = bestSkip * frame;
+        var common = Math.min(reference.length, ours.length - start);
+        var expected = Arrays.copyOf(reference, common);
+        var actual = Arrays.copyOfRange(ours, start, start + common);
+        System.out.println("[mp3-compliance] " + name + ": " + Tolerance.Difference.ofPcm(expected, actual));
+        MINIMP3.assertPcm(name, expected, actual);
+        COMPLIANCE.assertPcm(name, expected, actual);
         var extra = ours.length - bestSkip * frame - reference.length;
         if (strictLength) {
             assertEquals(0, extra, name + ": sample count differs from the reference");
@@ -50,14 +65,14 @@ class Mp3ConformanceTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"l1-fl1", "l1-fl2", "l1-fl3", "l1-fl4", "l1-fl5", "l1-fl6", "l1-fl7", "l1-fl8"})
-    @DisplayName("Layer I compliance streams reach 96 dB PSNR")
+    @DisplayName("Layer I compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void layer1(String name) {
         assertCompliant(name, false, false);
     }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"l2-fl10", "l2-fl11", "l2-fl12", "l2-fl13", "l2-fl14", "l2-fl15", "l2-fl16", "l2-test32"})
-    @DisplayName("Layer II compliance streams reach 96 dB PSNR")
+    @DisplayName("Layer II compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void layer2(String name) {
         assertCompliant(name, false, false);
     }
@@ -65,14 +80,14 @@ class Mp3ConformanceTest {
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"l3-compl", "l3-he_32khz", "l3-he_44khz", "l3-he_48khz", "l3-he_free", "l3-he_mode",
             "l3-hecommon", "l3-si", "l3-si_block", "l3-si_huff", "l3-sin1k0db", "l3-test45", "l3-test46"})
-    @DisplayName("MPEG-1 Layer III compliance streams reach 96 dB PSNR")
+    @DisplayName("MPEG-1 Layer III compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void layer3(String name) {
         assertCompliant(name, true, false);
     }
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"M2L3_bitrate_16_all", "M2L3_bitrate_22_all", "M2L3_bitrate_24_all", "M2L3_compl24", "M2L3_noise"})
-    @DisplayName("MPEG-2 Layer III compliance streams reach 96 dB PSNR")
+    @DisplayName("MPEG-2 Layer III compliance streams meet ISO/IEC 11172-4 full accuracy and 96 dB PSNR")
     void mpeg2(String name) {
         assertCompliant(name, true, false);
     }
