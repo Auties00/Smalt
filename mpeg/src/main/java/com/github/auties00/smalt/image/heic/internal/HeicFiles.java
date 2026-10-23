@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.AnimationFrame;
 import com.github.auties00.smalt.image.AnimationReader;
+import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -12,8 +13,11 @@ import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
+import com.github.auties00.smalt.internal.gainmap.AppleGainMaps;
+import com.github.auties00.smalt.internal.gainmap.HeifToneMaps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
@@ -24,6 +28,7 @@ import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifStill;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -400,6 +405,132 @@ public final class HeicFiles {
             current = inputs.length == 0 ? null : file.item(inputs[0]);
         }
         return null;
+    }
+
+    /**
+     * Decodes the gain map of the primary image of a HEIC file: the gain map of its tone map item, or else its
+     * Apple gain map auxiliary image converted to the ISO 21496-1 model.
+     *
+     * @param source the file
+     * @param options the limits and the bit depth choice
+     * @return the gain map, or empty when the file shows a sequence or has none
+     */
+    public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
+        var limits = options.limits();
+        var file = HeifFile.parse(source, limits, false);
+        if (showsSequence(file) || file.primaryItem() == null) {
+            return Optional.empty();
+        }
+        var primary = file.primaryItem();
+        var toneMap = HeifToneMaps.find(source, file, primary, limits, false);
+        if (toneMap != null) {
+            var still = StillDecoder.decode(source, file, toneMap.gainMap(), limits, options.highBitDepth());
+            return Optional.of(new GainMap(toneMap.metadata(), still.picture(), toneMap.alternateProfile(),
+                    toneMap.alternateLightLevel()));
+        }
+        for (var item : file.auxiliariesOf(primary.id())) {
+            var type = item.property(HeifProperty.AuxiliaryType.class);
+            if (type == null || !type.urn().equals(AppleGainMaps.URN)) {
+                continue;
+            }
+            var xmp = new ArrayList<XmpPacket>();
+            xmp.add(packet(file.xmpOf(source, item, limits)));
+            xmp.add(packet(file.xmpOf(source, primary, limits)));
+            var still = StillDecoder.decode(source, file, item, limits, options.highBitDepth());
+            return AppleGainMaps.convert(still.picture(), exif(source, file, primary, limits), xmp);
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * {@return a parsed XMP packet, or {@code null} when absent or invalid}
+     */
+    private static XmpPacket packet(byte[] xmp) {
+        if (xmp == null) {
+            return null;
+        }
+        try {
+            return XmpPacket.parse(xmp);
+        } catch (MediaException exception) {
+            return null;
+        }
+    }
+
+    /**
+     * Lists the auxiliary images of the primary image of a HEIC file, those this decoder reconstructs.
+     *
+     * @param source the file
+     * @param limits the bounds
+     * @return the images, empty for a file that shows a sequence
+     */
+    public static List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
+        return listed(source, HeifFile.parse(source, limits, false), limits).stream().map(Listed::description)
+                .toList();
+    }
+
+    /**
+     * Decodes an auxiliary image of the primary image of a HEIC file.
+     *
+     * @param source the file
+     * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource, MediaLimits)}
+     * @param options the limits and the bit depth choice
+     * @return the image, with the orientation of its own transformative properties and the color of its own
+     * {@code colr} property, or {@code null} when the file lists no image of that index
+     */
+    public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
+        var limits = options.limits();
+        var file = HeifFile.parse(source, limits, false);
+        var listed = listed(source, file, limits);
+        if (index < 0 || index >= listed.size()) {
+            return null;
+        }
+        var item = listed.get(index).item();
+        var still = StillDecoder.decode(source, file, item, limits, options.highBitDepth());
+        var picture = still.picture();
+        var icc = item.property(HeifProperty.ColorIcc.class);
+        var profile = icc == null ? null : icc.profile();
+        return new DecodedImage(picture, ImageFormat.HEIC, still.geometry().orientation(), picture.width(),
+                picture.height(), Optional.ofNullable(profile == null ? null : profile.clone()), Optional.empty(),
+                Optional.empty(), HeifPictures.colorProfile(profile, picture));
+    }
+
+    /**
+     * An auxiliary image with its description.
+     *
+     * @param item the image item
+     * @param description its description in the list
+     */
+    private record Listed(HeifItem item, AuxiliaryImage description) {
+    }
+
+    /**
+     * Lists the auxiliary images of the primary image that this decoder reconstructs and whose size is declared.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param limits the bounds
+     * @return the images
+     */
+    private static List<Listed> listed(MediaSource source, HeifFile file, MediaLimits limits) {
+        if (showsSequence(file) || file.primaryItem() == null) {
+            return List.of();
+        }
+        var result = new ArrayList<Listed>();
+        for (var auxiliary : HeifToneMaps.auxiliaries(source, file, file.primaryItem(), limits, false)) {
+            var item = auxiliary.item();
+            HeifGeometry geometry;
+            try {
+                StillDecoder.requireDecodable(item);
+                geometry = geometry(source, file, item, limits);
+            } catch (MediaException.Io exception) {
+                throw exception;
+            } catch (MediaException exception) {
+                continue;
+            }
+            result.add(new Listed(item, new AuxiliaryImage(result.size(), auxiliary.type(), auxiliary.identifier(),
+                    geometry.width(), geometry.height())));
+        }
+        return result;
     }
 
     /**

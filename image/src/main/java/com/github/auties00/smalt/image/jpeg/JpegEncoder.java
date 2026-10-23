@@ -1,11 +1,18 @@
 package com.github.auties00.smalt.image.jpeg;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorModel;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.color.ProfileColorSpace;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.jpeg.internal.JpegEncoding;
+import com.github.auties00.smalt.image.jpeg.internal.UltraHdr;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSink;
 
@@ -105,6 +112,90 @@ public final class JpegEncoder {
     public static void encode(Picture picture, JpegEncoderOptions options, MediaSink sink) {
         Objects.requireNonNull(sink, "sink");
         sink.write(encode(picture, options));
+    }
+
+    /**
+     * Encodes a picture with its gain map as an Ultra HDR file, with the {@link JpegEncoderOptions#defaults()}
+     * for the picture and quality 95 for the gain map.
+     *
+     * @param picture the picture, the base rendition; its alpha channel, if any, is ignored
+     * @param gainMap the gain map of the picture
+     * @return the JPEG file
+     * @throws IllegalArgumentException if a picture is wider or taller than 65535 pixels, or a metadata value is
+     * too large for a 32-bit fraction
+     * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments
+     * @see #encode(Picture, GainMap, JpegEncoderOptions, JpegEncoderOptions)
+     */
+    public static byte[] encode(Picture picture, GainMap gainMap) {
+        return encode(picture, gainMap, JpegEncoderOptions.defaults(), JpegEncoderOptions.ofQuality(95));
+    }
+
+    /**
+     * Encodes a picture with its gain map as an Ultra HDR file, written to a sink.
+     *
+     * @param picture the picture, the base rendition; its alpha channel, if any, is ignored
+     * @param gainMap the gain map of the picture
+     * @param options the settings of the picture
+     * @param gainMapOptions the settings of the gain map image
+     * @param sink the output; not closed
+     * @throws IllegalArgumentException if a picture is wider or taller than 65535 pixels, the settings do not
+     * fit a picture, or a metadata value is too large for a 32-bit fraction
+     * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments
+     * @throws MediaException.Io if writing the sink fails
+     */
+    public static void encode(Picture picture, GainMap gainMap, JpegEncoderOptions options,
+                              JpegEncoderOptions gainMapOptions, MediaSink sink) {
+        Objects.requireNonNull(sink, "sink");
+        sink.write(encode(picture, gainMap, options, gainMapOptions));
+    }
+
+    /**
+     * Encodes a picture with its gain map as an Ultra HDR file (Google's Ultra HDR image format 1.1, with the
+     * ISO 21496-1 metadata), which readers that ignore gain maps show as the picture alone.
+     *
+     * <p>The picture is encoded with {@code options} as {@link #encode(Picture, JpegEncoderOptions)} encodes it,
+     * and the gain map image with {@code gainMapOptions}, as a gray frame ({@link ChromaFormat#MONOCHROME})
+     * when it is a gray picture and as an unsubsampled one ({@link ChromaFormat#YUV444}) otherwise, with the
+     * {@linkplain GainMap#alternateProfile() color profile of the alternate rendition} in place of the color
+     * profile of {@code gainMapOptions} when it is an RGB profile. The primary image then carries, after its SOI
+     * marker and JFIF segment, an XMP packet with {@code hdrgm:Version} and the container directory of the two
+     * images, an ISO 21496-1 {@code APP2} segment with the two version fields, and a big-endian Multi-Picture
+     * Format index; the gain map image carries an XMP packet with the {@code hdrgm} metadata (left out when the
+     * gain map applies in the alternate color space, which that form cannot say) and an ISO 21496-1
+     * {@code APP2} segment with the metadata. The gain map image follows the primary image. The output does
+     * not depend on the number of threads.
+     *
+     * @param picture the picture, the base rendition; its alpha channel, if any, is ignored
+     * @param gainMap the gain map of the picture
+     * @param options the settings of the picture
+     * @param gainMapOptions the settings of the gain map image
+     * @return the JPEG file
+     * @throws IllegalArgumentException if a picture is wider or taller than 65535 pixels, the settings do not
+     * fit a picture as {@link #encode(Picture, JpegEncoderOptions)} describes, or a metadata value is too large
+     * for a 32-bit fraction
+     * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments
+     */
+    public static byte[] encode(Picture picture, GainMap gainMap, JpegEncoderOptions options,
+                                JpegEncoderOptions gainMapOptions) {
+        Objects.requireNonNull(picture, "picture");
+        Objects.requireNonNull(gainMap, "gainMap");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(gainMapOptions, "gainMapOptions");
+        try (var _ = ParallelBands.operation()) {
+            var image = gainMap.image();
+            var gray = switch (image) {
+                case YuvPicture yuv -> yuv.chromaFormat() == ChromaFormat.MONOCHROME;
+                case Yuv16Picture yuv -> yuv.chromaFormat() == ChromaFormat.MONOCHROME;
+                case ChannelPicture channels -> channels.layout().colorModel() == ColorModel.GRAY;
+                default -> false;
+            };
+            var builder = gainMapOptions.toBuilder().chromaFormat(gray ? ChromaFormat.MONOCHROME : ChromaFormat.YUV444);
+            gainMap.alternateProfile().filter(profile -> profile.colorSpace() == ProfileColorSpace.RGB)
+                    .ifPresent(builder::colorProfile);
+            var primary = JpegEncoding.encode(picture, options);
+            var secondary = JpegEncoding.encode(image, builder.build());
+            return UltraHdr.write(primary, secondary, gainMap.metadata());
+        }
     }
 
     /**

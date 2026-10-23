@@ -1,10 +1,17 @@
 package com.github.auties00.smalt.mpeg.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.image.AuxiliaryImage;
+import com.github.auties00.smalt.image.DecodedImage;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.image.gainmap.GainMap;
+import com.github.auties00.smalt.image.heic.HeicDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
+import com.github.auties00.smalt.testkit.fuzz.FuzzGainMaps;
 import com.github.auties00.smalt.testkit.fuzz.FuzzMedia;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -15,6 +22,8 @@ import com.github.auties00.smalt.video.mpeg4.Mpeg4ElementaryStream;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 
 /**
  * Fuzz targets of the video and audio decoders of this module, fed streams in the
@@ -136,6 +145,31 @@ class MpegFuzzTest {
                 throw new AssertionError("inconsistent frame size: " + info);
             }
             run.output();
+        });
+    }
+
+    @FuzzTest
+    void heicGainMap(byte[] data) {
+        FuzzGainMaps.run("heicGainMap", data, new FuzzGainMaps.Decoder() {
+            @Override
+            public DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
+                return HeicDecoder.decode(source, options);
+            }
+
+            @Override
+            public Optional<GainMap> gainMap(MediaSource source, ImageDecoderOptions options) {
+                return HeicDecoder.decodeGainMap(source, options);
+            }
+
+            @Override
+            public List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
+                return HeicDecoder.auxiliaryImages(source, limits);
+            }
+
+            @Override
+            public DecodedImage auxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
+                return HeicDecoder.decodeAuxiliaryImage(source, index, options);
+            }
         });
     }
 }

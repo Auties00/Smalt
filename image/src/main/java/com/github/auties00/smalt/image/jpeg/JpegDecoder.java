@@ -2,6 +2,8 @@ package com.github.auties00.smalt.image.jpeg;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.AuxiliaryImage;
+import com.github.auties00.smalt.image.AuxiliaryImageType;
 import com.github.auties00.smalt.image.Channel;
 import com.github.auties00.smalt.image.Channel16Picture;
 import com.github.auties00.smalt.image.Channel8Picture;
@@ -22,20 +24,27 @@ import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.exif.ExifReader;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.jpeg.internal.JpegColorSpace;
+import com.github.auties00.smalt.image.jpeg.internal.JpegContainer;
 import com.github.auties00.smalt.image.jpeg.internal.JpegFrame;
 import com.github.auties00.smalt.image.jpeg.internal.JpegOutput;
 import com.github.auties00.smalt.image.jpeg.internal.JpegPlanes;
 import com.github.auties00.smalt.image.jpeg.internal.JpegProbe;
 import com.github.auties00.smalt.image.jpeg.internal.JpegReader;
 import com.github.auties00.smalt.image.jpeg.internal.LosslessOutput;
+import com.github.auties00.smalt.image.jpeg.internal.UltraHdr;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.internal.gainmap.AppleGainMaps;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -93,6 +102,11 @@ import java.util.Optional;
  * {@link com.github.auties00.smalt.MediaLimits#maxChannels()} is rejected with
  * {@link MediaException.LimitExceeded}. JPEG XT files decode through their backward-compatible
  * base layer; the extension boxes carried in {@code APP11} segments are ignored.
+ *
+ * <p>The images a file holds after its primary image, which {@link #decode} ignores, are listed by
+ * {@link #auxiliaryImages(MediaSource, MediaLimits)} and decode one by one; the gain map of an Ultra HDR or Adobe
+ * gain map file decodes with {@link #decodeGainMap(MediaSource, ImageDecoderOptions)}, for
+ * {@link com.github.auties00.smalt.image.gainmap.GainMaps#apply}.
  *
  * <p>Every decoded component plane of a DCT frame is bit-exact with libjpeg-turbo's accurate
  * integer IDCT ({@code djpeg -dct int}; its reduced-size IDCTs at 1/2, 1/4 and 1/8), at 8 and at
@@ -255,6 +269,218 @@ public final class JpegDecoder {
                 return decodeImage(reader, frame, options).withDensity(Optional.ofNullable(reader.density()));
             });
         }
+    }
+
+    /**
+     * Decodes the gain map of a JPEG file under the {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the input
+     * @return the gain map, or empty when the file has none
+     * @throws MediaException.Malformed if the file or its gain map image is invalid
+     * @throws MediaException.Unsupported if the gain map image uses a coding feature listed on the class
+     * @throws MediaException.LimitExceeded if the input or the gain map image exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeGainMap(MediaSource, ImageDecoderOptions)
+     */
+    public static Optional<GainMap> decodeGainMap(MediaSource source) {
+        return decodeGainMap(source, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes the gain map of a JPEG file: of an Ultra HDR file, or of an Adobe gain map JPEG file.
+     *
+     * <p>The gain map is the first image after the primary one, among those the Multi-Picture Format index of
+     * the primary image's {@code APP2 MPF} segment lists, or without an index those the container directory of
+     * its XMP packet lists, whose header holds gain map metadata: an ISO 21496-1 {@code APP2} segment
+     * ({@code urn:iso:std:iso:ts:21496:-1}) with more than its version fields, or else the {@code hdrgm}
+     * properties of its XMP packet. Metadata that does not parse is skipped as if absent. The gain map image is
+     * decoded as {@link #decode(MediaSource, ImageDecoderOptions)} decodes it under the limits and the bit depth
+     * choice of the options, without color conversion; its embedded RGB ICC profile, if any, is the
+     * {@linkplain GainMap#alternateProfile() color space of the alternate rendition}. Without such an image, an
+     * Apple gain map (a secondary image whose XMP declares {@code HDRGainMap:HDRGainMapVersion}) is converted to the
+     * ISO 21496-1 model as the HEIC decoder converts Apple gain maps, with the headroom of
+     * the Apple maker note of the primary image's EXIF block.
+     *
+     * @param source the input
+     * @param options the limits and the bit depth choice of the gain map image; the size hint and the color
+     * conversion are ignored
+     * @return the gain map, or empty when the file has none
+     * @throws MediaException.Malformed if the file or its gain map image is invalid
+     * @throws MediaException.Unsupported if the gain map image uses a coding feature listed on the class
+     * @throws MediaException.LimitExceeded if the input or the gain map image exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        try (var _ = ParallelBands.operation()) {
+            return Guards.malformed(WHAT, () -> {
+                var data = SourceBytes.readAll(source, options.limits(), true);
+                var secondaries = UltraHdr.secondaries(data, options.limits());
+                for (var secondary : secondaries) {
+                    if (secondary.metadata() == null) {
+                        continue;
+                    }
+                    var image = secondary.image();
+                    var decoded = decode(MediaSource.of(data, image.offset(), image.length()), plain(options));
+                    var profile = decoded.colorProfile().filter(value -> value.colorSpace() == ProfileColorSpace.RGB);
+                    return Optional.of(new GainMap(secondary.metadata(), decoded.picture(), profile,
+                            Optional.empty()));
+                }
+                for (var secondary : secondaries) {
+                    if (!secondary.isApple()) {
+                        continue;
+                    }
+                    var image = secondary.image();
+                    var decoded = decode(MediaSource.of(data, image.offset(), image.length()), plain(options));
+                    var reader = new JpegReader(data, 0, data.length, options.limits());
+                    reader.readHeaders();
+                    var primaryXmp = reader.xmp(options.limits());
+                    var packets = new ArrayList<XmpPacket>();
+                    packets.add(secondary.xmp());
+                    packets.add(primaryXmp == null ? null : parseXmp(primaryXmp));
+                    return AppleGainMaps.convert(decoded.picture(), reader.exif(), packets);
+                }
+                return Optional.<GainMap>empty();
+            });
+        }
+    }
+
+    /**
+     * Lists the images a JPEG file holds after its primary image, within the
+     * {@linkplain MediaLimits#DEFAULT default limits}.
+     *
+     * @param source the input
+     * @return the images, as {@link #auxiliaryImages(MediaSource, MediaLimits)} describes
+     * @throws MediaException.Malformed if the input is not a JPEG stream
+     * @throws MediaException.LimitExceeded if the input exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<AuxiliaryImage> auxiliaryImages(MediaSource source) {
+        return auxiliaryImages(source, MediaLimits.DEFAULT);
+    }
+
+    /**
+     * Lists the images a JPEG file holds after its primary image: those its Multi-Picture Format index lists
+     * (thumbnails, the views of stereo and multi-angle images, disparity images, gain maps), or without an index
+     * those its XMP container directory lists (Ultra HDR gain maps, Dynamic Depth images).
+     *
+     * <p>Each image is listed with the size of its frame header; an index entry whose image does not start
+     * with an SOI marker or has no valid frame header is left out. An image whose header holds gain map
+     * metadata, or that the container directory names {@code GainMap}, is a
+     * {@link AuxiliaryImageType#GAIN_MAP}; one it names {@code Depth} a {@link AuxiliaryImageType#DEPTH}; the
+     * others take their role from their Multi-Picture Format type code. The file is read whole.
+     *
+     * @param source the input
+     * @param limits the bounds of the input and of the XMP packets
+     * @return the images in file order, indexed from 0; empty for a file of one image
+     * @throws MediaException.Malformed if the input is not a JPEG stream
+     * @throws MediaException.LimitExceeded if the input exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(limits, "limits");
+        try (var _ = ParallelBands.operation()) {
+            return Guards.malformed(WHAT, () -> {
+                var data = SourceBytes.readAll(source, limits, true);
+                return List.copyOf(listed(data, limits).stream().map(Listed::description).toList());
+            });
+        }
+    }
+
+    /**
+     * Decodes an image a JPEG file holds after its primary image under the
+     * {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the input
+     * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource)}
+     * @return the decoded image
+     * @throws IndexOutOfBoundsException if the file lists no image of that index
+     * @throws MediaException.Malformed if the file or the image is invalid
+     * @throws MediaException.Unsupported if the image uses a coding feature listed on the class
+     * @throws MediaException.LimitExceeded if the input or the image exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeAuxiliaryImage(MediaSource, int, ImageDecoderOptions)
+     */
+    public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index) {
+        return decodeAuxiliaryImage(source, index, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes an image a JPEG file holds after its primary image, as
+     * {@link #decode(MediaSource, ImageDecoderOptions)} decodes a JPEG file.
+     *
+     * @param source the input
+     * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource, MediaLimits)}
+     * @param options the limits, the size hint, the bit depth choice and the color conversion
+     * @return the decoded image
+     * @throws IndexOutOfBoundsException if the file lists no image of that index
+     * @throws MediaException.Malformed if the file or the image is invalid
+     * @throws MediaException.Unsupported if the image uses a coding feature listed on the class
+     * @throws MediaException.LimitExceeded if the input or the image exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        try (var _ = ParallelBands.operation()) {
+            var data = Guards.malformed(WHAT, () -> SourceBytes.readAll(source, options.limits(), true));
+            var listed = Guards.malformed(WHAT, () -> listed(data, options.limits()));
+            Objects.checkIndex(index, listed.size());
+            var image = listed.get(index).image();
+            return decode(MediaSource.of(data, image.offset(), image.length()), options);
+        }
+    }
+
+    /**
+     * A listed secondary image.
+     *
+     * @param image the location of the image in the file
+     * @param description its description
+     */
+    private record Listed(JpegContainer.Image image, AuxiliaryImage description) {
+    }
+
+    /**
+     * Lists the secondary images of a file that have a valid frame header.
+     *
+     * @param data the file
+     * @param limits the bounds of the XMP packets
+     * @return the images
+     */
+    private static List<Listed> listed(byte[] data, MediaLimits limits) {
+        var result = new ArrayList<Listed>();
+        for (var secondary : UltraHdr.secondaries(data, limits)) {
+            var image = secondary.image();
+            ImageInfo info;
+            try {
+                info = JpegProbe.probe(MediaSource.of(data, image.offset(), image.length()));
+            } catch (MediaException.Malformed | MediaException.Unsupported exception) {
+                continue;
+            }
+            result.add(new Listed(image, UltraHdr.describe(result.size(), secondary, info.width(), info.height())));
+        }
+        return result;
+    }
+
+    /**
+     * {@return a parsed XMP packet, or {@code null} when it does not parse}
+     */
+    private static XmpPacket parseXmp(byte[] xmp) {
+        try {
+            return XmpPacket.parse(xmp);
+        } catch (MediaException exception) {
+            return null;
+        }
+    }
+
+    /**
+     * {@return the options of a gain map image: the limits and the bit depth choice of others, without color
+     * conversion or size hint}
+     */
+    private static ImageDecoderOptions plain(ImageDecoderOptions options) {
+        return ImageDecoderOptions.builder().limits(options.limits()).highBitDepth(options.highBitDepth()).build();
     }
 
     /**

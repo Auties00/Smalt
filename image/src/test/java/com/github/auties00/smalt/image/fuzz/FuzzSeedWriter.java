@@ -543,4 +543,28 @@ class FuzzSeedWriter {
                 "-auto-alt-ref", "1", "-lag-in-frames", "3", "-error-resilient", "1");
         write(ImageVideoFuzzTest.class, "vp8", "valid-altref.bin", FuzzSeeds.packets(vp8Alpha, Codec.VP8, 0, 3));
     }
+
+    @Test
+    @DisplayName("writes the seeds of the JPEG gain map target: Ultra HDR files Smalt writes")
+    void gainMaps() {
+        var base = seedPicture(24, 1);
+        var hdr = com.github.auties00.smalt.image.ops.ImageOps.toSixteenBit(seedPicture(24, 2));
+        var pq = com.github.auties00.smalt.image.color.ColorProfile.of(new com.github.auties00.smalt.image.ColorInfo(
+                com.github.auties00.smalt.image.MatrixCoefficients.IDENTITY,
+                com.github.auties00.smalt.image.ColorRange.FULL, com.github.auties00.smalt.image.ColorPrimaries.BT709,
+                com.github.auties00.smalt.image.TransferCharacteristics.PQ));
+        var sdr = new com.github.auties00.smalt.image.DecodedImage(base, com.github.auties00.smalt.image.ImageFormat.JPEG, Orientation.NORMAL, 24, 24,
+                java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(),
+                java.util.Optional.empty());
+        var alternate = new com.github.auties00.smalt.image.DecodedImage(hdr, com.github.auties00.smalt.image.ImageFormat.JPEG, Orientation.NORMAL, 24,
+                24, java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(),
+                java.util.Optional.of(pq));
+        for (var multichannel : new boolean[]{false, true}) {
+            var gainMap = com.github.auties00.smalt.image.gainmap.GainMaps.compute(sdr, alternate,
+                    com.github.auties00.smalt.image.gainmap.GainMapComputeOptions.builder().multichannel(multichannel)
+                            .scale(multichannel ? 2 : 1).build());
+            write(ImageFuzzTest.class, "jpegGainMap", "valid-ultrahdr-" + (multichannel ? "multichannel" : "gray")
+                    + ".jpg", com.github.auties00.smalt.image.jpeg.JpegEncoder.encode(base, gainMap));
+        }
+    }
 }

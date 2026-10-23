@@ -629,4 +629,13 @@ class FuzzSeedWriter {
     private static void seed(String method, String name, Codec codec, Path file) {
         write(MpegFuzzTest.class, method, name, FuzzSeeds.packets(file, codec, 0, 6));
     }
+
+    @Test
+    @DisplayName("writes the seeds of the HEIC gain map target: an iPhone-style portrait with an Apple gain map")
+    void gainMaps() {
+        var portrait = com.github.auties00.smalt.image.heic.HeicGainMapTest.portrait(32, 24,
+                com.github.auties00.smalt.image.heic.HeicGainMapTest.exif(1, 2, 3, 100));
+        com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write(MpegFuzzTest.class, "heicGainMap", "valid-portrait.heic",
+                portrait);
+    }
 }

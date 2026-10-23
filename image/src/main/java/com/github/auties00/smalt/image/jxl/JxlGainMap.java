@@ -1,6 +1,10 @@
 package com.github.auties00.smalt.image.jxl;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.DecodedImage;
+import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.gainmap.GainMap;
+import com.github.auties00.smalt.image.gainmap.GainMapMetadata;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -40,6 +44,28 @@ public record JxlGainMap(int version, byte[] metadata, Optional<byte[]> alternat
         if (version < 0 || version > 255) {
             throw new IllegalArgumentException("invalid jhgm version " + version);
         }
+    }
+
+    /**
+     * Returns this gain map in the format-independent model: its metadata parsed as the binary ISO 21496-1
+     * structure ({@link GainMapMetadata#parse(byte[])}), its image, and the alternate ICC profile as the color
+     * space of the alternate rendition.
+     *
+     * @return the gain map; its alternate profile is empty when the box stores none or the stored one does not
+     * parse
+     * @throws MediaException.Malformed if the metadata is invalid
+     * @throws MediaException.Unsupported if the metadata has an unsupported minimum version or the backward
+     * direction
+     */
+    public GainMap toGainMap() {
+        var profile = alternateIcc.flatMap(icc -> {
+            try {
+                return Optional.of(ColorProfile.parse(icc));
+            } catch (MediaException exception) {
+                return Optional.empty();
+            }
+        });
+        return new GainMap(GainMapMetadata.parse(metadata), image.picture(), profile, Optional.empty());
     }
 
     @Override

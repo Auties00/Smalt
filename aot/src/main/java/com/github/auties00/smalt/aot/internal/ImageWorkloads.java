@@ -8,12 +8,17 @@ import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.bmp.BmpDecoder;
@@ -22,6 +27,9 @@ import com.github.auties00.smalt.image.bmp.BmpEncoderOptions;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifValue;
+import com.github.auties00.smalt.image.gainmap.GainMapComputeOptions;
+import com.github.auties00.smalt.image.gainmap.GainMapOptions;
+import com.github.auties00.smalt.image.gainmap.GainMaps;
 import com.github.auties00.smalt.image.gif.GifAnimationEncoder;
 import com.github.auties00.smalt.image.gif.GifDecoder;
 import com.github.auties00.smalt.image.gif.GifEncoder;
@@ -93,6 +101,7 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executors;
@@ -159,6 +168,7 @@ final class ImageWorkloads {
                 file("jpeg-encode", ImageWorkloads::jpegEncode),
                 file("jpeg-encode-modes", ImageWorkloads::jpegEncodeModes),
                 file("jpeg-transform", ImageWorkloads::jpegTransform),
+                file("jpeg-gainmap", ImageWorkloads::jpegGainMap),
                 file("mjpeg-decode", ImageWorkloads::mjpegDecode),
                 file("mjpeg-encode", ImageWorkloads::mjpegEncode),
                 file("png-decode", () -> pngDecode(2)),
@@ -510,6 +520,38 @@ final class ImageWorkloads {
                 Blackhole.consume(JpegEncoder.encode(rgba, option).length);
             }
             Blackhole.consume(JpegEncoder.encode(yuv, JpegEncoderOptions.defaults()).length);
+        });
+    }
+
+    /**
+     * Returns a workload that computes single and multichannel gain maps of a 640x360 picture against a PQ
+     * rendition, writes them as Ultra HDR files, reads them back and renders them to PQ and HLG at two headrooms.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegGainMap() {
+        var yuv = SyntheticVideo.natural(640, 360, 1).getFirst();
+        var rgba = SyntheticImages.rgba(yuv, false);
+        var base = new DecodedImage(rgba, ImageFormat.JPEG, Orientation.NORMAL, 640, 360, Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.empty());
+        var pq = ColorProfile.of(new ColorInfo(MatrixCoefficients.IDENTITY, ColorRange.FULL, ColorPrimaries.BT2020,
+                TransferCharacteristics.PQ));
+        var hdr = ImageOps.toSixteenBit(rgba);
+        var alternate = new DecodedImage(hdr, ImageFormat.JPEG, Orientation.NORMAL, 640, 360, Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.of(pq));
+        var renders = List.of(GainMapOptions.defaults(), GainMapOptions.ofHeadroom(1),
+                GainMapOptions.builder().transfer(TransferCharacteristics.HLG).build());
+        return TrainingWorkload.of("jpeg-gainmap", () -> {
+            for (var multichannel : new boolean[]{false, true}) {
+                var gainMap = GainMaps.compute(base, alternate, GainMapComputeOptions.builder()
+                        .multichannel(multichannel).scale(multichannel ? 2 : 1).build());
+                var file = JpegEncoder.encode(rgba, gainMap);
+                var decoded = JpegDecoder.decode(MediaSource.of(file));
+                var read = JpegDecoder.decodeGainMap(MediaSource.of(file)).orElseThrow();
+                for (var options : renders) {
+                    Blackhole.consume(GainMaps.apply(decoded, read, options).picture().width());
+                }
+            }
         });
     }
 

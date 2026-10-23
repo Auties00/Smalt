@@ -3,12 +3,20 @@
 package com.github.auties00.smalt.image.avif.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorModel;
+import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.video.av1.internal.DequantTables;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
@@ -118,6 +126,27 @@ public final class AvifStillEncoder {
      * @return the file
      */
     public static byte[] encode(Picture picture, AvifEncoderOptions options) {
+        return encode(picture, options, null, null);
+    }
+
+    /**
+     * Encodes a picture as an AVIF file, with a gain map.
+     *
+     * <p>The gain map is a hidden {@code av01} item, monochrome for a gray gain map image and 4:4:4 with the
+     * identity matrix otherwise, both full range, with the orientation of the color item; a {@code tmap} item
+     * with the gain map metadata and the {@code ispe} and alternate color properties, derived from the color item
+     * and the gain map item in that order, is preferred to the color item by an {@code altr} group, and the file
+     * gains the {@code tmap} brand. The color item stays the primary item, so that readers without gain map
+     * support show the base image.
+     *
+     * @param picture the picture, in any representation
+     * @param options the encoder settings of the picture
+     * @param gainMap the gain map, or {@code null} for none
+     * @param gainMapOptions the encoder settings of the gain map image, or {@code null} without a gain map
+     * @return the file
+     */
+    public static byte[] encode(Picture picture, AvifEncoderOptions options, GainMap gainMap,
+                                AvifEncoderOptions gainMapOptions) {
         var image = EncodeImage.of(picture, options.chromaFormat().orElse(null), options.bitDepth().orElse(0),
                 options.color(), options.isLossless(), options.premultipliedAlpha());
         var tileSize = options.gridTileSize().orElse(
@@ -148,7 +177,11 @@ public final class AvifStillEncoder {
                 alphaImages.add(code(image.alphaImage(), options.alphaQuality(), options, false));
             }
         }
-        var writer = new AvifWriter("avif", brands(colorImages, alphaImages));
+        var brands = brands(colorImages, alphaImages);
+        if (gainMap != null) {
+            brands.add("tmap");
+        }
+        var writer = new AvifWriter("avif", brands);
         var depth = image.bitDepth();
         var channels = image.format() == ChromaFormat.MONOCHROME ? 1 : 3;
         var colorProps = new ArrayList<AvifWriter.Property>();
@@ -196,6 +229,9 @@ public final class AvifStillEncoder {
                         AvifWriter.pixi(depth, 1), AvifWriter.av1C(alpha.av1C()), AvifWriter.auxC(HeifProperty.AuxiliaryType.ALPHA_URN));
             }
         }
+        if (gainMap != null) {
+            addGainMap(writer, colorId, image.width(), image.height(), options, gainMap, gainMapOptions);
+        }
         writer.primary(colorId);
         if (alphaId != 0) {
             writer.reference("auxl", alphaId, colorId);
@@ -205,6 +241,65 @@ public final class AvifStillEncoder {
         }
         writer.addMetadata(colorId, options.exif().orElse(null), options.xmp().orElse(null));
         return writer.write();
+    }
+
+    /**
+     * Adds the gain map item, the {@code tmap} item that derives the alternate rendition, and their
+     * {@code altr} group.
+     *
+     * @param writer the file
+     * @param colorId the color item
+     * @param width the width of the color image
+     * @param height the height of the color image
+     * @param options the encoder settings of the picture
+     * @param gainMap the gain map
+     * @param gainMapOptions the encoder settings of the gain map image
+     */
+    private static void addGainMap(AvifWriter writer, int colorId, int width, int height, AvifEncoderOptions options,
+                                   GainMap gainMap, AvifEncoderOptions gainMapOptions) {
+        var picture = gainMap.image();
+        var gray = switch (picture) {
+            case YuvPicture yuv -> yuv.chromaFormat() == ChromaFormat.MONOCHROME;
+            case Yuv16Picture yuv -> yuv.chromaFormat() == ChromaFormat.MONOCHROME;
+            case ChannelPicture channels -> channels.layout().colorModel() == ColorModel.GRAY;
+            default -> false;
+        };
+        var color = new ColorInfo(gray ? MatrixCoefficients.BT601 : MatrixCoefficients.IDENTITY, ColorRange.FULL,
+                ColorPrimaries.UNSPECIFIED, TransferCharacteristics.UNSPECIFIED);
+        var image = EncodeImage.of(picture, gray ? ChromaFormat.MONOCHROME : ChromaFormat.YUV444,
+                gainMapOptions.bitDepth().orElse(0), color, gainMapOptions.isLossless(), false);
+        var coded = code(image, gainMapOptions.quality(), gainMapOptions, false);
+        var signaled = image.color();
+        var gainMapProps = new ArrayList<AvifWriter.Property>();
+        gainMapProps.add(AvifWriter.ispe(image.width(), image.height()));
+        gainMapProps.add(AvifWriter.pixi(image.bitDepth(), gray ? 1 : 3));
+        gainMapProps.add(AvifWriter.av1C(coded.av1C()));
+        gainMapProps.add(AvifWriter.nclx(signaled.primaries().code(), signaled.transfer().code(),
+                signaled.matrix().code(), signaled.range() == ColorRange.FULL));
+        // the orientation goes on both inputs of the tmap item and not on the tmap item itself, the layout
+        // libavif writes and the only one it accepts
+        gainMapProps.addAll(orientation(options.orientation()));
+        var gainMapId = writer.addItem("av01", coded.data(), true, gainMapProps.toArray(AvifWriter.Property[]::new));
+        var properties = new ArrayList<AvifWriter.Property>();
+        properties.add(AvifWriter.ispe(width, height));
+        gainMap.alternateProfile().ifPresent(profile -> {
+            var info = profile.colorInfo();
+            if (info.isPresent()) {
+                var cicp = info.get();
+                properties.add(AvifWriter.nclx(cicp.primaries().code(), cicp.transfer().code(), cicp.matrix().code(),
+                        cicp.range() == ColorRange.FULL));
+            } else {
+                properties.add(AvifWriter.icc(profile.toByteArray()));
+            }
+        });
+        gainMap.alternateLightLevel().ifPresent(level -> properties.add(AvifWriter.clli(
+                level.maxContentLightLevel(), level.maxFrameAverageLightLevel())));
+        var metadata = gainMap.metadata().toByteArray();
+        var payload = new byte[metadata.length + 1];
+        System.arraycopy(metadata, 0, payload, 1, metadata.length);
+        var toneMapId = writer.addIdatItem("tmap", payload, properties.toArray(AvifWriter.Property[]::new));
+        writer.reference("dimg", toneMapId, colorId, gainMapId);
+        writer.alternatives(toneMapId, colorId);
     }
 
     /**

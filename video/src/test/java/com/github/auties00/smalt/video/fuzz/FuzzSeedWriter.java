@@ -56,4 +56,39 @@ class FuzzSeedWriter {
     private static void seed(String method, String name, Codec codec, int options, Path file) {
         write(VideoFuzzTest.class, method, name, FuzzSeeds.packets(file, codec, options, 4));
     }
+
+    @Test
+    @DisplayName("writes the seeds of the AVIF gain map target: AVIF files with a tmap item that Smalt writes")
+    void gainMaps() {
+        var base = com.github.auties00.smalt.image.RgbaPicture.allocate(24, 16, false);
+        var bright = com.github.auties00.smalt.image.Rgba16Picture.allocate(24, 16, false);
+        for (var i = 0; i < 24 * 16; i++) {
+            for (var c = 0; c < 3; c++) {
+                base.pixels()[i * 4 + c] = (byte) (i * (c + 3));
+                bright.pixels()[i * 4 + c] = (short) (i * (c + 3) * 150);
+            }
+            base.pixels()[i * 4 + 3] = (byte) 0xFF;
+            bright.pixels()[i * 4 + 3] = (short) 0xFFFF;
+        }
+        var pq = com.github.auties00.smalt.image.color.ColorProfile.of(new com.github.auties00.smalt.image.ColorInfo(
+                com.github.auties00.smalt.image.MatrixCoefficients.IDENTITY,
+                com.github.auties00.smalt.image.ColorRange.FULL, com.github.auties00.smalt.image.ColorPrimaries.BT709,
+                com.github.auties00.smalt.image.TransferCharacteristics.PQ));
+        var sdr = new com.github.auties00.smalt.image.DecodedImage(base,
+                com.github.auties00.smalt.image.ImageFormat.AVIF, com.github.auties00.smalt.image.Orientation.NORMAL,
+                24, 16, java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(),
+                java.util.Optional.empty());
+        var alternate = new com.github.auties00.smalt.image.DecodedImage(bright,
+                com.github.auties00.smalt.image.ImageFormat.AVIF, com.github.auties00.smalt.image.Orientation.NORMAL,
+                24, 16, java.util.Optional.empty(), java.util.Optional.empty(), java.util.Optional.empty(),
+                java.util.Optional.of(pq));
+        for (var multichannel : new boolean[]{false, true}) {
+            var gainMap = com.github.auties00.smalt.image.gainmap.GainMaps.compute(sdr, alternate,
+                    com.github.auties00.smalt.image.gainmap.GainMapComputeOptions.builder().multichannel(multichannel)
+                            .build());
+            com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write(VideoFuzzTest.class, "avifGainMap",
+                    "valid-tmap-" + (multichannel ? "multichannel" : "gray") + ".avif",
+                    com.github.auties00.smalt.image.avif.AvifEncoder.encode(base, gainMap));
+        }
+    }
 }

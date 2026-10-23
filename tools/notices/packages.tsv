@@ -68,6 +68,7 @@ image.bmp	image
 image.bmp.internal	image
 image.color	core
 image.exif	image
+image.gainmap	core
 image.gif	image
 image.gif.internal	image
 image.heic	mpeg
@@ -114,6 +115,7 @@ internal.check	core
 internal.codec	core
 internal.color	core
 internal.edit	core
+internal.gainmap	core
 internal.header	core
 internal.heif	core
 internal.io	core

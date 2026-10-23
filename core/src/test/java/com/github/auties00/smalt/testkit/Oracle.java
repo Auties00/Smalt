@@ -139,7 +139,16 @@ public final class Oracle {
         MPEG4REF("smalt-mpeg4ref"),
 
         /** {@code tools/testdata/gif-oracle}'s driver of giflib 5.2.2's GIF encoder. */
-        GIFENC("smalt-gifenc");
+        GIFENC("smalt-gifenc"),
+
+        /** libultrahdr's Ultra HDR encoder and decoder CLI. */
+        ULTRAHDR_APP("ultrahdr_app"),
+
+        /** libavif's gain map tool (tone mapping, metadata dump). */
+        AVIFGAINMAPUTIL("avifgainmaputil"),
+
+        /** libavif's AVIF decoder CLI. */
+        AVIFDEC("avifdec");
 
         /** The executable name without extension. */
         private final String executable;

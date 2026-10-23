@@ -134,6 +134,11 @@ public final class AvifWriter {
     private final List<Reference> references = new ArrayList<>();
 
     /**
+     * The alternatives groups ({@code altr}), each its items in order of preference.
+     */
+    private final List<int[]> alternatives = new ArrayList<>();
+
+    /**
      * The identifier of the primary item, 0 when unset.
      */
     private int primary;
@@ -284,6 +289,16 @@ public final class AvifWriter {
     }
 
     /**
+     * Adds an alternatives group ({@code altr}) of items, written in the {@code grpl} box with a group identifier
+     * above every item identifier.
+     *
+     * @param ids the items, the most preferred first
+     */
+    public void alternatives(int... ids) {
+        alternatives.add(ids.clone());
+    }
+
+    /**
      * Adds the metadata items that describe an item: an {@code Exif} item and an XMP {@code mime}
      * item, each with a {@code cdsc} reference to it.
      *
@@ -401,6 +416,20 @@ public final class AvifWriter {
             iref(out);
         }
         iprp(out);
+        if (!alternatives.isEmpty()) {
+            out.begin(FourCc.of("grpl"));
+            var groupId = items.size() + 1L;
+            for (var group : alternatives) {
+                out.beginFull(FourCc.of("altr"), 0, 0);
+                out.u32be(groupId++);
+                out.u32be(group.length);
+                for (var id : group) {
+                    out.u32be(id);
+                }
+                out.end();
+            }
+            out.end();
+        }
         var idat = 0;
         for (var item : items) {
             if (item.inIdat) {

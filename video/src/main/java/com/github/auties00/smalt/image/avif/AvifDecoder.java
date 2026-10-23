@@ -3,18 +3,23 @@ package com.github.auties00.smalt.image.avif;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.AnimationReader;
+import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.image.avif.internal.AvifFiles;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.function.Supplier;
 
 /**
  * Decodes AVIF images (AV1 Image File Format): still images, grids, derived images, alpha,
@@ -77,6 +82,12 @@ import java.util.Objects;
  *       the {@code nclx} box or the sequence header when it is not sRGB.</li>
  * </ul>
  * The EXIF orientation is not used: AVIF orients images with {@code irot} and {@code imir}.
+ *
+ * <p>The gain map of a tone map derived image item ({@code tmap}, ISO 21496-1) decodes with
+ * {@link #decodeGainMap(MediaSource, ImageDecoderOptions)}, for
+ * {@link com.github.auties00.smalt.image.gainmap.GainMaps#apply}; the primary image stays the one shown. The
+ * auxiliary images of the primary image (alpha, depth maps, thumbnails, the gain map) are listed by
+ * {@link #auxiliaryImages(MediaSource, MediaLimits)} and decode one by one.
  *
  * <p>An image sequence ({@code avis}) plays through {@link #openAnimation}: its color track and
  * its alpha track, every frame converted to RGBA (16-bit RGBA when
@@ -179,6 +190,146 @@ public final class AvifDecoder {
         try (var _ = ParallelBands.operation()) {
             var image = AvifFiles.decode(source, options);
             return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (OutOfMemoryError error) {
+            throw new MediaException.LimitExceeded("out of memory while decoding an AVIF file");
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("malformed AVIF file", exception);
+        }
+    }
+
+    /**
+     * Decodes the gain map of the primary image of an AVIF file under the {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the file
+     * @return the gain map, or empty when the file has none
+     * @throws MediaException.Malformed if the file or the gain map is invalid
+     * @throws MediaException.Unsupported if the gain map image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeGainMap(MediaSource, ImageDecoderOptions)
+     */
+    public static Optional<GainMap> decodeGainMap(MediaSource source) {
+        return decodeGainMap(source, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes the gain map of the primary image of an AVIF file.
+     *
+     * <p>The gain map is the second input of the tone map derived image item ({@code tmap}) whose first input is
+     * the primary item: an item with data that references exactly two distinct items with {@code dimg} and that an
+     * alternatives group ({@code altr}) prefers to the primary item, in a file with the {@code tmap} brand. Its
+     * payload is a version byte, 0, followed by the ISO 21496-1 metadata
+     * ({@link com.github.auties00.smalt.image.gainmap.GainMapMetadata#parse(byte[])}); another version, or metadata
+     * of an unsupported minimum version, is ignored as libavif ignores it. The gain map item decodes as an image
+     * item does, without its orientation; the {@code colr} and {@code clli} properties of the {@code tmap} item
+     * describe the alternate rendition.
+     *
+     * @param source the file
+     * @param options the limits and the bit depth choice of the gain map image; the size hint and the color
+     * conversion are ignored
+     * @return the gain map, or empty when the file has none or shows an image sequence
+     * @throws MediaException.Malformed if the file or the gain map is invalid
+     * @throws MediaException.Unsupported if the gain map image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        return auxiliaryGuarded(() -> AvifFiles.decodeGainMap(source, options));
+    }
+
+    /**
+     * Lists the auxiliary images of the primary image of an AVIF file within the
+     * {@linkplain MediaLimits#DEFAULT default limits}.
+     *
+     * @param source the file
+     * @return the images, as {@link #auxiliaryImages(MediaSource, MediaLimits)} describes
+     * @throws MediaException.Malformed if the file structure is invalid or truncated
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<AuxiliaryImage> auxiliaryImages(MediaSource source) {
+        return auxiliaryImages(source, MediaLimits.DEFAULT);
+    }
+
+    /**
+     * Lists the auxiliary images of the primary image of an AVIF file: its auxiliary items ({@code auxl}
+     * references: alpha planes, depth maps, mattes, gain maps and others, by the URN of their {@code auxC}
+     * property), then its thumbnails ({@code thmb} references), then the gain map of its tone map item.
+     *
+     * <p>Only the images this decoder reconstructs are listed, with the size of their {@code ispe} property, or
+     * of their grid; a file that shows an image sequence lists none.
+     *
+     * @param source the file
+     * @param limits the bounds of the structure and the items
+     * @return the images, indexed from 0
+     * @throws MediaException.Malformed if the file structure is invalid or truncated
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(limits, "limits");
+        return auxiliaryGuarded(() -> List.copyOf(AvifFiles.auxiliaryImages(source, limits)));
+    }
+
+    /**
+     * Decodes an auxiliary image of the primary image of an AVIF file under the
+     * {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the file
+     * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource)}
+     * @return the decoded image
+     * @throws IndexOutOfBoundsException if the file lists no image of that index
+     * @throws MediaException.Malformed if the file or the image is invalid
+     * @throws MediaException.Unsupported if the image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeAuxiliaryImage(MediaSource, int, ImageDecoderOptions)
+     */
+    public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index) {
+        return decodeAuxiliaryImage(source, index, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes an auxiliary image of the primary image of an AVIF file, as an image item decodes: a monochrome
+     * depth map or matte to a monochrome Y'CbCr picture, its clean aperture applied and its rotation and mirroring
+     * reported as the orientation, with the color of its own {@code colr} property and no EXIF or XMP. The pixels
+     * keep their values; the color conversion of the options is ignored.
+     *
+     * @param source the file
+     * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource, MediaLimits)}
+     * @param options the limits and the bit depth choice
+     * @return the decoded image
+     * @throws IndexOutOfBoundsException if the file lists no image of that index
+     * @throws MediaException.Malformed if the file or the image is invalid
+     * @throws MediaException.Unsupported if the image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        var image = auxiliaryGuarded(() -> AvifFiles.decodeAuxiliaryImage(source, index, options));
+        if (image == null) {
+            throw new IndexOutOfBoundsException("the file lists no auxiliary image " + index);
+        }
+        return image;
+    }
+
+    /**
+     * Runs an operation, turning unchecked failures into media exceptions.
+     *
+     * @param <T> the result type
+     * @param operation the decoding to run
+     * @return its result
+     */
+    private static <T> T auxiliaryGuarded(Supplier<T> operation) {
+        try (var _ = ParallelBands.operation()) {
+            return operation.get();
         } catch (MediaException exception) {
             throw exception;
         } catch (OutOfMemoryError error) {

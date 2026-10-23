@@ -3,17 +3,21 @@ package com.github.auties00.smalt.image.heic;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.AnimationReader;
+import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.heic.internal.HeicFiles;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
+import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
@@ -57,8 +61,10 @@ import java.util.function.Supplier;
  *       grid tile; limited-range alpha is expanded to full range, alpha of another bit depth is
  *       rescaled to the color depth, and an alpha image of another size than its color image is
  *       resampled to it with the triangle filter
- *       ({@link com.github.auties00.smalt.image.ops.ResizeFilter#BILINEAR}). Depth maps, HDR gain
- *       maps and the other auxiliary images are ignored;</li>
+ *       ({@link com.github.auties00.smalt.image.ops.ResizeFilter#BILINEAR}). The other auxiliary
+ *       images (depth maps, mattes, gain maps) are left out of the decoded image and listed by
+ *       {@link #auxiliaryImages(MediaSource, MediaLimits)}; the gain map, of a {@code tmap} item or
+ *       Apple's auxiliary image, decodes with {@link #decodeGainMap(MediaSource, ImageDecoderOptions)};</li>
  *   <li>the clean aperture ({@code clap}) is applied to the pixels; the rotation ({@code irot})
  *       and mirroring ({@code imir}) are reported as {@link DecodedImage#orientation()}, which
  *       the caller applies (for example with
@@ -180,6 +186,149 @@ public final class HeicDecoder {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         return guarded("decoding a HEIC file", () -> HeicFiles.decode(source, options));
+    }
+
+    /**
+     * Decodes the gain map of the primary image of a HEIC file under the {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the file
+     * @return the gain map, or empty when the file has none
+     * @throws MediaException.Malformed if the file or the gain map is invalid
+     * @throws MediaException.Unsupported if the gain map image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeGainMap(MediaSource, ImageDecoderOptions)
+     */
+    public static Optional<GainMap> decodeGainMap(MediaSource source) {
+        return decodeGainMap(source, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes the gain map of the primary image of a HEIC file.
+     *
+     * <p>The gain map is the second input of the tone map derived image item ({@code tmap}, ISO 21496-1 metadata)
+     * whose first input is the primary item and that an alternatives group ({@code altr}) prefers to it, as for
+     * AVIF files but without requiring the {@code tmap} brand; its {@code colr} and {@code clli} properties describe
+     * the alternate rendition. Without one, Apple's gain map auxiliary image
+     * ({@code urn:com:apple:photo:2020:aux:hdrgainmap}) of an image whose XMP declares
+     * {@code HDRGainMap:HDRGainMapVersion} is converted to the ISO 21496-1 model: its BT.709-encoded samples
+     * {@code g} scale the linear base as {@code 1 + (headroom - 1) * g}, the headroom coming from the tags 33 and 48
+     * of the Apple maker note of the EXIF item (or the {@code HDRGainMap:HDRGainMapHeadroom} XMP property), as
+     * Apple's "Applying Apple HDR effect to your photos" describes; the converted gain map is a 16-bit gray picture
+     * of {@code log2(1 + (headroom - 1) * g) / log2(headroom)}, whose log2 gains range from 0 to
+     * {@code log2(headroom)}, without offsets.
+     *
+     * @param source the file
+     * @param options the limits and the bit depth choice of the gain map image; the size hint and the color
+     * conversion are ignored
+     * @return the gain map, or empty when the file has none or shows an image sequence
+     * @throws MediaException.Malformed if the file or the gain map is invalid
+     * @throws MediaException.Unsupported if the gain map image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        return auxiliaryGuarded(() -> HeicFiles.decodeGainMap(source, options));
+    }
+
+    /**
+     * Lists the auxiliary images of the primary image of a HEIC file within the
+     * {@linkplain MediaLimits#DEFAULT default limits}.
+     *
+     * @param source the file
+     * @return the images, as {@link #auxiliaryImages(MediaSource, MediaLimits)} describes
+     * @throws MediaException.Malformed if the file structure is invalid or truncated
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<AuxiliaryImage> auxiliaryImages(MediaSource source) {
+        return auxiliaryImages(source, MediaLimits.DEFAULT);
+    }
+
+    /**
+     * Lists the auxiliary images of the primary image of a HEIC file: its auxiliary items ({@code auxl}
+     * references: alpha planes, depth maps, mattes, gain maps and others, by the URN of their {@code auxC}
+     * property), then its thumbnails ({@code thmb} references), then the gain map of its tone map item.
+     *
+     * <p>Only the images this decoder reconstructs are listed, with the size of their {@code ispe} property, or
+     * of their grid; a file that shows an image sequence lists none.
+     *
+     * @param source the file
+     * @param limits the bounds of the structure and the items
+     * @return the images, indexed from 0
+     * @throws MediaException.Malformed if the file structure is invalid or truncated
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(limits, "limits");
+        return auxiliaryGuarded(() -> List.copyOf(HeicFiles.auxiliaryImages(source, limits)));
+    }
+
+    /**
+     * Decodes an auxiliary image of the primary image of a HEIC file under the
+     * {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the file
+     * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource)}
+     * @return the decoded image
+     * @throws IndexOutOfBoundsException if the file lists no image of that index
+     * @throws MediaException.Malformed if the file or the image is invalid
+     * @throws MediaException.Unsupported if the image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeAuxiliaryImage(MediaSource, int, ImageDecoderOptions)
+     */
+    public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index) {
+        return decodeAuxiliaryImage(source, index, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes an auxiliary image of the primary image of a HEIC file, as an image item decodes: a monochrome
+     * depth map or matte to a monochrome Y'CbCr picture, its clean aperture applied and its rotation and mirroring
+     * reported as the orientation, with the color of its own {@code colr} property and no EXIF or XMP. The pixels
+     * keep their values; the color conversion of the options is ignored.
+     *
+     * @param source the file
+     * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource, MediaLimits)}
+     * @param options the limits and the bit depth choice
+     * @return the decoded image
+     * @throws IndexOutOfBoundsException if the file lists no image of that index
+     * @throws MediaException.Malformed if the file or the image is invalid
+     * @throws MediaException.Unsupported if the image uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        var image = auxiliaryGuarded(() -> HeicFiles.decodeAuxiliaryImage(source, index, options));
+        if (image == null) {
+            throw new IndexOutOfBoundsException("the file lists no auxiliary image " + index);
+        }
+        return image;
+    }
+
+    /**
+     * Runs an operation, turning unchecked failures into media exceptions.
+     *
+     * @param <T> the result type
+     * @param operation the decoding to run
+     * @return its result
+     */
+    private static <T> T auxiliaryGuarded(Supplier<T> operation) {
+        try (var _ = ParallelBands.operation()) {
+            return operation.get();
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (OutOfMemoryError error) {
+            throw new MediaException.LimitExceeded("out of memory while decoding a HEIC file");
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("malformed HEIC file", exception);
+        }
     }
 
     /**

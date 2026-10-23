@@ -63,8 +63,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * one. An alpha image of another size than its color image is resampled to it with
  * {@link HeifPictures#resampleAlpha}, and alpha of another bit depth is rescaled to the color
  * depth (see {@link HeifCanvas}); color premultiplied by the alpha ({@code prem} reference) is
- * divided back into a straight-alpha RGBA picture. Depth maps, gain maps and the other auxiliary
- * images are ignored.
+ * divided back into a straight-alpha RGBA picture. The other auxiliary images (depth maps, mattes, gain
+ * maps) are not merged; they reconstruct as items of their own.
  *
  * <p>Derived images nest at most {@value #MAX_DEPTH} deep, and the coded pictures decoded for one
  * image total at most four times the pixel limit; a file that goes beyond either is rejected, so a

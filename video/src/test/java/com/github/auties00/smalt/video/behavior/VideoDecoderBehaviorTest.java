@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.video.behavior;
 
+import com.github.auties00.smalt.image.avif.AvifDecoder;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.container.ReaderAsserts;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
@@ -61,5 +63,19 @@ class VideoDecoderBehaviorTest {
     @DisplayName("AVIF samples: identical pictures under every source behavior and clean faults")
     void avifSample(String sample) throws IOException {
         ImageDecoderAsserts.of(sample, Files.readAllBytes(AVIF_SAMPLES.resolve(sample))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"libavif-seine_sdr_gainmap_srgb.avif", "libavif-color_grid_alpha_grid_gainmap_nogrid.avif",
+            "valid-tmap-multichannel.avif"})
+    @DisplayName("AVIF gain maps: identical pictures, gain maps and auxiliary images under every source behavior")
+    void avifGainMap(String name) throws IOException {
+        var data = name.startsWith("libavif-") ? Files.readAllBytes(Conformance.fetchListed(name))
+                : Files.readAllBytes(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video",
+                "fuzz", "VideoFuzzTestInputs", "avifGainMap").resolve(name));
+        ImageDecoderAsserts.of("gainmap/" + name, data)
+                .decoder("gain map", source -> AvifDecoder.decodeGainMap(source).map(GainMap::image).orElse(null))
+                .decoder("auxiliary images", source -> AvifDecoder.auxiliaryImages(source).toString())
+                .run();
     }
 }

@@ -77,6 +77,9 @@ module com.github.auties00.smalt {
     // Color management: ICC profiles and color transforms
     exports com.github.auties00.smalt.image.color;
 
+    // HDR gain maps
+    exports com.github.auties00.smalt.image.gainmap;
+
     // Containers
     exports com.github.auties00.smalt.container.ac3;
     exports com.github.auties00.smalt.container.adts;
@@ -135,6 +138,10 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.audio,
             com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.edit to com.github.auties00.smalt.image;
+    exports com.github.auties00.smalt.internal.gainmap to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.video,
+            com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.heif to
             com.github.auties00.smalt.aot,
             com.github.auties00.smalt.image,

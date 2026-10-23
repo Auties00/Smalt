@@ -2,12 +2,24 @@ package com.github.auties00.smalt.property;
 
 import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
+import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.gainmap.GainMapComputeOptions;
+import com.github.auties00.smalt.image.gainmap.GainMapOptions;
+import com.github.auties00.smalt.image.gainmap.GainMaps;
 import com.github.auties00.smalt.image.jp2.Jp2Encoder;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
@@ -27,13 +39,14 @@ import java.security.MessageDigest;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Random;
 
 /**
  * Prints one SHA-256 per workload of the codecs and picture operations that parallelize on the shared helper threads
  * (image encoders and decoders, the WebP encoder's lossy and near-lossless modes, video decoders left to choose their
- * threads, resampling, the Opus multistream encoder): the output of a JVM whose {@code smalt.threads} differs must be
- * the same, line for line.
+ * threads, resampling, gain map computation and rendering, the Opus multistream encoder): the output of a JVM whose
+ * {@code smalt.threads} differs must be the same, line for line.
  */
 public final class ThreadDigest {
     private ThreadDigest() {
@@ -116,6 +129,7 @@ public final class ThreadDigest {
             digests.put("resize-" + filter.name().toLowerCase(),
                     sha256(ImageOps.toRgba(ImageOps.resize(picture, 517, 333, filter)).pixels()));
         }
+        gainMaps(picture, digests);
         for (var codec : new Codec[]{Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.PRORES, Codec.DNXHD,
                 Codec.MJPEG}) {
             var stream = Streams.video(codec, 640, 360, 8, builder -> builder.realtime(codec != Codec.H264));
@@ -126,6 +140,60 @@ public final class ThreadDigest {
                 AudioEncoderOptions.Builder::automaticBitrate);
         digests.put("opus-7.1-encode", sha256Packets(opus));
         return digests;
+    }
+
+    /**
+     * Adds the digests of gain map computation and rendering: the gain map image and metadata of a single-channel
+     * and a multichannel gain map of a PQ rendition, and the PQ and HLG renderings with their light levels.
+     *
+     * @param picture the standard-dynamic-range rendition
+     * @param digests the digests by workload name
+     */
+    static void gainMaps(Picture picture, Map<String, String> digests) {
+        var width = picture.width();
+        var height = picture.height();
+        var rgba = ImageOps.toRgba(picture);
+        var bright = Rgba16Picture.allocate(width, height, false);
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                var boost = 1 + 7.0 * x / width * y / height;
+                for (var c = 0; c < 3; c++) {
+                    var signal = (rgba.pixels()[y * rgba.stride() + x * 4 + c] & 0xFF) / 255.0;
+                    var light = Math.pow(signal, 2.2) * boost * 203 / 10000;
+                    var p = Math.pow(light, 2610.0 / 16384);
+                    var pq = Math.pow((3424.0 / 4096 + 2413.0 / 128 * p) / (1 + 2392.0 / 128 * p), 2523.0 / 32);
+                    bright.pixels()[y * bright.stride() + x * 4 + c] = (short) Math.round(pq * 65535);
+                }
+                bright.pixels()[y * bright.stride() + x * 4 + 3] = (short) 0xFFFF;
+            }
+        }
+        var base = new DecodedImage(picture, ImageFormat.PNG, Orientation.NORMAL, width, height, Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.empty());
+        var alternate = new DecodedImage(bright, ImageFormat.PNG, Orientation.NORMAL, width, height, Optional.empty(),
+                Optional.empty(), Optional.empty(), Optional.of(ColorProfile.of(new ColorInfo(
+                        MatrixCoefficients.IDENTITY, ColorRange.FULL, ColorPrimaries.BT2020,
+                        TransferCharacteristics.PQ))));
+        for (var multichannel : new boolean[]{false, true}) {
+            var name = "gainmap-" + (multichannel ? "multichannel" : "single");
+            var gainMap = GainMaps.compute(base, alternate, GainMapComputeOptions.builder().multichannel(multichannel)
+                    .scale(2).build());
+            var computed = digest();
+            computed.update(ImageOps.toRgba(gainMap.image()).pixels());
+            computed.update(gainMap.metadata().toByteArray());
+            digests.put(name + "-compute", HexFormat.of().formatHex(computed.digest()));
+            for (var transfer : new TransferCharacteristics[]{TransferCharacteristics.PQ, TransferCharacteristics.HLG}) {
+                var rendered = GainMaps.apply(base, gainMap, GainMapOptions.builder().headroom(2).transfer(transfer)
+                        .build());
+                var samples = ((Rgba16Picture) rendered.picture()).pixels();
+                var bytes = java.nio.ByteBuffer.allocate(samples.length * 2);
+                bytes.asShortBuffer().put(samples);
+                var digest = digest();
+                digest.update(bytes.array());
+                digest.update(rendered.colorProfile().orElseThrow().colorInfo().orElseThrow().contentLightLevel()
+                        .orElseThrow().toString().getBytes(java.nio.charset.StandardCharsets.US_ASCII));
+                digests.put(name + "-" + transfer.name().toLowerCase(), HexFormat.of().formatHex(digest.digest()));
+            }
+        }
     }
 
     public static String decodeDigest(Streams.Encoded stream) {

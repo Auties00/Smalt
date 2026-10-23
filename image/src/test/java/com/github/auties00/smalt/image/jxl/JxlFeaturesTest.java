@@ -520,6 +520,32 @@ class JxlFeaturesTest {
             assertArrayEquals(icc, stored.alternateIcc().orElseThrow());
         }
 
+        @Test
+        @DisplayName("the jhgm box converts to the ISO 21496-1 model and renders its base")
+        void toGainMap() {
+            var metadata = com.github.auties00.smalt.image.gainmap.GainMapMetadata.of(0, 2,
+                    com.github.auties00.smalt.image.gainmap.GainMapChannel.of(-0.25, 2));
+            var iso = metadata.toByteArray();
+            var content = new ByteArrayOutputStream();
+            content.write(0);
+            content.write(iso.length >>> 8);
+            content.write(iso.length);
+            content.writeBytes(iso);
+            content.write(0);
+            content.writeBytes(new byte[4]);
+            content.writeBytes(resource("gainmap.jxl"));
+            var file = JxlBoxes.container(resource("progressive.jxl"), JxlBoxes.box("jhgm", content.toByteArray()));
+            var gainMap = JxlDecoder.decodeGainMap(MediaSource.of(file)).orElseThrow().toGainMap();
+            assertEquals(metadata, gainMap.metadata());
+            assertTrue(gainMap.alternateProfile().isEmpty());
+            assertEquals(64, gainMap.image().width());
+            var base = JxlDecoder.decode(MediaSource.of(file));
+            var rendered = com.github.auties00.smalt.image.gainmap.GainMaps.apply(base, gainMap);
+            assertEquals(base.picture().width(), rendered.picture().width());
+            var opaque = JxlDecoder.decodeGainMap(MediaSource.of(resource("gainmap-plain.jxl"))).orElseThrow();
+            assertThrows(MediaException.class, opaque::toGainMap);
+        }
+
         /** The ICC stream of a codestream, byte aligned as a jhgm box stores it. */
         static byte[] iccStream(byte[] codestream) {
             var reader = new JxlBitReader(codestream, 0, codestream.length);

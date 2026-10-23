@@ -2,9 +2,13 @@ package com.github.auties00.smalt.image.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.AuxiliaryImage;
+import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
+import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.internal.jbig.JbigDecoder;
 import com.github.auties00.smalt.image.internal.lerc.LercDecoder;
 import com.github.auties00.smalt.image.internal.xz.XzDecoder;
@@ -12,12 +16,16 @@ import com.github.auties00.smalt.image.internal.zstd.ZstdDecoder;
 import com.github.auties00.smalt.image.internal.zstd.ZstdEncoder;
 import com.github.auties00.smalt.image.jp2.Jp2Decoder;
 import com.github.auties00.smalt.image.jp2.Jp2DecoderOptions;
+import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jxl.JxlDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
+import com.github.auties00.smalt.testkit.fuzz.FuzzGainMaps;
 import com.github.auties00.smalt.testkit.fuzz.FuzzMedia;
 
 import java.util.Arrays;
+import java.util.List;
+import java.util.Optional;
 import java.util.zip.DataFormatException;
 
 /**
@@ -240,6 +248,31 @@ class ImageFuzzTest {
                 }
             }
             run.output();
+        });
+    }
+
+    @FuzzTest
+    void jpegGainMap(byte[] data) {
+        FuzzGainMaps.run("jpegGainMap", data, new FuzzGainMaps.Decoder() {
+            @Override
+            public DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
+                return JpegDecoder.decode(source, options);
+            }
+
+            @Override
+            public Optional<GainMap> gainMap(MediaSource source, ImageDecoderOptions options) {
+                return JpegDecoder.decodeGainMap(source, options);
+            }
+
+            @Override
+            public List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
+                return JpegDecoder.auxiliaryImages(source, limits);
+            }
+
+            @Override
+            public DecodedImage auxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
+                return JpegDecoder.decodeAuxiliaryImage(source, index, options);
+            }
         });
     }
 }

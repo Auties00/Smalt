@@ -48,6 +48,9 @@ MSYS2 = os.environ.get('SMALT_MSYS2', 'C:/msys64')
 EXE = '.exe' if WINDOWS else ''
 PACKAGE_MANAGERS = ('apt', 'brew', 'msys2')
 SYSTEM_DIRECTORIES = ('/bin', '/usr/bin', '/usr/local/bin')
+# The libargparse revision of libavif 1.3.0 (cmake/Modules/LocalLibargparse.cmake), MIT, with its SHA-256.
+LIBARGPARSE = ('https://codeload.github.com/kmurray/libargparse/tar.gz/ee74d1b53bd680748af14e737378de57e2a0a954',
+               '7727b0498851e5b6a6fcd734eb667a8a231897e2c86a357aec51cc0664813060')
 
 # The version option of each executable; the first non-empty output line is recorded.
 VERSION_ARGS = {
@@ -59,6 +62,7 @@ VERSION_ARGS = {
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
     'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [],
+    'ultrahdr_app': [], 'avifgainmaputil': ['--version'], 'avifdec': ['--version'],
 }
 VERSION_MARKERS = ('version', 'libtiff', 'opj_', 'usage', 'exiftool', ' v', 'copyright')
 
@@ -514,6 +518,56 @@ def build(row, target):
             builder = load_script('mpeg4-oracle', 'build.py')
             builder.build(archive, work, cxx_compiler(target), executable, static=target.startswith('windows'),
                           env=env)
+        elif name == 'libultrahdr':
+            tree = source_tree(row, work)
+            build_dir = os.path.join(work, 'build')
+            # The lookup tables of the transfer functions and gains (USE_*_LUT in gainmapmath.h) are turned off, so
+            # that the oracle computes them exactly: its 65536-entry PQ table, indexed by linear light, is off by
+            # tens of 10-bit code values in the darks.
+            header = os.path.join(tree, 'lib', 'include', 'ultrahdr', 'gainmapmath.h')
+            with open(header, encoding='utf-8') as file:
+                text = file.read()
+            for lut in ('SRGB_INVOETF', 'HLG_OETF', 'PQ_OETF', 'HLG_INVOETF', 'PQ_INVOETF', 'APPLY_GAIN'):
+                old = '#define USE_%s_LUT 1' % lut
+                if old not in text:
+                    raise SystemExit('gainmapmath.h has no ' + old)
+                text = text.replace(old, '#define USE_%s_LUT 0' % lut)
+            with open(header, 'w', encoding='utf-8') as file:
+                file.write(text)
+            # ultrahdrcommon.h uses uint8_t without including <cstdint>, which GCC 15's headers no longer pull in.
+            common = os.path.join(tree, 'lib', 'include', 'ultrahdr', 'ultrahdrcommon.h')
+            with open(common, encoding='utf-8') as file:
+                text = file.read()
+            with open(common, 'w', encoding='utf-8') as file:
+                file.write('#include <cstdint>\n' + text)
+            # The scalar kernels give every platform the same arithmetic; libjpeg is the package manager's
+            # libjpeg-turbo, and the gain map metadata is written in its ISO 21496-1 form only, the default.
+            run(configure(tree, build_dir, target) + ['-DUHDR_BUILD_EXAMPLES=ON', '-DUHDR_BUILD_TESTS=OFF',
+                                                      '-DUHDR_BUILD_DEPS=OFF', '-DUHDR_ENABLE_INSTALL=OFF',
+                                                      '-DUHDR_ENABLE_INTRINSICS=OFF', '-DUHDR_BUILD_JAVA=OFF',
+                                                      '-DBUILD_SHARED_LIBS=OFF'], env=env)
+            build_all(build_dir, target, env, 'ultrahdr_app')
+            shutil.copy2(find_file(build_dir, 'ultrahdr_app' + EXE), os.path.join(out, 'ultrahdr_app' + EXE))
+        elif name == 'libavif':
+            tree = source_tree(row, work)
+            # avifgainmaputil parses its arguments with libargparse, which libavif fetches with git unless it is in
+            # ext/; the pinned revision of LocalLibargparse.cmake is unpacked there instead.
+            argparse_work = os.path.join(work, 'argparse')
+            os.makedirs(argparse_work)
+            extract(download(LIBARGPARSE[0], LIBARGPARSE[1]), argparse_work)
+            argparse_tree = os.path.join(argparse_work, os.listdir(argparse_work)[0])
+            shutil.move(argparse_tree, os.path.join(tree, 'ext', 'libargparse'))
+            build_dir = os.path.join(work, 'build')
+            # Decoding only, through the package manager's dav1d; libxml2 reads the XMP of JPEG gain maps where
+            # it links statically without extra work, that is everywhere but Windows.
+            run(configure(tree, build_dir, target) + [
+                '-DBUILD_SHARED_LIBS=OFF', '-DAVIF_BUILD_APPS=ON', '-DAVIF_CODEC_DAV1D=SYSTEM',
+                '-DAVIF_CODEC_AOM=OFF', '-DAVIF_JPEG=SYSTEM', '-DAVIF_ZLIBPNG=SYSTEM', '-DAVIF_LIBYUV=OFF',
+                '-DAVIF_LIBSHARPYUV=OFF', '-DAVIF_BUILD_TESTS=OFF', '-DAVIF_BUILD_MAN_PAGES=OFF',
+                '-DAVIF_LIBXML2=' + ('OFF' if target.startswith('windows') else 'SYSTEM')], env=env)
+            build_all(build_dir, target, env, 'avifgainmaputil', 'avifdec')
+            for tool in ('avifgainmaputil', 'avifdec'):
+                shutil.copy2(find_file(build_dir, tool + EXE), os.path.join(out, tool + EXE))
         elif name == 'mkvalidator':
             tree = source_tree(row, work)
             build_dir = os.path.join(work, 'build')

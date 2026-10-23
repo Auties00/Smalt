@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.image.behavior;
 
+import com.github.auties00.smalt.image.gainmap.GainMap;
+import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jxl.JxlDecoder;
 import com.github.auties00.smalt.image.jxl.JxlGainMap;
 import com.github.auties00.smalt.testkit.Conformance;
@@ -234,5 +236,20 @@ class ImageDecoderBehaviorTest {
     @DisplayName("smoke vectors: identical pictures under every source behavior and clean faults")
     void vector(String name) throws IOException {
         ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"libavif-paris_exif_xmp_gainmap_littleendian.jpg", "libavif-seine_sdr_gainmap_srgb.jpg",
+            "ImageFuzzTestInputs/jpegGainMap/valid-ultrahdr-gray.jpg",
+            "ImageFuzzTestInputs/jpegGainMap/valid-ultrahdr-multichannel.jpg"})
+    @DisplayName("JPEG gain maps: identical pictures, gain maps and auxiliary images under every source behavior")
+    void jpegGainMap(String name) throws IOException {
+        var data = name.startsWith("libavif-") ? Files.readAllBytes(Conformance.fetchListed(name))
+                : Files.readAllBytes(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "image",
+                "fuzz").resolve(name));
+        ImageDecoderAsserts.of("gainmap/" + name.substring(name.lastIndexOf('/') + 1), data)
+                .decoder("gain map", source -> JpegDecoder.decodeGainMap(source).map(GainMap::image).orElse(null))
+                .decoder("auxiliary images", source -> JpegDecoder.auxiliaryImages(source).toString())
+                .run();
     }
 }

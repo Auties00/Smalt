@@ -101,6 +101,7 @@ Contents
   44. OpenJPH
   45. OpenHTJ2K
   46. CharLS
+  47. libultrahdr
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -778,15 +779,24 @@ Derived Smalt packages:
   place of the primary item; AvifEncoder: the box layout of still images, alpha
   auxiliary items, grids, Exif and XMP items and image sequences, the quality
   scale, the automatic tiling, the orientation properties and the RGB to YUV
-  conversion defaults)
+  conversion defaults; the tone map items of gain maps, which AvifDecoder reads
+  and AvifEncoder writes as src/read.c and src/write.c do)
+  internal.gainmap (HeifToneMaps: the rules by which a tmap item counts, as
+  avifDecoderFindGainMapItem and avifParseToneMappedImageBox apply them)
+  image.gainmap (GainMapComputer: the gain map computation of
+  avifRGBImageComputeGainMap and the gain range without outliers of
+  avifFindMinMaxWithoutOutliers; GainMapRenderer: the signed weight of
+  avifGetGainMapWeight)
 
 Derivation: the semantics of src/read.c, src/write.c, src/avif.c, src/alpha.c
 and src/reformat.c followed in Java, and the operators of
-src/sampletransform.c (Copyright 2024 Google LLC) ported; no other code was
-translated line by line.
+src/sampletransform.c (Copyright 2024 Google LLC) and the gain map
+computation of src/gainmap.c (Copyright 2023 Google LLC, libavif 1.3.0)
+ported; no other code was translated line by line.
 
 Copyright:
   Copyright 2019 Joe Drago. All rights reserved.
+  Copyright 2023 Google LLC
   Copyright 2024 Google LLC
 EOF
 license_start "libavif license (LICENSE)"
@@ -1602,6 +1612,37 @@ Copyright:
 EOF
 license_start "CharLS license (LICENSE.md)"
 cat "$LIC/charls-LICENSE.md"
+
+section "47. libultrahdr"
+cat <<'EOF'
+Project:      libultrahdr, the reference library of the Ultra HDR image
+              format, version 1.4.0
+Source:       https://github.com/google/libultrahdr
+License text: LICENSE at the root of the repository
+NOTICE:       adobe-hdr-gain-map-license/NOTICE of the repository
+License:      Apache License, Version 2.0
+
+Derived Smalt packages:
+  image.gainmap (Fractions: the continued-fraction search of
+  floatToUnsignedFractionImpl in lib/src/gainmapmath.cpp)
+  image.jpeg.internal (UltraHdr: the layout of Ultra HDR files that
+  JpegR::appendGainMap writes in lib/src/jpegr.cpp and the Multi-Picture
+  Format index of lib/src/multipictureformat.cpp)
+
+Derivation: floatToUnsignedFractionImpl translated to Java; the segment
+order and index of the Ultra HDR writer followed. The Java code is a new
+implementation otherwise.
+
+Copyright:
+  Copyright 2022 The Android Open Source Project
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+EOF
+printf '\n'
+cat "$LIC/libultrahdr-adobe-NOTICE"
+license_start "Apache License, Version 2.0 (libultrahdr LICENSE)"
+cat "$LIC/libultrahdr-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

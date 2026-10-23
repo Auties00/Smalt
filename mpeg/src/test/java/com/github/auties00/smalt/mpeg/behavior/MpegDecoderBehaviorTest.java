@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.mpeg.behavior;
 
+import com.github.auties00.smalt.image.gainmap.GainMap;
+import com.github.auties00.smalt.image.heic.HeicDecoder;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.container.ReaderAsserts;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
@@ -86,5 +88,17 @@ class MpegDecoderBehaviorTest {
     void heicSeparatePlanes(String vector) throws IOException {
         var stream = Files.readAllBytes(HEVC_VECTORS.resolve(vector));
         ImageDecoderAsserts.of("heif-items/" + vector + ".heic", HevcSamples.heic(stream, 128, 96, 3, 8)).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"valid-portrait.heic"})
+    @DisplayName("HEIC gain maps and auxiliary images (the HEIC gain map fuzz seeds) under every source behavior")
+    void heicGainMap(String name) throws IOException {
+        var data = Files.readAllBytes(HEIF_SEEDS.resolveSibling("heicGainMap").resolve(name));
+        ImageDecoderAsserts.of("gainmap/" + name, data)
+                .decoder("gain map", source -> HeicDecoder.decodeGainMap(source).map(GainMap::image).orElse(null))
+                .decoder("auxiliary images", source -> HeicDecoder.auxiliaryImages(source).toString())
+                .decoder("depth map", source -> HeicDecoder.decodeAuxiliaryImage(source, 0).picture())
+                .run();
     }
 }
