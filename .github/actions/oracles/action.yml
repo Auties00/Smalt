@@ -5,7 +5,7 @@
 # failing test run still keeps them. Which runs save an entry they missed is .github/scripts/cache-policy.sh's
 # rule: the default branch owns the entries (warm-caches.yml fills them) and the pkg/* branches only restore them.
 # Package-manager tools are installed on every run; on Linux the archives apt downloads for them are cached too, in
-# an entry keyed by oracles.tsv, so that a slow Ubuntu mirror (it has served them at about 100 kB/s, 13 min for
+# an entry keyed by the apt rows of oracles.tsv, so that a slow Ubuntu mirror (it has served them at about 100 kB/s, 13 min for
 # 90 MB) delays only the run that saves the entry. The tool versions, and whether ffmpeg has, and can run, every
 # component of tools/testdata/ffmpeg-oracle/features.tsv, go to the job summary and to oracle-versions.tsv in the
 # workspace; a missing tool or component fails the step.
@@ -32,6 +32,13 @@ runs:
         path: ~/.smalt/ffmpeg-*
         key: ffmpeg-oracle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/ffmpeg-oracle/build.py', 'tools/testdata/ffmpeg-oracle/quarantine.c') }}
 
+    # Keyed by the apt rows alone, so that a branch whose other oracle rows differ shares the default branch's entry.
+    - name: Name the apt archives entry
+      id: aptkey
+      if: runner.os == 'Linux'
+      shell: bash
+      run: echo "hash=$(awk -F'\t' '$4 == "apt"' tools/testdata/oracles.tsv | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
+
     # An older entry is restored too: apt then downloads only the packages whose version changed since.
     - name: Restore the apt archives
       id: apt
@@ -39,7 +46,7 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.smalt/apt
-        key: oracle-apt-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv') }}
+        key: oracle-apt-${{ runner.os }}-${{ runner.arch }}-${{ steps.aptkey.outputs.hash }}
         restore-keys: oracle-apt-${{ runner.os }}-${{ runner.arch }}-
 
     - name: Keep the apt archives
