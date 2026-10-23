@@ -97,10 +97,12 @@ class ColorTransformTest {
         @ParameterizedTest(name = "{0} -> {1}")
         @CsvSource({
                 "compact-icc-DisplayP3-v4.icc, compact-icc-sRGB-v4.icc, 1",
-                "skia-icc-color.org-sRGB_ICC_v4_Appearance.icc, compact-icc-sRGB-v4.icc, 3",
+                // 16 bits use the plain lookup table here, which measures closer to the pipeline than the
+                // prelinearized one of the 8-bit transform (within 8 codes of it, against 12)
+                "skia-icc-color.org-sRGB_ICC_v4_Appearance.icc, compact-icc-sRGB-v4.icc, 9",
                 "skia-icc-misc-Coated_FOGRA39_CMYK.icc, compact-icc-sRGB-v4.icc, 2"
         })
-        @DisplayName("agree with the 8-bit transforms")
+        @DisplayName("agree with the 8-bit transforms and are at least as close to the pipeline")
         void consistentWithEightBit(String source, String target, int tolerance) {
             var from = TestProfiles.profile(source);
             var to = TestProfiles.profile(target);
@@ -120,6 +122,23 @@ class ColorTransformTest {
                 var difference = Math.abs((narrow[i] & 0xFF) - ColorMath.wordToByte(wideOut[i] & 0xFFFF));
                 assertTrue(difference <= tolerance, "sample " + i + " differs by " + difference);
             }
+            var pipeline = transform.pipeline();
+            var in = new int[channels];
+            var out = new int[3];
+            var error8 = 0;
+            var error16 = 0;
+            for (var p = 0; p < pixels; p++) {
+                for (var c = 0; c < channels; c++) {
+                    in[c] = wide[p * channels + c] & 0xFFFF;
+                }
+                pipeline.evaluate16(in, out);
+                for (var c = 0; c < 3; c++) {
+                    var expected = ColorMath.wordToByte(out[c]);
+                    error8 = Math.max(error8, Math.abs((narrow[p * 3 + c] & 0xFF) - expected));
+                    error16 = Math.max(error16, Math.abs(ColorMath.wordToByte(wideOut[p * 3 + c] & 0xFFFF) - expected));
+                }
+            }
+            assertTrue(error16 <= error8, "16-bit error " + error16 + " exceeds the 8-bit error " + error8);
         }
     }
 

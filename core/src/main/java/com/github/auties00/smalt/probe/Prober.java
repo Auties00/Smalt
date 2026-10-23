@@ -233,14 +233,16 @@ final class Prober {
         var bitDepth = 0;
         ChromaFormat chroma = null;
         ColorInfo color = track.color().orElse(null);
-        Rational sar = null;
+        var sar = track.sampleAspectRatio().orElse(null);
         Rational frameRate = track.frameRate().orElse(null);
         if (info != null) {
             profile = info.profile();
             level = info.level();
             bitDepth = info.bitDepth();
             chroma = info.chroma();
-            sar = info.sampleAspect();
+            if (sar == null && info.sampleAspect() != null) {
+                sar = info.sampleAspect().reduce();
+            }
             if (color == null) {
                 color = info.color();
             }
@@ -322,7 +324,7 @@ final class Prober {
             }
         }
         return new VideoStreamInfo(fields, track.codec(), profile, level, width, height, track.orientation(), frameRate,
-                sar, color, bitDepth, chroma);
+                sar, color, bitDepth, chroma, track.interlacing().orElse(null));
     }
 
     /**

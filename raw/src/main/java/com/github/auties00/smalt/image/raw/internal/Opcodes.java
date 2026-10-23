@@ -817,7 +817,7 @@ final class Opcodes {
             if (r < 1e-12) {
                 f = k[0];
             } else {
-                var t = Math.atan(r);
+                var t = StrictMath.atan(r);
                 var t2 = t * t;
                 f = t * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3]))) / r;
             }
