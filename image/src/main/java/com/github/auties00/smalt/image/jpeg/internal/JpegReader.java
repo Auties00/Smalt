@@ -188,6 +188,54 @@ public final class JpegReader {
     private ArithmeticScanDecoder arithmetic;
 
     /**
+     * The decoder of a JPEG-LS frame, created with the headers, or {@code null}.
+     */
+    private JpegLsDecoder jpegLs;
+
+    /**
+     * The color space of the first {@code APP8} SPIFF header before the first scan, or {@code -1}.
+     */
+    private int spiffColorSpace = -1;
+
+    /**
+     * The frame header of the completed image that the DHP segment of a hierarchical image defines, or
+     * {@code null} for any other image.
+     */
+    private JpegFrame image;
+
+    /**
+     * Whether the scans of the current frame are being read, so that the next frame header or EXP segment of a
+     * hierarchical image ends them.
+     */
+    private boolean frameOpen;
+
+    /**
+     * The index of the {@code 0xFF} of the last marker read.
+     */
+    private int markerAt;
+
+    /**
+     * The index of the {@code 0xFF} of the SOF marker of the current frame.
+     */
+    private int frameStart;
+
+    /**
+     * The expansion the EXP segment before the current frame asks for, horizontal in bit 1 and vertical in bit 0,
+     * or {@code -1} when no EXP segment precedes it.
+     */
+    private int expansion = -1;
+
+    /**
+     * Whether a DRI segment before the frame header has the 3 or 4-byte restart interval only JPEG-LS allows.
+     */
+    private boolean wideRestartInterval;
+
+    /**
+     * The decoded components of a hierarchical image, or {@code null} before it is decoded.
+     */
+    private HierarchicalImage hierarchy;
+
+    /**
      * Constructs a reader over {@code input[offset, offset + length)}.
      *
      * @param input the array holding the codestream
@@ -221,12 +269,12 @@ public final class JpegReader {
      * @return the frame
      * @throws MediaException.Malformed if the input does not start with SOI, a segment is truncated
      * or invalid, or the input has no frame or no scan
-     * @throws MediaException.Unsupported if the input uses hierarchical coding, JPEG-LS, or JPEG
-     * extensions
+     * @throws MediaException.Unsupported if the input uses JPEG-LS part 2 extensions or the JPG extension
+     * marker
      */
     public JpegFrame readHeaders() {
         if (firstScan >= 0) {
-            return frame;
+            return frame();
         }
         if (end - start < 2 || (input[start] & 0xFF) != 0xFF || (input[start + 1] & 0xFF) != 0xD8) {
             throw new MediaException.Malformed("missing JPEG SOI marker");
@@ -240,10 +288,29 @@ public final class JpegReader {
             throw new MediaException.Malformed("JPEG stream has no scan");
         }
         firstScan = position;
-        if (frame.height == 0) {
+        frameOpen = true;
+        if (frame.marker == 0xF7) {
+            openJpegLs();
+        } else if (frame.height == 0) {
             resolveDnl();
         }
-        return frame;
+        return frame();
+    }
+
+    /**
+     * Parses the whole marker structure of a JPEG-LS stream and replaces the frame with the frame of its
+     * decoded samples: its size from the oversize dimension or {@code DNL} segment when the frame header leaves it
+     * at zero, the precision of the mapped samples, and three components for a palette image.
+     */
+    private void openJpegLs() {
+        jpegLs = new JpegLsDecoder(input, start, end - start, limits);
+        var count = jpegLs.outputComponents();
+        var components = new JpegComponent[count];
+        for (var i = 0; i < count; i++) {
+            var sampling = jpegLs.sampling(i);
+            components[i] = new JpegComponent(jpegLs.id(i), sampling[0], sampling[1], 0, i);
+        }
+        frame = new JpegFrame(0xF7, jpegLs.outputPrecision(), jpegLs.width(), jpegLs.height(), components);
     }
 
     /**
@@ -295,13 +362,29 @@ public final class JpegReader {
                 case 0xDC -> parseDnl();
                 case 0xD8 -> throw new MediaException.Malformed("duplicate JPEG SOI marker");
                 case 0xC8 -> throw new MediaException.Unsupported("jpeg extensions", "JPEG stream uses the reserved JPG extension marker");
-                case 0xDE, 0xDF -> throw new MediaException.Unsupported("jpeg hierarchical", "JPEG stream uses hierarchical coding");
-                case 0xF8 -> throw new MediaException.Unsupported("jpeg-ls", "JPEG-LS streams are not supported");
+                case 0xDE -> parseDhp();
+                case 0xDF -> {
+                    if (image == null) {
+                        throw new MediaException.Malformed("JPEG EXP segment outside hierarchical coding");
+                    }
+                    if (frameOpen) {
+                        position = markerAt;
+                        return false;
+                    }
+                    parseExp();
+                }
+                case 0xF8 -> skipSegment();
+                case 0xF9 -> throw new MediaException.Unsupported("jpeg-ls extensions",
+                        "JPEG-LS part 2 (ITU-T T.870) streams are not supported");
                 case 0xFE -> skipSegment();
                 case 0x01, 0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7 -> {
                 }
                 default -> {
                     if ((marker >= 0xC0 && marker <= 0xCF) || marker == 0xF7) {
+                        if (image != null && frameOpen) {
+                            position = markerAt;
+                            return false;
+                        }
                         parseSof(marker);
                     } else if (marker >= 0xE0 && marker <= 0xEF) {
                         parseApp(marker);
@@ -356,6 +439,7 @@ public final class JpegReader {
             var code = input[p] & 0xFF;
             position = p + 1;
             if (code != 0) {
+                markerAt = p - 1;
                 return code;
             }
         }
@@ -464,10 +548,15 @@ public final class JpegReader {
      */
     private void parseDri() {
         var length = segmentLength(position);
-        if (length != 4) {
+        var jpegLsFrame = frame == null || frame.marker == 0xF7;
+        if (length != 4 && !(jpegLsFrame && (length == 5 || length == 6))) {
             throw new MediaException.Malformed("invalid DRI segment length " + length);
         }
-        restartInterval = u16(position + 2);
+        if (length == 4) {
+            restartInterval = u16(position + 2);
+        } else if (frame == null) {
+            wideRestartInterval = true;
+        }
         position += length;
     }
 
@@ -519,9 +608,102 @@ public final class JpegReader {
      * @param marker the SOF marker code
      */
     private void parseSof(int marker) {
-        if (frame != null) {
+        if (frame != null && image == null) {
             throw new MediaException.Malformed("duplicate JPEG frame header");
         }
+        var header = markerAt;
+        if (wideRestartInterval && marker != 0xF7) {
+            throw new MediaException.Malformed("a DRI segment before a frame other than JPEG-LS has a restart"
+                    + " interval wider than 2 bytes");
+        }
+        var parsed = parseFrameHeader(marker);
+        if (image != null) {
+            checkHierarchicalFrame(parsed);
+        }
+        frame = parsed;
+        frameStart = header;
+    }
+
+    /**
+     * Parses the DHP segment of a hierarchical image.
+     */
+    private void parseDhp() {
+        if (image != null || frame != null) {
+            throw new MediaException.Malformed("JPEG DHP segment after a frame header or a previous DHP segment");
+        }
+        image = parseFrameHeader(0xDE);
+    }
+
+    /**
+     * Parses an EXP segment.
+     */
+    private void parseExp() {
+        var length = segmentLength(position);
+        if (length != 3) {
+            throw new MediaException.Malformed("invalid EXP segment length " + length);
+        }
+        if (expansion >= 0) {
+            throw new MediaException.Malformed("two EXP segments precede one hierarchical JPEG frame");
+        }
+        var value = input[position + 2] & 0xFF;
+        var horizontal = value >>> 4;
+        var vertical = value & 15;
+        if (horizontal > 1 || vertical > 1) {
+            throw new MediaException.Malformed("invalid EXP expansion " + horizontal + "x" + vertical);
+        }
+        expansion = (horizontal << 1) | vertical;
+        position += length;
+    }
+
+    /**
+     * Checks a frame header of a hierarchical image against its DHP segment (T.81 B.3.1).
+     *
+     * @param parsed the frame header
+     * @throws MediaException.Malformed if the frame is not a frame of the image
+     */
+    private void checkHierarchicalFrame(JpegFrame parsed) {
+        var marker = parsed.marker;
+        if (marker < 0xC0 || marker > 0xCF) {
+            throw new MediaException.Malformed("a hierarchical JPEG image holds a frame of SOF marker 0x"
+                    + Integer.toHexString(marker));
+        }
+        if (parsed.precision != image.precision) {
+            throw new MediaException.Malformed("hierarchical JPEG frame of precision " + parsed.precision
+                    + " in an image of precision " + image.precision);
+        }
+        if (parsed.width > image.width || (image.height != 0 && parsed.height > image.height)) {
+            throw new MediaException.Malformed("hierarchical JPEG frame of " + parsed.width + "x" + parsed.height
+                    + " samples exceeds the " + image.width + "x" + image.height + " image");
+        }
+        for (var component : parsed.components) {
+            if (imageIndex(component.id) < 0) {
+                throw new MediaException.Malformed("hierarchical JPEG frame codes component " + component.id
+                        + ", which the DHP segment does not define");
+            }
+        }
+    }
+
+    /**
+     * {@return the index of a component of the completed image of a hierarchical image, or {@code -1}}
+     *
+     * @param id the component identifier
+     */
+    int imageIndex(int id) {
+        for (var i = 0; i < image.components.length; i++) {
+            if (image.components[i].id == id) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * Parses a frame header segment (SOF or DHP).
+     *
+     * @param marker the marker code
+     * @return the frame
+     */
+    private JpegFrame parseFrameHeader(int marker) {
         var length = segmentLength(position);
         if (length < 8) {
             throw new MediaException.Malformed("truncated SOF segment");
@@ -531,7 +713,7 @@ public final class JpegReader {
         var height = u16(at + 1);
         var width = u16(at + 3);
         var count = input[at + 5] & 0xFF;
-        if (width == 0 || count == 0) {
+        if ((width == 0 && marker != 0xF7) || count == 0) {
             throw new MediaException.Malformed("empty JPEG frame: " + width + "x" + height + " with " + count + " components");
         }
         if (length != 8 + 3 * count) {
@@ -552,8 +734,8 @@ public final class JpegReader {
             }
             components[i] = new JpegComponent(input[c] & 0xFF, h, v, tq, i);
         }
-        frame = new JpegFrame(marker, precision, width, height, components);
         position += length;
+        return new JpegFrame(marker, precision, width, height, components);
     }
 
     /**
@@ -587,6 +769,11 @@ public final class JpegReader {
                 }
             }
             case 0xE2 -> icc.add(input, at, size);
+            case 0xE8 -> {
+                if (beforeScan && spiffColorSpace < 0 && size >= 30 && matches(at, "SPIFF\0")) {
+                    spiffColorSpace = input[at + 18] & 0xFF;
+                }
+            }
             case 0xEE -> {
                 if (beforeScan && size >= 12 && matches(at, "Adobe")) {
                     adobeTransform = input[at + 11] & 0xFF;
@@ -630,12 +817,19 @@ public final class JpegReader {
      *
      * <p>The DCT processes (SOF0, SOF1, SOF2, SOF9, SOF10) take 8-bit and 12-bit precision; the
      * lossless processes (SOF3, SOF11) take any precision from 2 to 16. Every component count from 1 to
-     * 255 is accepted; {@link #colorSpace()} tells which have a color space.
+     * 255 is accepted; {@link #colorSpace()} tells which have a color space. A hierarchical image is checked
+     * as the first frame after its DHP segment describes it; a differential frame (SOF5 to SOF7, SOF13 to SOF15)
+     * outside hierarchical coding is malformed.
      *
-     * @throws MediaException.Malformed if the precision is not a valid precision of the process
+     * @throws MediaException.Malformed if the precision is not a valid precision of the process, or the frame is
+     * a differential frame without a DHP segment
      * @throws MediaException.Unsupported if it does not
      */
     public void checkSupported() {
+        if (image != null) {
+            checkHierarchical();
+            return;
+        }
         var marker = frame.marker;
         switch (marker) {
             case 0xC0, 0xC1, 0xC2, 0xC9, 0xCA -> {
@@ -651,11 +845,41 @@ public final class JpegReader {
                     throw new MediaException.Malformed("invalid lossless JPEG sample precision " + frame.precision);
                 }
             }
-            case 0xC7, 0xCF -> throw new MediaException.Unsupported("jpeg lossless",
-                    "differential lossless JPEG frames belong to hierarchical coding, which is not supported");
-            case 0xC5, 0xC6, 0xCD, 0xCE -> throw new MediaException.Unsupported("jpeg hierarchical", "hierarchical JPEG is not supported");
-            case 0xF7 -> throw new MediaException.Unsupported("jpeg-ls", "JPEG-LS streams are not supported");
+            case 0xC5, 0xC6, 0xC7, 0xCD, 0xCE, 0xCF -> throw new MediaException.Malformed("differential JPEG frame"
+                    + " (SOF" + (marker - 0xC0) + ") without the DHP segment of hierarchical coding");
+            case 0xF7 -> {
+            }
             default -> throw new MediaException.Malformed("invalid SOF marker 0x" + Integer.toHexString(marker));
+        }
+    }
+
+    /**
+     * Checks the first frame of a hierarchical image: a non-differential frame of 8 or 12 bits coded with a DCT
+     * process, or of 2 to 16 bits coded with a lossless process.
+     *
+     * @throws MediaException.Malformed if the first frame is differential or its precision is invalid
+     * @throws MediaException.Unsupported if the DCT frames have 16-bit precision
+     */
+    private void checkHierarchical() {
+        if (hierarchy != null) {
+            return;
+        }
+        switch (frame.marker) {
+            case 0xC0, 0xC1, 0xC2, 0xC9, 0xCA -> {
+                switch (image.precision) {
+                    case 8, 12 -> {
+                    }
+                    case 16 -> throw new MediaException.Unsupported("jpeg 16-bit precision", "16-bit JPEG is not supported");
+                    default -> throw new MediaException.Malformed("invalid JPEG sample precision " + image.precision);
+                }
+            }
+            case 0xC3, 0xCB -> {
+                if (image.precision < 2 || image.precision > 16) {
+                    throw new MediaException.Malformed("invalid lossless JPEG sample precision " + image.precision);
+                }
+            }
+            default -> throw new MediaException.Malformed("hierarchical JPEG image starts with SOF marker 0x"
+                    + Integer.toHexString(frame.marker) + ", not a non-differential frame");
         }
     }
 
@@ -673,10 +897,40 @@ public final class JpegReader {
     }
 
     /**
-     * {@return whether the frame is coded with a lossless process (SOF3 Huffman, SOF11 arithmetic)}
+     * {@return whether the frame's samples are not DCT coded: a lossless process (SOF3 Huffman, SOF11
+     * arithmetic) or JPEG-LS (SOF55)}
      */
     public boolean lossless() {
-        return frame.marker == 0xC3 || frame.marker == 0xCB;
+        if (image != null) {
+            return hierarchy().exact();
+        }
+        return frame.marker == 0xC3 || frame.marker == 0xCB || frame.marker == 0xF7;
+    }
+
+    /**
+     * {@return whether the image is coded in hierarchical mode, with a DHP segment}
+     */
+    public boolean hierarchical() {
+        return image != null;
+    }
+
+    /**
+     * {@return the decoded components of a hierarchical image, decoding them on first use}
+     */
+    private HierarchicalImage hierarchy() {
+        if (hierarchy == null) {
+            readHeaders();
+            checkHierarchical();
+            hierarchy = HierarchicalImage.decode(this);
+        }
+        return hierarchy;
+    }
+
+    /**
+     * {@return whether the frame is a JPEG-LS frame (SOF55)}
+     */
+    public boolean jpegLs() {
+        return frame.marker == 0xF7;
     }
 
     /**
@@ -689,13 +943,20 @@ public final class JpegReader {
      * @throws MediaException.Unsupported if the frame uses an unsupported feature
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
-    LosslessJpeg openLossless() {
+    LosslessSamples openLossless() {
         readHeaders();
         checkSupported();
         if (!lossless()) {
             throw new IllegalStateException("the frame is not lossless");
         }
+        if (image != null) {
+            prepareImage();
+            return hierarchy().samples(image);
+        }
         prepareFrame();
+        if (jpegLs != null) {
+            return jpegLs;
+        }
         return new LosslessJpeg(input, start, end - start, 4, frame.height, limits);
     }
 
@@ -711,7 +972,10 @@ public final class JpegReader {
      * @return the color space
      */
     public JpegColorSpace colorSpace() {
-        var components = frame.components;
+        var components = frame().components;
+        if (jpegLs != null) {
+            return jpegLsColorSpace();
+        }
         return switch (components.length) {
             case 1 -> JpegColorSpace.GRAY;
             case 3 -> {
@@ -732,6 +996,40 @@ public final class JpegReader {
     }
 
     /**
+     * Returns the color space of a JPEG-LS frame.
+     *
+     * <p>A palette image or a frame carrying an HP color transform is RGB. Otherwise one component is gray;
+     * three components are YCbCr when a JFIF segment is present, else as the SPIFF header declares (YCbCr for
+     * its three Y'CbCr color spaces, RGB), else as an Adobe transform declares, else RGB; four components are
+     * YCCK when an Adobe segment declares a non-zero transform or the SPIFF header declares YCCK, and CMYK
+     * otherwise. Any other count is {@link JpegColorSpace#UNKNOWN}.
+     *
+     * @return the color space
+     */
+    private JpegColorSpace jpegLsColorSpace() {
+        if (jpegLs.palette() || jpegLs.colorTransform() != 0) {
+            return JpegColorSpace.RGB;
+        }
+        return switch (frame.components.length) {
+            case 1 -> JpegColorSpace.GRAY;
+            case 3 -> {
+                if (jfif || spiffColorSpace == 1 || spiffColorSpace == 3 || spiffColorSpace == 4) {
+                    yield JpegColorSpace.YCBCR;
+                }
+                if (spiffColorSpace == 10) {
+                    yield JpegColorSpace.RGB;
+                }
+                if (adobeTransform >= 0) {
+                    yield adobeTransform == 0 ? JpegColorSpace.RGB : JpegColorSpace.YCBCR;
+                }
+                yield JpegColorSpace.RGB;
+            }
+            case 4 -> adobeTransform > 0 || spiffColorSpace == 13 ? JpegColorSpace.YCCK : JpegColorSpace.CMYK;
+            default -> JpegColorSpace.UNKNOWN;
+        };
+    }
+
+    /**
      * Returns the binary logarithm of the largest size reduction, among 1/1, 1/2, 1/4 and 1/8,
      * whose output is still at least the requested size.
      *
@@ -740,7 +1038,7 @@ public final class JpegReader {
      * @return the shift, zero when both hints are zero
      */
     public int chooseScale(int minWidth, int minHeight) {
-        if (minWidth <= 0 && minHeight <= 0) {
+        if ((minWidth <= 0 && minHeight <= 0) || image != null) {
             return 0;
         }
         var shift = 0;
@@ -768,6 +1066,10 @@ public final class JpegReader {
     public JpegPlanes decodePlanes(int scaleShift) {
         readHeaders();
         checkDct();
+        if (image != null) {
+            prepareImage();
+            return hierarchy().planes(image, false);
+        }
         prepareFrame();
         if (frame.precision == 12) {
             return decodeTwelveBit(scaleShift, false);
@@ -813,8 +1115,12 @@ public final class JpegReader {
     public JpegPlanes decodeWidePlanes(int scaleShift) {
         readHeaders();
         checkDct();
-        if (frame.precision != 12) {
-            throw new IllegalStateException("the frame has " + frame.precision + "-bit precision, not 12");
+        if (frame().precision != 12) {
+            throw new IllegalStateException("the frame has " + frame().precision + "-bit precision, not 12");
+        }
+        if (image != null) {
+            prepareImage();
+            return hierarchy().planes(image, true);
         }
         prepareFrame();
         return decodeTwelveBit(scaleShift, true);
@@ -915,11 +1221,16 @@ public final class JpegReader {
      *
      * @return the coefficients and the quantization tables they refer to
      * @throws MediaException.Malformed if a header is invalid or no MCU could be decoded
-     * @throws MediaException.Unsupported if the frame uses an unsupported feature or is lossless
+     * @throws MediaException.Unsupported if the frame uses an unsupported feature or is lossless, or the image is
+     * hierarchical (rejected before any of its frames is decoded)
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     public JpegCoefficients decodeCoefficients() {
         readHeaders();
+        if (image != null) {
+            throw new MediaException.Unsupported("jpeg hierarchical",
+                    "the coefficients of a hierarchical JPEG image are not available");
+        }
         checkDct();
         prepareFrame();
         var components = frame.components;
@@ -941,6 +1252,168 @@ public final class JpegReader {
         LimitChecks.checkPicture(limits, frame.width, frame.height);
         LimitChecks.checkChannels(limits, frame.components.length);
         frame.computeLayout();
+    }
+
+    /**
+     * Computes the layout of the completed image of a hierarchical image and checks it against the limits.
+     */
+    private void prepareImage() {
+        var height = hierarchy().height();
+        if (image.height == 0) {
+            image.setHeight(height);
+        }
+        LimitChecks.checkPicture(limits, image.width, image.height);
+        LimitChecks.checkChannels(limits, image.components.length);
+        image.computeLayout();
+    }
+
+    /**
+     * {@return the frame being decoded: the current frame of a hierarchical image}
+     */
+    JpegFrame codedFrame() {
+        return frame;
+    }
+
+    /**
+     * {@return the frame header of the completed image of a hierarchical image}
+     */
+    JpegFrame imageFrame() {
+        return image;
+    }
+
+    /**
+     * Returns the expansion of the EXP segment before the current frame and forgets it.
+     *
+     * @return the horizontal expansion in bit 1 and the vertical one in bit 0, or {@code -1} for none
+     */
+    int takeExpansion() {
+        var value = expansion;
+        expansion = -1;
+        return value;
+    }
+
+    /**
+     * Moves to the next frame of a hierarchical image, after the scans of the current one were decoded or
+     * skipped: reads the segments up to its first scan.
+     *
+     * @return {@code false} when no frame follows
+     * @throws MediaException.Malformed if a segment is invalid, or a scan has no frame header of its own
+     */
+    boolean nextFrame() {
+        frameOpen = false;
+        var previous = frame;
+        if (!parseUntilScan()) {
+            return false;
+        }
+        if (frame == previous) {
+            throw new MediaException.Malformed("hierarchical JPEG scan without a frame header of its own");
+        }
+        firstScan = position;
+        frameOpen = true;
+        if (frame.height == 0) {
+            resolveDnl();
+        }
+        return true;
+    }
+
+    /**
+     * Decodes the scans of the current DCT-coded frame of a hierarchical image into the samples of each frame
+     * component, each {@code width * height} in raster order.
+     *
+     * @param differential whether the frame is differential: its samples are then the unshifted, unlimited
+     * differences
+     * @return the samples of each frame component
+     * @throws MediaException.Malformed if a scan header is invalid or no MCU could be decoded
+     * @throws MediaException.LimitExceeded if the frame exceeds the limits
+     */
+    int[][] decodeDctFrame(boolean differential) {
+        prepareFrame();
+        var components = frame.components;
+        var target = new DecodeTarget(components.length, null, null, allocateCoefficients(),
+                frame.progressive() ? allocateMasks() : null, 0, differential);
+        decodeScans(target);
+        var samples = new int[components.length][];
+        var precision = frame.precision;
+        for (var i = 0; i < components.length; i++) {
+            var component = components[i];
+            var width = component.width;
+            var height = component.height;
+            LimitChecks.checkAllocation(limits, 4L * width * height);
+            var plane = new int[width * height];
+            samples[i] = plane;
+            var quant = naturalQuant(target.zigzagQuant[i]);
+            var coefficients = target.coefficients[i];
+            var paddedWide = component.paddedBlocksWide;
+            var columns = component.blocksWide;
+            var rows = component.blocksHigh;
+            var bands = ParallelBands.bands(rows, (long) rows * columns * BLOCK_WORK);
+            ParallelBands.run(bands, band -> {
+                var block = new int[64];
+                var last = ParallelBands.start(band + 1, bands, rows);
+                for (var by = ParallelBands.start(band, bands, rows); by < last; by++) {
+                    for (var bx = 0; bx < columns; bx++) {
+                        var base = (by * paddedWide + bx) * 64;
+                        for (var k = 0; k < 64; k++) {
+                            block[k] = coefficients[base + k] * quant[k];
+                        }
+                        HierarchicalIdct.transform(block, precision, differential, plane, by * 8 * width + bx * 8,
+                                width, Math.min(8, width - bx * 8), Math.min(8, height - by * 8));
+                    }
+                }
+            });
+        }
+        return samples;
+    }
+
+    /**
+     * Skips the scans of the current frame of a hierarchical image, keeping the tables they define, after another
+     * decoder has decoded them.
+     *
+     * @throws MediaException.Malformed if a scan header is invalid
+     */
+    void skipFrame() {
+        position = firstScan;
+        do {
+            parseSos();
+            segments.load(input, position, end);
+            scansDecoded = true;
+            position = segments.scanEnd();
+        } while (parseUntilScan());
+    }
+
+    /**
+     * {@return the index of the {@code 0xFF} of the SOF marker of the current frame}
+     */
+    int frameStart() {
+        return frameStart;
+    }
+
+    /**
+     * {@return the input}
+     */
+    byte[] input() {
+        return input;
+    }
+
+    /**
+     * {@return the index of the SOI marker}
+     */
+    int start() {
+        return start;
+    }
+
+    /**
+     * {@return the index after the input}
+     */
+    int end() {
+        return end;
+    }
+
+    /**
+     * {@return the resource bounds}
+     */
+    MediaLimits limits() {
+        return limits;
     }
 
     /**
@@ -1357,10 +1830,11 @@ public final class JpegReader {
     }
 
     /**
-     * {@return the frame, or {@code null} before {@link #readHeaders()} succeeded}
+     * {@return the frame, or {@code null} before {@link #readHeaders()} succeeded; for a hierarchical image the
+     * frame header of the completed image that its DHP segment defines}
      */
     public JpegFrame frame() {
-        return frame;
+        return image != null ? image : frame;
     }
 
     /**

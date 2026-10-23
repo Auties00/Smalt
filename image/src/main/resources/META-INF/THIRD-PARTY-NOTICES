@@ -37,6 +37,7 @@ Contents
   43. LERC (Limited Error Raster Compression)
   44. OpenJPH
   45. OpenHTJ2K
+  46. CharLS
 
 
 ===============================================================================
@@ -1645,6 +1646,69 @@ OpenHTJ2K license (LICENSE)
 BSD 3-Clause License
 
 Copyright (c) 2019 - 2021, Osamu Watanabe
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+46. CharLS
+===============================================================================
+
+Project:      CharLS, a JPEG-LS (ITU-T T.87 | ISO/IEC 14495-1) codec
+              (commit 1153c2529abf1d1740d245bcddb2b756df62df62)
+Home:         https://github.com/team-charls/charls
+Source:       https://github.com/team-charls/charls (src)
+License text: LICENSE.md at the root of the repository
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  image.jpeg.internal (JpegLsModel, JpegLsBitReader, JpegLsDecoder,
+  JpegLsWriter)
+
+Derivation: the context modeling, prediction, Golomb coding and run mode
+arithmetic of jpegls_algorithm.hpp, regular_mode_context.hpp,
+run_mode_context.hpp, default_traits.hpp and
+jpegls_preset_coding_parameters.hpp; the scan decoder and encoder of
+scan_decoder.hpp, scan_decoder_core.hpp, scan_decoder_impl.hpp,
+scan_encoder.hpp, scan_encoder_core.hpp and scan_encoder_impl.hpp,
+including the bit stuffing; the marker segment reading and writing of
+jpeg_stream_reader.cpp, jpeg_stream_writer.cpp and charls_jpegls_encoder.cpp;
+and the HP color transforms of color_transform.hpp, translated to Java.
+
+Copyright:
+  Copyright (c) 2007, Jan de Vaan and Victor Derks (Team CharLS)
+
+-------------------------------------------------------------------------------
+CharLS license (LICENSE.md)
+-------------------------------------------------------------------------------
+
+BSD 3-Clause License
+
+Copyright (c) 2007, Jan de Vaan and Victor Derks  
 All rights reserved.
 
 Redistribution and use in source and binary forms, with or without

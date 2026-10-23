@@ -257,6 +257,24 @@ class FuzzSeedWriter {
                 VECTORS.resolve("jpeg/lossless/variants/23x17-5ch-p8-sof11-2scans.jpg"));
         copy(ImageFuzzTest.class, "jpeg", "valid-five-components.jpg",
                 VECTORS.resolve("jpeg/lossless/variants/23x17-5ch-baseline.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-jpegls-rgb-line.jpg", VECTORS.resolve("jpeg/jpegls/charls/rgb8-ilv1.jls"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-jpegls-sample-near.jpg",
+                VECTORS.resolve("jpeg/jpegls/charls/rgb8-ilv2-near5.jls"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-jpegls-gray16-near.jpg",
+                VECTORS.resolve("jpeg/jpegls/charls/gray16-near7.jls"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-jpegls-palette.jpg", VECTORS.resolve("jpeg/jpegls/charls/palette8.jls"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-jpegls-hp3.jpg", VECTORS.resolve("jpeg/jpegls/charls/rgb8-hp3-ilv1.jls"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-jpegls-subsampled-restart.jpg",
+                VECTORS.resolve("jpeg/jpegls/referenceA/ilv1-sub420-near1-ri2.jls"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-jpegls-dnl.jpg", VECTORS.resolve("jpeg/jpegls/referenceA/ilv1-dnl.jls"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-hierarchical-420.jpg",
+                VECTORS.resolve("jpeg/hierarchical/dct8-ycc420-2.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-hierarchical-progressive-arithmetic.jpg",
+                VECTORS.resolve("jpeg/hierarchical/dct8-gray-2-prog-arith.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-hierarchical-final-lossless.jpg",
+                VECTORS.resolve("jpeg/hierarchical/dct8-rgb-same-size-lossless.jpg"));
+        copy(ImageFuzzTest.class, "jpeg", "valid-hierarchical-lossless-arithmetic.jpg",
+                VECTORS.resolve("jpeg/hierarchical/lossless12-gray-3-arith.jpg"));
 
         copy(ImageFuzzTest.class, "png", "valid-rgba.png", ffmpeg("png", still, "-frames:v", "1", "-update", "1",
                 "-pix_fmt", "rgba"));

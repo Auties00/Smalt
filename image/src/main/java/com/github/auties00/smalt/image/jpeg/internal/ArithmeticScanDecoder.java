@@ -123,6 +123,11 @@ final class ArithmeticScanDecoder {
     private final int[] dcContext = new int[4];
 
     /**
+     * Whether the scan belongs to a differential frame, whose DC coefficients are not predicted.
+     */
+    private boolean differential;
+
+    /**
      * The coefficients of one block in natural order, used in pixel mode.
      */
     private final short[] scratch = new short[64];
@@ -244,6 +249,7 @@ final class ArithmeticScanDecoder {
         this.dcLower = dcLower;
         this.dcUpper = dcUpper;
         this.acThreshold = acThreshold;
+        this.differential = target.differential;
         var usesDc = !progressive || (scan.ss == 0 && scan.ah == 0);
         var usesAc = !progressive || scan.ss != 0;
         for (var ci = 0; ci < components; ci++) {
@@ -408,6 +414,9 @@ final class ArithmeticScanDecoder {
      * @return {@code false} when a decoding error occurred
      */
     private boolean decodeDc(int ci) {
+        if (differential) {
+            lastDc[ci] = 0;
+        }
         var stats = dcStats[dcSlots[ci]];
         var st = dcContext[ci];
         if (decision(stats, st) == 0) {

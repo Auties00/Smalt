@@ -25,8 +25,8 @@ import java.util.zip.ZipInputStream;
  * Runs every image decoder of this artifact through the I/O behavior harness ({@link ImageDecoderAsserts}):
  * the samples of {@code src/test/resources/samples} (made by {@code tools/testdata/behavior/make-image-samples.sh}
  * and pinned in {@code samples.tsv} there), a selection of the committed codec vectors, PngSuite and BMP Suite
- * images, the lossless streams of the ITU-T T.83 compliance data and smoke-tier vectors, each compared with its
- * golden dump under {@code src/test/resources/dumps}.
+ * images, the lossless streams of the ITU-T T.83 compliance data, JPEG-LS streams of the ITU-T T.87 data set and
+ * smoke-tier vectors, each compared with its golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("image decoder I/O behaviors")
 class ImageDecoderBehaviorTest {
@@ -44,6 +44,25 @@ class ImageDecoderBehaviorTest {
             "jpeg/lossless/variants/23x17-5ch-baseline.jpg",
             "jpeg/lossless/variants/45x31-rgb-p12-psv5-cjpeg-scans.jpg",
             "jpeg/cjpeg12/17x1-yuv411-progressive-arithmetic.jpg",
+            "jpeg/jpegls/charls/rgb8-ilv0.jls",
+            "jpeg/jpegls/charls/rgb8-ilv2-near5.jls",
+            "jpeg/jpegls/charls/gray12-near2.jls",
+            "jpeg/jpegls/charls/palette8.jls",
+            "jpeg/jpegls/charls/mapped8to16.jls",
+            "jpeg/jpegls/charls/rgb16-hp3-ilv2.jls",
+            "jpeg/jpegls/charls/ycbcr8-spiff.jls",
+            "jpeg/jpegls/charls/five8-ilv0.jls",
+            "jpeg/jpegls/referenceA/ilv1-sub420-near1-ri2.jls",
+            "jpeg/jpegls/referenceA/ilv0-sub.jls",
+            "jpeg/jpegls/referenceA/ilv1-dnl.jls",
+            "jpeg/hierarchical/dct8-ycc420-2.jpg",
+            "jpeg/hierarchical/dct8-gray-3-arith.jpg",
+            "jpeg/hierarchical/dct8-gray-2-prog.jpg",
+            "jpeg/hierarchical/dct8-gray-2-dnl.jpg",
+            "jpeg/hierarchical/dct12-gray-final-lossless.jpg",
+            "jpeg/hierarchical/dct8-rgb-same-size-lossless-arith.jpg",
+            "jpeg/hierarchical/lossless8-rgb-2.jpg",
+            "jpeg/hierarchical/lossless16-gray-2-arith.jpg",
             "tiff/jpeg12/226x149-ycbcr422-tiles64-tables.tif",
             "tiff/codecs/webp-rgba8-strips.tif",
             "tiff/codecs/j2k-gray12-tiles.tif",
@@ -195,6 +214,18 @@ class ImageDecoderBehaviorTest {
         try (var zip = new ZipFile(Conformance.fetchListed("itu-t83-data-files.zip").toFile());
              var input = zip.getInputStream(zip.getEntry(entry))) {
             ImageDecoderAsserts.of("t83/" + entry.substring(entry.indexOf('/') + 1), input.readAllBytes()).run();
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"T87_test-1-2-3-4-5-6/T8C0E0.JLS", "T87_test-1-2-3-4-5-6/T8C1E3.JLS",
+            "T87_test-1-2-3-4-5-6/T8C2E0.JLS", "T87_test-7-8/T8SSE3.JLS", "T87_test-9-10/T8NDE0.JLS",
+            "T87_test-11-12/T16E3.JLS"})
+    @DisplayName("ITU-T T.87 JPEG-LS streams: identical pictures under every source behavior and clean faults")
+    void t87(String entry) throws IOException {
+        try (var zip = new ZipFile(Conformance.fetchListed("itu-t87-data-set.zip").toFile());
+             var input = zip.getInputStream(zip.getEntry(entry))) {
+            ImageDecoderAsserts.of("t87/" + entry.substring(entry.indexOf('/') + 1), input.readAllBytes()).run();
         }
     }
 

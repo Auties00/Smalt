@@ -40,7 +40,8 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Decodes JPEG images (ITU-T T.81, JFIF, EXIF and Adobe variants).
+ * Decodes JPEG images (ITU-T T.81, JFIF, EXIF and Adobe variants), hierarchical JPEG images (T.81 annex J) and
+ * JPEG-LS images (ITU-T T.87).
  *
  * <p>Supported: baseline and extended sequential (SOF0, SOF1) and progressive (SOF2) Huffman
  * coding, and sequential and progressive arithmetic coding (SOF9, SOF10), all at 8-bit and 12-bit
@@ -63,11 +64,31 @@ import java.util.Optional;
  * as if the data went on with zero bits. Only a DCT frame with no decodable data at all is
  * rejected. Motion-JPEG frames are decoded by {@link MjpegDecoder}.
  *
+ * <p>A hierarchical image (a DHP segment, then a non-differential frame of each component and differential
+ * frames, SOF5, SOF6, SOF7, SOF13, SOF14 and SOF15, each after the EXP segment that expands its reference) of any
+ * of the coding processes above decodes to the components of its completed image: each component's last
+ * reference, the differences of its differential frames added to the reference of the frame before, expanded by
+ * the bilinear interpolation of T.81 J.1.1.2. Differential DCT frames are inverse transformed without the level
+ * shift; the differences of every differential frame are added modulo {@code 2^16} (J.2.1), and only the
+ * non-differential DCT frames and the completed image are clamped to the range of the precision. An image whose
+ * last frames are lossless decodes as a lossless image, to exactly the samples coded; any other one as a DCT image.
+ * A stream whose frames break the order of annex J (DCT and lossless non-differential frames mixed, a DCT frame
+ * over lossless ones, a frame after a lossless frame over DCT ones, or a second non-differential frame of a
+ * component) is malformed, as is a differential frame without a DHP segment.
+ *
+ * <p>A JPEG-LS image (SOF55) of 2 to 16 bits, lossless or near-lossless, in any interleave mode, with any sampling
+ * factors, preset coding parameters ({@code LSE} segments), restart intervals, oversize dimensions and point
+ * transform, decodes as a lossless image to exactly the samples its decoding process reconstructs. Its sample
+ * mapping tables are applied: entries of 1 or 2 bytes map a component to 8 or 16-bit samples, and the 3-byte
+ * entries of a one-component frame are the red, green and blue samples of a palette image. The HP color
+ * transforms an {@code APP8 "mrfx"} segment declares are inverted. Three components are RGB unless a JFIF
+ * segment, a SPIFF header or an Adobe segment declares Y'CbCr.
+ *
  * <p>Unsupported, and rejected with {@link MediaException.Unsupported}: 16-bit precision of the
- * DCT processes ({@code "jpeg 16-bit precision"}), which T.81 does not define; the differential
- * lossless frames of hierarchical coding (SOF7, SOF15, {@code "jpeg lossless"}); hierarchical
- * coding ({@code "jpeg hierarchical"}, SOF5, SOF6, SOF13, SOF14, DHP, EXP); JPEG-LS
- * ({@code "jpeg-ls"}, SOF55, LSE); and the reserved JPG extension marker
+ * DCT processes ({@code "jpeg 16-bit precision"}), which T.81 does not define; JPEG-LS part 2
+ * ({@code "jpeg-ls extensions"}, ITU-T T.870, SOF57 and its {@code LSE} parameter types); JPEG-LS mapping tables of
+ * other entry sizes or mapping components to different precisions ({@code "jpeg-ls mapping table"}) and color
+ * transforms other than HP1 to HP3 ({@code "jpeg-ls color transform"}); and the reserved JPG extension marker
  * ({@code "jpeg extensions"}). A frame of more components than
  * {@link com.github.auties00.smalt.MediaLimits#maxChannels()} is rejected with
  * {@link MediaException.LimitExceeded}. JPEG XT files decode through their backward-compatible
@@ -194,7 +215,8 @@ public final class JpegDecoder {
      * {@link DecodedImage#sourceWidth()} and {@link DecodedImage#sourceHeight()}. At 1/8 a
      * progressive image is rebuilt from its DC coefficients alone and its AC scans are not
      * decoded, so such a decode fails as {@link MediaException.Malformed} when the DC scans hold
-     * no decodable data, whatever the AC scans hold. A lossless image always decodes at full size.
+     * no decodable data, whatever the AC scans hold. A lossless, JPEG-LS or hierarchical image always decodes at
+     * full size.
      *
      * <p>The result carries the orientation of the first {@code APP1 Exif} segment, that segment's
      * TIFF block, the ICC profile reassembled from the {@code APP2 ICC_PROFILE} segments, and the

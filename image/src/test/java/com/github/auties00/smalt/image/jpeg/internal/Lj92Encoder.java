@@ -282,6 +282,13 @@ final class Lj92Encoder {
     // a line and the one above zero on the first line of an interval.
     static byte[] encodeFrame(int[][] planes, int width, int height, int[][] factors, int precision, boolean arithmetic,
                               List<ScanSpec> scans, Tables tables) {
+        return encodeFrame(planes, width, height, factors, precision, arithmetic, scans, tables, false);
+    }
+
+    // A differential frame of hierarchical coding (SOF7, SOF15; T.81 J.1.3.2) codes its samples, the differences
+    // modulo 2^16, without prediction; its scans take predictor 0.
+    static byte[] encodeFrame(int[][] planes, int width, int height, int[][] factors, int precision, boolean arithmetic,
+                              List<ScanSpec> scans, Tables tables, boolean differential) {
         var components = planes.length;
         var hMax = Arrays.stream(factors).mapToInt(f -> f[0]).max().orElseThrow();
         var vMax = Arrays.stream(factors).mapToInt(f -> f[1]).max().orElseThrow();
@@ -301,7 +308,7 @@ final class Lj92Encoder {
                 }
             }
         }
-        marker(out, arithmetic ? 0xCB : 0xC3);
+        marker(out, differential ? (arithmetic ? 0xCF : 0xC7) : (arithmetic ? 0xCB : 0xC3));
         u16(out, 8 + 3 * components);
         out.write(precision);
         u16(out, height);
@@ -352,7 +359,8 @@ final class Lj92Encoder {
             out.write(scan.predictor());
             out.write(0);
             out.write(scan.transform());
-            encodeScan(out, planes, width, height, factors, hMax, vMax, precision, arithmetic, scan, tables, codes);
+            encodeScan(out, planes, width, height, factors, hMax, vMax, precision, arithmetic, scan, tables, codes,
+                    differential);
         }
         marker(out, 0xD9);
         return out.toByteArray();
@@ -360,7 +368,7 @@ final class Lj92Encoder {
 
     private static void encodeScan(ByteArrayOutputStream out, int[][] planes, int width, int height, int[][] factors,
                                    int hMax, int vMax, int precision, boolean arithmetic, ScanSpec scan, Tables tables,
-                                   HuffmanCode[] codes) {
+                                   HuffmanCode[] codes, boolean differential) {
         var order = scan.components();
         var count = order.length;
         var interleaved = count > 1;
@@ -422,7 +430,9 @@ final class Lj92Encoder {
                             var lineStart = restartUnit * hs[k];
                             var fresh = unitRow == restartRow && by == 0 && x >= lineStart;
                             int prediction;
-                            if (fresh) {
+                            if (differential) {
+                                prediction = 0;
+                            } else if (fresh) {
                                 prediction = x == lineStart ? initial : plane[index - 1];
                             } else if (x == 0) {
                                 prediction = plane[index - stride];
@@ -446,8 +456,12 @@ final class Lj92Encoder {
                                 var slot = scan.slots()[k];
                                 var conditioning = tables.conditioning() == null || tables.conditioning()[slot] < 0
                                         ? 0x10 : tables.conditioning()[slot];
+                                var difference = plane[index] - prediction;
+                                if (differential) {
+                                    difference = (short) difference;
+                                }
                                 classes[k][index] = coder.difference(slot, 20 * left + 4 * up, up >= 3 ? 129 : 100,
-                                        plane[index] - prediction, conditioning & 15, conditioning >> 4);
+                                        difference, conditioning & 15, conditioning >> 4);
                             } else {
                                 codes[scan.slots()[k]].write(bits, plane[index] - prediction);
                             }

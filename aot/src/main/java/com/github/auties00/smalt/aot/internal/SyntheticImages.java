@@ -1,8 +1,12 @@
 package com.github.auties00.smalt.aot.internal;
 
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.jpeg.JpegEncoder;
+import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -416,7 +420,31 @@ final class SyntheticImages {
                                     int predictor, boolean arithmetic, int[][] scans) {
         var out = new ByteArrayOutputStream();
         marker(out, 0xD8);
-        marker(out, arithmetic ? 0xCB : 0xC3);
+        losslessFrame(out, samples, width, height, components, precision, predictor, arithmetic, scans, false);
+        marker(out, 0xD9);
+        return out.toByteArray();
+    }
+
+    /**
+     * Writes the segments of one lossless frame, from its SOF segment to the end of its last scan.
+     *
+     * @param out the output
+     * @param samples the samples, row-major and component-interleaved, each below {@code 1 << precision}, or,
+     * for a differential frame, the differences modulo {@code 2^16}
+     * @param width the width in pixels
+     * @param height the height in pixels
+     * @param components the number of components
+     * @param precision the sample precision
+     * @param predictor the predictor, ignored for a differential frame
+     * @param arithmetic whether the scans are arithmetic coded
+     * @param scans the components of each scan
+     * @param differential whether the frame is a differential frame of hierarchical coding (SOF7 or SOF15),
+     * whose samples are coded without prediction
+     */
+    private static void losslessFrame(ByteArrayOutputStream out, int[] samples, int width, int height,
+                                      int components, int precision, int predictor, boolean arithmetic, int[][] scans,
+                                      boolean differential) {
+        marker(out, (arithmetic ? 0xCB : 0xC3) + (differential ? 4 : 0));
         u16be(out, 8 + 3 * components);
         out.write(precision);
         u16be(out, height);
@@ -449,7 +477,7 @@ final class SyntheticImages {
                 out.write(c + 1);
                 out.write(0);
             }
-            out.write(predictor);
+            out.write(differential ? 0 : predictor);
             out.write(0);
             out.write(0);
             var bits = arithmetic ? null : new HuffmanBits(out);
@@ -458,8 +486,9 @@ final class SyntheticImages {
                 for (var column = 0; column < width; column++) {
                     for (var c : scan) {
                         var index = row * stride + column * components + c;
-                        var difference = (samples[index] - prediction(samples, index, row == 0, column, components,
-                                stride, predictor, initial)) & 0xFFFF;
+                        var predicted = differential ? 0 : prediction(samples, index, row == 0, column, components,
+                                stride, predictor, initial);
+                        var difference = (samples[index] - predicted) & 0xFFFF;
                         if (difference >= 32768) {
                             difference -= 65536;
                         }
@@ -486,8 +515,148 @@ final class SyntheticImages {
                 bits.flush();
             }
         }
+    }
+
+    /**
+     * Writes a hierarchical JPEG (ITU-T T.81 annex J) of components of sampling factors one: a non-differential
+     * frame at half the size followed, after an EXP segment doubling it, by a differential frame at the full
+     * size. A lossless image codes a lossless frame and a differential lossless one of the differences from the
+     * expanded first frame; a DCT image (8-bit gray only) codes a sequential Huffman frame and a differential DCT
+     * frame of DC coefficients, and then, after an EXP segment of no expansion, a differential lossless frame.
+     * The differential frames code synthetic values, not the differences a real encoder computes, so the image
+     * decodes to other samples than the source.
+     *
+     * @param samples the samples, row-major and component-interleaved, each below {@code 1 << precision}
+     * @param width the width in pixels, even
+     * @param height the height in pixels, even
+     * @param components the number of components, from 1 to 4
+     * @param precision the sample precision, from 2 to 16, 8 for a DCT image
+     * @param arithmetic whether the lossless frames are arithmetic coded
+     * @param dct whether the first frames are DCT coded
+     * @return the JPEG file
+     */
+    static byte[] hierarchicalJpeg(int[] samples, int width, int height, int components, int precision,
+                                   boolean arithmetic, boolean dct) {
+        var out = new ByteArrayOutputStream();
+        marker(out, 0xD8);
+        marker(out, 0xDE);
+        u16be(out, 8 + 3 * components);
+        out.write(precision);
+        u16be(out, height);
+        u16be(out, width);
+        out.write(components);
+        for (var c = 0; c < components; c++) {
+            out.write(c + 1);
+            out.write(0x11);
+            out.write(0);
+        }
+        var halfWidth = width / 2;
+        var halfHeight = height / 2;
+        var half = new int[halfWidth * halfHeight * components];
+        for (var y = 0; y < halfHeight; y++) {
+            for (var x = 0; x < halfWidth; x++) {
+                for (var c = 0; c < components; c++) {
+                    half[(y * halfWidth + x) * components + c] = samples[(2 * y * width + 2 * x) * components + c];
+                }
+            }
+        }
+        var all = new int[components];
+        for (var c = 0; c < components; c++) {
+            all[c] = c;
+        }
+        var scans = new int[][]{all};
+        if (dct) {
+            var picture = YuvPicture.allocate(halfWidth, halfHeight, ChromaFormat.MONOCHROME, false, ColorInfo.JPEG);
+            for (var i = 0; i < half.length; i++) {
+                picture.y()[(i / halfWidth) * picture.yStride() + i % halfWidth] = (byte) half[i];
+            }
+            var base = JpegEncoder.encode(picture, JpegEncoderOptions.builder().quality(80)
+                    .chromaFormat(ChromaFormat.MONOCHROME).build());
+            out.write(base, 2, base.length - 4);
+            expand(out, 0x11);
+            differentialDct(out, width, height);
+            expand(out, 0x00);
+        } else {
+            losslessFrame(out, half, halfWidth, halfHeight, components, precision, 1, arithmetic, scans, false);
+            expand(out, 0x11);
+        }
+        var differences = new int[samples.length];
+        for (var i = 0; i < differences.length; i++) {
+            differences[i] = ((i * 7919) % 31 - 15) & 0xFFFF;
+        }
+        losslessFrame(out, differences, width, height, components, precision, 0, arithmetic, scans, true);
         marker(out, 0xD9);
         return out.toByteArray();
+    }
+
+    /**
+     * Writes an EXP segment.
+     *
+     * @param out the output
+     * @param expansion the horizontal expansion in the high nibble and the vertical one in the low nibble
+     */
+    private static void expand(ByteArrayOutputStream out, int expansion) {
+        marker(out, 0xDF);
+        u16be(out, 3);
+        out.write(expansion);
+    }
+
+    /**
+     * Writes a differential sequential Huffman DCT frame (SOF5) of one 8-bit component whose blocks hold only a
+     * small DC coefficient, coded without prediction, with quantization table 0 of the frame before it: a DC table
+     * of 5-bit codes for every category and an AC table holding only the end of block, one bit long.
+     *
+     * @param out the output
+     * @param width the width in pixels
+     * @param height the height in pixels
+     */
+    private static void differentialDct(ByteArrayOutputStream out, int width, int height) {
+        marker(out, 0xC4);
+        u16be(out, 2 + 17 + 12 + 17 + 1);
+        out.write(0x00);
+        for (var length = 1; length <= 16; length++) {
+            out.write(length == 5 ? 12 : 0);
+        }
+        for (var category = 0; category <= 11; category++) {
+            out.write(category);
+        }
+        out.write(0x10);
+        for (var length = 1; length <= 16; length++) {
+            out.write(length == 1 ? 1 : 0);
+        }
+        out.write(0x00);
+        marker(out, 0xC5);
+        u16be(out, 11);
+        out.write(8);
+        u16be(out, height);
+        u16be(out, width);
+        out.write(1);
+        out.write(1);
+        out.write(0x11);
+        out.write(0);
+        marker(out, 0xDA);
+        u16be(out, 8);
+        out.write(1);
+        out.write(1);
+        out.write(0x00);
+        out.write(0);
+        out.write(63);
+        out.write(0);
+        var bits = new HuffmanBits(out);
+        var blocksWide = (width + 7) / 8;
+        var blocksHigh = (height + 7) / 8;
+        for (var by = 0; by < blocksHigh; by++) {
+            for (var bx = 0; bx < blocksWide; bx++) {
+                var dc = (bx * 3 + by * 5) % 41 - 20;
+                var category = dc == 0 ? 0 : 32 - Integer.numberOfLeadingZeros(Math.abs(dc));
+                bits.write(category, 5);
+                if (category > 0) {
+                    bits.write(dc >= 0 ? dc : dc + (1 << category) - 1, category);
+                }
+                bits.write(0, 1);
+            }
+        }
+        bits.flush();
     }
 
     /**

@@ -45,6 +45,12 @@ final class DecodeTarget {
     final int scaleShift;
 
     /**
+     * Whether the frame is a differential frame of hierarchical coding, whose DC coefficients are coded
+     * directly, without prediction (T.81 J.2.3.1).
+     */
+    final boolean differential;
+
+    /**
      * Constructs a target.
      *
      * @param components   the number of frame components
@@ -56,12 +62,29 @@ final class DecodeTarget {
      */
     DecodeTarget(int components, byte[][] planes, int[] strides, short[][] coefficients, long[][] nonzero,
                  int scaleShift) {
+        this(components, planes, strides, coefficients, nonzero, scaleShift, false);
+    }
+
+    /**
+     * Constructs a target, possibly for a differential frame.
+     *
+     * @param components the number of frame components
+     * @param planes the sample planes, or {@code null} in coefficient mode
+     * @param strides the plane strides, or {@code null} in coefficient mode
+     * @param coefficients the coefficient buffers, or {@code null} in pixel mode
+     * @param nonzero the nonzero masks of every block, or {@code null}
+     * @param scaleShift the binary logarithm of the size reduction
+     * @param differential whether the DC coefficients are coded without prediction
+     */
+    DecodeTarget(int components, byte[][] planes, int[] strides, short[][] coefficients, long[][] nonzero,
+                 int scaleShift, boolean differential) {
         this.planes = planes;
         this.strides = strides;
         this.coefficients = coefficients;
         this.nonzero = nonzero;
         this.zigzagQuant = new int[components][];
         this.scaleShift = scaleShift;
+        this.differential = differential;
     }
 
     /**

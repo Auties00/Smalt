@@ -32,6 +32,21 @@ public final class LosslessOutput {
     }
 
     /**
+     * Opens the samples of a frame that is not DCT coded (lossless JPEG, JPEG-LS, or a hierarchical image whose
+     * last frames are lossless), after checking it against the limits.
+     *
+     * @param reader the reader, its headers read, of a frame for which {@link JpegReader#lossless()} holds
+     * @return the samples
+     * @throws IllegalStateException if the frame is DCT coded
+     * @throws com.github.auties00.smalt.MediaException.Malformed if a header is invalid
+     * @throws com.github.auties00.smalt.MediaException.Unsupported if the frame uses an unsupported feature
+     * @throws com.github.auties00.smalt.MediaException.LimitExceeded if the frame exceeds the limits
+     */
+    public static LosslessSamples open(JpegReader reader) {
+        return reader.openLossless();
+    }
+
+    /**
      * Returns whether a frame can keep its precision, through {@link #decodePicture} for a lossless
      * frame and {@link JpegOutput#toWidePicture} for a DCT frame: one of more than 8 bits coded as
      * gray, YCbCr or RGB.
@@ -66,7 +81,7 @@ public final class LosslessOutput {
      */
     public static boolean reversibleRgb(JpegReader reader) {
         var frame = reader.frame();
-        if (!reader.lossless() || frame.precision != 9 || !reader.hasJfif()
+        if ((frame.marker != 0xC3 && frame.marker != 0xCB) || frame.precision != 9 || !reader.hasJfif()
                 || (frame.components.length != 3 && frame.components.length != 4)) {
             return false;
         }
@@ -284,7 +299,7 @@ public final class LosslessOutput {
      * @param limits the resource bounds checked before the allocation
      * @return the picture
      */
-    private static Picture decodeSubsampled(LosslessJpeg jpeg, ChromaFormat format, int width, int height,
+    private static Picture decodeSubsampled(LosslessSamples jpeg, ChromaFormat format, int width, int height,
                                             int precision, MediaLimits limits) {
         var chroma = (long) ((width + (1 << format.shiftX()) - 1) >> format.shiftX())
                 * ((height + (1 << format.shiftY()) - 1) >> format.shiftY());
@@ -351,7 +366,7 @@ public final class LosslessOutput {
      * @param limits the resource bounds checked before every allocation
      * @param sink receives the rows
      */
-    private static void decodeRows(LosslessJpeg jpeg, JpegFrame frame, MediaLimits limits, LosslessJpeg.RowSink sink) {
+    private static void decodeRows(LosslessSamples jpeg, JpegFrame frame, MediaLimits limits, LosslessJpeg.RowSink sink) {
         if (jpeg.streamsRows()) {
             jpeg.decode(sink);
             return;

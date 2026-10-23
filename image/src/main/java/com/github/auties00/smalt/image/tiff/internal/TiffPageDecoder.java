@@ -522,9 +522,9 @@ public final class TiffPageDecoder {
                         floats(directory.doubles(TiffTags.Y_CB_CR_COEFFICIENTS), new float[]{0.299F, 0.587F, 0.114F}),
                         floats(directory.doubles(TiffTags.REFERENCE_BLACK_WHITE), new float[]{0, 255, 128, 255, 128, 255}))
                 : null;
-        if (compression == JPEG && ((bits != 8 && bits != 12) || format != 1)) {
+        if (compression == JPEG && (bits < 2 || bits > 16 || format != 1)) {
             throw new MediaException.Unsupported("tiff jpeg " + bits + "-bit",
-                    "only 8-bit and 12-bit JPEG-compressed TIFF images are supported");
+                    "JPEG-compressed TIFF images of 2 to 16-bit unsigned samples are supported, not " + bits + "-bit");
         }
         if (compression == OLD_JPEG && (bits != 8 || format != 1)) {
             throw new MediaException.Unsupported("tiff old-style jpeg " + bits + "-bit",
@@ -1546,13 +1546,18 @@ public final class TiffPageDecoder {
         } else {
             stream = TiffJpeg.join(jpegTables, raw, length);
         }
-        var decoded = TiffJpeg.decode(stream, 0, stream.length, limits, jpegYcbcr, compression == OLD_JPEG ? ycbcr : null);
+        var decoded = TiffJpeg.decode(stream, 0, stream.length, limits, jpegYcbcr, compression == OLD_JPEG ? ycbcr : null,
+                file.little());
         var components = planar ? 1 : samples;
         if (decoded.components() != components) {
             throw new MediaException.Malformed("a TIFF JPEG strip or tile has " + decoded.components()
                     + " components, the image " + components);
         }
         if (decoded.bits() != bits) {
+            if (bits != 8 && bits != 12) {
+                throw new MediaException.Unsupported("tiff jpeg " + bits + "-bit",
+                        "a " + bits + "-bit JPEG-compressed TIFF image needs lossless JPEG or JPEG-LS strips and tiles");
+            }
             throw new MediaException.Malformed("a TIFF JPEG strip or tile has " + decoded.bits()
                     + "-bit samples, the image " + bits);
         }
@@ -1642,7 +1647,7 @@ public final class TiffPageDecoder {
         TiffJpeg.Samples decoded;
         try {
             var stream = file.readBlock(start, length);
-            decoded = TiffJpeg.decode(stream, 0, stream.length, limits, jpegYcbcr, ycbcr);
+            decoded = TiffJpeg.decode(stream, 0, stream.length, limits, jpegYcbcr, ycbcr, file.little());
         } catch (MediaException.Malformed | MediaException.Unsupported exception) {
             return false;
         }

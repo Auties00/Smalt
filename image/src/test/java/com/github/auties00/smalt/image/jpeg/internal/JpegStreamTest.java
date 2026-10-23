@@ -392,16 +392,14 @@ class JpegStreamTest {
     @DisplayName("unsupported and invalid")
     class Unsupported {
         @ParameterizedTest(name = "SOF 0x{0}")
-        @CsvSource({"C7, jpeg lossless", "CF, jpeg lossless",
-                "C5, jpeg hierarchical", "C6, jpeg hierarchical", "CD, jpeg hierarchical", "CE, jpeg hierarchical",
-                "F7, jpeg-ls"})
-        @DisplayName("names the unsupported coding process")
-        void codingProcess(String marker, String name) {
+        @ValueSource(strings = {"C5", "C6", "C7", "CD", "CE", "CF"})
+        @DisplayName("rejects a differential frame without a DHP segment as malformed, and still probes it")
+        void codingProcess(String marker) {
             var writer = TestJpegWriter.fromPlanes(8, 8, new int[]{1}, new int[]{1}, new int[]{1}, new byte[][]{plane(8, 8, 0)}, 90);
             writer.sofMarker = Integer.parseInt(marker, 16);
             var jpeg = writer.sequential(new int[]{0});
-            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(jpeg));
-            assertEquals(name, exception.format());
+            var exception = assertThrows(MediaException.Malformed.class, () -> decode(jpeg));
+            assertTrue(exception.getMessage().contains("without the DHP segment"), exception.getMessage());
             assertEquals(8, JpegDecoder.probe(MediaSource.of(jpeg)).width());
         }
 
@@ -451,11 +449,14 @@ class JpegStreamTest {
         }
 
         @Test
-        @DisplayName("names hierarchical markers and the JPG extension marker, rejects non-JPEG input")
+        @DisplayName("rejects an empty DHP segment and a 3-byte restart interval, names the JPG extension marker, rejects"
+                + " non-JPEG input")
         void markers() {
             var jpeg = JpegEncoder.encode(RgbaPicture.allocate(8, 8, false), JpegEncoderOptions.ofQuality(90));
             var dhp = insertBefore(jpeg, 0xDB, new byte[]{(byte) 0xFF, (byte) 0xDE, 0, 2});
-            assertEquals("jpeg hierarchical", assertThrows(MediaException.Unsupported.class, () -> decode(dhp)).format());
+            assertThrows(MediaException.Malformed.class, () -> decode(dhp));
+            var wideRestart = insertBefore(jpeg, 0xDB, new byte[]{(byte) 0xFF, (byte) 0xDD, 0, 5, 0, 0, 1});
+            assertThrows(MediaException.Malformed.class, () -> decode(wideRestart));
             var jpg = insertBefore(jpeg, 0xDB, new byte[]{(byte) 0xFF, (byte) 0xC8, 0, 2});
             assertEquals("jpeg extensions", assertThrows(MediaException.Unsupported.class, () -> decode(jpg)).format());
             assertThrows(MediaException.Malformed.class, () -> decode(new byte[0]));

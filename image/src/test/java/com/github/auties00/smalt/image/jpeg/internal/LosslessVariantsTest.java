@@ -763,7 +763,7 @@ class LosslessVariantsTest {
             patched[at + 6] = 0;
             var picture = decode(patched, ImageDecoderOptions.defaults()).picture();
             assertEquals(14, picture.height());
-            var scan = new JpegReader(patched, 0, patched.length, MediaLimits.DEFAULT).openLossless();
+            var scan = new JpegReader(patched, 0, patched.length, MediaLimits.DEFAULT).openLossless() instanceof LosslessJpeg lossless ? lossless : null;
             assertEquals(14, scan.height());
             var decoded = decodeComponents(scan);
             for (var c = 0; c < 3; c++) {
@@ -1354,15 +1354,14 @@ class LosslessVariantsTest {
     }
 
     @Test
-    @DisplayName("differential lossless frames, which belong to hierarchical coding, stay unsupported")
+    @DisplayName("differential lossless frames outside hierarchical coding are malformed")
     void differential() {
         var jpeg = Lj92Encoder.encodeFrame(planes(4, 4, ones(1), 8, 1), 4, 4, ones(1), 8, false,
                 List.of(Lj92Encoder.ScanSpec.of(new int[]{0}, 1, 0, 0)));
         for (var marker : new int[]{0xC7, 0xCF}) {
             var patched = jpeg.clone();
             patched[MultiScan.indexOf(patched, 0xC3) + 1] = (byte) marker;
-            assertEquals("jpeg lossless", assertThrows(MediaException.Unsupported.class,
-                    () -> decode(patched, ImageDecoderOptions.defaults())).format());
+            assertThrows(MediaException.Malformed.class, () -> decode(patched, ImageDecoderOptions.defaults()));
         }
     }
 }

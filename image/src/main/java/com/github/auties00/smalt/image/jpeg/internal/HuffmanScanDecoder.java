@@ -163,6 +163,11 @@ final class HuffmanScanDecoder {
     private final int[] predictors = new int[4];
 
     /**
+     * Whether the scan belongs to a differential frame, whose DC coefficients are not predicted.
+     */
+    private boolean differential;
+
+    /**
      * The unstuffed entropy-coded data.
      */
     private byte[] data;
@@ -341,6 +346,7 @@ final class HuffmanScanDecoder {
         var components = scan.components.length;
         this.dcTables = dc;
         this.acTables = ac;
+        this.differential = target.differential;
         this.quant = new int[components][];
         this.planes = new byte[components][];
         this.strides = new int[components];
@@ -1204,7 +1210,7 @@ final class HuffmanScanDecoder {
             }
         }
         var dc = predictors[component] + diff;
-        predictors[component] = dc;
+        predictors[component] = differential ? 0 : dc;
         block[lane] = ((short) dc) * quant[0];
         var fast = acTable.fast;
         var lookup = acTable.lookup;
@@ -1323,7 +1329,7 @@ final class HuffmanScanDecoder {
             }
         }
         var dc = predictors[component] + diff;
-        predictors[component] = dc;
+        predictors[component] = differential ? 0 : dc;
         block[0] = ((short) dc) * quant[0];
         var fast = acTable.fast;
         var lookup = acTable.lookup;
@@ -1423,7 +1429,7 @@ final class HuffmanScanDecoder {
                 diff = size == 0 ? 0 : HuffmanDecodingTable.extend(bits(size), size);
             }
             var dc = predictors[ci] + diff;
-            predictors[ci] = dc;
+            predictors[ci] = differential ? 0 : dc;
             coefficients[ci][offset] = (short) (dc << al);
         }
     }

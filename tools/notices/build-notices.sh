@@ -100,6 +100,7 @@ Contents
   43. LERC (Limited Error Raster Compression)
   44. OpenJPH
   45. OpenHTJ2K
+  46. CharLS
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1572,6 +1573,35 @@ Copyright:
 EOF
 license_start "OpenHTJ2K license (LICENSE)"
 cat "$LIC/openhtj2k-LICENSE"
+
+section "46. CharLS"
+cat <<'EOF'
+Project:      CharLS, a JPEG-LS (ITU-T T.87 | ISO/IEC 14495-1) codec
+              (commit 1153c2529abf1d1740d245bcddb2b756df62df62)
+Home:         https://github.com/team-charls/charls
+Source:       https://github.com/team-charls/charls (src)
+License text: LICENSE.md at the root of the repository
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  image.jpeg.internal (JpegLsModel, JpegLsBitReader, JpegLsDecoder,
+  JpegLsWriter)
+
+Derivation: the context modeling, prediction, Golomb coding and run mode
+arithmetic of jpegls_algorithm.hpp, regular_mode_context.hpp,
+run_mode_context.hpp, default_traits.hpp and
+jpegls_preset_coding_parameters.hpp; the scan decoder and encoder of
+scan_decoder.hpp, scan_decoder_core.hpp, scan_decoder_impl.hpp,
+scan_encoder.hpp, scan_encoder_core.hpp and scan_encoder_impl.hpp,
+including the bit stuffing; the marker segment reading and writing of
+jpeg_stream_reader.cpp, jpeg_stream_writer.cpp and charls_jpegls_encoder.cpp;
+and the HP color transforms of color_transform.hpp, translated to Java.
+
+Copyright:
+  Copyright (c) 2007, Jan de Vaan and Victor Derks (Team CharLS)
+EOF
+license_start "CharLS license (LICENSE.md)"
+cat "$LIC/charls-LICENSE.md"
 } > "$OUT"
 
 echo "wrote $OUT"

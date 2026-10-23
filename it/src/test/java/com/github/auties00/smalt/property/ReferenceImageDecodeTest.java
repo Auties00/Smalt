@@ -45,7 +45,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Re-reads the images Smalt writes with the formats' reference decoders: libpng (through
  * {@code tools/testdata/png-oracle}), libjpeg-turbo's djpeg, libwebp's dwebp, OpenJPEG's opj_decompress, libtiff's
  * tools and ffmpeg's decoders (dav1d for AVIF), and requires the pixels to equal Smalt's own decode (or the source, for
- * lossless coding) within the tolerance declared for the format. Metadata edits are checked the same way: a reference
+ * lossless coding) within the tolerance declared for the format; JPEG-LS, which no image format constant names,
+ * through ffmpeg's decoder. Metadata edits are checked the same way: a reference
  * decoder reads the edited file without a warning and to exactly the pixels of the original.
  */
 @DisplayName("Images decoded by the reference decoders")
@@ -337,6 +338,23 @@ class ReferenceImageDecodeTest {
             var info = new String(Oracle.run("webpinfo", Duration.ofMinutes(1), null, List.of(file.toString())),
                     StandardCharsets.UTF_8);
             assertTrue(info.contains("No error detected"), info);
+        }
+
+        @ParameterizedTest(name = "NEAR {0}")
+        @ValueSource(ints = {0, 2})
+        @DisplayName("JPEG-LS decodes in ffmpeg to Smalt's decode exactly, and to the source within NEAR")
+        void jpegLs(int near) {
+            var source = source(false);
+            // ffmpeg's JPEG-LS decoder lacks sample-interleaved scans
+            for (var interleave : List.of(com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.Interleave.NONE,
+                    com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.Interleave.LINE)) {
+                var file = save("jpegls-" + near + "-" + interleave + ".jls",
+                        com.github.auties00.smalt.image.jpeg.JpegLsEncoder.encode(source,
+                                com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.builder().nearLossless(near)
+                                        .interleave(interleave).build()));
+                EXACT.assertWithin("ffmpeg JPEG-LS " + interleave, ffmpegRgba(file, 1), smalt(read(file)));
+                Tolerance.maxAbs(near).assertWithin("JPEG-LS source " + interleave, rgba(source), smalt(read(file)));
+            }
         }
 
         @ParameterizedTest(name = "{0}")

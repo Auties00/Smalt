@@ -1,0 +1,13 @@
+# image dump of resources/jpeg/jpegls/charls/ycbcr8-spiff.jls; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=53, height=41, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 53x41 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=c14ab225 u=fa66bd98 v=28647a8f
+  format=JPEG orientation=NORMAL source=53x41
+  icc=none exif=none xmp=none
+  profile=none
+scaled 13x10
+picture 53x41 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=c14ab225 u=fa66bd98 v=28647a8f
+  format=JPEG orientation=NORMAL source=53x41
+  icc=none exif=none xmp=none
+  profile=none

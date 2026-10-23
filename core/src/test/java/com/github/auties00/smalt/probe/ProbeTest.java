@@ -370,6 +370,8 @@ class ProbeTest {
                 Arguments.of("png gray16", Fixtures.testImage("png", 120, 90, List.of("-pix_fmt", "gray16be")), 16, false, 1),
                 Arguments.of("png palette", Fixtures.testImage("png", 120, 90, List.of("-pix_fmt", "pal8")), 8, false, 1),
                 Arguments.of("jpeg", Fixtures.testImage("jpg", 120, 90, List.of()), 8, false, 1),
+                Arguments.of("jpeg-ls", Fixtures.testImage("jls", 120, 90, List.of("-c:v", "jpegls", "-pix_fmt",
+                        "rgb24")), 8, false, 1),
                 Arguments.of("webp lossy", Fixtures.testImage("webp", 120, 90, List.of("-c:v", "libwebp")), 8, false, 1),
                 Arguments.of("webp lossless alpha", Fixtures.testImage("webp", 120, 90, List.of("-vf",
                         "format=rgba,colorchannelmixer=aa=0.5", "-c:v", "libwebp", "-lossless", "1")), 8, true, 1),
@@ -504,6 +506,19 @@ class ProbeTest {
         assertTrue(Media.probe(MediaSource.of(j2kData)).image().orElseThrow().hasAlpha());
         var jpeg = new HeifBuilder().brands("jpeg", "jpeg", "mif1").build();
         assertEquals(ImageFormat.HEIC, ImageFormat.detect(jpeg, jpeg.length).orElseThrow());
+    }
+
+    @Test
+    @DisplayName("describes a hierarchical JPEG image by its DHP segment, not by its smaller first frame")
+    void hierarchicalJpeg() {
+        var jpeg = new byte[]{(byte) 0xFF, (byte) 0xD8,
+                (byte) 0xFF, (byte) 0xDE, 0, 11, 12, 0, 29, 0, 41, 1, 1, 0x11, 0,
+                (byte) 0xFF, (byte) 0xC1, 0, 11, 12, 0, 15, 0, 21, 1, 1, 0x11, 0,
+                (byte) 0xFF, (byte) 0xDA, 0, 8, 1, 1, 0, 0, 63, 0, (byte) 0xFF, (byte) 0xD9};
+        var image = Media.probe(MediaSource.of(jpeg)).image().orElseThrow();
+        assertEquals(41, image.width());
+        assertEquals(29, image.height());
+        assertEquals(12, image.bitDepth().orElse(-1));
     }
 
     @Nested

@@ -44,7 +44,7 @@ import java.util.Arrays;
  * walk the canonical code lengths. Arithmetic-coded scans run through {@link ArithmeticScanDecoder}
  * with the two-dimensional statistical model of T.81 H.1.2.3.
  */
-public final class LosslessJpeg {
+public final class LosslessJpeg implements LosslessSamples {
     /**
      * The number of leading bits the fast Huffman table resolves.
      */
@@ -71,9 +71,15 @@ public final class LosslessJpeg {
     private final int precision;
 
     /**
-     * Whether the frame is arithmetic coded ({@code SOF11}).
+     * Whether the frame is arithmetic coded ({@code SOF11}, {@code SOF15}).
      */
     private final boolean arithmetic;
+
+    /**
+     * Whether the frame is a differential frame of hierarchical coding ({@code SOF7}, {@code SOF15}), whose
+     * differences are coded without prediction and decoded modulo {@code 2^16}.
+     */
+    private final boolean differential;
 
     /**
      * The identifier of each component, in frame order.
@@ -193,6 +199,47 @@ public final class LosslessJpeg {
      * @throws MediaException.Unsupported if the stream is not a lossless JPEG this decoder handles
      */
     LosslessJpeg(byte[] data, int offset, int length, int maxFactor, int lines, MediaLimits limits) {
+        this(data, offset, length, -1, false, maxFactor, lines, limits);
+    }
+
+    /**
+     * Parses the headers of one frame of a hierarchical image up to its first scan, walking the stream from its
+     * {@code SOI} for the tables in force there and skipping the frames before it.
+     *
+     * <p>The rows the decoder hands over are the samples of a non-differential frame, and for a differential
+     * frame the decoded differences modulo {@code 2^16}, shifted left by the point transform.
+     *
+     * @param data the bytes holding the stream
+     * @param offset the index of its {@code SOI} marker
+     * @param length the length of the stream
+     * @param frameStart the index of the {@code 0xFF} of the frame's SOF marker
+     * @param differential whether the frame is differential ({@code SOF7}, {@code SOF15})
+     * @param lines the frame height to use when the frame header declares zero rows, or 0 for none
+     * @param limits the resource bounds of the buffers the decode allocates
+     * @throws MediaException.Malformed if the headers are corrupt
+     * @throws MediaException.Unsupported if the frame is not a lossless frame this decoder handles
+     */
+    LosslessJpeg(byte[] data, int offset, int length, int frameStart, boolean differential, int lines,
+                 MediaLimits limits) {
+        this(data, offset, length, frameStart, differential, 4, lines, limits);
+    }
+
+    /**
+     * Parses the headers of a stream, or of one frame of a hierarchical stream, up to its first scan.
+     *
+     * @param data the bytes holding the stream
+     * @param offset the index of its {@code SOI} marker
+     * @param length the length of the stream
+     * @param frameStart the index of the {@code 0xFF} of the SOF marker of the frame to decode, or {@code -1} for
+     * the only frame
+     * @param differential whether the frame is differential
+     * @param maxFactor the largest sampling factor accepted
+     * @param lines the frame height to use when the frame header declares zero rows, or 0 for none
+     * @param limits the resource bounds of the buffers the decode allocates
+     */
+    private LosslessJpeg(byte[] data, int offset, int length, int frameStart, boolean differential, int maxFactor,
+                         int lines, MediaLimits limits) {
+        this.differential = differential;
         if (offset < 0 || length < 4 || offset > data.length - length) {
             throw new MediaException.Malformed("truncated lossless JPEG stream");
         }
@@ -210,6 +257,7 @@ public final class LosslessJpeg {
         var frameArithmetic = false;
         int[] frameIds = null;
         int[][] factors = null;
+        var foreign = false;
         var position = offset + 2;
         while (true) {
             var marker = nextMarker(position);
@@ -218,6 +266,19 @@ public final class LosslessJpeg {
             }
             position = (int) (marker >>> 8);
             var code = (int) (marker & 0xFF);
+            var sof = code >= 0xC0 && code <= 0xCF && code != 0xC4 && code != 0xC8 && code != 0xCC;
+            if (frameStart >= 0 && sof && position - 2 != frameStart) {
+                foreign = true;
+                position = segmentEnd(position, code);
+                continue;
+            }
+            if (frameStart >= 0 && code == 0xDA && (frameIds == null || foreign)) {
+                position = scanEnd(segmentEnd(position, code));
+                continue;
+            }
+            if (sof && differential && (code == 0xC7 || code == 0xCF)) {
+                code -= 4;
+            }
             if (code == 0xD9) {
                 throw new MediaException.Malformed("lossless JPEG stream ends before its scan");
             }
@@ -228,6 +289,7 @@ public final class LosslessJpeg {
             var body = position + 2;
             switch (code) {
                 case 0xC3, 0xCB -> {
+                    foreign = false;
                     if (frameIds != null) {
                         throw new MediaException.Malformed("duplicate lossless JPEG frame header");
                     }
@@ -354,7 +416,7 @@ public final class LosslessJpeg {
      * @param slots the table selector of each scan component
      * @param lower the lower conditioning bound of each scan component
      * @param upper the upper conditioning bound of each scan component
-     * @param predictor the predictor selection value, from 1 to 7
+     * @param predictor the predictor selection value, from 1 to 7, or 0 for the differences of a differential frame
      * @param pointTransform the point transform, below the precision
      * @param restartInterval the restart interval in minimum coded units, or {@code 0}
      * @param start the index of the first entropy-coded byte
@@ -540,7 +602,9 @@ public final class LosslessJpeg {
         }
         var select = data[body + 1 + 2 * count] & 0xFF;
         var transform = data[body + 3 + 2 * count] & 0x0F;
-        if (select < 1 || select > 7) {
+        if (differential) {
+            select = 0;
+        } else if (select < 1 || select > 7) {
             throw new MediaException.Malformed("invalid lossless JPEG predictor " + select);
         }
         if (transform >= precision) {
@@ -700,7 +764,7 @@ public final class LosslessJpeg {
      * component whole
      */
     public boolean streamsRows() {
-        if (arithmetic || first.components().length != components) {
+        if (arithmetic || differential || first.components().length != components) {
             return false;
         }
         if (components == 1) {
@@ -880,7 +944,7 @@ public final class LosslessJpeg {
             var transform = scan.pointTransform();
             var shifted = transform > 0 ? new int[unitsWide * hMax] : null;
             var initial = 1 << (precision - transform - 1);
-            var mask = (1 << precision) - 1;
+            var mask = differential ? 0xFFFF : (1 << precision) - 1;
             var predictor = scan.predictor();
             var interval = scan.restartInterval();
             BitReader reader = null;
@@ -931,7 +995,9 @@ public final class LosslessJpeg {
                                 var x = unit * h + bx;
                                 var fresh = firstLine && x >= lineStart;
                                 int prediction;
-                                if (fresh) {
+                                if (predictor == 0) {
+                                    prediction = 0;
+                                } else if (fresh) {
                                     prediction = x == lineStart ? initial : current[x - 1];
                                 } else if (x == 0) {
                                     prediction = above[0];

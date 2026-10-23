@@ -96,6 +96,12 @@ public final class ThreadDigest {
         for (var mode : jpegModes.entrySet()) {
             digests.put(mode.getKey() + "-encode", sha256(JpegEncoder.encode(picture, mode.getValue())));
         }
+        var jpegLs = com.github.auties00.smalt.image.jpeg.JpegLsEncoder.encode(picture,
+                com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.builder()
+                        .interleave(com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.Interleave.NONE).build());
+        digests.put("jpeg-ls-encode", sha256(jpegLs));
+        digests.put("jpeg-ls-decode", sha256(ImageOps.toRgba(Images.decode(MediaSource.of(jpegLs)).picture())
+                .pixels()));
         var webpModes = new LinkedHashMap<String, WebpEncoderOptions>();
         webpModes.put("webp-sharp", WebpEncoderOptions.builder().sharpYuv(true).build());
         webpModes.put("webp-photo", WebpEncoderOptions.forPreset(WebpEncoderOptions.Preset.PHOTO));

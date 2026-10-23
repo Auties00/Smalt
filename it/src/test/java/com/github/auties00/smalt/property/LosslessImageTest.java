@@ -185,6 +185,23 @@ class LosslessImageTest {
         }
     }
 
+    @Nested
+    @DisplayName("JPEG-LS")
+    class JpegLs {
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessImageTest#opaqueCases")
+        @DisplayName("returns every sample of every opaque layout and depth, in every interleave mode")
+        void identity(Case test) {
+            var picture = picture(test);
+            var interleave = com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.Interleave.values()[
+                    (int) (test.seed() % 3)];
+            var options = com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions.builder().interleave(interleave)
+                    .restartInterval((int) (test.seed() % 4)).build();
+            assertIdentity("JPEG-LS " + interleave + " " + test, picture,
+                    com.github.auties00.smalt.image.jpeg.JpegLsEncoder.encode(picture, options), true);
+        }
+    }
+
     static Stream<Case> opaqueCases() {
         return allDepths().filter(test -> test.layout() == PixelLayout.RGB || test.layout() == PixelLayout.GRAY);
     }

@@ -64,8 +64,9 @@ public final class JpegTransforms {
      * image does not fit the image
      * @throws MediaException.Malformed if the source or the dropped image is not a valid JPEG stream
      * @throws MediaException.Unsupported if the source or the dropped image uses a coding feature
-     * {@link JpegDecoder} rejects (lossless, hierarchical), if {@link JpegTransformOptions#perfect()} is
-     * set and the transform is not perfect for the image, if a grayscale conversion is asked of an
+     * the lossless transforms lack (a lossless, JPEG-LS or hierarchical frame), if
+     * {@link JpegTransformOptions#perfect()} is set and the transform is not perfect for the image, if a grayscale
+     * conversion is asked of an
      * image that is not YCbCr or gray, or if the dropped image's precision or sampling differs from the
      * source's
      * @throws MediaException.LimitExceeded if the image or the input exceeds the limits

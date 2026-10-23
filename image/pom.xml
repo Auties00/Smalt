@@ -11,7 +11,7 @@
     <artifactId>smalt-image</artifactId>
     <packaging>jar</packaging>
     <name>${project.groupId}:${project.artifactId}</name>
-    <description>Smalt image codecs: JPEG (and its lossless transforms), JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, ANI, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8)</description>
+    <description>Smalt image codecs: JPEG (and its lossless transforms), JPEG-LS, JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, ANI, JPEG XL, EXIF and image metadata editing, Motion-JPEG, and VP8 (lossy WebP is VP8)</description>
 
     <dependencies>
         <dependency>

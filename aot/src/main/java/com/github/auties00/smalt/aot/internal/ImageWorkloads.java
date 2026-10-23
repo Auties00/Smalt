@@ -7,12 +7,14 @@ import com.github.auties00.smalt.image.Channel16Picture;
 import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.bmp.BmpDecoder;
 import com.github.auties00.smalt.image.bmp.BmpEncoder;
@@ -43,6 +45,8 @@ import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegFill;
+import com.github.auties00.smalt.image.jpeg.JpegLsEncoder;
+import com.github.auties00.smalt.image.jpeg.JpegLsEncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegTransformOptions;
 import com.github.auties00.smalt.image.jpeg.JpegTransforms;
 import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
@@ -149,6 +153,8 @@ final class ImageWorkloads {
                 file("jpeg-decode-full", () -> jpegDecodeFull(2)),
                 file("jpeg-lossless-decode", ImageWorkloads::jpegLosslessDecode),
                 file("jpeg-lossless-variants-decode", ImageWorkloads::jpegLosslessVariantsDecode),
+                file("jpeg-hierarchical-decode", ImageWorkloads::jpegHierarchicalDecode),
+                file("jpeg-ls", ImageWorkloads::jpegLs),
                 file("jpeg-decode-12bit", ImageWorkloads::jpegDecode12),
                 file("jpeg-encode", ImageWorkloads::jpegEncode),
                 file("jpeg-encode-modes", ImageWorkloads::jpegEncodeModes),
@@ -317,6 +323,71 @@ final class ImageWorkloads {
                         .height());
             }
             Blackhole.consume(JpegDecoder.decode(MediaSource.of(files.getLast()), channels).picture().width());
+        });
+    }
+
+    /**
+     * Returns a workload that decodes hierarchical JPEG files of 256x192 pixels: lossless 8-bit RGB, Huffman
+     * coded, and 16-bit gray, arithmetic coded, each a frame at half the size and a differential frame at the
+     * full size, and an 8-bit gray image of a DCT frame at half the size, a differential DCT frame and a final
+     * differential lossless frame, each at its depth and reduced to 8 bits.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegHierarchicalDecode() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(256, 192, 1).getFirst(), false);
+        var files = List.of(
+                SyntheticImages.hierarchicalJpeg(SyntheticImages.losslessSamples(picture, 3, 8), 256, 192, 3, 8,
+                        false, false),
+                SyntheticImages.hierarchicalJpeg(SyntheticImages.losslessSamples(picture, 1, 16), 256, 192, 1, 16,
+                        true, false),
+                SyntheticImages.hierarchicalJpeg(SyntheticImages.losslessSamples(picture, 1, 8), 256, 192, 1, 8,
+                        false, true));
+        var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        return TrainingWorkload.of("jpeg-hierarchical-decode", () -> {
+            for (var file : files) {
+                Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), highBitDepth).picture().width());
+                Blackhole.consume(JpegDecoder.decode(MediaSource.of(file), ImageDecoderOptions.defaults()).picture()
+                        .height());
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes a 256x192 picture as JPEG-LS and decodes the files: RGB in every
+     * interleave mode, lossless and near-lossless, with the HP1 color transform and with restart intervals,
+     * 4:2:0 Y'CbCr, and 16-bit gray, each decoded at its depth and reduced to 8 bits.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jpegLs() {
+        var frame = SyntheticVideo.natural(256, 192, 1).getFirst();
+        var picture = SyntheticImages.rgba(frame, false);
+        var gray = SyntheticImages.losslessSamples(picture, 1, 16);
+        var deep = Yuv16Picture.allocate(256, 192, ChromaFormat.MONOCHROME, 16, false, ColorInfo.JPEG);
+        for (var i = 0; i < gray.length; i++) {
+            deep.y()[(i / 256) * deep.yStride() + i % 256] = (short) gray[i];
+        }
+        var settings = List.of(
+                JpegLsEncoderOptions.builder().interleave(JpegLsEncoderOptions.Interleave.NONE).build(),
+                JpegLsEncoderOptions.builder().interleave(JpegLsEncoderOptions.Interleave.LINE).restartInterval(16)
+                        .build(),
+                JpegLsEncoderOptions.builder().interleave(JpegLsEncoderOptions.Interleave.SAMPLE).build(),
+                JpegLsEncoderOptions.builder().interleave(JpegLsEncoderOptions.Interleave.SAMPLE).nearLossless(2)
+                        .build(),
+                JpegLsEncoderOptions.builder().interleave(JpegLsEncoderOptions.Interleave.LINE)
+                        .colorTransform(JpegLsEncoderOptions.ColorTransform.HP1).build());
+        var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        return TrainingWorkload.of("jpeg-ls", () -> {
+            for (var options : settings) {
+                var file = JpegLsEncoder.encode(picture, options);
+                Blackhole.consume(JpegDecoder.decode(MediaSource.of(file)).picture().width());
+            }
+            Blackhole.consume(JpegDecoder.decode(MediaSource.of(JpegLsEncoder.encode(frame)), ImageDecoderOptions
+                    .defaults()).picture().width());
+            var wide = JpegLsEncoder.encode(deep, JpegLsEncoderOptions.ofNearLossless(1));
+            Blackhole.consume(JpegDecoder.decode(MediaSource.of(wide), highBitDepth).picture().width());
+            Blackhole.consume(JpegDecoder.decode(MediaSource.of(wide)).picture().height());
         });
     }
 

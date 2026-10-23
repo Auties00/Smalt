@@ -71,6 +71,7 @@ class ImageBombTest {
         var bombs = List.of(
                 new Bomb("PNG", () -> encode(ImageFormat.PNG, true), ImageBombTest::png),
                 new Bomb("JPEG", () -> encode(ImageFormat.JPEG, false), ImageBombTest::jpeg),
+                new Bomb("JPEG-LS", () -> jpegLs(16), ImageBombTest::jpeg),
                 new Bomb("GIF", () -> encode(ImageFormat.GIF, false), ImageBombTest::gif),
                 new Bomb("WebP lossless", () -> webp(true), ImageBombTest::webp),
                 new Bomb("WebP lossy", () -> webp(false), ImageBombTest::webp),
@@ -107,6 +108,7 @@ class ImageBombTest {
         return Stream.of(
                 new Large("PNG", () -> encodeFlat(ImageFormat.PNG, LARGE, ImageEncoderOptions.builder().build()), LARGE),
                 new Large("JPEG", () -> encodeFlat(ImageFormat.JPEG, LARGE, ImageEncoderOptions.builder().build()), LARGE),
+                new Large("JPEG-LS", () -> jpegLs(LARGE), LARGE),
                 new Large("GIF", () -> encodeFlat(ImageFormat.GIF, LARGE, ImageEncoderOptions.builder().build()), LARGE),
                 new Large("WebP lossless", () -> encodeFlat(ImageFormat.WEBP, LARGE,
                         ImageEncoderOptions.builder().lossless(true).build()), LARGE),
@@ -300,6 +302,15 @@ class ImageBombTest {
         return Images.encode(picture, format);
     }
 
+    static byte[] jpegLs(int side) {
+        var picture = RgbaPicture.allocate(side, side, false);
+        var pixels = picture.pixels();
+        for (var index = 0; index < pixels.length; index++) {
+            pixels[index] = (index & 3) == 3 ? (byte) 0xFF : (byte) ((index >> 6) * 11);
+        }
+        return com.github.auties00.smalt.image.jpeg.JpegLsEncoder.encode(picture);
+    }
+
     static byte[] encodeFlat(ImageFormat format, int side, ImageEncoderOptions options) {
         var picture = RgbaPicture.allocate(side, side, false);
         var pixels = picture.pixels();
@@ -373,7 +384,8 @@ class ImageBombTest {
         while (offset + 4 <= data.length) {
             var marker = data[offset + 1] & 0xFF;
             var length = be16(data, offset + 2);
-            if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+            if ((marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
+                    || marker == 0xF7) {
                 be16(data, offset + 5, height);
                 be16(data, offset + 7, width);
                 return data;

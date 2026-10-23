@@ -72,7 +72,7 @@ linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicConforman
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicStructureTest	data:vector	1
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma422Test	data:vector	16
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma444Test	data:vector	29
-linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	185
+linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	187
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264DamageTest	data:vector	172
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ExtendedProfileTest	data:vector	2
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264HighBitDepthTest	data:vector	9
@@ -187,7 +187,7 @@ linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicStructureTe
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.jit.MpegKernelGuardTest	simd:disabled	1
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma422Test	data:vector	16
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma444Test	data:vector	29
-linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	185
+linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	187
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.h264.H264DamageTest	data:vector	172
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ExtendedProfileTest	data:vector	2
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.h264.H264HighBitDepthTest	data:vector	9
@@ -307,7 +307,7 @@ linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicConformance
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicStructureTest	data:vector	1
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma422Test	data:vector	16
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma444Test	data:vector	29
-linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	185
+linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	187
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264DamageTest	data:vector	172
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ExtendedProfileTest	data:vector	2
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264HighBitDepthTest	data:vector	9
@@ -414,7 +414,7 @@ macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicConforman
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicStructureTest	data:vector	1
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma422Test	data:vector	16
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma444Test	data:vector	29
-macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	185
+macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	187
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264DamageTest	data:vector	172
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ExtendedProfileTest	data:vector	2
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264HighBitDepthTest	data:vector	9
@@ -520,7 +520,7 @@ windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicConforman
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.image.heic.HeicStructureTest	data:vector	1
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma422Test	data:vector	16
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264Chroma444Test	data:vector	29
-windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	185
+windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ConformanceTest	data:vector	187
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264DamageTest	data:vector	172
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264ExtendedProfileTest	data:vector	2
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.H264HighBitDepthTest	data:vector	9

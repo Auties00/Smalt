@@ -38,9 +38,10 @@ import java.util.Set;
  *
  * <p>Each format is walked as far as its headers go: PNG chunks up to the image data
  * ({@code IHDR}, {@code tRNS}, {@code acTL}, {@code eXIf}), JPEG markers up to the frame header
- * (the EXIF {@code APP1} and the {@code SOFn}), every GIF block (its frames are counted, their
- * LZW data skipped), the WebP chunks ({@code VP8X}, {@code VP8}, {@code VP8L}, {@code ALPH},
- * {@code ANIM}, {@code ANMF}, {@code EXIF}), the BMP information header, every TIFF image file
+ * (the EXIF {@code APP1} and the {@code SOFn}, JPEG-LS {@code SOF55} or hierarchical {@code DHP}), every GIF
+ * block (its frames are counted, their LZW data skipped), the WebP chunks ({@code VP8X}, {@code VP8},
+ * {@code VP8L}, {@code ALPH}, {@code ANIM}, {@code ANMF}, {@code EXIF}), the BMP information header, every TIFF
+ * image file
  * directory (the first one describes the picture), the icon directory of an ICO file and the
  * {@code anih}, {@code rate}, {@code seq } chunks and frame directories of an ANI file, the HEIF
  * {@code meta} box of HEIC and
@@ -222,7 +223,8 @@ final class ImageHeaders {
     }
 
     /**
-     * Walks the markers of a JPEG file up to the frame header.
+     * Walks the markers of a JPEG file up to the frame header: the {@code DHP} segment of a hierarchical image,
+     * which describes the completed image, or the first {@code SOFn}, {@code SOF55} (JPEG-LS) included.
      *
      * @param source the input
      * @return the header
@@ -248,7 +250,8 @@ final class ImageHeaders {
             }
             var length = reader.u16be();
             var body = reader.position();
-            if (marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC) {
+            if ((marker >= 0xC0 && marker <= 0xCF && marker != 0xC4 && marker != 0xC8 && marker != 0xCC)
+                    || marker == 0xDE || marker == 0xF7) {
                 result.bitDepth = reader.u8();
                 result.height = reader.u16be();
                 result.width = reader.u16be();
