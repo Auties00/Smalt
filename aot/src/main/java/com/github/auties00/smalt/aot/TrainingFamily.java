@@ -29,8 +29,9 @@ public enum TrainingFamily {
     /**
      * The codecs of {@code smalt-audio}: Opus (speech and music files, and real-time coding at
      * 10 and 20 ms frames, wideband and fullband, with forward error correction, discontinuous
-     * transmission and loss concealment), Vorbis at several qualities, FLAC at 16 and 24 bits, MP3
-     * at constant and variable bitrate and in real time, the decoders of all four, and the voice
+     * transmission and loss concealment), Vorbis at several qualities, FLAC at 16 and 24 bits, ALAC
+     * stereo (searched and fast) and 24-bit 5.1, MP3 at constant and variable bitrate and in real time,
+     * the decoders of all five, and the voice
      * processor (echo cancellation, noise suppression) in 10 ms frames over several echo paths and
      * talk patterns.
      */

@@ -11,6 +11,7 @@ import com.github.auties00.smalt.audio.ac3.Ac3Encoder;
 import com.github.auties00.smalt.audio.ac3.Ac3EncoderOptions;
 import com.github.auties00.smalt.audio.aac.AacEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrDecoder;
+import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
@@ -339,6 +340,23 @@ final class AudioJitWorkloads {
             sink += packet.size();
         };
         return JitWorkload.named("flacenc", () -> {
+            packets[0] = 0;
+            feed(music, block, buffer -> encoder.encode(buffer, output));
+            return packets[0];
+        });
+    }
+
+    /** Encodes synthetic stereo music as 44.1 kHz 16-bit ALAC with the full parameter search, one stream across rounds. */
+    static JitWorkload.Workload alacEncode(double seconds) {
+        var music = music(44100, seconds);
+        var encoder = new AlacEncoder();
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+        int[] packets = {0};
+        Consumer<Packet> output = packet -> {
+            packets[0]++;
+            sink += packet.size();
+        };
+        return JitWorkload.named("alacenc", () -> {
             packets[0] = 0;
             feed(music, block, buffer -> encoder.encode(buffer, output));
             return packets[0];

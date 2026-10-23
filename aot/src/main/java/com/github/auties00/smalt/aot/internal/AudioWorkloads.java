@@ -5,6 +5,9 @@ import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.alac.AlacDecoder;
+import com.github.auties00.smalt.audio.alac.AlacEncoder;
+import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
 import com.github.auties00.smalt.audio.flac.FlacDecoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
@@ -39,7 +42,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
- * Vorbis, FLAC and MP3 encoding and decoding, and the voice processor, each on synthetic speech or
+ * Vorbis, FLAC, ALAC and MP3 encoding and decoding, and the voice processor, each on synthetic speech or
  * music and keeping its codecs across rounds as a long-running application does.
  */
 final class AudioWorkloads {
@@ -56,7 +59,6 @@ final class AudioWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the ALAC decoder, which needs a stream that no Smalt encoder produces
         return List.of(
                 realtime("voice-processor", () -> voiceProcessor(6)),
                 realtime("opus-rt-16000-20", () -> opusRealtime("opus-rt-16000-20", 6, 16000, 20)),
@@ -64,6 +66,7 @@ final class AudioWorkloads {
                 realtime("opus-rt-48000-10", () -> opusRealtime("opus-rt-48000-10", 6, 48000, 10)),
                 realtime("opus-rt-16000-10", () -> opusRealtime("opus-rt-16000-10", 6, 16000, 10)),
                 realtime("mp3-encode-rt", () -> mp3Encode("mp3-encode-rt", Mp3EncoderOptions.forRealtime(), 6)),
+                realtime("alac-encode-rt", () -> alacEncode("alac-encode-rt", AlacEncoderOptions.forSpeed(), 4)),
                 file("opus-encode-speech", () -> opusSpeech(8)),
                 file("opus-encode-music", () -> opusMusic(6)),
                 file("opus-decode", () -> opusDecode(6)),
@@ -77,6 +80,9 @@ final class AudioWorkloads {
                 file("flac-encode-24", () -> flacEncode("flac-encode-24", FlacEncoderOptions.ofCompressionLevel(8)
                         .toBuilder().format(48000, ChannelLayout.STEREO).bitsPerSample(24).build(), 48000, 4)),
                 file("flac-decode", () -> flacDecode(6)),
+                file("alac-encode", () -> alacEncode("alac-encode", AlacEncoderOptions.defaults(), 4)),
+                file("alac-encode-surround", () -> alacSurround(2)),
+                file("alac-decode", () -> alacDecode(6)),
                 file("mp3-encode", () -> mp3Encode("mp3-encode", Mp3EncoderOptions.defaults(), 6)),
                 file("mp3-encode-vbr", () -> mp3Encode("mp3-encode-vbr", Mp3EncoderOptions.ofVariableBitrate(2), 6)),
                 file("mp3-decode", AudioWorkloads::mp3Decode));
@@ -392,6 +398,47 @@ final class AudioWorkloads {
         var track = AudioStreams.track(Codec.FLAC, 44100, ChannelLayout.STEREO, encoder.codecConfig().orElseThrow());
         encoder.close();
         return AudioStreams.decode("flac-decode", packets, new FlacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that encodes stereo music as 44.1 kHz 16-bit ALAC, one encoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param options the encoder settings, whose format is 44.1 kHz 16-bit stereo
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload alacEncode(String name, AlacEncoderOptions options, double seconds) {
+        return AudioStreams.encode(name, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100,
+                new AlacEncoder(options));
+    }
+
+    /**
+     * Returns a workload that encodes 5.1 content as 48 kHz 24-bit ALAC, which codes single channels and
+     * channel pairs with shifted-off low bytes, one encoder across rounds.
+     *
+     * @param seconds the content encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload alacSurround(double seconds) {
+        var encoder = new AlacEncoder(AlacEncoderOptions.of(48000, ChannelLayout.SURROUND_5_1, 24));
+        return AudioStreams.encode("alac-encode-surround", surround(seconds), ChannelLayout.SURROUND_5_1, 48000,
+                encoder);
+    }
+
+    /**
+     * Returns a workload that decodes a 44.1 kHz 16-bit stereo ALAC track of music that Smalt's own
+     * encoder produced, one decoder across rounds.
+     *
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload alacDecode(double seconds) {
+        var encoder = new AlacEncoder();
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100);
+        var track = AudioStreams.track(Codec.ALAC, 44100, ChannelLayout.STEREO, encoder.codecConfig().orElseThrow());
+        encoder.close();
+        return AudioStreams.decode("alac-decode", packets, new AlacDecoder(track));
     }
 
     /**

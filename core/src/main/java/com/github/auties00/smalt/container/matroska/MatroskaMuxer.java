@@ -147,8 +147,9 @@ import java.util.Set;
  * configuration record on, every key frame that carries no parameter set gets those of the new
  * record, and the NAL unit lengths are rewritten to the size of the track's record; VP8, VP9 and
  * AV1 frames describe themselves and are written as they are. A change on any other track is
- * rejected. The final {@code STREAMINFO} of a FLAC track, which its encoder reports once flushed,
- * reaches the file through {@link #updateCodecConfig(int, byte[])}.
+ * rejected. The final {@code STREAMINFO} of a FLAC track and the final {@code ALACSpecificConfig} of an
+ * ALAC track, which their encoders report once flushed, reach the file through
+ * {@link #updateCodecConfig(int, byte[])}.
  *
  * <p>Output modes, following {@link MatroskaMuxerOptions}:
  * <ul>
@@ -692,16 +693,18 @@ public final class MatroskaMuxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>A FLAC configuration, reduced to the blocks {@code CodecPrivate} keeps (without
-     * {@code SEEKTABLE} and {@code PADDING}), replaces the track's: before the header is written
-     * it is written instead of the initial one, and afterwards, on a seekable sink without
+     * {@code SEEKTABLE} and {@code PADDING}), or the {@code ALACSpecificConfig} of an ALAC
+     * configuration, replaces the track's: before the header is written it is written instead of
+     * the initial one, and afterwards, on a seekable sink without
      * {@linkplain MatroskaMuxerOptions#live() live} output, it is rewritten in place over the
-     * initial {@code CodecPrivate} and the {@code Void} reserved after it, when it fits there.
-     * On a streaming sink, in live output, or when it does not fit, the initial configuration
-     * stays. Every other codec keeps its configuration.
+     * initial {@code CodecPrivate} (and, for FLAC, the {@code Void} reserved after it), when it
+     * fits there. On a streaming sink, in live output, or when it does not fit, the initial
+     * configuration stays. Every other codec keeps its configuration.
      *
-     * @throws IllegalArgumentException if the track was not declared, or a FLAC configuration does
+     * @throws IllegalArgumentException if the track was not declared, a FLAC configuration does
      * not start with {@code STREAMINFO} or describes another sample rate, channel count or sample
-     * size than the track's
+     * size than the track's, or an ALAC configuration holds no {@code ALACSpecificConfig} or
+     * describes another frame length, sample size, channel count or sampling rate than the track's
      * @throws IllegalStateException if the muxer is finished
      */
     @Override
@@ -714,20 +717,35 @@ public final class MatroskaMuxer implements Muxer {
         if (state == null) {
             throw new IllegalArgumentException("undeclared track " + trackId);
         }
-        if (state.track.codec() != Codec.FLAC) {
+        var codec = state.track.codec();
+        if (codec != Codec.FLAC && codec != Codec.ALAC) {
             return;
         }
         byte[] replacement;
-        AudioConfigs.FlacConfig parsed;
-        try {
-            replacement = AudioConfigs.flacContainerConfig(config);
-            parsed = AudioConfigs.parseFlac(replacement);
-        } catch (MediaException.Malformed exception) {
-            throw new IllegalArgumentException("a FLAC configuration must start with STREAMINFO", exception);
-        }
-        if (!parsed.equals(AudioConfigs.parseFlac(state.codecPrivate))) {
-            throw new IllegalArgumentException("the final FLAC configuration of track " + trackId
-                    + " describes another stream than the initial one");
+        if (codec == Codec.FLAC) {
+            AudioConfigs.FlacConfig parsed;
+            try {
+                replacement = AudioConfigs.flacContainerConfig(config);
+                parsed = AudioConfigs.parseFlac(replacement);
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("a FLAC configuration must start with STREAMINFO", exception);
+            }
+            if (!parsed.equals(AudioConfigs.parseFlac(state.codecPrivate))) {
+                throw new IllegalArgumentException("the final FLAC configuration of track " + trackId
+                        + " describes another stream than the initial one");
+            }
+        } else {
+            AudioConfigs.AlacConfig parsed;
+            try {
+                replacement = AudioConfigs.alacConfig(config);
+                parsed = AudioConfigs.parseAlac(replacement);
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("invalid ALACSpecificConfig: " + exception.getMessage(), exception);
+            }
+            if (!parsed.equals(AudioConfigs.parseAlac(state.codecPrivate))) {
+                throw new IllegalArgumentException("the final ALAC configuration of track " + trackId
+                        + " describes another stream than the initial one");
+            }
         }
         if (!started) {
             state.codecPrivate = replacement;
@@ -2000,9 +2018,11 @@ public final class MatroskaMuxer implements Muxer {
             }
             out.string(EbmlIds.LANGUAGE, track.language().filter(MatroskaMuxer::isLanguage).orElse("und"));
             out.string(EbmlIds.CODEC_ID, codecId);
-            if (codecPrivate != null && indexed && track.codec() == Codec.FLAC) {
+            if (codecPrivate != null && indexed && (track.codec() == Codec.FLAC || track.codec() == Codec.ALAC)) {
+                // an ALAC configuration keeps its length, so it needs no room to grow
                 privateMark = out.mark();
-                privateArea = EbmlOutput.elementLength(EbmlIds.CODEC_PRIVATE, codecPrivate.length) + PRIVATE_RESERVE;
+                privateArea = EbmlOutput.elementLength(EbmlIds.CODEC_PRIVATE, codecPrivate.length)
+                        + (track.codec() == Codec.FLAC ? PRIVATE_RESERVE : 0);
                 writePrivate(out, codecPrivate, privateArea);
             } else if (codecPrivate != null) {
                 out.binary(EbmlIds.CODEC_PRIVATE, codecPrivate);

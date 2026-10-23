@@ -655,6 +655,13 @@ compared with it.
 `gif-oracle/smalt-gifenc.c` writes a one-image GIF from raw indices with giflib 5.2.2's encoder (MIT, compiled into
 the program by `oracles.py install`), the oracle of `GifLzwEncoderTest`'s live comparison.
 
+## ALAC encoder oracle
+
+`alac-oracle/smalt-alacenc.cpp` encodes raw interleaved samples with the encoder of Apple's ALAC library
+(github.com/macosforge/alac at its last commit, c38887c; Apache-2.0, compiled into the program with g++ by
+`oracles.py install`, with `TARGET_RT_LITTLE_ENDIAN` defined, since its byte-order helpers recognize only x86) and
+writes the magic cookie and the packets, the oracle of `AlacEncoderOracleTest`'s byte-for-byte comparison.
+
 ## Adding a vector
 
 1. Call `Conformance.fetch(name, url, sha256)` from the test, with a cache name unique across suites.

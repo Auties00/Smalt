@@ -6,6 +6,9 @@ import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.audio.alac.AlacEncoder;
+import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
 import com.github.auties00.smalt.container.Containers;
@@ -32,8 +35,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
  * Lossless audio coding is the identity: FLAC (every sample size from 4 to 32 bits, one to eight channels, every
- * compression level, block sizes from the smallest to the largest) and ALAC (encoded by ffmpeg, which Smalt does not
- * encode) decode to every input sample, and so does every integer and floating-point PCM codec through every
+ * compression level, block sizes from the smallest to the largest) and ALAC (Smalt's encoder at every sample size,
+ * channel count and frame length, searched and fast, and ffmpeg's) decode to every input sample, and so does every integer and floating-point PCM codec through every
  * container that carries it. The inputs are seeded sweeps and noise quantized to the codec's grid, silence,
  * full-scale squares, alternating extremes and lone impulses, of lengths from one sample to several blocks.
  */
@@ -127,6 +130,64 @@ class LosslessAudioTest {
         }
     }
 
+    /** The speaker arrangement ALAC codes for each channel count, in WAVE order. */
+    static final List<ChannelLayout> ALAC_LAYOUTS = List.of(ChannelLayout.MONO, ChannelLayout.STEREO,
+            ChannelLayout.defaultFor(3),
+            new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.BACK_CENTER)),
+            ChannelLayout.defaultFor(5), ChannelLayout.SURROUND_5_1,
+            new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY,
+                    Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.BACK_CENTER)),
+            new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY,
+                    Speaker.BACK_LEFT, Speaker.BACK_RIGHT, Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER)));
+
+    static Stream<Arguments> alacSmalt() {
+        var arguments = new ArrayList<Arguments>();
+        var seed = 0L;
+        for (var bits : new int[]{16, 20, 24, 32}) {
+            for (var layout : ALAC_LAYOUTS) {
+                for (var content : Content.values()) {
+                    var frames = new int[]{1, 15, 4096, 10_007}[(int) (seed % 4)];
+                    var rate = new int[]{8000, 44_100, 96_000, 192_000}[(int) (seed / 4 % 4)];
+                    var frameLength = new int[]{4096, 16, 1152, 4096, 65_536}[(int) (seed % 5)];
+                    arguments.add(Arguments.of(new Signal(layout, rate, frames, bits, content, seed), frameLength,
+                            seed % 3 == 0));
+                    seed++;
+                }
+            }
+        }
+        return arguments.stream();
+    }
+
+    @Nested
+    @DisplayName("ALAC")
+    class AlacSmalt {
+        @ParameterizedTest(name = "{0} frame length {1} fast {2}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessAudioTest#alacSmalt")
+        @DisplayName("decodes to every input sample")
+        void identity(Signal signal, int frameLength, boolean fast) {
+            var options = AlacEncoderOptions.builder().format(signal.sampleRate(), signal.layout())
+                    .bitsPerSample(signal.bits()).frameLength(frameLength).fast(fast).build();
+            assertCodecIdentity(signal.toString(), signal.planes(), new AlacEncoder(options));
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.property.LosslessAudioTest#alacContainers")
+        @DisplayName("decodes to every input sample from every container that carries it")
+        void containers(OutputContainer container) {
+            for (var bits : new int[]{16, 24, 32}) {
+                var signal = new Signal(ChannelLayout.SURROUND_5_1, 48_000, 20_000, bits, Content.SWEEP, bits);
+                var planes = signal.planes();
+                var encoded = assertCodecIdentity("ALAC " + bits + "-bit", planes,
+                        new AlacEncoder(AlacEncoderOptions.of(48_000, ChannelLayout.SURROUND_5_1, bits)));
+                assertArrayEquals(flatten(planes), flatten(read(mux(container, encoded))), container + " " + bits + "-bit");
+            }
+        }
+    }
+
+    static Stream<OutputContainer> alacContainers() {
+        return Stream.of(OutputContainer.values()).filter(container -> container.supports(Codec.ALAC));
+    }
+
     static Stream<Arguments> alac() {
         return Stream.of(
                 Arguments.of("s16p", 16, ChannelLayout.MONO), Arguments.of("s16p", 16, ChannelLayout.STEREO),
@@ -136,7 +197,7 @@ class LosslessAudioTest {
 
     @Nested
     @DisplayName("ALAC encoded by ffmpeg")
-    class Alac {
+    class AlacFfmpeg {
         @ParameterizedTest(name = "{1}-bit {2}")
         @MethodSource("com.github.auties00.smalt.property.LosslessAudioTest#alac")
         @DisplayName("decodes to every sample of the WAV it was encoded from")

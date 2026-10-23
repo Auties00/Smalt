@@ -103,6 +103,8 @@ class RegistryCoverageTest {
         assertTrue(AudioEncoders.isSupported(Codec.AMR_NB));
         assertTrue(AudioEncoders.isSupported(Codec.AMR_WB));
         assertTrue(AudioEncoders.isSupported(Codec.FLAC));
+        assertTrue(AudioEncoders.isSupported(Codec.ALAC));
+        assertTrue(AudioDecoders.isSupported(Codec.ALAC));
         for (var format : new ImageFormat[]{ImageFormat.JPEG, ImageFormat.PNG, ImageFormat.GIF, ImageFormat.WEBP, ImageFormat.BMP,
                 ImageFormat.TIFF, ImageFormat.ICO, ImageFormat.ANI, ImageFormat.JP2}) {
             assertTrue(Images.isDecodable(format), format.name());

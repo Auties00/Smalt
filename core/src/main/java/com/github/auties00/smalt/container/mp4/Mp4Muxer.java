@@ -437,12 +437,14 @@ public final class Mp4Muxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * <p>A FLAC configuration replaces the track's until {@link #finish()} writes the movie header,
-     * so the {@code dfLa} box carries the final {@code STREAMINFO}; a header planned up front, and
-     * every other codec, keep their configuration.
+     * <p>A FLAC or ALAC configuration replaces the track's until {@link #finish()} writes the movie
+     * header, so the {@code dfLa} box carries the final {@code STREAMINFO} and the {@code alac} box
+     * the final {@code ALACSpecificConfig}; a header planned up front, and every other codec, keep
+     * their configuration.
      *
-     * @throws IllegalArgumentException if the track was not declared, or a FLAC configuration does
-     * not start with {@code STREAMINFO}
+     * @throws IllegalArgumentException if the track was not declared, a FLAC configuration does not
+     * start with {@code STREAMINFO}, or an ALAC configuration holds no {@code ALACSpecificConfig} or
+     * describes another frame length, sample size, channel count or sampling rate than the track's
      * @throws IllegalStateException if the muxer is finished
      */
     @Override
@@ -460,10 +462,24 @@ public final class Mp4Muxer implements Muxer {
         if (target == null) {
             throw new IllegalArgumentException("undeclared track " + trackId);
         }
-        if (target.track.codec() != Codec.FLAC || plannedHeader != null || planning) {
+        var codec = target.track.codec();
+        if ((codec != Codec.FLAC && codec != Codec.ALAC) || plannedHeader != null || planning) {
             return;
         }
-        AudioConfigs.parseFlac(config);
+        if (codec == Codec.FLAC) {
+            AudioConfigs.parseFlac(config);
+        } else {
+            AudioConfigs.AlacConfig replacement;
+            try {
+                replacement = AudioConfigs.parseAlac(AudioConfigs.alacConfig(config));
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("invalid ALACSpecificConfig: " + exception.getMessage(), exception);
+            }
+            if (!replacement.equals(AudioConfigs.parseAlac(AudioConfigs.alacConfig(target.config)))) {
+                throw new IllegalArgumentException("the final ALAC configuration of track " + trackId
+                        + " describes another stream than the initial one");
+            }
+        }
         target.config = config.clone();
     }
 

@@ -861,6 +861,7 @@ final class SampleEntryWriter {
     private static void writeAudio(BoxWriter writer, Mp4Muxer.TrackPlan plan, AudioTrack audio, byte[] config) {
         var channels = audio.layout().map(layout -> layout.channels()).orElse(0);
         var sampleRate = audio.sampleRate();
+        var sampleSize = 16;
         var format = BoxTypes.MP4A;
         switch (audio.codec()) {
             case AAC -> {
@@ -893,6 +894,8 @@ final class SampleEntryWriter {
                 var alac = AudioConfigs.parseAlac(config);
                 channels = alac.channels() > 0 ? alac.channels() : channels;
                 sampleRate = alac.sampleRate() > 0 ? alac.sampleRate() : sampleRate;
+                sampleSize = audio.bitsPerSample() > 0 ? audio.bitsPerSample()
+                        : alac.bitDepth() > 0 ? alac.bitDepth() : sampleSize;
             }
             case FLAC -> {
                 format = BoxTypes.FLAC;
@@ -928,7 +931,7 @@ final class SampleEntryWriter {
         writer.u16(1);
         writer.zeros(8);
         writer.u16(Math.max(channels, 1));
-        writer.u16(audio.codec() == Codec.ALAC && audio.bitsPerSample() > 0 ? audio.bitsPerSample() : 16);
+        writer.u16(sampleSize);
         writer.u32(0);
         writer.u32(sampleRate > 0 && sampleRate <= 0xFFFF ? (long) sampleRate << 16 : 0);
         switch (audio.codec()) {

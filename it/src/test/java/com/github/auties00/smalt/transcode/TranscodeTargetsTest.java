@@ -37,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Covers the codec-neutral key frame settings of the video encoders and the transcoder, and the
- * elementary-stream and Ogg FLAC output targets, checked with ffmpeg and ffprobe.
+ * elementary-stream, Ogg FLAC and ALAC output targets, checked with ffmpeg and ffprobe.
  */
 @DisplayName("Key frames and output targets")
 class TranscodeTargetsTest {
@@ -333,6 +333,62 @@ class TranscodeTargetsTest {
                     Transcoder.transcode(MediaSource.of(Files.readAllBytes(opus)), MediaSink.memory(),
                             TranscodeOptions.of(OutputContainer.OGG_FLAC).toBuilder()
                                     .audio(AudioTranscodeOptions.encode(Codec.OPUS)).build()));
+        }
+    }
+
+    @Nested
+    @DisplayName("ALAC")
+    class Alac {
+        @ParameterizedTest(name = "{0}")
+        @EnumSource(value = OutputContainer.class, names = {"M4A", "MP4", "MOV", "MATROSKA"})
+        @DisplayName("encodes ALAC that ffmpeg decodes to the source samples, at the source's sample size")
+        void encoded(OutputContainer container, @TempDir Path directory) throws IOException {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var options = TranscodeOptions.of(container).toBuilder().audio(AudioTranscodeOptions.encode(Codec.ALAC))
+                    .build();
+            var sources = List.of(
+                    Fixtures.tone("wav", 440, 48_000, 6, 0.6, List.of("-c:a", "pcm_s24le")),
+                    Fixtures.tone("flac", 330, 44_100, 2, 0.6, List.of("-c:a", "flac", "-sample_fmt", "s16")),
+                    Fixtures.tone("wav", 550, 22_050, 1, 0.6, List.of("-c:a", "pcm_u8")));
+            var bits = new int[]{24, 16, 16};
+            for (var index = 0; index < sources.size(); index++) {
+                var source = sources.get(index);
+                var output = directory.resolve("alac-" + index + "." + container.extension());
+                TranscodeResult result;
+                try (var in = MediaSource.of(source); var out = MediaSink.of(output)) {
+                    result = Transcoder.transcode(in, out, options);
+                }
+                var stream = result.streams().getFirst();
+                assertFalse(stream.copied());
+                assertEquals(Codec.ALAC, stream.track().codec());
+                var probe = Oracle.probe(output);
+                assertTrue(probe.contains("\"codec_name\": \"alac\""), probe);
+                assertTrue(probe.contains("\"bits_per_raw_sample\": \"" + bits[index] + "\""), probe);
+                Oracle.assertDecodesCleanly(output);
+                assertArrayEquals(Oracle.decodeAudio(source), Oracle.decodeAudio(output), source.getFileName()
+                        + " in " + container);
+                try (var demuxer = Containers.openDemuxer(MediaSource.of(output))) {
+                    var config = com.github.auties00.smalt.internal.codec.AudioConfigs.alacConfig(
+                            demuxer.tracks().getFirst().codecConfig().orElseThrow());
+                    assertTrue(java.nio.ByteBuffer.wrap(config).getInt(12) > 0, "final largest packet size");
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("copies an ALAC stream unless ALAC is asked for, and then re-encodes it to the same samples")
+        void copied(@TempDir Path directory) throws IOException {
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var alac = Fixtures.tone("m4a", 440, 44_100, 2, 0.5, List.of("-c:a", "alac"));
+            var copy = Transcoder.transcode(MediaSource.of(Files.readAllBytes(alac)), MediaSink.of(directory.resolve(
+                    "copy.mkv")), TranscodeOptions.of(OutputContainer.MATROSKA).toBuilder()
+                    .audio(AudioTranscodeOptions.copy()).build());
+            assertTrue(copy.streams().getFirst().copied());
+            var encoded = Transcoder.transcode(MediaSource.of(Files.readAllBytes(alac)), MediaSink.of(directory.resolve(
+                    "encoded.m4a")), TranscodeOptions.of(OutputContainer.M4A).toBuilder()
+                    .audio(AudioTranscodeOptions.encode(Codec.ALAC)).build());
+            assertFalse(encoded.streams().getFirst().copied());
+            assertArrayEquals(Oracle.decodeAudio(alac), Oracle.decodeAudio(directory.resolve("encoded.m4a")));
         }
     }
 }

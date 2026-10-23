@@ -48,6 +48,36 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the seeds of the ALAC encoder target")
+    void alacEncoder() {
+        write(AudioFuzzTest.class, "alacEncoder", "valid-stereo-16.bin", alacSeed(new byte[]{0, 1, 0}, 3000, false));
+        write(AudioFuzzTest.class, "alacEncoder", "valid-surround-24.bin", alacSeed(new byte[]{2, 5, 2}, 500, false));
+        write(AudioFuzzTest.class, "alacEncoder", "valid-mono-32-fast.bin", alacSeed(new byte[]{3, 0, 7}, 5000, true));
+        write(AudioFuzzTest.class, "alacEncoder", "valid-stereo-20-noise.bin", alacSeed(new byte[]{1, 1, 4}, 2100,
+                true));
+    }
+
+    /** Builds an ALAC encoder seed: the format bytes, then a triangle wave or the noise of a linear congruence. */
+    private static byte[] alacSeed(byte[] header, int frames, boolean noise) {
+        var bits = new int[]{16, 20, 24, 32}[header[0] & 3];
+        var channels = (header[1] & 7) + 1;
+        var out = java.nio.ByteBuffer.allocate(3 + 4 * frames * channels).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        out.put(header);
+        var state = 12345L;
+        for (var i = 0; i < frames; i++) {
+            for (var c = 0; c < channels; c++) {
+                if (noise) {
+                    state = (state * 1103515245L + 12345) & 0xFFFF_FFFFL;
+                    out.putInt((int) (state - (1L << 31)));
+                } else {
+                    out.putInt((int) ((i * (7L + c) * 131 % 2001 - 1000) * ((1 << (bits - 3)) / 1000)));
+                }
+            }
+        }
+        return out.array();
+    }
+
+    @Test
     @DisplayName("writes the seeds of the Opus packet target")
     void opusPackets() {
         var silk = packets(ffmpeg("opus", tone(16000, 0.1), "-c:a", "libopus", "-b:a", "8k", "-application", "voip"));

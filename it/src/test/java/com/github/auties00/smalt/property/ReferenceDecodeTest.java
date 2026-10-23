@@ -115,6 +115,7 @@ class ReferenceDecodeTest {
             entry(Codec.EAC3, of(OutputContainer.EAC3, "eac3", Tolerance.snr(90), "-drc_scale", "0")),
             // lossless, and the 3GPP fixed-point decoders are bit-exact by specification
             entry(Codec.FLAC, of(OutputContainer.FLAC, "flac", NORMATIVE)),
+            entry(Codec.ALAC, of(OutputContainer.M4A, "alac", NORMATIVE)),
             entry(Codec.AMR_NB, of(OutputContainer.AMR, "libopencore_amrnb", NORMATIVE)),
             entry(Codec.AMR_WB, of(OutputContainer.AMR, "libopencore_amrwb", NORMATIVE)));
 

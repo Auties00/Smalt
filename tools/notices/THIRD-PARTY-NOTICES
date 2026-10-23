@@ -3124,13 +3124,20 @@ License text: https://raw.githubusercontent.com/macosforge/alac/master/LICENSE
 License:      Apache License, Version 2.0
 
 Derived Smalt packages:
-  audio.alac (AlacDecoder, AlacResidual, AlacPredictor, AlacBitReader)
+  audio.alac (AlacDecoder, AlacResidual, AlacPredictor, AlacBitReader,
+  AlacEncoder, AlacElementEncoder, AlacResidualEncoder)
 
 Derivation: the decoder follows codec/ALACDecoder.cpp (element parsing,
 shifted-off bytes, partial frames, uncompressed elements), codec/ag_dec.c
 (the adaptive Golomb residual decoder with its zero runs), codec/dp_dec.c
 (the adaptive predictor unpc_block) and codec/matrix_dec.c (the matrixed
 stereo unmix), and the channel orders of ALACMagicCookieDescription.txt.
+The encoder follows codec/ALACEncoder.cpp (the element layout of each
+channel count, the stereo matrixing and predictor order searches, fast
+mode, escaped and partial elements, the magic cookie), codec/ag_enc.c
+(the adaptive Golomb residual coder dyn_comp), codec/dp_enc.c (the
+adaptive predictor pc_block and its initial coefficients) and
+codec/matrix_enc.c (the stereo mix).
 
 Copyright:
   Copyright (c) 2011 Apple Inc. All rights reserved.

@@ -1,11 +1,11 @@
 /**
  * Audio codecs of Smalt: the Opus, Vorbis, FLAC, ALAC and MP3 (and MP2) decoders, the Opus, FLAC,
- * MP3 and Vorbis encoders, and voice processing (echo cancellation, noise suppression, automatic gain
+ * ALAC, MP3 and Vorbis encoders, and voice processing (echo cancellation, noise suppression, automatic gain
  * control and the capture high-pass filter).
  *
  * <p>The codecs register with {@code AudioDecoders} and {@code AudioEncoders} through the core's
  * service-provider interfaces, so {@code AudioReader} decodes these codecs, and
- * {@code AudioEncoders} encodes Opus, FLAC, MP3 and Vorbis, whenever this module is present.
+ * {@code AudioEncoders} encodes Opus, FLAC, ALAC, MP3 and Vorbis, whenever this module is present.
  *
  * <p>The launch requirements (the optional {@code --add-modules jdk.incubator.vector}) and the threading
  * model are those of the core module ({@code com.github.auties00.smalt}).

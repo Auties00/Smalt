@@ -141,6 +141,9 @@ public final class Oracle {
         /** {@code tools/testdata/gif-oracle}'s driver of giflib 5.2.2's GIF encoder. */
         GIFENC("smalt-gifenc"),
 
+        /** {@code tools/testdata/alac-oracle}'s driver of the encoder of Apple's ALAC library. */
+        ALACENC("smalt-alacenc"),
+
         /** libultrahdr's Ultra HDR encoder and decoder CLI. */
         ULTRAHDR_APP("ultrahdr_app"),
 

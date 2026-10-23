@@ -37,6 +37,10 @@ MANIFEST = os.path.join(HERE, 'oracles.tsv')
 # The library sources of libpng 1.6, and the macros that turn off its SIMD filters.
 # The encoder half of giflib 5.2.2 (MIT), which smalt-gifenc drives.
 GIFLIB_SOURCES = ['egif_lib.c', 'gif_err.c', 'gif_hash.c', 'gifalloc.c', 'openbsd-reallocarray.c']
+# The encoder of Apple's ALAC library (codec/, Apache-2.0), which smalt-alacenc drives; ag_dec.c holds the
+# parameter setup the encoder calls.
+ALAC_SOURCES = ['ALACEncoder.cpp', 'ag_enc.c', 'ag_dec.c', 'dp_enc.c', 'matrix_enc.c', 'ALACBitUtilities.c',
+                'EndianPortable.c']
 LIBPNG_SOURCES = ['png.c', 'pngerror.c', 'pngget.c', 'pngmem.c', 'pngpread.c', 'pngread.c', 'pngrio.c',
                   'pngrtran.c', 'pngrutil.c', 'pngset.c', 'pngtrans.c', 'pngwio.c', 'pngwrite.c', 'pngwtran.c',
                   'pngwutil.c']
@@ -62,6 +66,7 @@ VERSION_ARGS = {
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
     'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [],
+    'smalt-alacenc': [],
     'ultrahdr_app': [], 'avifgainmaputil': ['--version'], 'avifdec': ['--version'],
 }
 VERSION_MARKERS = ('version', 'libtiff', 'opj_', 'usage', 'exiftool', ' v', 'copyright')
@@ -411,6 +416,8 @@ def build(row, target):
         key += ' ' + digest(os.path.join(HERE, 'mpeg4-oracle', 'build.py'))
     if name == 'smalt-gifenc':
         key += ' ' + digest(os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c'))
+    if name == 'smalt-alacenc':
+        key += ' ' + digest(os.path.join(HERE, 'alac-oracle', 'smalt-alacenc.cpp'))
     outputs = [os.path.join(out, tool + EXE) for tool, _ in provided(row)]
     if all(os.path.isfile(path) for path in outputs) and os.path.isfile(stamp) and open(stamp).read() == key:
         return out
@@ -513,6 +520,16 @@ def build(row, target):
             sources = [os.path.join(tree, file) for file in GIFLIB_SOURCES]
             run(compiler(target) + ['-O2', '-I' + tree, '-o', executable,
                                     os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c')] + sources, env=env)
+        elif name == 'smalt-alacenc':
+            # The library's encoder compiled into the program with g++, as its own makefile builds every file. Its
+            # byte-order helpers recognize only x86 as little-endian, so the macro is given for every runner, all
+            # of which are little-endian.
+            tree = source_tree(row, work)
+            codec = os.path.join(tree, 'codec')
+            sources = [os.path.join(codec, file) for file in ALAC_SOURCES]
+            command = [cxx_compiler(target), '-O2', '-w', '-DTARGET_RT_LITTLE_ENDIAN=1', '-I' + codec, '-o',
+                       executable, os.path.join(HERE, 'alac-oracle', 'smalt-alacenc.cpp')] + sources
+            run(command + (['-static'] if target.startswith('windows') else []), env=env)
         elif name == 'smalt-mpeg4ref':
             archive = download(row['source'], row['sha256'])
             builder = load_script('mpeg4-oracle', 'build.py')

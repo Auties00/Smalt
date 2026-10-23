@@ -436,6 +436,7 @@ public final class JitWorkload {
             case "heaac" -> AudioJitWorkloads.heAac(seconds(options, 6));
             case "ac3" -> AudioJitWorkloads.ac3(seconds(options, 6));
             case "flacenc" -> AudioJitWorkloads.flacEncode(seconds(options, 6));
+            case "alacenc" -> AudioJitWorkloads.alacEncode(seconds(options, 6));
             case "mp3dec" -> AudioJitWorkloads.mp3Decode(Path.of(options.get("input")));
             case "mp3enc" -> AudioJitWorkloads.mp3Encode(seconds(options, 6));
             case "resample" -> AudioJitWorkloads.resample(seconds(options, 10));
