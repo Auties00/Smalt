@@ -2,14 +2,13 @@ package com.github.auties00.smalt.video.mpeg4;
 
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
-import com.github.auties00.smalt.testkit.Quality;
+import com.github.auties00.smalt.testkit.Tolerance;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
-import java.util.Arrays;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -46,33 +45,31 @@ class Mpeg4ConformanceTest {
         var integer = Mpeg4TestStreams.ffmpeg(file, "int");
         var simple = Mpeg4TestStreams.ffmpeg(file, "simple");
         assertEquals(integer.length, simple.length, "ffmpeg decoded size");
-        var floor = Quality.psnr(integer, simple);
-        var ours = Quality.psnr(reference, decoded.raw());
+        var floor = Tolerance.Difference.of(integer, simple).psnr();
         var worstFloor = Double.POSITIVE_INFINITY;
-        var psnrs = new double[decoded.frames()];
+        var differences = new Tolerance.Difference[decoded.frames()];
         for (var i = 0; i < decoded.frames(); i++) {
             var from = i * frame;
             if (from + frame <= integer.length) {
-                worstFloor = Math.min(worstFloor, Quality.psnr(Arrays.copyOfRange(integer, from, from + frame),
-                        Arrays.copyOfRange(simple, from, from + frame)));
+                worstFloor = Math.min(worstFloor, Tolerance.Difference.of(integer, simple, from, from + frame).psnr());
             }
-            psnrs[i] = Quality.psnr(Arrays.copyOfRange(reference, from, from + frame),
-                    Arrays.copyOfRange(decoded.raw(), from, from + frame));
+            differences[i] = Tolerance.Difference.of(reference, decoded.raw(), from, from + frame);
         }
-        var bound = Math.min(worstFloor, 60) - 3;
+        var stream = Tolerance.psnr(Math.min(floor, 60) - 1);
+        var perFrame = Tolerance.psnr(Math.min(worstFloor, 60) - 3);
         var below = new StringBuilder();
         var count = 0;
-        for (var i = 0; i < psnrs.length; i++) {
-            if (psnrs[i] < bound) {
+        for (var i = 0; i < differences.length; i++) {
+            if (!perFrame.violations(differences[i]).isEmpty()) {
                 if (count++ < 8) {
-                    below.append(String.format(" %d:%.2f", i, psnrs[i]));
+                    below.append(String.format(" %d:%.2f", i, differences[i].psnr()));
                 }
             }
         }
-        var frames = count + " frames below " + bound + " dB against the reference (frame:dB" + below
+        var frames = count + " frames outside " + perFrame.describe() + " against the reference (frame:dB" + below
                 + "), the worst frame of the noise floor " + worstFloor + " dB";
-        assertTrue(ours >= Math.min(floor, 60) - 1, "PSNR against the reference "
-                + ours + " dB, noise floor " + floor + " dB; " + frames);
+        stream.check("against the reference, noise floor " + floor + " dB; " + frames,
+                Tolerance.Difference.of(reference, decoded.raw()));
         assertTrue(count == 0, frames);
     }
 }
