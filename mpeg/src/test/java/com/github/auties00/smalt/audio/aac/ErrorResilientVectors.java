@@ -534,7 +534,7 @@ final class ErrorResilientVectors {
     static Path fetch(String name) {
         var entry = VECTORS.get(name);
         if (entry == null) {
-            throw new IllegalArgumentException("unknown vector " + name);
+            return Conformance.fetchListed("mpeg4audio-" + name);
         }
         var dvd = entry.substring(0, entry.indexOf(':'));
         var hash = entry.substring(entry.indexOf(':') + 1);

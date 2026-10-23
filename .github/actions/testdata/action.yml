@@ -27,15 +27,19 @@ inputs:
   save:
     description: 'Save the entries this run missed: auto (the rule of .github/scripts/cache-policy.sh), true or false'
     default: auto
+  clips-artifact:
+    description: When the clips entry is missing (evicted from the 10 GB cache), take the clips from the testdata-clips artifact that oracle-tools.yml uploads in this run, before deriving them
+    default: 'false'
 runs:
   using: composite
   steps:
-    # The smoke entry is keyed by the smoke rows alone, so that a vector added to the full tier keeps it.
+    # The smoke entry is keyed by the smoke rows of vectors.tsv and archives.tsv alone, so that a vector added to the
+    # full tier keeps it.
     - name: Key the test data
       id: key
       shell: bash
       run: |
-        echo "smoke=$(grep '^smoke' tools/testdata/vectors.tsv | tr -d '\r' | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
+        echo "smoke=$(grep -h '^smoke' tools/testdata/vectors.tsv tools/testdata/archives.tsv | tr -d '\r' | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
         echo "clips=$(tr -d '\r' < tools/testdata/clips.tsv | sha256sum | cut -c1-64)" >> "$GITHUB_OUTPUT"
 
     - name: Restore the smoke vectors
@@ -91,6 +95,16 @@ runs:
             echo "$directory: $(ls ~/.smalt/cache/"$directory" | wc -l) files"
           fi
         done
+
+    # Linux arm64 cannot derive the clips (swscale's arm64 kernels scale differently from the x86-64 ones the
+    # golden tests pin), so a job of a run that derived them on Linux x64 takes them from that run's artifact.
+    - name: Download the clips of this run
+      if: inputs.clips == 'true' && inputs.clips-artifact == 'true' && steps.clips.outputs.cache-hit != 'true'
+      continue-on-error: true
+      uses: actions/download-artifact@v4
+      with:
+        name: testdata-clips
+        path: ~/.smalt/cache/clips
 
     - name: Fetch the smoke vectors
       id: fetch

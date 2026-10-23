@@ -12,8 +12,9 @@ with subsampled chroma) and compares it with two renderings this script writes i
 
 OpenSlide and imagecodecs are used as black boxes: pip install openslide-python openslide-bin
 tifffile imagecodecs numpy (made with openslide-python 1.4.6, openslide-bin 4.0.1, tifffile 2026.10.15
-and imagecodecs 2026.10.10, which bundles OpenJPEG 2.5.4). The slides are fetched first when the
-cache lacks them.
+and imagecodecs 2026.10.10, which bundles OpenJPEG 2.5.4), on Windows: the OpenJPEG of imagecodecs'
+Linux wheel rounds the irreversible component transform of one sample of the 33005 level otherwise. The
+slides are fetched first when the cache lacks them.
 
     python -I tools/testdata/svs-oracle.py
 """

@@ -24,6 +24,7 @@ import static com.github.auties00.smalt.video.mpeg4.InterlacedDirectStream.Pictu
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 /**
  * Checks interlaced direct mode (ISO/IEC 14496-2 7.7.2.2) on streams written by
@@ -32,7 +33,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * prediction that a model of 7.7.2.2 and field motion compensation (7.7.2.1) written here forms
  * from the decoded references. ffmpeg's encoder does not use interlaced direct mode (it predicts
  * such macroblocks as progressive direct ones) and its decoder scales zero co-located vectors,
- * so neither can serve as the oracle for these B-VOPs. With {@code -Dsmalt.test.mfDecode} naming
+ * so neither can serve as the oracle for these B-VOPs. The ISO/IEC 14496-5 reference decoder
+ * ({@code tools/testdata/mpeg4-oracle}) implements 7.7.2.2 with one deviation: it measures the temporal distances
+ * {@code TRB} and {@code TRD} in VOP time ticks instead of field periods of the frame period {@code Tframe}, which
+ * agree only when a frame lasts one tick. On the streams whose VOP times are frame numbers every picture must match
+ * its decode at the IDCT noise floor, which also checks the model. With {@code -Dsmalt.test.mfDecode} naming
  * the Media Foundation decoder driver of {@code tools/testdata/mf-oracle}, the streams whose VOP
  * times are frame numbers are also compared with the Windows MPEG-4 Part 2 decoder, which filters
  * its output and therefore matches within a few sample values.
@@ -49,6 +54,12 @@ class Mpeg4InterlacedDirectTest {
 
     /** The Windows decoder deblocks its output, which moves samples by up to about 4. */
     private static final Tolerance MEDIA_FOUNDATION = Tolerance.maxAbs(6);
+
+    /**
+     * Every picture against the ISO/IEC 14496-5 reference decoder: the two inverse DCTs drift by a few sample values
+     * at most, while a wrong prediction costs tens of dB.
+     */
+    private static final Tolerance REFERENCE_DECODER = Tolerance.psnr(50);
 
     record Case(String name, long seed, boolean topFieldFirst, int[][] gops, boolean frameTicks) {
         @Override
@@ -68,6 +79,10 @@ class Mpeg4InterlacedDirectTest {
                 new Case("two ticks per frame", 5, true, new int[][]{{8, 2, 4, 6}, {16, 10, 12, 14}}, false),
                 new Case("irregular times", 6, false, new int[][]{{9, 3, 5}, {17, 11, 12, 16}}, false)
         );
+    }
+
+    static Stream<Case> frameTickCases() {
+        return cases().filter(Case::frameTicks);
     }
 
     static InterlacedDirectStream stream(Case c) {
@@ -154,6 +169,54 @@ class Mpeg4InterlacedDirectTest {
         var reference = Fixtures.read(output);
         assertEquals(raw.length, reference.length);
         MEDIA_FOUNDATION.assertFrames("against Media Foundation", reference, raw, FRAME);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("frameTickCases")
+    @DisplayName("decodes every picture like the ISO/IEC 14496-5 reference decoder")
+    void matchesReferenceDecoder(Case c, @TempDir Path directory) throws IOException {
+        var file = directory.resolve("direct.m4v");
+        Files.write(file, stream(c).bytes());
+        var decoded = Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new);
+        var reference = Mpeg4TestStreams.reference(file, WIDTH, HEIGHT, directory);
+        assertEquals(reference.length, decoded.raw().length, "decoded size against the reference decoder");
+        for (var i = 0; i < decoded.frames(); i++) {
+            var difference = Tolerance.Difference.of(frame(reference, i), frame(decoded.raw(), i));
+            if (!REFERENCE_DECODER.violations(difference).isEmpty()) {
+                fail(c.name() + ", picture " + i + ": " + difference + " against the reference decoder; macroblocks off by"
+                        + " more than 8 (x,y luma:chroma): " + differing(frame(reference, i), frame(decoded.raw(), i))
+                        + "; pictures " + stream(c).pictures());
+            }
+        }
+    }
+
+    /** Lists the macroblocks whose luminance or chrominance differ by more than 8 anywhere, with the differences. */
+    private static String differing(byte[] expected, byte[] actual) {
+        var out = new StringBuilder();
+        for (var my = 0; my < HEIGHT / 16; my++) {
+            for (var mx = 0; mx < WIDTH / 16; mx++) {
+                var luma = 0;
+                for (var y = my * 16; y < my * 16 + 16; y++) {
+                    for (var x = mx * 16; x < mx * 16 + 16; x++) {
+                        luma = Math.max(luma, Math.abs((expected[y * WIDTH + x] & 0xFF) - (actual[y * WIDTH + x] & 0xFF)));
+                    }
+                }
+                var chroma = 0;
+                for (var plane = 0; plane < 2; plane++) {
+                    var base = WIDTH * HEIGHT + plane * (WIDTH / 2) * (HEIGHT / 2);
+                    for (var y = my * 8; y < my * 8 + 8; y++) {
+                        for (var x = mx * 8; x < mx * 8 + 8; x++) {
+                            var at = base + y * (WIDTH / 2) + x;
+                            chroma = Math.max(chroma, Math.abs((expected[at] & 0xFF) - (actual[at] & 0xFF)));
+                        }
+                    }
+                }
+                if (luma > 8 || chroma > 8) {
+                    out.append(' ').append(mx).append(',').append(my).append(' ').append(luma).append(':').append(chroma);
+                }
+            }
+        }
+        return out.toString();
     }
 
     static int framesBetween(int earlier, int later, int period) {

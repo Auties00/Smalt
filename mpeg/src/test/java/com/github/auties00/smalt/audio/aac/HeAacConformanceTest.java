@@ -90,8 +90,12 @@ class HeAacConformanceTest {
             Map.entry("al_sbr_twi_48_1_fsaac24", "141d8997fcc9ae04cc2b5897e22a4c8b9341948c05c63c2bda83ba08be902d12"));
 
     static Path fetch(String name) {
+        var hash = VECTORS.get(name);
+        if (hash == null) {
+            return Conformance.fetchListed("mpeg4audio-" + name + ".mp4");
+        }
         return Conformance.fetch("mpeg4audio-" + name + ".mp4",
-                AacConformanceTest.BASE + "DVD1/mpeg4audio-conformance/compressedMp4/" + name + ".mp4", VECTORS.get(name));
+                AacConformanceTest.BASE + "DVD1/mpeg4audio-conformance/compressedMp4/" + name + ".mp4", hash);
     }
 
     /** Returns a track that leaves the output rate to the stream, as players treat MP4 audio. */
@@ -134,7 +138,15 @@ class HeAacConformanceTest {
                 "al_sbr_sr_32_2_fsaac16, 32000, 2", "al_sbr_sr_44_2_fsaac22, 44100, 2",
                 "al_sbr_sr_48_2_fsaac24, 48000, 2", "al_sbr_sr_48_2_fsaac48, 48000, 2",
                 "al_sbr_sr_88_2_fsaac44, 88200, 2", "al_sbr_sr_96_2_fsaac48, 96000, 2",
-                "al_sbr_twi_22_1_fsaac22, 22050, 2", "al_sbr_twi_48_1_fsaac24, 48000, 2"
+                "al_sbr_twi_22_1_fsaac22, 22050, 2", "al_sbr_twi_48_1_fsaac24, 48000, 2",
+                "al_sbr_cm_48_4, 48000, 4", "al_sbr_e_32_2, 32000, 2", "al_sbr_e_44_1, 44100, 2",
+                "al_sbr_gh_32_2, 32000, 2", "al_sbr_gh_44_1, 44100, 2", "al_sbr_gh_48_1, 48000, 2",
+                "al_sbr_i_32_1, 32000, 2", "al_sbr_i_44_2, 44100, 2", "al_sbr_ps_00_new, 32000, 2",
+                "al_sbr_ps_01_new, 32000, 2", "al_sbr_ps_02_new, 32000, 2", "al_sbr_ps_03_new, 32000, 2",
+                "al_sbr_ps_04_new, 32000, 2", "al_sbr_ps_05_new, 32000, 2", "al_sbr_ps_06_new, 32000, 2",
+                "al_sbr_s_32_1, 32000, 2", "al_sbr_s_44_2, 44100, 2", "al_sbr_sr_22_2_fsaac22, 22050, 2",
+                "al_sbr_sr_24_2_fsaac24, 24000, 2", "al_sbr_sr_32_2_fsaac32, 32000, 2",
+                "al_sbr_sr_44_2_fsaac44, 44100, 2", "al_sbr_sr_64_2_fsaac32, 64000, 2"
         })
         @DisplayName("meets the 16-bit conformance criterion")
         void conformant(String name, int rate, int channels) {
@@ -162,12 +174,50 @@ class HeAacConformanceTest {
     }
 
     @Nested
+    @DisplayName("1024-sample streams ffmpeg rejects")
+    class WithoutOracle {
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"al_sbr_i_32_1_new, 32000, 2", "al_sbr_i_44_1_new, 44100, 2", "al_sbr_i_48_1_new, 48000, 2"})
+        @DisplayName("decode every frame with spectral band replication to a finite, non-silent output")
+        void decodes(String name, int rate, int channels) {
+            // TODO: compare these inverse filtering streams with a reference decoder: the suite ships no waveform
+            //  for them, and ffmpeg rejects the noise floor values of 31 they code ("noise_facs_q 31 is invalid"),
+            //  so its output, which differs from ours by an RMS of about 2^-7, is no reference here
+            var stream = AacTestSupport.parseMp4(Fixtures.read(fetch(name)));
+            var decoder = new AacDecoder(detectingTrack(stream));
+            var decoded = AacTestSupport.decodeAll(decoder, stream.frames());
+            assertEquals(rate, decoded.sampleRate());
+            assertEquals(channels, decoded.planes().length);
+            assertEquals(stream.frames().size() * (long) decoder.frameLength(), decoded.frames());
+            assertTrue(decoder.decodesSpectralBandReplication());
+            for (var plane : decoded.planes()) {
+                var energy = 0.0;
+                for (var sample : plane) {
+                    assertTrue(Float.isFinite(sample), name + " decodes a sample that is not finite");
+                    energy += sample * sample;
+                }
+                assertTrue(energy > 0, name + " decodes silence");
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("960-sample streams")
     class ShortFrames {
         @ParameterizedTest(name = "{0}")
         @CsvSource({
                 "al960_sbr_e_48_1, 24000, 2", "al960_sbr_gh_48_2, 24000, 2", "al960_sbr_ps_00, 16000, 2",
-                "al960_sbr_ps_01, 16000, 2", "al960_sbr_s_48_1, 24000, 2"
+                "al960_sbr_ps_01, 16000, 2", "al960_sbr_s_48_1, 24000, 2",
+                "al960_sbr_e_32_1, 16000, 2", "al960_sbr_e_32_2, 16000, 2", "al960_sbr_e_44_1, 22050, 2",
+                "al960_sbr_e_44_2, 22050, 2", "al960_sbr_e_48_2, 24000, 2", "al960_sbr_gh_32_1, 16000, 2",
+                "al960_sbr_gh_32_2, 16000, 2", "al960_sbr_gh_44_1, 22050, 2", "al960_sbr_gh_44_2, 22050, 2",
+                "al960_sbr_gh_48_1, 24000, 2", "al960_sbr_i_32_1, 16000, 2", "al960_sbr_i_32_2, 16000, 2",
+                "al960_sbr_i_44_1, 22050, 2", "al960_sbr_i_44_2, 22050, 2", "al960_sbr_i_48_1, 24000, 2",
+                "al960_sbr_i_48_2, 24000, 2", "al960_sbr_ps_02, 16000, 2", "al960_sbr_ps_03, 16000, 2",
+                "al960_sbr_ps_04, 16000, 2", "al960_sbr_ps_05, 16000, 2", "al960_sbr_ps_06, 16000, 2",
+                "al960_sbr_qmf_32_1, 16000, 2", "al960_sbr_qmf_44_1, 22050, 2", "al960_sbr_qmf_48_1, 24000, 2",
+                "al960_sbr_s_32_1, 16000, 2", "al960_sbr_s_32_2, 16000, 2", "al960_sbr_s_44_1, 22050, 2",
+                "al960_sbr_s_44_2, 22050, 2", "al960_sbr_s_48_2, 24000, 2"
         })
         @DisplayName("decode at twice the core rate with the core intact below the crossover")
         void dualRate(String name, int coreRate, int channels) {

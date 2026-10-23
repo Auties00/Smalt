@@ -128,7 +128,12 @@ import java.util.Set;
  *
  * <p>Every size read from the file is checked against the {@link MediaLimits} before allocating:
  * the {@code moov}, each {@code moof}, each sample, and the number of samples per track.
- * Encrypted tracks ({@code encv}, {@code enca}) raise {@link MediaException.Unsupported}.
+ * Encrypted tracks ({@code encv}, {@code enca}) raise {@link MediaException.Unsupported}. The
+ * compressed boxes of ISO/IEC 14496-12 clause 8.20 are read in place of the boxes they replace: a
+ * compressed movie box ({@code !mov}) as the {@code moov} and compressed movie fragments
+ * ({@code !mof}) as {@code moof} boxes, each decompressed size checked against the byte limit too.
+ * Their offsets count in the file as it would be with every compressed box uncompressed, compressed
+ * segment indexes ({@code !six}, {@code !ssx}) included, and are mapped into the file as it is.
  *
  * <p>Cover pictures ({@code covr} items) become {@link #attachedPictures()}; chapters come from a
  * Nero {@code chpl} box or, without one, from the first QuickTime chapter text track a track
@@ -289,6 +294,12 @@ public final class Mp4Demuxer implements Demuxer {
     private final List<Mp4Track> fragmentTracks;
 
     /**
+     * The compressed boxes walked so far, which map the offsets the file stores to offsets in the
+     * file, or {@code null} while none was met.
+     */
+    private CompressedBoxes compression;
+
+    /**
      * The index of the next sample of each active track.
      */
     private final int[] cursors;
@@ -396,25 +407,58 @@ public final class Mp4Demuxer implements Demuxer {
             var scan = TopLevelScan.scan(source, forwardOnly,
                     SegmentBacked.isInMemory(source) ? 0 : Math.min(PREFETCH_BUDGET, limits.maxBytes()));
             this.fastStart = scan.isFastStart();
-            if (scan.moovOffset < 0) {
+            var moov = scan.moovPayload;
+            scan.moovPayload = null;
+            var compressedMovie = scan.moovOffset < 0 && scan.compressedMoov != null;
+            if (compressedMovie) {
+                var box = scan.compressedMoov;
+                var payload = scan.compressedMoovPayload;
+                scan.compressedMoovPayload = null;
+                moov = CompressedBoxes.inflate(payload != null ? payload : readBox(box[0], (int) box[1], box[2], "!mov"),
+                        "!mov", limits);
+            } else if (scan.moovOffset < 0) {
                 throw new MediaException.Malformed("no moov box");
             }
             var parser = new MovieParser(limits);
-            var moov = scan.moovPayload;
-            scan.moovPayload = null;
             parser.parse(BoxCursor.of(moov != null ? moov : readBox(scan.moovOffset, scan.moovHeader, scan.moovSize, "moov"),
                     BoxTypes.MOOV));
-            for (var track : parser.tracks) {
+            var movieSamples = new int[parser.tracks.size()];
+            for (var index = 0; index < movieSamples.length; index++) {
+                var track = parser.tracks.get(index);
+                movieSamples[index] = track.samples.count;
                 var samples = track.samples;
                 track.nextFragmentDts = samples.count == 0 ? 0
                         : samples.dts[samples.count - 1] + Integer.toUnsignedLong(samples.durations[samples.count - 1]);
             }
-            for (var index = 0; index < scan.fragments.size(); index++) {
-                var fragment = scan.fragments.get(index);
-                var payload = scan.fragmentPayloads.set(index, null);
-                FragmentParser.parse(BoxCursor.of(payload != null ? payload : readBox(fragment[0], (int) fragment[1], fragment[2], "moof"),
-                                BoxTypes.MOOF),
-                        fragment[0], parser.tracks);
+            // the compressed boxes are added to the map in file order, each fragment parsed after the boxes before it
+            var indexes = scan.compressedIndexes;
+            var nextIndex = 0;
+            var movieAdded = !compressedMovie;
+            for (var index = 0; index <= scan.fragments.size(); index++) {
+                var fragment = index < scan.fragments.size() ? scan.fragments.get(index) : null;
+                var position = fragment != null ? fragment[0] : Long.MAX_VALUE;
+                while (true) {
+                    var indexAt = nextIndex < indexes.size() ? indexes.get(nextIndex)[0] : Long.MAX_VALUE;
+                    var movieAt = movieAdded ? Long.MAX_VALUE : scan.compressedMoov[0];
+                    var next = Math.min(indexAt, movieAt);
+                    if (next == Long.MAX_VALUE || next > position) {
+                        break;
+                    }
+                    if (movieAt < indexAt) {
+                        compressed().add(movieAt, scan.compressedMoov[2], CompressedBoxes.boxSize(moov.length));
+                        movieAdded = true;
+                    } else {
+                        addCompressedIndex(indexes.get(nextIndex++));
+                    }
+                }
+                if (fragment != null) {
+                    parseFragment(fragment, scan.fragmentPayloads.set(index, null), parser.tracks);
+                }
+            }
+            if (compression != null) {
+                for (var index = 0; index < movieSamples.length; index++) {
+                    compression.relocate(parser.tracks.get(index).samples, 0, movieSamples[index]);
+                }
             }
             var lazy = forwardOnly && parser.fragmented && scan.next >= 0;
             if (lazy && parser.tracks.stream().anyMatch(track -> !track.hasSimpleEdits())) {
@@ -598,6 +642,94 @@ public final class Mp4Demuxer implements Demuxer {
             }
         }
         return -1;
+    }
+
+    /**
+     * Returns the map of the compressed boxes, creating it when the first one is met.
+     *
+     * @return the map
+     */
+    private CompressedBoxes compressed() {
+        if (compression == null) {
+            compression = new CompressedBoxes();
+        }
+        return compression;
+    }
+
+    /**
+     * Adds a compressed segment index box ({@code !six}, {@code !ssx}) to the map of the compressed boxes;
+     * the demuxer ignores segment indexes, but the size of their uncompressed forms moves the offsets after
+     * them. A box that runs past the end of the file is left out, as no offset lies after it.
+     *
+     * @param box the offset, header size, size and type of the box
+     * @throws MediaException.Malformed if the box is damaged or is not a gzip stream
+     */
+    private void addCompressedIndex(long[] box) {
+        if (sourceSize >= 0 && box[0] + box[2] > sourceSize) {
+            return;
+        }
+        var name = (int) box[3] == BoxTypes.COMPRESSED_SIDX ? "!six" : "!ssx";
+        var payload = CompressedBoxes.inflate(readBox(box[0], (int) box[1], box[2], name), name, limits);
+        compressed().add(box[0], box[2], CompressedBoxes.boxSize(payload.length));
+    }
+
+    /**
+     * Indexes the samples of a movie fragment box, {@code moof} or its compressed form {@code !mof}.
+     *
+     * <p>The offsets of a fragment count in the file with every compressed box uncompressed, so once
+     * a compressed box has been met the fragment is parsed at its offset in that file and the offsets
+     * of its samples are mapped back into the file.
+     *
+     * @param box the offset, header size, size and type of the box
+     * @param payload the prefetched payload of the box, or {@code null} to read it
+     * @param tracks every track of the movie
+     * @throws MediaException.Malformed if the box is corrupt or a compressed one is not a gzip stream
+     * @throws MediaException.LimitExceeded if the box exceeds the byte limit
+     */
+    private void parseFragment(long[] box, byte[] payload, List<Mp4Track> tracks) {
+        var position = box[0];
+        var packed = (int) box[3] == BoxTypes.COMPRESSED_MOOF;
+        var name = packed ? "!mof" : "moof";
+        var data = payload != null ? payload : readBox(position, (int) box[1], box[2], name);
+        if (!packed && compression == null) {
+            FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), position, tracks);
+            return;
+        }
+        if (packed) {
+            data = CompressedBoxes.inflate(data, name, limits);
+        }
+        var map = compressed();
+        var start = map.uncompressed(position);
+        if (packed) {
+            map.add(position, box[2], CompressedBoxes.boxSize(data.length));
+        }
+        var counts = new int[tracks.size()];
+        for (var index = 0; index < counts.length; index++) {
+            counts[index] = tracks.get(index).samples.count;
+        }
+        FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), start, tracks);
+        for (var index = 0; index < counts.length; index++) {
+            var samples = tracks.get(index).samples;
+            map.relocate(samples, counts[index], samples.count);
+        }
+    }
+
+    /**
+     * Handles a top-level box of a forward-only source that the top-level scan stopped before: a movie
+     * fragment is indexed and a compressed segment index added to the map of the compressed boxes.
+     *
+     * @param position the offset of the box
+     * @param box the header size, the size and the type of the box, as {@link TopLevelScan#readHeader} reads them
+     * @param tracks every track of the movie
+     */
+    private void walkLater(long position, long[] box, List<Mp4Track> tracks) {
+        var type = (int) box[2];
+        var entry = new long[]{position, box[0], box[1], type};
+        if (type == BoxTypes.MOOF || type == BoxTypes.COMPRESSED_MOOF) {
+            parseFragment(entry, null, tracks);
+        } else if (type == BoxTypes.COMPRESSED_SIDX || type == BoxTypes.COMPRESSED_SSIX) {
+            addCompressedIndex(entry);
+        }
     }
 
     /**
@@ -1173,10 +1305,7 @@ public final class Mp4Demuxer implements Demuxer {
             if (box == null || box[1] < 0 || (sourceSize >= 0 && position + box[1] > sourceSize)) {
                 return;
             }
-            if ((int) box[2] == BoxTypes.MOOF) {
-                FragmentParser.parse(BoxCursor.of(readBox(position, (int) box[0], box[1], "moof"), BoxTypes.MOOF), position,
-                        tracks);
-            }
+            walkLater(position, box, tracks);
             position += box[1];
         }
     }
@@ -1213,7 +1342,8 @@ public final class Mp4Demuxer implements Demuxer {
      * walk resumes after the media data of the fragment and the bytes before its first sample are
      * not kept while the samples are read.
      *
-     * @throws MediaException.Malformed if the {@code moof} is corrupt
+     * @throws MediaException.Malformed if the {@code moof} is corrupt, or a compressed box is not a
+     * gzip stream
      */
     private void loadFragment() {
         while (fragmentScan >= 0) {
@@ -1224,15 +1354,18 @@ public final class Mp4Demuxer implements Demuxer {
             } else {
                 fragmentScan = position + box[1];
             }
-            if (box == null || (int) box[2] != BoxTypes.MOOF || box[1] < 0) {
+            if (box == null || box[1] < 0) {
+                continue;
+            }
+            if ((int) box[2] != BoxTypes.MOOF && (int) box[2] != BoxTypes.COMPRESSED_MOOF) {
+                walkLater(position, box, fragmentTracks);
                 continue;
             }
             var counts = new int[active.length];
             for (var index = 0; index < active.length; index++) {
                 counts[index] = active[index].samples.count;
             }
-            FragmentParser.parse(BoxCursor.of(readBox(position, (int) box[0], box[1], "moof"), BoxTypes.MOOF), position,
-                    fragmentTracks);
+            walkLater(position, box, fragmentTracks);
             if (fragmentScan >= 0) {
                 var data = TopLevelScan.readHeader(source, fragmentScan, sourceSize);
                 if (data != null && (int) data[2] == BoxTypes.MDAT) {

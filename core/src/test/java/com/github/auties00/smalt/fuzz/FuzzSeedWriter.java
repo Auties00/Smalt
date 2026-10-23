@@ -81,9 +81,13 @@ class FuzzSeedWriter {
         var mp4 = ffmpeg("mp4", av, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k",
                 "-ac", "1", "-metadata", "title=seed", "-metadata", "artist=smalt");
         copy(DemuxerFuzzTest.class, "mp4", "valid-h264-aac.mp4", mp4);
-        copy(DemuxerFuzzTest.class, "mp4", "valid-fragmented.mp4", ffmpeg("mp4", av, "-c:v", "libx264",
-                "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k", "-ac", "1",
-                "-movflags", "frag_keyframe+empty_moov+default_base_moof"));
+        write(DemuxerFuzzTest.class, "mp4", "valid-compressed-moov.mp4", compressBoxes(Files.readAllBytes(mp4),
+                java.util.Set.of("moov")));
+        var fragmented = ffmpeg("mp4", av, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k",
+                "-ac", "1", "-movflags", "frag_keyframe+empty_moov+default_base_moof");
+        copy(DemuxerFuzzTest.class, "mp4", "valid-fragmented.mp4", fragmented);
+        write(DemuxerFuzzTest.class, "mp4", "valid-compressed-fragments.mp4", compressBoxes(Files.readAllBytes(fragmented),
+                java.util.Set.of("moov", "moof")));
         copy(DemuxerFuzzTest.class, "mp4", "valid-mjpeg-pcm.mov", ffmpeg("mov", args(video(32, 32, 2),
                 tone(8000, 0.2)), "-c:v", "mjpeg", "-q:v", "20", "-c:a", "pcm_s16le"));
         copy(DemuxerFuzzTest.class, "mp4", "valid-h263-amr.3gp", ffmpeg("3gp", args(video(128, 96, 2),
@@ -261,6 +265,39 @@ class FuzzSeedWriter {
             out.writeBytes(FuzzPackets.MARKER);
             out.write(1);
             out.writeBytes(part.data());
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Replaces the top-level boxes of the given types by their gzip-compressed forms ({@code !mov}, {@code !mof}),
+     * every offset left unchanged, as the offsets of a file with compressed boxes count in the file uncompressed.
+     */
+    private static byte[] compressBoxes(byte[] file, java.util.Set<String> types) throws IOException {
+        var out = new java.io.ByteArrayOutputStream();
+        var position = 0;
+        var compressed = 0;
+        while (position + 8 <= file.length) {
+            var size = java.nio.ByteBuffer.wrap(file, position, 4).getInt();
+            var type = new String(file, position + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1);
+            if (types.contains(type)) {
+                var payload = new java.io.ByteArrayOutputStream();
+                try (var zip = new java.util.zip.GZIPOutputStream(payload)) {
+                    zip.write(file, position + 8, size - 8);
+                }
+                out.writeBytes(java.nio.ByteBuffer.allocate(8).putInt(8 + payload.size())
+                        .put(java.util.Map.of("moov", "!mov", "moof", "!mof").get(type)
+                                .getBytes(java.nio.charset.StandardCharsets.ISO_8859_1))
+                        .array());
+                payload.writeTo(out);
+                compressed++;
+            } else {
+                out.write(file, position, size);
+            }
+            position += size;
+        }
+        if (compressed == 0) {
+            throw new IllegalStateException("no " + types + " box");
         }
         return out.toByteArray();
     }

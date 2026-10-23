@@ -38,9 +38,13 @@ jobs:
   # The oracle tools of every test runner, cached before the tests start (the first build of a branch takes most of
   # an hour); a runner whose tools fail still runs its tests, which then fail on the missing oracle.
   oracles:
+    # The full tier the nightly caches fills most of the 10 GB Actions cache, so the clips and oracle data entries
+    # may be evicted between the oracle jobs and the tests; the artifacts of this run stand in for them.
     uses: ./.github/workflows/oracle-tools.yml
     with:
       os: '["ubuntu-latest","ubuntu-24.04-arm","windows-latest","macos-latest"]'
+      clips-artifact: true
+      data-artifact: true
 
   test:
     name: test (${{ matrix.os }}, ${{ matrix.simd }})
@@ -89,6 +93,12 @@ jobs:
       - uses: ./.github/actions/oracles
 
       - uses: ./.github/actions/testdata
+        with:
+          clips-artifact: 'true'
+
+      - uses: ./.github/actions/oracle-data
+        with:
+          artifact: 'true'
 
       - name: Build and test
         id: test
@@ -103,6 +113,7 @@ jobs:
         shell: bash
         run: |
           python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv" || true
           python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
 
       - name: Upload the skip report
@@ -112,6 +123,7 @@ jobs:
           name: skips-${{ env.SMALT_SKIP_JOB }}
           path: |
             target/skips-*.tsv
+            target/outcomes-*.tsv
             oracle-versions.tsv
           retention-days: 14
 
@@ -125,8 +137,72 @@ jobs:
             */target/kernel-guard/*/*/result.tsv
             */target/kernel-guard/*/*/vm.log
             it/target/kernel-guard-self/
+            **/hs_err_pid*.log
             ~/Library/Logs/DiagnosticReports/
           retention-days: 7
+
+  # A skip is acceptable only when the same test passes on another job: the scalar twin of a vector kernel, an
+  # operating system's tests on that system, a device test on the capture job. Every simd skip of the test jobs
+  # must have passed in another of them; the platform, device and opt-in skips, in another of them or in the latest
+  # completed nightly run of the branch, else of master (whose capture jobs provision the devices and the display
+  # the operating-system capture tests need, and whose opt-in job runs the opt-in tests). A nightly that failed
+  # elsewhere still counts: an outcome row records a test that passed.
+  skip-cover:
+    name: skips run elsewhere
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Download the outcomes of the test jobs
+        uses: actions/download-artifact@v4
+        with:
+          pattern: skips-*
+          path: reports
+
+      - name: Download the outcomes of the latest nightly
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p nightly
+          for branch in "${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}" master; do
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow nightly.yml --branch "$branch" --status completed \
+              --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)
+            if [ -n "$run" ] && gh run download "$run" -R "$GITHUB_REPOSITORY" --pattern 'outcomes-*' --dir nightly \
+                && [ -n "$(find nightly -name 'outcomes-*.tsv')" ]; then
+              echo "evidence: nightly run $run of $branch"
+              break
+            fi
+          done
+          find nightly -name 'outcomes-*.tsv' | sed 's/^/evidence: /'
+
+      - name: Check every skip passed elsewhere
+        shell: bash
+        run: |
+          mapfile -t checked < <(find reports -name 'outcomes-*.tsv')
+          evidence=()
+          while IFS= read -r file; do evidence+=(--evidence "$file"); done < <(find nightly -name 'outcomes-*.tsv')
+          status=0
+          python tools/testdata/skips.py cover "${checked[@]}" --families simd || status=1
+          if [ "${#evidence[@]}" -gt 0 ]; then
+            python tools/testdata/skips.py cover "${checked[@]}" "${evidence[@]}" --families platform,device,opt-in \
+              --impossible tools/testdata/impossible-skips.tsv || status=1
+          else
+            echo "::warning::no nightly outcomes: the platform skips are checked against the test jobs alone"
+            python tools/testdata/skips.py cover "${checked[@]}" --families platform \
+              --impossible tools/testdata/impossible-skips.tsv || status=1
+          fi
+          exit $status
 
   # Hostile inputs within the means of a small deployment: every fuzz seed and saved finding, and the
   # decompression-bomb, cyclic-offset and deep-nesting tests of it, in a 256 MiB heap (at the JVM's default
@@ -165,7 +241,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-reports-hostile
-          path: '**/target/surefire-reports/'
+          path: |
+            **/target/surefire-reports/
+            **/hs_err_pid*.log
           retention-days: 7
 
   javadoc:
@@ -220,6 +298,10 @@ jobs:
       # The benchmark tool of .github/workflows/bench.yml, against a stand-in for the JVM.
       - name: Benchmark tool tests
         run: python -m unittest discover -s tools/bench -p "test_*.py"
+
+      # Every downloaded vector, clip and archive set names its licence or terms of use (tools/testdata/licences.tsv).
+      - name: Test data licence notes
+        run: python tools/testdata/testdata.py licences
 
       # A pull request may shrink the baselines but never grow the comment findings or the environment skips.
       - name: Baselines only shrink

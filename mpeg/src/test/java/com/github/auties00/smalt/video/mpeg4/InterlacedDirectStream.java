@@ -186,8 +186,16 @@ final class InterlacedDirectStream {
         return List.copyOf(pictures);
     }
 
+    /**
+     * Returns the stream, ended by a {@code visual_object_sequence_end_code}: the ISO/IEC 14496-5 reference decoder
+     * reads ahead of the last macroblock, and decodes the last macroblocks of a stream that ends with them wrongly.
+     */
     byte[] bytes() {
-        return out.toByteArray();
+        var bytes = out.toByteArray();
+        var ended = Arrays.copyOf(bytes, bytes.length + 4);
+        ended[bytes.length + 2] = 1;
+        ended[bytes.length + 3] = (byte) 0xB1;
+        return ended;
     }
 
     private static FieldBlock find(List<FieldBlock> blocks, int mx, int my) {

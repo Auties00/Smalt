@@ -9,12 +9,16 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.internal.edit.EditPlan;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -26,6 +30,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.zip.GZIPInputStream;
 
 /**
  * Edits the iTunes metadata of an MP4, M4A or MOV file.
@@ -54,6 +59,13 @@ import java.util.Set;
  * {@code moov}, where a {@code stco} box whose offsets no longer fit 32 bits becomes a
  * {@code co64} box, the explicit base data offsets of movie fragments ({@code tfhd}) and the
  * fragment offsets of the random access index ({@code tfra}).
+ *
+ * <p>A file whose movie is a compressed movie box ({@code !mov}, ISO/IEC 14496-12 clause 8.20) is read
+ * from the decompressed movie, and a rewrite replaces the compressed box with an uncompressed
+ * {@code moov}. The offsets of such a file count in the file with its compressed boxes
+ * uncompressed, so the explicit offsets of the movie fragments after a rewritten compressed movie
+ * move by what the rewrite and the compression together changed; a rewrite that would move the data
+ * of compressed movie fragments ({@code !mof}) stating explicit base data offsets is rejected.
  */
 final class Mp4TagFile implements TagFile {
     /**
@@ -112,6 +124,11 @@ final class Mp4TagFile implements TagFile {
     private static final long U32_MAX = 0xFFFFFFFFL;
 
     /**
+     * The type of a compressed movie box (ISO/IEC 14496-12 clause 8.20).
+     */
+    private static final String COMPRESSED_MOVIE = "!mov";
+
+    /**
      * The width in bytes of the iTunes atoms that hold a signed integer: tempo ({@code tmpo}),
      * content rating ({@code rtng}), media kind ({@code stik}), gapless playback ({@code pgap}),
      * HD video ({@code hdvd}), TV season and episode ({@code tvsn}, {@code tves}), the store
@@ -141,7 +158,7 @@ final class Mp4TagFile implements TagFile {
     private final MediaLimits limits;
 
     /**
-     * The top-level boxes as offset, size and type, in file order.
+     * The top-level boxes as offset, size and header size, in file order.
      */
     private final List<long[]> topLevel;
 
@@ -159,6 +176,13 @@ final class Mp4TagFile implements TagFile {
      * The bytes of {@code moov}, header included.
      */
     private final byte[] moov;
+
+    /**
+     * The bytes the compressed movie box saved against the {@code moov} it holds, or {@code 0} when the
+     * movie box is not compressed: the offsets of the movie fragments count in the file with that box
+     * uncompressed, so they move back by this much when the box is rewritten.
+     */
+    private final long movieSaved;
 
     /**
      * The identifiers of the QuickTime chapter text tracks.
@@ -195,6 +219,7 @@ final class Mp4TagFile implements TagFile {
         var types = new ArrayList<String>();
         var position = 0L;
         var moovAt = -1;
+        var compressedAt = -1;
         while (size - position >= 8) {
             if (boxes.size() >= MAX_TOP_LEVEL) {
                 throw new MediaException.Malformed("more than " + MAX_TOP_LEVEL + " top-level MP4 boxes");
@@ -220,24 +245,128 @@ final class Mp4TagFile implements TagFile {
             var type = Mp4Boxes.type(header, 4);
             if (type.equals("moov") && moovAt < 0) {
                 moovAt = boxes.size();
+            } else if (type.equals(COMPRESSED_MOVIE) && compressedAt < 0) {
+                compressedAt = boxes.size();
             }
-            boxes.add(new long[]{position, boxSize});
+            boxes.add(new long[]{position, boxSize, ByteArrays.u32be(header, 0) == 1 ? 16 : 8});
             types.add(type);
             position += boxSize;
         }
-        if (moovAt < 0) {
+        if (moovAt < 0 && compressedAt < 0) {
             throw new MediaException.Malformed("MP4 file without a moov box");
         }
         this.topLevel = List.copyOf(boxes);
         this.topLevelTypes = List.copyOf(types);
-        this.moovIndex = moovAt;
-        var moovBox = boxes.get(moovAt);
-        this.moov = TagIo.read(source, moovBox[0], moovBox[1], limits);
+        this.moovIndex = moovAt >= 0 ? moovAt : compressedAt;
+        var moovBox = boxes.get(moovIndex);
+        this.moov = moovAt >= 0 ? TagIo.read(source, moovBox[0], moovBox[1], limits) : decompressMovie(moovBox);
+        this.movieSaved = moovAt >= 0 ? 0 : moov.length - moovBox[1];
         this.chapterTracks = findChapterTracks();
         var opaque = new ArrayList<byte[]>();
         this.integerForms = new HashMap<>();
         this.tags = decode(opaque);
         this.opaqueItems = List.copyOf(opaque);
+    }
+
+    /**
+     * Reads the movie of a compressed movie box ({@code !mov}, ISO/IEC 14496-12 clause 8.20), a gzip stream of the
+     * payload of a {@code moov} box, as an uncompressed {@code moov} box that replaces it when the tags are
+     * written. The chunk offsets of the compressed movie count in the file with the movie box uncompressed, so the
+     * offsets past it are moved to where the data lies in the file as it is.
+     *
+     * @param box the offset, size and header size of the compressed movie box
+     * @return the {@code moov} box
+     * @throws MediaException.Malformed if the payload is not a gzip stream or a chunk offset is out of range
+     * @throws MediaException.LimitExceeded if the movie box is larger than the byte limit
+     */
+    private byte[] decompressMovie(long[] box) {
+        var payload = inflate(TagIo.read(source, box[0] + box[2], box[1] - box[2], limits));
+        var wide = payload.length + 8L > U32_MAX;
+        var header = wide ? 16 : 8;
+        var movie = new byte[header + payload.length];
+        if (wide) {
+            ByteArrays.put32be(movie, 0, 1);
+            ByteArrays.put64be(movie, 8, movie.length);
+        } else {
+            ByteArrays.put32be(movie, 0, movie.length);
+        }
+        movie[4] = 'm';
+        movie[5] = 'o';
+        movie[6] = 'o';
+        movie[7] = 'v';
+        System.arraycopy(payload, 0, movie, header, payload.length);
+        var saved = movie.length - box[1];
+        var end = box[0] + movie.length;
+        for (var trak : Mp4Boxes.children(movie, header, movie.length)) {
+            if (trak.type().equals("trak")) {
+                relocateChunks(movie, trak, saved, end);
+            }
+        }
+        return movie;
+    }
+
+    /**
+     * Decompresses the payload of a compressed box, a gzip stream, within the byte limit.
+     *
+     * @param compressed the payload of the compressed box
+     * @return the payload of the box it replaces
+     * @throws MediaException.Malformed if the payload is not a gzip stream
+     * @throws MediaException.LimitExceeded if the decompressed payload exceeds the byte limit
+     */
+    private byte[] inflate(byte[] compressed) {
+        var payload = new ByteArrayOutputStream((int) Math.min(compressed.length * 4L, 1 << 20));
+        try (var input = new GZIPInputStream(new ByteArrayInputStream(compressed))) {
+            var buffer = new byte[8192];
+            for (var read = input.read(buffer); read >= 0; read = input.read(buffer)) {
+                LimitChecks.checkAllocation(limits, payload.size() + read + 16L);
+                payload.write(buffer, 0, read);
+            }
+        } catch (IOException exception) {
+            throw new MediaException.Malformed("the compressed box is not a gzip stream: " + exception.getMessage());
+        }
+        return payload.toByteArray();
+    }
+
+    /**
+     * Moves back, in place, the chunk offsets of a track that point at or after an offset.
+     *
+     * @param movie the {@code moov} box
+     * @param trak the {@code trak} box
+     * @param shift the distance to move the offsets back by
+     * @param threshold the first offset that moves
+     * @throws MediaException.Malformed if a moved offset is negative
+     */
+    private static void relocateChunks(byte[] movie, Mp4Boxes.Box trak, long shift, long threshold) {
+        var mdia = Mp4Boxes.find(Mp4Boxes.children(movie, trak.payload(), trak.end()), "mdia");
+        var minf = mdia == null ? null : Mp4Boxes.find(Mp4Boxes.children(movie, mdia.payload(), mdia.end()), "minf");
+        var stbl = minf == null ? null : Mp4Boxes.find(Mp4Boxes.children(movie, minf.payload(), minf.end()), "stbl");
+        if (stbl == null) {
+            return;
+        }
+        for (var table : Mp4Boxes.children(movie, stbl.payload(), stbl.end())) {
+            var wide = table.type().equals("co64");
+            if (!wide && !table.type().equals("stco") || table.end() - table.payload() < 8) {
+                continue;
+            }
+            var count = ByteArrays.u32be(movie, table.payload() + 4);
+            var entry = wide ? 8 : 4;
+            var position = table.payload() + 8;
+            for (var i = 0L; i < count && table.end() - position >= entry; i++) {
+                var offset = wide ? ByteArrays.i64be(movie, position) : ByteArrays.u32be(movie, position);
+                if (Long.compareUnsigned(offset, threshold) >= 0) {
+                    if (offset - shift < 0 || !wide && offset - shift > U32_MAX) {
+                        throw new MediaException.Malformed("chunk offset " + offset + " does not fit the file with the"
+                                + " compressed movie box");
+                    }
+                    if (wide) {
+                        ByteArrays.put64be(movie, position, offset - shift);
+                    } else {
+                        ByteArrays.put32be(movie, position, offset - shift);
+                    }
+                }
+                position += entry;
+            }
+        }
     }
 
     /**
@@ -694,10 +823,16 @@ final class Mp4TagFile implements TagFile {
         var fileSize = source.size();
         var slot = slotEnd - slotStart;
         var plan = EditPlan.builder().copy(0, slotStart);
-        if (base.length == slot || last) {
+        if (base.length == slot || last || base.length + 8 <= slot) {
             plan.bytes(base);
-        } else if (base.length + 8 <= slot) {
-            plan.bytes(base).bytes(Mp4Boxes.free(slot - base.length));
+            if (base.length != slot && !last) {
+                plan.bytes(Mp4Boxes.free(slot - base.length));
+            }
+            if (!last && movieSaved != 0) {
+                checkCompressedFragments(next, -movieSaved);
+                plan.transform(new Shift(slotEnd, fileSize - slotEnd, -movieSaved, limits));
+                return plan.build();
+            }
         } else {
             var padded = options.padding() >= 8 ? options.padding() : 0;
             var delta = base.length + padded - slot;
@@ -714,7 +849,8 @@ final class Mp4TagFile implements TagFile {
                 plan.bytes(Mp4Boxes.free(padded));
             }
             if (fileSize > slotEnd) {
-                plan.transform(new Shift(slotEnd, fileSize - slotEnd, delta, limits));
+                checkCompressedFragments(next, delta - movieSaved);
+                plan.transform(new Shift(slotEnd, fileSize - slotEnd, delta - movieSaved, limits));
             }
             return plan.build();
         }
@@ -722,6 +858,43 @@ final class Mp4TagFile implements TagFile {
             plan.copy(slotEnd, fileSize - slotEnd);
         }
         return plan.build();
+    }
+
+    /**
+     * Rejects a rewrite that would move the data of compressed movie fragments ({@code !mof}) whose track
+     * fragments state an explicit base data offset, which only a decompressed and recompressed fragment
+     * could correct.
+     *
+     * @param from the index of the first top-level box after the rewritten movie box
+     * @param delta the distance the offsets of the data after the movie box move by
+     * @throws MediaException.Unsupported if such a fragment follows the movie box and {@code delta} is not
+     * {@code 0}
+     * @throws MediaException.Malformed if a compressed fragment is not a gzip stream
+     */
+    private void checkCompressedFragments(int from, long delta) {
+        if (delta == 0) {
+            return;
+        }
+        for (var index = from; index < topLevel.size(); index++) {
+            if (!topLevelTypes.get(index).equals("!mof")) {
+                continue;
+            }
+            var box = topLevel.get(index);
+            var fragment = inflate(TagIo.read(source, box[0] + box[2], box[1] - box[2], limits));
+            for (var traf : Mp4Boxes.children(fragment, 0, fragment.length)) {
+                if (!traf.type().equals("traf")) {
+                    continue;
+                }
+                var tfhd = Mp4Boxes.find(Mp4Boxes.children(fragment, traf.payload(), traf.end()), "tfhd");
+                if (tfhd != null && tfhd.end() - tfhd.payload() >= 4
+                        && (ByteArrays.u32be(fragment, tfhd.payload()) & 1) != 0) {
+                    // TODO: rewrite the explicit base data offsets of compressed movie fragments, recompressing them
+                    throw new MediaException.Unsupported("mp4 compressed movie fragments",
+                            "writing tags would move the data of a compressed movie fragment with an explicit base"
+                                    + " data offset");
+                }
+            }
+        }
     }
 
     /**

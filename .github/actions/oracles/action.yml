@@ -21,14 +21,14 @@ runs:
       uses: actions/cache/restore@v4
       with:
         path: ~/.smalt/oracles
-        key: oracles-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv', 'tools/testdata/oracles.py', 'tools/testdata/png-oracle/*.c', 'tools/testdata/icc-hdr/*.c') }}
+        key: oracles-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/oracles.tsv', 'tools/testdata/oracles.py', 'tools/testdata/png-oracle/*.c', 'tools/testdata/icc-hdr/*.c', 'tools/testdata/mpeg4-oracle/build.py', 'tools/testdata/gif-oracle/*.c') }}
 
     - name: Restore the ffmpeg build
       id: ffmpeg
       uses: actions/cache/restore@v4
       with:
         path: ~/.smalt/ffmpeg-*
-        key: ffmpeg-oracle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/ffmpeg-oracle/build.py') }}
+        key: ffmpeg-oracle-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tools/testdata/ffmpeg-oracle/build.py', 'tools/testdata/ffmpeg-oracle/quarantine.c') }}
 
     - name: Decide which missing entries to save
       id: policy
@@ -49,6 +49,14 @@ runs:
     - name: Install the oracle tools
       shell: bash
       run: python tools/testdata/oracles.py install --github
+
+    # Pillow is the oracle of tools/testdata/bmp-oracle/pillow-bmp-dump.py, which the tests run with the first python3
+    # or python on PATH, the Python of setup-python. A Python without a Pillow wheel leaves that test to skip.
+    - name: Install Pillow
+      shell: bash
+      continue-on-error: true
+      run: |
+        python -m pip install --quiet --only-binary=:all: "pillow>=12,<14"
 
     - name: Save the oracle tools
       if: steps.policy.outputs.tools == 'true'

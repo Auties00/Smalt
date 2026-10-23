@@ -133,7 +133,13 @@ public final class Oracle {
         PNGDUMP("smalt-pngdump"),
 
         /** {@code tools/testdata/icc-hdr}'s Little CMS profile writer and reader. */
-        LCMSDUMP("smalt-lcmsdump");
+        LCMSDUMP("smalt-lcmsdump"),
+
+        /** {@code tools/testdata/mpeg4-oracle}'s build of the MPEG-4 Visual reference decoder of ISO/IEC 14496-5. */
+        MPEG4REF("smalt-mpeg4ref"),
+
+        /** {@code tools/testdata/gif-oracle}'s driver of giflib 5.2.2's GIF encoder. */
+        GIFENC("smalt-gifenc");
 
         /** The executable name without extension. */
         private final String executable;

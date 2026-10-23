@@ -27,6 +27,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.error
 import urllib.request
 import zipfile
@@ -34,6 +35,8 @@ import zipfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 MANIFEST = os.path.join(HERE, 'oracles.tsv')
 # The library sources of libpng 1.6, and the macros that turn off its SIMD filters.
+# The encoder half of giflib 5.2.2 (MIT), which smalt-gifenc drives.
+GIFLIB_SOURCES = ['egif_lib.c', 'gif_err.c', 'gif_hash.c', 'gifalloc.c', 'openbsd-reallocarray.c']
 LIBPNG_SOURCES = ['png.c', 'pngerror.c', 'pngget.c', 'pngmem.c', 'pngpread.c', 'pngread.c', 'pngrio.c',
                   'pngrtran.c', 'pngrutil.c', 'pngset.c', 'pngtrans.c', 'pngwio.c', 'pngwrite.c', 'pngwtran.c',
                   'pngwutil.c']
@@ -55,7 +58,7 @@ VERSION_ARGS = {
     'flac': ['--version'], 'opusenc': ['--version'], 'opusdec': ['--version'], 'opus_compare': [],
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
-    'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [],
+    'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [],
 }
 VERSION_MARKERS = ('version', 'libtiff', 'opj_', 'usage', 'exiftool', ' v', 'copyright')
 
@@ -104,6 +107,21 @@ def provided(row):
 def run(command, cwd=None, env=None, shell=False):
     print('+ ' + (command if isinstance(command, str) else ' '.join(command)), flush=True)
     subprocess.run(command, cwd=cwd, env=env, shell=shell, check=True)
+
+
+def run_retrying(command, cwd=None, env=None, attempts=4):
+    """Runs a package manager command, retrying with a growing pause when it fails: the package mirrors answer the
+    many runners of a workflow that install at once with HTTP 429."""
+    for attempt in range(1, attempts + 1):
+        try:
+            run(command, cwd=cwd, env=env)
+            return
+        except subprocess.CalledProcessError:
+            if attempt == attempts:
+                raise
+            pause = 60 * attempt
+            print(f'  attempt {attempt} failed; retrying in {pause} s', flush=True)
+            time.sleep(pause)
 
 
 def sudo():
@@ -292,7 +310,7 @@ def install_msys2(row):
     # The package database of the runner image is used as it is: refreshing it would make these packages newer than
     # the toolchain the ffmpeg build installed from the same database, which pacman refuses as a partial upgrade.
     pacman = os.path.join(MSYS2, 'usr', 'bin', 'pacman.exe')
-    run([pacman, '-S', '--noconfirm', '--needed'] + row['source'].split())
+    run_retrying([pacman, '-S', '--noconfirm', '--needed'] + row['source'].split())
     return row['path']
 
 
@@ -309,6 +327,29 @@ def compiler(target):
     if target.startswith('windows'):
         return [os.path.join(MSYS2, 'ucrt64', 'bin', 'gcc.exe'), '-static']
     return ['cc']
+
+
+def cxx_compiler(target):
+    """Returns the C++ compiler of the reference decoders: g++ everywhere, Homebrew's on macOS (the newest one
+    installed), whose system compiler, clang, rejects the pre-standard C++ they are written in."""
+    if target.startswith('windows'):
+        return os.path.join(MSYS2, 'ucrt64', 'bin', 'g++.exe')
+    if target.startswith('macos'):
+        for version in range(16, 11, -1):
+            found = shutil.which('g++-%d' % version)
+            if found:
+                return found
+        raise SystemExit('no Homebrew g++ (brew install gcc)')
+    return 'g++'
+
+
+def load_script(*path):
+    """Loads a Python script of this directory as a module."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(os.path.splitext(path[-1])[0], os.path.join(HERE, *path))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def source_tree(row, work):
@@ -362,6 +403,10 @@ def build(row, target):
     executable = os.path.join(out, name + EXE)
     stamp = os.path.join(out, '.' + name)
     key = '%s %s %s' % (row['version'], row['sha256'], digest(__file__))
+    if name == 'smalt-mpeg4ref':
+        key += ' ' + digest(os.path.join(HERE, 'mpeg4-oracle', 'build.py'))
+    if name == 'smalt-gifenc':
+        key += ' ' + digest(os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c'))
     outputs = [os.path.join(out, tool + EXE) for tool, _ in provided(row)]
     if all(os.path.isfile(path) for path in outputs) and os.path.isfile(stamp) and open(stamp).read() == key:
         return out
@@ -458,6 +503,17 @@ def build(row, target):
             # A static-only build names the programs <tool>-static.
             for tool in ('cjpeg', 'djpeg', 'jpegtran'):
                 shutil.copy2(find_file(build_dir, tool + '-static' + EXE), os.path.join(out, tool + EXE))
+        elif name == 'smalt-gifenc':
+            # giflib's encoder compiled into the program, so that every platform runs the same library code.
+            tree = source_tree(row, work)
+            sources = [os.path.join(tree, file) for file in GIFLIB_SOURCES]
+            run(compiler(target) + ['-O2', '-I' + tree, '-o', executable,
+                                    os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c')] + sources, env=env)
+        elif name == 'smalt-mpeg4ref':
+            archive = download(row['source'], row['sha256'])
+            builder = load_script('mpeg4-oracle', 'build.py')
+            builder.build(archive, work, cxx_compiler(target), executable, static=target.startswith('windows'),
+                          env=env)
         elif name == 'mkvalidator':
             tree = source_tree(row, work)
             build_dir = os.path.join(work, 'build')

@@ -30,7 +30,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decodes the ISO/IEC 14496-26 conformance streams of ER AAC LC ({@code er_al}), ER AAC LTP with the error
  * resilience tools ({@code er_ap14}, {@code er_ap27}), AAC-LD ({@code er_ad}) and AAC-ELD without SBR
- * ({@code er_eld}), across their sampling rates, and compares them with the reference waveforms under the
+ * ({@code er_eld}), at every sampling rate of the suite, and compares them with the reference waveforms under the
  * criterion of {@link AacConformanceTest}, on the output clipped to full scale as the references are. The streams
  * of the suites that use perceptual noise substitution, whose noise differs sample by sample, are compared by
  * their band energies instead. Streams stored with {@code epConfig} 1 (one track per error sensitivity category
@@ -405,5 +405,72 @@ class AacErrorResilientConformanceTest {
             var exception = assertThrows(MediaException.Unsupported.class, () -> new AacDecoder(parsed.track()));
             assertEquals("aac er epconfig 3", exception.format());
         }
+    }
+
+    /**
+     * The ER AAC LC, AAC-LD and AAC-ELD streams at the sampling rates the tests above do not cover whose every channel
+     * matches its reference.
+     */
+    private static final String[] OTHER_RATES_STRICT = {
+            "er_ad1000np_22_ep0", "er_ad1000np_24_ep0", "er_ad1000np_32_ep0", "er_ad1000np_44_ep0", "er_ad1020_24_ep0",
+            "er_ad1020_44_ep0", "er_ad1020np_24_ep0", "er_ad1020np_44_ep0", "er_ad1030_22_ep0", "er_ad1030_32_ep0",
+            "er_ad1030np_22_ep0", "er_ad1030np_32_ep0", "er_ad1100np_22_ep0", "er_ad1100np_24_ep0",
+            "er_ad1100np_32_ep0", "er_ad1100np_44_ep0", "er_ad1102np_22_ep0", "er_ad1102np_24_ep0",
+            "er_ad1102np_32_ep0", "er_ad1102np_44_ep0", "er_ad1103_22_ep0", "er_ad1103_32_ep0", "er_ad1103np_22_ep0",
+            "er_ad1103np_32_ep0", "er_ad1110np_22_ep0", "er_ad1110np_24_ep0", "er_ad1110np_32_ep0",
+            "er_ad1110np_44_ep0", "er_ad1111_24_ep0", "er_ad1111_44_ep0", "er_ad1111np_24_ep0", "er_ad1111np_44_ep0",
+            "er_ad1120np_22_ep0", "er_ad1120np_24_ep0", "er_ad1120np_32_ep0", "er_ad1120np_44_ep0",
+            "er_ad1130np_22_ep0", "er_ad1130np_24_ep0", "er_ad1130np_32_ep0", "er_ad1130np_44_ep0",
+            "er_ad1140np_22_ep0", "er_ad1140np_24_ep0", "er_ad1140np_32_ep0", "er_ad1140np_44_ep0",
+            "er_ad1150np_22_ep0", "er_ad1150np_24_ep0", "er_ad1150np_32_ep0", "er_ad1150np_44_ep0",
+            "er_ad1160np_22_ep0", "er_ad1160np_24_ep0", "er_ad1160np_32_ep0", "er_ad1160np_44_ep0", "er_ad2040_24_ep0",
+            "er_ad2040_44_ep0", "er_ad2040np_24_ep0", "er_ad2040np_44_ep0", "er_ad2050np_22_ep0", "er_ad2050np_32_ep0",
+            "er_ad2160_24_ep0", "er_ad2160_44_ep0", "er_ad2160np_24_ep0", "er_ad2160np_44_ep0", "er_ad2170np_22_ep0",
+            "er_ad2170np_32_ep0", "er_al12_11_ep0", "er_al12_16_ep0", "er_al12_24_ep0", "er_al12_44_ep0",
+            "er_al12_64_ep0", "er_al12_96_ep0", "er_al15_12_ep0", "er_al15_88_ep0", "er_al18_11_ep0", "er_al18_16_ep0",
+            "er_al18_24_ep0", "er_al18_44_ep0", "er_al18_64_ep0", "er_al18_96_ep0", "er_al21_12_ep0", "er_al21_88_ep0",
+            "er_al23_11_ep0", "er_al23_16_ep0", "er_al23_24_ep0", "er_al23_44_ep0", "er_al23_64_ep0", "er_al23_96_ep0"};
+
+    /** The streams at those sampling rates whose noise substitution makes them comparable by band energy only. */
+    private static final String[] OTHER_RATES_NOISE = {
+            "er_ad1009np_22_ep0", "er_ad1009np_24_ep0", "er_ad1009np_32_ep0", "er_ad1009np_44_ep0", "er_ad1020_22_ep0",
+            "er_ad1020_32_ep0", "er_ad1020np_22_ep0", "er_ad1020np_32_ep0", "er_ad1030_24_ep0", "er_ad1030_44_ep0",
+            "er_ad1030np_24_ep0", "er_ad1030np_44_ep0", "er_ad1103_24_ep0", "er_ad1103_44_ep0", "er_ad1103np_24_ep0",
+            "er_ad1103np_44_ep0", "er_ad1109_22_ep0", "er_ad1109_24_ep0", "er_ad1109_32_ep0", "er_ad1109_44_ep0",
+            "er_ad1109np_22_ep0", "er_ad1109np_24_ep0", "er_ad1109np_32_ep0", "er_ad1109np_44_ep0", "er_ad1111_22_ep0",
+            "er_ad1111_32_ep0", "er_ad1111np_22_ep0", "er_ad1111np_32_ep0", "er_ad2040_22_ep0", "er_ad2040_32_ep0",
+            "er_ad2040np_22_ep0", "er_ad2040np_32_ep0", "er_ad2050np_24_ep0", "er_ad2050np_44_ep0", "er_ad2160_22_ep0",
+            "er_ad2160_32_ep0", "er_ad2160np_22_ep0", "er_ad2160np_32_ep0", "er_ad2170np_24_ep0", "er_ad2170np_44_ep0",
+            "er_al12_12_ep0", "er_al12_22_ep0", "er_al12_32_ep0", "er_al12_88_ep0", "er_al15_11_ep0", "er_al15_16_ep0",
+            "er_al15_24_ep0", "er_al15_44_ep0", "er_al15_64_ep0", "er_al18_12_ep0", "er_al18_22_ep0", "er_al18_32_ep0",
+            "er_al18_88_ep0", "er_al21_11_ep0", "er_al21_16_ep0", "er_al21_24_ep0", "er_al21_44_ep0", "er_al21_64_ep0",
+            "er_al23_12_ep0", "er_al23_22_ep0", "er_al23_32_ep0", "er_al23_88_ep0", "er_eld1002np_22_ep0",
+            "er_eld1002np_24_ep0", "er_eld1002np_32_ep0", "er_eld1002np_44_ep0", "er_eld1102np_22_ep0",
+            "er_eld1102np_24_ep0", "er_eld1102np_32_ep0", "er_eld1102np_44_ep0"};
+
+    @Nested
+    @DisplayName("ER AAC LC, AAC-LD and AAC-ELD at the other sampling rates")
+    class OtherRates {
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacErrorResilientConformanceTest#otherRatesStrict")
+        @DisplayName("matches the reference")
+        void strict(String stream) {
+            assertStrict(stream);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacErrorResilientConformanceTest#otherRatesNoise")
+        @DisplayName("reproduces the reference's band energies where noise substitution is used")
+        void noise(String stream) {
+            assertNoise(stream, rate(stream));
+        }
+    }
+
+    static Stream<String> otherRatesStrict() {
+        return Stream.of(OTHER_RATES_STRICT);
+    }
+
+    static Stream<String> otherRatesNoise() {
+        return Stream.of(OTHER_RATES_NOISE);
     }
 }

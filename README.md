@@ -72,9 +72,15 @@ replaces.
 
 Conformance tests read official test vectors and Xiph clips, listed with their checksums in
 [tools/testdata](tools/testdata). `python tools/testdata/testdata.py fetch --tier smoke` downloads the few
-hundred megabytes CI runs on every pull request, `--tier full` everything (about 7 GB). Tests also download
-a missing vector on first use (`-Dsmalt.conformance.download=false` turns that off), and skip, rather than
-fail, when its data cannot be had.
+hundred megabytes CI runs on every pull request, `--tier full` everything (about 17 GB of vectors and 6 GB of archive members). Tests also download
+a missing vector on first use (`-Dsmalt.conformance.download=false` turns that off), retrying a host that
+answers 429 or 5xx or does not answer, and skip, rather than fail, when its data cannot be had. The full tier holds the public conformance suites: the Argon AV1 coverage
+streams, ISO/IEC 14496-4 MPEG-4 Visual (with the ISO/IEC 14496-5 reference decoder as the oracle), ISO/IEC
+14496-26 AAC, ISO/IEC 15444-4 JPEG 2000, the libjxl conformance set, MPEG's ISO base media file format
+conformance files and the DASH-IF test vectors. Members of archives too large to download whole are fetched by
+HTTP range ([tools/testdata/archives.tsv](tools/testdata)), and every source carries a licence note; none of it is
+committed. The nightly workflow runs the full tier on Linux x64 (and the `it` module's part of it on Windows and
+macOS), and, weekly, every module on Windows, macOS and Linux arm64.
 
 ### Oracle tools and skips
 
@@ -852,7 +858,8 @@ file on a seekable output, its final `STREAMINFO` (length, MD5) and seek table.
   RIFF defines no other way to delimit Opus packets; without an `OpusHead` in the format's extra bytes the
   pre-skip is taken as zero. AIFF files are written with samples of at most 32 bits, the limit of the AIFF
   sample size; 64-bit AIFF samples are read.
-- MPEG-4 Part 2 uses an IEEE 1180 inverse DCT, so it is close to, but not bit-exact with, other decoders.
+- MPEG-4 Part 2 uses an IEEE 1180 inverse DCT, so it is close to, but not bit-exact with, other decoders; the
+  Advanced Simple conformance streams match the ISO/IEC 14496-5 reference decoder within that drift.
   Interlaced direct mode follows ISO/IEC 14496-2 7.7.2.2, as the Windows Media Foundation decoder does;
   ffmpeg's encoder predicts those macroblocks as progressive direct ones, so its interlaced B-VOPs drift
   from what it meant (about 49 dB) wherever the backward reference has field-predicted macroblocks.
@@ -995,6 +1002,10 @@ file on a seekable output, its final `STREAMINFO` (length, MD5) and seek table.
   `BALANCED` and `FAST` for compression within measurement noise.
 - FLAC in Matroska and Ogg written to a stream (or as live Matroska) keeps the initial `STREAMINFO`, so the final
   length and MD5 reach only files on a seekable sink. DNxHD and DNxHR alpha is written in band only.
+- The MP4 demuxer reads the compressed boxes of ISO/IEC 14496-12 clause 8.20 (`!mov`, `!mof`, `!six`, `!ssx`),
+  and writing the tags of such a file stores its movie box uncompressed; a tag write that would move the data of
+  compressed movie fragments with explicit base data offsets raises `MediaException.Unsupported`. The demuxer
+  rejects the FEC reservoir and hint tracks of 3GPP MBMS files (`mdhd` timescale 0) as malformed.
 - MP4 edits play at normal speed whatever their media rate other than 0. A dwell edit of an audio track, or
   an empty edit after its first media edit, leaves a gap in the packet timestamps, and `AudioReader` and an
   audio re-encode join the samples on either side of it instead of filling it with silence. Packets flagged

@@ -13,9 +13,13 @@ headers with the platform's package manager (apt, Homebrew or pacman), meson and
 its work directory (MSYS2's packages on Windows), and for rav1e a pinned Rust toolchain through rustup and the
 cargo-c release binary (MSYS2's Rust and cargo-c on Windows). Every download is verified against its SHA-256.
 
-A finished prefix holds .build-sha256, the SHA-256 of this script. When it matches and ffmpeg is present, the
-script does nothing, so a CI cache keyed by the script's hash holds the build; any change to a pin or a recipe
-changes the hash and rebuilds.
+On Linux and macOS ffmpeg allocates through quarantine.c (next to this script, with --malloc-prefix), which holds
+back the small blocks ffmpeg frees for a while: ffmpeg 7.1 writes into a block it has just freed whenever it opens
+its libaom encoder (ticket #11617), which corrupts the heap of the C library and crashes ffmpeg on some runners.
+
+A finished prefix holds .build-sha256, the SHA-256 of this script and quarantine.c. When it matches and ffmpeg is
+present, the script does nothing, so a CI cache keyed by the hash of both holds the build; any change to a pin or a
+recipe changes the hash and rebuilds.
 
 ffmpeg is a black-box test tool here: it is configured with --enable-gpl --enable-version3 because x264, x265,
 Xvid and the opencore/vo AMR libraries need it, and its sources are compiled, never read.
@@ -103,6 +107,7 @@ BREW_PACKAGES = ['nasm', 'autoconf', 'automake', 'libtool', 'pkgconf', 'cmake']
 PACMAN_PACKAGES = ['make', 'autotools', 'diffutils', 'patch'] + ['mingw-w64-ucrt-x86_64-' + name for name in (
     'gcc', 'nasm', 'yasm', 'cmake', 'ninja', 'meson', 'pkgconf', 'rust', 'cargo-c', 'zlib', 'bzip2')]
 WINDOWS = sys.platform in ('msys', 'cygwin')
+QUARANTINE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'quarantine.c')
 EXE = '.exe' if WINDOWS else ''
 
 # The ffmpeg libraries, in the order they are built (a library is built after those it depends on).
@@ -447,9 +452,22 @@ class Build:
                        '--without-icu', '--without-iconv', '--without-http', '--without-ftp', '--without-readline',
                        '--without-modules')
 
+    def quarantine(self):
+        """Builds quarantine.c into libsmaltquarantine.a of the prefix and returns the configure arguments that make
+        ffmpeg allocate through it."""
+        if self.windows:
+            return [], ''
+        library = self.path('lib', 'libsmaltquarantine.a')
+        objects = os.path.join(self.work, 'quarantine.o')
+        compiler = 'clang' if self.macos else 'gcc'
+        run([compiler, '-O2', '-fPIC', '-c', QUARANTINE, '-o', objects], env=self.env)
+        run(['ar', 'rcs', library, objects], env=self.env)
+        return ['--malloc-prefix=smalt_q_'], ' -lsmaltquarantine'
+
     def ffmpeg(self):
         tree = self.source('ffmpeg')
-        runtime = '-lc++' if self.macos else '-lstdc++ -lpthread -lm'
+        allocator, allocator_library = self.quarantine()
+        runtime = ('-lc++' if self.macos else '-lstdc++ -lpthread -lm') + allocator_library
         # A static executable on Windows needs none of the MinGW runtime DLLs at run time.
         static = ' -static' if self.windows else ''
         # Autodetection is off, so that the build has the same components on every runner whatever else the runner
@@ -458,7 +476,8 @@ class Build:
                    '--extra-cflags=-I' + self.path('include'), '--extra-ldflags=-L' + self.path('lib') + static,
                    '--extra-libs=' + runtime, '--enable-gpl', '--enable-version3', '--disable-shared',
                    '--enable-static', '--disable-debug', '--disable-doc', '--disable-ffplay', '--disable-autodetect',
-                   '--enable-zlib', '--enable-bzlib'] + ['--enable-' + library for library in FFMPEG_LIBRARIES]
+                   '--enable-zlib', '--enable-bzlib'] + allocator + [
+                      '--enable-' + library for library in FFMPEG_LIBRARIES]
         run(command, cwd=tree, env=self.env)
         run(['make', '-j' + self.jobs], cwd=tree, env=self.env)
         run(['make', 'install'], cwd=tree, env=self.env)
@@ -496,7 +515,7 @@ def main():
     arguments = parser.parse_args()
     prefix = os.path.abspath(os.path.expanduser(arguments.prefix))
     stamp = os.path.join(prefix, '.build-sha256')
-    key = digest(os.path.abspath(__file__))
+    key = hashlib.sha256((digest(os.path.abspath(__file__)) + digest(QUARANTINE)).encode('ascii')).hexdigest()
     executables = [os.path.join(prefix, 'bin', name + EXE) for name in ('ffmpeg', 'ffprobe')]
     if os.path.isfile(stamp) and open(stamp).read().strip() == key and all(map(os.path.isfile, executables)):
         print('the ffmpeg oracle in %s is up to date' % prefix)

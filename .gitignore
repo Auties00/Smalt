@@ -28,3 +28,6 @@ __pycache__/
 /*/oom-*
 /*/slow-unit-*
 /*/leak-*
+
+# Oracle data the CI oracle jobs write before caching them
+.oracle-data/

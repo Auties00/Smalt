@@ -3,7 +3,8 @@
 # of the skip baseline. Development tooling dispatches it on snapshot branches to test one change without the
 # whole matrix: one job per runner, which installs its oracle tools itself from the default branch's caches (the
 # pkg/* branches only restore them, see .github/scripts/cache-policy.sh), plus, when a runner other than Linux x64
-# takes part, a short job that makes sure that the cache holds the clips those runners cannot derive themselves.
+# takes part, a short job that makes sure that the cache holds the clips those runners cannot derive themselves,
+# and the oracle data jobs of oracle-tools.yml, which write the oracle data files the cache lacks.
 name: Package tests
 
 on:
@@ -74,9 +75,19 @@ jobs:
           clips: fill
           save: ${{ inputs.cache_save }}
 
+  # The oracle data files of the scripted black boxes (Adobe DNG Converter, libxaac, FDK AAC, OpenSlide), written
+  # when the cache lacks them. The full tier the nightly caches fills most of the 10 GB Actions cache, so these
+  # entries may be evicted between this job and the tests; the artifacts of this run stand in for them.
+  data:
+    uses: ./.github/workflows/oracle-tools.yml
+    with:
+      os: ${{ inputs.os }}
+      tools: false
+      data-artifact: true
+
   test:
     name: test (${{ matrix.os }})
-    needs: clips
+    needs: [clips, data]
     if: ${{ !cancelled() }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 180
@@ -113,6 +124,10 @@ jobs:
         with:
           save: ${{ inputs.cache_save }}
 
+      - uses: ./.github/actions/oracle-data
+        with:
+          artifact: 'true'
+
       - name: Build the modules they depend on
         shell: bash
         run: mvn -B -ntp -q -T 1C -pl "${{ inputs.modules }}" -am install -DskipTests
@@ -146,6 +161,7 @@ jobs:
             */target/kernel-guard/*/*/vm.log
             it/target/kernel-guard-self/
             it/target/jit-stress/*/stdout.log
+            **/hs_err_pid*.log
             */target/media-fixtures/
             target/skips-*.tsv
             oracle-versions.tsv

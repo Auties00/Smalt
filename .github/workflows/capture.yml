@@ -27,7 +27,8 @@ jobs:
   capture:
     name: capture (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    # a cold oracle cache builds ffmpeg on Windows and macOS (about an hour) before the tests
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -131,12 +132,18 @@ jobs:
           echo "SMALT_TEST_AUDIO_LOOPBACK=BlackHole 2ch|BlackHole 2ch" >> "$GITHUB_ENV"
           echo "SMALT_CAPTURE_REQUIRE_DEVICES=screen,audio-loopback,audio-input,audio-output" >> "$GITHUB_ENV"
 
+      # JavaSoundReadTest compares with ffmpeg, which the Linux devices step installs from apt; Windows and macOS
+      # restore the pinned oracle build.
+      - name: Install the oracle tools (Windows, macOS)
+        if: runner.os != 'Linux'
+        uses: ./.github/actions/oracles
+
       - name: Capture tests
         id: test
         shell: bash
         run: >
-          mvn -B -ntp -fae -pl capture -am verify
-          -Dtest='com/github/auties00/smalt/capture/**/*'
+          mvn -B -ntp -fae -pl capture,desktop -am verify
+          -Dtest='com/github/auties00/smalt/capture/**/*,com/github/auties00/smalt/desktop/sound/JavaSoundReadTest'
           -Dsurefire.failIfNoSpecifiedTests=false
 
       - name: Check the skips against the baseline
@@ -144,7 +151,16 @@ jobs:
         shell: bash
         run: |
           python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv" || true
           python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
 
       - name: Upload the test reports
         if: always()

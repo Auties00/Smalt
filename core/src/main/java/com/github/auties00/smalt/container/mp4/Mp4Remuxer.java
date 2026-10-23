@@ -379,7 +379,7 @@ public final class Mp4Remuxer {
         checkCodec(codec, brand);
         switch (codec) {
             case AAC, OPUS, ALAC, FLAC -> {
-                if (audio.codecConfig().isEmpty()) {
+                if (audio.codecConfig().filter(config -> config.length > 0).isEmpty()) {
                     throw new MediaException.Unsupported(codec.displayName() + " without configuration",
                             "the " + codec.displayName() + " track has no codec configuration");
                 }

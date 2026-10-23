@@ -10,12 +10,16 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -26,7 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decodes the ISO/IEC 14496-26 conformance streams of AAC Main (the {@code am} suite: backward-adaptive
  * prediction with reset groups, intensity stereo and multichannel programs), AAC LTP ({@code ap}), AAC
- * SSR ({@code as}: the PQF filterbank, gain control and every window sequence transition) and ER AAC LTP
+ * SSR ({@code as}: the PQF filterbank, gain control and every window sequence transition), the Main and SSR
+ * streams at every sampling rate of the suite, and ER AAC LTP
  * ({@code er_ap10}), and compares them with the reference waveforms under the criterion of
  * {@link AacConformanceTest}, on the output clipped to full scale as the references are. The ER LTP stream
  * stored with {@code epConfig} 1 must decode like its {@code epConfig} 0 twin, and seeking through an audio
@@ -205,6 +210,9 @@ class AacObjectTypesConformanceTest {
 
     static Path fetch(String name) {
         var entry = VECTORS.get(name);
+        if (entry == null) {
+            return Conformance.fetchListed("mpeg4audio-" + name);
+        }
         var dvd = entry.substring(0, entry.indexOf(':'));
         var hash = entry.substring(entry.indexOf(':') + 1);
         var folder = name.endsWith(".mp4") ? "compressedMp4/" : "referencesWav/";
@@ -264,6 +272,36 @@ class AacObjectTypesConformanceTest {
         }
     }
 
+    /** The sampling rates of the suite other than 48 kHz, which the families' 48 kHz tests cover. */
+    private static final List<String> OTHER_RATES = List.of("08", "11", "12", "16", "22", "24", "32", "44", "64", "88",
+            "96");
+
+    /** The reference waveforms of the multichannel streams, by stream family; the others have one waveform. */
+    private static final Map<String, String> CHANNELS = Map.of(
+            "am05", "f00 f01 f02 b00 b01 l00", "am06", "f00 f01 f02", "am07", "f00 f01 f02 b00 b01 l00",
+            "as13", "f00 f01 f02 b00 b01 l00", "as14", "f00 f01 f02 b00 b01 l00",
+            "as15", "f00 f01 f02 f03 f04 b00 b01 l00", "as16", "f00 f01 f02 f03 f04 b00 b01 l00");
+
+    static Stream<String> mainRates() {
+        return Stream.of("am01", "am02", "am04", "am05", "am06", "am07")
+                .flatMap(family -> OTHER_RATES.stream().map(rate -> family + "_" + rate));
+    }
+
+    static Stream<String> ssrRates() {
+        return IntStream.rangeClosed(1, 17).mapToObj(index -> String.format("as%02d", index))
+                .flatMap(family -> OTHER_RATES.stream().map(rate -> family + "_" + rate));
+    }
+
+    /** Asserts a stream against its one reference waveform, or a multichannel one against those of its family. */
+    static void assertAnyStream(String stream) {
+        var channels = CHANNELS.get(stream.substring(0, stream.indexOf('_')));
+        if (channels == null) {
+            assertStream(stream, stream);
+        } else {
+            assertMultichannel(stream, channels);
+        }
+    }
+
     @Nested
     @DisplayName("AAC Main against reference waveforms")
     class Main {
@@ -286,6 +324,13 @@ class AacObjectTypesConformanceTest {
         @DisplayName("multichannel programs")
         void multichannel(String stream, String channels) {
             assertMultichannel(stream, channels);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacObjectTypesConformanceTest#mainRates")
+        @DisplayName("every stream at the other sampling rates")
+        void otherRates(String stream) {
+            assertAnyStream(stream);
         }
     }
 
@@ -324,6 +369,13 @@ class AacObjectTypesConformanceTest {
         @DisplayName("multichannel programs")
         void multichannel(String stream, String channels) {
             assertMultichannel(stream, channels);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @MethodSource("com.github.auties00.smalt.audio.aac.AacObjectTypesConformanceTest#ssrRates")
+        @DisplayName("every stream at the other sampling rates")
+        void otherRates(String stream) {
+            assertAnyStream(stream);
         }
     }
 

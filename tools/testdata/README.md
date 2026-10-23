@@ -14,7 +14,21 @@ Smalt's tests read two kinds of external data, both listed here with SHA-256 che
   rate or quality assertions are calibrated on the clips' content, which skip (`data:clip`). CI derives the clips
   once, on Linux x64 in the oracle tools job (`.github/workflows/oracle-tools.yml`), with `--strict`, which fails
   on a clip that does not match its checksum, and keeps them in one Actions cache entry shared by every runner, so
-  that the encoder golden tests see the same input everywhere.
+  that the encoder golden tests see the same input everywhere. The repository's 10 GB cache evicts that entry, and
+  the oracle data entries, when many branches run at once, so the nightly workflow also uploads the clips and the
+  oracle data files as artifacts of its run (`testdata-clips`, `oracle-data-*`), which its jobs download when
+  their cache entry is missing.
+
+- `archives.tsv`: sets of members of remote ZIP archives too large to download whole (the Argon AV1 coverage
+  streams, 6.4 GB of a 7 GB archive; the DASH-IF livesim-content representations), one row per set: tier, name,
+  size, the SHA-256 of the archive's central directory, URL, a regular expression selecting the members, and a
+  licence note. A set is read by HTTP range requests (the end of central directory record, the ZIP64 records, the
+  central directory, then each member, neighbors coalesced into one request), and each member is checked against
+  the CRC-32 and size of the pinned central directory. Members are cached under
+  `<conformance cache>/archives/<archive>-<digest prefix>/`; tests open a set with `Conformance.archive(name)`.
+- `licences.tsv`: the licence or terms of use of every source of `vectors.tsv` and `clips.tsv`, by URL prefix (the
+  archive sets carry their own). None of this data is committed or redistributed, and `testdata.py licences`,
+  which the comment lint job of CI runs, fails when a source has no note.
 
 Each entry belongs to a tier. `smoke` is small enough for the GitHub Actions cache and runs on every pull
 request; `full` (which includes `smoke`) runs nightly. A test whose data is absent is skipped.
@@ -31,6 +45,9 @@ python tools/testdata/testdata.py fetch --tier full --clips-only   # and the cli
 python tools/testdata/testdata.py fetch --tier full     # everything, clips included (needs ffmpeg)
 python tools/testdata/testdata.py size                  # the size of each tier
 python tools/testdata/testdata.py verify --tier full    # check the cache against the checksums
+python tools/testdata/testdata.py fetch --set 'argon-av1-profile0_core'   # one archive set, whatever its tier
+python tools/testdata/testdata.py archive NAME URL REGEX --tier full --licence TEXT   # pin a new archive set
+python tools/testdata/testdata.py licences              # every source has a licence note
 ```
 
 ## Oracle tools
@@ -68,7 +85,11 @@ libxml2 for the DASH demuxer). No prebuilt 7.1.2 has all of them (Ubuntu's and B
 pictures wrongly on arm64), so `ffmpeg-oracle/build.py` builds ffmpeg and each library, static, from pinned source
 releases into `~/.smalt/ffmpeg-7.1.2` (it installs its build tools with apt, Homebrew or MSYS2's pacman, and Rust
 through rustup for rav1e; the first build takes most of an hour, and CI caches the prefix under a key of the
-script's hash). On Windows it runs under MSYS2 (UCRT64, with MSYS2's Python, Rust and cargo-c). `oracles.py
+script's hash). On Windows it runs under MSYS2 (UCRT64, with MSYS2's Python, Rust and cargo-c). On Linux and macOS
+ffmpeg allocates through `ffmpeg-oracle/quarantine.c` (`--malloc-prefix`), which holds back the small blocks ffmpeg
+frees for a while: every ffmpeg 7.1 release writes into a 40-byte block it has just freed when it opens its libaom
+encoder (FFmpeg ticket #11617, found with AddressSanitizer), which corrupted the heap and crashed libaom encodes on
+some macOS and Linux arm64 runners (SIGTRAP from macOS's allocator, SIGSEGV from glibc's). `oracles.py
 versions` (through `ffmpeg-oracle/check.py`) fails when ffmpeg lacks a component of `features.tsv` or a smoke run of
 one fails (each encoder encodes, each decoder decodes, the DASH demuxer reads back a manifest without a warning),
 and core's `SkipTest` fails when a test names an external-library component (`"libx264"`, `assumeEncoder`, `zscale`)
@@ -100,6 +121,21 @@ python tools/testdata/skips.py report --job linux-x64-vector-smoke     # counts 
 python tools/testdata/skips.py check --job linux-x64-vector-smoke      # fails when a count grew
 python tools/testdata/skips.py update --job linux-x64-vector-smoke     # lowers the baseline (never raises)
 python tools/testdata/skips.py accept --job linux-x64-vector-smoke     # raises it for skips a change adds
+```
+
+A skip is acceptable only when the same test runs and passes on another job. `outcomes` writes the outcome of
+every test case of a build, which CI uploads per job (`outcomes-<job>`), and `cover` fails when a test skipped
+with a reason of the checked families passed in no other job: CI's `skip-cover` job checks the `simd` and
+`platform` skips of a run, and the `device` and `opt-in` ones against the outcomes of the latest nightly
+(`--evidence`); the nightly's checks its `device`, `opt-in` and `data` skips against its own jobs (the capture,
+opt-in and raw coverage jobs) and its `simd` and `platform` ones against the latest CI run of the branch (of
+`master` when the branch has none). `impossible-skips.tsv` lists the skips
+no hosted runner can run (reason id, job glob, test class glob, reason), which `cover --impossible` accepts and
+lists.
+
+```
+python tools/testdata/skips.py outcomes --job linux-x64-vector-smoke --out outcomes.tsv
+python tools/testdata/skips.py cover outcomes-*.tsv --evidence nightly/outcomes-*.tsv --families simd,platform
 ```
 
 CI runs `check` after every test job and uploads the job's `report` as an artifact (`skips-<job>`). A change that
@@ -462,8 +498,10 @@ The same test decodes a pyramid level of two Aperio slides of the OpenSlide test
 distribute; both `full` tier) and compares it with OpenSlide's rendering and, for the 33005 slide, with the
 tiles as OpenJPEG decodes them. `python -I tools/testdata/svs-oracle.py` writes both into
 `<conformance cache>/svs-oracle` (`-Dsmalt.test.svsOracle` overrides the directory the test reads), running
-OpenSlide 4.0.1 and imagecodecs as black boxes (`pip install openslide-python openslide-bin tifffile
-imagecodecs numpy`). Without them the comparison is skipped.
+OpenSlide 4.0.1 (openslide-bin 4.0.1.2) and imagecodecs as black boxes (`pip install openslide-python openslide-bin tifffile
+imagecodecs numpy`). CI writes them on Windows, whose imagecodecs wheel decodes the 33005 level as Smalt does; the
+OpenJPEG of the Linux wheel rounds the irreversible component transform of one sample otherwise. Without them the
+comparison is skipped.
 
 ## Opus oracle
 
@@ -510,6 +548,50 @@ Windows the library is the DLL of the MSYS2 package `mingw-w64-ucrt-x86_64-fdk-a
 downloaded unless `--fdk` names a library; elsewhere `--fdk` names the system's `libfdk-aac`. The encoded streams
 are deterministic for a build, and the script reports a stream whose digest differs from the reference build's.
 Without these files the comparisons are skipped.
+
+## Conformance suites read from remote archives
+
+- Argon AV1 coverage streams (AOMedia, version 2.1.1, licence unstated: used for testing only): 19 archive sets
+  `argon-av1-<group>` (`full` tier, never in the nightly's cache) for `Av1ArgonTest` (`smalt-video`, JUnit tag
+  `argon`, excluded unless `-Dsmalt.test.excludedGroups=none -Dgroups=argon`; `-Dsmalt.test.argon=<groups>` picks
+  groups). Each stream must decode to its `md5_ref` (aomdec's raw output), to `md5_no_film_grain` without film
+  grain, and to the reference of every operating point its sequence header declares; the error groups must decode
+  or fail with a `MediaException`. The nightly runs the groups in seven shards with a 12 GB heap.
+- DASH-IF livesim-content (Apache-2.0): 16 sets `dash-livesim-<presentation>-<representation>`, initialization
+  segment and the first eight media segments, with the `_data.json.gz` segment lists in `vectors.tsv`, for
+  `DashTestVectorsTest` (`smalt-core`).
+
+## MPEG file format conformance
+
+`FileFormatConformanceTest` (`smalt-core`) demuxes the 170 files of MPEGGroup/FileFormatConformance (commit
+`767a5bcb`) and compares every track with the GPAC box dump the repository publishes with each file
+(`mpegff-<file>_gpac.json`: sample sizes, decoding durations, composition offsets, sync samples) and with
+ffprobe; the files ffmpeg reads otherwise than the dump are listed with the deviation, those it cannot read are
+compared with the dump only, and the files with compressed boxes (`!mov`, `!mof`, `!six`, `!ssx`) are compared
+with ffprobe's reading of a copy whose compressed boxes are decompressed. The dumps of the smoke-tier files are in
+the smoke tier too, so that every pull request compares those files with both parsers.
+
+## MPEG-4 Visual reference decoder
+
+`mpeg4-oracle/build.py` builds the Microsoft MPEG-4 Visual decoder of the ISO/IEC 14496-5 reference software
+(version 2.3-001213, from the Internet Archive's copy of ISO's Publicly Available Standards, pinned by SHA-256) as
+`smalt-mpeg4ref`, modernizing its pre-standard C++ for g++ (clang rejects it, so macOS uses Homebrew's g++);
+`oracles.py install` builds it on every platform. The decoder was written for a 32-bit `long`, the type of its
+coordinates, so the build makes those `int` (with the 64-bit `long` of Linux and macOS the global motion
+compensated streams `vcon-asp14L0` and `vcon-asp14L1` decode unlike on Windows, whose decode matches ffmpeg's); it
+also links an `operator new` that zeroes every allocation, since the decoder reads members of the objects it
+allocates before writing them, and widens the 100-byte buffers that hold its output file names.
+`Mpeg4ConformanceTest` compares the ISO/IEC 14496-4 Advanced Simple streams (`mpeg4visual-vcon-asp*.bits`, Wayback
+copies) and `Mpeg4InterlacedDirectTest` its synthetic interlaced direct mode streams with its decodes. Two
+behaviors of the decoder shape those streams: it reads ahead of the last macroblock, so they end with a
+`visual_object_sequence_end_code`, and it measures the temporal distances of interlaced direct mode in VOP time
+ticks rather than in field periods of the frame period, so only the streams whose VOP times count frames are
+compared with it.
+
+## giflib encoder oracle
+
+`gif-oracle/smalt-gifenc.c` writes a one-image GIF from raw indices with giflib 5.2.2's encoder (MIT, compiled into
+the program by `oracles.py install`), the oracle of `GifLzwEncoderTest`'s live comparison.
 
 ## Adding a vector
 

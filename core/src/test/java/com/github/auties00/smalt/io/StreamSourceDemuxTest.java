@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.io;
 
-import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.Packet;
@@ -146,11 +145,15 @@ class StreamSourceDemuxTest {
         }
     }
 
+    /** The containers whose layout a stream source reads within a bounded memory budget (front to back). */
+    static Stream<Arguments> boundedContainers() {
+        return containers().filter(arguments -> (int) arguments.get()[4] > 0);
+    }
+
     @ParameterizedTest(name = "{0}")
-    @MethodSource("containers")
+    @MethodSource("boundedContainers")
     @DisplayName("memory-only stream source far smaller than the file: same packets for formats read front to back")
     void bounded(String name, List<String> options, String extension, double seconds, int boundKiB) throws IOException {
-        Skip.unless(boundKiB > 0, "input:layout", "the layout keeps its media data until the index");
         var data = Files.readAllBytes(fixture(extension, options, seconds));
         assertTrue(data.length > 2L * boundKiB * 1024, "fixture of " + data.length + " bytes is too small");
         var expected = packets(MediaSource.of(data));

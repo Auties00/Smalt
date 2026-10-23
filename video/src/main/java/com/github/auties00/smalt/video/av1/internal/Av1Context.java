@@ -101,6 +101,11 @@ public final class Av1Context {
     private boolean allLayers;
 
     /**
+     * Whether film grain is synthesized on the shown frames.
+     */
+    private boolean filmGrain = true;
+
+    /**
      * The picture of each reference slot.
      */
     private final Av1Picture[] refPic = new Av1Picture[8];
@@ -403,6 +408,16 @@ public final class Av1Context {
      */
     public void allLayers(boolean allLayers) {
         this.allLayers = allLayers;
+    }
+
+    /**
+     * Selects whether film grain is synthesized on the shown frames, as dav1d's {@code apply_grain} setting does;
+     * without it a frame is output as reconstructed, its grain parameters ignored.
+     *
+     * @param filmGrain {@code true}, the default, to synthesize film grain
+     */
+    public void filmGrain(boolean filmGrain) {
+        this.filmGrain = filmGrain;
     }
 
 
@@ -1478,7 +1493,7 @@ public final class Av1Context {
     private Av1Picture applyGrain(Av1Picture picture) {
         var hdr = picture.frameHdr;
         var fg = hdr.filmGrain;
-        if (!hdr.filmGrainPresent || (fg.numYPoints == 0 && fg.numUvPoints[0] == 0 && fg.numUvPoints[1] == 0
+        if (!filmGrain || !hdr.filmGrainPresent || (fg.numYPoints == 0 && fg.numUvPoints[0] == 0 && fg.numUvPoints[1] == 0
                 && !(fg.clipToRestrictedRange && fg.chromaScalingFromLuma))) {
             return picture;
         }

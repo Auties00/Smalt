@@ -58,6 +58,9 @@
         <smalt.test.simd>true</smalt.test.simd>
         <!-- Extra test JVM options, for example the hostile-input job's 256 MiB heap: mvn test -Dsmalt.test.jvmArgs=-Xmx256m -->
         <smalt.test.jvmArgs></smalt.test.jvmArgs>
+        <!-- The JUnit tags a build leaves out: the multi-gigabyte conformance suites run in their own CI jobs
+             (Av1ArgonTest: mvn test -Dsmalt.test.excludedGroups=none -Dgroups=argon -Dsmalt.test.argon=profile0_core) -->
+        <smalt.test.excludedGroups>argon</smalt.test.excludedGroups>
         <!-- The coverage agent the coverage profile adds to the test JVMs -->
         <smalt.test.agent></smalt.test.agent>
         <!-- jdk.management: the allocation tests read the per-thread allocation counter reflectively;
@@ -277,6 +280,7 @@
                         <argLine>${smalt.test.argLine}</argLine>
                         <forkCount>${smalt.test.forks}</forkCount>
                         <reuseForks>true</reuseForks>
+                        <excludedGroups>${smalt.test.excludedGroups}</excludedGroups>
                         <systemPropertyVariables>
                             <jazzer.hooks>${jazzer.hooks}</jazzer.hooks>
                             <!-- The test kit's Scratch directories: one per fork -->
