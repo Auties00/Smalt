@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.bmp.BmpEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.png.PngEncoder;
@@ -81,7 +82,7 @@ class RegistryCoverageTest {
     @DisplayName("report the decoders and encoders of every artifact")
     void supported() {
         for (var codec : new Codec[]{Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG,
-                Codec.MPEG4_PART2, Codec.H263, Codec.PRORES, Codec.DNXHD}) {
+                Codec.JPEG2000, Codec.MPEG4_PART2, Codec.H263, Codec.PRORES, Codec.DNXHD}) {
             assertTrue(com.github.auties00.smalt.video.VideoDecoders.isSupported(codec), codec.name());
         }
         for (var codec : new Codec[]{Codec.AAC, Codec.MP3, Codec.MP2, Codec.OPUS, Codec.VORBIS, Codec.FLAC, Codec.PCM_F32LE}) {
@@ -91,7 +92,8 @@ class RegistryCoverageTest {
         assertTrue(AudioDecoders.isSupported(Codec.EAC3));
         assertTrue(AudioEncoders.isSupported(Codec.AC3));
         assertTrue(AudioEncoders.isSupported(Codec.EAC3));
-        for (var codec : new Codec[]{Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.PRORES, Codec.DNXHD}) {
+        for (var codec : new Codec[]{Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000,
+                Codec.PRORES, Codec.DNXHD}) {
             assertTrue(VideoEncoders.isSupported(codec), codec.name());
         }
         assertTrue(AudioEncoders.isSupported(Codec.OPUS));
@@ -101,8 +103,10 @@ class RegistryCoverageTest {
         assertTrue(AudioEncoders.isSupported(Codec.AMR_NB));
         assertTrue(AudioEncoders.isSupported(Codec.AMR_WB));
         assertTrue(AudioEncoders.isSupported(Codec.FLAC));
+        assertTrue(AudioEncoders.isSupported(Codec.ALAC));
+        assertTrue(AudioDecoders.isSupported(Codec.ALAC));
         for (var format : new ImageFormat[]{ImageFormat.JPEG, ImageFormat.PNG, ImageFormat.GIF, ImageFormat.WEBP, ImageFormat.BMP,
-                ImageFormat.TIFF, ImageFormat.ICO, ImageFormat.JP2}) {
+                ImageFormat.TIFF, ImageFormat.ICO, ImageFormat.ANI, ImageFormat.JP2}) {
             assertTrue(Images.isDecodable(format), format.name());
         }
         assertTrue(Images.isDecodable(ImageFormat.AVIF));
@@ -116,13 +120,13 @@ class RegistryCoverageTest {
         assertTrue(Images.isEncodable(ImageFormat.GIF));
         assertTrue(Images.isEncodable(ImageFormat.TIFF));
         assertTrue(Images.isEncodable(ImageFormat.ICO));
+        assertTrue(Images.isEncodable(ImageFormat.ANI));
         assertTrue(Images.isEncodable(ImageFormat.JP2));
-        assertFalse(Images.isEncodable(ImageFormat.BMP));
-        var failure = assertThrows(MediaException.Unsupported.class, () -> Images.encode(picture(), ImageFormat.BMP));
-        assertEquals("bmp", failure.format());
+        assertTrue(Images.isEncodable(ImageFormat.BMP));
         assertTrue(Images.isAnimationEncodable(ImageFormat.WEBP));
         assertTrue(Images.isAnimationEncodable(ImageFormat.GIF));
         assertTrue(Images.isAnimationEncodable(ImageFormat.PNG));
+        assertTrue(Images.isAnimationEncodable(ImageFormat.ANI));
         assertTrue(Images.isEncodable(ImageFormat.AVIF));
         assertTrue(Images.isAnimationEncodable(ImageFormat.AVIF));
         assertFalse(Images.isAnimationEncodable(ImageFormat.JPEG));
@@ -150,14 +154,19 @@ class RegistryCoverageTest {
             Images.encode(picture, ImageFormat.WEBP, ImageEncoderOptions.defaults(), webpSink);
             assertArrayEquals(lossy, webpSink.toByteArray());
             assertEquals(Optional.of(ImageFormat.WEBP), Images.detect(MediaSource.of(lossy)));
+            var bmp = BmpEncoder.encode(picture);
+            assertArrayEquals(bmp, Images.encode(picture, ImageFormat.BMP, ImageEncoderOptions.ofQuality(10)));
+            assertEquals(Optional.of(ImageFormat.BMP), Images.detect(MediaSource.of(bmp)));
         }
 
         @Test
-        @DisplayName("rejects lossless JPEG")
+        @DisplayName("codes lossless JPEG in RGB, which decodes to the same pixels")
         void losslessJpeg() {
-            var failure = assertThrows(MediaException.Unsupported.class,
-                    () -> Images.encode(picture(), ImageFormat.JPEG, ImageEncoderOptions.lossless()));
-            assertEquals("jpeg lossless", failure.format());
+            var picture = picture();
+            var jpeg = Images.encode(picture, ImageFormat.JPEG, ImageEncoderOptions.lossless());
+            assertArrayEquals(JpegEncoder.encode(picture, JpegEncoderOptions.ofLossless()), jpeg);
+            var decoded = assertInstanceOf(RgbaPicture.class, Images.decode(MediaSource.of(jpeg)).picture());
+            assertArrayEquals(picture.pixels(), decoded.pixels());
         }
     }
 
@@ -257,6 +266,51 @@ class RegistryCoverageTest {
                         .speed(Av1EncoderSpeed.FAST).frameRate(rate).build(),
                         options);
                 assertEquals(Av1EncoderUsage.GOOD_QUALITY, options.usage());
+            }
+        }
+
+        @Test
+        @DisplayName("maps the key frame settings onto H.264, VP8, VP9 and AV1 options")
+        void keyframeSettings() {
+            var rate = new Rational(25, 1);
+            var interval = VideoEncoderOptions.of(320, 240, rate, 500_000).toBuilder().keyframeInterval(12).build();
+            var none = VideoEncoderOptions.of(320, 240, rate, 500_000).toBuilder().noPeriodicKeyframes().build();
+            try (var h264 = VideoEncoders.create(Codec.H264, interval)) {
+                assertEquals(OptionalInt.of(12), assertInstanceOf(H264Encoder.class, h264).options().keyframeInterval());
+            }
+            try (var h264 = VideoEncoders.create(Codec.H264, none)) {
+                assertEquals(H264EncoderOptions.forFile().toBuilder().frameRate(rate).timeBase(new Rational(1, 25))
+                        .bitrate(500_000).noPeriodicKeyframes().build(), assertInstanceOf(H264Encoder.class, h264).options());
+            }
+            try (var h264 = VideoEncoders.create(Codec.H264, VideoEncoderOptions.forRealtime(320, 240, rate, 500_000)
+                    .toBuilder().keyframeInterval(50).build())) {
+                assertEquals(H264EncoderOptions.forRealtime().toBuilder().frameRate(rate).bitrate(500_000)
+                        .keyframeInterval(50).build(), assertInstanceOf(H264Encoder.class, h264).options());
+            }
+            try (var vp8 = VideoEncoders.create(Codec.VP8, interval)) {
+                assertEquals(Vp8EncoderOptions.builder().frameRate(rate).bitrate(500_000).keyframeInterval(12).build(),
+                        assertInstanceOf(Vp8Encoder.class, vp8).options());
+            }
+            try (var vp8 = VideoEncoders.create(Codec.VP8, none)) {
+                assertEquals(Vp8EncoderOptions.builder().frameRate(rate).bitrate(500_000).noPeriodicKeyframes().build(),
+                        assertInstanceOf(Vp8Encoder.class, vp8).options());
+            }
+            try (var vp9 = VideoEncoders.create(Codec.VP9, interval)) {
+                assertEquals(Vp9EncoderOptions.builder().frameRate(rate).bitrate(500_000).keyframeInterval(12).build(),
+                        assertInstanceOf(Vp9Encoder.class, vp9).options());
+            }
+            try (var vp9 = VideoEncoders.create(Codec.VP9, none)) {
+                assertEquals(Vp9EncoderOptions.builder().frameRate(rate).bitrate(500_000).noPeriodicKeyframes().build(),
+                        assertInstanceOf(Vp9Encoder.class, vp9).options());
+            }
+            try (var av1 = VideoEncoders.create(Codec.AV1, interval)) {
+                assertEquals(Av1EncoderOptions.ofBitrate(500_000).toBuilder().speed(Av1EncoderSpeed.FAST).frameRate(rate)
+                        .keyframeInterval(12).build(), assertInstanceOf(Av1Encoder.class, av1).options());
+            }
+            try (var av1 = VideoEncoders.create(Codec.AV1, VideoEncoderOptions.forRealtime(320, 240, rate, 500_000)
+                    .toBuilder().keyframeInterval(12).build())) {
+                assertEquals(Av1EncoderOptions.forRealtime().toBuilder().frameRate(rate).bitrate(500_000)
+                        .keyframeInterval(12).build(), assertInstanceOf(Av1Encoder.class, av1).options());
             }
         }
 

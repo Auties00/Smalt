@@ -2,63 +2,49 @@ package com.github.auties00.smalt.image.heic.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
-import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.track.Packet;
-import com.github.auties00.smalt.video.hevc.internal.HevcDecoderEngine;
-import com.github.auties00.smalt.video.hevc.internal.HevcFrame;
 
-import java.util.Arrays;
 import java.util.List;
 import java.util.function.Consumer;
 
 /**
- * Decodes the HEVC payloads of HEIC image items and sequence samples with the HEVC decoding
- * engine of this module.
+ * Decodes the NAL unit payloads of coded image items and sequence samples with a video decoding
+ * engine of this module: HEVC for {@code hvc1} items and tracks, AVC for {@code avc1} items and
+ * {@code avc1} or {@code avc3} tracks.
  *
- * <p>An item is decoded on a fresh engine: the parameter sets of its {@code hvcC} configuration
- * first, then the items it is predicted from ({@code pred} references), then the item itself,
- * each payload a sequence of NAL units prefixed by their length. A sequence keeps one engine for
- * all its samples, because each sample predicts from the ones before it. Instances are not
+ * <p>An item is decoded on a fresh engine: the parameter sets of its configuration record first,
+ * then the items it is predicted from ({@code pred} references), then the item itself, each
+ * payload a sequence of NAL units prefixed by their length. A sequence keeps one engine for all
+ * its samples, because each sample predicts from the ones before it. Instances are not
  * thread-safe: a grid decoded in parallel uses one instance per thread.
  */
-final class ItemDecoder {
+abstract sealed class ItemDecoder permits HevcItemDecoder, AvcItemDecoder {
     /**
      * The resource bounds of every picture.
      */
-    private final MediaLimits limits;
+    final MediaLimits limits;
 
     /**
      * The most pictures the engine decodes concurrently; 1 decodes on the calling thread.
      */
-    private final int threads;
-
-    /**
-     * The engine of the sequence or item being decoded, or {@code null}.
-     */
-    private HevcDecoderEngine engine;
-
-    /**
-     * The configuration record whose parameter sets were fed last, or {@code null}.
-     */
-    private byte[] configuration;
+    final int threads;
 
     /**
      * The size of the NAL unit length prefixes of the current configuration.
      */
-    private int lengthSize = 4;
+    int lengthSize = 4;
 
     /**
      * The last picture the item decode produced.
      */
-    private HevcFrame last;
+    private CodedFrame last;
 
     /**
      * Constructs a decoder.
      *
      * @param limits the bounds checked against every picture
-     * @param threads the most pictures decoded concurrently, and the bound of the wavefront rows
-     * decoded concurrently; 1 decodes on the calling thread
+     * @param threads the most pictures decoded concurrently; 1 decodes on the calling thread
      */
     ItemDecoder(MediaLimits limits, int threads) {
         this.limits = limits;
@@ -66,20 +52,31 @@ final class ItemDecoder {
     }
 
     /**
+     * Returns a decoder for the items or samples of a codec.
+     *
+     * @param avc whether the payloads are AVC rather than HEVC
+     * @param limits the bounds checked against every picture
+     * @param threads the most pictures decoded concurrently; 1 decodes on the calling thread
+     * @return the decoder
+     */
+    static ItemDecoder of(boolean avc, MediaLimits limits, int threads) {
+        return avc ? new AvcItemDecoder(limits, threads) : new HevcItemDecoder(limits, threads);
+    }
+
+    /**
      * Decodes a coded item, after the items it is predicted from.
      *
-     * <p>The returned picture is the last one the engine outputs, cropped by its conformance
-     * window when read through its {@link HevcFrame#sps}. It stays valid until the next call on
-     * this decoder.
+     * <p>The returned picture is the last one the engine outputs, cropped to its visible area. It
+     * stays valid until the next call on this decoder.
      *
-     * @param configurations the {@code hvcC} record of each payload
+     * @param configurations the configuration record of each payload
      * @param payloads the payloads in decoding order, the item's own payload last
      * @return the decoded picture
-     * @throws MediaException.Malformed if a payload is corrupt or no picture is output
+     * @throws MediaException.Malformed if a payload is corrupt or no intact picture is output
      * @throws MediaException.Unsupported if the item uses a coding tool the engine lacks
      * @throws MediaException.LimitExceeded if the picture exceeds the limits
      */
-    HevcFrame decodeItem(List<byte[]> configurations, List<byte[]> payloads) {
+    CodedFrame decodeItem(List<byte[]> configurations, List<byte[]> payloads) {
         last = null;
         open(frame -> last = frame);
         try {
@@ -87,12 +84,15 @@ final class ItemDecoder {
                 configure(configurations.get(i));
                 feed(payloads.get(i), Packet.NO_TIMESTAMP, 0);
             }
-            engine.flush();
+            flush();
         } finally {
             close();
         }
         if (last == null) {
             throw new MediaException.Malformed("heic: the item shows no picture");
+        }
+        if (last instanceof AvcTile avc && avc.damaged()) {
+            throw new MediaException.Malformed("heic: the item decodes to a damaged picture");
         }
         return last;
     }
@@ -103,35 +103,16 @@ final class ItemDecoder {
      * @param sink receives the pictures in output order; their samples may be reused once it
      * returns
      */
-    void open(Consumer<HevcFrame> sink) {
-        close();
-        engine = new HevcDecoderEngine(limits, false, threads, sink);
-        configuration = null;
-        lengthSize = 4;
-    }
+    abstract void open(Consumer<CodedFrame> sink);
 
     /**
      * Feeds the parameter sets of a configuration record, unless they were fed last.
      *
-     * @param record the {@code hvcC} record, or {@code null} when the payloads carry their
+     * @param record the configuration record, or {@code null} when the payloads carry their
      * parameter sets
      * @throws MediaException.Malformed if the record is corrupt
      */
-    void configure(byte[] record) {
-        if (record == null || Arrays.equals(record, configuration)) {
-            return;
-        }
-        if (!NalRecords.looksLikeHevc(record)) {
-            throw new MediaException.Malformed("heic: the hvcC property is not a configuration record");
-        }
-        var parsed = NalRecords.parseHevcStrict(record);
-        engine.beginPacket(Packet.NO_TIMESTAMP, 0);
-        for (var unit : parsed.parameterSets()) {
-            engine.decodeNal(unit, 0, unit.length);
-        }
-        configuration = record;
-        lengthSize = parsed.lengthSize();
-    }
+    abstract void configure(byte[] record);
 
     /**
      * Decodes one payload of length-prefixed NAL units as one access unit.
@@ -142,34 +123,33 @@ final class ItemDecoder {
      * @throws MediaException.Malformed if a length prefix runs past the payload or a NAL unit is
      * corrupt
      */
-    void feed(byte[] data, long pts, long duration) {
-        engine.beginPacket(pts, duration);
-        var broken = NalUnits.forEachLengthPrefixed(data, lengthSize, engine::decodeNal);
+    abstract void feed(byte[] data, long pts, long duration);
+
+    /**
+     * Outputs every picture still waiting in the engine.
+     */
+    abstract void flush();
+
+    /**
+     * Discards the decoding state, waiting for the pictures in flight.
+     */
+    abstract void close();
+
+    /**
+     * Passes the length-prefixed NAL units of a payload to a consumer.
+     *
+     * @param data the payload
+     * @param consumer receives each NAL unit as an array, an offset and a length
+     * @throws MediaException.Malformed if a length prefix runs past the payload
+     */
+    final void forEachNal(byte[] data, NalUnits.Sink consumer) {
+        var broken = NalUnits.forEachLengthPrefixed(data, lengthSize, consumer);
         if (broken < data.length) {
             if (broken + lengthSize > data.length) {
                 throw new MediaException.Malformed("heic: truncated NAL unit length prefix");
             }
             throw new MediaException.Malformed("heic: NAL unit length " + NalUnits.readLength(data, broken, lengthSize)
                     + " exceeds the payload");
-        }
-        engine.endAccessUnit();
-    }
-
-    /**
-     * Outputs every picture still waiting in the engine.
-     */
-    void flush() {
-        engine.flush();
-    }
-
-    /**
-     * Discards the decoding state, waiting for the pictures in flight.
-     */
-    void close() {
-        if (engine != null) {
-            var closing = engine;
-            engine = null;
-            closing.close();
         }
     }
 }
