@@ -37,7 +37,15 @@ class FuzzSeedWriter {
         seed("flac", "valid-mono.bin", Codec.FLAC, ffmpeg("flac", tone(8000, 0.1), "-c:a", "flac"));
         seed("flac", "valid-stereo-24.bin", Codec.FLAC, ffmpeg("flac", tone(48000, 0.02), "-ac", "2", "-c:a", "flac",
                 "-sample_fmt", "s32", "-bits_per_raw_sample", "24", "-lpc_type", "cholesky"));
+        // 32-bit stereo, with the options bit that asks for the integrity check
+        write(AudioFuzzTest.class, "flac", "valid-stereo-32.bin", FuzzSeeds.packets(ffmpeg("flac", tone(48000, 0.02),
+                "-ac", "2", "-c:a", "flac", "-sample_fmt", "s32", "-bits_per_raw_sample", "32", "-strict", "experimental"),
+                Codec.FLAC, 2, 12));
         seed("alac", "valid-mono.bin", Codec.ALAC, ffmpeg("m4a", tone(8000, 0.2), "-c:a", "alac"));
+        // Apple's 32-bit encode (tools/testdata/alac-oracle), the packets copied into an M4A
+        seed("alac", "valid-mono-32.bin", Codec.ALAC, ffmpeg("m4a", List.of("-i",
+                Path.of("src/test/resources/com/github/auties00/smalt/audio/alac/apple/alac32-mono.caf").toAbsolutePath()
+                        .toString()), "-c:a", "copy"));
         seed("alac", "valid-stereo-24.bin", Codec.ALAC, ffmpeg("m4a", tone(44100, 0.05), "-ac", "2", "-c:a", "alac",
                 "-sample_fmt", "s32p"));
         seed("mp3", "valid-mono.bin", Codec.MP3, ffmpeg("mp3", tone(8000, 0.3), "-c:a", "libmp3lame", "-b:a", "8k"));

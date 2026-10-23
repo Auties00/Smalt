@@ -18,18 +18,23 @@ public final class AudioReaderOptions {
     public static final int DEFAULT_BLOCK_FRAMES = 4096;
 
     private static final AudioReaderOptions DEFAULTS =
-            new AudioReaderOptions(0, null, MediaLimits.DEFAULT, DEFAULT_BLOCK_FRAMES);
+            new AudioReaderOptions(0, null, MediaLimits.DEFAULT, DEFAULT_BLOCK_FRAMES, SampleFormat.FLOAT, false);
 
     private final int sampleRate;
     private final ChannelLayout layout;
     private final MediaLimits limits;
     private final int blockFrames;
+    private final SampleFormat sampleFormat;
+    private final boolean verifyIntegrity;
 
-    private AudioReaderOptions(int sampleRate, ChannelLayout layout, MediaLimits limits, int blockFrames) {
+    private AudioReaderOptions(int sampleRate, ChannelLayout layout, MediaLimits limits, int blockFrames,
+                               SampleFormat sampleFormat, boolean verifyIntegrity) {
         this.sampleRate = sampleRate;
         this.layout = layout;
         this.limits = limits;
         this.blockFrames = blockFrames;
+        this.sampleFormat = sampleFormat;
+        this.verifyIntegrity = verifyIntegrity;
     }
 
     /**
@@ -103,24 +108,51 @@ public final class AudioReaderOptions {
         return blockFrames;
     }
 
+    /**
+     * {@return the representation of the samples the reader returns; {@link SampleFormat#FLOAT} by
+     * default}
+     *
+     * <p>{@link SampleFormat#FLOAT} blocks come from {@link AudioReader#read()},
+     * {@link SampleFormat#INTEGER} blocks from {@link AudioReader#readIntegers()} and
+     * {@link SampleFormat#DOUBLE} blocks from {@link AudioReader#readDoubles()}. The exact formats
+     * keep the codec's rate and layout, as {@link AudioStreamDecoderOptions#sampleFormat()}
+     * describes.
+     */
+    public SampleFormat sampleFormat() {
+        return sampleFormat;
+    }
+
+    /**
+     * {@return whether the codec checks the whole-stream checksum the stream carries, at the end of
+     * a read from the start; {@code false} by default}
+     *
+     * @see AudioDecoderOptions#verifyIntegrity()
+     */
+    public boolean verifyIntegrity() {
+        return verifyIntegrity;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof AudioReaderOptions that
                 && sampleRate == that.sampleRate
                 && Objects.equals(layout, that.layout)
                 && limits.equals(that.limits)
-                && blockFrames == that.blockFrames;
+                && blockFrames == that.blockFrames
+                && sampleFormat == that.sampleFormat
+                && verifyIntegrity == that.verifyIntegrity;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sampleRate, layout, limits, blockFrames);
+        return Objects.hash(sampleRate, layout, limits, blockFrames, sampleFormat, verifyIntegrity);
     }
 
     @Override
     public String toString() {
         return "AudioReaderOptions[sampleRate=" + sampleRate + ", layout=" + layout + ", limits=" + limits
-                + ", blockFrames=" + blockFrames + "]";
+                + ", blockFrames=" + blockFrames + ", sampleFormat=" + sampleFormat
+                + ", verifyIntegrity=" + verifyIntegrity + "]";
     }
 
     /**
@@ -134,12 +166,16 @@ public final class AudioReaderOptions {
         private ChannelLayout layout;
         private MediaLimits limits;
         private int blockFrames;
+        private SampleFormat sampleFormat;
+        private boolean verifyIntegrity;
 
         private Builder(AudioReaderOptions options) {
             this.sampleRate = options.sampleRate();
             this.layout = options.layout;
             this.limits = options.limits;
             this.blockFrames = options.blockFrames;
+            this.sampleFormat = options.sampleFormat;
+            this.verifyIntegrity = options.verifyIntegrity;
         }
 
         /**
@@ -207,6 +243,30 @@ public final class AudioReaderOptions {
         }
 
         /**
+         * Sets the representation of the returned samples; see
+         * {@link AudioReaderOptions#sampleFormat()}.
+         *
+         * @param format the value
+         * @return this builder
+         */
+        public Builder sampleFormat(SampleFormat format) {
+            this.sampleFormat = Objects.requireNonNull(format, "format");
+            return this;
+        }
+
+        /**
+         * Sets whether the whole-stream checksum is checked; see
+         * {@link AudioReaderOptions#verifyIntegrity()}.
+         *
+         * @param verify the value
+         * @return this builder
+         */
+        public Builder verifyIntegrity(boolean verify) {
+            this.verifyIntegrity = verify;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -215,7 +275,7 @@ public final class AudioReaderOptions {
         public AudioReaderOptions build() {
             var rate = sampleRate.isPresent() ? Checks.positive("sample rate", sampleRate.getAsInt()) : 0;
             Checks.positive("block size", blockFrames);
-            return new AudioReaderOptions(rate, layout, limits, blockFrames);
+            return new AudioReaderOptions(rate, layout, limits, blockFrames, sampleFormat, verifyIntegrity);
         }
     }
 }

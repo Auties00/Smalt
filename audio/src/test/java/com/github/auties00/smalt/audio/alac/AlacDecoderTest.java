@@ -110,7 +110,7 @@ class AlacDecoderTest {
                 : new Mp4Demuxer(source);
     }
 
-    /** Decodes a file with Smalt into interleaved left-justified 32-bit samples. */
+    /** Decodes a file with Smalt's integer output into interleaved left-justified 32-bit samples. */
     static int[] smalt(Path file) {
         var out = new ArrayList<int[]>();
         var total = 0;
@@ -123,18 +123,22 @@ class AlacDecoderTest {
                     if (packet.trackId() != track.id()) {
                         continue;
                     }
-                    alac.decode(packet, buffer -> {
-                    });
-                    var frames = alac.lastFrames();
-                    var channels = alac.layout().channels();
-                    var chunk = new int[frames * channels];
-                    for (var i = 0; i < frames; i++) {
-                        for (var c = 0; c < channels; c++) {
-                            chunk[i * channels + c] = alac.lastSamples()[c][i] << (32 - alac.bitsPerSample());
+                    var chunks = new ArrayList<int[]>();
+                    alac.decodeIntegers(packet, block -> {
+                        var frames = block.frames();
+                        var channels = block.channels();
+                        var chunk = new int[frames * channels];
+                        for (var i = 0; i < frames; i++) {
+                            for (var c = 0; c < channels; c++) {
+                                chunk[i * channels + c] = block.plane(c)[i] << (32 - block.bitsPerSample());
+                            }
                         }
+                        chunks.add(chunk);
+                    });
+                    for (var chunk : chunks) {
+                        out.add(chunk);
+                        total += chunk.length;
                     }
-                    out.add(chunk);
-                    total += chunk.length;
                 }
             }
         }

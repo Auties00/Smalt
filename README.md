@@ -478,9 +478,9 @@ them, so files exchanged with ffmpeg differ in these known ways:
 | Vorbis | yes | quality -1 to 10 (or a nominal bitrate mapped to a quality), 1 to 255 channels, 1 Hz to 200 kHz; packets byte-identical to libvorbis 1.3.7; no bitrate management | `smalt-audio` | `audio.vorbis` | spec; libvorbis, stb_vorbis (decoder); libvorbis 1.3.7 with aoTuV tuning (encoder) | none |
 | AC-3 (Dolby Digital) | yes: every channel mode with LFE, coupling, rematrixing, delta bit allocation, block switching, the half and quarter rate streams (`bsid` 9 and 10), the Annex D alternate bit stream syntax; dynamic range control (off, `dynrng` with cut and boost scales, `compr` heavy compression), dialogue normalization, mono, Lo/Ro and Lt/Rt downmix with the stream's mix levels; frames failing their CRC are concealed | yes: every channel mode with LFE, 32, 44.1 and 48 kHz, 32 to 640 kbit/s constant bit rate, block switching, channel coupling with phase flags below 80 kbit/s per channel, rematrixing, exponent strategies chosen by cost over each frame, bit allocation searched to fill each frame; a faster search for real time (`forRealtime()`) | `smalt-mpeg` | `audio.ac3` | spec (ATSC A/52, ETSI TS 102 366) | patents expired (2017) |
 | E-AC-3 (Dolby Digital Plus) | yes: independent and dependent substreams (7.1 and other custom channel maps, AC-3 cores extended by an E-AC-3 dependent substream), 1 to 6 blocks per frame, reduced sampling rates, spectral extension, enhanced coupling, adaptive hybrid transform with gain-adaptive quantization, transient pre-noise processing; the Dolby Atmos (JOC) object audio is reported and its channel bed decoded | yes: one independent substream for mono to 5.1, and 7.1 and 7.0 as a 5.1 downmix plus a dependent substream with the side and back pairs (custom channel map); 32, 44.1 and 48 kHz with 1, 2, 3 or 6 blocks per frame and 16, 22.05 and 24 kHz with 6, any constant bit rate up to frames of 2048 words per substream (1024 kbit/s at 48 kHz with 6 blocks, 6144 kbit/s with 1), the AC-3 tools plus frame-based exponent strategies and spectral extension (from 44 to 92 kbit/s per channel); the adaptive hybrid transform and transient pre-noise processing on request; no enhanced coupling | `smalt-mpeg` | `audio.ac3` | spec (ATSC A/52 Annex E, ETSI TS 102 366, ETSI TS 103 420) | **may be covered by Dolby patents**; not covered by the MIT license |
-| FLAC | yes | yes: libFLAC's compression levels 0-8, 4 to 32-bit integer or float input, every stereo mode, MD5 and seek table | `smalt-audio` | `audio.flac` | libFLAC | none |
-| ALAC (Apple Lossless) | yes: 16/20/24/32-bit, 1-8 channels, from MP4 and Matroska | yes: 16, 20, 24 and 32-bit integer or float input, 1-8 channels, adaptive stereo matrixing and predictor search (or Apple's fast mode), escaped and partial frames, any frame length from 16 to 65536; packets byte-identical to Apple's reference encoder | `smalt-audio` | `audio.alac` | Apple's ALAC (Apache-2.0) | none (royalty-free) |
-| PCM (integer and float, any layout) | yes | 8 to 64-bit, integer and float, either byte order, G.711 A-law and mu-law, through the containers that carry it | `smalt-core` | `audio.pcm` | spec | none |
+| FLAC | yes: 4 to 32-bit samples, also as their integers bit for bit (`decodeIntegers`, `SampleFormat.INTEGER`) or exact doubles; the `STREAMINFO` MD5 signature checked on request (`AudioDecoderOptions.verifyIntegrity`) | yes: libFLAC's compression levels 0-8, 4 to 32-bit integer (planar, interleaved or `IntegerAudioBuffer` blocks of any sample size) or float input, every stereo mode, MD5 and seek table | `smalt-audio` | `audio.flac` | libFLAC | none |
+| ALAC (Apple Lossless) | yes: 16/20/24/32-bit, 1-8 channels, from MP4 and Matroska, also as their integers bit for bit (32-bit streams of Apple's reference encoder included) or exact doubles | yes: 16, 20, 24 and 32-bit integer or float input, 1-8 channels, adaptive stereo matrixing and predictor search (or Apple's fast mode), escaped and partial frames, any frame length from 16 to 65536; packets byte-identical to Apple's reference encoder | `smalt-audio` | `audio.alac` | Apple's ALAC (Apache-2.0) | none (royalty-free) |
+| PCM (integer and float, any layout) | yes; integer formats up to 32 bits and G.711 also as their integers bit for bit, every format as doubles (64-bit floats unchanged) | 8 to 64-bit, integer and float, either byte order, G.711 A-law and mu-law, through the containers that carry it, from float, integer or double samples | `smalt-core` | `audio.pcm` | spec | none |
 | AMR-NB, AMR-WB | yes, bit-exact with the 3GPP fixed-point decoders (TS 26.073, TS 26.173): every mode, mode changes on any frame, comfort noise (SID) and DTX, bad and lost frame concealment, homing; storage-format frames from `.amr`, MP4/3GP `samr`/`sawb` and Matroska (`A_AMR/NB`, `A_AMR/WB`, `A_MS/ACM`) | yes, bit-exact with the 3GPP encoders: AMR-NB in every mode with VAD option 1 and DTX, AMR-WB in every mode with VAD and DTX; mode changes on any frame | `smalt-mpeg` | `audio.amr` | AMR-NB decoder and encoder and AMR-WB decoder: opencore-amr (PacketVideo, Apache-2.0); AMR-WB encoder: vo-amrwbenc (VisualOn, Apache-2.0), its arithmetic aligned with TS 26.173 (passes TS 26.174, so its frames differ from `libvo_amrwbenc` on loud or unusual input); both derived from the 3GPP reference code | **patent pool** (VoiceAge, AMR-WB); AMR-NB patents are held by its developers; not covered by the MIT license |
 
 Where the AC-3 and E-AC-3 specifications leave room or disagree, the decoder follows what Dolby's encoders
@@ -741,10 +741,14 @@ artifacts present: H.264, AAC, AMR, AC-3 and E-AC-3 need `smalt-mpeg`, VP9, AV1,
 Motion-JPEG and Motion JPEG 2000 need `smalt-image`, Opus, FLAC, ALAC, MP3 and Vorbis need `smalt-audio`; PCM is in core. There is no
 HEVC encoder, so HEVC streams (an `.h265` output included) can only be copied. A QuickTime output gets ProRes 422 HQ by default (or DNxHR HQ),
 an `.amr` output AMR-NB at 12.2 kbit/s (8 kHz mono, resampled and downmixed as needed) unless a codec or
-bitrate is named, a FLAC encode keeps the source's sample size (up to 24 bits) and, written as a native
+bitrate is named, a FLAC encode keeps the source's sample size (up to 32 bits) and, written as a native
 file on a seekable output, its final `STREAMINFO` (length, MD5) and seek table, and an ALAC encode (M4A, MP4, MOV
 or Matroska, when the caller names ALAC) keeps the source's sample size rounded up to 16, 20, 24 or 32 bits and
-stores the final `ALACSpecificConfig` (largest packet, average bitrate).
+stores the final `ALACSpecificConfig` (largest packet, average bitrate). A stream re-encoded without a
+change of rate, layout or gain moves its samples as integers when both codecs code integers (FLAC, ALAC and integer
+PCM to FLAC or PCM), so FLAC to FLAC, ALAC to FLAC and their PCM conversions are bit for bit at every sample size, and
+as 64-bit floats to PCM otherwise, so 64-bit float PCM re-encodes exactly; `AudioTranscodeOptions.verifyIntegrity`
+checks a FLAC source's MD5 signature on the way.
 
 | Operation | Encoded streams | Copied streams |
 |---|---|---|
@@ -1066,6 +1070,12 @@ stores the final `ALACSpecificConfig` (largest packet, average bitrate).
   left and right of center. The ALAC encoder codes 16, 20, 24 and 32-bit samples only (the decoder reads 4 to 32);
   32-bit float input holds 24 bits of precision. ffmpeg 7.1 cannot decode a 32-bit channel pair sent uncompressed,
   which Apple's encoder, and so Smalt's, writes for incompressible 32-bit audio such as full-scale noise; Core Audio decodes them.
+- The exact audio outputs (`SampleFormat.INTEGER` and `DOUBLE`) keep the codec's rate and layout: a part of a stream
+  that changes either mid-way is converted through floats, as the float output converts it, and quantized to the
+  output's sample size. 64-bit integer PCM has no integer output, and its doubles round it to 53 bits. An ALAC
+  channel pair of 32-bit samples that keeps every byte (33-bit side information, which Apple's encoder never writes)
+  raises `MediaException.Unsupported`. The `STREAMINFO` MD5 check needs a decode from the stream's first frame, so a
+  read that seeks first is not checked.
 - The MP4 demuxer reads the compressed boxes of ISO/IEC 14496-12 clause 8.20 (`!mov`, `!mof`, `!six`, `!ssx`),
   and writing the tags of such a file stores its movie box uncompressed; a tag write that would move the data of
   compressed movie fragments with explicit base data offsets raises `MediaException.Unsupported`. The demuxer
@@ -1498,6 +1508,19 @@ try (var source = MediaSource.of(Path.of("song.mp3"));
     AudioBuffer buffer;
     while ((buffer = reader.read()) != null) {
         // buffer.frames() samples per channel, resampled to 48 kHz stereo
+    }
+}
+```
+
+For the source's own samples, bit for bit (a 32-bit FLAC, ALAC or WAV, which floats would round to 24
+significant bits), read integers instead, at the codec's rate and layout:
+
+```java
+var options = AudioReaderOptions.builder().sampleFormat(SampleFormat.INTEGER).verifyIntegrity(true).build();
+try (var reader = AudioReader.open(MediaSource.of(Path.of("master.flac")), options)) {
+    IntegerAudioBuffer block;
+    while ((block = reader.readIntegers()) != null) {
+        // block.plane(c)[i]: a signed sample of block.bitsPerSample() bits; at the end the MD5 is checked
     }
 }
 ```

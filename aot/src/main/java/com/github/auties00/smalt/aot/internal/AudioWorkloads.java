@@ -3,8 +3,10 @@ package com.github.auties00.smalt.aot.internal;
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.audio.alac.AlacDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
@@ -83,6 +85,7 @@ final class AudioWorkloads {
                 file("alac-encode", () -> alacEncode("alac-encode", AlacEncoderOptions.defaults(), 4)),
                 file("alac-encode-surround", () -> alacSurround(2)),
                 file("alac-decode", () -> alacDecode(6)),
+                file("flac-decode-32", () -> flacDecodeIntegers(3)),
                 file("mp3-encode", () -> mp3Encode("mp3-encode", Mp3EncoderOptions.defaults(), 6)),
                 file("mp3-encode-vbr", () -> mp3Encode("mp3-encode-vbr", Mp3EncoderOptions.ofVariableBitrate(2), 6)),
                 file("mp3-decode", AudioWorkloads::mp3Decode));
@@ -439,6 +442,43 @@ final class AudioWorkloads {
         var track = AudioStreams.track(Codec.ALAC, 44100, ChannelLayout.STEREO, encoder.codecConfig().orElseThrow());
         encoder.close();
         return AudioStreams.decode("alac-decode", packets, new AlacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes a 48 kHz 32-bit stereo FLAC track of music that Smalt's own
+     * encoder produced from integer blocks, through the integer output with the {@code STREAMINFO}
+     * MD5 check, one decoder per round.
+     *
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload flacDecodeIntegers(double seconds) {
+        var options = FlacEncoderOptions.defaults().toBuilder().format(48000, ChannelLayout.STEREO).bitsPerSample(32)
+                .build();
+        var music = SyntheticAudio.music(48000, seconds);
+        var planes = new int[music.length][];
+        for (var c = 0; c < music.length; c++) {
+            planes[c] = new int[music[c].length];
+            for (var i = 0; i < music[c].length; i++) {
+                planes[c][i] = (int) Math.round(Math.clamp(music[c][i], -1f, 1f) * 0x1p31 * 0.99);
+            }
+        }
+        var packets = new ArrayList<Packet>();
+        var encoder = new FlacEncoder(options);
+        encoder.encode(new IntegerAudioBuffer(ChannelLayout.STEREO, 48000, 32, planes, planes[0].length), packets::add);
+        encoder.flush(packets::add);
+        var track = AudioStreams.track(Codec.FLAC, 48000, ChannelLayout.STEREO, encoder.codecConfig().orElseThrow());
+        encoder.close();
+        var verify = AudioDecoderOptions.builder().verifyIntegrity(true).build();
+        Consumer<IntegerAudioBuffer> output = block -> Blackhole.consume(block.plane(0)[0] + block.frames());
+        return TrainingWorkload.of("flac-decode-32", () -> {
+            try (var decoder = new FlacDecoder(track, verify)) {
+                for (var packet : packets) {
+                    decoder.decodeIntegers(packet, output);
+                }
+                decoder.flushIntegers(output);
+            }
+        });
     }
 
     /**

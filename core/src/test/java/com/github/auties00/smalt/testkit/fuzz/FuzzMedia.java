@@ -2,9 +2,12 @@ package com.github.auties00.smalt.testkit.fuzz;
 
 import com.github.auties00.smalt.Media;
 import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.AudioDecoders;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.DoubleAudioBuffer;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
@@ -214,8 +217,12 @@ public final class FuzzMedia {
     /**
      * Decodes an audio stream in the {@link FuzzPackets} format.
      *
-     * <p>Options bit 0 asks for output at 48 kHz. Rejected packets are skipped as in
-     * {@link #video(Codec, byte[])}.
+     * <p>Options bit 0 asks for output at 48 kHz, bit 1 for the integrity check (which codecs without a checksum
+     * ignore, so the PCM target's use of bits 1 to 7 is unaffected). Rejected packets are skipped as in
+     * {@link #video(Codec, byte[])}. A codec with integer or double output decodes the stream again through it, in a
+     * decoder of its own, and every packet that both decoders accept must give the blocks of the float output: the
+     * same sizes, integers that fit their sample size and that the floats equal once scaled, and doubles that the
+     * floats equal once rounded.
      *
      * @param codec the codec of the target
      * @param data the input
@@ -236,25 +243,137 @@ public final class FuzzMedia {
             track.layout(ChannelLayout.defaultFor(Math.min(channels, Fuzz.LIMITS.maxChannels())));
         }
         header.config().ifPresent(track::codecConfig);
-        var options = AudioDecoderOptions.builder().limits(Fuzz.LIMITS);
+        var options = AudioDecoderOptions.builder().limits(Fuzz.LIMITS).verifyIntegrity((header.options() & 2) != 0);
         if ((header.options() & 1) != 0) {
             options.preferredSampleRate(48_000);
         }
-        var decoder = run.value("open", () -> AudioDecoders.create(track.build(), options.build()));
+        var built = track.build();
+        var decoder = run.value("open", () -> AudioDecoders.create(built, options.build()));
         if (decoder.isEmpty()) {
             return run;
         }
-        Consumer<AudioBuffer> sink = buffer -> touch(run, buffer);
+        var floats = new ArrayList<AudioBuffer>();
+        Consumer<AudioBuffer> sink = buffer -> {
+            touch(run, buffer);
+            floats.add(buffer.copy());
+        };
+        AudioDecoder exact = null;
         try (var opened = decoder.get()) {
             opened.sampleRate();
             opened.layout();
+            if (opened.supportsIntegerOutput() || opened.supportsDoubleOutput()) {
+                exact = run.value("open exact", () -> AudioDecoders.create(built, options.build())).orElse(null);
+            }
+            var integers = new ArrayList<IntegerAudioBuffer>();
+            var doubles = new ArrayList<DoubleAudioBuffer>();
             for (var index = 0; index < input.packets().size(); index++) {
                 var packet = packet(input.packets().get(index), index);
-                run.step("packet " + index, () -> opened.decode(packet, sink));
+                floats.clear();
+                var accepted = run.step("packet " + index, () -> opened.decode(packet, sink));
+                if (exact != null) {
+                    exactPacket(run, exact, packet, index, accepted ? floats : null, integers, doubles);
+                }
             }
             run.step("flush", () -> opened.flush(sink));
+            if (exact != null) {
+                var last = exact;
+                if (last.supportsIntegerOutput()) {
+                    run.step("flush integers", () -> last.flushIntegers(block -> touch(block)));
+                } else {
+                    run.step("flush doubles", () -> last.flushDoubles(DoubleAudioBuffer::copy));
+                }
+            }
+        } finally {
+            if (exact != null) {
+                exact.close();
+            }
         }
         return run;
+    }
+
+    /**
+     * Decodes one packet through the integer output of a decoder, or its double output when it has no integer
+     * one, and compares the blocks with the float blocks of the same packet.
+     *
+     * @param run the run
+     * @param exact the decoder of the exact output
+     * @param packet the packet
+     * @param index the index of the packet, for messages
+     * @param floats the float blocks of the packet, or {@code null} when the float decoder rejected it
+     * @param integers scratch list of integer blocks
+     * @param doubles scratch list of double blocks
+     */
+    private static void exactPacket(FuzzRun run, AudioDecoder exact, Packet packet, int index, List<AudioBuffer> floats,
+                                    List<IntegerAudioBuffer> integers, List<DoubleAudioBuffer> doubles) {
+        integers.clear();
+        doubles.clear();
+        boolean accepted;
+        if (exact.supportsIntegerOutput()) {
+            accepted = run.step("integers " + index, () -> exact.decodeIntegers(packet, block -> integers.add(touch(block))));
+        } else {
+            accepted = run.step("doubles " + index, () -> exact.decodeDoubles(packet, block -> doubles.add(block.copy())));
+        }
+        if (!accepted || floats == null) {
+            return;
+        }
+        var count = exact.supportsIntegerOutput() ? integers.size() : doubles.size();
+        if (count != floats.size()) {
+            throw new IllegalStateException("packet " + index + ": " + count + " exact blocks for " + floats.size()
+                    + " float blocks");
+        }
+        for (var b = 0; b < count; b++) {
+            var reference = floats.get(b);
+            var frames = exact.supportsIntegerOutput() ? integers.get(b).frames() : doubles.get(b).frames();
+            if (frames != reference.frames()) {
+                throw new IllegalStateException("packet " + index + ": an exact block of " + frames + " frames for a float"
+                        + " block of " + reference.frames());
+            }
+            for (var c = 0; c < reference.channels(); c++) {
+                var expected = reference.plane(c);
+                if (exact.supportsIntegerOutput()) {
+                    var block = integers.get(b);
+                    var scale = Math.scalb(1.0, 1 - block.bitsPerSample());
+                    for (var i = 0; i < frames; i++) {
+                        if (Float.compare((float) (block.plane(c)[i] * scale), expected[i]) != 0) {
+                            throw new IllegalStateException("packet " + index + ": integer " + block.plane(c)[i]
+                                    + " of " + block.bitsPerSample() + " bits does not scale to the float " + expected[i]);
+                        }
+                    }
+                } else {
+                    var block = doubles.get(b);
+                    for (var i = 0; i < frames; i++) {
+                        if (Float.compare((float) block.plane(c)[i], expected[i]) != 0) {
+                            throw new IllegalStateException("packet " + index + ": double " + block.plane(c)[i]
+                                    + " does not round to the float " + expected[i]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Checks that an integer block is consistent and its samples fit its sample size.
+     *
+     * @param block the block
+     * @return a copy of the block
+     */
+    private static IntegerAudioBuffer touch(IntegerAudioBuffer block) {
+        var frames = block.frames();
+        var bits = block.bitsPerSample();
+        if (frames < 0 || frames > block.capacity() || block.channels() != block.layout().channels()) {
+            throw new IllegalStateException("integer block of " + frames + " frames, " + block.channels() + " planes");
+        }
+        var min = bits == 32 ? Integer.MIN_VALUE : -(1 << (bits - 1));
+        var max = bits == 32 ? Integer.MAX_VALUE : (1 << (bits - 1)) - 1;
+        for (var plane : block.planes()) {
+            for (var i = 0; i < frames; i++) {
+                if (plane[i] < min || plane[i] > max) {
+                    throw new IllegalStateException("integer sample " + plane[i] + " does not fit " + bits + " bits");
+                }
+            }
+        }
+        return block.copy();
     }
 
     /**

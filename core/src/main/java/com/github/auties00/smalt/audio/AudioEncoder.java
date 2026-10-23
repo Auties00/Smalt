@@ -17,6 +17,10 @@ import java.util.function.Consumer;
  * first input sample; the {@link #delay()} priming samples at the start of the decoded output
  * are signaled to the container rather than subtracted from the timestamps.
  *
+ * <p>Encoders of codecs that code integer samples (FLAC, integer PCM) also take integer samples
+ * ({@link #encode(IntegerAudioBuffer, Consumer)}), which they code without the rounding of a float, and encoders
+ * that keep more than single precision (PCM) take 64-bit floats ({@link #encode(DoubleAudioBuffer, Consumer)}).
+ *
  * @implSpec
  * Implementations must accept blocks whose layout and rate match {@link #layout()} and
  * {@link #sampleRate()} and reject any other with {@link IllegalArgumentException}, must clip
@@ -76,6 +80,61 @@ public interface AudioEncoder extends AutoCloseable {
      * @throws IllegalArgumentException if the input layout or rate differs from the encoder's
      */
     void encode(AudioBuffer input, Consumer<Packet> output);
+
+    /**
+     * Returns whether the encoder also takes integer samples through
+     * {@link #encode(IntegerAudioBuffer, Consumer)}.
+     *
+     * @implSpec The default implementation returns {@code false}.
+     * @return {@code true} for encoders of codecs that code integer samples
+     */
+    default boolean supportsIntegerInput() {
+        return false;
+    }
+
+    /**
+     * Buffers integer samples and emits a packet for every coded frame they complete.
+     *
+     * <p>Samples of the encoder's own sample size are coded unchanged. Samples of a smaller size are shifted left to
+     * it, which keeps every value; samples of a larger size are rounded to it, to nearest with ties toward positive
+     * infinity, and clamped. Integer and float blocks may be mixed in one stream.
+     *
+     * @implSpec The default implementation throws {@link UnsupportedOperationException}.
+     * @param input the samples to encode, of any length
+     * @param output receives zero or more packets
+     * @throws UnsupportedOperationException if {@link #supportsIntegerInput()} is {@code false}
+     * @throws IllegalArgumentException if the input layout or rate differs from the encoder's
+     */
+    default void encode(IntegerAudioBuffer input, Consumer<Packet> output) {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " takes no integer input");
+    }
+
+    /**
+     * Returns whether the encoder also takes 64-bit float samples through
+     * {@link #encode(DoubleAudioBuffer, Consumer)}, coding them at more than single precision.
+     *
+     * @implSpec The default implementation returns {@code false}.
+     * @return {@code true} for encoders that keep more precision than a float carries
+     */
+    default boolean supportsDoubleInput() {
+        return false;
+    }
+
+    /**
+     * Buffers 64-bit float samples and emits a packet for every coded frame they complete.
+     *
+     * <p>Samples are clipped and quantized as {@link #encode(AudioBuffer, Consumer)} does, from their double value.
+     * Double and float blocks may be mixed in one stream.
+     *
+     * @implSpec The default implementation throws {@link UnsupportedOperationException}.
+     * @param input the samples to encode, of any length
+     * @param output receives zero or more packets
+     * @throws UnsupportedOperationException if {@link #supportsDoubleInput()} is {@code false}
+     * @throws IllegalArgumentException if the input layout or rate differs from the encoder's
+     */
+    default void encode(DoubleAudioBuffer input, Consumer<Packet> output) {
+        throw new UnsupportedOperationException(getClass().getSimpleName() + " takes no double input");
+    }
 
     /**
      * Encodes the buffered partial frame, padded with silence, and emits every remaining packet.

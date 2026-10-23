@@ -302,6 +302,16 @@ were coded from (`jpeg/mjpeg-md5.csv`). `bash tools/testdata/mjpeg/make-vectors.
 with ffmpeg 7.1, used as a black-box encoder, from its `testsrc2` pattern; the output is deterministic and
 `jpeg/mjpeg.sha256` pins the files.
 
+## 32-bit ALAC vectors
+
+`AlacIntegerOutputTest` of `smalt-audio` reads the CAF files of Apple's reference ALAC encoder, the only encoder of
+32-bit ALAC (`audio/src/test/resources/com/github/auties00/smalt/audio/alac/apple/`: 32-bit stereo and mono, each
+ending with a partial frame), with the MD5 of the samples they were coded from (`apple/apple-md5.csv`, interleaved
+32-bit little-endian). `python -I tools/testdata/alac-oracle/make-vectors.py <alacconvert> <checkout>` regenerates
+them: alacconvert is the converter of github.com/macosforge/alac (Apache License 2.0) at commit c38887c, built from
+source with gcc and g++ as the script describes; the script encodes deterministic 32-bit WAV files, checks that
+alacconvert, and ffmpeg when it is on PATH, decode the CAF back to the source, and `apple.sha256` pins the files.
+
 ## TIFF codec vectors
 
 `TiffCodecCompressionTest` of `smalt-image` reads small TIFF files whose strips or tiles are WebP, JPEG XL and
