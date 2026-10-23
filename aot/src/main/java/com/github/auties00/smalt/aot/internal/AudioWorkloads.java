@@ -10,7 +10,9 @@ import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp3EncoderOptions;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.opus.OpusApplication;
+import com.github.auties00.smalt.audio.opus.OpusChannelMapping;
 import com.github.auties00.smalt.audio.opus.OpusDecoder;
 import com.github.auties00.smalt.audio.opus.OpusDecoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusEncoder;
@@ -28,6 +30,7 @@ import com.github.auties00.smalt.track.Packet;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -64,6 +67,10 @@ final class AudioWorkloads {
                 file("opus-encode-speech", () -> opusSpeech(8)),
                 file("opus-encode-music", () -> opusMusic(6)),
                 file("opus-decode", () -> opusDecode(6)),
+                file("opus-encode-surround", () -> opusSurround(3)),
+                file("opus-decode-surround", () -> opusSurroundDecode(3)),
+                file("opus-encode-projection", () -> opusProjection(2)),
+                file("opus-decode-projection", () -> opusProjectionDecode(2)),
                 file("vorbis-encode", () -> vorbisEncode(2)),
                 file("vorbis-decode", () -> vorbisDecode(6)),
                 file("flac-encode", () -> flacEncode("flac-encode", FlacEncoderOptions.defaults(), 44100, 6)),
@@ -99,6 +106,151 @@ final class AudioWorkloads {
         var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, 2).build());
         return AudioStreams.encode("opus-encode-music", SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO,
                 48000, encoder);
+    }
+
+    /**
+     * Synthesizes 5.1 content in WAVE order: music in front and back, speech in the center and the
+     * music's bass in the LFE channel.
+     *
+     * @param seconds the duration in seconds
+     * @return the six planes at 48 kHz
+     */
+    private static float[][] surround(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var speech = SyntheticAudio.speech(48000, seconds);
+        var frames = music[0].length;
+        var lfe = new float[frames];
+        var back = new float[2][frames];
+        var smooth = 0f;
+        for (var i = 0; i < frames; i++) {
+            smooth += 0.01f * (music[0][i] + music[1][i] - smooth);
+            lfe[i] = smooth;
+            var delayed = Math.max(0, i - 480);
+            back[0][i] = 0.6f * music[1][delayed];
+            back[1][i] = 0.6f * music[0][delayed];
+        }
+        return new float[][]{music[0], music[1], speech, lfe, back[0], back[1]};
+    }
+
+    /**
+     * Returns a workload that encodes 5.1 content as a 48 kHz Opus multistream at 256 kb/s, which
+     * runs the surround masking analysis and the LFE stream, one encoder across rounds.
+     *
+     * @param seconds the content encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusSurround(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, ChannelLayout.SURROUND_5_1)
+                .bitrate(256000).build());
+        return AudioStreams.encode("opus-encode-surround", surround(seconds), ChannelLayout.SURROUND_5_1, 48000,
+                encoder);
+    }
+
+    /**
+     * Returns a workload that decodes a 5.1 Opus multistream that Smalt's own encoder produced, one
+     * decoder across rounds.
+     *
+     * @param seconds the content decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusSurroundDecode(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, ChannelLayout.SURROUND_5_1)
+                .bitrate(256000).build());
+        var packets = AudioStreams.encodeAll(encoder, surround(seconds), ChannelLayout.SURROUND_5_1, 48000);
+        var track = AudioStreams.track(Codec.OPUS, 48000, ChannelLayout.SURROUND_5_1,
+                encoder.codecConfig().orElseThrow());
+        encoder.close();
+        return AudioStreams.decode("opus-decode-surround", packets, new OpusDecoder(track));
+    }
+
+    /**
+     * The layout of second-order ambisonics with a non-diegetic stereo pair: eleven channels of
+     * unknown position.
+     */
+    private static final ChannelLayout AMBISONIC_11 = new ChannelLayout(Collections.nCopies(11, Speaker.UNKNOWN));
+
+    /**
+     * Synthesizes second-order ambisonics (ACN order, SN3D) of music panned around the listener, with
+     * speech as the non-diegetic stereo pair.
+     *
+     * @param seconds the duration in seconds
+     * @return the eleven planes at 48 kHz
+     */
+    private static float[][] ambisonic(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var speech = SyntheticAudio.speech(48000, seconds);
+        var frames = music[0].length;
+        var planes = new float[11][frames];
+        for (var i = 0; i < frames; i++) {
+            var azimuth = 2 * Math.PI * i / (4.0 * 48000);
+            var source = 0.5f * (music[0][i] + music[1][i]);
+            var x = (float) StrictMath.cos(azimuth);
+            var y = (float) StrictMath.sin(azimuth);
+            planes[0][i] = source;
+            planes[1][i] = y * source;
+            planes[3][i] = x * source;
+            planes[4][i] = 0.866f * 2 * x * y * source;
+            planes[6][i] = -0.5f * source;
+            planes[8][i] = 0.866f * (x * x - y * y) * source;
+            planes[9][i] = speech[i];
+            planes[10][i] = 0.8f * speech[i];
+        }
+        return planes;
+    }
+
+    /**
+     * Returns a workload that encodes second-order ambisonics with a non-diegetic pair as an Opus
+     * projection (mapping family 3) stream at 384 kb/s, which mixes the channels with the
+     * projection matrix, one encoder across rounds.
+     *
+     * @param seconds the content encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusProjection(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, AMBISONIC_11)
+                .channelMapping(OpusChannelMapping.AMBISONIC_PROJECTION).bitrate(384000).build());
+        return AudioStreams.encode("opus-encode-projection", ambisonic(seconds), AMBISONIC_11, 48000, encoder);
+    }
+
+    /**
+     * Returns a workload that decodes an Opus projection stream that Smalt's own encoder produced:
+     * every round demixes the track to its eleven channels, mixes it down to stereo, and decodes it
+     * packet by packet into 16-bit samples, concealing every seventh packet and rebuilding every
+     * fifth from the next packet's forward error correction; the decoders last across rounds.
+     *
+     * @param seconds the content decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusProjectionDecode(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, AMBISONIC_11)
+                .channelMapping(OpusChannelMapping.AMBISONIC_PROJECTION).application(OpusApplication.VOIP)
+                .bitrate(192000).inbandFec(true).packetLossPercent(10).build());
+        var packets = AudioStreams.encodeAll(encoder, ambisonic(seconds), AMBISONIC_11, 48000);
+        var track = AudioStreams.track(Codec.OPUS, 48000, AMBISONIC_11, encoder.codecConfig().orElseThrow());
+        encoder.close();
+        var full = new OpusDecoder(track);
+        var stereo = new OpusDecoder(track, OpusDecoderOptions.builder().channels(2).build());
+        var perPacket = new OpusDecoder(track);
+        var pcm = new short[5760 * 11];
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("opus-decode-projection", () -> {
+            for (var i = 0; i < packets.size(); i++) {
+                var packet = packets.get(i);
+                full.decode(packet, output);
+                stereo.decode(packet, output);
+                var data = packet.data();
+                int samples;
+                if (i % 5 == 3 && i + 1 < packets.size()) {
+                    var next = packets.get(i + 1).data();
+                    samples = perPacket.recover(next, 0, next.length, pcm, 0, 960);
+                } else if (i % 7 == 5) {
+                    samples = perPacket.conceal(pcm, 0, 960);
+                } else {
+                    samples = perPacket.decode(data, 0, data.length, pcm, 0, 5760);
+                }
+                Blackhole.consume(samples + pcm[17]);
+            }
+        });
     }
 
     /**

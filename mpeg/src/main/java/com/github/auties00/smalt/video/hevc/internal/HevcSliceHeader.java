@@ -82,6 +82,12 @@ public final class HevcSliceHeader {
     public boolean picOutput = true;
 
     /**
+     * {@code colour_plane_id}: the color plane of the slice with separate color planes, 0
+     * otherwise.
+     */
+    public int colorPlaneId;
+
+    /**
      * {@code slice_pic_order_cnt_lsb}, 0 for IDR pictures.
      */
     public int pocLsb;
@@ -154,6 +160,18 @@ public final class HevcSliceHeader {
     public final int[][] listEntry = new int[2][16];
 
     /**
+     * Whether each entry of the reference picture lists is the current picture, indexed
+     * {@code [list][refIdx]} (8.3.4, with {@code pps_curr_pic_ref_enabled_flag}).
+     */
+    public final boolean[][] currentPictureEntry = new boolean[2][16];
+
+    /**
+     * {@code use_integer_mv_flag}: whether the motion vectors of the slice that refer to other
+     * pictures than the current one have integer resolution.
+     */
+    public boolean useIntegerMv;
+
+    /**
      * {@code mvd_l1_zero_flag}.
      */
     public boolean mvdL1Zero;
@@ -219,6 +237,12 @@ public final class HevcSliceHeader {
      * {@code slice_cr_qp_offset}.
      */
     public int crQpOffset;
+
+    /**
+     * {@code slice_act_y_qp_offset}, {@code slice_act_cb_qp_offset} and
+     * {@code slice_act_cr_qp_offset}.
+     */
+    public final int[] actQpOffset = new int[3];
 
     /**
      * {@code cu_chroma_qp_offset_enabled_flag}.
@@ -298,7 +322,20 @@ public final class HevcSliceHeader {
                 total++;
             }
         }
+        if (pps.currPicRefEnabled) {
+            total++;
+        }
         return total;
+    }
+
+    /**
+     * Returns the number of pictures of the reference picture set that the current picture may
+     * reference, {@code NumPicTotalCurr} without the current picture itself.
+     *
+     * @return the count
+     */
+    public int numRpsPicturesCurr() {
+        return numPicTotalCurr() - (pps.currPicRefEnabled ? 1 : 0);
     }
 
     /**
@@ -406,6 +443,7 @@ public final class HevcSliceHeader {
         copy.sliceAddressRs = sliceAddressRs;
         copy.sliceType = sliceType;
         copy.picOutput = picOutput;
+        copy.colorPlaneId = colorPlaneId;
         copy.pocLsb = pocLsb;
         copy.shortTermRps = shortTermRps;
         copy.numLongTerm = numLongTerm;
@@ -422,11 +460,14 @@ public final class HevcSliceHeader {
         for (var list = 0; list < 2; list++) {
             copy.listModification[list] = listModification[list];
             System.arraycopy(listEntry[list], 0, copy.listEntry[list], 0, 16);
+            System.arraycopy(currentPictureEntry[list], 0, copy.currentPictureEntry[list], 0, 16);
             for (var i = 0; i < 16; i++) {
                 System.arraycopy(weights[list][i], 0, copy.weights[list][i], 0, 3);
                 System.arraycopy(offsets[list][i], 0, copy.offsets[list][i], 0, 3);
             }
         }
+        copy.useIntegerMv = useIntegerMv;
+        System.arraycopy(actQpOffset, 0, copy.actQpOffset, 0, 3);
         copy.mvdL1Zero = mvdL1Zero;
         copy.cabacInit = cabacInit;
         copy.collocatedFromL0 = collocatedFromL0;
@@ -457,14 +498,17 @@ public final class HevcSliceHeader {
     private void parseIndependent(H264BitReader reader, int nalType) {
         reader.readBits(pps.numExtraSliceHeaderBits);
         sliceType = reader.readUe(2, "slice_type");
-        if (HevcNal.isIrap(nalType) && sliceType != I) {
+        if (HevcNal.isIrap(nalType) && sliceType != I && !pps.currPicRefEnabled) {
             throw new MediaException.Malformed("intra random access point picture with a P or B slice");
         }
         if (pps.outputFlagPresent) {
             picOutput = reader.readFlag();
         }
         if (sps.separateColorPlane) {
-            reader.readBits(2);
+            colorPlaneId = reader.readBits(2);
+            if (colorPlaneId == 3) {
+                throw new MediaException.Malformed("colour_plane_id is 3");
+            }
         }
         if (!HevcNal.isIdr(nalType)) {
             pocLsb = reader.readBits(sps.log2MaxPocLsb);
@@ -524,6 +568,7 @@ public final class HevcSliceHeader {
                     }
                 }
             }
+            markCurrentPictureEntries();
             if (sliceType == B) {
                 mvdL1Zero = reader.readFlag();
             }
@@ -543,6 +588,7 @@ public final class HevcSliceHeader {
                 parsePredWeightTable(reader);
             }
             maxNumMergeCand = 5 - reader.readUe(4, "five_minus_max_num_merge_cand");
+            useIntegerMv = sps.mvResolutionControl == 2 ? reader.readFlag() : sps.mvResolutionControl == 1;
         }
         var qpBdOffset = 6 * (sps.bitDepthLuma - 8);
         sliceQp = 26 + pps.initQpMinus26 + reader.readSe(-(26 + pps.initQpMinus26 + qpBdOffset),
@@ -550,6 +596,15 @@ public final class HevcSliceHeader {
         if (pps.sliceChromaQpOffsetsPresent) {
             cbQpOffset = reader.readSe(-12, 12, "slice_cb_qp_offset");
             crQpOffset = reader.readSe(-12, 12, "slice_cr_qp_offset");
+        }
+        if (pps.sliceActQpOffsetsPresent) {
+            for (var c = 0; c < 3; c++) {
+                actQpOffset[c] = reader.readSe(-12, 12, "slice_act_qp_offset");
+                var total = pps.actQpOffset[c] + actQpOffset[c];
+                if (total < -12 || total > 12) {
+                    throw new MediaException.Malformed("adaptive color transform QP offset out of range");
+                }
+            }
         }
         if (pps.chromaQpOffsetList) {
             cuChromaQpOffsetEnabled = reader.readFlag();
@@ -567,6 +622,33 @@ public final class HevcSliceHeader {
         loopFilterAcrossSlices = pps.loopFilterAcrossSlices;
         if (pps.loopFilterAcrossSlices && (saoLuma || saoChroma || !deblockingDisabled)) {
             loopFilterAcrossSlices = reader.readFlag();
+        }
+    }
+
+    /**
+     * Derives which entries of the reference picture lists are the current picture, from the sizes
+     * of the reference picture set lists, {@code num_ref_idx_lX_active_minus1} and the list
+     * modification (equations 8-8 to 8-11).
+     */
+    private void markCurrentPictureEntries() {
+        for (var list = 0; list < 2; list++) {
+            java.util.Arrays.fill(currentPictureEntry[list], false);
+        }
+        if (!pps.currPicRefEnabled) {
+            return;
+        }
+        var rps = numRpsPicturesCurr();
+        var total = rps + 1;
+        for (var list = 0; list < (sliceType == B ? 2 : 1); list++) {
+            var count = Math.max(numRefIdx[list], total);
+            for (var i = 0; i < numRefIdx[list]; i++) {
+                var index = listModification[list] ? listEntry[list][i] : i;
+                // RefPicListTemp repeats the reference picture set pictures followed by the current picture
+                currentPictureEntry[list][i] = index < count && index % total == rps;
+            }
+            if (list == 0 && !listModification[0] && count > numRefIdx[0]) {
+                currentPictureEntry[0][numRefIdx[0] - 1] = true;
+            }
         }
     }
 
@@ -630,12 +712,13 @@ public final class HevcSliceHeader {
             var count = numRefIdx[list];
             var lumaFlags = new boolean[count];
             var chromaFlags = new boolean[count];
+            // the flags of the current picture are absent (7.3.6.3)
             for (var i = 0; i < count; i++) {
-                lumaFlags[i] = reader.readFlag();
+                lumaFlags[i] = !currentPictureEntry[list][i] && reader.readFlag();
             }
             if (chroma) {
                 for (var i = 0; i < count; i++) {
-                    chromaFlags[i] = reader.readFlag();
+                    chromaFlags[i] = !currentPictureEntry[list][i] && reader.readFlag();
                 }
             }
             for (var i = 0; i < count; i++) {
