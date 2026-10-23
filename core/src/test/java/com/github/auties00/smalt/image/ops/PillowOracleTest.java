@@ -21,7 +21,8 @@ import static org.junit.jupiter.api.Assertions.fail;
  * the cases and Pillow's outputs come from {@code tools/testdata/imageops-oracle.py}, which also
  * documents how each Pillow call maps to a Smalt one and how each case is compared: exactly, or
  * within a tolerance away from the edges where Pillow handles borders differently (its kernel
- * filters leave the border unfiltered; its interpolating rotations replicate edges and truncate).
+ * filters leave the border unfiltered; its interpolating rotations replicate edges and truncate; its
+ * resampling renormalizes the taps clipped at the edges and rounds to 8 bits between its passes).
  */
 @DisplayName("Pillow oracle")
 class PillowOracleTest {
@@ -104,6 +105,7 @@ class PillowOracleTest {
             case "gray" -> ImageAdjustments.grayscale(input, GrayscaleMode.BT601);
             case "colorize" -> ImageAdjustments.colorize(input, Integer.parseInt(p[0], 16), Integer.parseInt(p[1], 16));
             case "invert" -> ImageAdjustments.invert(input);
+            case "resize" -> ImageOps.resize(input, Integer.parseInt(p[1]), Integer.parseInt(p[2]), ResizeFilter.valueOf(p[0]));
             default -> throw new IllegalArgumentException(test.operation());
         };
     }
@@ -121,9 +123,12 @@ class PillowOracleTest {
             case "RGBA" -> 4;
             default -> throw new IllegalArgumentException(test.mode());
         };
-        assertEquals(WIDTH, actual.width());
-        assertEquals(HEIGHT, actual.height());
-        assertEquals(WIDTH * HEIGHT * channels, expected.length);
+        var resize = test.operation().equals("resize");
+        var width = resize ? Integer.parseInt(test.parameters().split(" ")[1]) : WIDTH;
+        var height = resize ? Integer.parseInt(test.parameters().split(" ")[2]) : HEIGHT;
+        assertEquals(width, actual.width());
+        assertEquals(height, actual.height());
+        assertEquals(width * height * channels, expected.length);
         var comparison = test.comparison().split(":");
         var inverse = test.operation().startsWith("rotate")
                 ? AffineTransform.translation(-WIDTH / 2.0, -HEIGHT / 2.0)
@@ -133,14 +138,14 @@ class PillowOracleTest {
         var worst = 0;
         var compared = 0;
         var mismatches = new ArrayList<String>();
-        for (var y = 0; y < HEIGHT; y++) {
-            for (var x = 0; x < WIDTH; x++) {
-                if (!included(comparison, inverse, x, y)) {
+        for (var y = 0; y < height; y++) {
+            for (var x = 0; x < width; x++) {
+                if (!included(comparison, inverse, x, y, width, height)) {
                     continue;
                 }
                 compared++;
                 for (var c = 0; c < channels; c++) {
-                    var want = expected[(y * WIDTH + x) * channels + c] & 0xFF;
+                    var want = expected[(y * width + x) * channels + c] & 0xFF;
                     var got = actual.pixels()[y * actual.stride() + 4 * x + c] & 0xFF;
                     var diff = Math.abs(want - got);
                     worst = Math.max(worst, diff);
@@ -150,7 +155,7 @@ class PillowOracleTest {
                 }
             }
         }
-        assertTrue(compared > WIDTH * HEIGHT / 4, "too few samples compared: " + compared);
+        assertTrue(compared > width * height / 4, "too few samples compared: " + compared);
         if (!mismatches.isEmpty()) {
             fail(test.name() + ": worst difference " + worst + " over tolerance " + tolerance(comparison) + ": " + mismatches);
         }
@@ -165,12 +170,12 @@ class PillowOracleTest {
         };
     }
 
-    private static boolean included(String[] comparison, AffineTransform inverse, int x, int y) {
+    private static boolean included(String[] comparison, AffineTransform inverse, int x, int y, int width, int height) {
         return switch (comparison[0]) {
             case "exact", "max" -> true;
             case "interior" -> {
                 var border = Integer.parseInt(comparison[1]);
-                yield x >= border && y >= border && x < WIDTH - border && y < HEIGHT - border;
+                yield x >= border && y >= border && x < width - border && y < height - border;
             }
             case "rotated" -> {
                 // the point the output pixel's center maps to, measured from the source pixel centers

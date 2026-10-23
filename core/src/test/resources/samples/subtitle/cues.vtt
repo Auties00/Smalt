@@ -1,0 +1,14 @@
+WEBVTT
+
+NOTE a comment block
+
+00:00.000 --> 00:00.400 align:start
+Hello
+
+second
+00:00.500 --> 00:00.900
+<b>World</b>
+
+00:01.250 --> 00:02.000
+Two
+lines

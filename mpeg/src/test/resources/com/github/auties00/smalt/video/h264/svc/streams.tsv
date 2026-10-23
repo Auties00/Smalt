@@ -1,0 +1,5 @@
+# Scalable H.264 streams made by tools/testdata/h264-svc/make-vectors.py with JSVM 9.19.15. Columns:
+# name	sha256	bytes	layers, each DQId:temporal_id:frames:MD5 of the JSVM decoding of its sub-bitstream
+svc-cgs-temporal	931c3921ba3da83372324bd3ca143de881ee504e3759b5ab011f4aa3f04fe96e	1603	0:2:9:3ae672fb5754ea67952bdfe83608df4f 16:2:9:f9d50dd528177fbbd142699b3430db00 16:0:3:31abc7b7964ba242b7eb346ba6b4805e
+svc-mgs-keys	4638026a009a6290cb5ccab92fc1fe107ff61c483a9e87fe4f63a5d979771c35	1796	0:2:9:d07218df6003a96e8d4eda1f15749e0b 1:2:9:f21029af82c347f8d001d094a95a4980 1:0:3:f8ff9bfad087f46fcaa607b075521bed
+svc-spatial	3e537d1d7d0b5ede2146ed5631e0dade223351afe42b83c04efc5b3492b0d607	2320	0:1:5:f043b0ee2f79b45f95fd75b0932cef0a 16:1:5:8353e837aa380b288b0d04cebc3fb162 32:1:5:0fd8f3ba24431b6d3c7b8116d0639e14 32:0:3:08a6e084a676238ba94737f6470e90e3
