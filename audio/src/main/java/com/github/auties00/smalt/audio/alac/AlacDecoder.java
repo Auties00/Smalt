@@ -110,9 +110,9 @@ public final class AlacDecoder implements AudioDecoder {
 
     /**
      * The speakers of each channel count in ALAC's bitstream order, after Apple's
-     * {@code ALACMagicCookieDescription.txt}.
+     * {@code ALACMagicCookieDescription.txt}; {@link AlacEncoder} codes the same arrangements.
      */
-    private static final Speaker[][] BITSTREAM_ORDER = {
+    static final Speaker[][] BITSTREAM_ORDER = {
             {Speaker.FRONT_CENTER},
             {Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT},

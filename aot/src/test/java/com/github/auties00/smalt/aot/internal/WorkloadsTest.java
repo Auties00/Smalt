@@ -2,9 +2,15 @@ package com.github.auties00.smalt.aot.internal;
 
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingMode;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawFormat;
+import com.github.auties00.smalt.image.tiff.TiffDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -47,6 +53,64 @@ class WorkloadsTest {
         for (var family : TrainingFamily.values()) {
             var hasRealtime = Workloads.of(family).stream().anyMatch(factory -> factory.mode() == TrainingMode.REALTIME);
             assertEquals(realtime.contains(family), hasRealtime, family.name());
+        }
+    }
+
+    @Test
+    @DisplayName("the synthetic TIFF variants decode, the masked page with alpha")
+    void tiffVariants() {
+        var files = SyntheticImages.tiffVariants(SyntheticImages.rgba(SyntheticVideo.natural(32, 16, 1).getFirst(),
+                true));
+        assertEquals(7, files.size());
+        for (var file : files) {
+            var picture = TiffDecoder.decode(MediaSource.of(file)).picture();
+            assertEquals(32, picture.width());
+            assertEquals(16, picture.height());
+        }
+        var masked = (RgbaPicture) TiffDecoder.decode(MediaSource.of(files.getLast())).picture();
+        assertTrue(masked.hasAlpha());
+        assertEquals(0, masked.pixels()[3]);
+    }
+
+    @Test
+    @DisplayName("the synthetic multi-scan and arithmetic-coded lossless JPEG files decode to their samples")
+    void losslessScans() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(48, 20, 1).getFirst(), false);
+        var wide = ImageDecoderOptions.builder().highBitDepth(true).build();
+        for (var precision : new int[]{8, 12, 16}) {
+            var samples = SyntheticImages.losslessSamples(picture, 3, precision);
+            for (var arithmetic : new boolean[]{false, true}) {
+                for (var scans : List.of(new int[][]{{0, 1, 2}}, new int[][]{{2}, {0, 1}})) {
+                    var jpeg = SyntheticImages.losslessScansJpeg(samples, 48, 20, 3, precision, precision % 7 + 1,
+                            arithmetic, scans);
+                    var decoded = JpegDecoder.decode(MediaSource.of(jpeg), wide).picture();
+                    for (var i = 0; i < 48 * 20; i++) {
+                        for (var c = 0; c < 3; c++) {
+                            var x = i % 48;
+                            var y = i / 48;
+                            var actual = switch (decoded) {
+                                case YuvPicture yuv -> (c == 0 ? yuv.y()[y * yuv.yStride() + x]
+                                        : (c == 1 ? yuv.u() : yuv.v())[y * yuv.uvStride() + x]) & 0xFF;
+                                case Yuv16Picture yuv -> (c == 0 ? yuv.y()[y * yuv.yStride() + x]
+                                        : (c == 1 ? yuv.u() : yuv.v())[y * yuv.uvStride() + x]) & 0xFFFF;
+                                default -> throw new AssertionError(decoded);
+                            };
+                            assertEquals(samples[i * 3 + c], actual, precision + " bits, arithmetic " + arithmetic);
+                        }
+                    }
+                }
+            }
+        }
+        var gray = SyntheticImages.losslessSamples(picture, 1, 8);
+        var five = new int[48 * 20 * 5];
+        for (var i = 0; i < five.length; i++) {
+            five[i] = gray[i / 5] ^ (i % 5) * 37 & 0xFF;
+        }
+        var jpeg = SyntheticImages.losslessScansJpeg(five, 48, 20, 5, 8, 6, true, new int[][]{{0, 1, 2, 3}, {4}});
+        var channels = (Channel8Picture) JpegDecoder.decode(MediaSource.of(jpeg),
+                ImageDecoderOptions.builder().keepChannels(true).build()).picture();
+        for (var i = 0; i < five.length; i++) {
+            assertEquals(five[i], channels.pixels()[i] & 0xFF);
         }
     }
 

@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.hevc.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.video.h264.internal.H264BitReader;
+import com.github.auties00.smalt.video.h264.internal.H264Sps;
 
 /**
  * Holds a parsed sequence parameter set (ITU-T H.265 7.3.2.2) with the variables derived from it.
@@ -11,6 +12,12 @@ import com.github.auties00.smalt.video.h264.internal.H264BitReader;
  * sequence parameter set that is never activated does not stop the stream.
  */
 public final class HevcSps {
+    /**
+     * The largest default display window offset kept, in chroma sample units, the bound of the
+     * conformance window offsets.
+     */
+    private static final int MAX_WINDOW_OFFSET = 65535;
+
     /**
      * {@code sps_seq_parameter_set_id}.
      */
@@ -92,7 +99,8 @@ public final class HevcSps {
     public int bitDepthLuma;
 
     /**
-     * {@code BitDepthC}.
+     * {@code BitDepthC}; {@link #bitDepthLuma} with separate color planes, whose planes are all
+     * decoded as monochrome pictures.
      */
     public int bitDepthChroma;
 
@@ -298,6 +306,49 @@ public final class HevcSps {
     public boolean explicitRdpcm;
 
     /**
+     * The sample aspect ratio width of the VUI, 0 when unspecified.
+     */
+    public int sarWidth;
+
+    /**
+     * The sample aspect ratio height of the VUI, 0 when unspecified.
+     */
+    public int sarHeight;
+
+    /**
+     * {@code field_seq_flag}: whether every picture is a field.
+     */
+    public boolean fieldSeq;
+
+    /**
+     * {@code frame_field_info_present_flag}: whether picture timing SEI messages start with
+     * {@code pic_struct}.
+     */
+    public boolean frameFieldInfoPresent;
+
+    /**
+     * The left offset of the VUI default display window inside the conformance window, in luma
+     * samples, 0 when absent or when an offset exceeds 65535 chroma samples (the four offsets are
+     * then all 0).
+     */
+    public int displayLeft;
+
+    /**
+     * The right offset of the default display window, in luma samples.
+     */
+    public int displayRight;
+
+    /**
+     * The top offset of the default display window, in luma samples.
+     */
+    public int displayTop;
+
+    /**
+     * The bottom offset of the default display window, in luma samples.
+     */
+    public int displayBottom;
+
+    /**
      * {@code extended_precision_processing_flag}.
      */
     public boolean extendedPrecision;
@@ -335,10 +386,46 @@ public final class HevcSps {
     public int log2TransformRangeChroma = 15;
 
     /**
-     * Whether the set carries a screen content coding or 3D extension, which this decoder does not
-     * parse.
+     * Whether the set carries a 3D extension, which this decoder does not parse.
      */
-    public boolean sccTools;
+    public boolean extension3d;
+
+    /**
+     * {@code sps_curr_pic_ref_enabled_flag}.
+     */
+    public boolean currPicRefEnabled;
+
+    /**
+     * {@code palette_mode_enabled_flag}.
+     */
+    public boolean paletteModeEnabled;
+
+    /**
+     * {@code palette_max_size}.
+     */
+    public int paletteMaxSize;
+
+    /**
+     * {@code PaletteMaxPredictorSize}: {@code palette_max_size + delta_palette_max_predictor_size}.
+     */
+    public int paletteMaxPredictorSize;
+
+    /**
+     * {@code sps_palette_predictor_initializer}, indexed {@code [comp][i]}, or {@code null} when
+     * {@code sps_palette_predictor_initializers_present_flag} is clear.
+     */
+    public int[][] paletteInitializers;
+
+    /**
+     * {@code motion_vector_resolution_control_idc}: 0 for quarter-sample motion vectors, 1 for
+     * integer ones, 2 for a choice per slice.
+     */
+    public int mvResolutionControl;
+
+    /**
+     * {@code intra_boundary_filtering_disabled_flag}.
+     */
+    public boolean intraBoundaryFilteringDisabled;
 
     /**
      * {@code CtbSizeY}.
@@ -505,7 +592,10 @@ public final class HevcSps {
             if (multilayerExtension) {
                 reader.readBit();
             }
-            sps.sccTools = sccExtension || extension3d;
+            sps.extension3d = extension3d;
+            if (sccExtension && !extension3d) {
+                parseSccExtension(reader, sps);
+            }
         }
         if (reader.overrun()) {
             throw new MediaException.Malformed("truncated sequence parameter set");
@@ -529,8 +619,49 @@ public final class HevcSps {
         widthInCtbs = (width + ctbSize - 1) >> log2CtbSize;
         heightInCtbs = (height + ctbSize - 1) >> log2CtbSize;
         sizeInCtbs = widthInCtbs * heightInCtbs;
+        if (separateColorPlane) {
+            // every plane is decoded as a monochrome picture, whose processes use BitDepthY only
+            bitDepthChroma = bitDepthLuma;
+        }
         log2TransformRangeLuma = extendedPrecision ? Math.max(15, bitDepthLuma + 6) : 15;
         log2TransformRangeChroma = extendedPrecision ? Math.max(15, bitDepthChroma + 6) : 15;
+    }
+
+    /**
+     * Parses a {@code sps_scc_extension()} structure (ITU-T H.265 7.3.2.2.3).
+     *
+     * @param reader the reader, positioned at the syntax structure
+     * @param sps the sequence parameter set being parsed, with its chroma format and bit depths known
+     * @throws MediaException.Malformed if a field is out of range
+     */
+    private static void parseSccExtension(H264BitReader reader, HevcSps sps) {
+        sps.currPicRefEnabled = reader.readFlag();
+        sps.paletteModeEnabled = reader.readFlag();
+        if (sps.paletteModeEnabled) {
+            sps.paletteMaxSize = reader.readUe(64, "palette_max_size");
+            sps.paletteMaxPredictorSize = sps.paletteMaxSize
+                    + reader.readUe(128 - sps.paletteMaxSize, "delta_palette_max_predictor_size");
+            if (reader.readFlag()) {
+                var count = reader.readUe(Math.max(0, sps.paletteMaxPredictorSize - 1),
+                        "sps_num_palette_predictor_initializers_minus1") + 1;
+                if (count > sps.paletteMaxPredictorSize) {
+                    throw new MediaException.Malformed("more palette predictor initializers than predictor entries");
+                }
+                var components = sps.chromaFormatIdc == 0 ? 1 : 3;
+                sps.paletteInitializers = new int[components][count];
+                for (var c = 0; c < components; c++) {
+                    var bits = c == 0 ? sps.bitDepthLuma : sps.bitDepthChroma;
+                    for (var i = 0; i < count; i++) {
+                        sps.paletteInitializers[c][i] = reader.readBits(bits);
+                    }
+                }
+            }
+        }
+        sps.mvResolutionControl = reader.readBits(2);
+        if (sps.mvResolutionControl == 3) {
+            throw new MediaException.Malformed("motion_vector_resolution_control_idc is 3");
+        }
+        sps.intraBoundaryFilteringDisabled = reader.readFlag();
     }
 
     /**
@@ -542,6 +673,7 @@ public final class HevcSps {
      */
     public boolean sameLayout(HevcSps other) {
         return width == other.width && height == other.height && chromaFormatIdc == other.chromaFormatIdc
+                && separateColorPlane == other.separateColorPlane
                 && bitDepthLuma == other.bitDepthLuma && bitDepthChroma == other.bitDepthChroma
                 && log2CtbSize == other.log2CtbSize && log2MinCbSize == other.log2MinCbSize
                 && log2MinTbSize == other.log2MinTbSize;
@@ -554,12 +686,9 @@ public final class HevcSps {
      * @return the feature name for {@link MediaException.Unsupported}, or {@code null}
      */
     public String unsupportedFeature() {
-        if (separateColorPlane) {
-            // TODO: separate color planes (4:4:4 coded as three monochrome pictures)
-            return "hevc separate color planes";
-        }
-        if (sccTools) {
-            return "hevc screen content coding";
+        if (extension3d) {
+            // TODO: the 3D-HEVC extension of a base layer sequence parameter set (Annex I)
+            return "hevc 3D extension";
         }
         return null;
     }
@@ -603,17 +732,26 @@ public final class HevcSps {
     }
 
     /**
-     * Parses a {@code vui_parameters()} structure (ITU-T H.265 E.2.1), keeping the color
-     * description, chroma location and timing.
+     * Parses a {@code vui_parameters()} structure (ITU-T H.265 E.2.1), keeping the sample aspect
+     * ratio, the color description, chroma location, {@code field_seq_flag},
+     * {@code frame_field_info_present_flag}, the default display window and timing.
      *
      * @param reader the reader, positioned at the syntax structure
-     * @param sps the sequence parameter set being parsed
+     * @param sps the sequence parameter set being parsed, with its chroma format known
      */
     private static void parseVui(H264BitReader reader, HevcSps sps) {
         if (reader.readFlag()) {
-            if (reader.readBits(8) == 255) {
-                reader.readBits(16);
-                reader.readBits(16);
+            var idc = reader.readBits(8);
+            if (idc == 255) {
+                sps.sarWidth = reader.readBits(16);
+                sps.sarHeight = reader.readBits(16);
+            } else {
+                sps.sarWidth = H264Sps.aspectWidthOf(idc);
+                sps.sarHeight = H264Sps.aspectHeightOf(idc);
+            }
+            if (sps.sarWidth == 0 || sps.sarHeight == 0) {
+                sps.sarWidth = 0;
+                sps.sarHeight = 0;
             }
         }
         if (reader.readFlag()) {
@@ -634,13 +772,23 @@ public final class HevcSps {
             reader.readUe(5, "chroma_sample_loc_type_bottom_field");
         }
         reader.readBit();
-        reader.readBit();
-        reader.readBit();
+        sps.fieldSeq = reader.readFlag();
+        sps.frameFieldInfoPresent = reader.readFlag();
         if (reader.readFlag()) {
-            reader.readUe();
-            reader.readUe();
-            reader.readUe();
-            reader.readUe();
+            var left = reader.readUe();
+            var right = reader.readUe();
+            var top = reader.readUe();
+            var bottom = reader.readUe();
+            // the window is only a display hint: one no picture could hold is dropped, not rejected
+            if (left <= MAX_WINDOW_OFFSET && right <= MAX_WINDOW_OFFSET && top <= MAX_WINDOW_OFFSET
+                    && bottom <= MAX_WINDOW_OFFSET) {
+                var unitX = sps.chromaArrayType == 0 ? 1 : 1 << sps.chromaShiftX;
+                var unitY = sps.chromaArrayType == 0 ? 1 : 1 << sps.chromaShiftY;
+                sps.displayLeft = left * unitX;
+                sps.displayRight = right * unitX;
+                sps.displayTop = top * unitY;
+                sps.displayBottom = bottom * unitY;
+            }
         }
         sps.timingInfoPresent = reader.readFlag();
         if (sps.timingInfoPresent) {

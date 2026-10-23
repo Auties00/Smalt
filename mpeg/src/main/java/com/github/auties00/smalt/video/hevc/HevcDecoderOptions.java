@@ -26,16 +26,22 @@ public final class HevcDecoderOptions {
 
     private final boolean hashVerification;
 
+    private final boolean defaultDisplayWindow;
+
+    private final boolean filmGrain;
+
     private HevcDecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.threads = builder.threads;
         this.highBitDepth = builder.highBitDepth;
         this.hashVerification = builder.hashVerification;
+        this.defaultDisplayWindow = builder.defaultDisplayWindow;
+        this.filmGrain = builder.filmGrain;
     }
 
     /**
-     * Returns the default options: {@link MediaLimits#defaults()}, the shared pool, 8-bit output and
-     * no hash verification.
+     * Returns the default options: {@link MediaLimits#defaults()}, the shared pool, 8-bit output, no
+     * hash verification and output cropped by the conformance window only.
      *
      * @return the default options
      */
@@ -97,21 +103,47 @@ public final class HevcDecoderOptions {
         return hashVerification;
     }
 
+    /**
+     * {@return whether the pictures are also cropped by the default display window the VUI
+     * signals, inside the conformance window; {@code false} by default}
+     *
+     * <p>The default display window is a display hint (ITU-T H.265 E.3.1): the conformance window
+     * alone gives the decoded pictures. A default display window that would leave no picture is
+     * ignored.
+     */
+    public boolean defaultDisplayWindow() {
+        return defaultDisplayWindow;
+    }
+
+    /**
+     * {@return whether the decoder adds the film grain that film grain characteristics SEI
+     * messages describe to the pictures; {@code true} by default}
+     *
+     * <p>When set, the grain of the frequency filtering model with additive blending is rendered
+     * as {@link HevcDecoder} describes; when clear, frames hold the decoded samples as they are.
+     * Decoded picture hashes are always checked on the samples without grain.
+     */
+    public boolean filmGrain() {
+        return filmGrain;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof HevcDecoderOptions that && limits.equals(that.limits) && threads == that.threads
-                && highBitDepth == that.highBitDepth && hashVerification == that.hashVerification;
+                && highBitDepth == that.highBitDepth && hashVerification == that.hashVerification
+                && defaultDisplayWindow == that.defaultDisplayWindow && filmGrain == that.filmGrain;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, threads, highBitDepth, hashVerification);
+        return Objects.hash(limits, threads, highBitDepth, hashVerification, defaultDisplayWindow, filmGrain);
     }
 
     @Override
     public String toString() {
         return "HevcDecoderOptions[limits=" + limits + ", threads=" + threads + ", highBitDepth=" + highBitDepth
-                + ", hashVerification=" + hashVerification + "]";
+                + ", hashVerification=" + hashVerification + ", defaultDisplayWindow=" + defaultDisplayWindow
+                + ", filmGrain=" + filmGrain + "]";
     }
 
     /**
@@ -129,8 +161,13 @@ public final class HevcDecoderOptions {
 
         private boolean hashVerification;
 
+        private boolean defaultDisplayWindow;
+
+        private boolean filmGrain;
+
         private Builder() {
             this.limits = MediaLimits.DEFAULT;
+            this.filmGrain = true;
         }
 
         private Builder(HevcDecoderOptions options) {
@@ -138,6 +175,8 @@ public final class HevcDecoderOptions {
             this.threads = options.threads;
             this.highBitDepth = options.highBitDepth;
             this.hashVerification = options.hashVerification;
+            this.defaultDisplayWindow = options.defaultDisplayWindow;
+            this.filmGrain = options.filmGrain;
         }
 
         /**
@@ -183,6 +222,30 @@ public final class HevcDecoderOptions {
          */
         public Builder hashVerification(boolean hashVerification) {
             this.hashVerification = hashVerification;
+            return this;
+        }
+
+        /**
+         * Sets whether the pictures are also cropped by the default display window; see
+         * {@link HevcDecoderOptions#defaultDisplayWindow()}.
+         *
+         * @param defaultDisplayWindow the value
+         * @return this builder
+         */
+        public Builder defaultDisplayWindow(boolean defaultDisplayWindow) {
+            this.defaultDisplayWindow = defaultDisplayWindow;
+            return this;
+        }
+
+        /**
+         * Sets whether the decoder adds film grain to the pictures; see
+         * {@link HevcDecoderOptions#filmGrain()}.
+         *
+         * @param filmGrain the value
+         * @return this builder
+         */
+        public Builder filmGrain(boolean filmGrain) {
+            this.filmGrain = filmGrain;
             return this;
         }
 

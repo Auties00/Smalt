@@ -68,12 +68,18 @@ image.bmp	image
 image.bmp.internal	image
 image.color	core
 image.exif	image
+image.gainmap	core
 image.gif	image
 image.gif.internal	image
 image.heic	mpeg
 image.heic.internal	mpeg
 image.ico	image
+image.internal.density	image
+image.internal.jbig	image
+image.internal.lerc	image
+image.internal.xz	image
 image.internal.zlib	image
+image.internal.zstd	image
 image.jp2	image
 image.jp2.internal	image
 image.jpeg	image
@@ -109,6 +115,7 @@ internal.check	core
 internal.codec	core
 internal.color	core
 internal.edit	core
+internal.gainmap	core
 internal.header	core
 internal.heif	core
 internal.io	core
@@ -124,6 +131,7 @@ internal.provider.raw	raw
 internal.provider.video	video
 internal.quantize	core
 internal.resize	core
+internal.sei	mpeg
 internal.simd	core
 internal.subtitle	core
 internal.tags	core

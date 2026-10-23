@@ -36,6 +36,27 @@ final class BoxTypes {
     static final int MOOF = 0x6D6F6F66;
 
     /**
+     * The compressed movie box ({@code !mov}, ISO/IEC 14496-12 clause 8.20): the payload of a {@code moov} box,
+     * gzip-compressed.
+     */
+    static final int COMPRESSED_MOOV = 0x216D6F76;
+
+    /**
+     * The compressed movie fragment box ({@code !mof}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_MOOF = 0x216D6F66;
+
+    /**
+     * The compressed segment index box ({@code !six}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_SIDX = 0x21736978;
+
+    /**
+     * The compressed subsegment index box ({@code !ssx}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_SSIX = 0x21737378;
+
+    /**
      * The movie fragment random access box ({@code mfra}).
      */
     static final int MFRA = 0x6D667261;
@@ -331,6 +352,36 @@ final class BoxTypes {
     static final int MJPB = 0x6D6A7062;
 
     /**
+     * The Motion JPEG 2000 sample entry ({@code mjp2}, ISO/IEC 15444-3), also the brand of a Motion JPEG 2000 file.
+     */
+    static final int MJP2 = 0x6D6A7032;
+
+    /**
+     * The simple profile brand of a Motion JPEG 2000 file ({@code mj2s}).
+     */
+    static final int MJ2S = 0x6D6A3273;
+
+    /**
+     * The JPEG 2000 signature box ({@code jP  }), the first box of a Motion JPEG 2000 file.
+     */
+    static final int JP_SIGNATURE = 0x6A502020;
+
+    /**
+     * The JP2 Header box of a Motion JPEG 2000 sample entry ({@code jp2h}).
+     */
+    static final int JP2H = 0x6A703268;
+
+    /**
+     * The subsampling box of a Motion JPEG 2000 sample entry ({@code jsub}).
+     */
+    static final int JSUB = 0x6A737562;
+
+    /**
+     * The original format box of a Motion JPEG 2000 sample entry ({@code orfo}).
+     */
+    static final int ORFO = 0x6F72666F;
+
+    /**
      * The ProRes 422 HQ sample entry ({@code apch}).
      */
     static final int APCH = 0x61706368;
@@ -595,6 +646,16 @@ final class BoxTypes {
      * The subtitle handler type ({@code sbtl}).
      */
     static final int SBTL = 0x7362746C;
+
+    /**
+     * The ISO subtitle handler type ({@code subt}).
+     */
+    static final int SUBT = 0x73756274;
+
+    /**
+     * The subtitle media header box ({@code sthd}).
+     */
+    static final int STHD = 0x73746864;
 
     /**
      * The video media header box ({@code vmhd}).

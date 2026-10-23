@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.matroska;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.internal.Languages;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.Chromaticity;
@@ -15,22 +16,22 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
-import java.util.Locale;
-import java.util.Map;
-import java.util.MissingResourceException;
 import java.util.Optional;
 
 /**
@@ -120,17 +121,6 @@ final class MatroskaTrackEntry {
     boolean enabled = true;
 
     /**
-     * The ISO 639-2 bibliographic codes of the languages whose terminology code differs, keyed by
-     * the terminology code.
-     */
-    private static final Map<String, String> BIBLIOGRAPHIC = Map.ofEntries(Map.entry("sqi", "alb"),
-            Map.entry("hye", "arm"), Map.entry("eus", "baq"), Map.entry("mya", "bur"), Map.entry("zho", "chi"),
-            Map.entry("ces", "cze"), Map.entry("nld", "dut"), Map.entry("fra", "fre"), Map.entry("kat", "geo"),
-            Map.entry("deu", "ger"), Map.entry("ell", "gre"), Map.entry("isl", "ice"), Map.entry("mkd", "mac"),
-            Map.entry("mri", "mao"), Map.entry("msa", "may"), Map.entry("fas", "per"), Map.entry("ron", "rum"),
-            Map.entry("slk", "slo"), Map.entry("bod", "tib"), Map.entry("cym", "wel"));
-
-    /**
      * The {@code PixelWidth}.
      */
     long pixelWidth;
@@ -139,6 +129,37 @@ final class MatroskaTrackEntry {
      * The {@code PixelHeight}.
      */
     long pixelHeight;
+
+    /**
+     * The {@code PixelCropTop}, {@code PixelCropBottom}, {@code PixelCropLeft} and
+     * {@code PixelCropRight}, in that order.
+     */
+    final long[] pixelCrop = new long[4];
+
+    /**
+     * The {@code DisplayWidth}, or {@code 0} when absent.
+     */
+    long displayWidth;
+
+    /**
+     * The {@code DisplayHeight}, or {@code 0} when absent.
+     */
+    long displayHeight;
+
+    /**
+     * The {@code DisplayUnit}: 0 pixels, 1 centimeters, 2 inches, 3 display aspect ratio, 4 unknown.
+     */
+    long displayUnit;
+
+    /**
+     * The {@code FlagInterlaced}: 0 undetermined, 1 interlaced, 2 progressive.
+     */
+    long flagInterlaced;
+
+    /**
+     * The {@code FieldOrder}, 2 (undetermined) unless declared.
+     */
+    long fieldOrder = 2;
 
     /**
      * The color description of the {@code Color} element, or {@code null}.
@@ -241,13 +262,21 @@ final class MatroskaTrackEntry {
      * @param video the element data
      */
     private void parseVideo(EbmlCursor video) {
-        // TODO: read DisplayWidth and DisplayHeight (the display aspect ratio) once VideoTrack can carry it
         while (video.hasMore()) {
             var element = video.next();
             var body = element.payload();
             switch ((int) element.id()) {
                 case EbmlIds.PIXEL_WIDTH -> pixelWidth = body.unsigned();
                 case EbmlIds.PIXEL_HEIGHT -> pixelHeight = body.unsigned();
+                case EbmlIds.PIXEL_CROP_TOP -> pixelCrop[0] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_BOTTOM -> pixelCrop[1] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_LEFT -> pixelCrop[2] = body.unsigned();
+                case EbmlIds.PIXEL_CROP_RIGHT -> pixelCrop[3] = body.unsigned();
+                case EbmlIds.DISPLAY_WIDTH -> displayWidth = body.unsigned();
+                case EbmlIds.DISPLAY_HEIGHT -> displayHeight = body.unsigned();
+                case EbmlIds.DISPLAY_UNIT -> displayUnit = body.unsigned();
+                case EbmlIds.FLAG_INTERLACED -> flagInterlaced = body.unsigned();
+                case EbmlIds.FIELD_ORDER -> fieldOrder = body.unsigned();
                 case EbmlIds.COLOR -> color = parseColor(body);
                 case EbmlIds.PROJECTION -> {
                     while (body.hasMore()) {
@@ -265,6 +294,55 @@ final class MatroskaTrackEntry {
                 }
             }
         }
+    }
+
+    /**
+     * Returns the sample aspect ratio the display size declares (RFC 9559 section 5.1.4.1.28.12 to
+     * 5.1.4.1.28.14): the display size divided by the pixel size after the {@code PixelCrop}
+     * elements, whatever the unit of a known {@code DisplayUnit}.
+     *
+     * @return the ratio in lowest terms, or {@code null} when neither display dimension is declared, the unit is
+     * unknown, a dimension is zero or the crop leaves no picture
+     */
+    Rational sampleAspect() {
+        if ((displayWidth == 0 && displayHeight == 0) || displayUnit > 3) {
+            return null;
+        }
+        var width = pixelWidth - pixelCrop[2] - pixelCrop[3];
+        var height = pixelHeight - pixelCrop[0] - pixelCrop[1];
+        if (pixelWidth <= 0 || pixelHeight <= 0 || width <= 0 || height <= 0 || width > pixelWidth
+                || height > pixelHeight) {
+            return null;
+        }
+        var shownWidth = displayWidth != 0 ? displayWidth : displayUnit == 0 ? width : 0;
+        var shownHeight = displayHeight != 0 ? displayHeight : displayUnit == 0 ? height : 0;
+        if (shownWidth <= 0 || shownHeight <= 0) {
+            return null;
+        }
+        var numerator = BigInteger.valueOf(shownWidth).multiply(BigInteger.valueOf(height));
+        var denominator = BigInteger.valueOf(shownHeight).multiply(BigInteger.valueOf(width));
+        var gcd = numerator.gcd(denominator);
+        numerator = numerator.divide(gcd);
+        denominator = denominator.divide(gcd);
+        if (numerator.bitLength() > 63 || denominator.bitLength() > 63) {
+            return null;
+        }
+        return new Rational(numerator.longValue(), denominator.longValue());
+    }
+
+    /**
+     * Returns the scan {@code FlagInterlaced} and {@code FieldOrder} declare.
+     *
+     * @return the scan, or {@code null} when {@code FlagInterlaced} is undetermined or unknown
+     */
+    Interlacing interlacing() {
+        if (flagInterlaced == 2) {
+            return Interlacing.PROGRESSIVE;
+        }
+        if (flagInterlaced != 1) {
+            return null;
+        }
+        return fieldOrder == 0 ? Interlacing.INTERLACED : Interlacing.ofCode(fieldOrder);
     }
 
     /**
@@ -468,7 +546,7 @@ final class MatroskaTrackEntry {
      */
     Track toTrack(Rational segmentBase, double segmentDuration, MediaLimits limits) {
         var id = (int) number;
-        var code = languageBcp47 != null ? bibliographicCode(languageBcp47) : language;
+        var code = languageBcp47 != null ? Languages.bibliographicCode(languageBcp47) : language;
         var lang = code.isEmpty() || code.equals("und") ? Optional.<String>empty() : Optional.of(code);
         timeBase = segmentBase;
         if (type == TYPE_VIDEO || codecId.startsWith("V_")) {
@@ -481,7 +559,9 @@ final class MatroskaTrackEntry {
                 case "V_AV1" -> Codec.AV1;
                 case "V_MPEG4/ISO/SP", "V_MPEG4/ISO/ASP", "V_MPEG4/ISO/AP" -> Codec.MPEG4_PART2;
                 case "V_MJPEG" -> Codec.MJPEG;
+                case "V_JPEG2000" -> Codec.JPEG2000;
                 case "V_PRORES" -> Codec.PRORES;
+                case "V_THEORA" -> Codec.THEORA;
                 case "V_MS/VFW/FOURCC" -> videoFromBitmapInfo();
                 case "V_QUICKTIME" -> videoFromImageDescription();
                 default -> Codec.UNKNOWN_VIDEO;
@@ -494,13 +574,16 @@ final class MatroskaTrackEntry {
                 config = codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 16, 20)
                         : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
             }
+            if (codec == Codec.JPEG2000 && !Jp2Frames.isHeader(config)) {
+                config = null;
+            }
             var width = (int) Math.min(pixelWidth, Integer.MAX_VALUE);
             var height = (int) Math.min(pixelHeight, Integer.MAX_VALUE);
             if (width > 0 && height > 0) {
                 LimitChecks.checkPicture(limits, width, height);
             }
             var frameRate = defaultDuration > 0 ? Optional.of(new Rational(1_000_000_000L, defaultDuration).reduce()) : Optional.<Rational>empty();
-            return VideoTrack.builder().id(id).codec(codec).timeBase(timeBase)
+            var builder = VideoTrack.builder().id(id).codec(codec).timeBase(timeBase)
                     .duration(duration(segmentBase, segmentDuration))
                     .codecConfig(config)
                     .language(lang.orElse(null))
@@ -508,8 +591,16 @@ final class MatroskaTrackEntry {
                     .height(height)
                     .frameRate(frameRate.orElse(null))
                     .color(color)
-                    .orientation(orientation)
-                    .build();
+                    .orientation(orientation);
+            var aspect = sampleAspect();
+            if (aspect != null) {
+                builder.sampleAspectRatio(aspect);
+            }
+            var scan = interlacing();
+            if (scan != null) {
+                builder.interlacing(scan);
+            }
+            return builder.build();
         }
         if (type == TYPE_AUDIO || codecId.startsWith("A_")) {
             var config = codecPrivate;
@@ -526,6 +617,8 @@ final class MatroskaTrackEntry {
                 case "A_PCM/FLOAT/IEEE" -> bits == 64 ? Codec.PCM_F64LE : bits == 32 ? Codec.PCM_F32LE : Codec.UNKNOWN_AUDIO;
                 case "A_AC3", "A_AC3/BSID9", "A_AC3/BSID10" -> Codec.AC3;
                 case "A_EAC3" -> Codec.EAC3;
+                case "A_DTS", "A_DTS/EXPRESS", "A_DTS/LOSSLESS" -> Codec.DTS;
+                case "A_TRUEHD" -> Codec.TRUEHD;
                 case "A_ALAC" -> Codec.ALAC;
                 case "A_AMR/NB" -> Codec.AMR_NB;
                 case "A_AMR/WB" -> Codec.AMR_WB;
@@ -622,6 +715,7 @@ final class MatroskaTrackEntry {
             case 16 -> littleEndian ? Codec.PCM_S16LE : Codec.PCM_S16BE;
             case 24 -> littleEndian ? Codec.PCM_S24LE : Codec.PCM_S24BE;
             case 32 -> littleEndian ? Codec.PCM_S32LE : Codec.PCM_S32BE;
+            case 64 -> littleEndian ? Codec.PCM_S64LE : Codec.PCM_S64BE;
             default -> Codec.UNKNOWN_AUDIO;
         };
     }
@@ -640,7 +734,8 @@ final class MatroskaTrackEntry {
             case "H264", "X264", "AVC1", "DAVC" -> Codec.H264;
             case "HEVC", "H265", "HVC1" -> Codec.HEVC;
             case "XVID", "DIVX", "DX50", "FMP4", "MP4V" -> Codec.MPEG4_PART2;
-            case "MJPG" -> Codec.MJPEG;
+            case "MJPG", "AVRN", "LJPG", "JPGL", "AVDJ", "DMB1" -> Codec.MJPEG;
+            case "MJ2C", "MJP2", "LJ2C", "LJ2K", "IPJ2", "AVJ2" -> Codec.JPEG2000;
             case "H263", "S263" -> Codec.H263;
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
@@ -652,7 +747,7 @@ final class MatroskaTrackEntry {
 
     /**
      * Maps the sample entry type of a QuickTime image description codec private
-     * ({@code V_QUICKTIME}): ProRes and DNxHD.
+     * ({@code V_QUICKTIME}): ProRes, DNxHD and Motion JPEG 2000.
      *
      * @return the codec
      */
@@ -663,6 +758,7 @@ final class MatroskaTrackEntry {
         return switch (new String(codecPrivate, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1)) {
             case "apco", "apcs", "apcn", "apch", "ap4h", "ap4x" -> Codec.PRORES;
             case "AVdn", "AVdh" -> Codec.DNXHD;
+            case "mjp2" -> Codec.JPEG2000;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }
@@ -677,7 +773,7 @@ final class MatroskaTrackEntry {
             return Codec.UNKNOWN_AUDIO;
         }
         var format = WaveFormat.parse(codecPrivate, codecPrivate.length, false);
-        return WaveFormat.codec(format.tag(), format.bitsPerSample());
+        return format.codec();
     }
 
     /**
@@ -708,22 +804,5 @@ final class MatroskaTrackEntry {
         } catch (IllegalArgumentException exception) {
             return null;
         }
-    }
-
-    /**
-     * Converts a BCP 47 language tag to the ISO 639-2 bibliographic code {@link Track#language()}
-     * reports.
-     *
-     * @param tag the tag, such as {@code fr-CA}
-     * @return the three-letter code, or {@code und} when the tag names no language with one
-     */
-    private static String bibliographicCode(String tag) {
-        String code;
-        try {
-            code = Locale.forLanguageTag(tag).getISO3Language();
-        } catch (MissingResourceException exception) {
-            return "und";
-        }
-        return code.isEmpty() ? "und" : BIBLIOGRAPHIC.getOrDefault(code, code);
     }
 }
