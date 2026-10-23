@@ -5,6 +5,7 @@ import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.audio.ac3.internal.Ac3Crc;
 import com.github.auties00.smalt.audio.ac3.internal.ChannelMap;
 import com.github.auties00.smalt.audio.ac3.internal.DitherClearing;
 import com.github.auties00.smalt.audio.ac3.internal.StreamInspector;
@@ -25,8 +26,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.regex.Pattern;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -445,6 +449,129 @@ class Eac3EncoderTest {
             Oracle.assertDecodesCleanly(path70);
             assertTrue(Oracle.probe(path70).contains("\"channels\": 7"), Oracle.probe(path70));
         }
+
+        @ParameterizedTest(name = "custom channel map {0}")
+        @CsvSource({
+                "0x0060, SURROUND_DIRECT_LEFT SURROUND_DIRECT_RIGHT WIDE_LEFT WIDE_RIGHT, true",
+                "0x018A, BACK_CENTER TOP_CENTER TOP_FRONT_CENTER LOW_FREQUENCY_2, false",
+                "0x0014, TOP_FRONT_LEFT TOP_FRONT_RIGHT TOP_BACK_LEFT TOP_BACK_RIGHT, true",
+                "0x0600, FRONT_LEFT_OF_CENTER FRONT_RIGHT_OF_CENTER BACK_LEFT BACK_RIGHT, false"
+        })
+        @DisplayName("name the locations of a custom channel map, keep the core surrounds, and match ffmpeg's layout")
+        void customMap(String map, String locations, boolean ffmpegSides) {
+            var channelMap = Integer.decode(map);
+            var relabeled = Arrays.stream(locations.split(" ")).map(Speaker::valueOf).toList();
+            var layout = ChannelLayout.SURROUND_7_1;
+            var input = Ac3EncoderTest.signal(layout, 48000, 1);
+            var options = Eac3EncoderOptions.of(48000, layout).toBuilder().bitrate(1100000).blockSwitching(false).build();
+            var stream = remap(DitherClearing.clear(Ac3EncoderTest.concatenate(encode(options, input))), channelMap);
+            assertTrue(StreamInspector.frames(stream).stream().filter(frame -> frame.streamType() == 1)
+                    .allMatch(frame -> frame.channelMap() == channelMap));
+            var smalt = Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange());
+            var speakers = new ArrayList<>(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER,
+                    Speaker.LOW_FREQUENCY, Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT));
+            speakers.addAll(relabeled);
+            speakers.sort(null);
+            assertEquals(new ChannelLayout(speakers), smalt.layout());
+            // the dependent substream codes the side and rear pairs of the input, now under the map's locations
+            var coded = List.of(Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.BACK_LEFT, Speaker.BACK_RIGHT);
+            for (var ch = 0; ch < 4; ch++) {
+                var source = input.plane(layout.indexOf(coded.get(ch)));
+                var decoded = smalt.planes().get(smalt.layout().indexOf(relabeled.get(ch)));
+                var actual = Arrays.copyOfRange(decoded, 256, 256 + input.frames());
+                var snr = Ac3TestSupport.compare(source, actual)[0];
+                assertTrue(snr >= 30, relabeled.get(ch) + " carries " + coded.get(ch) + " at " + snr + " dB");
+            }
+            var core = Ac3TestSupport.decode(stream, Ac3DecoderOptions.fullRange().toBuilder().channelExtensions(false)
+                    .build());
+            for (var side : List.of(Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT)) {
+                assertArrayEquals(core.planes().get(core.layout().indexOf(side)),
+                        smalt.planes().get(smalt.layout().indexOf(side)), side + " is not the core surround");
+            }
+            Oracle.assume(Oracle.Tool.FFMPEG);
+            var path = write("custom-" + map + ".ec3", stream);
+            var probe = Oracle.probe(path);
+            assertEquals(smalt.layout().speakers(), ffmpegSpeakers(probe), probe);
+            var ffmpeg = Ac3TestSupport.ffmpeg(path, "-drc_scale", "0");
+            var agreement = Ac3TestSupport.channelSnr(ffmpeg, smalt.interleaved(), smalt.layout().channels());
+            System.out.println("custom map " + map + " agreement with ffmpeg per channel: " + Arrays.toString(agreement));
+            for (var ch = 0; ch < agreement.length; ch++) {
+                var speaker = smalt.layout().speakers().get(ch);
+                // ffmpeg 7.1 fills its side pair from the dependent substream instead of the core surrounds when
+                // the map has the back center or the front-of-center pair, duplicating channels
+                if (!ffmpegSides && (speaker == Speaker.SIDE_LEFT || speaker == Speaker.SIDE_RIGHT)) {
+                    continue;
+                }
+                assertTrue(agreement[ch] >= 90, speaker + ": " + Arrays.toString(agreement));
+            }
+        }
+    }
+
+    /**
+     * Rewrites the custom channel map of every dependent substream frame of a 7.1 stream, whose
+     * map names four locations, and recomputes the frame CRC.
+     */
+    static byte[] remap(byte[] stream, int channelMap) {
+        var out = stream.clone();
+        for (var position = 0; position < out.length; ) {
+            var bytes = 2 * (((out[position + 2] & 7) << 8 | out[position + 3] & 0xFF) + 1);
+            if ((out[position + 2] & 0xC0) >>> 6 == 1) {
+                // chanmape follows compre (bit 34 after the sync word) and its optional 8-bit compr
+                var compre = readBits(out, position * 8 + 16 + 34, 1);
+                var chanmape = position * 8 + 16 + 35 + 8 * compre;
+                assertEquals(1, readBits(out, chanmape, 1));
+                assertEquals(ChannelMap.EXTENSION_MAP, readBits(out, chanmape + 1, 16));
+                for (var i = 0; i < 16; i++) {
+                    var bit = chanmape + 1 + i;
+                    var mask = 0x80 >>> (bit & 7);
+                    out[bit >>> 3] = (byte) ((channelMap & 0x8000 >>> i) != 0 ? out[bit >>> 3] | mask
+                            : out[bit >>> 3] & ~mask);
+                }
+                var crc = Ac3Crc.compute(out, position + 2, bytes - 4);
+                out[position + bytes - 2] = (byte) (crc >>> 8);
+                out[position + bytes - 1] = (byte) crc;
+            }
+            position += bytes;
+        }
+        return out;
+    }
+
+    /** Reads an MSB-first bit field. */
+    static int readBits(byte[] data, int bit, int count) {
+        var value = 0;
+        for (var i = 0; i < count; i++) {
+            var at = bit + i;
+            value = value << 1 | (data[at >>> 3] >>> (7 - (at & 7)) & 1);
+        }
+        return value;
+    }
+
+    /** Returns the speakers of the channel layout ffprobe reports, in ffmpeg's channel order. */
+    static List<Speaker> ffmpegSpeakers(String probe) {
+        var matcher = Pattern.compile("\"channel_layout\": \"[^\"]*?\\(?([A-Z0-9+]+)\\)?\"")
+                .matcher(probe);
+        assertTrue(matcher.find(), probe);
+        var names = Map.ofEntries(Map.entry("FL", Speaker.FRONT_LEFT),
+                Map.entry("FR", Speaker.FRONT_RIGHT), Map.entry("FC", Speaker.FRONT_CENTER),
+                Map.entry("LFE", Speaker.LOW_FREQUENCY), Map.entry("BL", Speaker.BACK_LEFT),
+                Map.entry("BR", Speaker.BACK_RIGHT), Map.entry("FLC", Speaker.FRONT_LEFT_OF_CENTER),
+                Map.entry("FRC", Speaker.FRONT_RIGHT_OF_CENTER), Map.entry("BC", Speaker.BACK_CENTER),
+                Map.entry("SL", Speaker.SIDE_LEFT), Map.entry("SR", Speaker.SIDE_RIGHT),
+                Map.entry("TC", Speaker.TOP_CENTER), Map.entry("TFL", Speaker.TOP_FRONT_LEFT),
+                Map.entry("TFC", Speaker.TOP_FRONT_CENTER), Map.entry("TFR", Speaker.TOP_FRONT_RIGHT),
+                Map.entry("TBL", Speaker.TOP_BACK_LEFT), Map.entry("TBC", Speaker.TOP_BACK_CENTER),
+                Map.entry("TBR", Speaker.TOP_BACK_RIGHT), Map.entry("WL", Speaker.WIDE_LEFT),
+                Map.entry("WR", Speaker.WIDE_RIGHT), Map.entry("SDL", Speaker.SURROUND_DIRECT_LEFT),
+                Map.entry("SDR", Speaker.SURROUND_DIRECT_RIGHT),
+                Map.entry("LFE2", Speaker.LOW_FREQUENCY_2), Map.entry("TSL", Speaker.TOP_SIDE_LEFT),
+                Map.entry("TSR", Speaker.TOP_SIDE_RIGHT), Map.entry("BFC", Speaker.BOTTOM_FRONT_CENTER),
+                Map.entry("BFL", Speaker.BOTTOM_FRONT_LEFT),
+                Map.entry("BFR", Speaker.BOTTOM_FRONT_RIGHT));
+        return Arrays.stream(matcher.group(1).split("\\+")).map(name -> {
+            var speaker = names.get(name);
+            assertTrue(speaker != null, "unmapped ffmpeg channel " + name + " in " + probe);
+            return speaker;
+        }).toList();
     }
 
     @Nested

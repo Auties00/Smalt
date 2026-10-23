@@ -295,6 +295,17 @@ class H264DamageTest {
                     name, loss * 100, requireMarker, 100.0 * shown / slots, unflagged));
             assertTrue(shown > 0);
         }
+
+        // MR4_TANDBERG_C holds long-term references, whose staleness must be judged in stream
+        // order; CAPM3_Sony_D, CABA3_SVA_B and CVBS3_Sony_C have B pictures whose lists skip the
+        // stand-ins of lost reference pictures.
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.ValueSource(strings = {"MR4_TANDBERG_C", "CAPM3_Sony_D", "CABA3_SVA_B",
+                "CVBS3_Sony_C"})
+        @DisplayName("conformance streams missing whole pictures show only exact frames as intact, the same with four threads")
+        void droppedPictures(String name) throws IOException {
+            H264InterlacedTest.assertDroppedPictures(name);
+        }
     }
 
     @Nested
@@ -598,11 +609,15 @@ class H264DamageTest {
         @DisplayName("unsupported streams still raise Unsupported")
         void unsupported() {
             var file = Fixtures.ffmpeg("h264", List.of("-f", "lavfi", "-i", "testsrc2=size=64x64:rate=30:duration=0.1"),
-                    List.of("-c:v", "libx264", "-pix_fmt", "yuv422p", "-f", "h264"));
+                    List.of("-c:v", "libx264", "-pix_fmt", "yuv420p", "-f", "h264"));
             var units = H264TestStreams.accessUnits(H264TestStreams.nalUnits(Fixtures.read(file)));
+            // a slice data partition A (Extended profile) ahead of the first picture's slices
+            var first = new ArrayList<>(units.getFirst());
+            first.add(first.size() - 1, H264BitWriter.nal(2, 2, new H264BitWriter().ue(0).ue(2).ue(0).ue(0)
+                    .bits(0, 7).trailing()));
             try (var decoder = new H264Decoder(TRACK, H264DecoderOptions.forRealtime())) {
                 assertThrows(MediaException.Unsupported.class,
-                        () -> decoder.decode(packet(H264TestStreams.annexB(units.getFirst()), 0), (frame, damaged) -> {
+                        () -> decoder.decode(packet(H264TestStreams.annexB(first), 0), (frame, damaged) -> {
                         }));
             }
         }

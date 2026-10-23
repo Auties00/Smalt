@@ -22,6 +22,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -37,13 +38,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class H264RobustnessTest {
     private static final Duration LIMIT = Duration.ofMinutes(2);
 
-    record Source(String name, List<String> options) {
+    record Source(String name, List<String> options, String resource) {
+        Source(String name, List<String> options) {
+            this(name, options, null);
+        }
+
         @Override
         public String toString() {
             return name;
         }
 
         byte[] bytes() {
+            if (resource != null) {
+                if (resource.startsWith("chroma422/")) {
+                    return H264Chroma422Test.resource(resource.substring("chroma422/".length()));
+                }
+                if (resource.startsWith("chroma444/")) {
+                    return H264Chroma444Test.resource(resource.substring("chroma444/".length()));
+                }
+                return H264HighBitDepthTest.resource(resource);
+            }
             var output = new ArrayList<String>(List.of("-frames:v", "16", "-c:v", "libx264"));
             output.addAll(options);
             output.addAll(List.of("-f", "h264"));
@@ -61,7 +75,44 @@ class H264RobustnessTest {
                 new Source("high cabac bframes", List.of("-profile:v", "high", "-bf", "3", "-refs", "3", "-x264-params",
                         "keyint=8:weightp=2:b-pyramid=normal:direct=temporal:8x8dct=1")),
                 new Source("main cabac spatial", List.of("-profile:v", "main", "-bf", "2", "-refs", "4", "-x264-params",
-                        "keyint=8:direct=spatial"))
+                        "keyint=8:direct=spatial")),
+                new Source("high cabac mbaff bframes", List.of("-profile:v", "high", "-bf", "3", "-refs", "3", "-x264-params",
+                        "keyint=8:interlaced=1:tff=1:direct=temporal:weightb=1:8x8dct=1")),
+                new Source("main cavlc mbaff spatial", List.of("-profile:v", "main", "-bf", "2", "-x264-params",
+                        "keyint=8:interlaced=1:bff=1:cabac=0:direct=spatial:slices=2")),
+                new Source("high 10 cabac bframes", List.of("-pix_fmt", "yuv420p10le", "-bf", "3", "-refs", "3",
+                        "-x264-params", "keyint=8:weightp=2:b-pyramid=normal:direct=temporal:8x8dct=1:qp=12")),
+                new Source("high 10 cavlc mbaff slices", List.of("-pix_fmt", "yuv420p10le", "-bf", "2", "-x264-params",
+                        "keyint=8:interlaced=1:tff=1:cabac=0:slices=3:qp=4")),
+                new Source("high 4:2:2 cabac bframes", List.of("-pix_fmt", "yuv422p", "-bf", "3", "-refs", "3",
+                        "-x264-params", "keyint=8:weightp=2:b-pyramid=normal:direct=temporal:8x8dct=1")),
+                new Source("high 4:2:2 10 cavlc mbaff slices", List.of("-pix_fmt", "yuv422p10le", "-bf", "2",
+                        "-x264-params", "keyint=8:interlaced=1:tff=1:cabac=0:slices=3:qp=4")),
+                // JM streams holding I_PCM macroblocks of 12 and 14 bits in CABAC, CAVLC, CAVLC MBAFF and CABAC MBAFF
+                // slices
+                new Source("jm 8/12-bit cabac pcm", List.of(), "hd8-12-spatial"),
+                new Source("jm 12-bit cabac weighted", List.of(), "hd12-cabac-wp"),
+                new Source("jm 14-bit cavlc pcm", List.of(), "hd14-cavlc-implicit"),
+                new Source("jm 14-bit cavlc mbaff pcm", List.of(), "hd14-mbaff-slices"),
+                new Source("jm 14-bit cabac mbaff pcm", List.of(), "hd14-cabac-mbaff-pcm"),
+                // JM 4:2:2 streams holding I_PCM macroblocks of 8, 10 and 14 bits in frame and field macroblocks
+                new Source("jm 4:2:2 cabac mbaff pcm", List.of(), "chroma422/c8-cabac-mbaff-pcm"),
+                new Source("jm 4:2:2 cavlc mbaff constrained intra", List.of(), "chroma422/c8-cavlc-mbaff-cip"),
+                new Source("jm 4:2:2 10-bit cabac pcm", List.of(), "chroma422/c10-cabac-pcm"),
+                new Source("jm 4:2:2 14-bit cavlc mbaff slices", List.of(), "chroma422/c14-cavlc-mbaff-slices"),
+                new Source("high 4:4:4 cabac bframes", List.of("-pix_fmt", "yuv444p", "-bf", "3", "-refs", "3",
+                        "-x264-params", "keyint=8:weightp=2:b-pyramid=normal:direct=temporal:8x8dct=1")),
+                new Source("high 4:4:4 lossless cavlc mbaff", List.of("-pix_fmt", "yuv444p", "-bf", "2",
+                        "-x264-params", "keyint=8:qp=0:interlaced=1:tff=1:cabac=0:slices=2")),
+                new Source("high 4:4:4 lossless 4:2:0 cabac", List.of("-pix_fmt", "yuv420p", "-bf", "2",
+                        "-x264-params", "keyint=8:qp=0:8x8dct=1")),
+                // JM 4:4:4 streams with I_PCM macroblocks, separately coded color planes and lossless macroblocks
+                new Source("jm 4:4:4 cabac pcm", List.of(), "chroma444/c8-cabac-pcm"),
+                new Source("jm 4:4:4 10-bit cavlc pcm", List.of(), "chroma444/c10-cavlc-pcm"),
+                new Source("jm separate planes 10-bit cabac mbaff pcm", List.of(), "chroma444/m10-cabac-mbaff-pcm-sep"),
+                new Source("jm separate planes 14-bit cavlc fields", List.of(), "chroma444/m14-cavlc-fields-sep"),
+                new Source("jm lossless 4:2:2 10-bit cabac", List.of(), "chroma444/l10-422-cabac"),
+                new Source("jm lossless 4:4:4 cavlc pcm", List.of(), "chroma444/l8-444-pcm")
         );
     }
 
@@ -224,6 +275,25 @@ class H264RobustnessTest {
         });
     }
 
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sources")
+    @DisplayName("decodes a repeated picture as a new picture with several threads, as on one thread")
+    void repeatedPicture(Source source) {
+        // Each picture is sent twice in a row: the copy repeats the slice headers of the picture before it, so only
+        // the repeated first macroblock makes it a new picture, which the decoder must see whatever its threads.
+        var packets = new ArrayList<Packet>();
+        for (var packet : annexB(source.units())) {
+            packets.add(packet);
+            packets.add(packet);
+        }
+        var single = H264TestStreams.decode(H264TestStreams.track(Optional.empty(), Optional.empty()), packets, 1);
+        var threaded = H264TestStreams.decode(H264TestStreams.track(Optional.empty(), Optional.empty()), packets, 3);
+        assertEquals(single.size(), threaded.size(), "pictures decoded");
+        for (var i = 0; i < single.size(); i++) {
+            assertArrayEquals(single.get(i).samples(), threaded.get(i).samples(), "picture " + i);
+        }
+    }
+
     @ParameterizedTest(name = "{0}, {1} threads")
     @MethodSource("configurations")
     @DisplayName("survives garbage NAL units between valid ones")
@@ -273,7 +343,8 @@ class H264RobustnessTest {
 
     static Stream<H264ConformanceTest.Vector> conformanceVectors() {
         var names = List.of("FM1_FT_E", "FM2_SVA_C", "MR4_TANDBERG_C", "FRExt_MMCO4_Sony_B", "CAPM3_Sony_D", "HCBP2_HHI_A",
-                "CVSEFDFT3_Sony_E", "MR6_BT_B");
+                "CVSEFDFT3_Sony_E", "MR6_BT_B", "FI1_Sony_E", "CAMASL3_Sony_B", "CVMAQP3_Sony_D", "MR9_BT_B",
+                "CVMP_MOT_FLD_L30_B");
         return H264ConformanceTest.vectors().stream().filter(vector -> names.contains(vector.name()));
     }
 
@@ -354,6 +425,43 @@ class H264RobustnessTest {
                 }
             }
         });
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("sources")
+    @DisplayName("repeated access units and slices decode with frame threads as on the calling thread")
+    void repeatedUnits(Source source) {
+        var units = source.units();
+        // the first access unit twice in a row (an IDR whose header repeats the previous picture's), then the
+        // stream with the second slice of every picture that has several repeated after it
+        var mutated = new ArrayList<List<byte[]>>();
+        mutated.add(units.getFirst());
+        for (var unit : units) {
+            var copy = new ArrayList<byte[]>(unit);
+            var slices = new ArrayList<Integer>();
+            for (var i = 0; i < copy.size(); i++) {
+                var type = copy.get(i)[0] & 0x1F;
+                if (type == 1 || type == 5) {
+                    slices.add(i);
+                }
+            }
+            if (slices.size() > 1) {
+                copy.add(slices.get(1) + 1, copy.get(slices.get(1)));
+            }
+            mutated.add(copy);
+        }
+        var packets = annexB(mutated);
+        var track = H264TestStreams.track(Optional.empty(), Optional.empty());
+        var expected = H264TestStreams.decode(track, packets, 1);
+        assertTrue(expected.size() > units.size(), "the repeated IDR is a picture of its own");
+        for (var threads : new int[]{2, 4}) {
+            var actual = H264TestStreams.decode(track, packets, threads);
+            assertEquals(expected.size(), actual.size(), "frames with " + threads + " threads");
+            for (var i = 0; i < expected.size(); i++) {
+                assertArrayEquals(expected.get(i).samples(), actual.get(i).samples(),
+                        "frame " + i + " with " + threads + " threads");
+            }
+        }
     }
 
     @Test

@@ -5,7 +5,9 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.internal.zlib.ZlibInflater;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
+import com.github.auties00.smalt.image.jpeg.internal.JpegLsDecoder;
 import com.github.auties00.smalt.image.jpeg.internal.LosslessJpeg;
+import com.github.auties00.smalt.image.jpeg.internal.LosslessSamples;
 import com.github.auties00.smalt.image.jxl.JxlDecoder;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.tiff.internal.Predictor;
@@ -17,7 +19,8 @@ import java.util.zip.DataFormatException;
 
 /**
  * Reads the sensor samples a TIFF directory stores in strips or tiles, with the compressions and
- * predictors of TIFF 6.0 and DNG: none, lossless JPEG (7), Deflate (8), lossy JPEG (34892) and JPEG
+ * predictors of TIFF 6.0 and DNG: none, lossless JPEG (7, also JPEG-LS codestreams in its place), Deflate (8),
+ * lossy JPEG (34892) and JPEG
  * XL (52546, DNG 1.7, decoded by {@link JxlDecoder}), with the integer predictors (2, and DNG's
  * 34892 and 34893, which predict from 2 and 4 pixels back) on integer samples and the
  * floating-point predictors (3, and DNG's 34894 and 34895) on floating-point samples.
@@ -248,12 +251,17 @@ final class TiffSamples {
         if (blockWidth <= 0 || blockHeight <= 0) {
             throw new MediaException.Malformed("raw image blocks of " + blockWidth + "x" + blockHeight);
         }
-        var across = (width + blockWidth - 1) / blockWidth;
-        var down = (height + blockHeight - 1) / blockHeight;
-        if ((long) across * down > offsets.length) {
-            throw new MediaException.Malformed("raw image declares " + offsets.length + " blocks for "
-                    + (long) across * down);
+        if (width <= 0 || height <= 0) {
+            throw new MediaException.Malformed("raw image of " + width + "x" + height);
         }
+        var blocksAcross = (width + (long) blockWidth - 1) / blockWidth;
+        var blocksDown = (height + (long) blockHeight - 1) / blockHeight;
+        if (blocksAcross * blocksDown > offsets.length) {
+            throw new MediaException.Malformed("raw image declares " + offsets.length + " blocks for "
+                    + blocksAcross * blocksDown);
+        }
+        var across = (int) blocksAcross;
+        var down = (int) blocksDown;
         var base = ifd.reader().base();
         var size = ifd.reader().size();
         var blocks = new Block[across * down];
@@ -321,7 +329,7 @@ final class TiffSamples {
         var data = new byte[(int) block.length];
         source.readFully(block.offset, data, 0, data.length);
         switch (compression) {
-            case 7 -> losslessJpeg(data, block, plane);
+            case 7 -> losslessJpeg(data, block, plane, limits);
             case COMPRESSION_LOSSY_JPEG -> lossyJpeg(data, block, plane, limits);
             case COMPRESSION_JPEG_XL -> jpegXl(data, block, plane, bits, floating, limits);
             default -> {
@@ -521,7 +529,7 @@ final class TiffSamples {
             return mantissa != 0 ? Float.NaN : sign != 0 ? Float.NEGATIVE_INFINITY : Float.POSITIVE_INFINITY;
         }
         if (exponent == 0) {
-            var value = mantissa / 65536.0f * (float) Math.pow(2, -62);
+            var value = mantissa / 65536.0f * (float) StrictMath.pow(2, -62);
             return sign != 0 ? -value : value;
         }
         return Float.intBitsToFloat((sign << 31) | ((exponent - 64 + 127) << 23) | (mantissa << 7));
@@ -530,18 +538,45 @@ final class TiffSamples {
     /**
      * Decodes a lossless JPEG block, laying its samples out in the block's raster order.
      *
+     * <p>A block holding a JPEG-LS codestream ({@code SOF55}) instead, as DICOM allows where it allows lossless
+     * JPEG, decodes through the JPEG-LS decoder the same way.
+     *
      * @param data the block bytes
      * @param block the strip or tile the samples belong to
      * @param plane the plane receiving the samples
+     * @param limits the resource bounds, which the frame size the JPEG declares must respect
      */
-    private static void losslessJpeg(byte[] data, Block block, SensorPlane plane) {
-        var jpeg = new LosslessJpeg(data, 0, data.length);
+    private static void losslessJpeg(byte[] data, Block block, SensorPlane plane, MediaLimits limits) {
+        LosslessSamples jpeg;
+        int width;
+        int height;
+        int components;
+        if (JpegLsDecoder.isJpegLs(data, 0, data.length)) {
+            var jpegLs = new JpegLsDecoder(data, 0, data.length, limits);
+            if (!jpegLs.fullResolution()) {
+                throw new MediaException.Unsupported("dng jpeg-ls subsampled",
+                        "JPEG-LS raw blocks of subsampled components are not supported");
+            }
+            jpeg = jpegLs;
+            width = jpegLs.width();
+            height = jpegLs.height();
+            components = jpegLs.outputComponents();
+        } else {
+            var lossless = new LosslessJpeg(data, 0, data.length);
+            jpeg = lossless;
+            width = lossless.width();
+            height = lossless.height();
+            components = lossless.components();
+        }
+        // the decoder runs over every sample the frame header declares, so a huge declared frame costs time
+        // although the block keeps only its own samples
+        LimitChecks.checkPicture(limits, width, height);
         var spp = plane.samplesPerPixel;
         var blockRow = (long) block.width * spp;
-        var rowSamples = (long) jpeg.width() * jpeg.components();
-        if (rowSamples * jpeg.height() < blockRow * block.height) {
-            throw new MediaException.Malformed("lossless JPEG of " + jpeg.width() + "x" + jpeg.height() + "x"
-                    + jpeg.components() + " is smaller than its " + block.width + "x" + block.height + " block");
+        var rowSamples = (long) width * components;
+        if (rowSamples * height < blockRow * block.height) {
+            throw new MediaException.Malformed("lossless JPEG of " + width + "x" + height + "x"
+                    + components + " is smaller than its " + block.width + "x" + block.height + " block");
         }
         var out = plane.integers;
         var limitRows = Math.min(block.height, plane.height - block.y);

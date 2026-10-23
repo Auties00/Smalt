@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.audio.opus.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
@@ -20,7 +20,7 @@ class AnalysisKernelsTest {
     @ValueSource(ints = {1, 2, 3, 4, 5, 6, 7, 8})
     @DisplayName("tonalityBins matches the scalar kernel bit for bit")
     void tonalityBins(int seed) {
-        Assumptions.assumeTrue(Simd.ENABLED, "Vector API not enabled");
+        Skip.unlessVector(Simd.ENABLED);
         var random = new Random(seed);
         var input = new float[4][240];
         var state = new float[3][240];

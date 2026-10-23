@@ -42,7 +42,7 @@ final class Mp3AnalysisFilterbank {
         }
         for (var n = 0; n < 32; n++) {
             for (var k = 0; k < 32; k++) {
-                MATRIX[n * 32 + k] = (float) Math.cos((2 * k + 1) * n * Math.PI / 64);
+                MATRIX[n * 32 + k] = (float) StrictMath.cos((2 * k + 1) * n * Math.PI / 64);
             }
         }
     }
