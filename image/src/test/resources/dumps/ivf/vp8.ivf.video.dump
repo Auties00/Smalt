@@ -1,0 +1,40 @@
+# video decode dump of ivf/vp8.ivf; regenerate with -Dsmalt.test.updateDumps=true
+format IVF
+duration 2000000
+seekable true
+track 0 VP8 160x120 timebase=1/15
+0 pts=0 dur=-1 key=true 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=200a2e1a u=270db742 v=fbc0a824
+1 pts=1 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=b0f63b32 u=2228427f v=daa6fbd2
+2 pts=2 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=6759f1be u=ae633ef9 v=8eefc11f
+3 pts=3 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=de54a796 u=c730d103 v=98d87ff2
+4 pts=4 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=d4eedf88 u=a8ee8ee4 v=c0f96f16
+5 pts=5 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=3e8da819 u=25a80c22 v=64f344a1
+6 pts=6 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=0c5a1597 u=a429839a v=cd24bc51
+7 pts=7 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=12ea2eb8 u=ed05af30 v=1fc2aecb
+8 pts=8 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e6989b8f u=e30c235d v=e95e686e
+9 pts=9 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f0174975 u=0529b928 v=b1ef24ec
+10 pts=10 dur=-1 key=true 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8d044373 u=167e102c v=11bfbd73
+11 pts=11 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f1661ef3 u=7b51d11a v=08198b4f
+12 pts=12 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=e147aa03 u=1fa8cc25 v=e701a336
+13 pts=13 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=b35b6819 u=bdd5eb82 v=5af2486d
+14 pts=14 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2f627b94 u=7e263c9b v=6611b0c1
+15 pts=15 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=54b35de9 u=95181693 v=cff2dfb7
+16 pts=16 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=5bc92071 u=72da38ed v=e0c36a9a
+17 pts=17 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=df918def u=562ff39a v=5ce5ff88
+18 pts=18 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=fd72ba8f u=57d44a86 v=e250cf52
+19 pts=19 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=29a2b698 u=1745678e v=27a5a39f
+20 pts=20 dur=-1 key=true 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=4b8091eb u=45c6034c v=9b37697c
+21 pts=21 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7680302e u=14350f3d v=c453de2a
+22 pts=22 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=864eeaa9 u=73ef1e11 v=2c6ecf43
+23 pts=23 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=33ecb99b u=cc74e150 v=20132a1a
+24 pts=24 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=66275d94 u=ec7f9ed0 v=d23b36c0
+25 pts=25 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=a7a4ab58 u=4713ceda v=2f7e4fbe
+26 pts=26 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=37b15248 u=9054205a v=06700dca
+27 pts=27 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=5d64ab68 u=e7163ae6 v=9a1a371f
+28 pts=28 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=853fbbd9 u=6d0e4627 v=c7d1ebc5
+29 pts=29 dur=-1 key=false 160x120 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=41638a2f u=e975d69b v=0bf2db7f
+seek 0: @0
+seek 666666: @9
+seek 1333333: @19
+seek 2000000: end
+seek -1000000: @0

@@ -206,11 +206,11 @@ final class Prober {
      * Returns whether a video track lacks a configuration record that describes it.
      *
      * @param track a video track
-     * @return {@code true} for VP8, ProRes and DNxHD tracks, and VP9 and AV1 tracks without one
+     * @return {@code true} for VP8, ProRes, DNxHD and Motion JPEG 2000 tracks, and VP9 and AV1 tracks without one
      */
     private static boolean needsKeyFrame(VideoTrack track) {
         return switch (track.codec()) {
-            case VP8, PRORES, DNXHD -> true;
+            case VP8, PRORES, DNXHD, JPEG2000 -> true;
             case VP9, AV1 -> track.codecConfig().isEmpty();
             default -> false;
         };
@@ -233,14 +233,16 @@ final class Prober {
         var bitDepth = 0;
         ChromaFormat chroma = null;
         ColorInfo color = track.color().orElse(null);
-        Rational sar = null;
+        var sar = track.sampleAspectRatio().orElse(null);
         Rational frameRate = track.frameRate().orElse(null);
         if (info != null) {
             profile = info.profile();
             level = info.level();
             bitDepth = info.bitDepth();
             chroma = info.chroma();
-            sar = info.sampleAspect();
+            if (sar == null && info.sampleAspect() != null) {
+                sar = info.sampleAspect().reduce();
+            }
             if (color == null) {
                 color = info.color();
             }
@@ -298,6 +300,18 @@ final class Prober {
                         }
                     }
                 }
+                case JPEG2000 -> {
+                    var header = IntraFrameHeaders.jpeg2000(keyFrame, track.codecConfig().orElse(null));
+                    if (header != null) {
+                        profile = header.profile();
+                        bitDepth = header.bitDepth();
+                        chroma = header.chroma();
+                        if (width <= 0 || height <= 0) {
+                            width = header.width();
+                            height = header.height();
+                        }
+                    }
+                }
                 case PRORES, DNXHD -> {
                     var header = track.codec() == Codec.PRORES
                             ? IntraFrameHeaders.prores(keyFrame, track.codecConfig().orElse(null))
@@ -322,7 +336,7 @@ final class Prober {
             }
         }
         return new VideoStreamInfo(fields, track.codec(), profile, level, width, height, track.orientation(), frameRate,
-                sar, color, bitDepth, chroma);
+                sar, color, bitDepth, chroma, track.interlacing().orElse(null));
     }
 
     /**

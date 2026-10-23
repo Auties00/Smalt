@@ -42,14 +42,16 @@ import java.util.zip.Deflater;
  * Scanlines are filtered as {@link ApngEncoderOptions#filter()} selects, as {@link PngEncoder}
  * filters them, and compressed at {@link ApngEncoderOptions#compressionLevel()} by the deflate
  * implementation {@code PngEncoder} uses, as one stream per frame, so the bytes of the image data
- * can differ from those {@code PngEncoder} writes for the same picture.
+ * can differ from those {@code PngEncoder} writes for the same picture. The color space chunks
+ * of {@link ApngEncoderOptions#colorProfile()} follow {@code IHDR}, before {@code acTL}.
  *
  * <p>The default image ({@code IDAT}) is the first frame, unless {@link #setFallbackImage} gives
  * one that decoders without APNG support show instead and APNG decoders skip. A frame identical
  * to the previous one is not coded: its delay is added to the previous frame's when the sum is
  * still a fraction of 16-bit terms. Fully transparent pixels are coded as transparent black, so
  * their color is not preserved; every other pixel round-trips exactly. An animation of a single
- * frame without a fallback image is written as a plain PNG.
+ * frame without a fallback image is written as a plain PNG, as {@code PngEncoder} chooses its
+ * format.
  *
  * <p>An encoder is single-use: add every frame, then call {@link #finish()} once. The color type
  * is known only after the last frame, so the changed rectangles are kept in memory until then;
@@ -295,7 +297,6 @@ public final class ApngEncoder {
      * @throws IllegalArgumentException if the frame size differs from the canvas size, the
      * duration is negative, or the delay exceeds 65535 seconds
      * @throws IllegalStateException if {@link #finish()} was called
-     * @throws MediaException.Unsupported if the frame's color matrix cannot be converted to RGB
      * @throws MediaException.LimitExceeded if encoding runs out of memory
      */
     public void addFrame(Picture frame, Duration duration) {
@@ -575,7 +576,8 @@ public final class ApngEncoder {
                 }
             }
             return PngEncoder.encode(picture, PngEncoderOptions.builder()
-                    .compressionLevel(options.compressionLevel()).filter(options.filter()).build());
+                    .compressionLevel(options.compressionLevel()).filter(options.filter())
+                    .colorProfile(options.colorProfile().orElse(null)).build());
         }
         int type;
         int[] blends;
@@ -763,7 +765,11 @@ public final class ApngEncoder {
         }
         var out = new PngChunkWriter((int) Math.min(Integer.MAX_VALUE - 16,
                 size + (hidden == null ? 0 : hidden.data.length)));
-        out.header(width, height, type, type == INDEXED ? colors : null, null);
+        out.header(width, height, 8, type, false);
+        out.colorSpace(options.colorProfile().orElse(null), null, null, null);
+        if (type == INDEXED) {
+            out.palette(colors);
+        }
         var actl = new byte[8];
         ByteArrays.put32be(actl, 0, coded.size());
         ByteArrays.put32be(actl, 4, options.loopCount());
