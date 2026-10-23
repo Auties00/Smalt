@@ -5,10 +5,7 @@ package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
-import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Picture;
-import com.github.auties00.smalt.image.Rgba16Picture;
-import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
@@ -28,8 +25,9 @@ import java.util.List;
  * Components have identifiers 1, 2 and 3 and use table 0 for luminance and table 1 for both
  * chrominance components. Quantizers are limited to 255, so every output is baseline.
  *
- * <p>A planar picture already in the target subsampling with full-range BT.601 samples is coded
- * as is; any other input is turned into full-resolution Y'CbCr rows, then downsampled. Samples
+ * <p>A 16-bit planar picture with full-range BT.601 samples is first reduced to 8 bits with
+ * {@link ImageOps#toEightBit(Yuv16Picture)}. A planar picture already in the target subsampling with full-range
+ * BT.601 samples is coded as is; any other input is turned into full-resolution Y'CbCr rows, then downsampled. Samples
  * outside the picture are filled as libjpeg fills them: rows and columns replicate the last
  * sample, chroma is downsampled from the edge-extended full-resolution rows, and MCU blocks
  * entirely outside a component become dummy blocks with zero AC coefficients and the previous
@@ -162,6 +160,26 @@ public final class JpegWriter {
     private final List<byte[]> iccSegments;
 
     /**
+     * The payload of the {@code APP0} segment after SOI, or {@code null} for none.
+     */
+    private final byte[] app0;
+
+    /**
+     * Whether the DQT segments are written.
+     */
+    private final boolean quantTables;
+
+    /**
+     * Whether the DHT segments are written.
+     */
+    private final boolean huffmanTables;
+
+    /**
+     * The most threads one call uses, or 0 for the shared pool's default share.
+     */
+    private final int threads;
+
+    /**
      * Whether the blocks are transformed a batch at a time by the Vector API kernel, rather than one
      * at a time by {@link #BLOCK_FDCT}; both give the same coefficients.
      *
@@ -184,14 +202,20 @@ public final class JpegWriter {
      * Prepares an encoder.
      *
      * @param picture the picture to encode; the alpha channel is ignored
-     * @param quality the quality, from 1 to 100
+     * @param lumaTable the luminance quantization table, natural order, each value from 1 to 255
+     * @param chromaTable the chrominance quantization table, natural order, each value from 1 to 255
      * @param format the target subsampling
      * @param restartInterval the restart interval in MCUs, or zero
      * @param iccProfile the ICC profile to embed, or {@code null}
+     * @param app0 the payload of the {@code APP0} segment after SOI, or {@code null} for none
+     * @param quantTables whether the DQT segments are written
+     * @param huffmanTables whether the DHT segments are written
+     * @param threads the most threads one call uses, or 0 for the shared pool's default share
      * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
      * @throws MediaException.LimitExceeded if the profile needs more than 255 segments
      */
-    private JpegWriter(Picture picture, int quality, ChromaFormat format, int restartInterval, byte[] iccProfile) {
+    private JpegWriter(Picture picture, int[] lumaTable, int[] chromaTable, ChromaFormat format, int restartInterval,
+                       byte[] iccProfile, byte[] app0, boolean quantTables, boolean huffmanTables, int threads) {
         this.width = picture.width();
         this.height = picture.height();
         if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
@@ -199,6 +223,10 @@ public final class JpegWriter {
                     + MAX_DIMENSION + " pixels per side");
         }
         this.restartInterval = restartInterval;
+        this.app0 = app0;
+        this.quantTables = quantTables;
+        this.huffmanTables = huffmanTables;
+        this.threads = threads;
         this.iccSegments = iccProfile == null ? List.of() : JpegIcc.segments(iccProfile);
         this.batched = Simd.ENABLED;
         this.fdct = batched ? VectorKernels.batchFdct() : null;
@@ -239,24 +267,19 @@ public final class JpegWriter {
             bandStride[c] = batched ? batches * BatchFdctKernel.LANES * 8 : blocksWide[c] * 8;
         }
         this.divisors = new QuantDivisors[components == 1 ? 1 : 2];
-        divisors[0] = new QuantDivisors(scaledTable(JpegTables.STD_LUMINANCE_QUANT, quality));
+        divisors[0] = new QuantDivisors(lumaTable);
         if (components == 3) {
-            divisors[1] = new QuantDivisors(scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality));
+            divisors[1] = new QuantDivisors(chromaTable);
         }
-        if (picture instanceof YuvPicture yuv && yuv.chromaFormat() == format && yuv.color().range() == ColorRange.FULL
-                && YccRows.FromOtherYuv.isBt601(yuv.color().matrix())) {
+        if (picture instanceof Yuv16Picture high && YccRows.isJpegYcc(high)) {
+            picture = ImageOps.toEightBit(high);
+        }
+        if (picture instanceof YuvPicture yuv && yuv.chromaFormat() == format && YccRows.isJpegYcc(yuv)) {
             this.planar = yuv;
             this.rows = null;
         } else {
             this.planar = null;
-            this.rows = switch (picture) {
-                case RgbaPicture rgba -> new YccRows.FromRgba(rgba, ColorKernel.INSTANCE);
-                case YuvPicture yuv when yuv.color().range() == ColorRange.FULL
-                        && YccRows.FromOtherYuv.isBt601(yuv.color().matrix()) -> new YccRows.FromYuv(yuv);
-                case YuvPicture yuv -> new YccRows.FromOtherYuv(yuv, ColorKernel.INSTANCE);
-                case Rgba16Picture high -> new YccRows.FromRgba(ImageOps.toEightBit(high), ColorKernel.INSTANCE);
-                case Yuv16Picture high -> new YccRows.FromOtherYuv(ImageOps.toEightBit(high), ColorKernel.INSTANCE);
-            };
+            this.rows = YccRows.of(picture);
         }
         this.out = new JpegBitWriter((int) Math.min(Integer.MAX_VALUE - 16, (long) width * height / 2 + 1024));
     }
@@ -272,13 +295,115 @@ public final class JpegWriter {
      * @param iccProfile the ICC profile written as {@code APP2 ICC_PROFILE} segments after the JFIF
      * segment, or {@code null} for none
      * @return the JPEG file
-     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side, or uses a
-     * color matrix with no conversion to BT.601
+     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
      * @throws MediaException.LimitExceeded if the profile needs more than 255 segments
      */
     public static byte[] encode(Picture picture, int quality, ChromaFormat format, boolean optimize, int restartInterval,
                                 byte[] iccProfile) {
-        return new JpegWriter(picture, quality, format, restartInterval, iccProfile).encode(optimize);
+        return encode(picture, scaledTable(JpegTables.STD_LUMINANCE_QUANT, quality),
+                scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), format, optimize, restartInterval, iccProfile,
+                JFIF);
+    }
+
+    /**
+     * Encodes a picture with given quantization tables and file header: the output of
+     * {@link #encode(Picture, int, ChromaFormat, boolean, int, byte[])} with these tables and another
+     * {@code APP0} payload.
+     *
+     * @param picture the picture; the alpha channel is ignored
+     * @param lumaTable the luminance quantization table, natural order, each value from 1 to 255
+     * @param chromaTable the chrominance quantization table, natural order, each value from 1 to 255
+     * @param format the target subsampling
+     * @param optimize whether to build optimal Huffman tables in a first pass
+     * @param restartInterval the restart interval in MCUs, or zero
+     * @param iccProfile the ICC profile written as {@code APP2 ICC_PROFILE} segments after the
+     * {@code APP0} segment, or {@code null} for none
+     * @param app0 the payload of the {@code APP0} segment after SOI
+     * @return the JPEG file
+     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
+     * @throws MediaException.LimitExceeded if the profile needs more than 255 segments
+     */
+    static byte[] encode(Picture picture, int[] lumaTable, int[] chromaTable, ChromaFormat format, boolean optimize,
+                         int restartInterval, byte[] iccProfile, byte[] app0) {
+        return new JpegWriter(picture, lumaTable, chromaTable, format, restartInterval, iccProfile, app0, true, true, 0)
+                .encode(optimize);
+    }
+
+    /**
+     * Encodes a picture as one Motion-JPEG image: the output of
+     * {@link #encode(Picture, int, ChromaFormat, boolean, int, byte[])} with another {@code APP0}
+     * payload in place of the JFIF one, optionally without its DHT segments, and with a cap on the
+     * threads.
+     *
+     * @param picture the picture; the alpha channel is ignored
+     * @param quality the quality, from 1 to 100, scaled as libjpeg scales it
+     * @param format the target subsampling
+     * @param optimize whether to build optimal Huffman tables in a first pass; {@code false} when
+     * {@code huffmanTables} is {@code false}
+     * @param restartInterval the restart interval in MCUs, or zero
+     * @param app0 the payload of the {@code APP0} segment after SOI, or {@code null} for the JFIF one
+     * @param huffmanTables whether the DHT segments are written; without them the stream relies on
+     * the tables of T.81 Annex K
+     * @param threads the most threads the call uses, or 0 for the shared pool's default share; the
+     * output does not depend on it
+     * @return the JPEG stream
+     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
+     */
+    public static byte[] encodeMotion(Picture picture, int quality, ChromaFormat format, boolean optimize,
+                                      int restartInterval, byte[] app0, boolean huffmanTables, int threads) {
+        return new JpegWriter(picture, scaledTable(JpegTables.STD_LUMINANCE_QUANT, quality),
+                scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), format, restartInterval, null,
+                app0 == null ? JFIF : app0, true, huffmanTables, threads).encode(optimize);
+    }
+
+    /**
+     * Encodes a picture as an abbreviated stream for a TIFF strip or tile (TIFF Technical Note 2): the output
+     * of {@link #encode(Picture, int, ChromaFormat, boolean, int, byte[])} without an {@code APP0} segment and
+     * without DQT segments, and with DHT segments only when the Huffman tables are optimized; the tables left
+     * out are those {@link #tables(int, ChromaFormat, boolean)} writes for the same quality and subsampling.
+     *
+     * @param picture the picture; the alpha channel is ignored
+     * @param quality the quality, from 1 to 100, scaled as libjpeg scales it
+     * @param format the target subsampling
+     * @param optimize whether to build optimal Huffman tables in a first pass and write them in the stream
+     * @param restartInterval the restart interval in MCUs, or zero
+     * @return the JPEG stream
+     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
+     */
+    public static byte[] encodeAbbreviated(Picture picture, int quality, ChromaFormat format, boolean optimize,
+                                           int restartInterval) {
+        return new JpegWriter(picture, scaledTable(JpegTables.STD_LUMINANCE_QUANT, quality),
+                scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), format, restartInterval, null, null, false,
+                optimize, 0).encode(optimize);
+    }
+
+    /**
+     * Writes the tables-only stream of a TIFF {@code JPEGTables} tag: SOI, the DQT segments of the quality
+     * (luminance, and chrominance unless the subsampling is monochrome), the DHT segments of T.81 Annex K when
+     * asked, and EOI.
+     *
+     * @param quality the quality, from 1 to 100, scaled as libjpeg scales it
+     * @param format the subsampling of the streams the tables serve
+     * @param huffman whether the DHT segments are written
+     * @return the stream
+     */
+    public static byte[] tables(int quality, ChromaFormat format, boolean huffman) {
+        var out = new JpegBitWriter(1024);
+        out.writeMarker(0xD8);
+        out.writeDqt(0, scaledTable(JpegTables.STD_LUMINANCE_QUANT, quality), false);
+        if (format.hasChroma()) {
+            out.writeDqt(1, scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), false);
+        }
+        if (huffman) {
+            out.writeDht(0, HuffmanSpec.STD_DC_LUMINANCE);
+            out.writeDht(0x10, HuffmanSpec.STD_AC_LUMINANCE);
+            if (format.hasChroma()) {
+                out.writeDht(1, HuffmanSpec.STD_DC_CHROMINANCE);
+                out.writeDht(0x11, HuffmanSpec.STD_AC_CHROMINANCE);
+            }
+        }
+        out.writeMarker(0xD9);
+        return out.toByteArray();
     }
 
     /**
@@ -317,7 +442,8 @@ public final class JpegWriter {
      */
     private byte[] encode(boolean optimize) {
         var perMcu = blocksPerMcu();
-        var bandCount = ParallelBands.bands(mcusHigh, (long) mcusWide * mcusHigh * perMcu * BLOCK_WORK);
+        var bands = ParallelBands.bands(mcusHigh, (long) mcusWide * mcusHigh * perMcu * BLOCK_WORK);
+        var bandCount = threads > 0 ? Math.min(bands, threads) : bands;
         var stores = new BlockStore[bandCount];
         ParallelBands.run(bandCount, band -> stores[band] = new BandEncoder().transform(
                 ParallelBands.start(band, bandCount, mcusHigh), ParallelBands.start(band + 1, bandCount, mcusHigh)));
@@ -568,16 +694,20 @@ public final class JpegWriter {
      */
     private void writeHeaders(HuffmanEncodingTable[] dc, HuffmanEncodingTable[] ac) {
         out.writeMarker(0xD8);
-        out.writeMarker(0xE0);
-        out.writeShort(2 + JFIF.length);
-        for (var b : JFIF) {
-            out.writeByte(b);
+        if (app0 != null) {
+            out.writeMarker(0xE0);
+            out.writeShort(2 + app0.length);
+            for (var b : app0) {
+                out.writeByte(b);
+            }
         }
         for (var segment : iccSegments) {
             out.writeBytes(segment);
         }
-        for (var t = 0; t < divisors.length; t++) {
-            out.writeDqt(t, divisors[t].table, false);
+        if (quantTables) {
+            for (var t = 0; t < divisors.length; t++) {
+                out.writeDqt(t, divisors[t].table, false);
+            }
         }
         out.writeMarker(0xC0);
         out.writeShort(8 + 3 * components);
@@ -590,9 +720,11 @@ public final class JpegWriter {
             out.writeByte((h[c] << 4) | v[c]);
             out.writeByte(c == 0 ? 0 : 1);
         }
-        for (var t = 0; t < dc.length; t++) {
-            out.writeDht(t, dc[t].spec);
-            out.writeDht(0x10 | t, ac[t].spec);
+        if (huffmanTables) {
+            for (var t = 0; t < dc.length; t++) {
+                out.writeDht(t, dc[t].spec);
+                out.writeDht(0x10 | t, ac[t].spec);
+            }
         }
         if (restartInterval != 0) {
             out.writeDri(restartInterval);

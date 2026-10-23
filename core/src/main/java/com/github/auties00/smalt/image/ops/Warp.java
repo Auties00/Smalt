@@ -153,6 +153,7 @@ final class Warp {
         var wx = new float[taps][count];
         var wy = new float[taps][count];
         var sums = new float[4][count];
+        var pixels = new int[taps][count];
         var weights = new float[4];
         var reach = taps / 2;
         for (var j = top; j < bottom; j++) {
@@ -188,14 +189,33 @@ final class Warp {
                 Arrays.fill(sum, 0);
             }
             for (var k = 0; k < taps; k++) {
+                for (var t = 0; t < taps; t++) {
+                    gather(padded, k * stride + t, base, pixels[t], count);
+                }
                 if (taps == 2) {
-                    kernel.accumulate2(padded, k * stride, base, wx[0], wx[1], wy[k], sums[0], sums[1], sums[2], sums[3], count);
+                    kernel.accumulate2(pixels[0], pixels[1], wx[0], wx[1], wy[k], sums[0], sums[1], sums[2], sums[3],
+                            count);
                 } else {
-                    kernel.accumulate4(padded, k * stride, base, wx[0], wx[1], wx[2], wx[3], wy[k], sums[0], sums[1], sums[2],
-                            sums[3], count);
+                    kernel.accumulate4(pixels[0], pixels[1], pixels[2], pixels[3], wx[0], wx[1], wx[2], wx[3], wy[k],
+                            sums[0], sums[1], sums[2], sums[3], count);
                 }
             }
             kernel.resolve(sums[0], sums[1], sums[2], sums[3], count, out.pixels(), j * out.stride());
+        }
+    }
+
+    /**
+     * Copies one tap of every pixel of a run out of the padded source.
+     *
+     * @param padded the padded packed source
+     * @param offset the offset of the tap from each pixel's base index
+     * @param base the index of each pixel's top-left tap
+     * @param pixels the destination, one packed pixel per output pixel
+     * @param count the number of pixels
+     */
+    private static void gather(int[] padded, int offset, int[] base, int[] pixels, int count) {
+        for (var i = 0; i < count; i++) {
+            pixels[i] = padded[base[i] + offset];
         }
     }
 
