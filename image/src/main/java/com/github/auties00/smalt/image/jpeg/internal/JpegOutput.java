@@ -4,10 +4,17 @@ package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Channel;
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelType;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.PixelLayout;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 
@@ -20,7 +27,14 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * is upsampled to {@link ChromaFormat#YUV444}. RGB, CMYK and YCCK frames become an opaque
  * {@link RgbaPicture}. CMYK samples are taken as stored inverted, the convention of Adobe
  * applications, so a pixel is {@code R = C * K / 255} (rounded) and likewise for G and B; YCCK is
- * first converted to that CMYK form.
+ * first converted to that CMYK form. The {@linkplain JpegPlanes#wide() wide} planes of a 12-bit
+ * gray, YCbCr or RGB frame become a {@link Yuv16Picture} of bit depth 12 or an
+ * {@link Rgba16Picture} through {@link #toWidePicture}. Frames of two or more than four components
+ * become channel pictures through {@link #toChannels} and {@link #toWideChannels}.
+ *
+ * <p>Subsampled components are upsampled as libjpeg-turbo upsamples them: with the triangle filter
+ * where it applies, and by replication at 1/8 size and for lossless frames, whose samples are thus
+ * kept exactly.
  *
  * @implNote This implementation follows libjpeg-turbo's {@code ycc_rgb_convert} tables,
  * {@code ycck_cmyk_convert} and {@code cmyk_to_rgb} for the color conversions.
@@ -58,7 +72,28 @@ public final class JpegOutput {
     private static final int[] CB_G = table(-0.34414, false, ONE_HALF);
 
     /**
-     * Builds one of libjpeg's {@code build_ycc_rgb_table} tables (jdcolor.c).
+     * The red contribution of each 12-bit Cr sample, {@code round(1.402 * (cr - 2048))}.
+     */
+    private static final int[] CR_R_12 = table(1.40200, true, 0, 4096);
+
+    /**
+     * The blue contribution of each 12-bit Cb sample, {@code round(1.772 * (cb - 2048))}.
+     */
+    private static final int[] CB_B_12 = table(1.77200, true, 0, 4096);
+
+    /**
+     * The green contribution of each 12-bit Cr sample in fixed point, {@code -0.71414 * (cr - 2048)}.
+     */
+    private static final int[] CR_G_12 = table(-0.71414, false, 0, 4096);
+
+    /**
+     * The green contribution of each 12-bit Cb sample in fixed point plus one half,
+     * {@code -0.34414 * (cb - 2048)}.
+     */
+    private static final int[] CB_G_12 = table(-0.34414, false, ONE_HALF, 4096);
+
+    /**
+     * Builds one of libjpeg's {@code build_ycc_rgb_table} tables (jdcolor.c) for 8-bit samples.
      *
      * @param factor the conversion factor applied to the centered chroma sample
      * @param round whether the entry is rounded to an integer, rather than kept in fixed point
@@ -66,10 +101,23 @@ public final class JpegOutput {
      * @return the 256 entries
      */
     private static int[] table(double factor, boolean round, int bias) {
-        var table = new int[256];
+        return table(factor, round, bias, 256);
+    }
+
+    /**
+     * Builds one of libjpeg's {@code build_ycc_rgb_table} tables (jdcolor.c).
+     *
+     * @param factor the conversion factor applied to the centered chroma sample
+     * @param round whether the entry is rounded to an integer, rather than kept in fixed point
+     * @param bias the constant added to a fixed-point entry
+     * @param samples the number of sample values, 256 or 4096; the center is half of it
+     * @return the entries, one per sample value
+     */
+    private static int[] table(double factor, boolean round, int bias, int samples) {
+        var table = new int[samples];
         var fixed = factor < 0 ? -fix(-factor) : fix(factor);
-        for (var i = 0; i < 256; i++) {
-            var x = i - 128;
+        for (var i = 0; i < samples; i++) {
+            var x = i - samples / 2;
             table[i] = round ? (fixed * x + ONE_HALF) >> SCALE_BITS : fixed * x + bias;
         }
         return table;
@@ -106,7 +154,188 @@ public final class JpegOutput {
             case RGB -> toRgba(planes, false, limits);
             case CMYK -> toRgba(planes, true, limits);
             case YCCK -> ycckToRgba(planes, limits);
+            case UNKNOWN -> toChannels(planes, rawLayout(planes.frame().components.length), limits);
         };
+    }
+
+    /**
+     * Returns the layout of the channel picture of a frame whose components have no known meaning:
+     * gray for the first component, then unspecified extra channels.
+     *
+     * @param count the number of components, positive
+     * @return the layout
+     */
+    public static PixelLayout rawLayout(int count) {
+        var layout = PixelLayout.GRAY;
+        for (var c = 1; c < count; c++) {
+            layout = layout.withChannel(Channel.of(ChannelType.UNSPECIFIED));
+        }
+        return layout;
+    }
+
+    /**
+     * Builds the channel picture of a frame from its 8-bit planes: every component at the picture
+     * resolution, in frame order, one channel each, with a tight stride.
+     *
+     * @param planes the decoded 8-bit planes
+     * @param layout the layout of the result, with one channel per component
+     * @param limits the resource bounds checked before every allocation
+     * @return the picture
+     * @throws IllegalArgumentException if the layout's channel count is not the component count
+     */
+    public static Channel8Picture toChannels(JpegPlanes planes, PixelLayout layout, MediaLimits limits) {
+        var count = planes.frame().components.length;
+        if (layout.count() != count) {
+            throw new IllegalArgumentException(layout + " does not have " + count + " channels");
+        }
+        var width = planes.width();
+        var height = planes.height();
+        LimitChecks.checkAllocation(limits, (long) width * height * count);
+        var picture = Channel8Picture.allocate(width, height, layout);
+        var pixels = picture.pixels();
+        for (var c = 0; c < count; c++) {
+            var plane = fullPlane(planes, c);
+            var stride = fullStride(planes, c);
+            for (var y = 0; y < height; y++) {
+                var in = y * stride;
+                var out = y * width * count + c;
+                for (var x = 0; x < width; x++) {
+                    pixels[out + x * count] = plane[in + x];
+                }
+            }
+        }
+        return picture;
+    }
+
+    /**
+     * Builds the 16-bit channel picture of a 12-bit frame from its wide planes, as
+     * {@link #toChannels} builds the 8-bit one, every sample rescaled as
+     * {@code round(v * 65535 / 4095)}.
+     *
+     * @param planes the {@linkplain JpegPlanes#wide() wide} planes
+     * @param layout the layout of the result, with one channel per component
+     * @param limits the resource bounds checked before every allocation
+     * @return the picture
+     * @throws IllegalArgumentException if the layout's channel count is not the component count
+     */
+    public static Channel16Picture toWideChannels(JpegPlanes planes, PixelLayout layout, MediaLimits limits) {
+        var frame = planes.frame();
+        var count = frame.components.length;
+        if (layout.count() != count) {
+            throw new IllegalArgumentException(layout + " does not have " + count + " channels");
+        }
+        var width = planes.width();
+        var height = planes.height();
+        LimitChecks.checkAllocation(limits, 2L * width * height * count);
+        var picture = Channel16Picture.allocate(width, height, layout);
+        var pixels = picture.pixels();
+        var sixteen = Idct12.SIXTEEN_BIT;
+        for (var c = 0; c < count; c++) {
+            var info = frame.components[c];
+            var direct = info.h == frame.hMax && info.v == frame.vMax;
+            var plane = direct ? planes.widePlane(c) : fullResolutionWide(planes, c);
+            var stride = direct ? planes.stride(c) : width;
+            for (var y = 0; y < height; y++) {
+                var in = y * stride;
+                var out = y * width * count + c;
+                for (var x = 0; x < width; x++) {
+                    pixels[out + x * count] = sixteen[plane[in + x]];
+                }
+            }
+        }
+        return picture;
+    }
+
+    /**
+     * Builds the picture of a 12-bit gray, YCbCr or RGB frame from its wide planes.
+     *
+     * <p>Gray and YCbCr frames become a {@link Yuv16Picture} of bit depth 12 with
+     * {@link ColorInfo#JPEG}, laid out as {@link #toYuv} lays out an 8-bit frame: the MCU-padded
+     * planes are handed out in their stored subsampling when it maps onto a {@link ChromaFormat},
+     * and upsampled to {@link ChromaFormat#YUV444} otherwise. RGB frames become an opaque
+     * {@link Rgba16Picture}, every sample rescaled as {@code round(v * 65535 / 4095)}.
+     *
+     * @param planes the {@linkplain JpegPlanes#wide() wide} planes
+     * @param colorSpace the frame's color space
+     * @param limits the resource bounds checked before every allocation
+     * @return the picture
+     * @throws MediaException.Unsupported if the color space is CMYK or YCCK
+     */
+    public static Picture toWidePicture(JpegPlanes planes, JpegColorSpace colorSpace, MediaLimits limits) {
+        var width = planes.width();
+        var height = planes.height();
+        var frame = planes.frame();
+        switch (colorSpace) {
+            case GRAY -> {
+                return Yuv16Picture.builder().size(width, height).chromaFormat(ChromaFormat.MONOCHROME).bitDepth(12)
+                        .color(ColorInfo.JPEG).luma(planes.widePlane(0), planes.stride(0)).build();
+            }
+            case YCBCR -> {
+                var luma = frame.components[0];
+                var format = directFormat(frame, luma, frame.components[1], frame.components[2]);
+                if (format != null) {
+                    return Yuv16Picture.builder().size(width, height).chromaFormat(format).bitDepth(12)
+                            .color(ColorInfo.JPEG)
+                            .luma(planes.widePlane(0), planes.stride(0))
+                            .chroma(planes.widePlane(1), planes.widePlane(2), planes.stride(1))
+                            .build();
+                }
+                LimitChecks.checkAllocation(limits, 6L * width * height);
+                var full = luma.h == frame.hMax && luma.v == frame.vMax;
+                var y = full ? planes.widePlane(0) : fullResolutionWide(planes, 0);
+                var u = fullResolutionWide(planes, 1);
+                var v = fullResolutionWide(planes, 2);
+                return Yuv16Picture.builder().size(width, height).chromaFormat(ChromaFormat.YUV444).bitDepth(12)
+                        .color(ColorInfo.JPEG)
+                        .luma(y, full ? planes.stride(0) : width)
+                        .chroma(u, v, width)
+                        .build();
+            }
+            case RGB -> {
+                LimitChecks.checkAllocation(limits, 8L * width * height);
+                var picture = Rgba16Picture.allocate(width, height, false);
+                var pixels = picture.pixels();
+                var stride = picture.stride();
+                var sixteen = Idct12.SIXTEEN_BIT;
+                for (var c = 0; c < 3; c++) {
+                    var info = frame.components[c];
+                    var direct = info.h == frame.hMax && info.v == frame.vMax;
+                    var plane = direct ? planes.widePlane(c) : fullResolutionWide(planes, c);
+                    var planeStride = direct ? planes.stride(c) : width;
+                    for (var y = 0; y < height; y++) {
+                        var in = y * planeStride;
+                        var out = y * stride + c;
+                        for (var x = 0; x < width; x++) {
+                            pixels[out + 4 * x] = sixteen[plane[in + x]];
+                        }
+                    }
+                }
+                for (var y = 0; y < height; y++) {
+                    var out = y * stride + 3;
+                    for (var x = 0; x < width; x++) {
+                        pixels[out + 4 * x] = (short) 0xFFFF;
+                    }
+                }
+                return picture;
+            }
+            default -> throw new MediaException.Unsupported("jpeg " + colorSpace.name().toLowerCase() + " color space",
+                    "a 12-bit JPEG coded as " + colorSpace + " has no 16-bit form");
+        }
+    }
+
+    /**
+     * Returns one 12-bit component at the picture resolution, upsampling it.
+     *
+     * @param planes the {@linkplain JpegPlanes#wide() wide} planes
+     * @param component the frame component index
+     * @return the samples with a tight stride equal to the picture width
+     */
+    public static short[] fullResolutionWide(JpegPlanes planes, int component) {
+        var frame = planes.frame();
+        var info = frame.components[component];
+        return Upsampler.upsample(planes.widePlane(component), planes.stride(component),
+                planes.componentWidth(component), planes.componentHeight(component), info.h, info.v,
+                frame.hMax, frame.vMax, planes.width(), planes.height(), fancy(planes));
     }
 
     /**
@@ -168,7 +397,7 @@ public final class JpegOutput {
      * @param cr the Cr component
      * @return the matching format, or {@code null} when the planes need upsampling
      */
-    private static ChromaFormat directFormat(JpegFrame frame, JpegComponent luma, JpegComponent cb, JpegComponent cr) {
+    static ChromaFormat directFormat(JpegFrame frame, JpegComponent luma, JpegComponent cb, JpegComponent cr) {
         if (luma.h != frame.hMax || luma.v != frame.vMax || cb.h != cr.h || cb.v != cr.v) {
             return null;
         }
@@ -201,7 +430,18 @@ public final class JpegOutput {
         var info = frame.components[component];
         return Upsampler.upsample(planes.plane(component), planes.stride(component),
                 planes.componentWidth(component), planes.componentHeight(component), info.h, info.v,
-                frame.hMax, frame.vMax, planes.width(), planes.height(), planes.scaleShift() < 3);
+                frame.hMax, frame.vMax, planes.width(), planes.height(), fancy(planes));
+    }
+
+    /**
+     * Returns whether the planes may be upsampled with the triangle filter: not at 1/8 size and not
+     * for a lossless frame.
+     *
+     * @param planes the decoded planes
+     * @return whether the triangle filter may be used
+     */
+    private static boolean fancy(JpegPlanes planes) {
+        return planes.scaleShift() < 3 && !planes.frame().lossless();
     }
 
     /**
@@ -397,6 +637,31 @@ public final class JpegOutput {
         var g = clamp(luma + ((CB_G[cb] + CR_G[cr]) >> SCALE_BITS));
         var b = clamp(luma + CB_B[cb]);
         return (r << 16) | (g << 8) | b;
+    }
+
+    /**
+     * Converts one 12-bit YCbCr sample to 12-bit RGB with libjpeg's 12-bit tables.
+     *
+     * @param luma the Y sample, from 0 to 4095
+     * @param cb the Cb sample, from 0 to 4095
+     * @param cr the Cr sample, from 0 to 4095
+     * @return the pixel packed as {@code (r << 24) | (g << 12) | b}, 12 bits each
+     */
+    public static long yccToRgb12(int luma, int cb, int cr) {
+        var r = clamp12(luma + CR_R_12[cr]);
+        var g = clamp12(luma + ((CB_G_12[cb] + CR_G_12[cr]) >> SCALE_BITS));
+        var b = clamp12(luma + CB_B_12[cb]);
+        return ((long) r << 24) | ((long) g << 12) | b;
+    }
+
+    /**
+     * Clamps a value to the 12-bit sample range.
+     *
+     * @param value the number, possibly out of range
+     * @return the value limited to 0..4095
+     */
+    private static int clamp12(int value) {
+        return value < 0 ? 0 : Math.min(value, Idct12.MAX_SAMPLE);
     }
 
     /**

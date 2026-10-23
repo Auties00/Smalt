@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.h264.encoder.internal;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
 import com.github.auties00.smalt.video.h264.internal.H264Tables;
 import org.junit.jupiter.api.BeforeAll;
@@ -16,7 +17,6 @@ import java.util.Random;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Checks every Vector API kernel against its scalar twin on randomized input, including extreme
@@ -27,7 +27,7 @@ class SimdEquivalenceTest {
 
     @BeforeAll
     static void requireVectors() {
-        assumeTrue(Simd.ENABLED, "the Vector API is not enabled");
+        Skip.unlessVector(Simd.ENABLED);
     }
 
     private static byte[] samples(int length, int mode) {

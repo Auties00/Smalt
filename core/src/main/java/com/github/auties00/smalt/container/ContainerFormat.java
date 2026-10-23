@@ -1,14 +1,17 @@
 package com.github.auties00.smalt.container;
 
 /**
- * Enumerates the container formats this module can recognize.
+ * Enumerates the container formats this module can recognize or write.
+ *
+ * <p>Every constant is recognized by {@link Containers#detect(com.github.auties00.smalt.io.MediaSource)} except the
+ * elementary video streams {@link #H264}, {@link #HEVC} and {@link #AV1}, which are only written.
  *
  * <p>Constants may be added in minor releases as new formats are recognized, so a {@code switch}
  * over this type needs a {@code default} branch.
  */
 public enum ContainerFormat {
     /**
-     * ISO base media file format: MP4, MOV, M4A, M4V, 3GP and 3G2.
+     * ISO base media file format: MP4, MOV, M4A, M4V, 3GP, 3G2 and Motion JPEG 2000 (MJ2).
      */
     MP4,
 
@@ -18,7 +21,7 @@ public enum ContainerFormat {
     MATROSKA,
 
     /**
-     * Ogg, carrying Opus, Vorbis, FLAC or Speex.
+     * Ogg, carrying Opus, Vorbis, FLAC, Speex or Theora.
      */
     OGG,
 
@@ -81,5 +84,24 @@ public enum ContainerFormat {
     /**
      * A WebVTT ({@code .vtt}) text subtitle file.
      */
-    WEBVTT
+    WEBVTT,
+
+    /**
+     * An H.264 elementary stream in the Annex B byte stream format ({@code .h264}): start-code prefixed NAL
+     * units, with the parameter sets in front of every key frame. Written only.
+     */
+    H264,
+
+    /**
+     * An HEVC elementary stream in the Annex B byte stream format ({@code .h265}): start-code prefixed NAL
+     * units, with the parameter sets in front of every key frame. Written only.
+     */
+    HEVC,
+
+    /**
+     * An AV1 elementary stream in the low-overhead bitstream format of the AV1 specification, section 5
+     * ({@code .obu}): temporal units of OBUs with size fields, each starting with a temporal delimiter, with
+     * the sequence header in front of every key frame. Written only.
+     */
+    AV1
 }

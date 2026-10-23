@@ -8,6 +8,8 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.DoubleAudioBuffer;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -42,7 +44,10 @@ import java.util.function.Consumer;
  * center; five are 5.0 with back surrounds; six are 5.1; seven are 6.1 with a back center; eight
  * are 7.1 with front left and right of center. Samples are scaled to floats by
  * {@code 2^-(bitsPerSample - 1)}, so full scale maps to {@code [-1, 1)}; samples of up to 24 bits
- * are represented exactly, and wider samples are rounded to the nearest float.
+ * are represented exactly, and wider samples are rounded to the nearest float. The decoded integers
+ * themselves, bit for bit at every sample size, are the blocks of
+ * {@link #decodeIntegers(Packet, Consumer)}, and {@link #decodeDoubles(Packet, Consumer)} scales them
+ * to doubles exactly.
  *
  * <p>A packet with a reserved element, a nonzero reserved header field, a frame longer than the
  * configuration's frame length or residuals that run past the packet raises
@@ -217,6 +222,16 @@ public final class AlacDecoder implements AudioDecoder {
     private final AudioBuffer buffer;
 
     /**
+     * The integer output block, over {@link #samples}.
+     */
+    private final IntegerAudioBuffer integers;
+
+    /**
+     * The double output block, or {@code null} before the first double decode.
+     */
+    private DoubleAudioBuffer doubles;
+
+    /**
      * The number of samples per channel of the last packet.
      */
     private int lastFrames;
@@ -327,6 +342,7 @@ public final class AlacDecoder implements AudioDecoder {
         this.coefficientsV = new short[MAX_COEFFICIENTS];
         this.samples = new int[channels][frameLength];
         this.buffer = new AudioBuffer(layout, Math.max(sampleRate, 1), frameLength);
+        this.integers = new IntegerAudioBuffer(layout, Math.max(sampleRate, 1), bitDepth, samples, 0);
     }
 
     /**
@@ -372,13 +388,7 @@ public final class AlacDecoder implements AudioDecoder {
     public void decode(Packet packet, Consumer<AudioBuffer> output) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(output, "output");
-        try {
-            decodeFrame(packet.data());
-        } catch (MediaException exception) {
-            throw exception;
-        } catch (RuntimeException exception) {
-            throw new MediaException.Malformed("corrupt ALAC packet", exception);
-        }
+        decodePacket(packet);
         var scale = Math.scalb(1f, 1 - bitDepth);
         var frames = lastFrames;
         for (var c = 0; c < channels; c++) {
@@ -403,6 +413,103 @@ public final class AlacDecoder implements AudioDecoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsIntegerOutput() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the sample size of the configuration, from 4 to 32
+     */
+    @Override
+    public int bitsPerSample() {
+        return bitDepth;
+    }
+
+    @Override
+    public void decodeIntegers(Packet packet, Consumer<IntegerAudioBuffer> output) {
+        Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(output, "output");
+        decodePacket(packet);
+        integers.setFrames(lastFrames);
+        output.accept(integers);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Does nothing: an ALAC decoder buffers no samples between packets.
+     */
+    @Override
+    public void flushIntegers(Consumer<IntegerAudioBuffer> output) {
+        Objects.requireNonNull(output, "output");
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsDoubleOutput() {
+        return true;
+    }
+
+    @Override
+    public void decodeDoubles(Packet packet, Consumer<DoubleAudioBuffer> output) {
+        Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(output, "output");
+        decodePacket(packet);
+        if (doubles == null) {
+            doubles = new DoubleAudioBuffer(layout, Math.max(sampleRate, 1), frameLength);
+        }
+        var scale = Math.scalb(1.0, 1 - bitDepth);
+        var frames = lastFrames;
+        for (var c = 0; c < channels; c++) {
+            var source = samples[c];
+            var plane = doubles.plane(c);
+            for (var i = 0; i < frames; i++) {
+                plane[i] = source[i] * scale;
+            }
+        }
+        doubles.setFrames(frames);
+        output.accept(doubles);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Does nothing: an ALAC decoder buffers no samples between packets.
+     */
+    @Override
+    public void flushDoubles(Consumer<DoubleAudioBuffer> output) {
+        Objects.requireNonNull(output, "output");
+    }
+
+    /**
+     * Decodes one packet into {@link #samples}, wrapping unchecked failures.
+     *
+     * @param packet the packet to decode, one frame
+     * @throws MediaException.Malformed if the packet is corrupt
+     * @throws MediaException.Unsupported if it holds a 33-bit channel pair
+     */
+    private void decodePacket(Packet packet) {
+        try {
+            decodeFrame(packet.data());
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("corrupt ALAC packet", exception);
+        }
+    }
+
+    /**
      * Returns the integer samples of the last decoded packet, one array per output channel; a test
      * hook for checks defined over integer samples.
      *
@@ -412,15 +519,6 @@ public final class AlacDecoder implements AudioDecoder {
      */
     int[][] lastSamples() {
         return samples;
-    }
-
-    /**
-     * Returns the sample size of the stream; a test hook.
-     *
-     * @return the size in bits, as the configuration declares it
-     */
-    int bitsPerSample() {
-        return bitDepth;
     }
 
     /**

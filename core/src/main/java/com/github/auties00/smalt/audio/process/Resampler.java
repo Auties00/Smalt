@@ -357,7 +357,7 @@ public final class Resampler {
             return 1;
         }
         var pix = Math.PI * x;
-        return Math.sin(pix) / pix;
+        return StrictMath.sin(pix) / pix;
     }
 
     /**

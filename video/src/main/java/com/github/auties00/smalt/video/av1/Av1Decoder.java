@@ -260,6 +260,8 @@ public final class Av1Decoder implements VideoDecoder {
     private void emit(Consumer<VideoFrame> output) {
         try {
             for (var p : shown) {
+                // TODO: the 8-bit mode rounds YCgCo-Re and YCgCo-Ro samples, keeping only 6 or 7 bits of R'G'B';
+                // such frames could be output as 8-bit RGBA, as the AVIF decoder does
                 Picture frame = highBitDepth && p.bpc > 8 ? convertWide(p) : convert(p);
                 var keyframe = p.frameHdr.frameType == FrameHeader.KEY;
                 output.accept(new VideoFrame(frame, p.pts, p.duration > 0 ? p.duration : Track.UNKNOWN_DURATION,
