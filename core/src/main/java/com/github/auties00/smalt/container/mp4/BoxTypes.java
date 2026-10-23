@@ -276,6 +276,12 @@ final class BoxTypes {
     static final int HVCC = 0x68766343;
 
     /**
+     * The layered HEVC decoder configuration box ({@code lhvC}, ISO/IEC 14496-15 clause 9.6.3),
+     * holding the parameter sets of the layers above the base layer.
+     */
+    static final int LHVC = 0x6C687643;
+
+    /**
      * The VP8 sample entry ({@code vp08}).
      */
     static final int VP08 = 0x76703038;
@@ -595,6 +601,16 @@ final class BoxTypes {
      * The subtitle handler type ({@code sbtl}).
      */
     static final int SBTL = 0x7362746C;
+
+    /**
+     * The ISO subtitle handler type ({@code subt}).
+     */
+    static final int SUBT = 0x73756274;
+
+    /**
+     * The subtitle media header box ({@code sthd}).
+     */
+    static final int STHD = 0x73746864;
 
     /**
      * The video media header box ({@code vmhd}).

@@ -87,6 +87,12 @@ public final class H264SliceHeader {
     public H264Sps sps;
 
     /**
+     * The {@code colour_plane_id} of a slice of a picture whose color planes are coded
+     * separately: 0 for Y, 1 for Cb, 2 for Cr; 0 otherwise.
+     */
+    public int colorPlaneId;
+
+    /**
      * The {@code frame_num}.
      */
     public int frameNum;
@@ -341,8 +347,12 @@ public final class H264SliceHeader {
         this.nalUnitType = nalUnitType;
         this.nalRefIdc = nalRefIdc;
         this.idr = nalUnitType == H264Nal.IDR_SLICE;
+        colorPlaneId = 0;
         if (sps.separateColorPlane) {
-            reader.readBits(2);
+            colorPlaneId = reader.readBits(2);
+            if (colorPlaneId > 2) {
+                throw new MediaException.Malformed("colour_plane_id " + colorPlaneId + " out of range");
+            }
         }
         frameNum = reader.readBits(sps.log2MaxFrameNum);
         fieldPic = false;
@@ -608,6 +618,7 @@ public final class H264SliceHeader {
         ppsId = other.ppsId;
         pps = other.pps;
         sps = other.sps;
+        colorPlaneId = other.colorPlaneId;
         frameNum = other.frameNum;
         fieldPic = other.fieldPic;
         bottomField = other.bottomField;

@@ -2,11 +2,15 @@ package com.github.auties00.smalt.video.h264;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.internal.plane.Narrow;
 import com.github.auties00.smalt.internal.plane.Planes;
+import com.github.auties00.smalt.internal.sei.FilmGrainSynthesizer;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -25,11 +29,23 @@ import java.util.function.Consumer;
  * Decodes an ITU-T H.264 / MPEG-4 AVC video track.
  *
  * <p>The decoder implements the Baseline (flexible macroblock ordering and arbitrary slice order
- * included), Main and High profiles for progressive 8-bit 4:2:0 and 4:0:0 (monochrome) video:
- * CAVLC and CABAC, I, P and B slices, all partition sizes, weighted prediction, spatial and
- * temporal direct prediction, the 8x8 transform, scaling matrices, long-term references, every
- * memory management control operation, and the deblocking filter. Output is bit-exact with the
+ * included), Main, High, High 10, High 4:2:2 and High 4:4:4 Predictive profiles (with High 10
+ * Intra, High 4:2:2 Intra, High 4:4:4 Intra and CAVLC 4:4:4 Intra), for progressive and interlaced
+ * 4:2:0, 4:2:2, 4:4:4 and 4:0:0 (monochrome) video of 8 to 14 bits, with independent luma and
+ * chroma bit depths: CAVLC and CABAC, I, P and B slices, all partition sizes, I_PCM macroblocks,
+ * lossless macroblocks ({@code qpprime_y_zero_transform_bypass_flag}), weighted prediction, spatial
+ * and temporal direct prediction, the 8x8 transform, scaling matrices, long-term references, every
+ * memory management control operation, the deblocking filter, field pictures and
+ * macroblock-adaptive frame/field (MBAFF) frames. 4:4:4 streams may code their three color planes
+ * together or separately ({@code separate_colour_plane_flag}). Output is bit-exact with the
  * normative decoding process.
+ *
+ * <p>Interlaced content is output as frames: the two fields of a frame, coded as one frame
+ * picture or as two field pictures, are woven into one frame, which carries the timestamp of the
+ * packet in which its first field arrived and, when the two fields arrived in separate packets of
+ * known durations, the sum of those durations. A field whose frame never receives its other field
+ * is output as a frame whose missing field is mid-gray ({@code 1 << (d - 1)} at bit depth
+ * {@code d}).
  *
  * <p>Packet format follows the track: when {@link VideoTrack#codecConfig()} holds an
  * {@code AVCDecoderConfigurationRecord}, packets are NAL units prefixed by their big-endian
@@ -38,7 +54,17 @@ import java.util.function.Consumer;
  * packets are honored in both cases. A packet may hold any number of complete NAL units.
  *
  * <p>Frames reach the consumer in presentation order as {@link YuvPicture}s cropped by the
- * sequence's frame cropping, in {@link ChromaFormat#YUV420} or {@link ChromaFormat#MONOCHROME}.
+ * sequence's frame cropping, in {@link ChromaFormat#YUV420}, {@link ChromaFormat#YUV422},
+ * {@link ChromaFormat#YUV444} or {@link ChromaFormat#MONOCHROME}. The planes of a 4:4:4 stream
+ * coded as G, B and R (with {@code matrix_coefficients} 0) come out in that order, as Y, Cb and Cr;
+ * separately coded color planes all have the luma bit depth.
+ * Samples of streams deeper than 8 bits are rounded to 8 bits,
+ * {@code min((v + (1 << (d - 9))) >> (d - 8), 255)} for bit depth {@code d}, unless
+ * {@link H264DecoderOptions#highBitDepth()} is set, in which case they are handed out as
+ * {@link Yuv16Picture}s of the stream's bit depth: the luma depth for monochrome streams, the
+ * larger of the luma and chroma depths otherwise. When luma and chroma have different depths, the
+ * samples of the shallower component are scaled to that depth by a left shift; a component of 8
+ * bits in a deeper stream keeps its 8-bit samples when rounded.
  * Each frame carries the timestamp of the packet in which its picture's first slice arrived.
  * When that packet had no timestamp and the frame duration is known (from the packet, the
  * track's frame rate or the stream's VUI timing), the timestamp is derived from the previous
@@ -47,16 +73,27 @@ import java.util.function.Consumer;
  * leaves unspecified default to BT.709 for pictures wider than 1024 or taller than 576 samples
  * and to BT.601 (SMPTE 170M) otherwise, with limited range unless {@code video_full_range_flag}
  * is set; the chroma siting is the VUI's {@code chroma_sample_loc_type_top_field} when signaled,
- * and the mastering display and content light level come from the last SEI messages that carried
- * them. A frame is a keyframe when its picture is an IDR picture or an I picture carrying a
- * recovery point.
+ * the transfer function the one an alternative transfer characteristics SEI message of the coded
+ * video sequence prefers when present, and the mastering display and content light level come from
+ * the last SEI messages that carried them. A frame is a keyframe when its picture is an IDR picture
+ * or an I picture carrying a recovery point.
+ *
+ * <p>With {@link H264DecoderOptions#filmGrain()} set, the film grain a film grain characteristics
+ * SEI message describes (the frequency filtering model with additive blending) is added to the
+ * frames it applies to, before cropping; the samples are bit-exact with SMPTE RDD 5 for 8-bit 4:2:0
+ * frames, and other formats get the same grain extended to them. The display information of the
+ * picture timing ({@code pic_struct}), frame packing arrangement and display orientation SEI
+ * messages is reported in {@link VideoFrame#sideData()}; a frame woven from two field pictures
+ * reports the parity of the field shown first. Messages that persist (a repetition period above 0)
+ * apply to the frames output after them until a cancel, a later message of the same type or an IDR
+ * picture. A duration derived from the track's frame rate or the VUI timing is extended by the
+ * field periods {@code pic_struct} repeats: one and a half frame periods for the three-field
+ * structures, two for frame doubling and three for frame tripling.
  *
  * <p>Unsupported but valid streams raise {@link MediaException.Unsupported} naming the feature:
- * {@code "h264 interlaced"} (field pictures and MBAFF frames), {@code "h264 4:2:2"},
- * {@code "h264 4:4:4"}, {@code "h264 high bit depth"}, {@code "h264 lossless"},
- * {@code "h264 sp/si slices"} and {@code "h264 data partitioning"}. NAL units of the scalable
- * and multiview extensions and auxiliary pictures are skipped, so the base layer and primary
- * pictures decode. A corrupt slice raises {@link MediaException.Malformed} for its packet after
+ * {@code "h264 sp/si slices"} and {@code "h264 data partitioning"}. NAL
+ * units of the scalable and multiview extensions and auxiliary pictures are skipped, so the base
+ * layer and primary pictures decode. A corrupt slice raises {@link MediaException.Malformed} for its packet after
  * the rest of the packet was processed; the missing area is concealed from the previous frame
  * and decoding continues with the next packet. A stream that starts on a non-IDR picture is
  * decoded from its first I picture or recovery point. An exception the frame consumer throws
@@ -76,7 +113,10 @@ import java.util.function.Consumer;
  * reconstruction, because its packet was declared incomplete, a slice failed to decode,
  * macroblocks had to be concealed, a partition predicts from a damaged or missing picture
  * (including the stand-ins for pictures lost entirely, which show up as gaps in
- * {@code frame_num}), or its reference list modification names a picture that does not exist.
+ * {@code frame_num}), its reference list modification names a picture that does not exist, its
+ * B slice lists leave out a picture lost entirely, or it is made of fields and data was lost
+ * among or next to them, which may have carried one of its fields or changed which fields pair
+ * up.
  * Damage propagates only through the references partitions actually use, so the first picture
  * that predicts only from intact pictures, such as an IDR picture or a picture predicting from a
  * long-term reference kept for recovery, is intact again. {@link #keyframeNeeded()} tells the
@@ -87,11 +127,12 @@ import java.util.function.Consumer;
  * <p>A decoder with {@link H264DecoderOptions#forRealtime()} works in low-delay mode on the
  * calling thread: every packet must hold one whole access unit, whose picture is finished and
  * output before the decode call returns (at most one frame per packet, none when the access unit
- * carried no picture or only part of one that could not start). Baseline profile sequences never
- * reorder pictures, so their pictures are output at once even when the sequence parameter set
- * signals no reordering limit; other profiles keep the reordering the sequence signals (none for
- * a {@code bitstream_restriction} with {@code max_num_reorder_frames} 0 or picture order count
- * type 2).
+ * carried no picture or only part of one that could not start). The first field of a frame coded
+ * as two field pictures is output with the second one, or, when no second field follows, once
+ * the next picture starts. Baseline profile sequences never reorder pictures, so their pictures
+ * are output at once even when the sequence parameter set signals no reordering limit; other
+ * profiles keep the reordering the sequence signals (none for a {@code bitstream_restriction}
+ * with {@code max_num_reorder_frames} 0 or picture order count type 2).
  *
  * <p>Instances are not thread-safe.
  */
@@ -149,6 +190,12 @@ public final class H264Decoder implements VideoDecoder {
     private YuvPicture picture;
 
     /**
+     * The reusable output picture of streams deeper than 8 bits with
+     * {@link H264DecoderOptions#highBitDepth()}.
+     */
+    private Yuv16Picture widePicture;
+
+    /**
      * The timestamp of the last frame output, or {@link Packet#NO_TIMESTAMP}.
      */
     private long lastPts = Packet.NO_TIMESTAMP;
@@ -168,6 +215,21 @@ public final class H264Decoder implements VideoDecoder {
      * keeps its carrier thread.
      */
     private final ParallelBands.Operation operation = new ParallelBands.Operation();
+
+    /**
+     * The film grain renderer, created with the first frame that carries grain.
+     */
+    private FilmGrainSynthesizer grainSynthesizer;
+
+    /**
+     * The recycled 8-bit planes of frames with film grain, by component.
+     */
+    private final byte[][] grainPlanes = new byte[3][];
+
+    /**
+     * The recycled 16-bit planes of frames with film grain, by component.
+     */
+    private final short[][] grainWidePlanes = new short[3][];
 
     private boolean closed;
 
@@ -503,38 +565,84 @@ public final class H264Decoder implements VideoDecoder {
      * @param frame the engine's frame
      */
     private void emit(H264DecoderEngine.OutputFrame frame) {
+        if (frame.filmGrain() != null && options.filmGrain()) {
+            frame = withFilmGrain(frame);
+        }
         var sps = frame.sps();
         var width = sps.croppedWidth();
         var height = sps.croppedHeight();
-        var monochrome = frame.cb() == null;
-        var format = monochrome ? ChromaFormat.MONOCHROME : ChromaFormat.YUV420;
+        var monochrome = !frame.hasChroma();
+        var format = switch (sps.chromaFormatIdc) {
+            case 0 -> ChromaFormat.MONOCHROME;
+            case 2 -> ChromaFormat.YUV422;
+            case 3 -> ChromaFormat.YUV444;
+            default -> ChromaFormat.YUV420;
+        };
         var color = frame.color();
-        var target = picture;
-        if (target == null || target.width() != width || target.height() != height || target.chromaFormat() != format
-                || !target.color().equals(color)) {
-            target = YuvPicture.allocate(width, height, format, false, color);
-            picture = target;
-        }
         var luma = frame.lumaOrigin() + sps.cropTop * frame.lumaStride() + sps.cropLeft;
-        Planes.copy(frame.luma(), luma, frame.lumaStride(), target.y(), 0, target.yStride(), width, height);
-        if (!monochrome) {
-            var chroma = frame.chromaOrigin() + (sps.cropTop >> 1) * frame.chromaStride() + (sps.cropLeft >> 1);
-            Planes.copy(frame.cb(), chroma, frame.chromaStride(), target.u(), 0, target.uvStride(),
-                    target.chromaWidth(), target.chromaHeight());
-            Planes.copy(frame.cr(), chroma, frame.chromaStride(), target.v(), 0, target.uvStride(),
-                    target.chromaWidth(), target.chromaHeight());
+        var chromaTop = sps.cropTop >> format.shiftY();
+        var chroma = frame.chromaOrigin() + chromaTop * frame.chromaStride() + (sps.cropLeft >> format.shiftX());
+        Picture result;
+        if (frame.wide() && options.highBitDepth()) {
+            var depth = monochrome ? frame.bitDepthLuma() : Math.max(frame.bitDepthLuma(), frame.bitDepthChroma());
+            var target = widePicture;
+            if (target == null || target.width() != width || target.height() != height
+                    || target.chromaFormat() != format || target.bitDepth() != depth || !target.color().equals(color)) {
+                target = Yuv16Picture.allocate(width, height, format, depth, false, color);
+                widePicture = target;
+            }
+            copyShifted(frame.luma16(), luma, frame.lumaStride(), target.y(), target.yStride(), width, height,
+                    depth - frame.bitDepthLuma());
+            if (!monochrome) {
+                var shift = depth - frame.bitDepthChroma();
+                copyShifted(frame.cb16(), chroma, frame.chromaStride(), target.u(), target.uvStride(),
+                        target.chromaWidth(), target.chromaHeight(), shift);
+                copyShifted(frame.cr16(), chroma, frame.chromaStride(), target.v(), target.uvStride(),
+                        target.chromaWidth(), target.chromaHeight(), shift);
+            }
+            result = target;
+        } else {
+            var target = picture;
+            if (target == null || target.width() != width || target.height() != height
+                    || target.chromaFormat() != format || !target.color().equals(color)) {
+                target = YuvPicture.allocate(width, height, format, false, color);
+                picture = target;
+            }
+            if (frame.wide()) {
+                var narrow = Narrow.select();
+                narrow.narrow(frame.luma16(), luma, frame.lumaStride(), target.y(), 0, target.yStride(), width,
+                        height, frame.bitDepthLuma() - 8);
+                if (!monochrome) {
+                    var shift = frame.bitDepthChroma() - 8;
+                    narrow.narrow(frame.cb16(), chroma, frame.chromaStride(), target.u(), 0, target.uvStride(),
+                            target.chromaWidth(), target.chromaHeight(), shift);
+                    narrow.narrow(frame.cr16(), chroma, frame.chromaStride(), target.v(), 0, target.uvStride(),
+                            target.chromaWidth(), target.chromaHeight(), shift);
+                }
+            } else {
+                Planes.copy(frame.luma(), luma, frame.lumaStride(), target.y(), 0, target.yStride(), width, height);
+                if (!monochrome) {
+                    Planes.copy(frame.cb(), chroma, frame.chromaStride(), target.u(), 0, target.uvStride(),
+                            target.chromaWidth(), target.chromaHeight());
+                    Planes.copy(frame.cr(), chroma, frame.chromaStride(), target.v(), 0, target.uvStride(),
+                            target.chromaWidth(), target.chromaHeight());
+                }
+            }
+            result = target;
         }
-        var duration = frame.duration() > 0 ? frame.duration() : frameDuration(sps);
+        var nominal = frame.duration() > 0 ? frame.duration() : frameDuration(sps);
         var pts = frame.pts();
-        if (pts == Packet.NO_TIMESTAMP && duration > 0) {
+        if (pts == Packet.NO_TIMESTAMP && nominal > 0) {
             if (lastPts == Packet.NO_TIMESTAMP) {
                 pts = 0;
             } else {
                 var step = pocStep == Integer.MAX_VALUE ? 2 : pocStep;
                 var frames = Math.max(1, (frame.poc() - lastPoc) / step);
-                pts = lastPts + frames * duration;
+                pts = lastPts + frames * nominal;
             }
         }
+        // the picture timing pic_struct shows the frame for extra field periods
+        var duration = frame.duration() > 0 ? nominal : nominal * (2 + frame.sideData().repeatedFields()) / 2;
         var pocDelta = frame.poc() - lastPoc;
         if (pocDelta > 0 && lastPts != Packet.NO_TIMESTAMP) {
             pocStep = Math.min(pocStep, pocDelta);
@@ -543,7 +651,8 @@ public final class H264Decoder implements VideoDecoder {
         if (pts != Packet.NO_TIMESTAMP) {
             lastPts = pts;
         }
-        var decoded = new VideoFrame(target, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.keyframe());
+        var decoded = new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.keyframe(),
+                frame.sideData());
         if (checkedOutput != null) {
             try {
                 checkedOutput.accept(decoded, frame.damaged());
@@ -553,6 +662,94 @@ public final class H264Decoder implements VideoDecoder {
             }
         } else {
             output.accept(decoded);
+        }
+    }
+
+    /**
+     * Returns a frame whose planes hold the decoded samples of a frame plus the film grain its
+     * film grain characteristics message describes, rendered on the whole decoded frame before
+     * cropping, or the frame itself when the message is not one the renderer supports.
+     *
+     * @param frame the engine's frame, whose film grain message is not {@code null}
+     * @return the frame with grain, whose planes are recycled for the next frame with grain
+     */
+    private H264DecoderEngine.OutputFrame withFilmGrain(H264DecoderEngine.OutputFrame frame) {
+        var sps = frame.sps();
+        var params = frame.filmGrain();
+        if (!params.renderable(frame.bitDepthLuma(), frame.bitDepthChroma(), sps.videoFullRange,
+                sps.colorDescriptionPresent, sps.colorPrimaries, sps.transferCharacteristics, sps.matrixCoefficients)) {
+            return frame;
+        }
+        if (grainSynthesizer == null) {
+            grainSynthesizer = new FilmGrainSynthesizer();
+        }
+        var width = sps.codedWidth();
+        var height = sps.codedHeight();
+        var format = sps.chromaFormatIdc;
+        var chromaWidth = format == 3 ? width : width >> 1;
+        var chromaHeight = format == 1 ? height >> 1 : height;
+        var components = frame.hasChroma() ? 3 : 1;
+        var threads = Math.max(1, options.threads());
+        var offset = frame.grainOffset();
+        byte[][] planes8 = null;
+        short[][] planes16 = null;
+        for (var c = 0; c < components; c++) {
+            var w = c == 0 ? width : chromaWidth;
+            var h = c == 0 ? height : chromaHeight;
+            var stride = c == 0 ? frame.lumaStride() : frame.chromaStride();
+            var origin = c == 0 ? frame.lumaOrigin() : frame.chromaOrigin();
+            if (frame.wide()) {
+                planes16 = grainWidePlanes;
+                if (planes16[c] == null || planes16[c].length < w * h) {
+                    planes16[c] = new short[w * h];
+                }
+                var src = c == 0 ? frame.luma16() : c == 1 ? frame.cb16() : frame.cr16();
+                var depth = c == 0 ? frame.bitDepthLuma() : frame.bitDepthChroma();
+                grainSynthesizer.apply(params, offset, c, format, depth, src, origin, stride, planes16[c], 0, w, w, h,
+                        threads);
+            } else {
+                planes8 = grainPlanes;
+                if (planes8[c] == null || planes8[c].length < w * h) {
+                    planes8[c] = new byte[w * h];
+                }
+                var src = c == 0 ? frame.luma() : c == 1 ? frame.cb() : frame.cr();
+                grainSynthesizer.apply(params, offset, c, format, src, origin, stride, planes8[c], 0, w, w, h, threads);
+            }
+        }
+        var chroma = components == 3;
+        return new H264DecoderEngine.OutputFrame(planes8 != null ? planes8[0] : null,
+                planes8 != null && chroma ? planes8[1] : null, planes8 != null && chroma ? planes8[2] : null,
+                planes16 != null ? planes16[0] : null, planes16 != null && chroma ? planes16[1] : null,
+                planes16 != null && chroma ? planes16[2] : null, frame.bitDepthLuma(), frame.bitDepthChroma(), width,
+                chromaWidth, 0, 0, sps, frame.color(), frame.pts(), frame.duration(), frame.keyframe(), frame.poc(),
+                frame.damaged(), params, offset, frame.sideData(), frame.picStruct());
+    }
+
+    /**
+     * Copies a region of a 16-bit plane to the top-left corner of an output plane, shifting every
+     * sample left.
+     *
+     * @param src the source plane
+     * @param srcOffset the index of the region's top-left sample
+     * @param srcStride the source row stride
+     * @param dst the output plane
+     * @param dstStride the output row stride
+     * @param width the region width
+     * @param height the region height
+     * @param shift the left shift, from 0 to 6
+     */
+    private static void copyShifted(short[] src, int srcOffset, int srcStride, short[] dst, int dstStride, int width,
+                                    int height, int shift) {
+        if (shift == 0) {
+            Planes.copy(src, srcOffset, srcStride, dst, 0, dstStride, width, height);
+            return;
+        }
+        for (var y = 0; y < height; y++) {
+            var from = srcOffset + y * srcStride;
+            var to = y * dstStride;
+            for (var x = 0; x < width; x++) {
+                dst[to + x] = (short) (src[from + x] << shift);
+            }
         }
     }
 

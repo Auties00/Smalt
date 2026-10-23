@@ -14,35 +14,58 @@ import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Supplier;
 
 /**
  * A decoder of HEIC images (HEIF with HEVC-coded images, the photo format of many phones and
- * cameras): still images, grids, derived images, alpha and image sequences.
+ * cameras) and of the other HEIF images: still images, grids, derived images, alpha and image
+ * sequences.
  *
  * <p>The primary image decodes to its native planar representation: a {@link YuvPicture} in the
- * chroma layout of its HEVC payload (4:2:0, 4:2:2, 4:4:4 or monochrome), with an alpha plane when
- * the file has an alpha auxiliary image. Sources of 10 to 16 bits are reduced to 8 bits by rounding
+ * chroma layout of its payload (4:2:0, 4:2:2, 4:4:4 or monochrome), with an alpha plane when
+ * the file has an alpha auxiliary image or the payload carries alpha itself. RGB payloads (JPEG
+ * 2000 and uncompressed items with red, green and blue components, and RGB-coded JPEG) decode to
+ * 4:4:4 planes with the identity matrix, green in the luma plane and blue and red in the chroma
+ * planes. Sources of 10 to 16 bits are reduced to 8 bits by rounding
  * to nearest, exactly as {@link com.github.auties00.smalt.video.hevc.HevcDecoder} reduces them; with
  * {@link ImageDecoderOptions#highBitDepth()} set they decode to a {@link Yuv16Picture} of their
  * own depth instead, which
  * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Yuv16Picture)} reduces to
  * exactly the default 8-bit picture. An image overlay, and an image whose color is
  * premultiplied by its alpha ({@code prem} reference), decode to a straight-alpha
- * {@link RgbaPicture} instead.
+ * {@link RgbaPicture} instead, or, with {@link ImageDecoderOptions#highBitDepth()} and a source
+ * of more than 8 bits, to a straight-alpha {@link com.github.auties00.smalt.image.Rgba16Picture}
+ * (an overlay composed at 16 bits).
  *
  * <p>The file structure follows ISO/IEC 23008-12 (HEIF) and MIAF (ISO/IEC 23000-22):
  * <ul>
- *   <li>the primary item is an HEVC-coded item ({@code hvc1}), possibly predicted from other
- *       coded items ({@code pred} references), or a derived image: an image grid ({@code grid}),
+ *   <li>the primary item is a coded item, or a derived image. A coded item is HEVC-coded
+ *       ({@code hvc1}) or AVC-coded ({@code avc1}, ISO/IEC 23008-12 Annex E), possibly predicted
+ *       from other coded items ({@code pred} references); layered HEVC-coded ({@code lhv1}: the
+ *       scalable or multiview layers of its target output layer set {@code tols}, showing the
+ *       layer its {@code lsel} property selects or else the highest output layer, over the
+ *       picture of the AVC-coded item it references with {@code exbl} when its base layer is coded
+ *       outside it), which the file shows in place of the primary item when the alternatives
+ *       group ({@code altr}) of the primary item lists it first and it can be reconstructed;
+ *       JPEG-coded ({@code jpeg}, Annex H, its
+ *       {@code jpgC} property preceding its data); JPEG 2000-coded ({@code j2k1}, ISO/IEC
+ *       15444-16, with the channel definition, component mapping and palette of its {@code j2kH}
+ *       property); or uncompressed ({@code unci}, ISO/IEC 23001-17, with its {@code uncC},
+ *       {@code cmpd} and {@code cmpC} properties). JPEG and JPEG 2000 items decode with the codecs
+ *       of the {@code smalt-image} artifact and raise {@link MediaException.Unsupported} when it is
+ *       not present. A derived image is an image grid ({@code grid}),
  *       whose coded tiles decode in parallel on the module's shared helper threads, an identity
  *       derivation ({@code iden}) or an image overlay ({@code iovl}), nested to any depth up to
  *       eight;</li>
  *   <li>the alpha plane comes from an auxiliary item ({@code auxl} reference) whose {@code auxC}
  *       property carries {@code urn:mpeg:hevc:2015:auxid:1} or
  *       {@code urn:mpeg:mpegB:cicp:systems:auxiliary:alpha}: one item, a grid, or one item per
- *       grid tile; limited-range alpha is expanded to full range. Depth maps, HDR gain maps and
- *       the other auxiliary images are ignored;</li>
+ *       grid tile; limited-range alpha is expanded to full range, alpha of another bit depth is
+ *       rescaled to the color depth, and an alpha image of another size than its color image is
+ *       resampled to it with the triangle filter
+ *       ({@link com.github.auties00.smalt.image.ops.ResizeFilter#BILINEAR}). Depth maps, HDR gain
+ *       maps and the other auxiliary images are ignored;</li>
  *   <li>the clean aperture ({@code clap}) is applied to the pixels; the rotation ({@code irot})
  *       and mirroring ({@code imir}) are reported as {@link DecodedImage#orientation()}, which
  *       the caller applies (for example with
@@ -51,14 +74,17 @@ import java.util.function.Supplier;
  *       association order, and those of the inputs of derived images are applied to the
  *       inputs. A crop that starts inside a subsampled chroma block yields a 4:4:4 picture, so
  *       that no pixel changes color;</li>
- *   <li>the color description comes from the {@code nclx} color box, or from the video
- *       usability information of the HEVC stream without one, with the MIAF defaults (sRGB
- *       primaries and transfer, BT.601 matrix, full range) for what neither specifies, together
- *       with the {@code clli} and {@code mdcv} properties (or the HEVC SEI messages); an ICC
+ *   <li>the color description comes from the {@code nclx} color box, or without one from the
+ *       video usability information of the HEVC or AVC stream or from the JPEG stream, with the
+ *       MIAF defaults (sRGB primaries and transfer, BT.601 matrix, full range) for what neither
+ *       specifies, together with the {@code clli} and {@code mdcv} properties (or the SEI messages
+ *       of the stream); RGB payloads keep the identity matrix and full range whatever the
+ *       {@code nclx} box says, and uncompressed components of fewer than 8 bits are rescaled to 8
+ *       bits; an ICC
  *       profile ({@code colr} of type {@code prof} or {@code rICC}) is returned with the picture
  *       and as its {@link DecodedImage#colorProfile()}, which otherwise describes the
- *       {@code nclx} color when it is not sRGB; the EXIF item of the primary image is returned
- *       too.</li>
+ *       {@code nclx} color when it is not sRGB; the EXIF item and the XMP item ({@code mime} item
+ *       of type {@code application/rdf+xml}) of the primary image are returned too.</li>
  * </ul>
  * The EXIF orientation is not used: HEIF orients images with {@code irot} and {@code imir}.
  *
@@ -69,19 +95,29 @@ import java.util.function.Supplier;
  * of the primary image. Without a suitable thumbnail the hint is ignored. With
  * {@link ImageDecoderOptions#convertToSrgb()} the pixels are converted to sRGB.
  *
- * <p>An image sequence ({@code msf1}) plays through {@link #openAnimation}: its color track and
- * its alpha track, every frame converted to RGBA, with the loop count of the edit list (a track
- * without an edit list loops forever); a picture the edit list does not show is skipped.
+ * <p>An image sequence ({@code msf1}) of HEVC or AVC tracks plays through {@link #openAnimation}:
+ * its color track and its alpha track, every frame converted to RGBA (16-bit RGBA when
+ * {@link ImageDecoderOptions#highBitDepth()} is set and the sequence has more than 8 bits), with
+ * the loop count of the edit list (a track
+ * without an edit list loops forever); a picture the edit list does not show is skipped. The
+ * reader seeks: it restarts the decoding at the last sync sample at or before the requested time
+ * and decodes up to the picture shown then, which is the picture a decode from the start shows.
  * {@link #decode} returns the primary image, or the first frame of the sequence of a file without
- * a primary item.
+ * a primary item; {@link #decodeStereoView} returns either view of the stereo pair the primary
+ * image belongs to.
  *
  * <p>Every size the file declares is checked against the {@link MediaLimits} of the options
  * before the corresponding allocation, and the pictures decoded for one image total at most four
  * times the pixel limit. Malformed input raises {@link MediaException.Malformed}, never an
  * unchecked runtime exception; a valid file using a feature this decoder lacks (an essential
- * property it does not know, an image coded with another codec, an alpha plane of another size
- * than the color) raises {@link MediaException.Unsupported}. HEVC items of every range extension
- * format decode, such as the 10-bit 4:2:2 grids of camera {@code .hif} files and 4:4:4 images.
+ * property it does not know, an image coded with another codec) raises
+ * {@link MediaException.Unsupported}; the README lists the unsupported features of JPEG 2000 and
+ * uncompressed items. HEVC items of every range extension
+ * format decode, such as the 10-bit 4:2:2 grids of camera {@code .hif} files and 4:4:4 images,
+ * those coded as separate color planes and with the screen content coding tools included; a
+ * picture whose luma and chroma depths differ keeps the larger depth under
+ * {@link ImageDecoderOptions#highBitDepth()}, the shallower planes shifted left to it, as
+ * {@link com.github.auties00.smalt.video.hevc.HevcDecoder} outputs it.
  *
  * <p>This class is thread-safe.
  *
@@ -141,7 +177,8 @@ public final class HeicDecoder {
      * @param source the file
      * @param options the limits, the bit depth choice, the reduced-size hint and the color
      * conversion
-     * @return the decoded image with its orientation, ICC profile, color profile and EXIF block
+     * @return the decoded image with its orientation, ICC profile, color profile, EXIF block and XMP
+     * packet
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported if the file uses a feature this decoder lacks
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits
@@ -151,6 +188,56 @@ public final class HeicDecoder {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         return guarded("decoding a HEIC file", () -> HeicFiles.decode(source, options));
+    }
+
+    /**
+     * Decodes one view of the stereo pair of a HEIC file with the
+     * {@linkplain ImageDecoderOptions#defaults() default} options.
+     *
+     * @param source the file
+     * @param view 0 for the left view, 1 for the right view
+     * @return the decoded view, or empty when the image the file shows belongs to no stereo pair
+     * @throws IllegalArgumentException if {@code view} is neither 0 nor 1
+     * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
+     * @throws MediaException.Unsupported if the view uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #decodeStereoView(MediaSource, int, ImageDecoderOptions)
+     */
+    public static Optional<DecodedImage> decodeStereoView(MediaSource source, int view) {
+        return decodeStereoView(source, view, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes one view of the stereo pair of a HEIC file, such as the two eyes of a spatial photo
+     * or of a multiview (MV-HEVC) image.
+     *
+     * <p>The pair is the stereo pair entity group ({@code ster}, ISO/IEC 23008-12) that holds the
+     * primary image, or the image the file shows in its place; it lists the left view, then the
+     * right view, each an image item of any kind {@link #decode} reconstructs, such as a grid or a
+     * layered HEVC item ({@code lhv1}) whose layer selector names one view of a multiview stream.
+     * The view decodes as {@link #decode} decodes the primary image, with the view's own
+     * orientation, thumbnails and metadata.
+     *
+     * @param source the file
+     * @param view 0 for the left view, 1 for the right view
+     * @param options the limits, the bit depth choice, the reduced-size hint and the color
+     * conversion
+     * @return the decoded view with its orientation, ICC profile, color profile, EXIF block and XMP
+     * packet, or empty when the image the file shows belongs to no stereo pair
+     * @throws IllegalArgumentException if {@code view} is neither 0 nor 1
+     * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
+     * @throws MediaException.Unsupported if the view uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static Optional<DecodedImage> decodeStereoView(MediaSource source, int view, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        if (view != 0 && view != 1) {
+            throw new IllegalArgumentException("stereo view must be 0 (left) or 1 (right): " + view);
+        }
+        return guarded("decoding a HEIC stereo view", () -> HeicFiles.decodeStereoView(source, view, options));
     }
 
     /**
@@ -173,11 +260,13 @@ public final class HeicDecoder {
      * Opens a reader over the frames of a HEIC image sequence.
      *
      * <p>A file without a sequence is presented as an animation of its primary image: one frame
-     * shown for zero microseconds that plays once. Frames are RGBA pictures in the stored
-     * orientation.
+     * shown for zero microseconds that plays once. Either reader can seek. Frames are RGBA pictures
+     * in the stored orientation: {@link com.github.auties00.smalt.image.Rgba16Picture} pictures when
+     * {@link ImageDecoderOptions#highBitDepth()} is set and the source has more than 8 bits,
+     * {@link RgbaPicture} pictures otherwise.
      *
      * @param source the file
-     * @param options the limits; the reduced-size hint, the bit depth choice and the color
+     * @param options the limits and the bit depth choice; the reduced-size hint and the color
      * conversion are ignored
      * @return the reader; closing it does not close {@code source}
      * @throws MediaException.Malformed if the file structure is invalid or truncated
@@ -188,7 +277,8 @@ public final class HeicDecoder {
     public static AnimationReader openAnimation(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        return guarded("opening a HEIC animation", () -> HeicFiles.openAnimation(source, options.limits()));
+        return guarded("opening a HEIC animation", () -> HeicFiles.openAnimation(source, options.limits(),
+                options.highBitDepth()));
     }
 
     /**
