@@ -45,7 +45,8 @@ public interface Muxer extends AutoCloseable {
      * Sets the tags, attached pictures (cover art) and chapters the output carries.
      *
      * <p>The tags are written in the container's own form: an iTunes {@code ilst} and a Nero
-     * {@code chpl} box for MP4, {@code Tags}, {@code Chapters} and picture {@code Attachments} for
+     * {@code chpl} box for MP4 (with a QuickTime chapter track from {@code Mp4Muxer}),
+     * {@code Tags}, {@code Chapters} and picture {@code Attachments} for
      * Matroska, Vorbis comments for Ogg and FLAC, ID3v2 for MP3 and ADTS, the {@code LIST/INFO}
      * and {@code id3 } chunks for WAV, the text and {@code ID3 } chunks for AIFF. A later call
      * replaces the tags of an earlier one.
@@ -64,9 +65,21 @@ public interface Muxer extends AutoCloseable {
     /**
      * Writes one packet.
      *
+     * <p>A packet whose side data carries a
+     * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration}
+     * that differs from the one in use changes the configuration of its track from that packet on:
+     * a container that stores several configurations per track stores the new one, a container
+     * whose packets can carry it in band (H.264 and HEVC parameter sets, an ADTS header) writes it
+     * there, frames that describe themselves (VP8, VP9, AV1) are written as they are, and any other
+     * container rejects the packet. Packets flagged
+     * {@link com.github.auties00.smalt.track.PacketFlag#DISCARD} are written as any other packet,
+     * or marked as decoded but not presented where the container can say so (Matroska).
+     *
      * @param packet the next packet of its track, in decoding order
      * @throws IllegalArgumentException if the packet's track was not declared
      * @throws IllegalStateException if the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes its track's codec configuration and
+     * the container cannot store the change
      * @throws MediaException.Io if writing the output fails
      */
     void writePacket(Packet packet);

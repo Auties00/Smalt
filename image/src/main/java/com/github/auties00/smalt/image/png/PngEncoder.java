@@ -1,12 +1,12 @@
 package com.github.auties00.smalt.image.png;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
-import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.internal.zlib.ZlibDeflater;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.io.ByteArrays;
@@ -14,27 +14,46 @@ import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSink;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.zip.Adler32;
 
 /**
- * Encodes pictures as 8-bit PNG datastreams.
+ * Encodes pictures as PNG datastreams.
  *
- * <p>The color type is chosen from the pixels:
+ * <p>The color type and bit depth are chosen from the pixels, losslessly:
  * <ul>
- *   <li>indexed color ({@code PLTE}, plus {@code tRNS} when some color is translucent) when the
- *       picture has at most 256 distinct RGBA colors and the indexed scanlines plus the palette
- *       chunks are smaller than the truecolor scanlines;</li>
- *   <li>otherwise truecolor when every pixel is opaque;</li>
- *   <li>otherwise truecolor with alpha.</li>
+ *   <li>an {@link RgbaPicture} becomes indexed color ({@code PLTE}, plus {@code tRNS} when some
+ *       color is translucent) of 1, 2, 4 or 8 bits when it has at most 256 distinct RGBA colors,
+ *       grayscale of 1, 2, 4 or 8 bits when its red, green and blue samples are equal (a depth
+ *       below 8 when every gray level is a multiple of {@code 255 / (2^depth - 1)}), grayscale
+ *       with alpha, truecolor, or truecolor with alpha;</li>
+ *   <li>an {@link Rgba16Picture} keeps 16 bits per sample, as grayscale, grayscale with alpha,
+ *       truecolor or truecolor with alpha;</li>
+ *   <li>a format without an alpha channel is used when every pixel is opaque, or when every
+ *       pixel is either opaque or fully transparent, every transparent pixel has the same color
+ *       and no opaque pixel has it, which a {@code tRNS} key chunk then marks;</li>
+ *   <li>among the eligible formats the one whose scanlines and format chunks take the fewest
+ *       bytes is written; ties go to grayscale, then truecolor, then indexed color.</li>
  * </ul>
- * A picture whose {@link RgbaPicture#hasAlpha()} is {@code false} is treated as opaque: its alpha
- * samples are ignored. Every other picture round-trips exactly, including the color of fully
- * transparent pixels. The output is non-interlaced with bit depth 8 and holds only the critical
- * chunks ({@code IHDR}, optional {@code PLTE}, {@code IDAT}, {@code IEND}), {@code tRNS}, and the
- * {@code iCCP} chunk of {@link PngEncoderOptions#colorProfile()} right after {@code IHDR}. The
- * scanlines are filtered as {@link PngEncoderOptions#filter()} selects and compressed into one
- * zlib stream at {@link PngEncoderOptions#compressionLevel()}.
+ * Planar and channel pictures are first converted to one of the two, as
+ * {@link #encode(Picture, PngEncoderOptions)} describes. An ICC profile in
+ * {@link PngEncoderOptions#colorProfile()} restricts the choice: an RGB profile excludes grayscale
+ * and a gray profile requires it; a high-dynamic-range profile does not. A picture whose
+ * {@code hasAlpha()} is {@code false} is treated as opaque: its alpha samples are ignored. Every
+ * other {@link RgbaPicture} or {@link Rgba16Picture} round-trips exactly through
+ * {@link PngDecoder}, including the color of fully transparent pixels, a 16-bit one when decoded with
+ * {@link com.github.auties00.smalt.image.ImageDecoderOptions#highBitDepth()}.
+ *
+ * <p>After {@code IHDR} the datastream holds, in this order and only when the options or the
+ * format ask for them: the color space chunks of {@link PngEncoderOptions#colorProfile()}
+ * ({@code cICP}, {@code mDCV} and {@code cLLI} for a high-dynamic-range profile, then {@code iCCP}),
+ * {@link PngEncoderOptions#srgbIntent()}, {@link PngEncoderOptions#gamma()} and
+ * {@link PngEncoderOptions#chromaticities()}; {@code sBIT}; {@code pHYs}; {@code PLTE} and
+ * {@code tRNS}; then the {@code IDAT} chunks and {@code IEND}. The scanlines are stored in the
+ * Adam7 order when {@link PngEncoderOptions#isInterlaced()} is set, filtered as
+ * {@link PngEncoderOptions#filter()} selects and compressed into one zlib stream at
+ * {@link PngEncoderOptions#compressionLevel()}.
  *
  * <p>Bands of scanlines are compressed in parallel on the shared threads
  * {@link com.github.auties00.smalt.MediaRuntime MediaRuntime} describes; the datastream does not
@@ -53,12 +72,6 @@ public final class PngEncoder {
     private static final int IDAT_SIZE = 64 * 1024;
 
     /**
-     * The bytes of the {@code IHDR}, {@code IDAT} (per chunk) and {@code IEND} framing counted
-     * when comparing the indexed and truecolor sizes.
-     */
-    private static final int CHUNK_OVERHEAD = 12;
-
-    /**
      * The filtered bytes of one independently compressed band of scanlines, about 1 MiB.
      */
     private static final int BAND_BYTES = 1 << 20;
@@ -67,6 +80,13 @@ public final class PngEncoder {
      * The deflate window, which primes the compression of each band.
      */
     private static final int WINDOW = 32768;
+
+    /**
+     * The Adam7 passes (PNG 3rd edition 8.2) as first column, first row, column step and row step.
+     */
+    private static final int[][] ADAM7 = {
+            {0, 0, 8, 8}, {4, 0, 8, 8}, {0, 4, 4, 8}, {2, 0, 4, 4}, {0, 2, 2, 4}, {1, 0, 2, 2}, {0, 1, 1, 2}
+    };
 
     /**
      * Prevents instantiation.
@@ -80,8 +100,6 @@ public final class PngEncoder {
      *
      * @param picture the pixels to encode
      * @return the complete PNG datastream
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B'
      * @throws MediaException.LimitExceeded if the converted picture would exceed the default
      * limits, encoding runs out of memory, or the datastream would exceed the largest Java array
      * @see #encode(Picture, PngEncoderOptions)
@@ -96,10 +114,10 @@ public final class PngEncoder {
      * <p>The bytes written are those {@link #encode(Picture, PngEncoderOptions)} returns.
      *
      * @param picture the pixels to encode
-     * @param options the compression level, filter selection and color profile
+     * @param options the format and compression settings
      * @param sink the output, written from its position and not closed
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B'
+     * @throws IllegalArgumentException if the options hold a gray ICC profile and the picture's
+     * red, green and blue samples are not all equal
      * @throws MediaException.LimitExceeded if the converted picture would exceed the default
      * limits, encoding runs out of memory, or the datastream would exceed the largest Java array
      * @throws MediaException.Io if writing the sink fails
@@ -112,89 +130,93 @@ public final class PngEncoder {
     /**
      * Encodes a picture as a PNG datastream.
      *
-     * <p>An {@link RgbaPicture} is encoded as it is. Any other picture is first converted with
-     * {@link ImageOps#toRgba(Picture)}: a {@link YuvPicture} or {@link Yuv16Picture} through its
-     * color matrix, a {@link Rgba16Picture} reduced to 8 bits.
+     * <p>An {@link RgbaPicture} is encoded with 8 bits per sample or fewer and an
+     * {@link Rgba16Picture} with 16. A {@link ChannelPicture} of 16-bit or floating-point samples and a
+     * {@link Yuv16Picture} deeper than 8 bits are first converted with
+     * {@link ImageOps#toRgba16(Picture)}, so they are written with 16 bits per sample (a
+     * {@link Yuv16Picture} through its color matrix, with its samples rescaled to 16 bits). Any other
+     * picture, a {@link YuvPicture} or an 8-bit {@link Yuv16Picture} among them, is first converted
+     * with {@link ImageOps#toRgba(Picture)}, to 8 bits.
      *
      * @param picture the pixels to encode
-     * @param options the compression level, filter selection and color profile
+     * @param options the format and compression settings
      * @return the complete PNG datastream
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B'
+     * @throws IllegalArgumentException if the options hold a gray ICC profile and the picture's
+     * red, green and blue samples are not all equal
      * @throws MediaException.LimitExceeded if the converted picture would exceed the default
      * limits, encoding runs out of memory, or the datastream would exceed the largest Java array
      */
     public static byte[] encode(Picture picture, PngEncoderOptions options) {
         Objects.requireNonNull(picture, "picture");
         Objects.requireNonNull(options, "options");
-        return Guards.encoding("PNG image",
-                () -> encode(picture instanceof RgbaPicture rgba ? rgba : ImageOps.toRgba(picture), options));
+        return Guards.encoding("PNG image", () -> {
+            try (var _ = ParallelBands.operation()) {
+                var profile = options.colorProfile().orElse(null);
+                var layout = switch (picture) {
+                    case RgbaPicture rgba -> PngLayout.of(rgba, profile);
+                    case Rgba16Picture wide -> PngLayout.of(wide, profile);
+                    case ChannelPicture channels when channels.bitDepth() > 8 ->
+                            PngLayout.of(ImageOps.toRgba16(channels), profile);
+                    case Yuv16Picture yuv when yuv.bitDepth() > 8 -> PngLayout.of(ImageOps.toRgba16(yuv), profile);
+                    default -> PngLayout.of(ImageOps.toRgba(picture), profile);
+                };
+                return encode(layout, picture.width(), picture.height(), options);
+            }
+        });
     }
 
     /**
-     * Encodes packed RGBA pixels as a PNG datastream.
+     * Encodes a picture in a chosen format.
      *
-     * @param picture the pixels to encode
-     * @param options the compression level, filter selection and color profile
+     * @param layout the format and the picture
+     * @param width the picture width
+     * @param height the picture height
+     * @param options the encoder options
      * @return the complete PNG datastream
      * @throws MediaException.LimitExceeded if the datastream would exceed the largest Java array
      */
-    private static byte[] encode(RgbaPicture picture, PngEncoderOptions options) {
-        try (var _ = ParallelBands.operation()) {
-            var opaque = ImageOps.isOpaque(picture);
-            var width = picture.width();
-            var height = picture.height();
-            var palette = PngPalette.of(picture, opaque);
-            var trueChannels = opaque ? 3 : 4;
-            var trueSize = (long) height * (1 + (long) width * trueChannels);
-            var indexed = palette != null
-                    && (long) height * (1 + width) + CHUNK_OVERHEAD * 2L + palette.size() * 3L + palette.translucentCount()
-                    < trueSize;
-            var channels = indexed ? 1 : trueChannels;
-            var rowBytes = (long) width * channels;
-            if (rowBytes + 1 > Integer.MAX_VALUE - 16) {
-                throw new MediaException.LimitExceeded("picture of " + width + " pixels per row is too wide to encode");
-            }
-            var out = new PngChunkWriter((int) Math.min(Integer.MAX_VALUE - 16, Math.max(1024, trueSize / 4)));
-            var profile = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
-            out.header(width, height, indexed ? PngHeader.PALETTE : opaque ? PngHeader.RGB : PngHeader.RGBA,
-                    indexed ? palette : null, profile);
-            writeImageData(picture, options, indexed ? palette : null, channels, (int) rowBytes, out);
-            out.end();
-            return out.toByteArray();
+    private static byte[] encode(PngLayout layout, int width, int height, PngEncoderOptions options) {
+        var scan = new Scan(layout, width, height, options.isInterlaced());
+        var out = new PngChunkWriter((int) Math.min(Integer.MAX_VALUE - 16, Math.max(1024, scan.totalBytes / 4)));
+        out.header(width, height, layout.bitDepth(), layout.colorType(), options.isInterlaced());
+        out.colorSpace(options.colorProfile().orElse(null), options.srgbIntent().orElse(null),
+                options.gamma().isPresent() ? options.gamma().getAsDouble() : null,
+                options.chromaticities().orElse(null));
+        if (options.significantBits().isPresent()) {
+            out.significantBits(layout.significantBits(options.significantBits().getAsInt()));
         }
+        options.density().ifPresent(out::physicalDimensions);
+        if (layout.palette() != null) {
+            out.palette(layout.palette());
+        } else if (layout.key() != null) {
+            out.transparencyKey(layout.key());
+        }
+        writeImageData(layout, scan, options, out);
+        out.end();
+        return out.toByteArray();
     }
 
     /**
      * Filters, compresses and writes the scanlines as {@code IDAT} chunks.
      *
-     * @param picture the picture whose scanlines are written
+     * @param layout the format and the picture
+     * @param scan the order of the scanlines
      * @param options the encoder options
-     * @param palette the palette of an indexed-color image, or {@code null}
-     * @param channels the bytes per pixel of the output: 1, 3 or 4
-     * @param rowBytes the scanline length in bytes
      * @param out the datastream being written
      */
-    private static void writeImageData(RgbaPicture picture, PngEncoderOptions options, PngPalette palette,
-                                       int channels, int rowBytes, PngChunkWriter out) {
-        var height = picture.height();
-        var stride = rowBytes + 1;
-        var bandRows = (int) Math.max(1, Math.min(height, BAND_BYTES / stride));
-        var bands = (height + bandRows - 1) / bandRows;
+    private static void writeImageData(PngLayout layout, Scan scan, PngEncoderOptions options, PngChunkWriter out) {
+        var starts = scan.bands();
+        var bands = starts.length - 1;
         var level = options.compressionLevel();
-        var filter = options.filter();
-        var type = PngFilters.type(filter);
-        var filtered = type < 0 ? palette == null : type != 0;
+        var type = PngFilters.type(options.filter());
+        var adaptive = type < 0 && layout.filtersAdaptively();
+        var fixedType = Math.max(0, type);
         var parts = new Band[bands];
-        ParallelBands.run(bands, band -> {
-            var first = band * bandRows;
-            var end = Math.min(height, first + bandRows);
-            parts[band] = encodeBand(picture, options, palette, channels, rowBytes, first, end, level, filtered);
-        });
+        ParallelBands.run(bands, band -> parts[band] = encodeBand(layout.copy(), scan, adaptive, fixedType,
+                starts[band], starts[band + 1], level, adaptive || fixedType != 0));
         var adler = parts[0].adler();
         for (var band = 1; band < bands; band++) {
-            var rows = Math.min(height, (band + 1) * bandRows) - band * bandRows;
-            adler = combineAdler(adler, parts[band].adler(), (long) rows * stride);
+            adler = combineAdler(adler, parts[band].adler(), scan.bytes(starts[band], starts[band + 1]));
         }
         var flags = level < 2 ? 0 : level < 6 ? 1 : level == 6 ? 2 : 3;
         var header = (0x78 << 8) | (flags << 6);
@@ -269,7 +291,173 @@ public final class PngEncoder {
     }
 
     /**
-     * Filters the scanlines of a band row by row, choosing each row's filter type.
+     * Lists the scanlines of the image data in stored order: the rows of the image, or the rows
+     * of each non-empty Adam7 pass in turn. A scanline is addressed by its index in that order.
+     */
+    private static final class Scan {
+        /**
+         * The format and the picture.
+         */
+        private final PngLayout layout;
+
+        /**
+         * The number of non-empty passes, 1 without interlacing.
+         */
+        private final int passes;
+
+        /**
+         * The index of the first scanline of each pass, and the total count after the last.
+         */
+        private final int[] first;
+
+        /**
+         * The first column of each pass.
+         */
+        private final int[] x0;
+
+        /**
+         * The first row of each pass.
+         */
+        private final int[] y0;
+
+        /**
+         * The column step of each pass.
+         */
+        private final int[] dx;
+
+        /**
+         * The row step of each pass.
+         */
+        private final int[] dy;
+
+        /**
+         * The pixels per scanline of each pass.
+         */
+        private final int[] widths;
+
+        /**
+         * The scanline length of each pass, filter type byte included.
+         */
+        private final int[] strides;
+
+        /**
+         * The longest scanline, filter type byte excluded.
+         */
+        private final int maxRowBytes;
+
+        /**
+         * The filtered bytes of all scanlines.
+         */
+        private final long totalBytes;
+
+        /**
+         * Lists the scanlines of an image.
+         *
+         * @param layout the format and the picture
+         * @param width the image width
+         * @param height the image height
+         * @param interlaced whether the Adam7 order is used
+         * @throws MediaException.LimitExceeded if a scanline is too long to encode
+         */
+        private Scan(PngLayout layout, int width, int height, boolean interlaced) {
+            this.layout = layout;
+            var geometry = interlaced ? ADAM7 : new int[][]{{0, 0, 1, 1}};
+            first = new int[geometry.length + 1];
+            x0 = new int[geometry.length];
+            y0 = new int[geometry.length];
+            dx = new int[geometry.length];
+            dy = new int[geometry.length];
+            widths = new int[geometry.length];
+            strides = new int[geometry.length];
+            var count = 0;
+            var total = 0L;
+            var longest = 0L;
+            var used = 0;
+            for (var pass : geometry) {
+                var w = (width - pass[0] + pass[2] - 1) / pass[2];
+                var h = (height - pass[1] + pass[3] - 1) / pass[3];
+                if (w <= 0 || h <= 0) {
+                    continue;
+                }
+                var rowBytes = layout.rowBytes(w);
+                if (rowBytes + 1 > Integer.MAX_VALUE - 16 - WINDOW) {
+                    throw new MediaException.LimitExceeded("picture of " + width + " pixels per row is too wide to encode");
+                }
+                longest = Math.max(longest, rowBytes);
+                first[used] = count;
+                x0[used] = pass[0];
+                y0[used] = pass[1];
+                dx[used] = pass[2];
+                dy[used] = pass[3];
+                widths[used] = w;
+                strides[used] = (int) rowBytes + 1;
+                count += h;
+                total += (long) h * (rowBytes + 1);
+                used++;
+            }
+            first[used] = count;
+            passes = used;
+            maxRowBytes = (int) longest;
+            totalBytes = total;
+        }
+
+        /**
+         * {@return the pass of a scanline}
+         *
+         * @param k the scanline index
+         */
+        private int pass(int k) {
+            var p = 0;
+            while (k >= first[p + 1]) {
+                p++;
+            }
+            return p;
+        }
+
+        /**
+         * {@return the filtered bytes of a run of scanlines}
+         *
+         * @param from the first scanline
+         * @param to the scanline after the last
+         */
+        private long bytes(int from, int to) {
+            var total = 0L;
+            for (var p = 0; p < passes; p++) {
+                var lo = Math.max(from, first[p]);
+                var hi = Math.min(to, first[p + 1]);
+                if (hi > lo) {
+                    total += (long) (hi - lo) * strides[p];
+                }
+            }
+            return total;
+        }
+
+        /**
+         * Splits the scanlines into bands of at most {@link #BAND_BYTES} filtered bytes, or of one
+         * scanline when a scanline is longer.
+         *
+         * @return the first scanline of each band, then the scanline count
+         */
+        private int[] bands() {
+            var count = first[passes];
+            var starts = new int[count + 1];
+            var bands = 0;
+            var filled = 0L;
+            for (var k = 0; k < count; k++) {
+                var stride = strides[pass(k)];
+                if (k == 0 || filled + stride > BAND_BYTES) {
+                    starts[bands++] = k;
+                    filled = 0;
+                }
+                filled += stride;
+            }
+            starts[bands] = count;
+            return Arrays.copyOf(starts, bands + 1);
+        }
+    }
+
+    /**
+     * Filters scanlines one after the other, choosing each one's filter type.
      */
     private static final class RowFilter {
         /**
@@ -278,24 +466,19 @@ public final class PngEncoder {
         private final PngFilterKernel kernel = PngFilterKernel.INSTANCE;
 
         /**
-         * The picture.
+         * The format and the picture, owned by this filter.
          */
-        private final RgbaPicture picture;
+        private final PngLayout layout;
 
         /**
-         * The palette of an indexed image, or {@code null}.
+         * The order of the scanlines.
          */
-        private final PngPalette palette;
+        private final Scan scan;
 
         /**
-         * The bytes per pixel of the output.
+         * The 8-bit picture whose rows are the scanlines, or {@code null}.
          */
-        private final int channels;
-
-        /**
-         * The scanline length in bytes.
-         */
-        private final int rowBytes;
+        private final RgbaPicture direct;
 
         /**
          * Whether each filter type is tried and the cheapest kept.
@@ -308,9 +491,9 @@ public final class PngEncoder {
         private final int fixedType;
 
         /**
-         * Whether the picture's pixels are the scanline bytes.
+         * The filter distance in bytes.
          */
-        private final boolean direct;
+        private final int distance;
 
         /**
          * The filtered candidates of the current scanline, type byte first.
@@ -318,103 +501,104 @@ public final class PngEncoder {
         private final byte[][] candidates;
 
         /**
-         * The all-zero prior scanline of the first row.
+         * The all-zero prior scanline of the first row of a pass.
          */
         private final byte[] zero;
 
         /**
-         * The converted current scanline of a non-direct picture.
+         * The packed current scanline of a non-direct picture.
          */
         private byte[] current;
 
         /**
-         * The converted prior scanline of a non-direct picture.
+         * The packed prior scanline of a non-direct picture.
          */
         private byte[] previous;
 
         /**
-         * Creates a filter for a picture.
+         * Creates a filter.
          *
-         * @param picture the picture whose scanlines are filtered
-         * @param options the encoder options
-         * @param palette the palette of an indexed image, or {@code null}
-         * @param channels the bytes per pixel of the output
-         * @param rowBytes the scanline length in bytes
+         * @param layout the format and the picture, owned by the filter
+         * @param scan the order of the scanlines
+         * @param picture the 8-bit picture whose rows are the scanlines, or {@code null}
+         * @param adaptive whether each filter type is tried
+         * @param fixedType the filter type when not adaptive
          */
-        private RowFilter(RgbaPicture picture, PngEncoderOptions options, PngPalette palette, int channels,
-                          int rowBytes) {
-            var filter = options.filter();
-            this.picture = picture;
-            this.palette = palette;
-            this.channels = channels;
-            this.rowBytes = rowBytes;
-            this.adaptive = filter == PngEncoderOptions.Filter.ADAPTIVE && palette == null;
-            this.fixedType = Math.max(0, PngFilters.type(filter));
-            this.direct = channels == 4;
-            this.candidates = new byte[adaptive ? PngFilters.TYPES : 1][rowBytes + 1];
-            this.zero = new byte[rowBytes];
-            this.current = direct ? null : new byte[rowBytes];
-            this.previous = direct ? null : new byte[rowBytes];
+        private RowFilter(PngLayout layout, Scan scan, RgbaPicture picture, boolean adaptive, int fixedType) {
+            this.layout = layout;
+            this.scan = scan;
+            this.direct = picture;
+            this.adaptive = adaptive;
+            this.fixedType = fixedType;
+            this.distance = layout.distance();
+            this.candidates = new byte[adaptive ? PngFilters.TYPES : 1][scan.maxRowBytes + 1];
+            this.zero = new byte[scan.maxRowBytes];
+            this.current = direct != null ? null : new byte[scan.maxRowBytes];
+            this.previous = direct != null ? null : new byte[scan.maxRowBytes];
         }
 
         /**
-         * Converts a scanline of a non-direct picture.
+         * Packs a scanline of a non-direct picture.
          *
-         * @param y the row
+         * @param p the pass of the scanline
+         * @param k the scanline index
          * @param target the destination
          */
-        private void convert(int y, byte[] target) {
-            if (palette != null) {
-                toIndices(picture.pixels(), y * picture.stride(), picture.width(), palette, target);
-            } else {
-                toRgb(picture.pixels(), y * picture.stride(), picture.width(), target);
+        private void pack(int p, int k, byte[] target) {
+            var y = scan.y0[p] + (k - scan.first[p]) * scan.dy[p];
+            layout.pack(y, scan.x0[p], scan.dx[p], scan.widths[p], target);
+        }
+
+        /**
+         * Prepares for filtering from a scanline on, packing the one before it as the prior
+         * scanline when it belongs to the same pass.
+         *
+         * @param k the first scanline to filter
+         */
+        private void start(int k) {
+            var p = scan.pass(k);
+            if (direct == null && k > scan.first[p]) {
+                pack(p, k - 1, previous);
             }
         }
 
         /**
-         * Prepares for filtering from a row on, converting the row before it as the prior row.
+         * Filters a scanline, which must follow the previous call or {@link #start(int)}.
          *
-         * @param y the first row to filter
+         * @param k the scanline index
+         * @return the filtered scanline, type byte first, valid until the next call
          */
-        private void start(int y) {
-            if (!direct && y > 0) {
-                convert(y - 1, previous);
-            }
-        }
-
-        /**
-         * Filters a row, which must follow the previous call or {@link #start(int)}.
-         *
-         * @param y the row
-         * @return the filtered row, type byte first, valid until the next call
-         */
-        private byte[] next(int y) {
+        private byte[] next(int k) {
+            var p = scan.pass(k);
+            var top = k == scan.first[p];
+            var rowBytes = scan.strides[p] - 1;
             byte[] row;
             int rowOffset;
             byte[] prior;
             int priorOffset;
-            var stride = picture.stride();
-            if (direct) {
-                row = picture.pixels();
-                rowOffset = y * stride;
-                prior = y == 0 ? zero : row;
-                priorOffset = y == 0 ? 0 : rowOffset - stride;
+            if (direct != null) {
+                var stride = direct.stride();
+                row = direct.pixels();
+                rowOffset = k * stride;
+                prior = top ? zero : row;
+                priorOffset = top ? 0 : rowOffset - stride;
             } else {
-                convert(y, current);
+                pack(p, k, current);
                 row = current;
                 rowOffset = 0;
-                prior = y == 0 ? zero : previous;
+                prior = top ? zero : previous;
                 priorOffset = 0;
             }
             byte[] chosen;
             if (adaptive) {
-                chosen = PngFilters.filterAdaptive(kernel, row, rowOffset, prior, priorOffset, rowBytes, channels,
+                chosen = PngFilters.filterAdaptive(kernel, row, rowOffset, prior, priorOffset, rowBytes, distance,
                         candidates);
             } else {
-                PngFilters.filter(kernel, fixedType, row, rowOffset, prior, priorOffset, rowBytes, channels, candidates[0]);
+                PngFilters.filter(kernel, fixedType, row, rowOffset, prior, priorOffset, rowBytes, distance,
+                        candidates[0]);
                 chosen = candidates[0];
             }
-            if (!direct) {
+            if (direct == null) {
                 var swap = previous;
                 previous = current;
                 current = swap;
@@ -424,90 +608,53 @@ public final class PngEncoder {
     }
 
     /**
-     * Filters and compresses the scanlines of one band into a raw deflate segment that ends on a
-     * byte boundary (or, for the last band, ends the stream), primed with the 32 KiB of filtered
-     * data before the band so that the segments join into one deflate stream.
+     * Filters and compresses a band of scanlines into a raw deflate segment that ends on a byte
+     * boundary (or, for the last band, ends the stream), primed with the 32 KiB of filtered data
+     * before the band so that the segments join into one deflate stream.
      *
-     * @param picture the picture whose scanlines are compressed
-     * @param options the encoder options
-     * @param palette the palette of an indexed image, or {@code null}
-     * @param channels the bytes per pixel of the output
-     * @param rowBytes the scanline length in bytes
-     * @param first the first row of the band
-     * @param end the row after the last of the band
+     * @param layout the format and the picture, owned by this call
+     * @param scan the order of the scanlines
+     * @param adaptive whether each filter type is tried
+     * @param fixedType the filter type when not adaptive
+     * @param from the first scanline of the band
+     * @param to the scanline after the last of the band
      * @param level the compression level, from 0 to 9
      * @param filtered whether matches of five bytes or fewer are discarded
      * @return the compressed band and the checksum of its filtered scanlines
      */
-    private static Band encodeBand(RgbaPicture picture, PngEncoderOptions options, PngPalette palette, int channels,
-                                   int rowBytes, int first, int end, int level, boolean filtered) {
-        var stride = rowBytes + 1;
-        var filter = new RowFilter(picture, options, palette, channels, rowBytes);
-        var used = 0;
-        byte[] dictionary = null;
-        if (first > 0) {
-            var rows = Math.min(first, (WINDOW + stride - 1) / stride);
-            dictionary = new byte[rows * stride];
-            filter.start(first - rows);
-            for (var i = 0; i < rows; i++) {
-                System.arraycopy(filter.next(first - rows + i), 0, dictionary, i * stride, stride);
-            }
-            used = Math.min(WINDOW, dictionary.length);
-        } else {
-            filter.start(0);
+    private static Band encodeBand(PngLayout layout, Scan scan, boolean adaptive, int fixedType, int from, int to,
+                                   int level, boolean filtered) {
+        var picture = layout.direct() && scan.passes == 1 && scan.dx[0] == 1 ? layout.directPicture() : null;
+        var filter = new RowFilter(layout, scan, picture, adaptive, fixedType);
+        var back = from;
+        var collected = 0L;
+        while (back > 0 && collected < WINDOW) {
+            back--;
+            collected += scan.strides[scan.pass(back)];
         }
-        var length = (end - first) * stride;
+        var used = (int) Math.min(WINDOW, collected);
+        var length = (int) scan.bytes(from, to);
         var buffer = new byte[used + length + 16];
-        if (used > 0) {
-            System.arraycopy(dictionary, dictionary.length - used, buffer, 0, used);
+        filter.start(back);
+        var skip = collected - used;
+        var position = 0;
+        for (var k = back; k < from; k++) {
+            var row = filter.next(k);
+            var stride = scan.strides[scan.pass(k)];
+            var start = (int) Math.min(stride, skip);
+            skip -= start;
+            System.arraycopy(row, start, buffer, position, stride - start);
+            position += stride - start;
         }
-        for (var y = first; y < end; y++) {
-            System.arraycopy(filter.next(y), 0, buffer, used + (y - first) * stride, stride);
+        for (var k = from; k < to; k++) {
+            var row = filter.next(k);
+            var stride = scan.strides[scan.pass(k)];
+            System.arraycopy(row, 0, buffer, position, stride);
+            position += stride;
         }
         var adler = new Adler32();
         adler.update(buffer, used, length);
-        return new Band(ZlibDeflater.segment(buffer, used, length, level, filtered, end == picture.height()),
+        return new Band(ZlibDeflater.segment(buffer, used, length, level, filtered, to == scan.first[scan.passes]),
                 (int) adler.getValue());
-    }
-
-    /**
-     * Converts a row of RGBA pixels to RGB samples.
-     *
-     * @param pixels the picture samples
-     * @param offset the index of the row's first pixel
-     * @param width the number of pixels
-     * @param target the destination, {@code width * 3} bytes
-     */
-    private static void toRgb(byte[] pixels, int offset, int width, byte[] target) {
-        for (var x = 0; x < width; x++) {
-            var s = offset + x * 4;
-            var t = x * 3;
-            target[t] = pixels[s];
-            target[t + 1] = pixels[s + 1];
-            target[t + 2] = pixels[s + 2];
-        }
-    }
-
-    /**
-     * Converts a row of RGBA pixels to palette indices.
-     *
-     * @param pixels the picture samples
-     * @param offset the index of the row's first pixel
-     * @param width the number of pixels
-     * @param palette the ordered palette holding every color of the row
-     * @param target the destination, {@code width} bytes
-     */
-    private static void toIndices(byte[] pixels, int offset, int width, PngPalette palette, byte[] target) {
-        var opaque = palette.translucentCount() == 0 ? 0xFF00_0000 : 0;
-        var lastColor = 0;
-        var lastIndex = -1;
-        for (var x = 0; x < width; x++) {
-            var color = ByteArrays.i32le(pixels, offset + x * 4) | opaque;
-            if (color != lastColor || lastIndex < 0) {
-                lastColor = color;
-                lastIndex = palette.indexOf(color);
-            }
-            target[x] = (byte) lastIndex;
-        }
     }
 }

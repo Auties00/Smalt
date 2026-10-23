@@ -22,16 +22,33 @@ import java.util.Objects;
  *
  * <p>The compressed pixel data is copied byte for byte: JPEG files are rewritten segment by
  * segment up to the first scan, PNG files chunk by chunk, WebP files chunk by chunk through the
- * RIFF structure, and GIF files block by block. The metadata kinds an
- * {@link ImageMetadataEdit} keeps stay byte-identical; EXIF edits go through
- * {@link ExifWriter#rewrite(byte[], ExifData)}, which keeps the maker note and every unchanged
- * value at its offset and zeroes what it removes.
+ * RIFF structure, GIF files block by block, and TIFF files keep every byte outside the first
+ * directory and its metadata where it is, and BMP files keep their color table and pixel data. The
+ * metadata kinds an {@link ImageMetadataEdit} keeps stay byte-identical; EXIF edits go through
+ * {@link ExifWriter#rewrite(byte[], ExifData)}, which keeps the maker note and every unchanged value at
+ * its offset and zeroes what it removes.
  *
  * <p>JPEG, PNG and WebP accept every kind of change (IPTC only in JPEG, comments in JPEG and PNG,
- * text in PNG); GIF accepts XMP and comments; HEIC and AVIF accept EXIF and XMP, whose items are
- * rewritten while the coded image items stay where they are or move with their offsets corrected.
- * TIFF metadata is read only. An edit a format cannot store raises
- * {@link MediaException.Unsupported}.
+ * text in PNG); GIF accepts XMP, ICC and comment changes; HEIC and AVIF accept EXIF, XMP and ICC
+ * changes, still images and image sequences alike: the EXIF and XMP items and the primary item's
+ * ICC property are rewritten while the coded image items and the tracks stay where they are or
+ * move with their offsets corrected; TIFF, BigTIFF, DNG and the camera raw files with a TIFF
+ * signature accept EXIF, XMP, IPTC and ICC changes; JPEG XL accepts EXIF and XMP changes, a bare
+ * codestream being wrapped in a container to hold them; BMP accepts ICC changes, a new profile
+ * giving the file a V5 header. The other camera raw files are read only. An edit a format cannot
+ * store raises {@link MediaException.Unsupported}.
+ *
+ * <p>A TIFF edit rebuilds the first directory (IFD0) and, when the EXIF block changes, its Exif,
+ * GPS and interoperability directories; the strips and tiles, the other pages and their
+ * directories, and every value an entry still references stay at their offsets, unchanged values
+ * included. The entries that lay out or describe the coded image (its size, samples, compression,
+ * strips or tiles, colors, GeoTIFF and DNG tags) are not part of the EXIF block and are always
+ * kept; {@code XResolution}, {@code YResolution} and {@code ResolutionUnit}, which TIFF requires,
+ * are part of it but keep their values unless the edit sets them. IPTC data stored in the
+ * Photoshop image resources (tag 34377) is changed there too. The old directories and the values
+ * nothing references any more are zeroed, the new ones are written over that space or appended,
+ * and freed space that ends the file is cut off, so that every copied byte stays at its offset and
+ * {@link #apply(Path, ImageMetadataEdit)} edits a TIFF file in place.
  *
  * <p>HEIC and AVIF readers orient pictures by the {@code irot} and {@code imir} properties, not by
  * the EXIF orientation, which an orientation edit still records.
@@ -107,7 +124,8 @@ public final class ImageMetadataEditor {
      *
      * <p>The file is rewritten to a temporary file in the same directory that replaces it,
      * atomically where the file system supports it, unless the change fits in place (the same
-     * metadata size), in which case only the metadata bytes are written. A failed edit leaves the
+     * metadata size, or any change of a TIFF file), in which case only the metadata bytes are
+     * written and the file is extended or truncated. An edit that fails before writing leaves the
      * original untouched.
      *
      * @param file the image file
@@ -175,7 +193,10 @@ public final class ImageMetadataEditor {
             case Change.Remove<ColorProfile> _ -> new Change.Remove<>();
             case Change.Replace<ColorProfile> _ -> new Change.Replace<>(edit.iccBytes());
         };
-        return new Resolved(exif, xmp, iptc, icc, edit.comments(), edit.text(), edit.removesOtherMetadata());
+        var hdrColor = edit.colorProfile() instanceof Change.Replace<ColorProfile>(var profile)
+                ? profile.colorInfo().orElse(null) : null;
+        return new Resolved(exif, xmp, iptc, icc, hdrColor, edit.comments(), edit.text(),
+                edit.removesOtherMetadata());
     }
 
     /**

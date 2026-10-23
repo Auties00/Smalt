@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.loudness;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Oracle;
@@ -24,7 +25,6 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Compares the meter with ffmpeg used as a black box: its {@code ebur128} filter (integrated
@@ -64,7 +64,7 @@ class LoudnessFfmpegTest {
         if (source == null) {
             Files.write(wav, Signals.wav(speechLike(), 48_000));
         } else {
-            assumeTrue(Files.isRegularFile(source), source + " is not cached");
+            Skip.unless(Files.isRegularFile(source), "data:vector", source + " is not cached");
             run(List.of("-v", "error", "-y", "-i", source.toString(), "-c:a", "pcm_f32le", wav.toString()));
         }
         var stats = Loudness.measure(MediaSource.of(wav));
