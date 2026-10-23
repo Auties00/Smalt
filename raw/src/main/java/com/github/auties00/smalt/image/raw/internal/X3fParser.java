@@ -715,7 +715,7 @@ final class X3fParser {
         var captureIso = camf.numbers("CaptureISO", 1);
         var scaling = sensorIso != null && captureIso != null && sensorIso[0] > 0 && captureIso[0] > 0
                 ? captureIso[0] / sensorIso[0] : 1;
-        file.color.baselineExposure = Math.log(scaling * smallest) / Math.log(2);
+        file.color.baselineExposure = StrictMath.log(scaling * smallest) / StrictMath.log(2);
     }
 
     /**

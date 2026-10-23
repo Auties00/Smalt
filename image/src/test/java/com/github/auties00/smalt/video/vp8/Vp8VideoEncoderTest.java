@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.vp8;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -160,6 +161,17 @@ class Vp8VideoEncoderTest {
     }
 
     /** Returns the frames of a cached clip, read lazily, or synthetic frames when it is absent. */
+    /**
+     * Returns the frames of a cached clip, skipping the calling test without it; for assertions calibrated on
+     * the clip's content, which synthetic video does not reproduce.
+     */
+    static IntFunction<YuvPicture> clipOrSkip(String name, int width, int height, int frames) throws IOException {
+        var clip = RtTestVideo.clip(name);
+        Skip.unless(clip != null && Files.size(clip) >= (long) frames * width * height * 3 / 2, "data:clip",
+                "clip " + name + " is not cached (python tools/testdata/testdata.py fetch --tier full)");
+        return clipOrSynthetic(name, width, height, frames);
+    }
+
     static IntFunction<YuvPicture> clipOrSynthetic(String name, int width, int height, int frames) throws IOException {
         var clip = RtTestVideo.clip(name);
         if (clip != null && Files.size(clip) >= (long) frames * width * height * 3 / 2) {
@@ -419,7 +431,7 @@ class Vp8VideoEncoderTest {
         /** Encodes a clip whose bitrate steps every {@link #SEGMENT} frames, returning each frame's bits (0 if dropped). */
         static long[] encodeSteps(String clip, int width, int height, int[] steps, boolean dropFrames) throws IOException {
             var count = SEGMENT * steps.length;
-            var frames = clipOrSynthetic(clip, width, height, count);
+            var frames = clipOrSkip(clip, width, height, count);
             var c = config(width, height, steps[0]);
             var base = Vp8Setup.of(width, height, c.frameRate(), c.timeBase(), steps[0], 4, 63, 0, 6, false,
                     1, dropFrames, 1000, 500, 600, 1, 1);
@@ -542,7 +554,7 @@ class Vp8VideoEncoderTest {
             var raise = 240;
             var count = raise + 30;
             var c = config(width, height, from);
-            var run = encode(c, clipOrSynthetic(clip, width, height, count), count, false, i -> false,
+            var run = encode(c, clipOrSkip(clip, width, height, count), count, false, i -> false,
                     i -> i == raise ? c.withBitrate(to) : null);
             var bits = run.packets().stream().filter(p -> p.pts() >= raise).mapToLong(p -> p.size() * 8L).sum();
             assertTrue(Math.abs(bits - to) <= 0.08 * to, bits + " bits in the second after the raise to " + to);

@@ -1,0 +1,31 @@
+# demux dump of mp4/hevc.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 1000000
+seekable true
+metadata compatible_brands="isomiso2mp41"
+metadata encoder="Lavf61.7.100"
+metadata major_brand="isom"
+metadata minor_version="512"
+track 1 VIDEO HEVC timebase=1/15360 duration=15360 config=2430:6e6948c3
+  video 160x120 orientation=NORMAL rate=15/1 sar=1/1 interlacing=PROGRESSIVE
+packets 15
+0 t1 pts=0 dts=0 dur=1024 flags=KEY size=1789 crc=59d61136
+1 t1 pts=1024 dts=1024 dur=1024 flags=- size=787 crc=64dd9adc
+2 t1 pts=2048 dts=2048 dur=1024 flags=- size=669 crc=8856737b
+3 t1 pts=3072 dts=3072 dur=1024 flags=- size=739 crc=7b42cbdd
+4 t1 pts=4096 dts=4096 dur=1024 flags=- size=596 crc=022548a0
+5 t1 pts=5120 dts=5120 dur=1024 flags=KEY size=2454 crc=e601cc74
+6 t1 pts=6144 dts=6144 dur=1024 flags=- size=645 crc=9c6eb72e
+7 t1 pts=7168 dts=7168 dur=1024 flags=- size=867 crc=fe9ec69d
+8 t1 pts=8192 dts=8192 dur=1024 flags=- size=668 crc=72cd3a8a
+9 t1 pts=9216 dts=9216 dur=1024 flags=- size=743 crc=34c27813
+10 t1 pts=10240 dts=10240 dur=1024 flags=KEY size=2710 crc=9999731f
+11 t1 pts=11264 dts=11264 dur=1024 flags=- size=955 crc=c3f19644
+12 t1 pts=12288 dts=12288 dur=1024 flags=- size=693 crc=04aecaa8
+13 t1 pts=13312 dts=13312 dur=1024 flags=- size=822 crc=95743641
+14 t1 pts=14336 dts=14336 dur=1024 flags=- size=422 crc=8f180719
+seek 0: t1@0
+seek 333333: t1@0
+seek 666666: t1@5
+seek 1000000: end
+seek -1000000: t1@0
