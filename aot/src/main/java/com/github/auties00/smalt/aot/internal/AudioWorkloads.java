@@ -77,6 +77,7 @@ final class AudioWorkloads {
                 file("opus-encode-projection", () -> opusProjection(2)),
                 file("opus-decode-projection", () -> opusProjectionDecode(2)),
                 file("vorbis-encode", () -> vorbisEncode(2)),
+                file("vorbis-encode-managed", () -> vorbisEncodeManaged(1)),
                 file("vorbis-decode", () -> vorbisDecode(6)),
                 file("flac-encode", () -> flacEncode("flac-encode", FlacEncoderOptions.defaults(), 44100, 6)),
                 file("flac-encode-24", () -> flacEncode("flac-encode-24", FlacEncoderOptions.ofCompressionLevel(8)
@@ -353,6 +354,30 @@ final class AudioWorkloads {
         var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioStreams.BLOCK_FRAMES);
         Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
         return TrainingWorkload.of("vorbis-encode", () -> {
+            for (var encoder : encoders) {
+                SyntheticAudio.feed(music, block, buffer -> encoder.encode(buffer, output));
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes stereo music as bitrate managed 44.1 kHz Vorbis, which codes
+     * every block at all its rates: an average bitrate with a maximum, and a tight maximum at a
+     * quality that truncates packets, one encoder of each across rounds.
+     *
+     * @param seconds the music encoded per round by each encoder, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload vorbisEncodeManaged(double seconds) {
+        var music = SyntheticAudio.music(44100, seconds);
+        var encoders = List.of(
+                new VorbisEncoder(VorbisEncoderOptions.ofAverageBitrate(128_000).toBuilder().maximumBitrate(160_000)
+                        .build()),
+                new VorbisEncoder(VorbisEncoderOptions.ofQuality(4).toBuilder().maximumBitrate(48_000)
+                        .reservoirBits(8_000).build()));
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioStreams.BLOCK_FRAMES);
+        Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of("vorbis-encode-managed", () -> {
             for (var encoder : encoders) {
                 SyntheticAudio.feed(music, block, buffer -> encoder.encode(buffer, output));
             }

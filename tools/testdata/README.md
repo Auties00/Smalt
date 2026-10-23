@@ -612,6 +612,21 @@ in-band FEC: `python -I tools/testdata/opus-oracle/traces.py <conformance cache>
 SHA-256), compiles `ofdown.c`, which muxes libopus packets into Ogg with libogg and decodes them with
 opusfile's `op_read_float_stereo`, and prints the goldens of `OpusDownmixTest`.
 
+## Vorbis oracle
+
+`VorbisEncoderTest` and `VorbisBitrateManagementTest` compare the SHA-256 of the Vorbis encoder's
+identification and setup headers and packets with those of libvorbis 1.3.7, which Smalt's encoder matches
+packet for packet at a quality and in every bitrate managed mode. `vorbis-oracle/` regenerates those hashes:
+`python -I tools/testdata/vorbis-oracle/build.py <dir>` (with gcc, from an MSYS2 UCRT64 shell on Windows)
+downloads libvorbis 1.3.7, libogg 1.3.5 and the fdlibm 5.3 sources of netlib (pinned by SHA-256) and compiles
+libvorbis with `vbm.c`, a harness that feeds it in 1024-sample chunks through `vorbis_encode_setup_vbr`, the
+same followed by `OV_ECTL_RATEMANAGE2_SET`, or `vorbis_encode_setup_managed`. The build drops the `rint` that
+libvorbis's `os.h` defines on Windows (it rounds exact halves up, which is the only difference between a Windows
+libvorbis and Smalt), and links the libvorbis calls of `sin`, `cos`, `atan`, `exp`, `log` and `pow` to fdlibm,
+the library of `StrictMath`. `python -I tools/testdata/vorbis-oracle/goldens.py <dir>/vbm.exe <dir>/io` writes
+the inputs with `Signals.java` (the tests' signals, computed with `StrictMath`; it needs a JDK) and prints the
+`CsvSource` rows of both tests.
+
 ## AAC-ELD low delay SBR oracle
 
 The ISO/IEC 14496-26 streams of AAC-ELD with low delay SBR (`er_eld_sbr_*`) ship without reference waveforms, and
