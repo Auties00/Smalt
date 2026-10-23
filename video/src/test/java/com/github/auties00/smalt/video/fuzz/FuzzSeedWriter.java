@@ -53,6 +53,42 @@ class FuzzSeedWriter {
                 "-c:v", "libaom-av1", "-cpu-used", "8"));
     }
 
+    @Test
+    @DisplayName("writes the DNxHD alpha seeds: premultiplied in-band alpha and Avid's out-of-band alpha, which Smalt writes")
+    void dnxhdAlpha() {
+        var picture = com.github.auties00.smalt.image.Yuv16Picture.allocate(32, 16,
+                com.github.auties00.smalt.image.ChromaFormat.YUV444, 10, true,
+                com.github.auties00.smalt.image.ColorInfo.BT709_LIMITED);
+        for (var i = 0; i < 32 * 16; i++) {
+            picture.y()[i] = (short) (64 + i);
+            picture.u()[i] = (short) (512 + (i % 32) * 8);
+            picture.v()[i] = (short) (512 - (i / 32) * 8);
+            picture.alpha()[i] = (short) (i % 32 < 4 ? 0 : (i % 32) * 33);
+        }
+        var o = com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions.of(
+                com.github.auties00.smalt.video.dnxhd.DnxhdProfile.DNXHR_444).toBuilder().alpha(true);
+        dnxhdSeed("valid-dnxhr-444-premultiplied-lossless.bin", o.losslessAlpha(true).premultipliedAlpha(true).build(),
+                picture);
+        var hq = com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions.of(
+                com.github.auties00.smalt.video.dnxhd.DnxhdProfile.DNXHR_HQX).toBuilder().alpha(true);
+        dnxhdSeed("valid-dnxhr-hqx-avid-uncompressed.bin", hq.alphaStorage(
+                com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions.AlphaStorage.AVID_UNCOMPRESSED).build(),
+                picture);
+        dnxhdSeed("valid-dnxhr-hqx-avid-coded.bin", hq.alphaStorage(
+                com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions.AlphaStorage.AVID_CODED).build(), picture);
+    }
+
+    private static void dnxhdSeed(String name, com.github.auties00.smalt.video.dnxhd.DnxhdEncoderOptions options,
+                                  com.github.auties00.smalt.image.Picture picture) {
+        var encoder = new com.github.auties00.smalt.video.dnxhd.DnxhdEncoder(32, 16, options);
+        var packet = encoder.encodeFrame(new com.github.auties00.smalt.video.VideoFrame(picture, 0, 3600, true));
+        var track = com.github.auties00.smalt.track.VideoTrack.builder().id(1).codec(Codec.DNXHD)
+                .timeBase(encoder.timeBase()).codecConfig(encoder.codecConfig().orElseThrow()).width(32).height(16)
+                .build();
+        write(VideoFuzzTest.class, "dnxhd", name, FuzzSeeds.packets(track, 0,
+                java.util.List.of(new com.github.auties00.smalt.testkit.fuzz.FuzzPackets.Part(packet.data(), true))));
+    }
+
     private static void seed(String method, String name, Codec codec, int options, Path file) {
         write(VideoFuzzTest.class, method, name, FuzzSeeds.packets(file, codec, options, 4));
     }

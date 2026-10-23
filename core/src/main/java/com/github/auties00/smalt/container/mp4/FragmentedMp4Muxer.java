@@ -356,8 +356,9 @@ public final class FragmentedMp4Muxer implements Muxer {
      * first packet's timestamp.
      *
      * @throws IllegalArgumentException if the id is already used, the codec is not supported, the
-     * configuration it needs is missing or a TTML configuration is malformed, a PCM track has no
-     * sampling rate or channel layout, or a CMAF file would get a second track
+     * configuration it needs is missing, a TTML configuration is malformed or a DNxHD configuration
+     * holds anything but Avid sample description extensions after its sample entry type, a PCM
+     * track has no sampling rate or channel layout, or a CMAF file would get a second track
      */
     @Override
     public void addTrack(Track track) {

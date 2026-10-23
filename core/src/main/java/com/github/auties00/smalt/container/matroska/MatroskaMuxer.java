@@ -611,9 +611,10 @@ public final class MatroskaMuxer implements Muxer {
      * Declares a track, flagged {@link TrackFlag#DEFAULT} when it is the first of its kind.
      *
      * @param track the track description
-     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, or the
+     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, the
      * track lacks what its codec needs (a configuration, a frame size, a sample rate, a layout or, for a data track,
-     * a Matroska codec identifier as its handler)
+     * a Matroska codec identifier as its handler), or a DNxHD configuration holds anything but Avid sample
+     * description extensions after its sample entry type
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
     @Override
@@ -631,9 +632,10 @@ public final class MatroskaMuxer implements Muxer {
      *
      * @param track the track description
      * @param flags the flags of its {@code TrackEntry}; a flag not in the set is written as cleared
-     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, or the
+     * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, the
      * track lacks what its codec needs (a configuration, a frame size, a sample rate, a layout or, for a data track,
-     * a Matroska codec identifier as its handler)
+     * a Matroska codec identifier as its handler), or a DNxHD configuration holds anything but Avid sample
+     * description extensions after its sample entry type
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
     public void addTrack(Track track, Set<TrackFlag> flags) {
@@ -1787,28 +1789,34 @@ public final class MatroskaMuxer implements Muxer {
         /**
          * Builds the {@code CodecPrivate} of a {@code V_QUICKTIME} track: a QuickTime video sample
          * description (Apple QuickTime File Format, "Video sample description"), from its size and
-         * sample entry type to its color table ID, 86 bytes without extensions.
+         * sample entry type to its color table ID, 86 bytes, followed by the Avid extensions the
+         * configuration carries after its sample entry type. The depth is 32 when the extensions
+         * declare Avid's alpha, 24 otherwise.
          *
-         * @param fourCc the sample entry type, four bytes
+         * @param config the configuration: the sample entry type, four bytes, and the extensions
          * @param video the track
          * @return the sample description
-         * @throws IllegalArgumentException if {@code fourCc} is not four bytes long
+         * @throws IllegalArgumentException if {@code config} is shorter than four bytes, or its bytes
+         * after the type are not Avid extensions
          */
-        private static byte[] imageDescription(byte[] fourCc, VideoTrack video) {
-            if (fourCc.length != 4) {
+        private static byte[] imageDescription(byte[] config, VideoTrack video) {
+            if (config.length < 4) {
                 throw new IllegalArgumentException("a " + video.codec().displayName() + " track needs its"
                         + " four-character sample entry type as configuration");
             }
+            var fourCc = Arrays.copyOf(config, 4);
+            var extensions = CodecConfigs.dnxhdExtensions(config);
             var name = video.codec() == Codec.DNXHD && fourCc[3] == 'h' ? "DNxHR" : "DNxHD";
-            var buffer = ByteBuffer.allocate(86);
-            buffer.putInt(86).put(fourCc).put(new byte[6]).putShort((short) 1);
+            var buffer = ByteBuffer.allocate(86 + extensions.length);
+            buffer.putInt(86 + extensions.length).put(fourCc).put(new byte[6]).putShort((short) 1);
             buffer.putShort((short) 0).putShort((short) 0).putInt(0).putInt(0x200).putInt(0x200);
             buffer.putShort((short) video.width()).putShort((short) video.height());
             buffer.putInt(0x00480000).putInt(0x00480000).putInt(0).putShort((short) 1);
             var compressor = new byte[32];
             compressor[0] = (byte) name.length();
             System.arraycopy(name.getBytes(StandardCharsets.US_ASCII), 0, compressor, 1, name.length());
-            buffer.put(compressor).putShort((short) 24).putShort((short) -1);
+            buffer.put(compressor).putShort((short) (CodecConfigs.dnxhdAvidAlpha(config) ? 32 : 24))
+                    .putShort((short) -1).put(extensions);
             return buffer.array();
         }
 

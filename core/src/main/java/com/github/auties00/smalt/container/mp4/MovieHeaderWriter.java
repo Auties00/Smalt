@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
@@ -35,7 +36,8 @@ final class MovieHeaderWriter {
      *
      * @param track the track to check
      * @throws IllegalArgumentException if an H.264, HEVC, AAC, Opus, ALAC or FLAC track has no
-     * configuration, or a TTML configuration is malformed
+     * configuration, a TTML configuration is malformed, or a DNxHD configuration carries bytes
+     * after its sample entry type that are not Avid sample description extensions
      * @throws com.github.auties00.smalt.MediaException.Malformed if an AAC, Opus or FLAC
      * configuration is invalid
      */
@@ -59,6 +61,8 @@ final class MovieHeaderWriter {
             AudioConfigs.parseAac(track.codecConfig().orElseThrow());
         } else if (codec == Codec.FLAC) {
             AudioConfigs.parseFlac(track.codecConfig().orElseThrow());
+        } else if (codec == Codec.DNXHD) {
+            track.codecConfig().filter(config -> config.length > 4).ifPresent(CodecConfigs::dnxhdExtensions);
         }
     }
 

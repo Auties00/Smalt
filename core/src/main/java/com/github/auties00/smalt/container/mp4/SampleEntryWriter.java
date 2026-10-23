@@ -722,8 +722,9 @@ final class SampleEntryWriter {
      * metadata), a {@code fiel} box with the declared scan (the scan of the first frame when the
      * track declares none) and a {@code pasp} box with the declared sample aspect ratio (square
      * samples when the track declares none). The depth is 32 when the first frame carries alpha (a
-     * ProRes 4444 alpha channel, or the alpha flag {@code ALP} of a VC-3 coding unit), 24
-     * otherwise.
+     * ProRes 4444 alpha channel, or the alpha flag {@code ALP} of a VC-3 coding unit) or the DNxHD
+     * configuration declares Avid's alpha (an {@code AALP} extension), 24 otherwise. The Avid
+     * extensions of a DNxHD configuration follow the color table ID.
      *
      * <p>The sample entry type is the track's four-character configuration; without one it is
      * {@code ap4h} or {@code apcn} for ProRes, by the chroma format of the first frame, and
@@ -738,8 +739,10 @@ final class SampleEntryWriter {
         var first = track.firstBytes;
         var prores = video.codec() == Codec.PRORES;
         var format = CodecConfigs.quickTimeVisualType(prores, config, first);
+        var extensions = !prores && config != null && config.length > 4 ? CodecConfigs.dnxhdExtensions(config)
+                : new byte[0];
         var alpha = prores ? first != null && first.length > 25 && (first[25] & 0x0F) != 0
-                : first != null && first.length > 7 && (first[7] & 1) != 0;
+                : first != null && first.length > 7 && (first[7] & 1) != 0 || CodecConfigs.dnxhdAvidAlpha(config);
         var fieldOrder = 0;
         if (prores && first != null && first.length > 20) {
             fieldOrder = (first[20] >>> 2) & 3;
@@ -766,6 +769,7 @@ final class SampleEntryWriter {
         writer.zeros(31 - name.length);
         writer.u16(alpha ? 32 : 24);
         writer.u16(0xFFFF);
+        writer.bytes(extensions);
         if (video.color().isPresent()) {
             var color = video.color().get();
             writer.begin(BoxTypes.COLR);

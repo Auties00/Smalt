@@ -107,6 +107,7 @@ linux-arm64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConforma
 linux-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 linux-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.internal.VectorCdfDspTest	simd:narrow	18
 linux-arm64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
+linux-arm64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAvidAlphaTest	data:vector	2
 linux-x64-capture	capture	com.github.auties00.smalt.capture.internal.linux.LinuxCaptureTest	platform:not-linux	1
 linux-x64-capture	capture	com.github.auties00.smalt.capture.internal.windows.WasapiAudioTest	platform:windows	5
 linux-x64-capture	capture	com.github.auties00.smalt.capture.internal.windows.WindowsCaptureTest	platform:windows	3
@@ -232,6 +233,7 @@ linux-x64-scalar-smoke	video	com.github.auties00.smalt.video.av1.internal.McDspT
 linux-x64-scalar-smoke	video	com.github.auties00.smalt.video.av1.internal.VectorCdfDspTest	simd:narrow	18
 linux-x64-scalar-smoke	video	com.github.auties00.smalt.video.av1.internal.VectorIpredDspTest	simd:disabled	784
 linux-x64-scalar-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
+linux-x64-scalar-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAvidAlphaTest	data:vector	2
 linux-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.audio.AudioLoopbackLiveTest	device:audio-loopback	2
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.linux.LinuxCaptureTest	device:camera	1
@@ -346,6 +348,7 @@ linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParse
 linux-x64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 linux-x64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 linux-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
+linux-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAvidAlphaTest	data:vector	2
 macos-arm64-capture	capture	com.github.auties00.smalt.capture.internal.linux.LinuxCaptureTest	platform:linux	5
 macos-arm64-capture	capture	com.github.auties00.smalt.capture.internal.macos.MacCaptureLiveTest	device:camera	1
 macos-arm64-capture	capture	com.github.auties00.smalt.capture.internal.windows.WasapiAudioTest	platform:windows	5
@@ -455,6 +458,7 @@ macos-arm64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConforma
 macos-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 macos-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.internal.VectorCdfDspTest	simd:narrow	18
 macos-arm64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
+macos-arm64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAvidAlphaTest	data:vector	2
 windows-x64-capture	capture	com.github.auties00.smalt.capture.internal.linux.LinuxCaptureTest	platform:linux	5
 windows-x64-capture	capture	com.github.auties00.smalt.capture.internal.windows.WindowsCaptureTest	device:camera	5
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
@@ -562,3 +566,4 @@ windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fPar
 windows-x64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
+windows-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAvidAlphaTest	data:vector	2

@@ -394,8 +394,9 @@ public final class Mp4Muxer implements Muxer {
      * the track included, becomes a sample holding a TTML document that shows nothing.
      *
      * @throws IllegalArgumentException if the id is already used, the codec is not supported, the
-     * configuration it needs is missing or a TTML configuration is malformed, a PCM track has no
-     * sampling rate or channel layout, or the brand cannot carry the track
+     * configuration it needs is missing, a TTML configuration is malformed or a DNxHD configuration
+     * holds anything but Avid sample description extensions after its sample entry type, a PCM
+     * track has no sampling rate or channel layout, or the brand cannot carry the track
      */
     @Override
     public void addTrack(Track track) {

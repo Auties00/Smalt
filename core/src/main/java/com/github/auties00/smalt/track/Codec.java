@@ -75,6 +75,14 @@ public enum Codec {
 
     /**
      * Avid DNxHD and DNxHR, the VC-3 format of SMPTE ST 2019-1.
+     *
+     * <p>A packet is one frame: its coding units (two for field-encoded interlaced frames),
+     * possibly followed by the alpha Avid's QuickTime encoders store after the video and the size
+     * of the video part in four big-endian bytes. The configuration is the QuickTime sample entry
+     * type in ASCII ({@code AVdn} or {@code AVdh}), optionally followed by the extension atoms of
+     * Avid's sample descriptions ({@code ACLR}, {@code APRG}, {@code ARES}, {@code AALP} and
+     * {@code ADHR}, sizes and types included), which QuickTime and Matroska muxers write into the
+     * sample description; an {@code AALP} atom declares the alpha stored after the video.
      */
     DNXHD(TrackKind.VIDEO, "dnxhd"),
 

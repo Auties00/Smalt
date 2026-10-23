@@ -3,6 +3,7 @@ package com.github.auties00.smalt.internal.codec;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
 
+import java.io.ByteArrayOutputStream;
 import java.util.Arrays;
 
 /**
@@ -33,6 +34,31 @@ public final class CodecConfigs {
      * The VP9 level codes ({@code 10 * major + minor}) matching {@link #VP9_LEVEL_AREAS}.
      */
     private static final int[] VP9_LEVELS = {10, 11, 20, 21, 30, 31, 40, 50, 60};
+
+    /**
+     * The Avid color range extension ({@code ACLR}).
+     */
+    private static final int AVID_COLOR_RANGE = 0x41434C52;
+
+    /**
+     * The Avid scan extension ({@code APRG}).
+     */
+    private static final int AVID_PROGRESSIVE = 0x41505247;
+
+    /**
+     * The Avid resolution extension ({@code ARES}).
+     */
+    private static final int AVID_RESOLUTION = 0x41524553;
+
+    /**
+     * The Avid alpha extension ({@code AALP}).
+     */
+    private static final int AVID_ALPHA = 0x41414C50;
+
+    /**
+     * The Avid DNxHR extension ({@code ADHR}).
+     */
+    private static final int AVID_DNXHR = 0x41444852;
 
     /**
      * Prevents instantiation.
@@ -231,7 +257,8 @@ public final class CodecConfigs {
 
     /**
      * Returns the QuickTime sample entry type of a ProRes or DNxHD track: the track's
-     * four-character configuration when it has one, otherwise the type its first frame implies,
+     * four-character configuration (the first four characters of a DNxHD configuration, which
+     * Avid extensions may follow) when it has one, otherwise the type its first frame implies,
      * {@code ap4h} for a ProRes 4:4:4 frame and {@code apcn} for any other ProRes frame,
      * {@code AVdh} for a DNxHR frame and {@code AVdn} for any other DNxHD frame.
      *
@@ -242,7 +269,7 @@ public final class CodecConfigs {
      * @return the sample entry type, four ASCII characters packed big-endian
      */
     public static int quickTimeVisualType(boolean prores, byte[] config, byte[] frame) {
-        if (config != null && config.length == 4) {
+        if (config != null && (prores ? config.length == 4 : config.length >= 4)) {
             return (config[0] & 0xFF) << 24 | (config[1] & 0xFF) << 16 | (config[2] & 0xFF) << 8 | config[3] & 0xFF;
         }
         if (prores) {
@@ -252,5 +279,102 @@ public final class CodecConfigs {
             return chroma == 3 ? 0x61703468 : 0x6170636E;
         }
         return frame != null && frame.length > 4 && frame[4] >= 3 ? 0x41566468 : 0x4156646E;
+    }
+
+    /**
+     * Returns whether an atom type is one of the extensions of Avid's QuickTime sample
+     * descriptions of DNxHD and DNxHR: {@code ACLR}, {@code APRG}, {@code ARES}, {@code AALP} or
+     * {@code ADHR}.
+     *
+     * @param type the atom type, four ASCII characters packed big-endian
+     * @return {@code true} for an Avid extension
+     */
+    public static boolean isAvidExtension(int type) {
+        return type == AVID_COLOR_RANGE || type == AVID_PROGRESSIVE || type == AVID_RESOLUTION
+                || type == AVID_ALPHA || type == AVID_DNXHR;
+    }
+
+    /**
+     * Returns the Avid extensions among the atoms of part of a QuickTime sample description, in
+     * order, stopping at the first atom whose size does not fit.
+     *
+     * @param data the array holding the atoms
+     * @param offset the index of the first atom
+     * @param end the index after the last byte of the atoms
+     * @return the Avid atoms, sizes and types included, empty when there are none
+     */
+    public static byte[] avidExtensions(byte[] data, int offset, int end) {
+        var out = new ByteArrayOutputStream();
+        var at = offset;
+        while (end - at >= 8) {
+            var size = u32(data, at);
+            if (size < 8 || size > end - at) {
+                break;
+            }
+            if (isAvidExtension((int) u32(data, at + 4))) {
+                out.write(data, at, (int) size);
+            }
+            at += (int) size;
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns the sample description extensions a DNxHD configuration carries after its
+     * four-character sample entry type.
+     *
+     * @param config the configuration, at least four bytes
+     * @return the extensions, sizes and types included, empty when there are none
+     * @throws IllegalArgumentException if the bytes after the type are not a sequence of atoms of
+     * Avid's extension types
+     */
+    public static byte[] dnxhdExtensions(byte[] config) {
+        var at = 4;
+        while (at < config.length) {
+            var size = config.length - at >= 8 ? u32(config, at) : -1;
+            if (size < 8 || size > config.length - at || !isAvidExtension((int) u32(config, at + 4))) {
+                throw new IllegalArgumentException("the DNxHD configuration after its sample entry type is not a "
+                        + "sequence of Avid sample description atoms");
+            }
+            at += (int) size;
+        }
+        return Arrays.copyOfRange(config, 4, config.length);
+    }
+
+    /**
+     * Returns whether a DNxHD configuration declares the alpha Avid's encoders store after the
+     * video of each frame, by an {@code AALP} extension.
+     *
+     * @param config the configuration, or {@code null}
+     * @return {@code true} when an {@code AALP} atom follows the sample entry type
+     */
+    public static boolean dnxhdAvidAlpha(byte[] config) {
+        if (config == null || config.length < 4) {
+            return false;
+        }
+        var at = 4;
+        while (config.length - at >= 8) {
+            var size = u32(config, at);
+            if (size < 8 || size > config.length - at) {
+                return false;
+            }
+            if ((int) u32(config, at + 4) == AVID_ALPHA) {
+                return true;
+            }
+            at += (int) size;
+        }
+        return false;
+    }
+
+    /**
+     * Reads a big-endian unsigned 32-bit value.
+     *
+     * @param data the array
+     * @param at the index of the first byte
+     * @return the value
+     */
+    private static long u32(byte[] data, int at) {
+        return ((data[at] & 0xFFL) << 24) | (data[at + 1] & 0xFF) << 16 | (data[at + 2] & 0xFF) << 8
+                | data[at + 3] & 0xFF;
     }
 }

@@ -425,7 +425,7 @@ fills the tags `make`, `model`, `lens`, `iso`, `exposure_time`, `f_number`, `foc
 | VP9 | profiles 0-3, 8/10/12-bit (rounded to 8-bit on output unless `VideoDecoderOptions.builder().highBitDepth(true)`) | real-time (one-pass, speeds 5-9) | `smalt-video` | `video.vp9` | libvpx | Google's royalty-free VP8/VP9 grant (`PATENTS` in libvpx) |
 | AV1 | main, high and professional, 8/10/12-bit (rounded to 8-bit on output unless `Av1DecoderOptions.builder().highBitDepth(true)`), film grain | real-time (one-pass, low delay, speeds 7-10), 8-bit 4:2:0 main profile; good quality (`Av1EncoderOptions.ofQuality`, `ofBitrate`, `forArchive`: lookahead, alternate reference pyramids of up to 16 frames, temporal filtering, compound prediction, constant quality or variable bitrate, libaom good speeds 2-6), 8-bit 4:2:0; intra-only at constant quality (`Av1EncoderOptions.forIntraOnly`), 8/10/12-bit, 4:2:0 to 4:4:4 and monochrome, main, high and professional profiles | `smalt-video` | `video.av1` | dav1d (decoder), libaom (encoder) | Alliance for Open Media Patent License 1.0 (royalty-free) |
 | Apple ProRes | every flavor (422 Proxy, LT, 422, HQ, 4444, 4444 XQ; QuickTime `apco`, `apcs`, `apcn`, `apch`, `ap4h`, `ap4x` and Matroska `V_PRORES`), any frame size, progressive and interlaced (fields woven), 8 and 16-bit alpha; 4:2:2 decodes to 10-bit and 4:4:4 to 12-bit `Yuv16Picture`s by default (`ProResDecoderOptions.builder().highBitDepth(false)` computes 8-bit pictures directly; the registry follows `VideoDecoderOptions.highBitDepth`), slices in parallel; samples within one code value of ffmpeg's decode (RDD 36 leaves the IDCT implementation-defined within its Annex A bounds, which the decoder's transform meets) | every flavor with Apple's quantization matrices and target data rates (scaled to the frame size and rate, or a set bitrate or fixed quantizer), alpha for 4444, interlaced, any picture representation | `smalt-video` | `video.prores`, `video.intra.internal` | spec (SMPTE RDD 36); the encoder's quantization matrices are the ones Apple's encoders signal in their frame headers | **Apple licenses ProRes implementations** (see [Licensing of ProRes and DNxHD](#licensing-of-prores-and-dnxhd)); not covered by the MIT license |
-| Avid DNxHD / DNxHR (VC-3) | every compression ID of SMPTE ST 2019-1: DNxHD 1235-1260 (1920x1080, 1440x1080, 1280x720 and 960x720, progressive, field-encoded interlaced and the adaptive field/frame macroblocks of 1260; 8 and 10-bit, the 4:4:4 RGB ID 1256) and DNxHR 1270-1274 (LB, SQ, HQ, HQX, 444; any size; 4:2:0, 4:2:2, 4:4:4 Y'CbCr and RGB; 8, 10 and 12-bit); QuickTime `AVdn`/`AVdh`, Matroska `V_QUICKTIME` (and `V_MS/VFW/FOURCC`); macroblock rows in parallel; 4:4:4 frames with the color format flag set decode to full-range RGBA, Y'CbCr-coded macroblocks converted with BT.709 (see [Licensing of ProRes and DNxHD](#licensing-of-prores-and-dnxhd)); alpha: the in-band channel of Amendment 1:2023 (DCT-coded on every ID that permits it, lossless run-length on 1256 and 1270) and the out-of-band alpha of Avid's QuickTime encoders (raw 8-bit or a second coding unit) | every compression ID: DNxHR LB, SQ, HQ (8-bit 4:2:2 or 4:2:0), HQX (10/12-bit 4:2:2 or 4:2:0), 444 (10/12-bit Y'CbCr or RGB; RGB coded as BT.709 Y'CbCr macroblocks by default, `alternateColorSpace`) at any size, DNxHD picked from the raster, scan, depth and bitrate (or named), ID 1260 with adaptive field/frame macroblocks; in-band alpha (`alpha`, lossless on 1256 and 1270 with `losslessAlpha`); constant frame size | `smalt-video` | `video.dnxhd`, `video.intra.internal` | spec (SMPTE ST 2019-1:2016 and Amendment 1:2023, tables of Annexes C to E) | **Avid licenses DNxHD** (see [Licensing of ProRes and DNxHD](#licensing-of-prores-and-dnxhd)); not covered by the MIT license |
+| Avid DNxHD / DNxHR (VC-3) | every compression ID of SMPTE ST 2019-1: DNxHD 1235-1260 (1920x1080, 1440x1080, 1280x720 and 960x720, progressive, field-encoded interlaced and the adaptive field/frame macroblocks of 1260; 8 and 10-bit, the 4:4:4 RGB ID 1256) and DNxHR 1270-1274 (LB, SQ, HQ, HQX, 444; any size; 4:2:0, 4:2:2, 4:4:4 Y'CbCr and RGB; 8, 10 and 12-bit); QuickTime `AVdn`/`AVdh`, Matroska `V_QUICKTIME` (and `V_MS/VFW/FOURCC`); macroblock rows in parallel; 4:4:4 frames with the color format flag set decode to full-range RGBA, Y'CbCr-coded macroblocks converted with BT.709 (see [Licensing of ProRes and DNxHD](#licensing-of-prores-and-dnxhd)); alpha: the in-band channel of Amendment 1:2023 (DCT-coded on every ID that permits it, lossless run-length on 1256 and 1270, premultiplied video (`PMA`) divided back to straight alpha) and the out-of-band alpha of Avid's QuickTime encoders (raw 8-bit or a second coding unit) | every compression ID: DNxHR LB, SQ, HQ (8-bit 4:2:2 or 4:2:0), HQX (10/12-bit 4:2:2 or 4:2:0), 444 (10/12-bit Y'CbCr or RGB; RGB coded as BT.709 Y'CbCr macroblocks by default, `alternateColorSpace`) at any size, DNxHD picked from the raster, scan, depth and bitrate (or named), ID 1260 with adaptive field/frame macroblocks; in-band alpha (`alpha`, lossless on 1256 and 1270 with `losslessAlpha`, premultiplied with `premultipliedAlpha`) or Avid's out-of-band alpha on every ID (`alphaStorage`: raw 8-bit samples or a second coding unit, declared by an `AALP` atom in the QuickTime or Matroska sample description); constant frame size | `smalt-video` | `video.dnxhd`, `video.intra.internal` | spec (SMPTE ST 2019-1:2016 and Amendment 1:2023, tables of Annexes C to E) | **Avid licenses DNxHD** (see [Licensing of ProRes and DNxHD](#licensing-of-prores-and-dnxhd)); not covered by the MIT license |
 
 AV1 through the codec-independent API (`VideoEncoders`, and so the transcoder) uses the good-quality usage
 for files and on-demand streams (`VideoEncoderOptions.of`): `Av1EncoderOptions.ofBitrate` at the requested
@@ -450,8 +450,17 @@ them, so files exchanged with ffmpeg differ in these known ways:
 - Alpha is coded in band, as ST 2019-1 and Amendment 1:2023 define it (DCT-coded, or lossless run-length
   codes on IDs 1256 and 1270 with `losslessAlpha`). Where the standard's prose, tables and figures
   disagree, Smalt applies the amendment's precedence rule (normative prose first), and each code site names
-  both readings. The decoder also reads the out-of-band alpha of Avid's QuickTime encoders. ffmpeg 7.1
-  ignores alpha in both forms and rejects some of Smalt's alpha frames.
+  both readings. Video premultiplied by alpha (`PMA`) is scaled about black for luma, red, green and blue and
+  about the middle code for Cb and Cr, a subsampled chroma sample by the mean alpha it covers; the decoder
+  divides it back, so pictures always carry straight alpha. The encoder also writes, and the decoder reads,
+  the out-of-band alpha of Avid's QuickTime encoders (`alphaStorage`): 8-bit samples (in an area sized for
+  10-bit samples on deeper streams, as Avid's encoders size it) or a coding unit of the stream's ID whose
+  luma is the alpha, after the video coding units and before the size of the video in four bytes, with the
+  `AALP` atom of Avid's sample descriptions (`AUA8`, `AUAX` or the sample entry type) and a 32-bit depth.
+  The QuickTime and Matroska demuxers keep the `ACLR`, `APRG`, `ARES`, `AALP` and `ADHR` atoms of Avid's
+  and ffmpeg's sample descriptions in the track configuration, and the muxers write them back. ffmpeg 7.1
+  ignores alpha in both forms (it decodes the video of out-of-band alpha frames) and rejects some of
+  Smalt's in-band alpha frames.
 - 4:2:0 DNxHR (Table C.2, `SSC = 01b`) is encoded on request (`chromaFormat`) and decoded; ffmpeg 7.1
   reads such frames as 4:2:2 and fails.
 - ID 1260 (thin-raster 1440x1080 interlaced) codes each macroblock in frame or field mode, chosen by the AC
@@ -1046,7 +1055,9 @@ file on a seekable output, its final `STREAMINFO` (length, MD5) and seek table.
   key-frame intra search). The AV1 good-quality speeds `SLOW`, `SLOWER` and `SLOWEST` take much longer than
   `BALANCED` and `FAST` for compression within measurement noise.
 - FLAC in Matroska and Ogg written to a stream (or as live Matroska) keeps the initial `STREAMINFO`, so the final
-  length and MD5 reach only files on a seekable sink. DNxHD and DNxHR alpha is written in band only.
+  length and MD5 reach only files on a seekable sink. DNxHD and DNxHR premultiplied alpha is written in band
+  only, and the sample descriptions Smalt writes carry the `AALP` extension of Avid's but not its `ACLR`,
+  `APRG` and `ARES` ones (kept on remux).
 - The MP4 demuxer reads the compressed boxes of ISO/IEC 14496-12 clause 8.20 (`!mov`, `!mof`, `!six`, `!ssx`),
   and writing the tags of such a file stores its movie box uncompressed; a tag write that would move the data of
   compressed movie fragments with explicit base data offsets raises `MediaException.Unsupported`. The demuxer
@@ -1547,9 +1558,10 @@ one call, transcode to `OutputContainer.MOV` with `VideoTranscodeOptions.encode(
 round (see [the DNxHD notes](#video)). RGB input is coded as BT.709 Y'CbCr macroblocks, the form
 other encoders' files use and ffmpeg decodes with the right colors; on the options' builder,
 `alternateColorSpace(false)` codes the RGB samples themselves, `alpha(true)` codes the picture's alpha in band
-(`losslessAlpha(true)` for DNxHR 444) and `chromaFormat(ChromaFormat.YUV420)` codes 4:2:0
-DNxHR; ffmpeg decodes neither, while `DnxhdDecoder` also reads the alpha Avid's QuickTime encoders store
-after each frame.
+(`losslessAlpha(true)` for DNxHR 444, `premultipliedAlpha(true)` for premultiplied video) and
+`chromaFormat(ChromaFormat.YUV420)` codes 4:2:0 DNxHR; ffmpeg decodes neither. With
+`alphaStorage(AlphaStorage.AVID_UNCOMPRESSED)` or `AVID_CODED` the alpha follows each frame as Avid's
+QuickTime encoders store it, and `DnxhdDecoder` reads it back.
 
 ### Remux to MP4 without re-encoding
 

@@ -16,6 +16,7 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
@@ -569,7 +570,8 @@ final class MatroskaTrackEntry {
             if (codec == Codec.VP8 || codec == Codec.VP9) {
                 config = null;
             } else if (codecId.equals("V_QUICKTIME")) {
-                config = codec == Codec.PRORES || codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 4, 8) : null;
+                config = codec == Codec.PRORES ? Arrays.copyOfRange(codecPrivate, 4, 8)
+                        : codec == Codec.DNXHD ? dnxhdConfig(codecPrivate) : null;
             } else if (codecId.equals("V_MS/VFW/FOURCC")) {
                 config = codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 16, 20)
                         : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
@@ -743,6 +745,21 @@ final class MatroskaTrackEntry {
             case "AVDN", "AVDH" -> Codec.DNXHD;
             default -> Codec.UNKNOWN_VIDEO;
         };
+    }
+
+    /**
+     * Returns the configuration of a DNxHD track from a QuickTime image description codec private:
+     * the sample entry type followed by the Avid extensions after the 86 fixed bytes.
+     *
+     * @param description the image description, at least 8 bytes
+     * @return the configuration
+     */
+    private static byte[] dnxhdConfig(byte[] description) {
+        var extensions = description.length > 86
+                ? CodecConfigs.avidExtensions(description, 86, description.length) : new byte[0];
+        var config = Arrays.copyOfRange(description, 4, 8 + extensions.length);
+        System.arraycopy(extensions, 0, config, 4, extensions.length);
+        return config;
     }
 
     /**

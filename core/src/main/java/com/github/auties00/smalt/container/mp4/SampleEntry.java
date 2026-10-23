@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.io.FourCc;
@@ -24,6 +25,7 @@ import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.TrackKind;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -273,6 +275,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         ContentLightLevel lightLevel = null;
         Rational sampleAspect = null;
         Interlacing interlacing = null;
+        ByteArrayOutputStream avid = null;
         for (var box : children(payload)) {
             var body = box;
             switch (box.type()) {
@@ -298,6 +301,15 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 case BoxTypes.PASP -> sampleAspect = parseAspect(body);
                 case BoxTypes.FIEL -> interlacing = parseFields(body);
                 default -> {
+                    if (CodecConfigs.isAvidExtension(box.type())) {
+                        if (avid == null) {
+                            avid = new ByteArrayOutputStream();
+                        }
+                        var rest = body.rest();
+                        avid.writeBytes(fourCc(rest.length + 8));
+                        avid.writeBytes(fourCc(box.type()));
+                        avid.writeBytes(rest);
+                    }
                 }
             }
         }
@@ -355,7 +367,9 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
             case BoxTypes.AVDN, BoxTypes.AVDH -> {
                 codec = Codec.DNXHD;
-                config = fourCc(format);
+                var extensions = avid == null ? new byte[0] : avid.toByteArray();
+                config = Arrays.copyOf(fourCc(format), 4 + extensions.length);
+                System.arraycopy(extensions, 0, config, 4, extensions.length);
             }
             default -> codec = Codec.UNKNOWN_VIDEO;
         }
@@ -385,8 +399,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     }
 
     /**
-     * Returns a sample entry type as four ASCII bytes, the codec configuration of ProRes and DNxHD
-     * tracks.
+     * Returns a sample entry type as four ASCII bytes, the codec configuration of ProRes tracks and
+     * the start of that of DNxHD tracks, or a 32-bit size as four big-endian bytes.
      *
      * @param format the sample entry type
      * @return the four bytes, most significant first
