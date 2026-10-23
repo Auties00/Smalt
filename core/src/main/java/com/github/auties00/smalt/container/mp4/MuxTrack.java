@@ -201,6 +201,18 @@ final class MuxTrack {
     boolean quickTime;
 
     /**
+     * Whether the track belongs to a Motion JPEG 2000 file, whose video sample entries carry the {@code fiel},
+     * {@code jsub} and {@code orfo} boxes ISO/IEC 15444-3 defines.
+     */
+    boolean motionJpeg2000;
+
+    /**
+     * The JP2 Header box ({@code jp2h}) of a Motion JPEG 2000 track, taken from its configuration or its first frame,
+     * or {@code null} until known.
+     */
+    byte[] jp2Header;
+
+    /**
      * The size of one PCM frame (one sample of every channel) of an uncompressed audio track, or
      * {@code 0} for any other track. Such a track is stored one frame per sample in a timescale of
      * its sampling rate.
@@ -672,9 +684,10 @@ final class MuxTrack {
      *
      * @param codec the codec of the track
      * @return the whole sample, up to 64 KiB, for AC-3 and E-AC-3, whose configuration boxes
-     * describe every substream of the first access unit; eight bytes otherwise
+     * describe every substream of the first access unit, and for Motion JPEG 2000, whose JP2 header and main
+     * codestream header describe the frames; 64 bytes otherwise
      */
     static int firstBytesLength(Codec codec) {
-        return codec == Codec.AC3 || codec == Codec.EAC3 ? 64 << 10 : 64;
+        return codec == Codec.AC3 || codec == Codec.EAC3 || codec == Codec.JPEG2000 ? 64 << 10 : 64;
     }
 }

@@ -10,6 +10,7 @@ import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.subtitle.TimedText;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
@@ -27,10 +28,11 @@ import java.util.Arrays;
  * Serializes the sample description of a track the {@link Mp4Muxer} writes: a visual sample entry
  * ({@code avc1}, {@code hvc1}, {@code vp08}, {@code vp09}, {@code av01}, {@code mp4v} with its
  * {@code esds}, {@code s263} with its {@code d263}, the QuickTime {@code h263}, {@code jpeg},
- * {@code mjpa} and {@code mjpb}) with its configuration box, an optional {@code colr} followed by the {@code mdcv}
- * and {@code clli} boxes of its high-dynamic-range metadata, and the optional {@code pasp} and
- * {@code fiel} boxes of a declared sample aspect ratio and scan, a QuickTime visual sample entry
- * ({@code apco} to {@code ap4x} for ProRes, {@code AVdn} and {@code AVdh} for DNxHD) with its
+ * {@code mjpa} and {@code mjpb}, and the Motion JPEG 2000 {@code mjp2} with its {@code jp2h} box and, in a
+ * Motion JPEG 2000 file, its {@code fiel}, {@code jsub} and {@code orfo} boxes) with its configuration box, an
+ * optional {@code colr} followed by the {@code mdcv} and {@code clli} boxes of its high-dynamic-range metadata,
+ * and the optional {@code pasp} and {@code fiel} boxes of a declared sample aspect ratio and scan, a QuickTime
+ * visual sample entry ({@code apco} to {@code ap4x} for ProRes, {@code AVdn} and {@code AVdh} for DNxHD) with its
  * {@code colr}, {@code mdcv}, {@code clli}, {@code fiel} and {@code pasp} boxes, an audio sample
  * entry ({@code mp4a}, {@code Opus}, {@code alac}, {@code fLaC}, {@code samr}, {@code sawb},
  * {@code ac-3}, {@code ec-3}) with its configuration box, a PCM entry ({@code ipcm} and
@@ -131,6 +133,7 @@ final class SampleEntryWriter {
                 }
             }
             case H263 -> writeH263(writer, track, (VideoTrack) described);
+            case JPEG2000 -> writeMotionJpeg2000(writer, track, (VideoTrack) described, config);
             case PRORES, DNXHD -> writeQuickTimeVisual(writer, track, (VideoTrack) described, config);
             case MOV_TEXT, WEBVTT -> writeText(writer, track.track);
             case TTML -> writeTtml(writer, track.track);
@@ -268,6 +271,18 @@ final class SampleEntryWriter {
      * @param video the track
      */
     private static void writeVisualTrailer(BoxWriter writer, VideoTrack video) {
+        writeColorAndAspect(writer, video);
+        video.interlacing().ifPresent(interlacing -> writeFields(writer, interlacing));
+        writer.end();
+    }
+
+    /**
+     * Writes the optional {@code colr}, {@code mdcv}, {@code clli} and {@code pasp} boxes of a visual sample entry.
+     *
+     * @param writer the destination, inside the sample entry
+     * @param video the track
+     */
+    private static void writeColorAndAspect(BoxWriter writer, VideoTrack video) {
         if (video.color().isPresent()) {
             var color = video.color().get();
             writer.begin(BoxTypes.COLR);
@@ -280,8 +295,82 @@ final class SampleEntryWriter {
             writeHdrMetadata(writer, color);
         }
         video.sampleAspectRatio().ifPresent(aspect -> writeAspect(writer, aspect));
-        video.interlacing().ifPresent(interlacing -> writeFields(writer, interlacing));
+    }
+
+    /**
+     * Writes the {@code mjp2} sample entry of a Motion JPEG 2000 track (ISO/IEC 15444-3): the visual sample entry
+     * fields, the JP2 Header box when one is known, and the optional {@code colr}, {@code mdcv}, {@code clli} and
+     * {@code pasp} boxes; a Motion JPEG 2000 file then gets the field coding ({@code fiel}), subsampling
+     * ({@code jsub}) and original format ({@code orfo}) boxes, the others the {@code fiel} box of a declared scan.
+     *
+     * <p>The field coding box declares two fields, the topmost line's field stored first (order 1) or second (order
+     * 6), for a scan of separated fields or an unspecified interlaced one, and one field otherwise; the original
+     * format box repeats it. The subsampling box gives the subsampling of the second component of the first frame's
+     * codestream, with no offset.
+     *
+     * @param writer the destination
+     * @param track the track state
+     * @param video the track
+     * @param config the configuration of the sample description, or {@code null}
+     */
+    private static void writeMotionJpeg2000(BoxWriter writer, MuxTrack track, VideoTrack video, byte[] config) {
+        writeVisualHeader(writer, BoxTypes.MJP2, video, "Motion JPEG2000");
+        var header = Jp2Frames.isHeader(config) ? config
+                : track.jp2Header != null ? track.jp2Header : jp2Header(null, track.firstBytes);
+        if (header != null) {
+            writer.bytes(header);
+        }
+        writeColorAndAspect(writer, video);
+        if (!track.motionJpeg2000) {
+            video.interlacing().ifPresent(interlacing -> writeFields(writer, interlacing));
+            writer.end();
+            return;
+        }
+        var scan = video.interlacing().orElse(Interlacing.PROGRESSIVE);
+        var fields = scan == Interlacing.TOP_FIELD_FIRST_SEPARATED || scan == Interlacing.BOTTOM_FIELD_FIRST_SEPARATED
+                || scan == Interlacing.INTERLACED ? 2 : 1;
+        var order = scan == Interlacing.TOP_FIELD_FIRST_SEPARATED ? 1
+                : scan == Interlacing.BOTTOM_FIELD_FIRST_SEPARATED ? 6 : 0;
+        writer.begin(BoxTypes.FIEL);
+        writer.u8(fields);
+        writer.u8(order);
         writer.end();
+        var siz = track.firstBytes == null ? null : Jp2Frames.firstSiz(track.firstBytes);
+        var chroma = siz != null && siz.components() >= 2;
+        writer.begin(BoxTypes.JSUB);
+        writer.u8(chroma ? siz.subsamplingX()[1] : 1);
+        writer.u8(chroma ? siz.subsamplingY()[1] : 1);
+        writer.u8(0);
+        writer.u8(0);
+        writer.end();
+        writer.begin(BoxTypes.ORFO);
+        writer.u8(fields);
+        writer.u8(order);
+        writer.end();
+        writer.end();
+    }
+
+    /**
+     * Returns the JP2 Header box describing the frames of a Motion JPEG 2000 track: its configuration, the JP2
+     * Header box of a frame that is a JP2 file, or one built from the main header of the frame's first codestream.
+     *
+     * @param config the track's configuration, or {@code null}
+     * @param frame the first frame, possibly only its leading bytes, or {@code null}
+     * @return the box, header included, or {@code null} when none can be found or built
+     */
+    static byte[] jp2Header(byte[] config, byte[] frame) {
+        if (Jp2Frames.isHeader(config)) {
+            return config;
+        }
+        if (frame == null) {
+            return null;
+        }
+        var header = Jp2Frames.header(frame, 0, frame.length);
+        if (Jp2Frames.isHeader(header)) {
+            return header;
+        }
+        var siz = Jp2Frames.firstSiz(frame);
+        return siz == null ? null : Jp2Frames.synthesizeHeader(siz);
     }
 
     /**

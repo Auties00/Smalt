@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
@@ -28,8 +29,8 @@ import java.util.Objects;
 /**
  * Writes AVI files with the OpenDML 1.02 extensions.
  *
- * <p>Video tracks of Motion-JPEG, MPEG-4 Part 2, H.264, HEVC, H.263, VP8 and VP9, and audio tracks
- * of PCM (8-bit unsigned, 16, 24, 32 and 64-bit signed and 32 and 64-bit float little-endian, A-law,
+ * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-4 Part 2, H.264, HEVC, H.263, VP8 and VP9, and audio
+ * tracks of PCM (8-bit unsigned, 16, 24, 32 and 64-bit signed and 32 and 64-bit float little-endian, A-law,
  * mu-law), MP3, MP2, AAC and AC-3 are accepted, at most 99 tracks in all. Video is stored at a
  * constant frame rate, the track's frame rate (or the inverse of its time base when that is a
  * plausible frame period, 25 frames per second otherwise); a gap in the timestamps is filled with
@@ -37,7 +38,10 @@ import java.util.Objects;
  * HEVC packets, length-prefixed in Smalt, are written as Annex B byte streams with the parameter
  * sets of the track's configuration record in front of every key frame that carries none of its own.
  * The decoder configuration of MPEG-4 Part 2 and AAC tracks is stored as the extra data of the
- * stream format. PCM audio is a
+ * stream format. Motion JPEG 2000 is stored with the FourCC {@code MJ2C}, and a frame that relies on its
+ * track's JP2 Header box is made to carry that header, since the stream format has no place for it: a raw
+ * codestream or a single {@code jp2c} box is written as a JP2 file, the two {@code jp2c} boxes of an
+ * interlaced frame after a copy of the header box. PCM audio is a
  * constant bitrate stream of sample blocks; compressed audio is a variable bitrate stream of one
  * frame per chunk. A video track that declares its
  * {@link VideoTrack#sampleAspectRatio() sample aspect ratio} or its
@@ -951,6 +955,9 @@ public final class AviMuxer implements Muxer {
                 appliedConfig = newConfig;
             }
             var data = packet.data();
+            if (track.codec() == Codec.JPEG2000) {
+                data = Jp2Frames.selfContained(data, track.codecConfig().orElse(null));
+            }
             if (video) {
                 var time = packet.dts() != Packet.NO_TIMESTAMP ? packet.dts() : packet.pts();
                 if (time != Packet.NO_TIMESTAMP) {

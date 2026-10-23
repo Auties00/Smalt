@@ -3,6 +3,7 @@ package com.github.auties00.smalt.image.jpeg.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -386,7 +387,8 @@ public final class MotionJpegFields {
      * frame's rows 0, 2, 4 and so on, those of {@code bottom} rows 1, 3, 5 and so on, and the chroma
      * rows alternate the same way.
      *
-     * @param top the top field, a {@link YuvPicture}, a {@link Yuv16Picture} or an {@link RgbaPicture}
+     * @param top the top field, a {@link YuvPicture}, a {@link Yuv16Picture}, an {@link RgbaPicture} or an
+     * {@link Rgba16Picture}
      * @param bottom the bottom field, of the same type, width, chroma format, depth, color and alpha
      * as {@code top}, and as many rows or one fewer
      * @param height the frame height, at most the sum of the field heights
@@ -404,6 +406,7 @@ public final class MotionJpegFields {
         return switch (top) {
             case YuvPicture first -> weaveBytes(first, (YuvPicture) bottom, height);
             case Yuv16Picture first -> weaveShorts(first, (Yuv16Picture) bottom, height);
+            case Rgba16Picture first -> weaveWidePixels(first, (Rgba16Picture) bottom, height);
             default -> weavePixels((RgbaPicture) top, (RgbaPicture) bottom, height);
         };
     }
@@ -411,8 +414,8 @@ public final class MotionJpegFields {
     /**
      * Returns whether two decoded fields form one frame: both are {@link YuvPicture} or both
      * {@link Yuv16Picture} of the same width, chroma format, depth and color, or both
-     * {@link RgbaPicture} of the same width and alpha, and the top field has as many rows as the
-     * bottom one or one more.
+     * {@link RgbaPicture} or both {@link Rgba16Picture} of the same width and alpha, and the top field
+     * has as many rows as the bottom one or one more.
      *
      * @param top the top field
      * @param bottom the bottom field
@@ -429,6 +432,8 @@ public final class MotionJpegFields {
                     first.chromaFormat() == second.chromaFormat() && first.bitDepth() == second.bitDepth()
                             && first.color().equals(second.color());
             case RgbaPicture first when bottom instanceof RgbaPicture second -> first.hasAlpha() == second.hasAlpha();
+            case Rgba16Picture first when bottom instanceof Rgba16Picture second ->
+                    first.hasAlpha() == second.hasAlpha();
             default -> false;
         };
     }
@@ -490,6 +495,22 @@ public final class MotionJpegFields {
         weavePlane(top.pixels(), top.stride(), top.height(), bottom.pixels(), bottom.stride(), bottom.height(),
                 frame.pixels(), frame.stride(), 4 * top.width(), height);
         return frame;
+    }
+
+    /**
+     * Weaves two 16-bit RGBA fields.
+     *
+     * @param top the top field
+     * @param bottom the bottom field
+     * @param height the frame height
+     * @return the frame
+     */
+    private static Rgba16Picture weaveWidePixels(Rgba16Picture top, Rgba16Picture bottom, int height) {
+        var stride = 4 * top.width();
+        var pixels = new short[stride * height];
+        weavePlane(top.pixels(), top.stride(), top.height(), bottom.pixels(), bottom.stride(), bottom.height(),
+                pixels, stride, stride, height);
+        return Rgba16Picture.of(top.width(), height, stride, pixels, top.hasAlpha());
     }
 
     /**

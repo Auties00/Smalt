@@ -38,6 +38,8 @@ ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -c:v prores_ks -profil
     "$out/mp4/prores.mov"
 ff -f lavfi -i "testsrc2=size=256x128:rate=15:duration=0.2" -c:v dnxhd -profile:v dnxhr_lb -pix_fmt yuv422p \
     "$out/mp4/dnxhr.mov"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -c:v jpeg2000 -pix_fmt yuv422p "$out/mp4/jpeg2000.mov"
+python -I "$(dirname "$0")/make-mj2-sample.py" "$out/mp4/motion.mj2"
 ff -f lavfi -i "testsrc2=size=128x96:rate=15:duration=1" -f lavfi -i "sine=frequency=440:sample_rate=8000:duration=1" \
     -c:v h263 -q:v 8 -g 5 -c:a libopencore_amrnb -b:a 12.2k -ac 1 -shortest "$out/mp4/h263-amr.3gp"
 

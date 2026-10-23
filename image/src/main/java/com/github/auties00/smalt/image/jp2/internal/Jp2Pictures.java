@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.Channel16Picture;
 import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.ChannelType;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
@@ -16,6 +17,8 @@ import com.github.auties00.smalt.image.PixelLayout;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.jp2.Jp2ChannelType;
@@ -291,6 +294,114 @@ public final class Jp2Pictures {
         return new Jp2Image(image.x0(), image.y0(), image.width(), image.height(), image.fullWidth(),
                 image.fullHeight(), image.reduction(), channels, image.colorSpace(), image.colorParameters(),
                 image.iccProfile(), image.exif(), image.xmp());
+    }
+
+    /**
+     * Returns the samples of a gray or Y'CbCr image as a planar picture, without any color conversion.
+     *
+     * <p>The image qualifies when it has one unsigned color channel and a grayscale or unspecified color space, or
+     * three unsigned color channels that the declared sYCC color space, or an unspecified color space with
+     * subsampled chroma, makes Y'CbCr, with an unsubsampled luma channel and chroma channels both subsampled by
+     * 1x1, 2x1 or 2x2; every channel must be of one precision of at most 16 bits and hold exactly the samples the
+     * picture's planes hold. Samples of a precision {@code P} other than 8 are scaled to 8 bits as
+     * {@code round(v * 255 / (2^P - 1))}, unless {@code highBitDepth} is set and {@code P} exceeds 8, which keeps
+     * them as they are in a {@link Yuv16Picture} of bit depth {@code P}.
+     *
+     * @param image the decoded image
+     * @param highBitDepth whether samples wider than 8 bits keep their depth
+     * @param color the color description of the picture
+     * @param limits the limits checked before allocating
+     * @return the picture, a {@link YuvPicture} or a {@link Yuv16Picture}, or {@code null} when the image does
+     * not qualify
+     * @throws MediaException.LimitExceeded if the picture exceeds the limits
+     */
+    public static Picture toYuv(Jp2Image image, boolean highBitDepth, ColorInfo color, MediaLimits limits) {
+        var channels = image.channels();
+        var space = image.colorSpace();
+        ChromaFormat format;
+        if (channels.size() == 1) {
+            if (space != Jp2ColorSpace.GRAYSCALE && space != Jp2ColorSpace.UNSPECIFIED) {
+                return null;
+            }
+            format = ChromaFormat.MONOCHROME;
+        } else if (channels.size() == 3) {
+            if (space != Jp2ColorSpace.SYCC && (space != Jp2ColorSpace.UNSPECIFIED
+                    || effectiveColorSpace(image, channels) != Jp2ColorSpace.SYCC)) {
+                return null;
+            }
+            var luma = channels.get(0);
+            var cb = channels.get(1);
+            var cr = channels.get(2);
+            if (luma.subsamplingX() != 1 || luma.subsamplingY() != 1 || cb.subsamplingX() != cr.subsamplingX()
+                    || cb.subsamplingY() != cr.subsamplingY()) {
+                return null;
+            }
+            var dx = cb.subsamplingX();
+            var dy = cb.subsamplingY();
+            format = dx == 1 && dy == 1 ? ChromaFormat.YUV444 : dx == 2 && dy == 1 ? ChromaFormat.YUV422
+                    : dx == 2 && dy == 2 ? ChromaFormat.YUV420 : null;
+            if (format == null) {
+                return null;
+            }
+        } else {
+            return null;
+        }
+        var width = image.width();
+        var height = image.height();
+        var precision = channels.getFirst().precision();
+        for (var c = 0; c < channels.size(); c++) {
+            var channel = channels.get(c);
+            var planeWidth = c == 0 ? width : format.chromaWidth(width);
+            var planeHeight = c == 0 ? height : format.chromaHeight(height);
+            if (channel.wide() || channel.signed() || channel.precision() != precision || precision > 16
+                    || channel.type() != Jp2ChannelType.COLOR || channel.width() != planeWidth
+                    || channel.height() != planeHeight) {
+                return null;
+            }
+        }
+        var lumaSize = (long) width * height;
+        var chromaSize = format.hasChroma() ? (long) format.chromaWidth(width) * format.chromaHeight(height) : 0;
+        var wide = highBitDepth && precision > 8;
+        LimitChecks.checkAllocation(limits, (lumaSize + 2 * chromaSize) * (wide ? 2 : 1));
+        if (wide) {
+            var planes = new short[channels.size()][];
+            for (var c = 0; c < planes.length; c++) {
+                var samples = channels.get(c).samples();
+                var plane = new short[samples.length];
+                for (var i = 0; i < samples.length; i++) {
+                    plane[i] = (short) samples[i];
+                }
+                planes[c] = plane;
+            }
+            var builder = Yuv16Picture.builder().size(width, height).chromaFormat(format).bitDepth(precision)
+                    .color(color).luma(planes[0], width);
+            if (format.hasChroma()) {
+                builder.chroma(planes[1], planes[2], format.chromaWidth(width));
+            }
+            return builder.build();
+        }
+        var planes = new byte[channels.size()][];
+        for (var c = 0; c < planes.length; c++) {
+            var samples = channels.get(c).samples();
+            var plane = new byte[samples.length];
+            if (precision == 8) {
+                for (var i = 0; i < samples.length; i++) {
+                    plane[i] = (byte) samples[i];
+                }
+            } else {
+                var max = (1L << precision) - 1;
+                for (var i = 0; i < samples.length; i++) {
+                    plane[i] = (byte) ((Math.clamp(samples[i], 0, max) * 510 + max) / (2 * max));
+                }
+            }
+            planes[c] = plane;
+        }
+        var builder = YuvPicture.builder().size(width, height).chromaFormat(format).color(color)
+                .luma(planes[0], width);
+        if (format.hasChroma()) {
+            builder.chroma(planes[1], planes[2], format.chromaWidth(width));
+        }
+        return builder.build();
     }
 
     /**

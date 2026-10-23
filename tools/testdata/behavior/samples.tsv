@@ -25,7 +25,9 @@ core/src/test/resources/samples/mp4/h263-amr.3gp	24096	2df889506b194052da09c3ddd
 core/src/test/resources/samples/mp4/h264-422-10.mov	13774	c9165c7b3ad544676da17150f6b0b19a6f87625ce2643a408fe8eb81b5160024	make-samples.sh
 core/src/test/resources/samples/mp4/h264-444.mp4	11523	065db6efeb6ba3d033ff466cb7011199beaacb959fb63212cfcd4745a14101ba	make-samples.sh
 core/src/test/resources/samples/mp4/hevc.mp4	18875	128b382bc84d00e2e8bd72f6890174a4b6b8260abc840a7bb4a5c5efc634ebf1	make-samples.sh
+core/src/test/resources/samples/mp4/jpeg2000.mov	22043	61fcdfd99ef4e81586e7b3a125a64b5c8d62778d5f3cbcc85f4fc3bc0868e0a0	make-samples.sh
 core/src/test/resources/samples/mp4/moov-last.mp4	45860	f07f29483d40c24ccdbed6833e4a04f5d22e446968b7448c4cf0ad36cc8281dc	make-samples.sh
+core/src/test/resources/samples/mp4/motion.mj2	18352	9c3c18eeee3e9fe70749ac0b6671c29d712f7a559d34cf38fe52ff24978976c3	make-mj2-sample.py
 core/src/test/resources/samples/mp4/prores.mov	11125	76b429c682e15e7ea6537ac906d400030dbae4fbf322415798be2633f13ea71c	make-samples.sh
 core/src/test/resources/samples/mp4/quicktime.mov	65138	aa49fbc8e1940cb53ce15527fcb2b4e8f6204f0c628824655c7178227c9001ae	make-samples.sh
 core/src/test/resources/samples/ogg/chained.ogg	10178	143e9c49ce5401aa9da89334a3f834acebfc9c5b32ff44d8f9c90bbf12f48e01	make-samples.sh

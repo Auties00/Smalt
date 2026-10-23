@@ -424,6 +424,11 @@ public final class Containers {
         if (matches(header, 0, "FORM") && (matches(header, 8, "AIFF") || matches(header, 8, "AIFC"))) {
             return ContainerFormat.AIFF;
         }
+        if (header.length >= 24 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 12
+                && matches(header, 4, "jP  ") && matches(header, 16, "ftyp")
+                && (matches(header, 20, "mjp2") || matches(header, 20, "mj2s"))) {
+            return ContainerFormat.MP4;
+        }
         for (var box : MP4_LEADING_BOXES) {
             if (matches(header, 4, box)) {
                 return ContainerFormat.MP4;

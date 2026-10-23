@@ -49,6 +49,10 @@ import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.jp2.Jp2Format;
 import com.github.auties00.smalt.image.jp2.Jp2RegionOfInterest;
 import com.github.auties00.smalt.image.jp2.Jp2TilePartDivision;
+import com.github.auties00.smalt.image.jp2.Mj2Decoder;
+import com.github.auties00.smalt.image.jp2.Mj2Encoder;
+import com.github.auties00.smalt.image.jp2.Mj2EncoderOptions;
+import com.github.auties00.smalt.image.jp2.Mj2PixelFormat;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
@@ -183,6 +187,7 @@ final class ImageWorkloads {
                 file("jpeg2000", ImageWorkloads::jpeg2000),
                 file("htj2k", ImageWorkloads::highThroughputJpeg2000),
                 file("jpeg2000-part2", ImageWorkloads::part2Jpeg2000),
+                file("motion-jpeg2000", ImageWorkloads::motionJpeg2000),
                 file("ico-bmp", ImageWorkloads::icoBmp),
                 file("bmp", ImageWorkloads::bmp),
                 file("image-metadata", ImageWorkloads::metadata));
@@ -992,6 +997,35 @@ final class ImageWorkloads {
             Blackhole.consume(Jp2Decoder.decodeChannels(MediaSource.of(layered), reduced).hashCode());
             var inks = Jp2Encoder.encode(cmyk, Jp2EncoderOptions.lossless());
             Blackhole.consume(Jp2Decoder.decode(MediaSource.of(inks), keep).picture().width());
+        });
+    }
+
+    /**
+     * Returns a workload that codes three 384x256 frames as Motion JPEG 2000 in each kind of frame (lossless 4:2:0
+     * JP2 files, lossy RGB codestreams under a bitrate, interlaced 10-bit 4:2:2 fields) and decodes them, the
+     * codestreams and fields under the encoder's JP2 Header box.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload motionJpeg2000() {
+        var pictures = SyntheticVideo.natural(384, 256, 3);
+        var settings = List.of(Mj2EncoderOptions.defaults(),
+                Mj2EncoderOptions.lossy(20).toBuilder().pixelFormat(Mj2PixelFormat.RGB).bitrate(4_000_000)
+                        .coding(Jp2EncoderOptions.lossy(20).toBuilder().format(Jp2Format.CODESTREAM).build()).build(),
+                Mj2EncoderOptions.builder().pixelFormat(Mj2PixelFormat.YUV422).bitDepth(10)
+                        .fieldOrder(FieldOrder.TOP_FIRST).build());
+        var deep = VideoDecoderOptions.builder().highBitDepth(true).build();
+        return TrainingWorkload.of("motion-jpeg2000", () -> {
+            for (var options : settings) {
+                var encoder = new Mj2Encoder(384, 256, options);
+                var decoder = new Mj2Decoder(VideoStreams.track(Codec.JPEG2000, 384, 256,
+                        encoder.codecConfig().orElseThrow()), deep);
+                for (var picture : pictures) {
+                    var packet = encoder.encodeFrame(new VideoFrame(picture, Packet.NO_TIMESTAMP,
+                            Packet.UNKNOWN_DURATION, true));
+                    decoder.decode(packet, frame -> Blackhole.consume(frame.picture().width()));
+                }
+            }
         });
     }
 

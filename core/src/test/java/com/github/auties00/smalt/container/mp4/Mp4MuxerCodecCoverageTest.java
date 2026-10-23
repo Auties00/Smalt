@@ -3,7 +3,10 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.ContainerProbe;
+import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
@@ -137,6 +140,13 @@ class Mp4MuxerCodecCoverageTest {
                 qt, Codec.MJPEG, "mjpeg", BoxTypes.JPEG));
         cases.add(new Case("mjpeg iso", () -> fixture("mov", video(160, 120), List.of("-c:v", "mjpeg", "-q:v", "5")),
                 mp4, Codec.MJPEG, "mjpeg", BoxTypes.MP4V));
+        cases.add(new Case("jpeg2000 quicktime", () -> fixture("mov", video(160, 120), List.of("-c:v", "jpeg2000",
+                "-pix_fmt", "yuv420p")), qt, Codec.JPEG2000, "jpeg2000", BoxTypes.MJP2));
+        cases.add(new Case("jpeg2000 iso from mp4v", () -> fixture("mp4", video(160, 120), List.of("-c:v", "jpeg2000",
+                "-pix_fmt", "yuv444p")), mp4, Codec.JPEG2000, "jpeg2000", BoxTypes.MJP2));
+        cases.add(new Case("jpeg2000 codestreams from mkv", () -> fixture("mkv", video(160, 120), List.of("-c:v",
+                "libopenjpeg", "-format", "j2k", "-pix_fmt", "yuv422p")), mp4, Codec.JPEG2000, "jpeg2000",
+                BoxTypes.MJP2));
         return cases;
     }
 
@@ -395,6 +405,71 @@ class Mp4MuxerCodecCoverageTest {
             data[offset + 1] = (byte) (value >>> 16);
             data[offset + 2] = (byte) (value >>> 8);
             data[offset + 3] = (byte) value;
+        }
+
+        @Test
+        @DisplayName("writes a Motion JPEG 2000 file of jp2c samples that ffmpeg decodes to the source's pictures")
+        void motionJpeg2000() {
+            var input = fixture("mov", Mp4Fixtures.both(160, 120, 1, 48000), List.of("-c:v", "jpeg2000", "-pix_fmt",
+                    "yuv420p", "-c:a", "aac", "-shortest"));
+            var demuxed = demux(input);
+            var source = only(demuxed, TrackKind.VIDEO);
+            var before = demuxed.packetsOf(source);
+            var muxed = mux(input, "mj2", Mp4MuxerOptions.Brand.MJ2);
+            var data = Fixtures.read(muxed);
+            assertArrayEquals(new byte[]{0, 0, 0, 12, 'j', 'P', ' ', ' ', 13, 10, (byte) 0x87, 10},
+                    Arrays.copyOf(data, 12), "signature box");
+            assertArrayEquals("ftypmjp2____mjp2mj2s".replace('_', (char) 0).getBytes(StandardCharsets.ISO_8859_1),
+                    Arrays.copyOfRange(data, 16, 36), "file type box");
+            assertEquals(BoxTypes.MJP2, sampleEntryType(muxed));
+            for (var box : List.of("jp2h", "fiel", "jsub", "orfo")) {
+                assertTrue(indexOf(data, box) > 0, box + " box");
+            }
+            assertEquals(java.util.Optional.of(ContainerFormat.MP4), Containers.detect(MediaSource.of(data)));
+            assertTrue(ImageFormat.detect(data, data.length).isEmpty(), "not a JP2 image");
+            var read = demux(muxed);
+            var track = only(read, TrackKind.VIDEO);
+            assertEquals(Codec.JPEG2000, track.codec());
+            var first = before.getFirst().data();
+            assertArrayEquals(Jp2Frames.header(first, 0, first.length), track.codecConfig().orElseThrow(),
+                    "jp2h of the first frame");
+            var after = read.packetsOf(track);
+            assertEquals(before.size(), after.size());
+            for (var index = 0; index < before.size(); index++) {
+                var expected = Jp2Frames.toSample(before.get(index).data());
+                assertEquals(Jp2Frames.BOXES, Jp2Frames.form(expected, 0, expected.length));
+                assertArrayEquals(expected, after.get(index).data(), "sample " + index);
+            }
+            assertEquals(1, read.tracks().stream().filter(candidate -> candidate.kind() == TrackKind.AUDIO).count(),
+                    "the AAC track is kept");
+            assertEquals("jpeg2000", ContainerProbe.probe(muxed).streams().stream()
+                    .filter(stream -> "video".equals(stream.get("codec_type"))).findFirst().orElseThrow().codecName());
+            assertEquals(videoMd5(input), videoMd5(muxed), "ffmpeg decodes the same pictures");
+        }
+
+        @Test
+        @DisplayName("builds the jp2h box of a track of raw codestreams from the first frame's main header")
+        void synthesizedHeader() {
+            var input = fixture("mkv", video(96, 64), List.of("-c:v", "libopenjpeg", "-format", "j2k", "-pix_fmt",
+                    "yuv420p"));
+            var muxed = mux(input, "jpeg2000-synthesized", Mp4MuxerOptions.Brand.MP4);
+            var config = only(demux(muxed), TrackKind.VIDEO).codecConfig().orElseThrow();
+            assertTrue(Jp2Frames.isHeader(config));
+            assertEquals(18, Jp2Frames.headerColorSpace(config), "sYCC for subsampled chroma");
+            assertArrayEquals(new long[]{96, 64}, Jp2Frames.headerSize(config));
+            assertEquals(8, Jp2Frames.headerDepth(config));
+            var h264 = VideoTrack.builder().id(1).codec(Codec.H264).timeBase(Rational.timeBaseOf(90_000)).width(96)
+                    .height(64).build();
+            var pcm = AudioTrack.builder().id(2).codec(Codec.PCM_S16LE).timeBase(Rational.timeBaseOf(48_000))
+                    .sampleRate(48_000).layout(ChannelLayout.STEREO).build();
+            for (var track : List.<Track>of(h264, pcm)) {
+                try (var muxer = new Mp4Muxer(MediaSink.memory(), Mp4MuxerOptions.mj2())) {
+                    assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(track),
+                            "MJ2 carries no " + track.codec());
+                }
+            }
+            assertTrue(Mp4Muxer.supports(Mp4MuxerOptions.Brand.MJ2, Codec.AAC));
+            assertFalse(Mp4Muxer.supports(Mp4MuxerOptions.Brand.M4A, Codec.JPEG2000));
         }
 
         static String videoMd5(Path file) {

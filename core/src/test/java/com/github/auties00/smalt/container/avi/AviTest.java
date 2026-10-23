@@ -60,7 +60,11 @@ class AviTest {
                 new Sample("H.264 and AC-3", List.of("-c:v", "libx264", "-preset", "ultrafast", "-c:a", "ac3")),
                 new Sample("Motion-JPEG and AAC", List.of("-c:v", "mjpeg", "-q:v", "5", "-c:a", "aac")),
                 new Sample("Motion-JPEG and unsigned PCM", List.of("-c:v", "mjpeg", "-q:v", "5", "-c:a", "pcm_u8",
-                        "-ac", "1")));
+                        "-ac", "1")),
+                new Sample("Motion JPEG 2000 and PCM", List.of("-c:v", "jpeg2000", "-pix_fmt", "yuv420p", "-c:a",
+                        "pcm_s16le")),
+                new Sample("Motion JPEG 2000 codestreams and MP3", List.of("-c:v", "libopenjpeg", "-format", "j2k",
+                        "-pix_fmt", "yuv422p", "-c:a", "libmp3lame")));
     }
 
     static Path fixture(Sample sample) {

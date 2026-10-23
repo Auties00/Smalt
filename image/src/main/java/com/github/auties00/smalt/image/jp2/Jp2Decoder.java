@@ -81,7 +81,7 @@ import java.util.Optional;
  * meaning, 0 being no ink, and are scaled to 8 bits, or to 16 bits as for the RGBA output; its color profile is the
  * embedded profile when that is a four-channel one. {@link #openPages(MediaSource, ImageDecoderOptions)} decodes each
  * compositing layer of a JPX file as a page, and {@link #openAnimation(MediaSource, ImageDecoderOptions)} renders its
- * composition.
+ * composition. Motion JPEG 2000 video is decoded by {@link Mj2Decoder}.
  *
  * <p>Unsupported, and rejected with {@link MediaException.Unsupported} naming the feature: HTJ2K
  * code-blocks of sub-bands with more than 30 magnitude bit-planes; the Part 2 coding extensions of variable deadzone

@@ -75,7 +75,9 @@ class FragmentedMp4CodecCoverageTest {
                 new Case("h263", () -> Fixtures.ffmpeg("3gp", video(176, 144), List.of("-c:v", "h263", "-g", "10")),
                         Codec.H263, "h263"),
                 new Case("mjpeg", () -> Fixtures.ffmpeg("mov", video(160, 120), List.of("-c:v", "mjpeg")),
-                        Codec.MJPEG, "mjpeg"));
+                        Codec.MJPEG, "mjpeg"),
+                new Case("jpeg2000", () -> Fixtures.ffmpeg("mov", video(160, 120), List.of("-c:v", "jpeg2000",
+                        "-pix_fmt", "yuv420p")), Codec.JPEG2000, "jpeg2000"));
     }
 
     static byte[] concatenate(List<Packet> packets) {

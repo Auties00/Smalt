@@ -16,6 +16,7 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -558,6 +559,7 @@ final class MatroskaTrackEntry {
                 case "V_AV1" -> Codec.AV1;
                 case "V_MPEG4/ISO/SP", "V_MPEG4/ISO/ASP", "V_MPEG4/ISO/AP" -> Codec.MPEG4_PART2;
                 case "V_MJPEG" -> Codec.MJPEG;
+                case "V_JPEG2000" -> Codec.JPEG2000;
                 case "V_PRORES" -> Codec.PRORES;
                 case "V_THEORA" -> Codec.THEORA;
                 case "V_MS/VFW/FOURCC" -> videoFromBitmapInfo();
@@ -571,6 +573,9 @@ final class MatroskaTrackEntry {
             } else if (codecId.equals("V_MS/VFW/FOURCC")) {
                 config = codec == Codec.DNXHD ? Arrays.copyOfRange(codecPrivate, 16, 20)
                         : codecPrivate != null && codecPrivate.length > 40 ? Arrays.copyOfRange(codecPrivate, 40, codecPrivate.length) : null;
+            }
+            if (codec == Codec.JPEG2000 && !Jp2Frames.isHeader(config)) {
+                config = null;
             }
             var width = (int) Math.min(pixelWidth, Integer.MAX_VALUE);
             var height = (int) Math.min(pixelHeight, Integer.MAX_VALUE);
@@ -730,6 +735,7 @@ final class MatroskaTrackEntry {
             case "HEVC", "H265", "HVC1" -> Codec.HEVC;
             case "XVID", "DIVX", "DX50", "FMP4", "MP4V" -> Codec.MPEG4_PART2;
             case "MJPG", "AVRN", "LJPG", "JPGL", "AVDJ", "DMB1" -> Codec.MJPEG;
+            case "MJ2C", "MJP2", "LJ2C", "LJ2K", "IPJ2", "AVJ2" -> Codec.JPEG2000;
             case "H263", "S263" -> Codec.H263;
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
@@ -741,7 +747,7 @@ final class MatroskaTrackEntry {
 
     /**
      * Maps the sample entry type of a QuickTime image description codec private
-     * ({@code V_QUICKTIME}): ProRes and DNxHD.
+     * ({@code V_QUICKTIME}): ProRes, DNxHD and Motion JPEG 2000.
      *
      * @return the codec
      */
@@ -752,6 +758,7 @@ final class MatroskaTrackEntry {
         return switch (new String(codecPrivate, 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1)) {
             case "apco", "apcs", "apcn", "apch", "ap4h", "ap4x" -> Codec.PRORES;
             case "AVdn", "AVdh" -> Codec.DNXHD;
+            case "mjp2" -> Codec.JPEG2000;
             default -> Codec.UNKNOWN_VIDEO;
         };
     }

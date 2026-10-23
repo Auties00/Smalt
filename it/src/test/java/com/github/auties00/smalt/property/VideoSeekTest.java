@@ -36,7 +36,8 @@ class VideoSeekTest {
 
     static Stream<Arguments> cases() {
         var arguments = new ArrayList<Arguments>();
-        for (var codec : List.of(Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.PRORES, Codec.DNXHD)) {
+        for (var codec : List.of(Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000,
+                Codec.PRORES, Codec.DNXHD)) {
             for (var container : OutputContainer.values()) {
                 if (container.supports(codec) && container != OutputContainer.H264 && container != OutputContainer.AV1
                         && container != OutputContainer.HEVC) {

@@ -78,6 +78,15 @@ class MatroskaMuxerCodecTest {
                 List.of("-c:v", "mjpeg", "-q:v", "5")), Codec.MJPEG, "V_MJPEG", Codec.MJPEG, "mjpeg", 0));
         cases.add(new Case("mjpeg mov", () -> Fixtures.ffmpeg("mov", video(96, 64, 0.6),
                 List.of("-c:v", "mjpeg", "-q:v", "3")), Codec.MJPEG, "V_MJPEG", Codec.MJPEG, "mjpeg", 0));
+        cases.add(new Case("jpeg2000 mov", () -> Fixtures.ffmpeg("mov", video(96, 64, 0.6),
+                List.of("-c:v", "jpeg2000", "-pix_fmt", "yuv420p")), Codec.JPEG2000, "V_JPEG2000", Codec.JPEG2000,
+                "jpeg2000", 0));
+        cases.add(new Case("jpeg2000 vfw mkv", () -> Fixtures.ffmpeg("mkv", video(96, 64, 0.6),
+                List.of("-c:v", "jpeg2000", "-pix_fmt", "yuv444p")), Codec.JPEG2000, "V_JPEG2000", Codec.JPEG2000,
+                "jpeg2000", 0));
+        cases.add(new Case("jpeg2000 codestreams avi", () -> Fixtures.ffmpeg("avi", video(96, 64, 0.6),
+                List.of("-c:v", "libopenjpeg", "-format", "j2k", "-pix_fmt", "yuv420p")), Codec.JPEG2000, "V_JPEG2000",
+                Codec.JPEG2000, "jpeg2000", 0));
         cases.add(new Case("h263 3gp", () -> Fixtures.ffmpeg("3gp", video(176, 144, 1),
                 List.of("-c:v", "h263", "-g", "10")), Codec.H263, "V_MS/VFW/FOURCC", Codec.H263, "h263", 0));
         cases.add(new Case("alac 16-bit m4a", () -> Fixtures.ffmpeg("m4a", audio(44100, 1),
@@ -409,7 +418,7 @@ class MatroskaMuxerCodecTest {
                     assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(track), track.toString());
                 }
             }
-            for (var codec : List.of(Codec.MPEG4_PART2, Codec.MJPEG, Codec.H263, Codec.ALAC, Codec.AMR_NB, Codec.AMR_WB,
+            for (var codec : List.of(Codec.MPEG4_PART2, Codec.MJPEG, Codec.JPEG2000, Codec.H263, Codec.ALAC, Codec.AMR_NB, Codec.AMR_WB,
                     Codec.PCM_ALAW, Codec.PCM_MULAW, Codec.PCM_S8, Codec.PCM_F32BE, Codec.PCM_F64BE)) {
                 assertTrue(MatroskaMuxer.supports(MatroskaDocType.MATROSKA, codec), codec.toString());
                 assertFalse(MatroskaMuxer.supports(MatroskaDocType.WEBM, codec), codec.toString());

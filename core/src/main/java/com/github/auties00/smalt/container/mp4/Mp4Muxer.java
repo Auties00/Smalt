@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
@@ -332,10 +333,11 @@ public final class Mp4Muxer implements Muxer {
      * accepts a track of it given the configuration the codec needs.
      *
      * <p>Every brand carries AAC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB, AMR-WB, AC-3 and E-AC-3;
-     * {@link Mp4MuxerOptions.Brand#MP4} and {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC,
-     * VP8, VP9, AV1, MPEG-4 Part 2, H.263, Motion-JPEG, the 16-, 24- and 32-bit integer and 32- and
-     * 64-bit float PCM formats, {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT} and {@link Codec#TTML};
-     * only {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law and
+     * {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
+     * {@link Mp4MuxerOptions.Brand#MJ2} add Motion JPEG 2000; {@link Mp4MuxerOptions.Brand#MP4} and
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VP8, VP9, AV1, MPEG-4 Part 2, H.263, Motion-JPEG, the
+     * 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats, {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT}
+     * and {@link Codec#TTML}; only {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law and
      * mu-law.
      *
      * @param brand the brand of the file
@@ -346,9 +348,10 @@ public final class Mp4Muxer implements Muxer {
         Objects.requireNonNull(brand, "brand");
         return switch (Objects.requireNonNull(codec, "codec")) {
             case AAC, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
+            case JPEG2000 -> brand != Mp4MuxerOptions.Brand.M4A;
             case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, H263, MJPEG, MOV_TEXT, WEBVTT, TTML, PCM_S16LE, PCM_S16BE,
                  PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE ->
-                    brand != Mp4MuxerOptions.Brand.M4A;
+                    brand == Mp4MuxerOptions.Brand.MP4 || brand == Mp4MuxerOptions.Brand.QUICKTIME;
             case PRORES, DNXHD, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> brand == Mp4MuxerOptions.Brand.QUICKTIME;
             default -> false;
         };
@@ -365,7 +368,10 @@ public final class Mp4Muxer implements Muxer {
      * that precede the first picture of the first frame; H.263 is {@code s263} with a {@code d263}
      * box ({@code h263} in a QuickTime file); Motion-JPEG is {@code mp4v} with the JPEG object
      * type in an ISO file and {@code jpeg} ({@code mjpa} for Motion-JPEG format A frames,
-     * {@code mjpb} for format B frames) in a QuickTime file. AAC needs its
+     * {@code mjpb} for format B frames) in a QuickTime file. Motion JPEG 2000 is {@code mjp2} with a {@code jp2h}
+     * box, the track's configuration or, without one, the JP2 Header box of the first frame or one built from its
+     * main codestream header; a Motion JPEG 2000 file adds the {@code fiel}, {@code jsub} and {@code orfo} boxes and
+     * stores each frame as its Contiguous Codestream boxes, dropping the other boxes of a JP2 file. AAC needs its
      * {@code AudioSpecificConfig}, Opus its {@code OpusHead}, ALAC its {@code ALACSpecificConfig}
      * and FLAC its metadata blocks; MP3 and MP2 are {@code mp4a}
      * entries with the MPEG-1 or MPEG-2 audio object type; AMR-NB and AMR-WB are {@code samr} and
@@ -403,6 +409,10 @@ public final class Mp4Muxer implements Muxer {
         }
         var codec = track.codec();
         if (!supports(options.brand(), codec)) {
+            if (options.brand() == Mp4MuxerOptions.Brand.MJ2 && supports(Mp4MuxerOptions.Brand.MP4, codec)) {
+                throw new IllegalArgumentException("the MJ2 brand carries Motion JPEG 2000 video and compressed audio"
+                        + " only, not " + codec.displayName());
+            }
             if (options.brand() == Mp4MuxerOptions.Brand.M4A && supports(Mp4MuxerOptions.Brand.MP4, codec)) {
                 throw new IllegalArgumentException(codec.kind() != TrackKind.AUDIO ? "the M4A brand carries audio only"
                         : "the M4A brand does not carry " + codec.displayName() + "; the MP4 and QuickTime brands do");
@@ -415,6 +425,7 @@ public final class Mp4Muxer implements Muxer {
         MovieHeaderWriter.validateConfig(track);
         var state = new MuxTrack(track, tracks.size() + 1);
         state.quickTime = options.brand() == Mp4MuxerOptions.Brand.QUICKTIME;
+        state.motionJpeg2000 = options.brand() == Mp4MuxerOptions.Brand.MJ2;
         if (TextSamples.handles(codec)) {
             textTracks.add(new TextSamples(track.id(), codec, this::writeTextSample));
         }
@@ -498,8 +509,9 @@ public final class Mp4Muxer implements Muxer {
      *
      * @throws IllegalArgumentException if the track was not declared, its decoding timestamps
      * decrease, a new codec configuration is invalid, the packet of a PCM track does not hold a
-     * whole number of frames or takes the track past {@code 2^32 - 1} frames, or the packet of a
-     * TTML track starts before zero or before the previous one ends
+     * whole number of frames or takes the track past {@code 2^32 - 1} frames, the packet of a
+     * TTML track starts before zero or before the previous one ends, or the packet of a Motion JPEG 2000 track of
+     * a Motion JPEG 2000 file holds no JPEG 2000 codestream
      * @throws MediaException.Unsupported if the packet changes the codec configuration of a text
      * track or of a codec whose sample description holds none (MP3, MP2, AMR, AC-3, E-AC-3, PCM,
      * H.263, Motion-JPEG)
@@ -530,6 +542,8 @@ public final class Mp4Muxer implements Muxer {
         for (var track : tracks) {
             if (track.track.id() == packet.trackId() && track.codec() == Codec.PRORES && !hasProResPrefix(data)) {
                 data = withProResPrefix(data);
+            } else if (track.track.id() == packet.trackId() && track.codec() == Codec.JPEG2000) {
+                data = jpeg2000Sample(track, data);
             }
         }
         var newConfig = packet.sideData().newCodecConfig().orElse(null);
@@ -538,6 +552,30 @@ public final class Mp4Muxer implements Muxer {
         }
         accept(packet.trackId(), data, 0, data.length, packet.pts(), packet.dts(), packet.duration(), packet.keyframe(),
                 spooling());
+    }
+
+    /**
+     * Records the JP2 Header box of a Motion JPEG 2000 track from its first frame and, in a Motion JPEG 2000 file,
+     * rewrites a frame as the Contiguous Codestream boxes the file stores.
+     *
+     * @param track the state of the Motion JPEG 2000 track
+     * @param data the frame
+     * @return the sample to store
+     * @throws IllegalArgumentException if the frame of a Motion JPEG 2000 file holds no codestream
+     */
+    private static byte[] jpeg2000Sample(MuxTrack track, byte[] data) {
+        if (track.jp2Header == null) {
+            track.jp2Header = SampleEntryWriter.jp2Header(track.track.codecConfig().orElse(null), data);
+        }
+        if (!track.motionJpeg2000) {
+            return data;
+        }
+        var sample = Jp2Frames.toSample(data);
+        if (sample == null) {
+            throw new IllegalArgumentException("a packet of Motion JPEG 2000 track " + track.track.id()
+                    + " holds no JPEG 2000 codestream");
+        }
+        return sample;
     }
 
     /**
@@ -1012,13 +1050,24 @@ public final class Mp4Muxer implements Muxer {
     }
 
     /**
-     * Writes the {@code ftyp} box of the configured brand.
+     * Writes the {@code ftyp} box of the configured brand, after the JPEG 2000 signature box in a Motion JPEG 2000
+     * file.
      *
      * @param writer the box writer of the output
      */
     private void writeFileType(BoxWriter writer) {
+        if (options.brand() == Mp4MuxerOptions.Brand.MJ2) {
+            writer.begin(BoxTypes.JP_SIGNATURE);
+            writer.u32(0x0D0A870AL);
+            writer.end();
+        }
         writer.begin(BoxTypes.FTYP);
-        if (options.brand() == Mp4MuxerOptions.Brand.M4A) {
+        if (options.brand() == Mp4MuxerOptions.Brand.MJ2) {
+            writer.u32(BoxTypes.MJP2);
+            writer.u32(0);
+            writer.u32(BoxTypes.MJP2);
+            writer.u32(BoxTypes.MJ2S);
+        } else if (options.brand() == Mp4MuxerOptions.Brand.M4A) {
             writer.u32(BoxTypes.M4A);
             writer.u32(0x200);
             writer.u32(BoxTypes.M4A);

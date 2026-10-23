@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -264,7 +265,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (format == BoxTypes.ENCV) {
             throw new MediaException.Unsupported("mp4 encryption", "the video track is encrypted (encv)");
         }
-        byte[] avcC = null, hvcC = null, vpcC = null, av1C = null;
+        byte[] avcC = null, hvcC = null, vpcC = null, av1C = null, jp2h = null;
         EsDescriptor esds = null;
         ColorInfo color = null;
         MasteringDisplay mastering = null;
@@ -283,6 +284,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     }
                 }
                 case BoxTypes.AV1C -> av1C = body.rest();
+                case BoxTypes.JP2H -> jp2h = withHeader(BoxTypes.JP2H, body.rest());
                 case BoxTypes.ESDS -> esds = parseEsds(body);
                 case BoxTypes.COLR -> {
                     if (color == null) {
@@ -332,6 +334,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 codec = switch (objectType) {
                     case 0x21 -> Codec.H264;
                     case 0x6C -> Codec.MJPEG;
+                    case 0x6E -> Codec.JPEG2000;
                     case 0x20 -> Codec.MPEG4_PART2;
                     default -> Codec.UNKNOWN_VIDEO;
                 };
@@ -339,6 +342,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
             case BoxTypes.S263, BoxTypes.H263 -> codec = Codec.H263;
             case BoxTypes.JPEG, BoxTypes.MJPA, BoxTypes.MJPB -> codec = Codec.MJPEG;
+            case BoxTypes.MJP2 -> {
+                codec = Codec.JPEG2000;
+                config = Jp2Frames.isHeader(jp2h) ? jp2h : null;
+            }
             case BoxTypes.APCH, BoxTypes.APCN, BoxTypes.APCS, BoxTypes.APCO, BoxTypes.AP4H, BoxTypes.AP4X -> {
                 codec = Codec.PRORES;
                 config = fourCc(format);
@@ -350,6 +357,28 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             default -> codec = Codec.UNKNOWN_VIDEO;
         }
         return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, 0, 0, null, 0, 0);
+    }
+
+    /**
+     * Rebuilds a box from its type and contents.
+     *
+     * @param type the box type
+     * @param contents the box contents
+     * @return the box, with a 32-bit size field
+     */
+    private static byte[] withHeader(int type, byte[] contents) {
+        var box = new byte[8 + contents.length];
+        var size = box.length;
+        box[0] = (byte) (size >>> 24);
+        box[1] = (byte) (size >>> 16);
+        box[2] = (byte) (size >>> 8);
+        box[3] = (byte) size;
+        box[4] = (byte) (type >>> 24);
+        box[5] = (byte) (type >>> 16);
+        box[6] = (byte) (type >>> 8);
+        box[7] = (byte) type;
+        System.arraycopy(contents, 0, box, 8, contents.length);
+        return box;
     }
 
     /**

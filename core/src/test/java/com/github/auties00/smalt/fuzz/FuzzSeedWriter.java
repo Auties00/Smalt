@@ -94,6 +94,11 @@ class FuzzSeedWriter {
                 tone(8000, 0.2)), "-c:v", "h263", "-q:v", "20", "-c:a", "libopencore_amrnb", "-ar", "8000"));
         var m4a = ffmpeg("m4a", tone(8000, 0.2), "-c:a", "alac", "-metadata", "title=seed");
         copy(DemuxerFuzzTest.class, "mp4", "valid-alac.m4a", m4a);
+        // a Motion JPEG 2000 file (signature box, mjp2 brand, mjp2 sample entry, jp2c samples), the behavior sample
+        // an independent writer made (tools/testdata/behavior/make-mj2-sample.py)
+        var mj2 = Path.of("src", "test", "resources", "samples", "mp4", "motion.mj2");
+        copy(DemuxerFuzzTest.class, "mp4", "valid-motion.mj2", mj2);
+        copy(ProbeFuzzTest.class, "probe", "valid-motion.mj2", mj2);
 
         var srt = Files.writeString(Files.createTempFile("seed", ".srt"), SRT);
         var mkv = ffmpeg("mkv", args(video(32, 32, 2), tone(8000, 0.2), List.of("-i", srt.toString())),

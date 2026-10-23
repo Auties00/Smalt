@@ -9,6 +9,7 @@ import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.nal.NalUnits;
@@ -58,10 +59,12 @@ import java.util.Set;
  *   <li>Matroska only: H.264 ({@code V_MPEG4/ISO/AVC}, {@code avcC}), HEVC
  *       ({@code V_MPEGH/ISO/HEVC}, {@code hvcC}), MPEG-4 Part 2 ({@code V_MPEG4/ISO/ASP}, the
  *       decoder specific information of the track's configuration, when it has one), Motion-JPEG
- *       ({@code V_MJPEG}, none), H.263 ({@code V_MS/VFW/FOURCC}, a {@code BITMAPINFOHEADER} with
- *       the FourCC {@code H263}), ProRes ({@code V_PRORES}, the four-character
- *       sample entry type of the track's configuration), Theora ({@code V_THEORA}, the Xiph-laced
- *       headers), DNxHD and DNxHR ({@code V_QUICKTIME}, a
+ *       ({@code V_MJPEG}, none), Motion JPEG 2000 ({@code V_JPEG2000}, none: a frame that relies on the track's JP2
+ *       Header box is made to carry it, a raw codestream or a single {@code jp2c} box written as a JP2 file and the
+ *       two {@code jp2c} boxes of an interlaced frame after a copy of the header box), H.263
+ *       ({@code V_MS/VFW/FOURCC}, a {@code BITMAPINFOHEADER} with the FourCC {@code H263}), ProRes
+ *       ({@code V_PRORES}, the four-character sample entry type of the track's configuration), Theora
+ *       ({@code V_THEORA}, the Xiph-laced headers), DNxHD and DNxHR ({@code V_QUICKTIME}, a
  *       QuickTime video sample description of the four-character sample entry type of the
  *       track's configuration, {@code AVdn} or {@code AVdh}), AAC ({@code A_AAC}, the
  *       {@code AudioSpecificConfig}), FLAC ({@code A_FLAC}, the {@code fLaC} marker and metadata
@@ -579,6 +582,7 @@ public final class MatroskaMuxer implements Muxer {
             case HEVC -> "V_MPEGH/ISO/HEVC";
             case MPEG4_PART2 -> "V_MPEG4/ISO/ASP";
             case MJPEG -> "V_MJPEG";
+            case JPEG2000 -> "V_JPEG2000";
             case H263 -> "V_MS/VFW/FOURCC";
             case PRORES -> "V_PRORES";
             case THEORA -> "V_THEORA";
@@ -797,6 +801,11 @@ public final class MatroskaMuxer implements Muxer {
                 && data[7] == 'f') {
             // Matroska blocks of V_PRORES omit the frame size and icpf identifier of the frame
             packet = packet.withData(java.util.Arrays.copyOfRange(data, 8, data.length));
+        } else if (state.track.codec() == Codec.JPEG2000) {
+            var framed = Jp2Frames.selfContained(data, state.track.codecConfig().orElse(null));
+            if (framed != data) {
+                packet = packet.withData(framed);
+            }
         }
         var micros = state.orderMicros(packet);
         state.queue.add(new Queued(packet, micros));

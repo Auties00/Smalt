@@ -24,6 +24,7 @@ import java.util.stream.Stream;
 import static com.github.auties00.smalt.hostile.Hostile.LIMITS;
 import static com.github.auties00.smalt.hostile.Hostile.assertRejected;
 import static com.github.auties00.smalt.hostile.Hostile.be16;
+import static com.github.auties00.smalt.hostile.Hostile.be32;
 
 /**
  * Decompression bombs for every video decoder. A bitstream header (a parameter set, a sequence header, a key frame
@@ -89,6 +90,17 @@ class VideoBombTest {
                 new Bomb(Codec.MJPEG, (width, height) -> patched(Codec.MJPEG, (packet) -> {
                     var patched = ImageBombTest.jpeg(packet, width, height);
                     System.arraycopy(patched, 0, packet, 0, packet.length);
+                })),
+                // the SIZ segment of the frame's codestream, its single tile resized with the image
+                new Bomb(Codec.JPEG2000, (width, height) -> patched(Codec.JPEG2000, (packet) -> {
+                    var siz = 0;
+                    while ((packet[siz] & 0xFF) != 0xFF || (packet[siz + 1] & 0xFF) != 0x51) {
+                        siz++;
+                    }
+                    be32(packet, siz + 6, width);
+                    be32(packet, siz + 10, height);
+                    be32(packet, siz + 22, width);
+                    be32(packet, siz + 26, height);
                 })),
                 new Bomb(Codec.PRORES, (width, height) -> patched(Codec.PRORES, (packet) -> {
                     be16(packet, 16, width);
@@ -181,8 +193,8 @@ class VideoBombTest {
     }
 
     static Stream<Codec> encodable() {
-        return Stream.of(Codec.H264, Codec.AV1, Codec.VP8, Codec.VP9, Codec.MJPEG, Codec.PRORES, Codec.DNXHD,
-                Codec.HEVC, Codec.MPEG4_PART2);
+        return Stream.of(Codec.H264, Codec.AV1, Codec.VP8, Codec.VP9, Codec.MJPEG, Codec.JPEG2000, Codec.PRORES,
+                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2);
     }
 
     @Nested

@@ -57,7 +57,7 @@ public final class Artifacts {
         return switch (codec) {
             case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8, MJPEG -> IMAGE;
+            case VP8, MJPEG, JPEG2000 -> IMAGE;
             case OPUS, VORBIS, FLAC, MP3, MP2, ALAC -> AUDIO;
             default -> null;
         };
@@ -73,7 +73,7 @@ public final class Artifacts {
         return switch (codec) {
             case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8, MJPEG -> IMAGE;
+            case VP8, MJPEG, JPEG2000 -> IMAGE;
             case OPUS, FLAC, MP3, VORBIS -> AUDIO;
             default -> null;
         };

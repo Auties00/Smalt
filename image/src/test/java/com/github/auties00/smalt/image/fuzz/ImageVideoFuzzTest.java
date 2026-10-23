@@ -15,6 +15,11 @@ class ImageVideoFuzzTest {
     }
 
     @FuzzTest
+    void jpeg2000(byte[] data) {
+        FuzzMedia.video(Codec.JPEG2000, data);
+    }
+
+    @FuzzTest
     void vp8(byte[] data) {
         FuzzMedia.video(Codec.VP8, data);
     }

@@ -66,6 +66,8 @@ import java.util.Objects;
  * output of the ISO/IEC 15444-1 block coder is byte-identical to OpenJPEG's {@code opj_compress}
  * given the same parameters and comment.
  *
+ * <p>Motion JPEG 2000 video is encoded by {@link Mj2Encoder}.
+ *
  * <p>This class is thread-safe.
  *
  * @implNote This implementation ports OpenJPEG 2.5's encoder, including the rate-distortion

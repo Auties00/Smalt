@@ -56,6 +56,19 @@ public enum Codec {
     MJPEG(TrackKind.VIDEO, "mjpeg"),
 
     /**
+     * Motion JPEG 2000 (ISO/IEC 15444-3): every frame is an independent JPEG 2000 image.
+     *
+     * <p>A packet is one frame in one of three forms: a JP2 file (a frame that starts with the JPEG 2000 signature
+     * box), a raw codestream (one that starts with the {@code SOC} and {@code SIZ} markers {@code FF 4F FF 51}), or
+     * the sequence of boxes a Motion JPEG 2000 sample holds, one Contiguous Codestream box ({@code jp2c}) for a
+     * progressive frame and two, the earlier field first, for an interlaced one, possibly with a JP2 Header box
+     * ({@code jp2h}) that describes them. The configuration, when the track has one, is the JP2 Header box (header
+     * included) of the {@code mjp2} sample entry: it declares the color space and the channels of the frames whose
+     * packet carries no JP2 header of its own.
+     */
+    JPEG2000(TrackKind.VIDEO, "jpeg2000"),
+
+    /**
      * Apple ProRes.
      */
     PRORES(TrackKind.VIDEO, "prores"),

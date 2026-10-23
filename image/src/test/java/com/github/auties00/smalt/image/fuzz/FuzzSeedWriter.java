@@ -28,6 +28,7 @@ import com.github.auties00.smalt.metadata.XmpPacket;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
 import org.junit.jupiter.api.DisplayName;
@@ -515,6 +516,25 @@ class FuzzSeedWriter {
         write(ImageFuzzTest.class, "jp2", "valid-res.jp2", withRes);
     }
 
+    /** Remuxes the video track of a file into a Motion JPEG 2000 file. */
+    private static void remux(Path input, Path output) {
+        try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                com.github.auties00.smalt.io.MediaSource.of(input));
+             var sink = com.github.auties00.smalt.io.MediaSink.of(output);
+             var muxer = new com.github.auties00.smalt.container.mp4.Mp4Muxer(sink,
+                     com.github.auties00.smalt.container.mp4.Mp4MuxerOptions.mj2())) {
+            var track = demuxer.tracks().stream().filter(candidate -> candidate.codec() == Codec.JPEG2000)
+                    .findFirst().orElseThrow();
+            muxer.addTrack(track);
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                if (packet.trackId() == track.id()) {
+                    muxer.writePacket(packet);
+                }
+            }
+            muxer.finish();
+        }
+    }
+
     /** Returns a copy of a committed seed of an image target. */
     private static byte[] seed(String target, String name) {
         return Fixtures.read(FuzzSeeds.directory(ImageFuzzTest.class, target).resolve(name));
@@ -537,6 +557,14 @@ class FuzzSeedWriter {
         write(ImageVideoFuzzTest.class, "mjpeg", "valid-avi.bin", FuzzSeeds.packets(mjpeg, Codec.MJPEG, 0, 3));
         write(ImageVideoFuzzTest.class, "mjpeg", "valid-lossless.bin", FuzzSeeds.packets(
                 VECTORS.resolve("jpeg/mjpeg/ljpeg-yuvj420p-pred1.avi"), Codec.MJPEG, 0, 2));
+        // JP2 file frames as ffmpeg's encoder writes them, and the jp2c samples of a Motion JPEG 2000 file whose
+        // track carries the JP2 Header box of the first frame
+        var jpeg2000 = ffmpeg("mov", video(32, 32, 3), "-c:v", "jpeg2000", "-pix_fmt", "yuv420p");
+        write(ImageVideoFuzzTest.class, "jpeg2000", "valid-jp2.bin", FuzzSeeds.packets(jpeg2000, Codec.JPEG2000, 0,
+                3));
+        var mj2 = Scratch.directory("fuzz-seeds").resolve("seed.mj2");
+        remux(jpeg2000, mj2);
+        write(ImageVideoFuzzTest.class, "jpeg2000", "valid-mj2.bin", FuzzSeeds.packets(mj2, Codec.JPEG2000, 0, 3));
         var vp8 = ffmpeg("ivf", video(32, 32, 4), "-c:v", "libvpx", "-deadline", "realtime", "-b:v", "50k");
         write(ImageVideoFuzzTest.class, "vp8", "valid-ivf.bin", FuzzSeeds.packets(vp8, Codec.VP8, 0, 4));
         var vp8Alpha = ffmpeg("webm", video(32, 32, 3), "-c:v", "libvpx", "-deadline", "realtime", "-b:v", "50k",

@@ -276,9 +276,14 @@ public enum ImageFormat {
                 && u8(header, 3) == 0x51) {
             return true;
         }
-        return length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 0x0C
+        var signature = length >= 12 && header[0] == 0 && header[1] == 0 && header[2] == 0 && header[3] == 0x0C
                 && header[4] == 'j' && header[5] == 'P' && header[6] == ' ' && header[7] == ' '
                 && header[8] == 0x0D && header[9] == 0x0A && u8(header, 10) == 0x87 && header[11] == 0x0A;
+        // a Motion JPEG 2000 file shares the signature box; its ftyp brand makes it a video container
+        var motion = length >= 24 && header[16] == 'f' && header[17] == 't' && header[18] == 'y' && header[19] == 'p'
+                && header[20] == 'm' && header[21] == 'j' && ((header[22] == 'p' && header[23] == '2')
+                || (header[22] == '2' && header[23] == 's'));
+        return signature && !motion;
     }
 
     /**

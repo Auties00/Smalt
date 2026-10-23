@@ -95,6 +95,10 @@ class ReferenceDecodeTest {
             // T.81 leaves the inverse DCT's rounding to the decoder; ffmpeg's is not libjpeg's
             entry(Codec.MJPEG, new Reference("mkv", MatroskaMuxer::new, "mjpeg", Tolerance.offByOne()
                     .and(Tolerance.psnr(55)), List.of())),
+            // the irreversible 9-7 wavelet is float arithmetic, which ffmpeg's decoder orders differently; sYCC is full
+            // range, which ffmpeg's decoder leaves untagged
+            entry(Codec.JPEG2000, of(OutputContainer.MOV, "jpeg2000", Tolerance.offByOne().and(Tolerance.psnr(60)),
+                    "-color_range", "pc")),
             // the float synthesis of both decoders differs only by rounding
             entry(Codec.AAC, of(OutputContainer.M4A, "aac", Tolerance.snr(110))),
             entry(Codec.MP3, of(OutputContainer.MP3, "mp3float", Tolerance.snr(110)

@@ -17,6 +17,8 @@ def generator(root, relative):
         return "make-image-samples.sh"
     if root.startswith("video/"):
         return "make-avif-samples.py"
+    if relative == "mp4/motion.mj2":
+        return "make-mj2-sample.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
     return "make-samples.sh"

@@ -228,17 +228,69 @@ public final class Jp2Writer {
         out.u32be(0);
         out.fourCc(brand);
         out.end();
-        var components = config.components();
+        writeHeader(out, config.width(), config.height(), config.precisions(), config.signed(), colorSpace, icc, alpha,
+                premultiplied, density);
+        uuid(out, Jp2Boxes.EXIF_UUID, exif);
+        uuid(out, Jp2Boxes.IPTC_UUID, iptc);
+        uuid(out, Jp2Boxes.XMP_UUID, xmp);
+        out.begin(FourCc.of("jp2c"));
+        out.bytes(codestream);
+        out.end();
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns the JP2 Header box ({@code jp2h}, header included) that {@link #jp2} writes for an image: the Image
+     * Header box, a Bits Per Component box when the components differ in precision or signedness, the Colour
+     * Specification box, a Channel Definition box when the image has an opacity channel and a Capture Resolution
+     * box for a physical density.
+     *
+     * @param width the image width
+     * @param height the image height
+     * @param precisions the precision of each component, from 1 to 38
+     * @param signed whether each component is signed
+     * @param colorSpace the enumerated color space, used when {@code icc} is {@code null}
+     * @param icc the ICC profile to embed, or {@code null}
+     * @param alpha the index of the opacity channel, or {@code -1}
+     * @param premultiplied whether the opacity channel is premultiplied opacity
+     * @param density the physical density written in a capture resolution box, or {@code null} for none
+     * @return the box
+     */
+    public static byte[] header(long width, long height, int[] precisions, boolean[] signed, int colorSpace,
+                                byte[] icc, int alpha, boolean premultiplied, PixelDensity density) {
+        var out = new ByteWriter(128 + (icc != null ? icc.length : 0));
+        writeHeader(out, width, height, precisions, signed, colorSpace, icc, alpha, premultiplied, density);
+        return out.toByteArray();
+    }
+
+    /**
+     * Writes the JP2 Header box {@link #header} describes.
+     *
+     * @param out the destination
+     * @param width the image width
+     * @param height the image height
+     * @param precisions the precision of each component, from 1 to 38
+     * @param signed whether each component is signed
+     * @param colorSpace the enumerated color space, used when {@code icc} is {@code null}
+     * @param icc the ICC profile to embed, or {@code null}
+     * @param alpha the index of the opacity channel, or {@code -1}
+     * @param premultiplied whether the opacity channel is premultiplied opacity
+     * @param density the physical density written in a capture resolution box, or {@code null} for none
+     */
+    private static void writeHeader(ByteWriter out, long width, long height, int[] precisions, boolean[] signed,
+                                    int colorSpace, byte[] icc, int alpha, boolean premultiplied,
+                                    PixelDensity density) {
+        var components = precisions.length;
         var uniform = true;
         for (var c = 1; c < components; c++) {
-            uniform &= config.precisions()[c] == config.precisions()[0] && config.signed()[c] == config.signed()[0];
+            uniform &= precisions[c] == precisions[0] && signed[c] == signed[0];
         }
         out.begin(FourCc.of("jp2h"));
         out.begin(FourCc.of("ihdr"));
-        out.u32be(config.height());
-        out.u32be(config.width());
+        out.u32be(height);
+        out.u32be(width);
         out.u16be(components);
-        out.u8(uniform ? depth(config, 0) : 255);
+        out.u8(uniform ? depth(precisions[0], signed[0]) : 255);
         out.u8(7);
         out.u8(0);
         out.u8(0);
@@ -246,7 +298,7 @@ public final class Jp2Writer {
         if (!uniform) {
             out.begin(FourCc.of("bpcc"));
             for (var c = 0; c < components; c++) {
-                out.u8(depth(config, c));
+                out.u8(depth(precisions[c], signed[c]));
             }
             out.end();
         }
@@ -295,13 +347,6 @@ public final class Jp2Writer {
             out.end();
         }
         out.end();
-        uuid(out, Jp2Boxes.EXIF_UUID, exif);
-        uuid(out, Jp2Boxes.IPTC_UUID, iptc);
-        uuid(out, Jp2Boxes.XMP_UUID, xmp);
-        out.begin(FourCc.of("jp2c"));
-        out.bytes(codestream);
-        out.end();
-        return out.toByteArray();
     }
 
     /**
@@ -365,12 +410,12 @@ public final class Jp2Writer {
     /**
      * Returns the {@code BPC} byte of a component.
      *
-     * @param config the parameters
-     * @param component the component index
+     * @param precision the component precision
+     * @param signed whether the component is signed
      * @return the precision minus one, with bit 7 set for signed components
      */
-    private static int depth(EncoderConfig config, int component) {
-        return config.precisions()[component] - 1 + (config.signed()[component] ? 0x80 : 0);
+    private static int depth(int precision, boolean signed) {
+        return precision - 1 + (signed ? 0x80 : 0);
     }
 
     /**
@@ -454,7 +499,7 @@ public final class Jp2Writer {
         out.u32be(config.tileY0());
         out.u16be(components);
         for (var c = 0; c < components; c++) {
-            out.u8(depth(config, c));
+            out.u8(depth(config.precisions()[c], config.signed()[c]));
             out.u8(config.subsamplingX()[c]);
             out.u8(config.subsamplingY()[c]);
         }

@@ -11,7 +11,7 @@ package com.github.auties00.smalt.container;
  */
 public enum ContainerFormat {
     /**
-     * ISO base media file format: MP4, MOV, M4A, M4V, 3GP and 3G2.
+     * ISO base media file format: MP4, MOV, M4A, M4V, 3GP, 3G2 and Motion JPEG 2000 (MJ2).
      */
     MP4,
 

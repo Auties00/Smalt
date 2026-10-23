@@ -907,7 +907,7 @@ public final class AviDemuxer implements Demuxer {
      */
     private static boolean startsIntra(Codec codec, byte[] data, int length) {
         switch (codec) {
-            case MJPEG -> {
+            case MJPEG, JPEG2000 -> {
                 return true;
             }
             case MPEG4_PART2 -> {

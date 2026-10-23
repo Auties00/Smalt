@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.io.LocalSource;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -447,7 +448,8 @@ public final class Mp4Remuxer {
      * channel layout, an AC-3, E-AC-3 or AMR track (whose configuration boxes come from the
      * frames), a VP8, VP9, AV1 or MPEG-4 Part 2 track without a configuration (derived from the
      * first key frame), a ProRes or DNxHD track (whose sample entry reads the first frame),
-     * Motion-JPEG in a QuickTime file (whose sample entry type depends on the frames) and the
+     * Motion-JPEG in a QuickTime file (whose sample entry type depends on the frames), Motion JPEG 2000 in a Motion
+     * JPEG 2000 file (whose samples are rewritten) or without a JP2 Header box configuration, and the
      * subtitle tracks of an input other than ISO base media (whose cues are cut into new samples).
      *
      * @param copies the track plans
@@ -463,6 +465,8 @@ public final class Mp4Remuxer {
                 case AC3, EAC3, AMR_NB, AMR_WB, PRORES, DNXHD -> false;
                 case VP8, VP9, AV1, MPEG4_PART2 -> output.codecConfig().filter(config -> config.length > 0).isPresent();
                 case MJPEG -> brand != Mp4MuxerOptions.Brand.QUICKTIME;
+                case JPEG2000 -> brand != Mp4MuxerOptions.Brand.MJ2
+                        && Jp2Frames.isHeader(output.codecConfig().orElse(null));
                 case MOV_TEXT, WEBVTT, TTML -> format == ContainerFormat.MP4;
                 default -> true;
             };
