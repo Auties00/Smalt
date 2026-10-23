@@ -44,9 +44,10 @@ final class PictureJob implements Runnable {
     final HevcFrame frame;
 
     /**
-     * The coding information of the picture.
+     * The coding information of the picture: one entry, or one per color plane with separate color
+     * planes, indexed by {@code colour_plane_id}.
      */
-    final PictureState pic;
+    final PictureState[] states;
 
     /**
      * The sequence number of the job: its position in the decoding order of the engine.
@@ -74,6 +75,12 @@ final class PictureJob implements Runnable {
     private final Queue<PictureDecoder> decoders;
 
     /**
+     * Whether the work of the picture may run on several threads: the color planes of a picture
+     * coded with separate color planes are then decoded concurrently.
+     */
+    final boolean parallel;
+
+    /**
      * The handle of the started job, or {@code null} when it was not started on the pool.
      */
     private ParallelBands.Pending<Void> pending;
@@ -87,15 +94,37 @@ final class PictureJob implements Runnable {
      * Constructs a job.
      *
      * @param frame    the picture to decode into
-     * @param pic      the coding information of the picture
+     * @param states   the coding information of the picture, one per color plane decoded apart
      * @param sequence the sequence number of the job
      * @param decoders the idle picture decoders
+     * @param parallel whether the work of the picture may run on several threads
      */
-    PictureJob(HevcFrame frame, PictureState pic, long sequence, Queue<PictureDecoder> decoders) {
+    PictureJob(HevcFrame frame, PictureState[] states, long sequence, Queue<PictureDecoder> decoders,
+               boolean parallel) {
         this.frame = frame;
-        this.pic = pic;
+        this.states = states;
         this.sequence = sequence;
         this.decoders = decoders;
+        this.parallel = parallel;
+    }
+
+    /**
+     * Takes an idle picture decoder, or creates one when none is idle.
+     *
+     * @return the decoder, to be handed back with {@link #release(PictureDecoder)}
+     */
+    PictureDecoder borrow() {
+        var decoder = decoders.poll();
+        return decoder != null ? decoder : new PictureDecoder();
+    }
+
+    /**
+     * Hands back a picture decoder taken with {@link #borrow()}.
+     *
+     * @param decoder the decoder, which no longer decodes anything
+     */
+    void release(PictureDecoder decoder) {
+        decoders.add(decoder);
     }
 
     /**
@@ -155,10 +184,7 @@ final class PictureJob implements Runnable {
 
     @Override
     public void run() {
-        var decoder = decoders.poll();
-        if (decoder == null) {
-            decoder = new PictureDecoder();
-        }
+        var decoder = borrow();
         try {
             error = decoder.decode(this);
         } catch (MediaException failure) {
@@ -170,7 +196,7 @@ final class PictureJob implements Runnable {
         } finally {
             slices.clear();
             frame.publishDone();
-            decoders.add(decoder);
+            release(decoder);
         }
     }
 }

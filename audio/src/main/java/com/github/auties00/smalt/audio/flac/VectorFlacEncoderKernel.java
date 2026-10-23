@@ -231,6 +231,11 @@ final class VectorFlacEncoderKernel implements FlacEncoderKernel {
 
     @Override
     public boolean lpcResidualWide(int[] signal, int length, int[] coefficients, int order, int shift, int[] residual) {
+        // Two-lane double compares and masks compile to vector code on some platforms only (not on x86 limited to
+        // 128-bit vectors), so this kernel needs four double lanes.
+        if (DOUBLE_LANES < 4) {
+            return SCALAR.lpcResidualWide(signal, length, coefficients, order, shift, residual);
+        }
         for (var j = 0; j < order; j++) {
             if (Math.abs(coefficients[j]) > MAX_EXACT_COEFFICIENT) {
                 return SCALAR.lpcResidualWide(signal, length, coefficients, order, shift, residual);
