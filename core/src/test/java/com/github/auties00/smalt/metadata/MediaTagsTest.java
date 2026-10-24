@@ -25,8 +25,15 @@ class MediaTagsTest {
     @ParameterizedTest(name = "{0} -> {1}")
     @CsvSource({"TIT2,title", "TITLE,title", "INAM,title", "title,title", "\u00A9nam,title", "TPE2,album_artist",
             "ALBUMARTIST,album_artist", "ALBUM ARTIST,album_artist", "TRACKNUMBER,track", "trkn,track", "PART_NUMBER,track",
-            "TYER,date", "TDRC,date", "DATE_RELEASED,date", "DESCRIPTION,comment", "COMM,comment", "TCMP,compilation",
-            "cpil,compilation", "REPLAYGAIN_TRACK_GAIN,REPLAYGAIN_TRACK_GAIN", "TBPM,TBPM"})
+            "TYER,date", "TDRC,date", "DATE_RELEASED,date", "DESCRIPTION,description", "desc,description",
+            "COMM,comment", "ANNO,comment", "TCMP,compilation", "cpil,compilation",
+            "REPLAYGAIN_TRACK_GAIN,replaygain_track_gain", "replaygain_album_peak,replaygain_album_peak",
+            "REPLAYGAIN_GAIN,REPLAYGAIN_GAIN", "TBPM,bpm", "tmpo,bpm", "TSRC,isrc", "TSOT,title_sort",
+            "TITLESORT,title_sort", "sonm,title_sort", "TITLE/SORT_WITH,title_sort", "title-sort,title_sort",
+            "soaa,album_artist_sort", "TSO2,album_artist_sort", "TPE3,conductor", "TEXT,lyricist",
+            "UFID,musicbrainz_recording_id", "MusicBrainz Track Id,musicbrainz_recording_id",
+            "MUSICBRAINZ_TRACKID,musicbrainz_recording_id", "MusicBrainz Album Id,musicbrainz_album_id",
+            "MUSICBRAINZ_RELEASEGROUPID,musicbrainz_release_group_id", "POPM,rating", "RATING,rating"})
     @DisplayName("normalizes the native names of every format")
     void normalize(String name, String key) {
         assertEquals(key, StandardTag.normalize(name));
@@ -43,8 +50,15 @@ class MediaTagsTest {
         for (var tag : StandardTag.values()) {
             assertEquals(Optional.of(tag), StandardTag.fromName(tag.key()));
             assertEquals(Optional.of(tag), StandardTag.fromName(tag.vorbisField()));
-            assertEquals(Optional.of(tag), StandardTag.fromName(tag.matroskaName()));
+            assertEquals(Optional.of(tag), StandardTag.fromName(tag.id3Description()));
+            assertEquals(Optional.of(tag), StandardTag.fromName(tag.mp4FreeformName()));
+            tag.id3Frame().ifPresent(frame -> assertEquals(Optional.of(tag), StandardTag.fromName(frame)));
+            tag.mp4Atom().ifPresent(atom -> assertEquals(Optional.of(tag), StandardTag.fromName(atom)));
+            if (!tag.matroskaName().startsWith("REPLAYGAIN_")) {
+                assertEquals(Optional.of(tag), StandardTag.fromName(tag.matroskaName()));
+            }
         }
+        assertTrue(StandardTag.fromName("REPLAYGAIN_GAIN").isEmpty(), "a Matroska name whose meaning depends on its level");
     }
 
     @Test

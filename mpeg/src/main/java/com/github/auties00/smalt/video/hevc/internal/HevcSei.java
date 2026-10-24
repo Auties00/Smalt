@@ -1,16 +1,23 @@
 package com.github.auties00.smalt.video.hevc.internal;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
+import com.github.auties00.smalt.internal.sei.DisplaySei;
+import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
+import com.github.auties00.smalt.video.h264.internal.H264BitReader;
 
 /**
  * Collects the supplemental enhancement information messages the decoder uses (ITU-T H.265 D.2):
- * the decoded picture hash (D.3.19), the mastering display color volume (D.3.28), the content light
- * level information (D.3.35), the alternative transfer characteristics (D.3.38) and the recovery
- * point (D.3.8).
+ * the picture timing (D.3.3), the recovery point (D.3.8), the film grain characteristics (D.3.13),
+ * the frame packing arrangement (D.3.16), the display orientation (D.3.17), the decoded picture
+ * hash (D.3.20), the mastering display color volume (D.3.28), the content light level information
+ * (D.3.35), the alternative transfer characteristics (D.3.38) and the alpha channel
+ * information (F.14.2.8).
  *
- * <p>A message too short for its syntax is ignored; every other message is skipped.
+ * <p>A message too short for its syntax, or whose values are out of range, is ignored; every other
+ * message is skipped.
  */
 public final class HevcSei {
     /**
@@ -39,10 +46,30 @@ public final class HevcSei {
     public ContentLightLevel contentLightLevel;
 
     /**
-     * The {@code preferred_transfer_characteristics} of the last alternative transfer
-     * characteristics message, or -1.
+     * The {@code preferred_transfer_characteristics} of the alternative transfer characteristics
+     * message in effect for the coded layer-wise video sequence, or -1.
      */
     public int preferredTransfer = -1;
+
+    /**
+     * Whether an alternative transfer characteristics message arrived for the next picture.
+     */
+    public boolean transferPending;
+
+    /**
+     * The film grain characteristics message of the next picture, or {@code null}.
+     */
+    public FilmGrainParameters filmGrain;
+
+    /**
+     * The frame packing arrangement message of the next picture, or {@code null}.
+     */
+    public DisplaySei.FramePackingMessage framePacking;
+
+    /**
+     * The display orientation message of the next picture, or {@code null}.
+     */
+    public DisplaySei.OrientationMessage orientation;
 
     /**
      * The hash type of the last decoded picture hash message, or -1 when none is pending.
@@ -54,6 +81,86 @@ public final class HevcSei {
      * MD5, the value in the first 2 (CRC) or 4 (checksum) bytes big-endian otherwise.
      */
     public final byte[][] hash = new byte[3][16];
+
+    /**
+     * Whether a recovery point message arrived for the next picture.
+     */
+    public boolean recoveryPoint;
+
+    /**
+     * {@code recovery_poc_cnt} of the last recovery point message, from -32768 to 32767.
+     */
+    public int recoveryPocCount;
+
+    /**
+     * {@code exact_match_flag} of the last recovery point message.
+     */
+    public boolean recoveryExactMatch;
+
+    /**
+     * The first payload byte of the last picture timing message for the next picture, whose high
+     * four bits are {@code pic_struct} when the sequence's {@code frame_field_info_present_flag}
+     * is set, or -1 when none arrived.
+     */
+    public int pictureTiming = -1;
+
+    /**
+     * The alpha channel information message in effect for the layer (F.14.2.8), or {@code null}
+     * when none arrived or the last one was a cancel.
+     */
+    public AlphaChannel alphaChannel;
+
+    /**
+     * Whether an alpha channel information message arrived for the next picture.
+     */
+    public boolean alphaChannelPending;
+
+    /**
+     * The interpretation of the samples of an alpha auxiliary picture that an alpha channel
+     * information message gives (F.14.3.8).
+     *
+     * @param useIdc {@code alpha_channel_use_idc}: 0 when the primary samples are to be multiplied
+     * by the alpha, 1 when they already are (premultiplied), 2 when unspecified
+     * @param bitDepth {@code alpha_channel_bit_depth_minus8 + 8}
+     * @param transparent {@code alpha_transparent_value}
+     * @param opaque {@code alpha_opaque_value}
+     * @param increment {@code alpha_channel_incr_flag}
+     * @param clip {@code alpha_channel_clip_flag}
+     * @param clipType {@code alpha_channel_clip_type_flag}
+     */
+    public record AlphaChannel(int useIdc, int bitDepth, int transparent, int opaque, boolean increment, boolean clip,
+                               boolean clipType) {
+        /**
+         * Returns the interpretation sample value of a decoded alpha sample, after the increment
+         * and the clipping the message asks for.
+         *
+         * @param sample the decoded sample
+         * @return the interpretation value
+         */
+        public int interpret(int sample) {
+            var low = Math.min(transparent, opaque);
+            var high = Math.max(transparent, opaque);
+            var value = sample;
+            if (increment && value > low) {
+                value++;
+            }
+            if (clip) {
+                if (!clipType) {
+                    value = value > (opaque + transparent) / 2 ? high : low;
+                } else if (value > high) {
+                    value = high;
+                } else if (value <= low) {
+                    value = low;
+                }
+            }
+            return value;
+        }
+    }
+
+    /**
+     * The reader of message payloads coded with Exp-Golomb codes.
+     */
+    private final H264BitReader payloadReader = new H264BitReader();
 
     /**
      * Constructs an empty collector.
@@ -101,8 +208,33 @@ public final class HevcSei {
                 }
             } else {
                 switch (payloadType) {
-                    // TODO: keep recovery point messages (payload type 6) for random access from
-                    // non-IRAP pictures
+                    case 1 -> {
+                        if (payloadSize >= 1) {
+                            pictureTiming = rbsp[position] & 0xFF;
+                        }
+                    }
+                    case 6 -> parseRecoveryPoint(rbsp, position, payloadSize);
+                    case 19 -> {
+                        payloadReader.init(rbsp, position, payloadSize);
+                        var message = FilmGrainParameters.parse(payloadReader, true);
+                        if (message != null) {
+                            filmGrain = message;
+                        }
+                    }
+                    case 45 -> {
+                        payloadReader.init(rbsp, position, payloadSize);
+                        var message = DisplaySei.framePacking(payloadReader, true);
+                        if (message != null) {
+                            framePacking = message;
+                        }
+                    }
+                    case 47 -> {
+                        payloadReader.init(rbsp, position, payloadSize);
+                        var message = DisplaySei.displayOrientation(payloadReader, true);
+                        if (message != null) {
+                            orientation = message;
+                        }
+                    }
                     case 132 -> parseHash(rbsp, position, payloadSize, components);
                     case 137 -> {
                         if (payloadSize >= 24) {
@@ -117,14 +249,90 @@ public final class HevcSei {
                     case 147 -> {
                         if (payloadSize >= 1) {
                             preferredTransfer = rbsp[position] & 0xFF;
+                            transferPending = true;
                         }
                     }
+                    case 165 -> parseAlphaChannel(rbsp, position, payloadSize);
                     default -> {
                     }
                 }
             }
             position += payloadSize;
         }
+    }
+
+    /**
+     * Parses a recovery point message: {@code recovery_poc_cnt se(v)}, {@code exact_match_flag}
+     * and {@code broken_link_flag}.
+     *
+     * @param rbsp the payload buffer, followed by at least {@link H264BitReader#PADDING} bytes
+     * @param position the index of the message payload
+     * @param size the message payload size
+     */
+    private void parseRecoveryPoint(byte[] rbsp, int position, int size) {
+        if (size < 1) {
+            return;
+        }
+        payloadReader.init(rbsp, position, size);
+        try {
+            var count = payloadReader.readSe();
+            var exact = payloadReader.readFlag();
+            payloadReader.readFlag();
+            if (payloadReader.overrun() || count < -32768 || count > 32767) {
+                return;
+            }
+            recoveryPocCount = count;
+            recoveryExactMatch = exact;
+            recoveryPoint = true;
+        } catch (MediaException ignored) {
+            // an invalid Exp-Golomb code makes the message unusable, not the stream
+        }
+    }
+
+    /**
+     * Parses an alpha channel information message (F.14.2.8).
+     *
+     * @param rbsp the payload buffer, followed by at least {@link H264BitReader#PADDING} bytes
+     * @param position the index of the message payload
+     * @param size the message payload size
+     */
+    private void parseAlphaChannel(byte[] rbsp, int position, int size) {
+        if (size < 1) {
+            return;
+        }
+        payloadReader.init(rbsp, position, size);
+        if (payloadReader.readFlag()) {
+            alphaChannel = null;
+            alphaChannelPending = true;
+            return;
+        }
+        var use = payloadReader.readBits(3);
+        var depth = payloadReader.readBits(3) + 8;
+        var transparent = payloadReader.readBits(depth + 1);
+        var opaque = payloadReader.readBits(depth + 1);
+        var increment = payloadReader.readFlag();
+        var clip = payloadReader.readFlag();
+        var clipType = clip && payloadReader.readFlag();
+        if (payloadReader.overrun() || depth > 15) {
+            return;
+        }
+        alphaChannel = new AlphaChannel(use, depth, transparent, opaque, increment, clip, clipType);
+        alphaChannelPending = true;
+    }
+
+    /**
+     * Forgets the messages that apply only to the next picture: the recovery point, the picture
+     * timing, the film grain characteristics, the frame packing arrangement and the display
+     * orientation.
+     */
+    public void clearPictureMessages() {
+        recoveryPoint = false;
+        alphaChannelPending = false;
+        pictureTiming = -1;
+        transferPending = false;
+        filmGrain = null;
+        framePacking = null;
+        orientation = null;
     }
 
     /**

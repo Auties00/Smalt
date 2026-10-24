@@ -12,10 +12,13 @@ import java.util.List;
  *
  * <p>The first profile of a chain is used in the input direction (device values to the
  * connection space); every later profile is used in the output direction when the chain is in a
- * connection space at that point, otherwise in the input direction. Between a connection space and
- * an output profile the linker inserts the conversion its intent asks for: the media white scaling
- * of absolute colorimetric, or the black point compensation scaling, and the XYZ and L*a*b*
- * conversions when the two connection spaces differ.
+ * connection space at that point, otherwise in the input direction. Device link and abstract
+ * profiles are applied wherever they stand, from their data color space to the space their
+ * connection space field names. A named color profile may only start a chain: it maps color
+ * indexes to its connection space, or, alone, to its device coordinates. Between a connection space
+ * and an output or abstract profile the linker inserts the conversion its intent asks for: the media
+ * white scaling of absolute colorimetric, or the black point compensation scaling, and the XYZ and
+ * L*a*b* conversions when the two connection spaces differ.
  *
  * @implNote This implementation follows Little CMS 2.17: {@code DefaultICCintents}, {@code ComputeConversion},
  * {@code AddConversion}, {@code ComputeAbsoluteIntent} (for an observer fully adapted, the default),
@@ -131,8 +134,10 @@ final class Linker {
      * Links a chain of profiles.
      *
      * @param chain the nodes, at least one
-     * @return the pipeline from the first node's device values to the last node's
-     * @throws MediaException.Unsupported if consecutive color spaces do not match
+     * @return the pipeline from the first node's device values (a named color index for a named color profile) to
+     * the values of the space the chain ends in
+     * @throws MediaException.Unsupported if consecutive color spaces do not match, or a named color profile does not
+     * start the chain
      * @throws MediaException.Malformed if a profile lacks the tags its role needs
      */
     static Pipeline link(List<Node> chain) {
@@ -149,16 +154,24 @@ final class Linker {
         }
         var lab = IccReader.signature("Lab ");
         var xyz = IccReader.signature("XYZ ");
+        var abstractClass = IccReader.signature("abst");
+        var namedClass = IccReader.signature("nmcl");
         var current = nodes[0].colorSpace();
-        var result = new Pipeline(IccReader.channels(current), IccReader.channels(nodes[nodes.length - 1].colorSpace()));
+        var result = new Pipeline(1, 1);
         for (var i = 0; i < nodes.length; i++) {
             var node = nodes[i];
-            var input = i == 0 && !node.isLab() || (current != xyz && current != lab);
+            var deviceClass = node.isLab() ? abstractClass : node.profile().deviceClass;
+            var deviceLink = deviceClass == abstractClass || deviceClass == IccReader.signature("link");
+            var alone = deviceClass == namedClass && nodes.length == 1;
+            if (deviceClass == namedClass && i > 0) {
+                throw new MediaException.Unsupported("icc", "a named color profile can only start a chain");
+            }
+            var input = i == 0 && !deviceLink || (current != xyz && current != lab);
             int spaceIn;
             int spaceOut;
-            if (input || node.isLab()) {
+            if (input || deviceLink) {
                 spaceIn = node.colorSpace();
-                spaceOut = node.pcs();
+                spaceOut = alone ? node.colorSpace() : node.pcs();
             } else {
                 spaceIn = node.pcs();
                 spaceOut = node.colorSpace();
@@ -167,9 +180,14 @@ final class Linker {
                 throw new MediaException.Unsupported("icc", "cannot link color space " + IccReader.name(current)
                         + " to " + IccReader.name(spaceIn));
             }
-            if (node.isLab()) {
-                double[][] conversion = i > 0 ? conversion(nodes, i, bpc[i]) : new double[][]{ColorMath.identity(), new double[3]};
+            if (deviceLink || alone) {
+                var lut = node.isLab() ? null : ProfileLuts.deviceLink(node.profile(), node.intent());
+                var conversion = deviceClass == abstractClass && i > 0 ? conversion(nodes, i, bpc[i])
+                        : new double[][]{ColorMath.identity(), new double[3]};
                 addConversion(result, current, spaceIn, conversion[0], conversion[1]);
+                if (lut != null) {
+                    result.append(lut);
+                }
             } else if (input) {
                 result.append(ProfileLuts.input(node.profile(), node.intent()));
             } else {
@@ -180,7 +198,38 @@ final class Linker {
             }
             current = spaceOut;
         }
-        return result;
+        var inputs = nodes[0].isLab() || nodes[0].profile().deviceClass != namedClass
+                ? IccReader.channels(nodes[0].colorSpace()) : 1;
+        var outputs = IccReader.channels(current);
+        if (outputs == 0) {
+            throw new MediaException.Malformed("ICC profile chain ends in unknown color space " + IccReader.name(current));
+        }
+        return result.copy(inputs, outputs);
+    }
+
+    /**
+     * Returns the color space a chain of profiles ends in, as {@link #link} tracks it.
+     *
+     * @param profiles the parsed profiles of the chain, at least one
+     * @return the signature of the last color space
+     */
+    static int exitSpace(List<IccReader> profiles) {
+        var lab = IccReader.signature("Lab ");
+        var xyz = IccReader.signature("XYZ ");
+        var current = profiles.getFirst().colorSpace;
+        for (var i = 0; i < profiles.size(); i++) {
+            var profile = profiles.get(i);
+            var deviceClass = profile.deviceClass;
+            var deviceLink = deviceClass == IccReader.signature("abst") || deviceClass == IccReader.signature("link");
+            if (deviceClass == IccReader.signature("nmcl")) {
+                current = profiles.size() == 1 ? profile.colorSpace : profile.pcs;
+            } else if (deviceLink || i == 0 || (current != xyz && current != lab)) {
+                current = profile.pcs;
+            } else {
+                current = profile.colorSpace;
+            }
+        }
+        return current;
     }
 
     /**

@@ -13,6 +13,7 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 import org.junit.jupiter.api.DisplayName;
@@ -147,6 +148,29 @@ class MatroskaMuxerTest {
         assertEquals(decodedIn.length, decodedOut.length, "ffmpeg decodes the same number of samples");
     }
 
+    @ParameterizedTest(name = "{0} samples")
+    @org.junit.jupiter.params.provider.ValueSource(ints = {1, 1000, 69_999, 70_000, 70_001})
+    @DisplayName("ends the segment Duration on the last sample, finer than a millisecond, so no sample is cut")
+    void exactDuration(int samples) {
+        var track = AudioTrack.builder().id(1).codec(Codec.PCM_S16LE).timeBase(new Rational(1, 44_100))
+                .sampleRate(44_100).layout(ChannelLayout.MONO).build();
+        var sink = MediaSink.memory();
+        try (var muxer = new MatroskaMuxer(sink)) {
+            muxer.addTrack(track);
+            for (var start = 0; start < samples; start += 1000) {
+                var count = Math.min(1000, samples - start);
+                muxer.writePacket(new Packet(1, new byte[2 * count], start, start, count, true));
+            }
+            muxer.finish();
+        }
+        var structure = MatroskaStructure.check(sink.toByteArray());
+        assertEquals(samples * 1000.0 / 44_100, structure.duration, 1e-6, "segment Duration in milliseconds");
+        try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(
+                com.github.auties00.smalt.io.MediaSource.of(sink.toByteArray()))) {
+            assertEquals(samples, demuxer.tracks().getFirst().duration(), "track duration in samples");
+        }
+    }
+
     @Test
     @DisplayName("produces byte-identical output for the same input")
     void deterministic() {
@@ -183,8 +207,8 @@ class MatroskaMuxerTest {
                     .build();
             var sink = MediaSink.memory();
             try (var muxer = new MatroskaMuxer(sink, MatroskaMuxerOptions.webm().toBuilder().title("title").build())) {
-                muxer.addTrack(colored, EnumSet.of(MatroskaMuxer.TrackFlag.DEFAULT));
-                muxer.addTrack(audio, EnumSet.of(MatroskaMuxer.TrackFlag.FORCED, MatroskaMuxer.TrackFlag.COMMENTARY));
+                muxer.addTrack(colored, EnumSet.of(TrackDisposition.DEFAULT));
+                muxer.addTrack(audio, EnumSet.of(TrackDisposition.FORCED, TrackDisposition.COMMENTARY));
                 source.order().forEach(muxer::writePacket);
                 muxer.finish();
             }
@@ -232,6 +256,13 @@ class MatroskaMuxerTest {
             var output = MuxSupport.toMemory(List.of(track), List.of(), MatroskaMuxer::new);
             var structure = MatroskaStructure.check(output);
             assertTrue(structure.clusterPositions.isEmpty());
+            // RFC 9559 requires a positive Duration, so the reserved element turns into Void padding of its size
+            assertEquals(-1, structure.duration, "no Duration element");
+            // the SeekHead, ahead of Info, names Info and Tracks by their ids too, so the elements are found by it
+            var info = (int) (structure.segmentStart + structure.seeks.get((long) EbmlIds.INFO));
+            var tracks = (int) (structure.segmentStart + structure.seeks.get((long) EbmlIds.TRACKS));
+            var padding = indexOf(output, info, new byte[]{(byte) 0xEC, 0x40, 0x08});
+            assertTrue(info < tracks && padding > info && padding < tracks, "an 11-byte Void element in Info");
             var result = MuxSupport.demux(output);
             assertEquals(1, result.tracks().size());
             assertTrue(result.order().isEmpty());
@@ -366,6 +397,20 @@ class MatroskaMuxerTest {
                 assertThrows(IllegalStateException.class, muxer::finish);
             }
         }
+    }
+
+    /** Returns the offset of the first occurrence of a byte pattern at or after an offset, or -1. */
+    private static int indexOf(byte[] data, int from, byte[] pattern) {
+        outer:
+        for (var i = Math.max(0, from); i + pattern.length <= data.length; i++) {
+            for (var j = 0; j < pattern.length; j++) {
+                if (data[i + j] != pattern[j]) {
+                    continue outer;
+                }
+            }
+            return i;
+        }
+        return -1;
     }
 
     private static AudioTrack pcmTrack(int id) {

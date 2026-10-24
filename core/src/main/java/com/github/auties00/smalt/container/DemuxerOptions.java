@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 
 import java.util.Objects;
 
@@ -12,16 +13,18 @@ public final class DemuxerOptions {
     /**
      * The options of {@link #defaults()}.
      */
-    private static final DemuxerOptions DEFAULTS = new DemuxerOptions(MediaLimits.DEFAULT);
+    private static final DemuxerOptions DEFAULTS = new DemuxerOptions(MediaLimits.DEFAULT, DataReferenceResolver.none());
 
     private final MediaLimits limits;
+    private final DataReferenceResolver dataReferences;
 
-    private DemuxerOptions(MediaLimits limits) {
+    private DemuxerOptions(MediaLimits limits, DataReferenceResolver dataReferences) {
         this.limits = limits;
+        this.dataReferences = dataReferences;
     }
 
     /**
-     * Returns demuxing under {@link MediaLimits#defaults()}.
+     * Returns demuxing under {@link MediaLimits#defaults()}, without resolving data references.
      *
      * @return the default options
      */
@@ -54,19 +57,33 @@ public final class DemuxerOptions {
         return limits;
     }
 
+    /**
+     * {@return the resolver of the data references that name other files; {@link DataReferenceResolver#none()}
+     * by default}
+     *
+     * <p>An ISO base media or QuickTime file may store the samples of a track in other files, which its data
+     * reference box names (a reference movie, for example). The MP4 demuxer asks this resolver for those files;
+     * the samples of a reference it does not resolve raise
+     * {@link com.github.auties00.smalt.MediaException.Unsupported}. Other demuxers do not use it.
+     */
+    public DataReferenceResolver dataReferences() {
+        return dataReferences;
+    }
+
     @Override
     public boolean equals(Object other) {
-        return other instanceof DemuxerOptions that && limits.equals(that.limits);
+        return other instanceof DemuxerOptions that && limits.equals(that.limits)
+                && dataReferences.equals(that.dataReferences);
     }
 
     @Override
     public int hashCode() {
-        return limits.hashCode();
+        return limits.hashCode() * 31 + dataReferences.hashCode();
     }
 
     @Override
     public String toString() {
-        return "DemuxerOptions[limits=" + limits + "]";
+        return "DemuxerOptions[limits=" + limits + ", dataReferences=" + dataReferences + "]";
     }
 
     /**
@@ -77,9 +94,11 @@ public final class DemuxerOptions {
      */
     public static final class Builder {
         private MediaLimits limits;
+        private DataReferenceResolver dataReferences;
 
         private Builder(DemuxerOptions options) {
             this.limits = options.limits;
+            this.dataReferences = options.dataReferences;
         }
 
         /**
@@ -94,12 +113,34 @@ public final class DemuxerOptions {
         }
 
         /**
+         * Sets the resolver of the data references that name other files; see
+         * {@link DemuxerOptions#dataReferences()}.
+         *
+         * @param dataReferences the resolver
+         * @return this builder
+         */
+        public Builder dataReferences(DataReferenceResolver dataReferences) {
+            this.dataReferences = Objects.requireNonNull(dataReferences, "dataReferences");
+            return this;
+        }
+
+        /**
+         * Resolves no data reference, the default; see {@link DemuxerOptions#dataReferences()}.
+         *
+         * @return this builder
+         */
+        public Builder noDataReferences() {
+            this.dataReferences = DataReferenceResolver.none();
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
          */
         public DemuxerOptions build() {
-            return new DemuxerOptions(limits);
+            return new DemuxerOptions(limits, dataReferences);
         }
     }
 }
