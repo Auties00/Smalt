@@ -71,6 +71,15 @@ final class CabacEncoder extends CabacCoder {
     }
 
     /**
+     * Constructs an encoder of a number of contexts.
+     *
+     * @param count the number of contexts
+     */
+    CabacEncoder(int count) {
+        super(count);
+    }
+
+    /**
      * Initializes the arithmetic encoding engine (clause 9.3.1.2) to write to a destination.
      *
      * @param out the destination, byte-aligned
@@ -229,7 +238,7 @@ final class CabacEncoder extends CabacCoder {
         registers[4] = bufferedCount;
         registers[5] = bufferedByte;
         registers[6] = bins;
-        System.arraycopy(states, 0, contexts, 0, CabacTables.CONTEXTS);
+        System.arraycopy(states, 0, contexts, 0, states.length);
     }
 
     /**
@@ -246,7 +255,7 @@ final class CabacEncoder extends CabacCoder {
         bufferedCount = (int) registers[4];
         bufferedByte = (int) registers[5];
         bins = registers[6];
-        System.arraycopy(contexts, 0, states, 0, CabacTables.CONTEXTS);
+        System.arraycopy(contexts, 0, states, 0, states.length);
     }
 
     /**

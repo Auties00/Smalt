@@ -151,7 +151,7 @@ public final class LoudnessNormalization {
         var gain = targetLufs - stats.integrated();
         var peak = Double.isNaN(stats.truePeak()) ? stats.samplePeak() : stats.truePeak();
         if (Double.isFinite(truePeakCeilingDb) && peak > 0) {
-            var peakDb = 20 * Math.log10(peak);
+            var peakDb = 20 * StrictMath.log10(peak);
             if (peakDb + gain > truePeakCeilingDb) {
                 gain = truePeakCeilingDb - peakDb;
             }

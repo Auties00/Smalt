@@ -1,0 +1,13 @@
+# image dump of avif/derived.avif; regenerate with -Dsmalt.test.updateDumps=true
+format AVIF
+info ImageInfo[format=AVIF, width=96, height=80, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 96x80 rgba8 alpha=true crc=bdddc1c3
+  format=AVIF orientation=NORMAL source=96x80
+  icc=none exif=none xmp=none
+  profile=none
+scaled 24x20
+picture 48x40 yuv8 YUV420 color=UNSPECIFIED/LIMITED/UNSPECIFIED/UNSPECIFIED y=d9c10b1a u=39de9d06 v=2ad99c4b
+  format=AVIF orientation=NORMAL source=96x80
+  icc=none exif=none xmp=none
+  profile=none

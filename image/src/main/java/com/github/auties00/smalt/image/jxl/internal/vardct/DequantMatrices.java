@@ -427,7 +427,7 @@ public final class DequantMatrices {
         var frac = scaled - index;
         var a = bands[index];
         var b = bands[index + 1];
-        return a * (float) Math.pow(b / a, frac);
+        return a * (float) StrictMath.pow(b / a, frac);
     }
 
     /**

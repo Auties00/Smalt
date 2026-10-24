@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-nikon-d70s-12bit-12bit-compressed-lossy-type-1-3-2.nef; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=3008, height=2000, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 3008x2000 rgba8 alpha=false crc=c1b05f16
+  format=RAW orientation=NORMAL source=3008x2000
+  icc=520:86132914 exif=704:f97d48d5 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 3008x2000 channels=1 cfa=BGGR neutral=[0.8411842798660083, 0.9648984343428327, 1.0] crc=8b6fa5d1

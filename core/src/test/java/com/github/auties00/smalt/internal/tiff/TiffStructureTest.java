@@ -3,6 +3,7 @@ package com.github.auties00.smalt.internal.tiff;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -204,6 +205,15 @@ class TiffStructureTest {
             var limited = Ifd.read(TiffInput.of(large), 0, header, 8, tiny);
             assertThrows(MediaException.LimitExceeded.class, () -> limited.value(0, MediaLimits.DEFAULT));
             assertThrows(IllegalArgumentException.class, () -> new Ifd.Policy(16, true, 2, 32));
+            // a count that runs past the end of the input invalidates the first value too, although its bytes exist
+            var counted = new Builder(true).entry(262, TiffTypes.SHORT, 0x7FFF0001L, 4).build(1);
+            var countedInput = TiffInput.of(counted);
+            var countedIfd = Ifd.read(countedInput, 0, TiffHeader.read(countedInput, 0), 8, Ifd.Policy.STRICT);
+            assertThrows(MediaException.Malformed.class, () -> countedIfd.firstInteger(0, -1));
+            var listed = new Builder(true).entry(262, TiffTypes.SHORT, 3, new byte[]{2, 0, 0, 0, 0, 0}).build(1);
+            var listedInput = TiffInput.of(listed);
+            assertEquals(2, Ifd.read(listedInput, 0, TiffHeader.read(listedInput, 0), 8, Ifd.Policy.STRICT)
+                    .firstInteger(0, -1));
         }
 
         @Test
@@ -268,6 +278,66 @@ class TiffStructureTest {
             var badOffset = tiff.clone();
             badOffset[7] = 4;
             assertEquals(Orientation.NORMAL, TiffExif.orientation(badOffset, 0));
+        }
+
+        @ParameterizedTest(name = "little endian {0}")
+        @ValueSource(booleans = {false, true})
+        @DisplayName("reads the resolution and its unit, inches when the unit is absent")
+        void density(boolean little) {
+            var dpi = new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, rational(little, 601, 2))
+                    .entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, rational(little, 150, 1)).build(2);
+            assertEquals(PixelDensity.ofDotsPerInch(300.5, 150), TiffExif.density(dpi, 0));
+            for (var unit : new int[]{1, 2, 3}) {
+                var tiff = new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, rational(little, 72, 1))
+                        .entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, rational(little, 36, 1))
+                        .entry(TiffExif.RESOLUTION_UNIT, TiffTypes.SHORT, 1, little ? unit : (long) unit << 16)
+                        .build(3);
+                var expected = switch (unit) {
+                    case 1 -> PixelDensity.ofAspectRatio(72, 36);
+                    case 2 -> PixelDensity.ofDotsPerInch(72, 36);
+                    default -> PixelDensity.ofDotsPerCentimeter(72, 36);
+                };
+                assertEquals(expected, TiffExif.density(tiff, 0), "unit " + unit);
+            }
+            var integers = new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.LONG, 1, 96)
+                    .entry(TiffExif.Y_RESOLUTION, TiffTypes.LONG, 1, 96).build(2);
+            assertEquals(PixelDensity.ofDotsPerInch(96), TiffExif.density(integers, 0));
+        }
+
+        @ParameterizedTest(name = "little endian {0}")
+        @ValueSource(booleans = {false, true})
+        @DisplayName("gives no resolution for a missing or zero value, an unknown unit, text, or damage")
+        void noDensity(boolean little) {
+            var x = rational(little, 72, 1);
+            assertNull(TiffExif.density(new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .build(1), 0));
+            assertNull(TiffExif.density(new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, rational(little, 0, 1)).build(2), 0));
+            assertNull(TiffExif.density(new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, rational(little, 72, 0)).build(2), 0));
+            assertNull(TiffExif.density(new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .entry(TiffExif.RESOLUTION_UNIT, TiffTypes.SHORT, 1, little ? 4 : 4L << 16).build(3), 0));
+            assertNull(TiffExif.density(new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.ASCII, 4,
+                    new byte[]{'7', '2', 0, 0}).entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, x).build(2), 0));
+            assertNull(TiffExif.density(new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .entry(TiffExif.RESOLUTION_UNIT, TiffTypes.RATIONAL, 1, x).build(3), 0));
+            var whole = new Builder(little).entry(TiffExif.X_RESOLUTION, TiffTypes.RATIONAL, 1, x)
+                    .entry(TiffExif.Y_RESOLUTION, TiffTypes.RATIONAL, 1, x).build(2);
+            assertNull(TiffExif.density(Arrays.copyOf(whole, whole.length - 4), 0));
+            assertNull(TiffExif.density(new byte[5], 0));
+            assertEquals(PixelDensity.ofDotsPerInch(72), TiffExif.density(whole, 0));
+        }
+
+        private static byte[] rational(boolean little, long numerator, long denominator) {
+            var bytes = new byte[8];
+            for (var i = 0; i < 4; i++) {
+                var shift = little ? 8 * i : 8 * (3 - i);
+                bytes[i] = (byte) (numerator >>> shift);
+                bytes[4 + i] = (byte) (denominator >>> shift);
+            }
+            return bytes;
         }
 
         private static byte[] exif(boolean little, int type, long count, long value) {

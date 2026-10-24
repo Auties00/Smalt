@@ -92,6 +92,11 @@ final class TileEncoder {
     final RangeEncoder ec = new RangeEncoder();
 
     /**
+     * The writer of the palette syntax of the tile's palette blocks.
+     */
+    private final PaletteWriter palette = new PaletteWriter();
+
+    /**
      * The coefficient writer.
      */
     private final CoefWriter coefWriter = new CoefWriter();
@@ -165,7 +170,7 @@ final class TileEncoder {
     /**
      * The quantized levels of every transform block of the current block, in coding order.
      */
-    private final int[] levels = new int[64 * 64 + 2 * 32 * 32];
+    private final int[] levels = new int[3 * 64 * 64];
 
     /**
      * The number of transform blocks recorded for the current block.
@@ -327,6 +332,8 @@ final class TileEncoder {
      */
     TileEncoder(FrameEncoder frame) {
         this.frame = frame;
+        this.dsp = frame.dsp;
+        search.dsp(dsp);
         this.part = new VarPartition(frame, this, dsp, search);
         this.pick = new PickMode(frame, this, dsp, search, part);
         t.ts = ts;
@@ -383,9 +390,9 @@ final class TileEncoder {
             ec.reset(hdr.disableCdfUpdate);
         }
         if (frame.speed.rdoq) {
-            rdoq.setup(f.inCdf);
+            rdoq.setup(f.inCdf, frame.bitDepth);
         }
-        var selected = EncDsp.select();
+        var selected = frame.dsp;
         if (selected != dsp) {
             dsp = selected;
             search.dsp(dsp);
@@ -475,9 +482,10 @@ final class TileEncoder {
         }
         var alignH = (f.bh + 31) & ~31;
         System.arraycopy(t.l.txLpfY, t.by & 16, f.txLpfRightEdge[0], alignH * tileCol + t.by, f.sbStep);
-        alignH >>= 1;
-        System.arraycopy(t.l.txLpfUv, (t.by & 16) >> 1, f.txLpfRightEdge[1], alignH * tileCol + (t.by >> 1),
-                f.sbStep >> 1);
+        var ssVer = frame.ssVer;
+        alignH >>= ssVer;
+        System.arraycopy(t.l.txLpfUv, (t.by & 16) >> ssVer, f.txLpfRightEdge[1], alignH * tileCol + (t.by >> ssVer),
+                f.sbStep >> ssVer);
         if (wavefront != null) {
             wavefront.complete(unit);
         }
@@ -613,7 +621,8 @@ final class TileEncoder {
         if (!haveVSplit) {
             bp = bp == PARTITION_NONE || bp == PARTITION_H ? PARTITION_H : PARTITION_SPLIT;
         } else if (!haveHSplit) {
-            bp = bp == PARTITION_NONE || bp == PARTITION_V ? PARTITION_V : PARTITION_SPLIT;
+            bp = (bp == PARTITION_NONE || bp == PARTITION_V) && frame.layout != SequenceHeader.LAYOUT_I422
+                    ? PARTITION_V : PARTITION_SPLIT;
         }
         var bx8 = (t.bx & 31) >> 1;
         var by8 = (t.by & 31) >> 1;
@@ -729,7 +738,8 @@ final class TileEncoder {
         if (bl < BL_8X8 && !whole) {
             var noneRefs = 1 << pick.lastBestRef;
             if ((sf.searchRectLevels & (1 << bl)) != 0 && !(noneSkips && bl >= sf.searchRectSkipLevel)) {
-                for (var bp = PARTITION_H; bp <= PARTITION_V; bp++) {
+                var lastRect = frame.layout == SequenceHeader.LAYOUT_I422 ? PARTITION_H : PARTITION_V;
+                for (var bp = PARTITION_H; bp <= lastRect; bp++) {
                     var cost = searchRect(bl, bp, node, hsz, noneRefs, best - RdCost.rdcost(rdmult, partitionCosts[bp], 0));
                     if (cost != Long.MAX_VALUE) {
                         best = cost + RdCost.rdcost(rdmult, partitionCosts[bp], 0);
@@ -891,6 +901,12 @@ final class TileEncoder {
             b.segId = cr.segmentOf(t.by, t.bx, bh4, bw4);
         }
         pick.decide(bs, edgeFlags);
+        if (b.intra && pick.paletteSize > 0) {
+            b.palSz[0] = pick.paletteSize;
+            System.arraycopy(pick.paletteColors, 0, t.pal, 0, pick.paletteSize);
+            PaletteWriter.pack(t.palIdxY, pick.paletteMap, bw4 * 4, bw4 * 4, bh4 * 4,
+                    Math.min(bw4, frame.f.bw - t.bx) * 4, Math.min(bh4, frame.f.bh - t.by) * 4);
+        }
         if (segmented) {
             var segment = cr.updateSegment(t.by, t.bx, bh4, bw4, b.segId, b.intra, RefMvs.mvY(b.mv[0]),
                     RefMvs.mvX(b.mv[0]), Math.min(bw4, bh4) >= 4, pick.bestRate, pick.bestDist,
@@ -1048,7 +1064,8 @@ final class TileEncoder {
                 var lb = plane == 0 ? t.l.lcoef : t.l.ccoef;
                 eob = rdoq.optimize(coef, qc, eob, scan, tx, plane,
                         (plane != 0 ? 3 : 0) + CoefWriter.dcSignCtx(tx, ab, aOff, lb, lOff),
-                        CoefWriter.skipCtx(tx, t.b.bs, ab, aOff, lb, lOff, plane != 0), q.dequant(false),
+                        CoefWriter.skipCtx(tx, t.b.bs, ab, aOff, lb, lOff, plane != 0, frame.ssHor, frame.ssVer),
+                        q.dequant(false),
                         q.dequant(true), dqShift,
                         (int) ((long) frame.rd.rdmult * frame.speed.rdoqLambdaScale / 100));
             }
@@ -1067,7 +1084,7 @@ final class TileEncoder {
         }
         if (eob > 0) {
             q.dequantize(qc, eob, scan, dqShift, cf);
-            frame.f.itx.itxfmAdd(tx, txtp, dst, dstOff, stride, cf, 0, eob - 1, t.itxScratch, 255);
+            frame.f.itx.itxfmAdd(tx, txtp, dst, dstOff, stride, cf, 0, eob - 1, t.itxScratch, frame.bdMax);
         }
     }
 
@@ -1275,14 +1292,17 @@ final class TileEncoder {
         var f = frame.f;
         var ipred = IpredDsp.INSTANCE;
         var cur = f.cur;
+        var bdMax = frame.bdMax;
+        var ssHor = frame.ssHor;
+        var ssVer = frame.ssVer;
         var bx4 = t.bx & 31;
         var by4 = t.by & 31;
         var bw4 = BLOCK_DIMENSIONS[bs * 4];
         var bh4 = BLOCK_DIMENSIONS[bs * 4 + 1];
         var w4 = Math.min(bw4, f.bw - t.bx);
         var h4 = Math.min(bh4, f.bh - t.by);
-        var cw4 = (w4 + 1) >> 1;
-        var ch4 = (h4 + 1) >> 1;
+        var cw4 = (w4 + ssHor) >> ssHor;
+        var ch4 = (h4 + ssVer) >> ssVer;
         var tx = b.tx;
         var txW = Tables.TX_W[tx];
         var txH = Tables.TX_H[tx];
@@ -1295,25 +1315,34 @@ final class TileEncoder {
         var angle = t.angle;
         for (var initY = 0; initY < h4; initY += 16) {
             var subH4 = Math.min(h4, 16 + initY);
-            var subCh4 = Math.min(ch4, (initY + 16) >> 1);
+            var subCh4 = Math.min(ch4, (initY + 16) >> ssVer);
             for (var initX = 0; initX < w4; initX += 16) {
                 var intraFlags = t.a.smFlag(bx4) | t.l.smFlag(by4) | intraEdgeFilterFlag;
                 var sbHasTr = initX + 16 < w4 ? 1 : initY != 0 ? 0 : edgeFlags & IntraEdge.I444_TOP_HAS_RIGHT;
                 var sbHasBl = initX != 0 ? 0 : initY + 16 < h4 ? 1 : edgeFlags & IntraEdge.I444_LEFT_HAS_BOTTOM;
                 var subW4 = Math.min(w4, initX + 16);
+                if (b.palSz[0] != 0) {
+                    ipred.palPred(yPlane, 4 * (t.by * yStride + t.bx), yStride, t.pal, 0, t.palIdxY, 0, bw4 * 4,
+                            bh4 * 4);
+                }
                 int y;
                 int x = 0;
                 for (y = initY, t.by += initY; y < subH4; y += txH, t.by += txH) {
                     var dst = 4 * (t.by * yStride + t.bx + initX);
                     for (x = initX, t.bx += initX; x < subW4; x += txW, t.bx += txW) {
-                        angle[0] = b.yAngle;
-                        var flags = (((y > initY || sbHasTr == 0) && (x + txW >= subW4)) ? 0 : IntraEdge.I444_TOP_HAS_RIGHT)
-                                | ((x > initX || (sbHasBl == 0 && y + txH >= subH4)) ? 0 : IntraEdge.I444_LEFT_HAS_BOTTOM);
-                        var m = IpredDsp.prepareIntraEdges(t.bx, t.bx > ts.colStart, t.by, t.by > ts.rowStart,
-                                ts.colEnd, ts.rowEnd, flags, yPlane, dst, yStride, null, 0, b.yMode, angle, txW, txH,
-                                intraEdgeFilter, edge, edgeOff, 255);
-                        ipred.intraPred(m, yPlane, dst, yStride, edge, edgeOff, txW * 4, txH * 4, angle[0] | intraFlags,
-                                4 * f.bw - 4 * t.bx, 4 * f.bh - 4 * t.by, t.ipredScratch, 255);
+                        if (b.palSz[0] == 0) {
+                            angle[0] = b.yAngle;
+                            var flags = (((y > initY || sbHasTr == 0) && (x + txW >= subW4)) ? 0
+                                    : IntraEdge.I444_TOP_HAS_RIGHT)
+                                    | ((x > initX || (sbHasBl == 0 && y + txH >= subH4)) ? 0
+                                    : IntraEdge.I444_LEFT_HAS_BOTTOM);
+                            var m = IpredDsp.prepareIntraEdges(t.bx, t.bx > ts.colStart, t.by, t.by > ts.rowStart,
+                                    ts.colEnd, ts.rowEnd, flags, yPlane, dst, yStride, null, 0, b.yMode, angle, txW,
+                                    txH, intraEdgeFilter, edge, edgeOff, bdMax);
+                            ipred.intraPred(m, yPlane, dst, yStride, edge, edgeOff, txW * 4, txH * 4,
+                                    angle[0] | intraFlags, 4 * f.bw - 4 * t.bx, 4 * f.bh - 4 * t.by, t.ipredScratch,
+                                    bdMax);
+                        }
                         codeTx(0, tx, yPlane, dst, yStride, bx4 + x, by4 + y, Math.min(txW, f.bw - t.bx),
                                 Math.min(txH, f.bh - t.by));
                         dst += 4 * txW;
@@ -1321,7 +1350,9 @@ final class TileEncoder {
                     t.bx -= x;
                 }
                 t.by -= y;
-                reconIntraChroma(bs, edgeFlags, b, initX, initY, subCh4, cw4, intraEdgeFilterFlag);
+                if (frame.planes > 1) {
+                    reconIntraChroma(bs, edgeFlags, b, initX, initY, subCh4, cw4, ch4, intraEdgeFilterFlag);
+                }
             }
         }
     }
@@ -1334,15 +1365,20 @@ final class TileEncoder {
      * @param b the block
      * @param initX the area's column offset in 4-sample units
      * @param initY the area's row offset in 4-sample units
-     * @param subCh4 the chroma rows of the area
+     * @param subCh4 the chroma row after the area
      * @param cw4 the visible chroma width of the block
+     * @param ch4 the visible chroma height of the block
      * @param intraEdgeFilterFlag the edge filter flag of the angle argument
      */
     private void reconIntraChroma(int bs, int edgeFlags, Av1Block b, int initX, int initY, int subCh4, int cw4,
-                                  int intraEdgeFilterFlag) {
+                                  int ch4, int intraEdgeFilterFlag) {
         var f = frame.f;
         var ipred = IpredDsp.INSTANCE;
         var cur = f.cur;
+        var bdMax = frame.bdMax;
+        var layout = frame.layout;
+        var ssHor = frame.ssHor;
+        var ssVer = frame.ssVer;
         var stride = cur.stride[1];
         var uvtx = b.uvtx;
         var uvW = Tables.TX_W[uvtx];
@@ -1350,50 +1386,50 @@ final class TileEncoder {
         var edge = t.edge;
         var edgeOff = IpredDsp.EDGE_TOPLEFT;
         var angle = t.angle;
-        var cbx4 = (t.bx & 31) >> 1;
-        var cby4 = (t.by & 31) >> 1;
-        var h4 = Math.min(BLOCK_DIMENSIONS[bs * 4 + 1], f.bh - t.by);
-        var ch4 = (h4 + 1) >> 1;
+        var cbx4 = (t.bx & 31) >> ssHor;
+        var cby4 = (t.by & 31) >> ssVer;
         var smUvFl = t.a.smUvFlag(cbx4) | t.l.smUvFlag(cby4);
-        var uvSbHasTr = ((initX + 16) >> 1) < cw4 ? 1 : initY != 0 ? 0 : edgeFlags & IntraEdge.I420_TOP_HAS_RIGHT;
-        var uvSbHasBl = initX != 0 ? 0 : ((initY + 16) >> 1) < ch4 ? 1 : edgeFlags & IntraEdge.I420_LEFT_HAS_BOTTOM;
-        var subCw4 = Math.min(cw4, (initX + 16) >> 1);
+        var uvSbHasTr = ((initX + 16) >> ssHor) < cw4 ? 1 : initY != 0 ? 0
+                : edgeFlags & (IntraEdge.I420_TOP_HAS_RIGHT >> (layout - 1));
+        var uvSbHasBl = initX != 0 ? 0 : ((initY + 16) >> ssVer) < ch4 ? 1
+                : edgeFlags & (IntraEdge.I420_LEFT_HAS_BOTTOM >> (layout - 1));
+        var subCw4 = Math.min(cw4, (initX + 16) >> ssHor);
         for (var pl = 0; pl < 2; pl++) {
             var plane = cur.data[1 + pl];
             int y;
             int x = 0;
-            for (y = initY >> 1, t.by += initY; y < subCh4; y += uvH, t.by += uvH << 1) {
-                var dst = 4 * ((t.by >> 1) * stride + ((t.bx + initX) >> 1));
-                for (x = initX >> 1, t.bx += initX; x < subCw4; x += uvW, t.bx += uvW << 1) {
+            for (y = initY >> ssVer, t.by += initY; y < subCh4; y += uvH, t.by += uvH << ssVer) {
+                var dst = 4 * ((t.by >> ssVer) * stride + ((t.bx + initX) >> ssHor));
+                for (x = initX >> ssHor, t.bx += initX; x < subCw4; x += uvW, t.bx += uvW << ssHor) {
                     angle[0] = b.uvAngle;
-                    var flags = (((y > (initY >> 1) || uvSbHasTr == 0) && (x + uvW >= subCw4))
+                    var flags = (((y > (initY >> ssVer) || uvSbHasTr == 0) && (x + uvW >= subCw4))
                             ? 0 : IntraEdge.I444_TOP_HAS_RIGHT)
-                            | ((x > (initX >> 1) || (uvSbHasBl == 0 && y + uvH >= subCh4))
+                            | ((x > (initX >> ssHor) || (uvSbHasBl == 0 && y + uvH >= subCh4))
                             ? 0 : IntraEdge.I444_LEFT_HAS_BOTTOM);
-                    var xpos = t.bx >> 1;
-                    var ypos = t.by >> 1;
-                    var xstart = ts.colStart >> 1;
-                    var ystart = ts.rowStart >> 1;
-                    var m = IpredDsp.prepareIntraEdges(xpos, xpos > xstart, ypos, ypos > ystart, ts.colEnd >> 1,
-                            ts.rowEnd >> 1, flags, plane, dst, stride, null, 0, b.uvMode, angle, uvW, uvH,
-                            f.seqHdr.intraEdgeFilter, edge, edgeOff, 255);
+                    var xpos = t.bx >> ssHor;
+                    var ypos = t.by >> ssVer;
+                    var xstart = ts.colStart >> ssHor;
+                    var ystart = ts.rowStart >> ssVer;
+                    var m = IpredDsp.prepareIntraEdges(xpos, xpos > xstart, ypos, ypos > ystart, ts.colEnd >> ssHor,
+                            ts.rowEnd >> ssVer, flags, plane, dst, stride, null, 0, b.uvMode, angle, uvW, uvH,
+                            f.seqHdr.intraEdgeFilter, edge, edgeOff, bdMax);
                     angle[0] |= intraEdgeFilterFlag;
                     ipred.intraPred(m, plane, dst, stride, edge, edgeOff, uvW * 4, uvH * 4, angle[0] | smUvFl,
-                            (4 * f.bw + 1 - 4 * (t.bx & ~1)) >> 1, (4 * f.bh + 1 - 4 * (t.by & ~1)) >> 1,
-                            t.ipredScratch, 255);
+                            (4 * f.bw + ssHor - 4 * (t.bx & ~ssHor)) >> ssHor,
+                            (4 * f.bh + ssVer - 4 * (t.by & ~ssVer)) >> ssVer, t.ipredScratch, bdMax);
                     codeTx(1 + pl, uvtx, plane, dst, stride, pl * 32 + cbx4 + x, pl * 32 + cby4 + y,
-                            Math.min(uvW, (f.bw - t.bx + 1) >> 1), Math.min(uvH, (f.bh - t.by + 1) >> 1));
+                            Math.min(uvW, (f.bw - t.bx + ssHor) >> ssHor), Math.min(uvH, (f.bh - t.by + ssVer) >> ssVer));
                     dst += uvW * 4;
                 }
-                t.bx -= x << 1;
+                t.bx -= x << ssHor;
             }
-            t.by -= y << 1;
+            t.by -= y << ssVer;
         }
     }
 
     /**
      * Predicts one plane of a single-reference inter block from a reference picture
-     * ({@code mc} without scaling).
+     * ({@code mc}), with the decoder's scaled prediction when the reference has another size.
      *
      * @param dst the destination plane
      * @param dstOff the offset of the block's top-left sample
@@ -1405,25 +1441,31 @@ final class TileEncoder {
      * @param pl the plane
      * @param mv the packed motion vector
      * @param refp the reference picture
+     * @param refidx the decoder reference index of the reference
      * @param filter2d the interpolation filter pair
      */
     void mc(short[] dst, int dstOff, int dstStride, int bw4, int bh4, int bx, int by, int pl, int mv,
-            Av1Picture refp, int filter2d) {
+            Av1Picture refp, int refidx, int filter2d) {
         var f = frame.f;
+        if (frame.scaled(refidx)) {
+            EncoderBridge.predictSingle(t, dst, dstOff, dstStride, bw4, bh4, bx, by, pl, mv, refp, refidx, filter2d);
+            return;
+        }
         var dsp = f.mc;
-        var ss = pl != 0 ? 1 : 0;
-        var hMul = 4 >> ss;
-        var vMul = 4 >> ss;
+        var ssx = pl != 0 ? frame.ssHor : 0;
+        var ssy = pl != 0 ? frame.ssVer : 0;
+        var hMul = 4 >> ssx;
+        var vMul = 4 >> ssy;
         var mvx = RefMvs.mvX(mv);
         var mvy = RefMvs.mvY(mv);
-        var mx = mvx & (15 >> (ss ^ 1));
-        var my = mvy & (15 >> (ss ^ 1));
+        var mx = mvx & (15 >> (ssx ^ 1));
+        var my = mvy & (15 >> (ssy ^ 1));
         var refStride = refp.stride[pl != 0 ? 1 : 0];
         var refData = refp.data[pl];
-        var dx = bx * hMul + (mvx >> (3 + ss));
-        var dy = by * vMul + (mvy >> (3 + ss));
-        var w = (f.cur.w + ss) >> ss;
-        var h = (f.cur.h + ss) >> ss;
+        var dx = bx * hMul + (mvx >> (3 + ssx));
+        var dy = by * vMul + (mvy >> (3 + ssy));
+        var w = (f.cur.w + ssx) >> ssx;
+        var h = (f.cur.h + ssy) >> ssy;
         var hasMx = mx != 0 ? 1 : 0;
         var hasMy = my != 0 ? 1 : 0;
         short[] ref;
@@ -1439,7 +1481,7 @@ final class TileEncoder {
             refOff = refStride * dy + dx;
         }
         dsp.mc(filter2d, dst, dstOff, dstStride, ref, refOff, refStride, bw4 * hMul, bh4 * vMul,
-                mx << (ss ^ 1), my << (ss ^ 1), t.mcScratch, 255);
+                mx << (ssx ^ 1), my << (ssy ^ 1), t.mcScratch, frame.bdMax);
     }
 
     /**
@@ -1462,17 +1504,21 @@ final class TileEncoder {
         var yStride = cur.stride[0];
         var uvStride = cur.stride[1];
         var dst = 4 * (t.by * yStride + t.bx);
-        var uvdstoff = 4 * ((t.bx >> 1) + (t.by >> 1) * uvStride);
+        var ssHor = frame.ssHor;
+        var ssVer = frame.ssVer;
+        var planes = frame.planes;
+        var uvdstoff = 4 * ((t.bx >> ssHor) + (t.by >> ssVer) * uvStride);
         var refp = f.refp[b.ref[0]];
         if (b.ref[1] >= 0) {
             EncoderBridge.predictCompound(t, bs, b, dst, uvdstoff);
         } else if (b.motionMode == MOTION_MODE_WARP) {
             EncoderBridge.predictWarp(t, cur.data[0], dst, yStride, bs, 0, refp);
-            for (var pl = 1; pl < 3; pl++) {
-                if (Math.min((bw4 + 1) >> 1, (bh4 + 1) >> 1) > 1) {
+            for (var pl = 1; pl < planes; pl++) {
+                if (Math.min((bw4 + ssHor) >> ssHor, (bh4 + ssVer) >> ssVer) > 1) {
                     EncoderBridge.predictWarp(t, cur.data[pl], uvdstoff, uvStride, bs, pl, refp);
                 } else {
-                    mc(cur.data[pl], uvdstoff, uvStride, bw4, bh4, t.bx & ~1, t.by & ~1, pl, b.mv[0], refp, b.filter2d);
+                    mc(cur.data[pl], uvdstoff, uvStride, bw4, bh4, t.bx & ~ssHor, t.by & ~ssVer, pl, b.mv[0], refp,
+                            b.ref[0], b.filter2d);
                 }
             }
             return;
@@ -1483,10 +1529,11 @@ final class TileEncoder {
                 System.arraycopy(pred, y * bw, cur.data[0], dst + y * yStride, bw);
             }
         } else {
-            mc(cur.data[0], dst, yStride, bw4, bh4, t.bx, t.by, 0, b.mv[0], refp, b.filter2d);
+            mc(cur.data[0], dst, yStride, bw4, bh4, t.bx, t.by, 0, b.mv[0], refp, b.ref[0], b.filter2d);
         }
-        for (var pl = 1; pl < 3 && b.ref[1] < 0; pl++) {
-            mc(cur.data[pl], uvdstoff, uvStride, bw4, bh4, t.bx & ~1, t.by & ~1, pl, b.mv[0], refp, b.filter2d);
+        for (var pl = 1; pl < planes && b.ref[1] < 0; pl++) {
+            mc(cur.data[pl], uvdstoff, uvStride, bw4, bh4, t.bx & ~ssHor, t.by & ~ssVer, pl, b.mv[0], refp,
+                    b.ref[0], b.filter2d);
         }
     }
 
@@ -1680,24 +1727,25 @@ final class TileEncoder {
         var f = frame.f;
         var cur = f.cur;
         long sse = 0;
-        for (var pl = 0; pl < 3; pl++) {
-            var shift = pl == 0 ? 0 : 1;
+        for (var pl = 0; pl < frame.planes; pl++) {
+            var ssx = pl == 0 ? 0 : frame.ssHor;
+            var ssy = pl == 0 ? 0 : frame.ssVer;
             var stride = cur.stride[Math.min(pl, 1)];
             var plane = cur.data[pl];
             var src = frame.source.data[pl];
-            var x0 = t.bx * 4 >> shift;
-            var y0 = t.by * 4 >> shift;
-            var w = Math.max(1, (w4 * 4) >> shift);
-            var h = Math.max(1, (h4 * 4) >> shift);
+            var x0 = t.bx * 4 >> ssx;
+            var y0 = t.by * 4 >> ssy;
+            var w = Math.max(1, (w4 * 4) >> ssx);
+            var h = Math.max(1, (h4 * 4) >> ssy);
             for (var y = 0; y < h; y++) {
                 var o = (y0 + y) * stride + x0;
                 for (var x = 0; x < w; x++) {
-                    var d = src[o + x] - plane[o + x];
+                    long d = src[o + x] - plane[o + x];
                     sse += d * d;
                 }
             }
         }
-        return sse;
+        return sse >> frame.distShift();
     }
 
     /**
@@ -1711,19 +1759,24 @@ final class TileEncoder {
      * @return the cost
      */
     private long chromaTrialCost(int bs, int w4, int h4) {
+        if (frame.planes == 1) {
+            return 0;
+        }
         var f = frame.f;
         var hdr = f.frameHdr;
         var b = t.b;
         var cur = f.cur;
+        var ssHor = frame.ssHor;
+        var ssVer = frame.ssVer;
         var uvStride = cur.stride[1];
         var uvtx = b.uvtx;
         var uvW = Tables.TX_W[uvtx];
         var uvH = Tables.TX_H[uvtx];
-        var cw4 = (w4 + 1) >> 1;
-        var ch4 = (h4 + 1) >> 1;
-        var cbx4 = (t.bx & 31) >> 1;
-        var cby4 = (t.by & 31) >> 1;
-        var uvdstoff = 4 * ((t.bx >> 1) + (t.by >> 1) * uvStride);
+        var cw4 = (w4 + ssHor) >> ssHor;
+        var ch4 = (h4 + ssVer) >> ssVer;
+        var cbx4 = (t.bx & 31) >> ssHor;
+        var cby4 = (t.by & 31) >> ssVer;
+        var uvdstoff = 4 * ((t.bx >> ssHor) + (t.by >> ssVer) * uvStride);
         var w = uvW * 4;
         var h = uvH * 4;
         var n = Math.min(w, 32) * Math.min(h, 32);
@@ -1754,7 +1807,8 @@ final class TileEncoder {
                     var error = dsp.levelError(trialCoef, trialLevels, n, dcDq, acDq, logScale);
                     counter.startCounting();
                     coefWriter.write(counter, f.inCdf, t.a.ccoef, pl * 32 + cbx4 + x, t.l.ccoef, pl * 32 + cby4 + y,
-                            uvtx, bs, 1 + pl, false, 0, hdr.reducedTxtpSet, qidx, 0, trialLevels, 0, eob);
+                            uvtx, bs, 1 + pl, false, 0, hdr.reducedTxtpSet, qidx, 0, trialLevels, 0, eob, ssHor,
+                            ssVer);
                     total += RdCost.rdcost(rdmult, counter.cost(), (error >> (6 - 2 * logScale)) << 4);
                 }
             }
@@ -1776,16 +1830,18 @@ final class TileEncoder {
         var yStride = cur.stride[0];
         var uvStride = cur.stride[1];
         var dst = 4 * (t.by * yStride + t.bx);
-        var uvdstoff = 4 * ((t.bx >> 1) + (t.by >> 1) * uvStride);
+        var ssHor = frame.ssHor;
+        var ssVer = frame.ssVer;
+        var uvdstoff = 4 * ((t.bx >> ssHor) + (t.by >> ssVer) * uvStride);
         predictInter(bs, b);
         var bx4 = t.bx & 31;
         var by4 = t.by & 31;
         var w4 = Math.min(bw4, f.bw - t.bx);
         var h4 = Math.min(bh4, f.bh - t.by);
-        var cw4 = (w4 + 1) >> 1;
-        var ch4 = (h4 + 1) >> 1;
-        var cbx4 = bx4 >> 1;
-        var cby4 = by4 >> 1;
+        var cw4 = (w4 + ssHor) >> ssHor;
+        var ch4 = (h4 + ssVer) >> ssVer;
+        var cbx4 = bx4 >> ssHor;
+        var cby4 = by4 >> ssVer;
         var uvtx = b.uvtx;
         var uvW = Tables.TX_W[uvtx];
         var uvH = Tables.TX_H[uvtx];
@@ -1817,16 +1873,17 @@ final class TileEncoder {
                     t.by += yH;
                 }
                 t.by -= y;
-                for (var pl = 0; pl < 2; pl++) {
+                for (var pl = 0; pl < frame.planes - 1; pl++) {
                     var plane = cur.data[1 + pl];
-                    for (y = initY >> 1; y < Math.min(ch4, (initY + 16) >> 1); y += uvH) {
-                        for (var x = initX >> 1; x < Math.min(cw4, (initX + 16) >> 1); x += uvW) {
-                            var bx = t.bx + (x << 1);
-                            var by = t.by + (y << 1);
+                    for (y = initY >> ssVer; y < Math.min(ch4, (initY + 16) >> ssVer); y += uvH) {
+                        for (var x = initX >> ssHor; x < Math.min(cw4, (initX + 16) >> ssHor); x += uvW) {
+                            var bx = t.bx + (x << ssHor);
+                            var by = t.by + (y << ssVer);
                             chromaLumaTxtp = lumaTypeMap[(by & 31) * 32 + (bx & 31)];
                             codeTx(1 + pl, uvtx, plane, uvdstoff + 4 * (y * uvStride + x), uvStride,
-                                    pl * 32 + cbx4 + x, pl * 32 + cby4 + y, Math.min(uvW, (f.bw - bx + 1) >> 1),
-                                    Math.min(uvH, (f.bh - by + 1) >> 1));
+                                    pl * 32 + cbx4 + x, pl * 32 + cby4 + y,
+                                    Math.min(uvW, (f.bw - bx + ssHor) >> ssHor),
+                                    Math.min(uvH, (f.bh - by + ssVer) >> ssVer));
                         }
                     }
                 }
@@ -1892,10 +1949,13 @@ final class TileEncoder {
         var bh4 = BLOCK_DIMENSIONS[bs * 4 + 1];
         var bwl = BLOCK_DIMENSIONS[bs * 4 + 2];
         var bhl = BLOCK_DIMENSIONS[bs * 4 + 3];
-        var cbx4 = bx4 >> 1;
-        var cby4 = by4 >> 1;
-        var cbw4 = (bw4 + 1) >> 1;
-        var cbh4 = (bh4 + 1) >> 1;
+        var ssHor = frame.ssHor;
+        var ssVer = frame.ssVer;
+        var cbx4 = bx4 >> ssHor;
+        var cby4 = by4 >> ssVer;
+        var cbw4 = (bw4 + ssHor) >> ssHor;
+        var cbh4 = (bh4 + ssVer) >> ssVer;
+        var chroma = frame.planes > 1;
         var haveLeft = t.bx > ts.colStart;
         var haveTop = t.by > ts.rowStart;
         if (hdr.skipModeEnabled && Math.min(bw4, bh4) > 1) {
@@ -1928,14 +1988,33 @@ final class TileEncoder {
             var ictx = ModeWriter.intraCtx(t.a, t.l, by4, bx4, haveTop, haveLeft);
             ec.encodeBool(cdf, Cdf.INTRA + ictx * 2, b.intra ? 0 : 1);
         }
-        var layout = SequenceHeader.LAYOUT_I420;
+        var layout = frame.layout;
         if (b.intra) {
             var yModeCdf = inter ? Cdf.Y_MODE + Tables.YMODE_SIZE_CONTEXT[bs] * 16
                     : ModeWriter.kfYModeCdf(t.a, t.l, bx4, by4);
-            ModeWriter.writeIntraModes(ec, cdf, yModeCdf, bs, b, true,
+            ModeWriter.writeIntraModes(ec, cdf, yModeCdf, bs, b, chroma,
                     Tables.cflAllowed(bs, hdr.segLossless[b.segId], cbw4, cbh4));
-            if (f.seqHdr.filterIntra && b.yMode == IpredDsp.DC_PRED && Math.max(bwl, bhl) <= 3) {
+            if (hdr.allowScreenContentTools && Math.max(bw4, bh4) <= 16 && bw4 + bh4 >= 4) {
+                var szCtx = bwl + bhl - 2;
+                if (b.yMode == IpredDsp.DC_PRED) {
+                    var palCtx = (t.a.palSz[bx4] > 0 ? 1 : 0) + (t.l.palSz[by4] > 0 ? 1 : 0);
+                    ec.encodeBool(cdf, Cdf.PAL_Y + (szCtx * 3 + palCtx) * 2, b.palSz[0] > 0 ? 1 : 0);
+                    if (b.palSz[0] > 0) {
+                        palette.writeColors(ec, cdf, t, 0, szCtx, bx4, by4, t.pal, 0, b.palSz[0], frame.bitDepth);
+                    }
+                }
+                if (chroma && b.uvMode == IpredDsp.DC_PRED) {
+                    // TODO: search chroma palettes and intra block copy, as the still encoder searches
+                    // chroma palettes; this encoder's frames code luma palettes only
+                    ec.encodeBool(cdf, Cdf.PAL_UV + (b.palSz[0] > 0 ? 2 : 0), 0);
+                }
+            }
+            if (f.seqHdr.filterIntra && b.yMode == IpredDsp.DC_PRED && b.palSz[0] == 0 && Math.max(bwl, bhl) <= 3) {
                 ec.encodeBool(cdf, Cdf.USE_FILTER_INTRA + bs * 2, 0);
+            }
+            if (b.palSz[0] > 0) {
+                palette.writeIndices(ec, cdf, pick.paletteMap, bw4 * 4, b.palSz[0], 0,
+                        Math.min(bw4, f.bw - t.bx) * 4, Math.min(bh4, f.bh - t.by) * 4);
             }
             if (hdr.txfmMode == FrameHeader.TX_SWITCHABLE) {
                 ModeWriter.writeIntraTxSize(ec, cdf, t.a, t.l, bx4, by4, bs, b.tx);
@@ -1944,12 +2023,18 @@ final class TileEncoder {
             if (hdr.loopfilterLevelY[0] != 0 || hdr.loopfilterLevelY[1] != 0) {
                 LoopFilterMasks.createLfMaskIntra(t.lfMask, f.lfLevel, f.b4Stride, ts.lflvl, b.segId * 64,
                         t.bx, t.by, f.w4, f.h4, bs, b.tx, b.uvtx, layout,
-                        t.a.txLpfY, bx4, t.l.txLpfY, by4, t.a.txLpfUv, cbx4, t.l.txLpfUv, cby4);
+                        t.a.txLpfY, bx4, t.l.txLpfY, by4, chroma ? t.a.txLpfUv : null, cbx4,
+                        chroma ? t.l.txLpfUv : null, cby4);
             }
             updateIntraCtx(t.a, bx4, bw4, Tables.TX_LW[b.tx], b, inter);
             updateIntraCtx(t.l, by4, bh4, Tables.TX_LH[b.tx], b, inter);
-            Arrays.fill(t.a.uvmode, cbx4, cbx4 + cbw4, (byte) b.uvMode);
-            Arrays.fill(t.l.uvmode, cby4, cby4 + cbh4, (byte) b.uvMode);
+            if (b.palSz[0] > 0) {
+                EncoderBridge.copyPalBlockY(t, bx4, by4, bw4, bh4);
+            }
+            if (chroma) {
+                Arrays.fill(t.a.uvmode, cbx4, cbx4 + cbw4, (byte) b.uvMode);
+                Arrays.fill(t.l.uvmode, cby4, cby4 + cbh4, (byte) b.uvMode);
+            }
             if (inter) {
                 t.rt.splat((t.by & 31) + 5, t.bx, bw4, bh4, RefMvs.INVALID_MV, 0, RefMvs.packInfo(0, -1, bs, 0));
             }
@@ -1994,7 +2079,8 @@ final class TileEncoder {
                 LoopFilterMasks.createLfMaskInter(t.lfMask, f.lfLevel, f.b4Stride, ts.lflvl,
                         b.segId * 64 + (b.ref[0] + 1) * 2 + (isGlobalmv ? 0 : 1),
                         t.bx, t.by, f.w4, f.h4, b.skip, bs, b.maxYtx, b.txSplit0, b.txSplit1, b.uvtx, layout,
-                        t.a.txLpfY, bx4, t.l.txLpfY, by4, t.a.txLpfUv, cbx4, t.l.txLpfUv, cby4, t.lfTxa);
+                        t.a.txLpfY, bx4, t.l.txLpfY, by4, chroma ? t.a.txLpfUv : null, cbx4,
+                        chroma ? t.l.txLpfUv : null, cby4, t.lfTxa);
             }
             var mode = b.interMode;
             if (comp) {
@@ -2007,8 +2093,10 @@ final class TileEncoder {
             }
             updateInterCtx(t.a, bx4, bw4, bwl, b, filter);
             updateInterCtx(t.l, by4, bh4, bhl, b, filter);
-            Arrays.fill(t.a.uvmode, cbx4, cbx4 + cbw4, (byte) IpredDsp.DC_PRED);
-            Arrays.fill(t.l.uvmode, cby4, cby4 + cbh4, (byte) IpredDsp.DC_PRED);
+            if (chroma) {
+                Arrays.fill(t.a.uvmode, cbx4, cbx4 + cbw4, (byte) IpredDsp.DC_PRED);
+                Arrays.fill(t.l.uvmode, cby4, cby4 + cbh4, (byte) IpredDsp.DC_PRED);
+            }
         }
         if (!b.skip) {
             var noskip = t.lfMask.noskipMask;
@@ -2218,10 +2306,13 @@ final class TileEncoder {
             var bh4 = BLOCK_DIMENSIONS[bs * 4 + 1];
             Arrays.fill(a.lcoef, bx4, bx4 + bw4, (byte) 0x40);
             Arrays.fill(l.lcoef, by4, by4 + bh4, (byte) 0x40);
-            var cbx4 = bx4 >> 1;
-            var cby4 = by4 >> 1;
-            var cbw4 = (bw4 + 1) >> 1;
-            var cbh4 = (bh4 + 1) >> 1;
+            if (frame.planes == 1) {
+                return;
+            }
+            var cbx4 = bx4 >> frame.ssHor;
+            var cby4 = by4 >> frame.ssVer;
+            var cbw4 = (bw4 + frame.ssHor) >> frame.ssHor;
+            var cbh4 = (bh4 + frame.ssVer) >> frame.ssVer;
             Arrays.fill(a.ccoef, cbx4, cbx4 + cbw4, (byte) 0x40);
             Arrays.fill(a.ccoef, 32 + cbx4, 32 + cbx4 + cbw4, (byte) 0x40);
             Arrays.fill(l.ccoef, cby4, cby4 + cbh4, (byte) 0x40);
@@ -2240,7 +2331,8 @@ final class TileEncoder {
                 continue;
             }
             var ctx = coefWriter.write(ec, ts.cdf, ab, txAOff[i], lb, txLOff[i], tx, bs, plane, intra,
-                    b.yMode, hdr.reducedTxtpSet, qidx, txType[i], levels, txLevelOff[i], txEob[i]);
+                    b.yMode, hdr.reducedTxtpSet, qidx, txType[i], levels, txLevelOff[i], txEob[i], frame.ssHor,
+                    frame.ssVer);
             Arrays.fill(ab, txAOff[i], txAOff[i] + txCtxW[i], (byte) ctx);
             Arrays.fill(lb, txLOff[i], txLOff[i] + txCtxH[i], (byte) ctx);
         }
@@ -2261,7 +2353,7 @@ final class TileEncoder {
         Arrays.fill(edge.txIntra, off, off + n, (byte) txLsz);
         Arrays.fill(edge.tx, off, off + n, (byte) txLsz);
         Arrays.fill(edge.mode, off, off + n, (byte) b.yMode);
-        Arrays.fill(edge.palSz, off, off + n, (byte) 0);
+        Arrays.fill(edge.palSz, off, off + n, (byte) b.palSz[0]);
         Arrays.fill(edge.segPred, off, off + n, (byte) 0);
         Arrays.fill(edge.skipMode, off, off + n, (byte) 0);
         Arrays.fill(edge.intra, off, off + n, (byte) 1);
