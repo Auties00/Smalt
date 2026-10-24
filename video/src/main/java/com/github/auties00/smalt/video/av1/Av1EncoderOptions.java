@@ -469,7 +469,7 @@ public final class Av1EncoderOptions {
      * {@return the chroma format of the coded pictures; {@link ChromaFormat#YUV420} by default}
      *
      * <p>Pictures in another format are converted. Only the all-intra usage codes a format other
-     * than 4:2:0.
+     * than 4:2:0; no usage codes {@link ChromaFormat#YUV440}, which AV1 cannot code.
      */
     public ChromaFormat chromaFormat() {
         return chromaFormat;
@@ -911,10 +911,13 @@ public final class Av1EncoderOptions {
          * initial level is not in [0, size], the optimal level is not positive or exceeds the size,
          * the temporal layers are not in [1, 3], the tile column logarithm is not in [0, 6], the
          * thread count is negative, the key frame target limit is below 100, the real-time usage has
-         * a quality, the all-intra usage has none, or a usage other than all-intra has a picture
-         * format other than 8-bit 4:2:0
+         * a quality, the all-intra usage has none, a usage other than all-intra has a picture
+         * format other than 8-bit 4:2:0, or the chroma format is 4:4:0, which AV1 cannot code
          */
         public Av1EncoderOptions build() {
+            if (chromaFormat == ChromaFormat.YUV440) {
+                throw new IllegalArgumentException("AV1 cannot code 4:4:0 chroma");
+            }
             if (quality.isPresent()) {
                 Checks.inRange("quality", quality.getAsInt(), 0, 100);
             }

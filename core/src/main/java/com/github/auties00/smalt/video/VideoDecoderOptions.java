@@ -82,7 +82,8 @@ public final class VideoDecoderOptions {
      * {@link com.github.auties00.smalt.image.YuvPicture}. Codecs without a high bit depth output
      * ignore it.
      *
-     * @implNote This implementation honors the setting in the VP9 and AV1 decoders.
+     * @implNote This implementation honors the setting in the VP9, AV1, HEVC, H.264 and Motion-JPEG
+     * decoders.
      */
     public boolean highBitDepth() {
         return highBitDepth;
