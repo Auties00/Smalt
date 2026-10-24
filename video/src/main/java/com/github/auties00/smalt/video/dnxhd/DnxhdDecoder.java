@@ -39,7 +39,11 @@ import java.util.function.Consumer;
  * ST 2019-1 and its Amendment 1:2023 (DCT-coded on every compression ID that permits it,
  * losslessly run-length coded on IDs 1256 and 1270), and the alpha Avid's QuickTime encoders store
  * after the coding units of each frame, followed by the size of the video part, as 8-bit samples
- * or as a second coding unit whose luma holds the alpha.
+ * or as a second coding unit whose luma holds the alpha. Pictures always carry straight alpha: the
+ * video of a frame with in-band alpha that sets the premultiplied alpha flag {@code PMA} of
+ * Amendment 1:2023 is divided by that alpha (luma, red, green and blue about black, Cb and Cr
+ * about the middle code, a subsampled chroma sample by the mean alpha of the luma samples it
+ * covers, rounded to nearest and clipped), and samples whose alpha is zero come out black.
  *
  * <p>Instances are not thread-safe. Large frames are decoded in parallel macroblock rows on the
  * module's shared helper threads unless {@link DnxhdDecoderOptions#threads()} is {@code 1}. With

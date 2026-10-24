@@ -3,22 +3,29 @@ package com.github.auties00.smalt.internal.tags;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Attachment;
+import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.edit.EditPlan;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.TrackTags;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.LongUnaryOperator;
 
 /**
- * Edits the tags, chapters and picture attachments of a Matroska or WebM file.
+ * Edits the tags, chapter editions and attachments of a Matroska or WebM file.
  *
  * <p>The level-1 elements of the segment are listed up to the end of the file (or up to the first
  * cluster of unknown size). An edit first tries to fit every changed element ({@code Tags},
@@ -26,6 +33,13 @@ import java.util.function.LongUnaryOperator;
  * elements that follow it, or, for an element the file lacks, into a {@code Void} element before
  * the first cluster; the remainder becomes a {@code Void} element and nothing moves. A removed
  * element becomes a {@code Void} element and its {@code SeekHead} entry a {@code Void} child.
+ *
+ * <p>The track tags are read from the {@code TrackEntry} of each track (its {@code Name} as the
+ * title and its flag elements as the dispositions, the track identifier being its
+ * {@code TrackNumber}) and from the {@code Tag} elements targeting its {@code TrackUID} alone. A
+ * write that changes the tags of a track rebuilds its {@code TrackEntry} with the new name and
+ * flags, in the {@code Tracks} element, and replaces the {@code Tag} elements targeting it alone
+ * with one holding its other entries.
  *
  * <p>When an element does not fit, the segment is rewritten: a new {@code SeekHead}, the header
  * elements, the new metadata elements and a {@code Void} element of the configured padding, then
@@ -37,6 +51,16 @@ final class MatroskaTagFile implements TagFile {
      * The largest number of level-1 elements listed.
      */
     private static final int MAX_ELEMENTS = 1 << 20;
+
+    /**
+     * The largest EBML header whose {@code DocTypeVersion} an edit raises.
+     */
+    private static final int MAX_EBML_HEADER = 4096;
+
+    /**
+     * The flag elements of a {@code TrackEntry} and the dispositions they store.
+     */
+    private static final Map<Integer, TrackDisposition> FLAGS = flags();
 
     /**
      * The source.
@@ -57,6 +81,22 @@ final class MatroskaTagFile implements TagFile {
      * The offset of the segment header.
      */
     private final long segmentOffset;
+
+    /**
+     * The offset of the data of the {@code DocTypeVersion} element of a Matroska (not WebM) file's EBML header, or
+     * {@code -1} when there is none.
+     */
+    private final long docTypeVersionAt;
+
+    /**
+     * The width of the data of the {@code DocTypeVersion} element.
+     */
+    private final int docTypeVersionWidth;
+
+    /**
+     * The {@code DocTypeVersion} of the file.
+     */
+    private final long docTypeVersion;
 
     /**
      * Whether the segment size is unknown.
@@ -116,6 +156,21 @@ final class MatroskaTagFile implements TagFile {
     private final List<byte[]> opaqueTags;
 
     /**
+     * The bytes of the first {@code Tracks} element, or {@code null}.
+     */
+    private final byte[] tracksElement;
+
+    /**
+     * The tags of the tracks, by track number.
+     */
+    private final Map<Long, TrackTags> trackTags;
+
+    /**
+     * The {@code TrackUID} of the tracks, by track number.
+     */
+    private final Map<Long, Long> trackUids;
+
+    /**
      * The opaque {@code AttachedFile} elements.
      */
     private final List<byte[]> opaqueFiles;
@@ -125,7 +180,7 @@ final class MatroskaTagFile implements TagFile {
      *
      * @param source the Matroska file; not closed
      * @param limits the resource bounds
-     * @throws MediaException.Malformed if the EbmlIds.EBML header or the segment is missing
+     * @throws MediaException.Malformed if the EBML header or the segment is missing
      */
     MatroskaTagFile(MediaSource source, MediaLimits limits) {
         this.source = source;
@@ -133,12 +188,16 @@ final class MatroskaTagFile implements TagFile {
         var size = source.size();
         var header = headerAt(0);
         if (header == null || header.id() != EbmlIds.EBML || header.size() == Ebml.UNKNOWN) {
-            throw new MediaException.Malformed("Matroska file without an EbmlIds.EBML header");
+            throw new MediaException.Malformed("Matroska file without an EBML header");
         }
         var position = header.length() + header.size();
+        var version = findDocTypeVersion(header);
+        this.docTypeVersionAt = version[0];
+        this.docTypeVersionWidth = (int) version[1];
+        this.docTypeVersion = version[2];
         var segment = headerAt(position);
         if (segment == null || segment.id() != EbmlIds.SEGMENT) {
-            throw new MediaException.Malformed("Matroska file without a segment after its EbmlIds.EBML header");
+            throw new MediaException.Malformed("Matroska file without a segment after its EBML header");
         }
         this.segmentOffset = position;
         this.segmentData = position + segment.length();
@@ -183,15 +242,156 @@ final class MatroskaTagFile implements TagFile {
             builder.add(entry.key(), entry.value());
         }
         if (chaptersElement != null) {
-            builder.chapters(MatroskaTags.decodeChapters(chaptersElement, root(chaptersElement), durationMicros()));
+            builder.editions(MatroskaTags.decodeEditions(chaptersElement, root(chaptersElement), durationMicros()));
         }
         var pictures = new ArrayList<AttachedPicture>();
+        var attachments = new ArrayList<Attachment>();
         var files = new ArrayList<byte[]>();
         if (attachmentsElement != null) {
-            MatroskaTags.decodeAttachments(attachmentsElement, root(attachmentsElement), pictures, files);
+            MatroskaTags.decodeAttachments(attachmentsElement, root(attachmentsElement), pictures, attachments, files);
         }
+        builder.attachments(attachments);
         this.opaqueFiles = List.copyOf(files);
+        this.tracksElement = readFirst(EbmlIds.TRACKS);
+        this.trackTags = new LinkedHashMap<>();
+        this.trackUids = new HashMap<>();
+        if (tracksElement != null) {
+            readTracks();
+        }
+        for (var track : trackTags.values()) {
+            builder.track(track);
+        }
         this.tags = builder.pictures(pictures).build();
+    }
+
+    /**
+     * Reads the tags of every track: the name and flags of its {@code TrackEntry} and the entries of the
+     * {@code Tag} elements targeting it alone.
+     */
+    private void readTracks() {
+        for (var entry : Ebml.children(tracksElement, root(tracksElement).data(), tracksElement.length)) {
+            if (entry.id() != EbmlIds.TRACK_ENTRY) {
+                continue;
+            }
+            var fields = Ebml.children(tracksElement, entry.data(), entry.end());
+            var number = Ebml.find(fields, EbmlIds.TRACK_NUMBER);
+            if (number == null || Ebml.unsigned(tracksElement, number) <= 0
+                    || Ebml.unsigned(tracksElement, number) > Integer.MAX_VALUE) {
+                continue;
+            }
+            var trackNumber = Ebml.unsigned(tracksElement, number);
+            var uidElement = Ebml.find(fields, EbmlIds.TRACK_UID);
+            var uid = uidElement != null ? Ebml.unsigned(tracksElement, uidElement) : 0;
+            var disposition = EnumSet.of(TrackDisposition.DEFAULT);
+            String name = null;
+            for (var field : fields) {
+                var value = FLAGS.get(field.id());
+                if (value != null) {
+                    if (Ebml.unsigned(tracksElement, field) != 0) {
+                        disposition.add(value);
+                    } else {
+                        disposition.remove(value);
+                    }
+                } else if (field.id() == EbmlIds.NAME) {
+                    name = Ebml.string(tracksElement, field);
+                }
+            }
+            var trackTagsBuilder = MediaTags.builder();
+            if (name != null && !name.isEmpty()) {
+                trackTagsBuilder.add(StandardTag.TITLE.key(), name);
+            }
+            for (var tag : targeting(uid)) {
+                for (var item : MatroskaTags.decodeSimpleTags(tag, root(tag))) {
+                    if (name == null || name.isEmpty() || !item.key().equals(StandardTag.TITLE.key())) {
+                        trackTagsBuilder.add(item.key(), item.value());
+                    }
+                }
+            }
+            if (!trackTags.containsKey(trackNumber)) {
+                trackTags.put(trackNumber, new TrackTags((int) trackNumber, trackTagsBuilder.build(), disposition));
+                trackUids.put(trackNumber, uid);
+            }
+        }
+    }
+
+    /**
+     * Returns the opaque {@code Tag} elements that target one track alone.
+     *
+     * @param uid the {@code TrackUID} of the track, 0 for none
+     * @return the complete elements
+     */
+    private List<byte[]> targeting(long uid) {
+        var result = new ArrayList<byte[]>();
+        if (uid == 0) {
+            return result;
+        }
+        for (var tag : opaqueTags) {
+            var children = Ebml.children(tag, root(tag).data(), tag.length);
+            var targets = MatroskaTags.targets(tag, Ebml.find(children, EbmlIds.TARGETS));
+            if (targets.singleTrack() && targets.trackUid() == uid) {
+                result.add(tag);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Rebuilds the {@code Tracks} element with the names and flags of the changed tracks, dropping
+     * its {@code CRC-32} child.
+     *
+     * @param changed the new tags of the changed tracks, by track number
+     * @return the element
+     */
+    private byte[] tracksWith(Map<Long, TrackTags> changed) {
+        var out = new ByteWriter(tracksElement.length + 256);
+        for (var entry : Ebml.children(tracksElement, root(tracksElement).data(), tracksElement.length)) {
+            if (entry.id() == EbmlIds.CRC32) {
+                continue;
+            }
+            var fields = entry.id() == EbmlIds.TRACK_ENTRY ? Ebml.children(tracksElement, entry.data(), entry.end())
+                    : List.<Ebml.Element>of();
+            var number = Ebml.find(fields, EbmlIds.TRACK_NUMBER);
+            var track = number != null ? changed.get(Ebml.unsigned(tracksElement, number)) : null;
+            if (track == null) {
+                out.bytes(tracksElement, entry.offset(), entry.end() - entry.offset());
+                continue;
+            }
+            var body = new ByteWriter(entry.size() + 64);
+            for (var field : fields) {
+                if (field.id() != EbmlIds.NAME && field.id() != EbmlIds.CRC32 && !FLAGS.containsKey(field.id())) {
+                    body.bytes(tracksElement, field.offset(), field.end() - field.offset());
+                }
+            }
+            for (var flag : FLAGS.entrySet()) {
+                var set = track.has(flag.getValue());
+                if (set || flag.getValue() == TrackDisposition.DEFAULT) {
+                    Ebml.unsigned(body, flag.getKey(), set ? 1 : 0);
+                }
+            }
+            var name = track.name().orElse(null);
+            if (name != null && !name.isEmpty()) {
+                Ebml.string(body, EbmlIds.NAME, name);
+            }
+            Ebml.element(out, EbmlIds.TRACK_ENTRY, body.toByteArray());
+        }
+        return Ebml.element(EbmlIds.TRACKS, out.toByteArray());
+    }
+
+    /**
+     * Builds the table of flag elements.
+     *
+     * @return the dispositions by element identifier, in writing order
+     */
+    private static Map<Integer, TrackDisposition> flags() {
+        var flags = new LinkedHashMap<Integer, TrackDisposition>();
+        flags.put(EbmlIds.FLAG_DEFAULT, TrackDisposition.DEFAULT);
+        flags.put(EbmlIds.FLAG_FORCED, TrackDisposition.FORCED);
+        flags.put(EbmlIds.FLAG_HEARING_IMPAIRED, TrackDisposition.HEARING_IMPAIRED);
+        flags.put(EbmlIds.FLAG_VISUAL_IMPAIRED, TrackDisposition.VISUAL_IMPAIRED);
+        flags.put(EbmlIds.FLAG_TEXT_DESCRIPTIONS, TrackDisposition.DESCRIPTIONS);
+        flags.put(EbmlIds.FLAG_ORIGINAL, TrackDisposition.ORIGINAL);
+        flags.put(EbmlIds.FLAG_COMMENTARY, TrackDisposition.COMMENTARY);
+        return Collections.unmodifiableMap(flags);
     }
 
     /**
@@ -203,6 +403,59 @@ final class MatroskaTagFile implements TagFile {
     private Ebml.Header headerAt(long position) {
         var bytes = TagIo.readAvailable(source, position, 12);
         return Ebml.header(bytes, 0, bytes.length);
+    }
+
+    /**
+     * Locates the {@code DocTypeVersion} element of the EBML header of a Matroska file.
+     *
+     * @param header the EBML header, at the start of the file
+     * @return the offset of its data (or {@code -1} when the header has none, is larger than
+     * {@value #MAX_EBML_HEADER} bytes, or belongs to a file whose {@code DocType} is not {@code matroska}), the
+     * width of its data and its value
+     */
+    private long[] findDocTypeVersion(Ebml.Header header) {
+        var none = new long[]{-1, 0, 0};
+        var total = header.length() + header.size();
+        if (total > MAX_EBML_HEADER) {
+            return none;
+        }
+        var bytes = TagIo.readAvailable(source, 0, (int) total);
+        var children = Ebml.children(bytes, header.length(), bytes.length);
+        var docType = Ebml.find(children, EbmlIds.DOC_TYPE);
+        var version = Ebml.find(children, EbmlIds.DOC_TYPE_VERSION);
+        if (docType == null || !Ebml.string(bytes, docType).equals("matroska") || version == null
+                || version.size() < 1 || version.size() > 8) {
+            return none;
+        }
+        return new long[]{version.data(), version.size(), Ebml.unsigned(bytes, version)};
+    }
+
+    /**
+     * Returns the write that raises the {@code DocTypeVersion} of the file to what a {@code Chapters} element of
+     * editions needs.
+     *
+     * @param editions the editions written
+     * @return the write, or {@code null} when the version is already high enough or the file declares none
+     */
+    private DocTypeVersionWrite docTypeVersionWrite(List<ChapterEdition> editions) {
+        var needed = MatroskaTags.docTypeVersion(editions);
+        if (docTypeVersionAt < 0 || docTypeVersion >= needed) {
+            return null;
+        }
+        var data = new byte[docTypeVersionWidth];
+        for (var index = 0; index < data.length; index++) {
+            data[index] = (byte) (needed >>> 8 * (data.length - 1 - index));
+        }
+        return new DocTypeVersionWrite(docTypeVersionAt, data);
+    }
+
+    /**
+     * Describes the new data of the {@code DocTypeVersion} element.
+     *
+     * @param offset the offset of the element's data in the file
+     * @param data the new data, as wide as the old
+     */
+    private record DocTypeVersionWrite(long offset, byte[] data) {
     }
 
     /**
@@ -296,24 +549,58 @@ final class MatroskaTagFile implements TagFile {
                 replacements.add(new Replacement(EbmlIds.INFO, infoWithTitle(title)));
             }
         }
-        if (!tagsPart.entries().equals(tagEntries) || (!keepOpaque && !opaqueTags.isEmpty())) {
-            replacements.add(new Replacement(EbmlIds.TAGS,
-                    MatroskaTags.encodeTags(tagsPart, keepOpaque ? opaqueTags : List.of())));
+        var changed = new LinkedHashMap<Long, TrackTags>();
+        for (var track : newTags.tracks()) {
+            var number = (long) track.trackId();
+            if (trackTags.containsKey(number) && !trackTags.get(number).equals(track)) {
+                changed.put(number, track);
+            }
         }
-        if (!newTags.chapters().equals(tags.chapters())) {
-            replacements.add(new Replacement(EbmlIds.CHAPTERS, MatroskaTags.encodeChapters(newTags.chapters())));
+        if (!changed.isEmpty()) {
+            replacements.add(new Replacement(EbmlIds.TRACKS, tracksWith(changed)));
         }
-        if (!newTags.pictures().equals(tags.pictures()) || (!keepOpaque && !opaqueFiles.isEmpty())) {
-            replacements.add(new Replacement(EbmlIds.ATTACHMENTS,
-                    MatroskaTags.encodeAttachments(newTags.pictures(), keepOpaque ? opaqueFiles : List.of())));
+        var modeled = new ArrayList<byte[]>();
+        for (var uid : trackUids.values()) {
+            for (var tag : targeting(uid)) {
+                if (!modeled.contains(tag)) {
+                    modeled.add(tag);
+                }
+            }
+        }
+        var dropsOpaque = !keepOpaque && opaqueTags.size() > modeled.size();
+        if (!tagsPart.entries().equals(tagEntries) || dropsOpaque || !changed.isEmpty()) {
+            var kept = new ArrayList<byte[]>();
+            for (var tag : opaqueTags) {
+                if (keepOpaque || modeled.contains(tag)) {
+                    kept.add(tag);
+                }
+            }
+            for (var track : changed.entrySet()) {
+                var uid = trackUids.get(track.getKey());
+                kept.removeAll(targeting(uid));
+                var entries = track.getValue().tags().toBuilder().remove(StandardTag.TITLE).build().entries();
+                if (uid != 0 && !entries.isEmpty()) {
+                    kept.add(MatroskaTags.encodeTrackTag(uid, entries));
+                }
+            }
+            replacements.add(new Replacement(EbmlIds.TAGS, MatroskaTags.encodeTags(tagsPart, kept)));
+        }
+        if (!newTags.editions().equals(tags.editions())) {
+            replacements.add(new Replacement(EbmlIds.CHAPTERS, MatroskaTags.encodeEditions(newTags.editions())));
+        }
+        if (!newTags.pictures().equals(tags.pictures()) || !newTags.attachments().equals(tags.attachments())
+                || (!keepOpaque && !opaqueFiles.isEmpty())) {
+            replacements.add(new Replacement(EbmlIds.ATTACHMENTS, MatroskaTags.encodeAttachments(newTags.pictures(),
+                    newTags.attachments(), keepOpaque ? opaqueFiles : List.of())));
         }
         if (replacements.isEmpty()) {
             return EditPlan.builder().copy(0, source.size()).build();
         }
+        var version = docTypeVersionWrite(newTags.editions());
         // TODO: when an element does not fit, void it and append the new one at the segment end with an updated
         // SeekHead entry, as mkvpropedit does, instead of rewriting the whole segment.
-        var inPlace = planInPlace(replacements);
-        return inPlace != null ? inPlace : planRewrite(replacements, options);
+        var inPlace = planInPlace(replacements, version);
+        return inPlace != null ? inPlace : planRewrite(replacements, version, options);
     }
 
     /**
@@ -322,11 +609,16 @@ final class MatroskaTagFile implements TagFile {
      * first cluster.
      *
      * @param replacements the elements to replace
+     * @param version the new {@code DocTypeVersion} data, or {@code null}
      * @return the plan, or {@code null} when an element does not fit
      */
-    private EditPlan planInPlace(List<Replacement> replacements) {
+    private EditPlan planInPlace(List<Replacement> replacements, DocTypeVersionWrite version) {
         var writes = new ArrayList<long[]>();
         var contents = new ArrayList<byte[]>();
+        if (version != null) {
+            writes.add(new long[]{version.offset(), version.data().length});
+            contents.add(version.data());
+        }
         var used = new boolean[elements.size()];
         for (var replacement : replacements) {
             var index = indexOf(replacement.id());
@@ -467,11 +759,12 @@ final class MatroskaTagFile implements TagFile {
      * Plans a rewrite of the segment with the new metadata elements before the clusters.
      *
      * @param replacements the elements to replace
+     * @param version the new {@code DocTypeVersion} data, or {@code null}
      * @param options the write options
      * @return the plan
      * @throws MediaException.LimitExceeded if the cues exceed the limits
      */
-    private EditPlan planRewrite(List<Replacement> replacements, TagWriteOptions options) {
+    private EditPlan planRewrite(List<Replacement> replacements, DocTypeVersionWrite version, TagWriteOptions options) {
         var firstCluster = indexOf(EbmlIds.CLUSTER);
         var headerEnd = firstCluster >= 0 ? firstCluster : elements.size();
         var replaced = new HashMap<Integer, byte[]>();
@@ -528,7 +821,7 @@ final class MatroskaTagFile implements TagFile {
         var cursor = (long) seekHeadTotal;
         for (var element : head) {
             positions.putIfAbsent((int) element[2], cursor);
-            var bytes = (int) element[2] == EbmlIds.INFO ? replaced.get(EbmlIds.INFO) : null;
+            var bytes = headReplacement(replaced, (int) element[2]);
             if (bytes != null) {
                 cursor += bytes.length;
                 continue;
@@ -570,7 +863,14 @@ final class MatroskaTagFile implements TagFile {
             return old;
         };
         var plan = EditPlan.builder();
-        plan.copy(0, segmentOffset);
+        if (version != null) {
+            plan.copy(0, version.offset());
+            plan.bytes(version.data());
+            var after = version.offset() + version.data().length;
+            plan.copy(after, segmentOffset - after);
+        } else {
+            plan.copy(0, segmentOffset);
+        }
         var segmentHeader = new ByteWriter(12);
         Ebml.id(segmentHeader, EbmlIds.SEGMENT);
         Ebml.size(segmentHeader, unknownSize ? Ebml.UNKNOWN : segmentSize, 8);
@@ -579,7 +879,7 @@ final class MatroskaTagFile implements TagFile {
             plan.bytes(seekHead(positions, seekHeadTotal));
         }
         for (var element : head) {
-            var bytes = (int) element[2] == EbmlIds.INFO ? replaced.get(EbmlIds.INFO) : null;
+            var bytes = headReplacement(replaced, (int) element[2]);
             if (bytes != null) {
                 plan.bytes(bytes);
             } else {
@@ -609,6 +909,17 @@ final class MatroskaTagFile implements TagFile {
             plan.copy(segmentEnd, source.size() - segmentEnd);
         }
         return plan.build();
+    }
+
+    /**
+     * Returns the new encoding of a header element a rewrite replaces.
+     *
+     * @param replaced the new elements by identifier
+     * @param id the identifier of the header element
+     * @return the new {@code Info} or {@code Tracks} element, or {@code null} to copy the old one
+     */
+    private static byte[] headReplacement(Map<Integer, byte[]> replaced, int id) {
+        return id == EbmlIds.INFO || id == EbmlIds.TRACKS ? replaced.get(id) : null;
     }
 
     /**
