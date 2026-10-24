@@ -188,7 +188,7 @@ final class AdtsParser extends FrameParser {
         var channelConfiguration = header.channelConfiguration();
         var count = channelConfiguration == 7 ? 8 : channelConfiguration;
         var described = AudioTrack.builder()
-                .id(pid())
+                .id(trackId())
                 .codec(Codec.AAC)
                 .timeBase(Rational.timeBaseOf(rate))
                 .codecConfig(header.audioSpecificConfig())

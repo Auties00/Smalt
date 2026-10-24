@@ -410,6 +410,25 @@ public final class AacRawBlocks {
      * @throws MediaException.Malformed if the element is truncated
      */
     public static int copyProgramConfig(MsbBitReader reader, MsbBitWriter writer) {
+        return copyProgramConfig(reader, writer, -1);
+    }
+
+    /**
+     * Copies the fields of a program configuration element that follow its sampling frequency index, aligning the
+     * reader before the comment relative to a bit position of the reader rather than to its start; an element of
+     * an {@code AudioSpecificConfig} aligns relative to the start of that configuration (ISO/IEC 14496-3 clause
+     * 4.4.1.1).
+     *
+     * @param reader the reader, positioned after the element's sampling frequency index
+     * @param writer the writer, positioned after the element's sampling frequency index, or {@code null} to skip
+     * the element; its byte alignment is relative to the writer's start
+     * @param alignBase the bit position of the reader the reader's byte alignment is relative to, or {@code -1}
+     * for the reader's start
+     * @return the number of channels the element declares: two per channel pair element, one per single channel and
+     * LFE element
+     * @throws MediaException.Malformed if the element is truncated
+     */
+    public static int copyProgramConfig(MsbBitReader reader, MsbBitWriter writer, long alignBase) {
         var front = copy(reader, writer, 4);
         var side = copy(reader, writer, 4);
         var back = copy(reader, writer, 4);
@@ -434,7 +453,11 @@ public final class AacRawBlocks {
         for (var element = 0; element < coupling; element++) {
             copy(reader, writer, 5);
         }
-        reader.alignToByte();
+        if (alignBase < 0) {
+            reader.alignToByte();
+        } else {
+            reader.skip((8 - ((reader.bitPosition() - alignBase) & 7)) & 7);
+        }
         if (writer != null) {
             writer.alignWithZeros();
         }

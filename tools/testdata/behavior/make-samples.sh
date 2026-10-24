@@ -63,6 +63,23 @@ rm -rf "$link1"
 ff -f lavfi -i "$video" -f lavfi -i "$tone" "${x264[@]}" -c:a aac -b:a 48k -ac 1 -shortest "$out/ts/h264-aac.ts"
 ff -f lavfi -i "$video" -f lavfi -i "$tone" "${x264[@]}" -c:a ac3 -b:a 96k -ac 1 -shortest -f mpegts \
     -mpegts_m2ts_mode 1 "$out/ts/h264-ac3.m2ts"
+ff -f lavfi -i "$video" -f lavfi -i "$tone" -t 0.6 -c:v mpeg4 -q:v 8 -g 10 -bf 2 -c:a pcm_bluray -ac 1 -f mpegts \
+    -mpegts_m2ts_mode 1 "$out/ts/mpeg4-lpcm.m2ts"
+ff -f lavfi -i "$tone" -t 0.3 -c:a s302m -strict -2 -ac 2 "$out/ts/s302m.ts"
+# two recordings concatenated: the second continues the first one's timeline, moves the streams to other PIDs, adds
+# an MP2 stream and has PMT version 1
+pmt="$(mktemp -d)"
+ff -f lavfi -i "$video" -f lavfi -i "$tone" -t 1 "${x264[@]}" -c:a aac -b:a 48k -ac 1 "$pmt/a.ts"
+ff -f lavfi -i "$video" -f lavfi -i "$tone" -f lavfi -i "sine=frequency=660:sample_rate=48000:duration=1" -t 1 \
+    -map 0 -map 1 -map 2 "${x264[@]}" -c:a:0 aac -b:a:0 48k -ac:a:0 1 -c:a:1 mp2 -b:a:1 64k -ac:a:1 1 \
+    -mpegts_start_pid 0x200 -tables_version 1 -output_ts_offset 1 "$pmt/b.ts"
+cat "$pmt/a.ts" "$pmt/b.ts" > "$out/ts/pmt-change.ts"
+rm -rf "$pmt"
+obu="$(mktemp -d)"
+ff -f lavfi -i "testsrc2=size=160x120:rate=15:duration=1" -c:v libaom-av1 -cpu-used 8 -usage realtime -b:v 100k \
+    -g 5 -threads 1 -row-mt 0 -f obu "$obu/av1.obu"
+python -I "$(dirname "$0")/make-ts-samples.py" av1-scte35 "$obu/av1.obu" "$out/ts/av1-scte35.ts"
+rm -rf "$obu"
 
 ff -f lavfi -i "$video" -f lavfi -i "$tone" -c:v mpeg4 -q:v 8 -g 10 -bf 0 -c:a libmp3lame -b:a 32k -ac 1 -shortest \
     "$out/avi/mpeg4-mp3.avi"

@@ -8,10 +8,13 @@ import com.github.auties00.smalt.track.Codec;
  * Recognizes the coding of a private PES stream ({@code stream_type 0x06}) that no descriptor
  * describes, from its first payload, and hands the stream to the parser of that coding.
  *
- * <p>Some writers (M2TS writers among them) declare AAC or AC-3 audio as private data without a
- * descriptor. The first PES payload that starts with an ADTS header makes the stream AAC, a LOAS
- * sync word AAC in LATM, an AC-3 sync word AC-3 or E-AC-3, and a valid MPEG audio header MPEG
- * audio; any other payload makes it a data track with the handler {@code "private"}. The
+ * <p>Some writers (M2TS writers among them) declare AAC or AC-3 audio and MPEG-4 Part 2 video as
+ * private data without a descriptor. The first PES payload that starts with an ADTS header makes the
+ * stream AAC, a LOAS sync word AAC in LATM, an AC-3 sync word AC-3 or E-AC-3, a valid MPEG audio
+ * header MPEG audio, and an MPEG-4 Part 2 start code (visual object sequence, visual object, video
+ * object layer, group of video object planes or video object plane) in a payload that holds a video
+ * object plane MPEG-4 Part 2 video; any other payload (H.264, HEVC and MPEG-2 video among them) makes it a data
+ * track with the handler {@code "private"}. The
  * recognizing parser itself only exists during the probe: {@link #fresh()} returns a fresh
  * parser of the recognized coding.
  */
@@ -37,7 +40,7 @@ final class SniffingParser extends ElementaryParser {
             if (pes.length() < 4) {
                 return;
             }
-            delegate = recognize(pes.data(), pes.offset());
+            delegate = recognize(pes.data(), pes.offset(), pes.offset() + pes.length());
         }
         delegate.accept(pes, clock, (packet, offset) -> {
             track = delegate.track();
@@ -67,11 +70,19 @@ final class SniffingParser extends ElementaryParser {
      *
      * @param data the bytes
      * @param offset the index of the payload
+     * @param end the index after the payload
      * @return the parser
      */
-    private ElementaryParser recognize(byte[] data, int offset) {
+    private ElementaryParser recognize(byte[] data, int offset, int end) {
         var b0 = data[offset] & 0xFF;
         var b1 = data[offset + 1] & 0xFF;
+        if (b0 == 0 && b1 == 0 && data[offset + 2] == 1) {
+            var code = data[offset + 3] & 0xFF;
+            if ((code == 0xB0 || code == 0xB3 || code == 0xB5 || code == 0xB6 || code <= 0x2F)
+                    && hasVideoObjectPlane(data, offset, end)) {
+                return new Mpeg4VideoParser(entry, limits);
+            }
+        }
         if (b0 == 0xFF && (b1 & 0xF6) == 0xF0) {
             return new AdtsParser(entry, limits);
         }
@@ -85,5 +96,24 @@ final class SniffingParser extends ElementaryParser {
             return new MpegAudioParser(entry, limits);
         }
         return new PesParser(entry, limits, Codec.DATA, "private");
+    }
+
+    /**
+     * Returns whether a payload holds a video object plane start code ({@code 00 00 01 B6}), which tells MPEG-4
+     * Part 2 apart from H.264, HEVC and MPEG-2 video, whose start codes share the values of its headers but never
+     * take that one.
+     *
+     * @param data the bytes
+     * @param offset the index of the payload
+     * @param end the index after the payload
+     * @return {@code true} when the payload holds one
+     */
+    private static boolean hasVideoObjectPlane(byte[] data, int offset, int end) {
+        for (var index = offset; index + 3 < end; index++) {
+            if (data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 1 && (data[index + 3] & 0xFF) == 0xB6) {
+                return true;
+            }
+        }
+        return false;
     }
 }

@@ -1,0 +1,35 @@
+# demux dump of ts/s302m.ts; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG_TS
+duration 300000
+seekable true
+track 256 AUDIO PCM_S16LE timebase=1/48000 duration=? config=none
+  audio rate=48000 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+packets 15
+0 t256 pts=0 dts=0 dur=1024 flags=KEY size=4096 crc=285ab80b
+1 t256 pts=1024 dts=1024 dur=1024 flags=KEY size=4096 crc=7bfe3978
+2 t256 pts=2048 dts=2048 dur=1024 flags=KEY size=4096 crc=98042138
+3 t256 pts=3072 dts=3072 dur=1024 flags=KEY size=4096 crc=a29fb435
+4 t256 pts=4096 dts=4096 dur=1024 flags=KEY size=4096 crc=3705745d
+5 t256 pts=5120 dts=5120 dur=1024 flags=KEY size=4096 crc=66d1f7f1
+6 t256 pts=6144 dts=6144 dur=1024 flags=KEY size=4096 crc=6fb93b0f
+7 t256 pts=7168 dts=7168 dur=1024 flags=KEY size=4096 crc=41102443
+8 t256 pts=8192 dts=8192 dur=1024 flags=KEY size=4096 crc=aef1146a
+9 t256 pts=9216 dts=9216 dur=1024 flags=KEY size=4096 crc=2c0244ba
+10 t256 pts=10240 dts=10240 dur=1024 flags=KEY size=4096 crc=2822750c
+11 t256 pts=11264 dts=11264 dur=1024 flags=KEY size=4096 crc=aef1cc57
+12 t256 pts=12288 dts=12288 dur=1024 flags=KEY size=4096 crc=6f784ba6
+13 t256 pts=13312 dts=13312 dur=1024 flags=KEY size=4096 crc=f21828a8
+14 t256 pts=14336 dts=14336 dur=64 flags=KEY size=256 crc=13c4aaf4
+seek 0: t256@0
+seek 100000: t256@4
+seek 200000: t256@9
+seek 300000: end
+seek -1000000: t256@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format MPEG_TS
+  duration -1
+  seekable false
+  track 256 AUDIO PCM_S16LE timebase=1/48000 duration=? config=none
+    audio rate=48000 bits=16 skip=0 layout=[FRONT_LEFT, FRONT_RIGHT]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

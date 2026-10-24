@@ -216,7 +216,7 @@ final class LoasDemuxer implements Demuxer {
             }
         }
         var layout = AudioConfigs.aacLayout(config.channels());
-        var count = layout != null ? layout.channels() : config.channels();
+        var count = layout != null ? layout.channels() : config.declaredChannels();
         LimitChecks.checkChannels(limits, count);
         this.trackRate = config.coreRate();
         this.baseConfig = config.audioSpecificConfig();

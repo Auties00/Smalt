@@ -200,6 +200,61 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the transport stream seeds of AV1, PCM, SCTE 35, MPEG-4 Part 2, LATM and program map changes")
+    void transportStreams() throws IOException {
+        copy(DemuxerFuzzTest.class, "mpegTs", "valid-lpcm.m2ts", ffmpeg("m2ts", tone(48000, 0.02), "-c:a", "pcm_bluray",
+                "-ac", "2", "-f", "mpegts", "-mpegts_m2ts_mode", "1"));
+        copy(DemuxerFuzzTest.class, "mpegTs", "valid-s302m.ts", ffmpeg("ts", tone(48000, 0.02), "-c:a", "s302m",
+                "-strict", "-2", "-ac", "2"));
+        copy(DemuxerFuzzTest.class, "mpegTs", "valid-mpeg4-latm.ts", ffmpeg("ts", args(video(32, 32, 2),
+                tone(16000, 0.1)), "-c:v", "mpeg4", "-q:v", "20", "-c:a", "aac", "-b:a", "16k", "-ac", "1",
+                "-mpegts_flags", "latm"));
+        var first = Files.readAllBytes(ffmpeg("ts", args(video(32, 32, 2), tone(16000, 0.1)), "-c:v", "libx264",
+                "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k", "-ac", "1"));
+        var second = Files.readAllBytes(ffmpeg("ts", args(video(32, 32, 2), tone(16000, 0.1)), "-c:v", "libx264",
+                "-preset", "ultrafast", "-c:a", "mp2", "-b:a", "32k", "-mpegts_start_pid", "0x200", "-tables_version",
+                "1"));
+        var both = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, both, first.length, second.length);
+        write(DemuxerFuzzTest.class, "mpegTs", "valid-pmt-change.ts", both);
+        var av1 = ffmpeg("ivf", video(32, 32, 2), "-c:v", "libaom-av1", "-cpu-used", "8", "-b:v", "50k");
+        try (var source = com.github.auties00.smalt.io.MediaSource.of(av1);
+             var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(source)) {
+            var sink = com.github.auties00.smalt.io.MediaSink.memory();
+            try (var muxer = new com.github.auties00.smalt.container.ts.TsMuxer(sink)) {
+                var video = demuxer.tracks().getFirst();
+                muxer.addTrack(video);
+                muxer.addTrack(com.github.auties00.smalt.track.DataTrack.builder().id(video.id() + 1)
+                        .timeBase(com.github.auties00.smalt.track.Rational.timeBaseOf(90_000)).handler("scte35").build());
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    muxer.writePacket(packet);
+                    if (packet.keyframe()) {
+                        var time = video.timeBase().rescale(packet.pts(),
+                                com.github.auties00.smalt.track.Rational.timeBaseOf(90_000));
+                        muxer.writePacket(new com.github.auties00.smalt.track.Packet(video.id() + 1, spliceNull(),
+                                time, time, 0, true));
+                    }
+                }
+                muxer.finish();
+            }
+            write(DemuxerFuzzTest.class, "mpegTs", "valid-av1-scte35.ts", sink.toByteArray());
+        }
+    }
+
+    /** Returns an SCTE 35 {@code splice_info_section} holding a {@code splice_null} command. */
+    private static byte[] spliceNull() {
+        var section = new byte[]{(byte) 0xFC, 0x30, 0x11, 0, 0, 0, 0, 0, 0, 0, (byte) 0xFF, (byte) 0xF0, 0, 0, 0, 0,
+                0, 0, 0, 0};
+        var crc = com.github.auties00.smalt.internal.header.Crc32Mpeg.update(
+                com.github.auties00.smalt.internal.header.Crc32Mpeg.MPEG_INIT, section, 0, section.length - 4);
+        section[section.length - 4] = (byte) (crc >>> 24);
+        section[section.length - 3] = (byte) (crc >>> 16);
+        section[section.length - 2] = (byte) (crc >>> 8);
+        section[section.length - 1] = (byte) crc;
+        return section;
+    }
+
+    @Test
     @DisplayName("copies demuxer seeds to the remux target")
     void remux() {
         // the remuxer reads ISO base media, Matroska, MPEG-TS, AVI and Ogg files

@@ -194,6 +194,8 @@ class MuxDemuxIdentityTest {
             var want = expected.get(index);
             var got = packets.get(index);
             var same = nal ? sameSlices(original.track().codec(), config, want.data(), got.data())
+                    : original.track().codec() == Codec.AV1 ? sameObus(want.data(), got.data())
+                    : original.track().codec() == Codec.MPEG4_PART2 ? sameFrame(config, want.data(), got.data())
                     : Arrays.equals(payload(want), payload(got));
             if (!same) {
                 throw new AssertionError(what + " packet " + index + " differs: " + want.size() + " bytes written, "
@@ -331,6 +333,51 @@ class MuxDemuxIdentityTest {
             }
         }
         return units;
+    }
+
+    /**
+     * Returns whether two AV1 temporal units hold the same OBUs but for temporal delimiters and sequence headers,
+     * which a transport stream adds to key frames and drops.
+     */
+    private static boolean sameObus(byte[] written, byte[] read) {
+        return obus(written).equals(obus(read));
+    }
+
+    /** Returns the OBUs of a temporal unit, without temporal delimiters and sequence headers, as hex strings. */
+    private static List<String> obus(byte[] unit) {
+        var result = new ArrayList<String>();
+        for (var offset = 0; offset < unit.length; ) {
+            var header = unit[offset] & 0xFF;
+            var position = offset + ((header & 0x04) != 0 ? 2 : 1);
+            var size = 0L;
+            for (var shift = 0; ; shift += 7) {
+                var b = unit[position++] & 0xFF;
+                size |= (long) (b & 0x7F) << shift;
+                if ((b & 0x80) == 0) {
+                    break;
+                }
+            }
+            var end = position + (int) size;
+            var type = (header >> 3) & 0x0F;
+            if (type != 1 && type != 2) {
+                result.add(java.util.HexFormat.of().formatHex(unit, offset, end));
+            }
+            offset = end;
+        }
+        return result;
+    }
+
+    /**
+     * Returns whether two MPEG-4 Part 2 frames are the same once the decoder configuration that a transport
+     * stream repeats before key frames is removed from the one read.
+     */
+    private static boolean sameFrame(byte[] config, byte[] written, byte[] read) {
+        if (Arrays.equals(written, read)) {
+            return true;
+        }
+        return config != null && read.length == config.length + written.length
+                && Arrays.equals(config, Arrays.copyOf(read, config.length))
+                && Arrays.equals(written, Arrays.copyOfRange(read, config.length, read.length));
     }
 
     private static boolean sameSlices(Codec codec, byte[] config, byte[] written, byte[] read) {

@@ -150,7 +150,8 @@ public enum OutputContainer {
 
     /**
      * An MPEG-2 transport stream of 188-byte packets, written as it is produced, so a streaming
-     * sink works; it carries H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3 and Opus.
+     * sink works; it carries H.264, HEVC, AV1, MPEG-4 Part 2, AAC, MP3, MP2, AC-3, E-AC-3, Opus and 16 and
+     * 24-bit PCM.
      */
     MPEG_TS(ContainerFormat.MPEG_TS, "ts", "video/mp2t", List.of(Codec.H264, Codec.HEVC),
             List.of(Codec.AAC, Codec.MP3, Codec.OPUS)),
@@ -372,7 +373,7 @@ public enum OutputContainer {
                 default -> false;
             };
             case MPEG_TS -> switch (codec) {
-                case H264, HEVC, AAC -> true;
+                case H264, HEVC, MPEG4_PART2, AAC, OPUS -> true;
                 default -> false;
             };
             case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;

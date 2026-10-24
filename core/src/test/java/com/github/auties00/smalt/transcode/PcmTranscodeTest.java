@@ -246,6 +246,33 @@ class PcmTranscodeTest {
         }
 
         @Test
+        @DisplayName("encode PCM that a transport stream cannot carry and copy the PCM it can")
+        void transportStream() {
+            // the 44.1 kHz input has no transport stream carriage, so the default policy encodes AAC
+            var output = MediaSink.memory();
+            var aac = assertThrows(MediaException.Unsupported.class, () -> Transcoder.transcode(MediaSource.of(wav()),
+                    output, TranscodeOptions.of(OutputContainer.MPEG_TS)));
+            assertEquals("smalt-mpeg", aac.artifact().orElseThrow());
+            var tone = PcmPackets.tone(Codec.PCM_S16LE, 48_000, ChannelLayout.STEREO, 48_000);
+            var sink = MediaSink.memory();
+            try (var muxer = new WavMuxer(sink)) {
+                muxer.addTrack(tone.track());
+                tone.packets().forEach(muxer::writePacket);
+                muxer.finish();
+            }
+            var input = sink.toByteArray();
+            var ts = MediaSink.memory();
+            var copied = Transcoder.transcode(MediaSource.of(input), ts, TranscodeOptions.of(OutputContainer.MPEG_TS));
+            assertEquals(Codec.PCM_S16LE, copied.streams().getFirst().track().codec());
+            var expected = samples(input);
+            var actual = samples(ts.toByteArray());
+            assertEquals(expected.length, actual.length);
+            for (var channel = 0; channel < expected.length; channel++) {
+                assertArrayEquals(expected[channel], actual[channel], "channel " + channel);
+            }
+        }
+
+        @Test
         @DisplayName("reject inputs that are not media")
         void unknown() {
             assertThrows(MediaException.Unsupported.class, () -> Transcoder.transcode(MediaSource.of(new byte[64]),

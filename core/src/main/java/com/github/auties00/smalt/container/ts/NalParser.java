@@ -433,8 +433,8 @@ final class NalParser extends ElementaryParser {
 
     @Override
     void accept(Pes pes, TsClock clock, UnitSink sink) {
-        var dts = pes.dts() == TsClock.NONE ? TsClock.NONE : clock.ticks(pid(), pes.dts(), true);
-        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(pid(), pes.pts(), dts == TsClock.NONE);
+        var dts = pes.dts() == TsClock.NONE ? TsClock.NONE : clock.ticks(trackId(), pes.dts(), true);
+        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(trackId(), pes.pts(), dts == TsClock.NONE);
         if (dts == TsClock.NONE) {
             dts = pts;
         }
@@ -818,7 +818,7 @@ final class NalParser extends ElementaryParser {
         if (unit.corrupt) {
             flags.add(PacketFlag.CORRUPT);
         }
-        sink.accept(new Packet(pid(), Arrays.copyOf(unit.data, unit.size), unit.pts, unit.dts,
+        sink.accept(new Packet(trackId(), Arrays.copyOf(unit.data, unit.size), unit.pts, unit.dts,
                 lastDuration > 0 ? lastDuration : Packet.UNKNOWN_DURATION, flags,
                 unit.newConfig == null ? PacketSideData.NONE : PacketSideData.builder().newCodecConfig(unit.newConfig).build()),
                 unit.fileOffset);
@@ -844,7 +844,7 @@ final class NalParser extends ElementaryParser {
             info = null;
         }
         var builder = VideoTrack.builder()
-                .id(pid())
+                .id(trackId())
                 .codec(hevc ? Codec.HEVC : Codec.H264)
                 .timeBase(TIME_BASE)
                 .codecConfig(config)

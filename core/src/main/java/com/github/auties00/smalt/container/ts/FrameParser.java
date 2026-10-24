@@ -45,9 +45,9 @@ abstract class FrameParser extends ElementaryParser {
     private final StreamBuffer buffer = new StreamBuffer(CAPACITY);
 
     /**
-     * The time at which the previous frame ends, in samples, or {@link TsClock#NONE}.
+     * The timestamps of the units.
      */
-    private long next = TsClock.NONE;
+    private final SampleClock samples = new SampleClock();
 
     /**
      * Whether the parser is synchronized on the frame stream.
@@ -63,12 +63,6 @@ abstract class FrameParser extends ElementaryParser {
      * The sampling rate of the timestamps, set when the track is configured.
      */
     int timestampRate;
-
-    /**
-     * The first PES time of the stream, in absolute 90 kHz ticks (before the clock's origin is
-     * subtracted), from which PES times are measured, or {@link TsClock#NONE} before the first.
-     */
-    private long baseTicks = TsClock.NONE;
 
     /**
      * The origin of the clock of the current read pass, in 90 kHz ticks.
@@ -215,14 +209,14 @@ abstract class FrameParser extends ElementaryParser {
     final <T extends FrameParser> T inheritTiming(T fresh) {
         fresh.track = track;
         fresh.timestampRate = timestampRate;
-        ((FrameParser) fresh).baseTicks = baseTicks;
+        ((FrameParser) fresh).samples.inherit(samples);
         return fresh;
     }
 
     @Override
     final void accept(Pes pes, TsClock clock, UnitSink sink) {
         origin = clock.origin();
-        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(pid(), pes.pts(), true);
+        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(trackId(), pes.pts(), true);
         if (buffer.append(pes, pts, TsClock.NONE)) {
             synced = false;
         }
@@ -333,28 +327,16 @@ abstract class FrameParser extends ElementaryParser {
         if (timestampRate <= 0) {
             return;
         }
-        var timestamp = next;
-        if (pendingAnchor != TsClock.NONE) {
-            if (baseTicks == TsClock.NONE) {
-                baseTicks = pendingAnchor + origin;
-            }
-            var base = baseTicks - origin;
-            var anchored = Math.floorDiv(base * timestampRate + 45_000, 90_000)
-                    + Math.floorDiv((pendingAnchor - base) * timestampRate + 45_000, 90_000);
-            pendingAnchor = TsClock.NONE;
-            if (next == TsClock.NONE || Math.abs(anchored - next) > samples / 2) {
-                timestamp = anchored;
-            }
-        }
+        var timestamp = this.samples.stamp(pendingAnchor, origin, timestampRate, samples);
+        pendingAnchor = TsClock.NONE;
         if (timestamp == TsClock.NONE) {
             return;
         }
-        next = timestamp + samples;
         if (track != null && currentSink != null) {
             var sideData = announced == null ? PacketSideData.NONE
                     : PacketSideData.builder().newCodecConfig(announced).build();
             announced = null;
-            currentSink.accept(new Packet(pid(), payload, timestamp, timestamp, Math.max(0, Math.min(samples, duration)),
+            currentSink.accept(new Packet(trackId(), payload, timestamp, timestamp, Math.max(0, Math.min(samples, duration)),
                     currentCorrupt ? KEY_CORRUPT : KEY, sideData), currentOffset);
         }
     }

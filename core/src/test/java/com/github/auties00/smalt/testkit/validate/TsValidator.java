@@ -10,7 +10,9 @@ import java.util.Set;
  * grid and its sync bytes, adaptation fields, continuity counters, the PAT and PMT sections (syntax and CRC), that
  * every PID carrying data is declared, PES packet headers (start code, stream id, length, PTS and DTS marker bits and
  * order), PCR presence on the PCR PID with intervals of at most 100 ms, and, for an HLS segment, that the PAT and the
- * PMT precede the first PES packet.
+ * PMT precede the first PES packet. The SCTE 35 streams of a program ({@code stream_type 0x86} outside Blu-ray
+ * programs) carry {@code splice_info_section}s (table {@code 0xFC}, CRC checked) instead of PES packets, and the PES
+ * packets of a stream registered as AV1 ({@code "AV01"}) are video, which may leave their length unbounded.
  */
 public final class TsValidator {
     /** The packet size. */
@@ -34,6 +36,8 @@ public final class TsValidator {
     private final Map<Integer, Long> pesRemaining = new HashMap<>();
     private final Map<Integer, Integer> sectionLength = new HashMap<>();
     private final Map<Integer, java.io.ByteArrayOutputStream> sections = new HashMap<>();
+    private final Set<Integer> splicePids = new HashSet<>();
+    private final Set<Integer> privateVideoPids = new HashSet<>();
     private boolean patSeen;
     private boolean pmtSeen;
     private boolean pesBeforeTables;
@@ -131,7 +135,7 @@ public final class TsValidator {
             if (!hasPayload || payload >= end) {
                 continue;
             }
-            if (pid == 0 || pmtPids.contains(pid)) {
+            if (pid == 0 || pmtPids.contains(pid) || splicePids.contains(pid)) {
                 section(pid, start, payload, end, where);
             } else if (streams.containsKey(pid)) {
                 pes(pid, start, payload, end, where);
@@ -216,6 +220,12 @@ public final class TsValidator {
             return;
         }
         var table = raw[0] & 0xFF;
+        if (splicePids.contains(pid)) {
+            findings.require(table == 0xFC, where, "table id " + table + " on the SCTE 35 PID " + pid);
+            findings.require(length <= 4096, where, "a splice_info_section of " + length + " bytes");
+            findings.require(crc32(raw, length) == 0, where, "CRC mismatch in a splice_info_section on PID " + pid);
+            return;
+        }
         findings.require((raw[1] & 0x80) != 0, where, "section_syntax_indicator 0 on PID " + pid);
         findings.require(length <= 1024, where, "a section of " + length + " bytes, at most 1024 allowed");
         if (crc32(raw, length) != 0) {
@@ -242,11 +252,18 @@ public final class TsValidator {
                 pcrPids.add(pcrPid);
             }
             var infoLength = (raw[10] & 0x0F) << 8 | raw[11] & 0xFF;
+            var hdmv = registered(raw, 12, Math.min(12 + infoLength, length - 4), "HDMV");
             var offset = 12 + infoLength;
             while (offset + 5 <= length - 4) {
                 var type = raw[offset] & 0xFF;
                 var elementary = (raw[offset + 1] & 0x1F) << 8 | raw[offset + 2] & 0xFF;
                 var esInfo = (raw[offset + 3] & 0x0F) << 8 | raw[offset + 4] & 0xFF;
+                if (type == 0x86 && !hdmv) {
+                    splicePids.add(elementary);
+                }
+                if (type == 0x06 && registered(raw, offset + 5, Math.min(offset + 5 + esInfo, length - 4), "AV01")) {
+                    privateVideoPids.add(elementary);
+                }
                 var previous = streams.put(elementary, type);
                 findings.require(previous == null || previous == type, where, "PID " + elementary
                         + " changes its stream type");
@@ -254,6 +271,21 @@ public final class TsValidator {
             }
             findings.require(offset == length - 4, where, "PMT stream loop does not end at the CRC");
         }
+    }
+
+    /** {@return whether a descriptor loop holds a registration descriptor with a format identifier} */
+    private static boolean registered(byte[] raw, int from, int to, String identifier) {
+        var position = from;
+        while (position + 2 <= to) {
+            var tag = raw[position] & 0xFF;
+            var size = raw[position + 1] & 0xFF;
+            if (tag == 0x05 && size >= 4 && position + 6 <= to && new String(raw, position + 2, 4,
+                    java.nio.charset.StandardCharsets.ISO_8859_1).equals(identifier)) {
+                return true;
+            }
+            position += 2 + size;
+        }
+        return false;
     }
 
     private void pes(int pid, boolean start, int from, int end, String where) {
@@ -273,7 +305,7 @@ public final class TsValidator {
             }
             var streamId = data[from + 3] & 0xFF;
             var length = (data[from + 4] & 0xFF) << 8 | data[from + 5] & 0xFF;
-            var video = streamId >= 0xE0 && streamId <= 0xEF;
+            var video = streamId >= 0xE0 && streamId <= 0xEF || privateVideoPids.contains(pid);
             findings.require(length != 0 || video, where, "an unbounded PES packet on non-video stream 0x"
                     + Integer.toHexString(streamId));
             if (streamId != 0xBC && streamId != 0xBE && streamId != 0xBF && streamId != 0xF0 && streamId != 0xF1

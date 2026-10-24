@@ -92,7 +92,8 @@ public final class Catalog {
             var rate = switch (codec) {
                 case AMR_NB -> 8000;
                 case AMR_WB -> 16_000;
-                case OPUS, AC3, EAC3 -> 48_000;
+                // 48 kHz is also the rate SMPTE ST 302 carries 16 and 24-bit PCM at in a transport stream
+                case OPUS, AC3, EAC3, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE -> 48_000;
                 default -> 44_100;
             };
             var layout = codec == Codec.AMR_NB || codec == Codec.AMR_WB ? ChannelLayout.MONO : ChannelLayout.STEREO;

@@ -38,8 +38,12 @@ core/src/test/resources/samples/ogg/opus.opus	10841	ac8202a28ae12f6b7f4e381d83ee
 core/src/test/resources/samples/ogg/vorbis.ogg	18054	fb11a857110af7946c0609e0074b65588e749df24fb3d6fc7c16af4bf67f7f70	make-samples.sh
 core/src/test/resources/samples/subtitle/cues.srt	127	bc8c292dba31a375d35e1d2a6510599fb037e57083e7091514ef12a6022f63ec	make-samples.sh
 core/src/test/resources/samples/subtitle/cues.vtt	152	96b11a2f961e3aaba170d8749e4cca59654371f6878612f56d438d1f854eaba0	make-samples.sh
+core/src/test/resources/samples/ts/av1-scte35.ts	19740	8a3eeb3fe3cbe469c76c6e9325e0e84f8b7cb0f08e2de5fa9cf6abbf5f89366f	make-samples.sh, make-ts-samples.py
 core/src/test/resources/samples/ts/h264-aac.ts	56024	1d1be5df58c4e151117773533d98c3de47efa31ec059d491622a1be7870fefe9	make-samples.sh
 core/src/test/resources/samples/ts/h264-ac3.m2ts	73728	1ffeb7b1c6cd63f72ac245496308111bc78ff60d802ecbcc8bb167dbd9b58dc0	make-samples.sh
+core/src/test/resources/samples/ts/mpeg4-lpcm.m2ts	159744	72de59960c421f590a8dcb65cc8c9655b91734722ea7225f35473cbf8dc1b18d	make-samples.sh
+core/src/test/resources/samples/ts/pmt-change.ts	68244	d2b5e4852700e5cae87b28157f1513484d6808ada4fef97cac2a87ec3b582db9	make-samples.sh
+core/src/test/resources/samples/ts/s302m.ts	75388	4e8b88fff340d198301def2a4bb3bd769f62282737e1cbff632efde13be00633	make-samples.sh
 core/src/test/resources/samples/wav/aac-raw.wav	8082	ced6abefd6ca5a8e4e315de9b087bdc5c62fff7eb740031901becf99c426867b	make-wav-samples.py
 core/src/test/resources/samples/wav/ac3.wav	16476	b76cc7668502a43cd91534ccef394cc8a67c247dfa57f76caa2fd9ffbf88c9d1	make-wav-samples.py
 core/src/test/resources/samples/wav/amr.wav	1118	edb864115c08bd6a0cb0919b6b713d359819a44db0e89c20b39c67741a3f228d	make-wav-samples.py

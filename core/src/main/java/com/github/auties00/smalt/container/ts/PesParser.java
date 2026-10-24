@@ -41,11 +41,11 @@ final class PesParser extends ElementaryParser {
     PesParser(Psi.StreamEntry entry, MediaLimits limits, Codec codec, String handler) {
         super(entry, limits);
         this.track = switch (codec.kind()) {
-            case VIDEO -> VideoTrack.builder().id(entry.pid()).codec(codec).timeBase(NalParser.TIME_BASE)
+            case VIDEO -> VideoTrack.builder().id(entry.trackId()).codec(codec).timeBase(NalParser.TIME_BASE)
                     .language(entry.language()).build();
-            case AUDIO -> AudioTrack.builder().id(entry.pid()).codec(codec).timeBase(NalParser.TIME_BASE)
+            case AUDIO -> AudioTrack.builder().id(entry.trackId()).codec(codec).timeBase(NalParser.TIME_BASE)
                     .language(entry.language()).build();
-            case DATA -> DataTrack.builder().id(entry.pid()).codec(codec).timeBase(NalParser.TIME_BASE)
+            case DATA -> DataTrack.builder().id(entry.trackId()).codec(codec).timeBase(NalParser.TIME_BASE)
                     .language(entry.language()).handler(handler).build();
         };
     }
@@ -70,8 +70,8 @@ final class PesParser extends ElementaryParser {
         if (pes.length() == 0) {
             return;
         }
-        var dts = pes.dts() == TsClock.NONE ? Packet.NO_TIMESTAMP : clock.ticks(pid(), pes.dts(), true);
-        var pts = pes.pts() == TsClock.NONE ? Packet.NO_TIMESTAMP : clock.ticks(pid(), pes.pts(), dts == Packet.NO_TIMESTAMP);
+        var dts = pes.dts() == TsClock.NONE ? Packet.NO_TIMESTAMP : clock.ticks(trackId(), pes.dts(), true);
+        var pts = pes.pts() == TsClock.NONE ? Packet.NO_TIMESTAMP : clock.ticks(trackId(), pes.pts(), dts == Packet.NO_TIMESTAMP);
         if (dts == Packet.NO_TIMESTAMP) {
             dts = pts;
         }
@@ -83,7 +83,7 @@ final class PesParser extends ElementaryParser {
             flags.add(PacketFlag.CORRUPT);
         }
         var payload = Arrays.copyOfRange(pes.data(), pes.offset(), pes.offset() + pes.length());
-        sink.accept(new Packet(pid(), payload, pts, dts, Packet.UNKNOWN_DURATION, flags, PacketSideData.NONE), pes.fileOffset());
+        sink.accept(new Packet(trackId(), payload, pts, dts, Packet.UNKNOWN_DURATION, flags, PacketSideData.NONE), pes.fileOffset());
     }
 
     @Override

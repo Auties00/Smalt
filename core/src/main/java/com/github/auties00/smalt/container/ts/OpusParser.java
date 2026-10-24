@@ -156,7 +156,7 @@ final class OpusParser extends FrameParser {
         var head = AudioConfigs.opusHead(channels, preSkip, 48_000, code == 0x80);
         timestampRate = 48_000;
         track = AudioTrack.builder()
-                .id(pid())
+                .id(trackId())
                 .codec(Codec.OPUS)
                 .timeBase(Rational.timeBaseOf(48_000))
                 .codecConfig(head)

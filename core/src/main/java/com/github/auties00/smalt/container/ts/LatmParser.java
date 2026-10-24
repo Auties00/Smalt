@@ -6,6 +6,7 @@ import com.github.auties00.smalt.container.internal.AacExtensions;
 import com.github.auties00.smalt.container.internal.Latm;
 import com.github.auties00.smalt.container.internal.Latm.Config;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
@@ -17,9 +18,11 @@ import java.util.Arrays;
  * 1.7) into raw access units.
  *
  * <p>Each {@code AudioSyncStream} frame holds one {@code AudioMuxElement} with in-band
- * configuration, in the layouts {@link Latm} reads. The {@code AudioSpecificConfig} of the
- * {@code StreamMuxConfig} becomes the track configuration; a stream of a layout {@link Latm} does
- * not support is not exposed. Every subframe becomes a packet of 1024 samples of the core rate. Elements
+ * configuration, in the layouts {@link Latm} reads. The {@code AudioSpecificConfig} of the first
+ * stream of the {@code StreamMuxConfig} (program 0, layer 0) becomes the track configuration, a
+ * program config element included, in which case the track declares no layout, as for ADTS; a
+ * stream of a layout {@link Latm} does not support is not exposed. Every payload of the first stream
+ * becomes a packet of 1024 samples of the core rate. Elements
  * that reuse the configuration before one was seen are skipped. An in-band
  * {@code AudioSpecificConfig} that differs from the previous one is announced on the next packet,
  * refined for HE-AAC as the track's is, as its new codec configuration; durations stay in samples
@@ -137,15 +140,15 @@ final class LatmParser extends FrameParser {
      * @param parsed the configuration
      */
     private void configure(Config parsed) {
-        var count = parsed.channels() == 7 ? 8 : parsed.channels();
+        LimitChecks.checkChannels(limits, parsed.declaredChannels());
         var described = AudioTrack.builder()
-                .id(pid())
+                .id(trackId())
                 .codec(Codec.AAC)
                 .timeBase(Rational.timeBaseOf(parsed.coreRate()))
                 .codecConfig(parsed.audioSpecificConfig())
                 .language(entry.language())
                 .sampleRate(parsed.coreRate())
-                .layout(ChannelLayout.defaultFor(count))
+                .layout(layoutOf(parsed))
                 .build();
         track = described;
         timestampRate = parsed.coreRate();
@@ -156,17 +159,28 @@ final class LatmParser extends FrameParser {
     }
 
     /**
+     * Returns the layout a configuration declares.
+     *
+     * @param parsed the configuration
+     * @return the layout of its channel configuration, or {@code null} when a program config element declares
+     * the channels, as for ADTS
+     */
+    private static ChannelLayout layoutOf(Config parsed) {
+        var count = parsed.channels() == 7 ? 8 : parsed.channels();
+        return count > 0 ? ChannelLayout.defaultFor(count) : null;
+    }
+
+    /**
      * Announces a configuration that differs from the reported one.
      *
      * @param parsed the new configuration
      * @param payload the first payload coded with it, which tells HE-AAC apart
      */
     private void announceChange(Config parsed, byte[] payload) {
-        var count = parsed.channels() == 7 ? 8 : parsed.channels();
         var described = ((AudioTrack) track).toBuilder()
                 .codecConfig(parsed.audioSpecificConfig())
                 .sampleRate(parsed.coreRate())
-                .layout(ChannelLayout.defaultFor(count))
+                .layout(layoutOf(parsed))
                 .build();
         described = AacExtensions.refine(described, payload);
         reportedConfig = parsed.audioSpecificConfig();

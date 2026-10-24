@@ -14,6 +14,7 @@ import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
 import com.github.auties00.smalt.container.mp4.RemuxOptions;
 import com.github.auties00.smalt.container.mp4.RemuxResult;
+import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Orientation;
@@ -833,6 +834,8 @@ final class AvTranscode {
             reason = container + " cannot carry " + codec.displayName();
         } else if (container.needsConfig(codec) && track.codecConfig().isEmpty()) {
             reason = "the track has no codec configuration";
+        } else if (container == OutputContainer.MPEG_TS && !TsMuxer.supports(track)) {
+            reason = container + " carries PCM at 48, 96 or 192 kHz with one to eight channels only";
         } else if ((codec == Codec.AMR_NB || codec == Codec.AMR_WB) && container != OutputContainer.AMR
                 && track.layout().map(ChannelLayout::channels).orElse(1) > 1) {
             reason = container + " carries single-channel " + codec.displayName() + " only";
