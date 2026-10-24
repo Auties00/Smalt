@@ -255,6 +255,19 @@ filter (mcomp.c), the choice of the motion mode of a block by its coded cost
 and the speed features that widen the all-intra searches of key frames
 (speed_features.c).
 
+The predicted AV1 encoders' high bit depth, film grain, two-pass, screen
+content, super-resolution and timing support follows libaom 3.13.1: the high
+bit depth variances, sums of absolute differences and block errors
+(aom_dsp/variance.c, aom_dsp/sad.c, av1/encoder/av1_quantize.c), the film
+grain table format (av1/encoder/grain_table.c), the noise model, flat block
+finder, Wiener denoiser and noise strength solver (aom_dsp/noise_model.c,
+aom_dsp/noise_util.c, aom_dsp/mathutils.h), the two-pass bit allocation
+(av1/encoder/pass2_strategy.c), the palette search of the non-RD mode
+decision (nonrd_pickmode.c, intra_mode_search.c, palette.c), the whole-sample
+motion decision (encoder_utils.c, hash_motion.c), the non-normative
+downscaling filters of super-resolution (av1/common/resize.c) and the decoder
+model parameters (av1/common/timing.c).
+
 The large scale tile decoding of the AV1 decoder follows libaom 3.13.1's
 decoding of tile list OBUs (av1/decoder/obu.c: read_and_decode_one_tile_list,
 copy_decoded_tile_to_tile_list_buffer; av1/decoder/decodeframe.c: the tiles

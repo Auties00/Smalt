@@ -19,6 +19,8 @@ import com.github.auties00.smalt.video.av1.Av1DecoderOptions;
 import com.github.auties00.smalt.video.av1.Av1Encoder;
 import com.github.auties00.smalt.video.av1.Av1EncoderOptions;
 import com.github.auties00.smalt.video.av1.Av1EncoderSpeed;
+import com.github.auties00.smalt.video.av1.Av1ScreenContent;
+import com.github.auties00.smalt.video.av1.Av1TimingInfo;
 import com.github.auties00.smalt.image.avif.AvifDecoder;
 import com.github.auties00.smalt.image.avif.AvifEncoder;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
@@ -111,6 +113,7 @@ final class VideoWorkloads {
                 file("av1-encode-quality-t2", VideoWorkloads::av1EncodeQuality),
                 file("vp9-encode-quality-t2", VideoWorkloads::vp9EncodeQuality),
                 file("av1-encode-intra", VideoWorkloads::av1EncodeIntra),
+                file("av1-encode-tools", VideoWorkloads::av1EncodeTools),
                 file("av1-decode-t2", VideoWorkloads::av1Decode),
                 file("avif-encode", VideoWorkloads::avifEncode),
                 file("avif-decode", VideoWorkloads::avifDecode),
@@ -286,6 +289,31 @@ final class VideoWorkloads {
                 for (var picture : pictures) {
                     encoder.encode(new VideoFrame(picture, pts[0]++, 1, true), packet -> Blackhole.consume(packet.size()));
                 }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes with the coding tools of the predicted AV1 encoders beyond
+     * 8-bit 4:2:0 camera content: a real-time 10-bit stream with the screen content tools, and a
+     * good-quality stream with super-resolution and the decoder model's timing, new encoders every
+     * round, flushed at the end.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload av1EncodeTools() {
+        var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 8);
+        var realtime = Av1EncoderOptions.forRealtime().toBuilder().bitrate(BITRATE)
+                .pictureFormat(ChromaFormat.YUV420, 10).screenContent(Av1ScreenContent.ALWAYS).timeBase(TIME_BASE)
+                .build();
+        var good = Av1EncoderOptions.ofQuality(60).toBuilder().speed(Av1EncoderSpeed.FASTEST).lookahead(4)
+                .superResolution(12).timingInfo(Av1TimingInfo.DECODER_MODEL).timeBase(TIME_BASE).build();
+        return TrainingWorkload.of("av1-encode-tools", () -> {
+            for (var packet : VideoStreams.encodeAll(new Av1Encoder(SMALL_WIDTH, SMALL_HEIGHT, realtime), pictures)) {
+                Blackhole.consume(packet.size());
+            }
+            for (var packet : VideoStreams.encodeAll(new Av1Encoder(SMALL_WIDTH, SMALL_HEIGHT, good), pictures)) {
+                Blackhole.consume(packet.size());
             }
         });
     }

@@ -140,6 +140,52 @@ class FuzzSeedWriter {
         write(VideoFuzzTest.class, method, name, FuzzPackets.video(options, width, height, null, parts));
     }
 
+    @Test
+    @DisplayName("writes the seeds of the AV1 film grain table and first pass statistics targets")
+    void av1EncoderSeeds() {
+        write(VideoFuzzTest.class, "av1FilmGrainTable", "valid-table.txt",
+                GRAIN_TABLE.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+        write(VideoFuzzTest.class, "av1FilmGrainTable", "valid-constant-luma.txt", ("filmgrn1\n"
+                + "E 0 9223372036854775807 1 1234 1\n"
+                + "\tp 0 6 1 9 0 1 128 192 256 128 192 256\n"
+                + "\tsY 3  0 32 128 48 255 40\n"
+                + "\tsCb 0\n"
+                + "\tsCr 0\n"
+                + "\tcY\n"
+                + "\tcCb 0\n"
+                + "\tcCr 0\n").getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+        write(VideoFuzzTest.class, "av1FirstPassStatistics", "valid-16x16-scene-cut.bin", statistics(16, 16, 6));
+        write(VideoFuzzTest.class, "av1FirstPassStatistics", "valid-32x24-one-frame.bin", statistics(32, 24, 1));
+    }
+
+    /** A libaom-style table of three entries: parameters, no grain, and the first parameters again. */
+    private static final String GRAIN_TABLE = "filmgrn1\n"
+            + "E 0 10000000 1 7391 1\n"
+            + "\tp 3 7 0 11 0 1 128 192 256 128 192 256\n"
+            + "\tsY 6  0 20 40 28 94 30 144 28 196 26 255 24\n"
+            + "\tsCb 2 0 18 255 16\n"
+            + "\tsCr 2 0 15 255 14\n"
+            + "\tcY 1 -2 3 -4 5 -6 7 -8 9 -10 11 -12 13 -14 15 -16 17 -18 19 -20 21 -22 23 -24\n"
+            + "\tcCb 0 1 0 -1 0 1 0 -1 0 1 0 -1 0 1 0 -1 0 1 0 -1 0 1 0 -1 33\n"
+            + "\tcCr 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 2 -7\n"
+            + "E 10000000 20000000 0 0 0\n"
+            + "E 20000000 30000000 1 10 0\n";
+
+    /** Returns serialized first pass statistics of plausible measurements, the fourth frame a scene cut. */
+    private static byte[] statistics(int width, int height, int frames) {
+        var out = java.nio.ByteBuffer.allocate(24 + frames * 12 * 8);
+        out.putLong(0x534D414C54465031L).putInt(1).putInt(width).putInt(height).putInt(frames);
+        for (var i = 0; i < frames; i++) {
+            var cut = i == 3;
+            double[] values = {cut ? 900 : 120 + 10 * i, cut ? 850 : 30 + 2 * i, cut ? 860 : 40, cut ? 0.05 : 0.9,
+                    cut ? 0.0 : 0.4, 0.1, 0.25, 0.0, 0.5, 1.5, -0.25, 1.0};
+            for (var v : values) {
+                out.putDouble(v);
+            }
+        }
+        return out.array();
+    }
+
     private static byte[] resource(String name) {
         try (var input = FuzzSeedWriter.class.getResourceAsStream(name)) {
             return input.readAllBytes();

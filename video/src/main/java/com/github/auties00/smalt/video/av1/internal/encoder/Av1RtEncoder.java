@@ -2,7 +2,10 @@ package com.github.auties00.smalt.video.av1.internal.encoder;
 
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ColorInfo;
-import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.video.av1.Av1FilmGrain;
+import com.github.auties00.smalt.video.av1.Av1ScreenContent;
+import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 import com.github.auties00.smalt.video.av1.internal.FrameHeader;
 
 import java.util.Arrays;
@@ -109,17 +112,33 @@ public final class Av1RtEncoder implements Av1Engine {
     /**
      * The picture width.
      */
-    private final int width;
+    private int width;
 
     /**
      * The picture height.
      */
-    private final int height;
+    private int height;
 
     /**
      * The frame encoder.
      */
-    private final FrameEncoder frame;
+    private FrameEncoder frame;
+
+    /**
+     * The allocation limits.
+     */
+    private final MediaLimits limits;
+
+    /**
+     * Whether the next frame must be a key frame because a change of picture size left a
+     * reference the new size cannot predict from.
+     */
+    private boolean resizeKey;
+
+    /**
+     * Whether every frame uses the screen content tools.
+     */
+    private final boolean screenContent;
 
     /**
      * The number of temporal layers, 1 to 3.
@@ -271,16 +290,39 @@ public final class Av1RtEncoder implements Av1Engine {
      * @param limits the allocation limits
      */
     public Av1RtEncoder(int width, int height, ColorInfo color, int temporalLayers, MediaLimits limits) {
+        this(width, height, StreamFormat.of(color), temporalLayers, limits);
+    }
+
+    /**
+     * Creates the loop of a picture size and stream format with temporal layers.
+     *
+     * @param width the picture width
+     * @param height the picture height
+     * @param format the format of the coded pictures and the sequence-level tools
+     * @param temporalLayers the number of temporal layers, 1 to 3
+     * @param limits the allocation limits
+     */
+    public Av1RtEncoder(int width, int height, StreamFormat format, int temporalLayers, MediaLimits limits) {
         this.width = width;
         this.height = height;
+        this.limits = limits;
         this.temporalLayers = Math.clamp(temporalLayers, 1, 3);
         this.layerRc = new RateControl[this.temporalLayers];
         for (var i = 0; i < layerRc.length; i++) {
             layerRc[i] = new RateControl();
         }
         this.rc = layerRc[0];
-        this.frame = new FrameEncoder(width, height, color, ObuWriter.level(width, height), this.temporalLayers,
-                limits);
+        var seq = FrameEncoder.sequenceHeader(width, height, format.color(), ObuWriter.level(width, height),
+                this.temporalLayers, SequenceHeader.layoutOf(format.format()), format.bitDepth());
+        seq.filmGrainPresent = format.filmGrain();
+        this.screenContent = format.screenContent() == Av1ScreenContent.ALWAYS;
+        if (screenContent) {
+            seq.screenContentTools = SequenceHeader.ADAPTIVE;
+        }
+        format.timing().apply(seq);
+        seq.superRes = format.superresDenominator() > 8;
+        this.frame = new FrameEncoder(width, height, format.superresDenominator(), seq, limits);
+        frame.timing(format.timing());
     }
 
     /**
@@ -321,7 +363,7 @@ public final class Av1RtEncoder implements Av1Engine {
         this.minQindex = Math.max(1, minQindex);
         var aq = settings.adaptiveQuantization();
         if (aq && refresh == null) {
-            refresh = new CyclicRefresh(((width + 7) & ~7) >> 2, ((height + 7) & ~7) >> 2);
+            refresh = new CyclicRefresh(((frame.width + 7) & ~7) >> 2, ((height + 7) & ~7) >> 2);
         } else if (!aq) {
             refresh = null;
         }
@@ -357,6 +399,41 @@ public final class Av1RtEncoder implements Av1Engine {
         rc = layerRc[0];
         rateControlLive = true;
         inheritedPixels = (long) previous.width * previous.height;
+    }
+
+    /**
+     * Changes the picture size without a new sequence header, when the new size fits the
+     * sequence's largest size: the frames are coded at the new size and signal it in their headers
+     * ({@code frame_size_override_flag}), and the next frame predicts from the references of the
+     * previous size with scaled motion compensation, or is a key frame when a reference is more
+     * than twice the new size or less than a sixteenth of it. The rate control keeps what it
+     * learned, rescaled by the next {@link #configure}, which must follow.
+     *
+     * @param width the new width, positive
+     * @param height the new height, positive
+     * @return {@code true} when the size changed; {@code false}, with nothing changed, when it
+     * exceeds the sequence's largest size and the stream needs a new sequence header
+     */
+    public boolean resize(int width, int height) {
+        var seq = frame.seq;
+        if (width > seq.maxWidth || height > seq.maxHeight) {
+            return false;
+        }
+        if (width == this.width && height == this.height) {
+            return true;
+        }
+        var next = new FrameEncoder(width, height, frame.superresDenominator, seq, limits);
+        next.inherit(frame);
+        frame.close();
+        frame = next;
+        if (rateControlLive) {
+            inheritedPixels = (long) this.width * this.height;
+        }
+        this.width = width;
+        this.height = height;
+        refresh = null;
+        resizeKey = started && !next.referencesPredictable();
+        return true;
     }
 
     /**
@@ -412,12 +489,32 @@ public final class Av1RtEncoder implements Av1Engine {
     /**
      * Encodes one picture.
      *
-     * @param picture the 4:2:0 picture of the configured size
+     * @param picture the picture of the configured size, chroma format and bit depth, a
+     * {@code YuvPicture} at 8 bits and a {@code Yuv16Picture} above
      * @param forceKey whether the frame must be a key frame
      * @return the temporal unit, or {@code null} when the rate control dropped the frame
      */
-    public byte[] encode(YuvPicture picture, boolean forceKey) {
-        var key = !started || forceKey || (keyInterval > 0 && framesToKey <= 0);
+    public byte[] encode(Picture picture, boolean forceKey) {
+        return encode(picture, forceKey, null, 0);
+    }
+
+    /**
+     * Encodes one picture with the film grain it signals and its timestamp.
+     *
+     * @param picture the picture of the configured size, chroma format and bit depth, a
+     * {@code YuvPicture} at 8 bits and a {@code Yuv16Picture} above
+     * @param forceKey whether the frame must be a key frame
+     * @param grain the film grain of the frame, or {@code null} for none; ignored unless the stream
+     * signals film grain
+     * @param pts the timestamp of the frame in time base units, for the decoder model times of its
+     * header
+     * @return the temporal unit, or {@code null} when the rate control dropped the frame
+     * @throws IllegalArgumentException if the grain cannot be coded in the stream's chroma format
+     */
+    public byte[] encode(Picture picture, boolean forceKey, Av1FilmGrain grain, long pts) {
+        params.grain = grain == null || !frame.seq.filmGrainPresent ? null : FilmGrains.toData(grain, frame.seq);
+        params.pts = pts;
+        var key = !started || forceKey || resizeKey || (keyInterval > 0 && framesToKey <= 0);
         if (key) {
             frameInPattern = 0;
         }
@@ -512,6 +609,7 @@ public final class Av1RtEncoder implements Av1Engine {
         lastTemporalId = tl;
         frameInPattern++;
         started = true;
+        resizeKey = false;
         lastKey = key;
         lastQindex = q;
         frameInKey = key ? 1 : frameInKey + 1;
@@ -617,6 +715,8 @@ public final class Av1RtEncoder implements Av1Engine {
         p.txSwitchable = !key;
         // TODO: search and code 1/8-sample motion vectors at low quantizers (allow_high_precision_mv)
         p.allowHighPrecisionMv = false;
+        p.screenContent = screenContent;
+        p.integerMv = false;
         p.interpFilter = !key && features().useNonrdFilterSearch ? FrameHeader.FILTER_SWITCHABLE : 0;
         p.goldenUpdate = gfUpdate;
         p.temporalId = tl;
@@ -662,7 +762,7 @@ public final class Av1RtEncoder implements Av1Engine {
             p.refreshFlags = 1 << lastRefresh | (gfUpdate ? 1 << GOLDEN_SLOT : 0);
             p.refSearch = 1 | 1 << 3 | 1 << 6;
         }
-        filterModel(p, key, q);
+        filterModel(p, key, q, frame.bitDepth);
     }
 
     /**
@@ -672,15 +772,21 @@ public final class Av1RtEncoder implements Av1Engine {
      * @param p the frame parameters
      * @param key whether the frame is a key frame
      * @param q the quantizer index
+     * @param bitDepth the bit depth of the coded pictures, 8, 10 or 12
      */
-    static void filterModel(FrameParams p, boolean key, int q) {
-        var acq = Quantizer.acQuant(q, 0);
+    static void filterModel(FrameParams p, boolean key, int q, int bitDepth) {
+        var hbdAcq = Quantizer.acQuant(q, 0, (bitDepth - 8) >> 1);
         int lf;
-        if (key) {
-            lf = (acq * 17563 - 421574 + (1 << 17)) >> 18;
+        if (bitDepth == 10) {
+            lf = (int) (((long) hbdAcq * 20723 + 4060632 + (1 << 19)) >> 20) - (key ? 4 : 0);
+        } else if (bitDepth == 12) {
+            lf = (int) (((long) hbdAcq * 20723 + 16242526 + (1 << 21)) >> 22) - (key ? 4 : 0);
+        } else if (key) {
+            lf = (hbdAcq * 17563 - 421574 + (1 << 17)) >> 18;
         } else {
-            lf = (acq * 12034 + 650707 + (1 << 17)) >> 18;
+            lf = (hbdAcq * 12034 + 650707 + (1 << 17)) >> 18;
         }
+        var acq = hbdAcq >> (bitDepth - 8);
         lf = Math.clamp(lf, 0, 63);
         p.lfLevelY[0] = lf;
         p.lfLevelY[1] = lf;

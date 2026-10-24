@@ -1973,7 +1973,7 @@ public final class Av1Context {
      * @param thisSz the current size
      * @return the factor
      */
-    private static int scaleFac(int refSz, int thisSz) {
+    static int scaleFac(int refSz, int thisSz) {
         return (int) ((((long) refSz << 14) + (thisSz >> 1)) / thisSz);
     }
 
@@ -1985,7 +1985,7 @@ public final class Av1Context {
      * @param step the position step
      * @return the initial position
      */
-    private static int upscaleX0(int inW, int outW, int step) {
+    static int upscaleX0(int inW, int outW, int step) {
         var err = outW * step - (inW << 14);
         var x0 = (-((outW - inW) << 13) + (outW >> 1)) / outW + 128 - (err / 2);
         return x0 & 0x3fff;

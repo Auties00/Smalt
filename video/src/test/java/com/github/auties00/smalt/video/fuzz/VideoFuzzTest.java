@@ -25,7 +25,14 @@ import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.av1.Av1Decoder;
 import com.github.auties00.smalt.video.av1.Av1DecoderOptions;
+import com.github.auties00.smalt.video.av1.Av1Encoder;
+import com.github.auties00.smalt.video.av1.Av1EncoderOptions;
+import com.github.auties00.smalt.video.av1.Av1EncoderSpeed;
+import com.github.auties00.smalt.video.av1.Av1FilmGrainTable;
+import com.github.auties00.smalt.video.av1.Av1FirstPassStatistics;
+import com.github.auties00.smalt.image.ChromaFormat;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.function.Consumer;
 
@@ -38,7 +45,10 @@ import java.util.Optional;
  * AVIF image decoder (see {@link FuzzMedia#image}). The AV1 Annex B target reads its options byte as bit 0 high bit
  * depth output, bits 1 and 2 the operating point and bit 3 all layers; the AV1 tile list target decodes the number of
  * packets of bits 4 to 7 of its options byte as anchor frames, sets the frame each shows as an anchor frame and
- * decodes the rest, the camera frame header and the tile lists, in large scale tile mode.
+ * decodes the rest, the camera frame header and the tile lists, in large scale tile mode. The film grain table
+ * target parses the text form, checks that it round-trips and signals the table's grain in two real-time frames
+ * that it decodes; the first pass statistics target parses and reserializes them and, for pictures of at most
+ * 32x32 samples, at least 16x16, runs a two-pass good-quality encode over them that it decodes.
  */
 class VideoFuzzTest {
     @FuzzTest
@@ -149,6 +159,118 @@ class VideoFuzzTest {
             }
         });
     }
+
+    @FuzzTest
+    void av1FilmGrainTable(byte[] data) {
+        var run = Fuzz.start("AV1 film grain table");
+        Av1FilmGrainTable table;
+        try {
+            table = Av1FilmGrainTable.parse(new String(data, StandardCharsets.ISO_8859_1));
+        } catch (IllegalArgumentException rejected) {
+            run.reject("parse: " + rejected.getMessage());
+            return;
+        }
+        run.output();
+        var text = table.format();
+        if (!table.equals(Av1FilmGrainTable.parse(text)) || !text.equals(Av1FilmGrainTable.parse(text).format())) {
+            throw new AssertionError("the text form does not round-trip: " + text);
+        }
+        for (var entry : table.entries()) {
+            table.lookup(entry.start());
+        }
+        // the first two frames, at 0 and 1/30 s, signal the grain the table gives them
+        var options = Av1EncoderOptions.forRealtime().toBuilder().bitrate(100_000).dropFrames(false).threads(1)
+                .timeBase(new Rational(1, 90_000)).filmGrain(table).build();
+        Av1Encoder encoder;
+        try {
+            encoder = new Av1Encoder(GRAIN_SIZE, GRAIN_SIZE, options);
+        } catch (IllegalArgumentException rejected) {
+            run.reject("encoder: " + rejected.getMessage());
+            return;
+        }
+        var packets = new ArrayList<Packet>();
+        try (encoder) {
+            for (var i = 0; i < 2; i++) {
+                var picture = YuvPicture.allocate(GRAIN_SIZE, GRAIN_SIZE, ChromaFormat.YUV420, false,
+                        options.color());
+                java.util.Arrays.fill(picture.y(), (byte) (100 + 20 * i));
+                java.util.Arrays.fill(picture.u(), (byte) 128);
+                java.util.Arrays.fill(picture.v(), (byte) 128);
+                encoder.encode(new VideoFrame(picture, i * 3000L, 3000, false), packets::add);
+            }
+            encoder.flush(packets::add);
+        }
+        var track = VideoTrack.builder().id(1).codec(Codec.AV1).timeBase(new Rational(1, 90_000))
+                .width(GRAIN_SIZE).height(GRAIN_SIZE).build();
+        run.step("decode", () -> {
+            try (var decoder = new Av1Decoder(track, Av1DecoderOptions.builder().limits(Fuzz.LIMITS).threads(1)
+                    .build())) {
+                for (var packet : packets) {
+                    decoder.decode(packet, frame -> touch(run, frame.picture(), false));
+                }
+            }
+        });
+    }
+
+    @FuzzTest
+    void av1FirstPassStatistics(byte[] data) {
+        var run = Fuzz.start("AV1 first pass statistics");
+        Av1FirstPassStatistics statistics;
+        try {
+            statistics = Av1FirstPassStatistics.parse(data);
+        } catch (IllegalArgumentException rejected) {
+            run.reject("parse: " + rejected.getMessage());
+            return;
+        }
+        run.output();
+        if (!java.util.Arrays.equals(data, statistics.toByteArray())) {
+            throw new AssertionError("the serialized form does not round-trip");
+        }
+        var width = statistics.width();
+        var height = statistics.height();
+        if (width > STATISTICS_SIZE || height > STATISTICS_SIZE || width < 16 || height < 16) {
+            run.skip("pictures of a size the target does not encode");
+            return;
+        }
+        // a second pass over a few more frames than the statistics measure, at a variable bitrate
+        var options = Av1EncoderOptions.ofBitrate(200_000).toBuilder().speed(Av1EncoderSpeed.FASTEST).lookahead(4)
+                .threads(1).timeBase(new Rational(1, 90_000)).firstPassStatistics(statistics).build();
+        var frames = Math.min(statistics.frameCount() + 2, STATISTICS_FRAMES);
+        var packets = new ArrayList<Packet>();
+        try (var encoder = new Av1Encoder(width, height, options)) {
+            for (var i = 0; i < frames; i++) {
+                var picture = YuvPicture.allocate(width, height, ChromaFormat.YUV420, false, options.color());
+                for (var y = 0; y < height; y++) {
+                    for (var x = 0; x < width; x++) {
+                        picture.y()[y * picture.yStride() + x] = (byte) ((x * 5 + y * 3 + i * 7) & 0xFF);
+                    }
+                }
+                java.util.Arrays.fill(picture.u(), (byte) 128);
+                java.util.Arrays.fill(picture.v(), (byte) 128);
+                encoder.encode(new VideoFrame(picture, i * 3000L, 3000, false), packets::add);
+            }
+            encoder.flush(packets::add);
+        }
+        var track = VideoTrack.builder().id(1).codec(Codec.AV1).timeBase(new Rational(1, 90_000)).width(width)
+                .height(height).build();
+        run.step("decode", () -> {
+            try (var decoder = new Av1Decoder(track, Av1DecoderOptions.builder().limits(Fuzz.LIMITS).threads(1)
+                    .build())) {
+                for (var packet : packets) {
+                    decoder.decode(packet, frame -> touch(run, frame.picture(), false));
+                }
+            }
+        });
+        if (run.outputs() != 1 + frames) {
+            throw new AssertionError(frames + " frames coded, " + (run.outputs() - 1) + " decoded");
+        }
+    }
+
+    private static final int GRAIN_SIZE = 16;
+
+    private static final int STATISTICS_SIZE = 32;
+
+    private static final int STATISTICS_FRAMES = 10;
 
     private static VideoTrack track(FuzzPackets input) {
         var header = input.header();
