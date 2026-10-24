@@ -106,29 +106,43 @@ class Aec3KernelsTest {
             var random = new SplittableRandom(wide ? 13 : 17);
             var bins = Aec3.FFT_LENGTH_BY_2_PLUS_1;
             for (var c = 0; c < CASES; c++) {
-                var xRe = gaussian(random, RenderBuffer.SIZE * bins, 1000);
-                var xIm = gaussian(random, RenderBuffer.SIZE * bins, 1000);
+                var channels = 1 + c % 3;
+                var size = RenderBuffer.SIZE * channels;
+                var xRe = gaussian(random, size * bins, 1000);
+                var xIm = gaussian(random, size * bins, 1000);
                 var partitions = 12 + random.nextInt(2);
-                var hRe = gaussian(random, 13 * bins, 0.1);
-                var hIm = gaussian(random, 13 * bins, 0.1);
+                var hRe = gaussian(random, 13 * channels * bins, 0.1);
+                var hIm = gaussian(random, 13 * channels * bins, 0.1);
                 var gRe = gaussian(random, bins, 1e-6);
                 var gIm = gaussian(random, bins, 1e-6);
-                var position = c % 3 == 0 ? RenderBuffer.SIZE - 1 - random.nextInt(12) : random.nextInt(RenderBuffer.SIZE);
+                var slot = c % 4 == 0 ? RenderBuffer.SIZE - 1 - random.nextInt(12) : random.nextInt(RenderBuffer.SIZE);
+                var position = slot * channels;
+                var virtualPartitions = partitions * channels;
                 float[] sReV = new float[bins], sImV = new float[bins], sReS = new float[bins], sImS = new float[bins];
-                vector.apply(xRe, xIm, position, partitions, hRe, hIm, sReV, sImV);
-                scalar.apply(xRe, xIm, position, partitions, hRe, hIm, sReS, sImS);
+                vector.apply(xRe, xIm, position, size, virtualPartitions, hRe, hIm, sReV, sImV);
+                scalar.apply(xRe, xIm, position, size, virtualPartitions, hRe, hIm, sReS, sImS);
                 assertArrayEquals(sReS, sReV, "apply re, case " + c);
                 assertArrayEquals(sImS, sImV, "apply im, case " + c);
                 var hReV = hRe.clone();
                 var hImV = hIm.clone();
-                vector.adapt(xRe, xIm, position, partitions, gRe, gIm, hReV, hImV);
-                scalar.adapt(xRe, xIm, position, partitions, gRe, gIm, hRe, hIm);
+                vector.adapt(xRe, xIm, position, size, virtualPartitions, gRe, gIm, hReV, hImV);
+                scalar.adapt(xRe, xIm, position, size, virtualPartitions, gRe, gIm, hRe, hIm);
                 assertArrayEquals(hRe, hReV, "adapt re, case " + c);
                 assertArrayEquals(hIm, hImV, "adapt im, case " + c);
                 float[] h2V = new float[13 * bins], h2S = new float[13 * bins];
-                vector.frequencyResponse(partitions, hRe, hIm, h2V);
-                scalar.frequencyResponse(partitions, hRe, hIm, h2S);
+                vector.frequencyResponse(partitions, channels, hRe, hIm, h2V);
+                scalar.frequencyResponse(partitions, channels, hRe, hIm, h2S);
                 assertArrayEquals(h2S, h2V, "frequency response, case " + c);
+                for (var p = 0; p < partitions; p++) {
+                    for (var k = 0; k < bins; k++) {
+                        var expected = 0.f;
+                        for (var ch = 0; ch < channels; ch++) {
+                            var o = (p * channels + ch) * bins + k;
+                            expected = Math.max(expected, hRe[o] * hRe[o] + hIm[o] * hIm[o]);
+                        }
+                        assertEquals(expected, h2S[p * bins + k], "largest channel response, case " + c);
+                    }
+                }
                 float[] erlV = new float[bins], erlS = new float[bins];
                 vector.erl(partitions, h2S, erlV);
                 scalar.erl(partitions, h2S, erlS);

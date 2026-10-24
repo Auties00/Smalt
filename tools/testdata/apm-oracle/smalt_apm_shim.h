@@ -2,24 +2,24 @@
  * smalt_apm_shim.h
  *
  * An extern-C facade over the WebRTC Audio Processing Module (the
- * webrtc-audio-processing 2.1 standalone library: AEC3, the mobile echo
- * canceller, the noise suppressor and the gain controller), compiled to
- * WebAssembly as the bit-exact reference of Smalt's voice processor tests
- * (build_wasm.py next to this file builds apm.wasm from it).
+ * webrtc-audio-processing 2.1 standalone library), compiled to WebAssembly as
+ * the bit-exact reference of Smalt's voice processor tests (build_wasm.py next
+ * to this file builds apm.wasm from it).
  *
  * The WebRTC APM has no C ABI: its surface is the C++ webrtc::AudioProcessing
  * class, configured through a nested AudioProcessing::Config aggregate and
  * driven through ProcessStream / ProcessReverseStream over deinterleaved channel
- * pointers and StreamConfig objects. This shim hides the whole object behind
- * one opaque void* handle, fixes the geometry to a single 16 kHz mono channel,
- * exchanges audio as flat float32 arrays of one 10 ms APM frame (160 samples),
- * and flattens the Config to scalar knobs, so the WebAssembly exports take only
- * int32_t, float and pointers.
+ * pointers and StreamConfig objects. This shim hides the object behind one
+ * opaque void* handle, flattens the Config into an int32 and a float parameter
+ * array (the SMALT_APM_I_* and SMALT_APM_F_* indices below), and exchanges
+ * audio as planar float32 arrays of one 10 ms frame: channel c of a frame of
+ * n samples per channel starts at index c * n. Samples are normalized to
+ * [-1, 1], the range the float ProcessStream API expects.
  *
- * TODO: the exported symbols keep the cobalt_webrtc_ prefix that the checked-in
- * apm.wasm exports; rename them to smalt_apm_ / smalt_aecm_ (here, in
- * build_wasm.py's EXPORTS and in WasmApmOracle / WasmAecmOracle) when the
- * module is next rebuilt.
+ * Besides the APM, the shim exports a few of its building blocks, so a port
+ * can be checked one component at a time: the push sinc resampler, the band
+ * splitting filter, the AGC2 voice activity detector and the legacy mobile
+ * echo canceller.
  */
 
 #ifndef SMALT_APM_SHIM_H
@@ -32,162 +32,191 @@ extern "C" {
 #endif
 
 /*
- * Status codes returned by the process/create entry points. Zero is success.
- * Negative values are shim-level failures: an invalid argument supplied to the
- * shim, an allocation failure inside the APM factory, or an error code returned
- * by the underlying WebRTC ProcessStream / ProcessReverseStream call.
+ * Status codes. Zero is success.
  *
  *   SMALT_APM_OK         0   the call succeeded
- *   SMALT_APM_BAD_PARAM (-1) a NULL handle/buffer or a wrong frame length
- *   SMALT_APM_NOMEM     (-2) the APM instance could not be allocated
- *   SMALT_APM_ERROR     (-3) the underlying WebRTC APM returned an error
+ *   SMALT_APM_BAD_PARAM (-1) a NULL handle or buffer
+ *   SMALT_APM_ERROR     (-3) the underlying WebRTC call returned an error
  */
 #define SMALT_APM_OK         0
 #define SMALT_APM_BAD_PARAM (-1)
-#define SMALT_APM_NOMEM     (-2)
 #define SMALT_APM_ERROR     (-3)
 
-/*
- * The single supported sample rate, in hertz. The shim hard-codes one rate and
- * one channel (16 kHz mono) rather than exposing a StreamConfig.
- */
-#define SMALT_APM_SAMPLE_RATE_HZ 16000
-
-/*
- * The samples in one WebRTC APM frame: kChunkSizeMs (10 ms) at 16 kHz, i.e.
- * 160. ProcessStream and ProcessReverseStream each consume exactly this many
- * samples per call; the caller splits a longer block (for example 20 ms,
- * 320 samples) into successive 10 ms frames.
- */
-#define SMALT_APM_FRAME_SAMPLES 160
-
-/*
- * The echo-canceller selection passed to cobalt_webrtc_apm_create as aec_mode.
- * Value 2 selects AEC3, value 1 the mobile echo controller (AECM), and value 0
- * disables the echo canceller. The shim
- * maps these onto the WebRTC AudioProcessing::Config::EchoCanceller fields
- * (enabled / mobile_mode).
- */
+/* Echo canceller selection (SMALT_APM_I_AEC). */
 #define SMALT_APM_AEC_OFF    0
 #define SMALT_APM_AEC_MOBILE 1
 #define SMALT_APM_AEC_AEC3   2
 
-/**
- * Creates a WebRTC Audio Processing Module instance for 16 kHz mono capture
- * conditioning.
+/*
+ * Indices of the int32 parameter array of smalt_apm_create. Booleans are 0 or
+ * 1; a level or mode of -1 disables the component.
  *
- * It builds an APM instance, enables the echo canceller selected by aec_mode,
- * enables the noise suppressor at the level ns_denoiser_intensity maps to when
- * ns_use_denoiser is non-zero, and enables the gain controller when agc_enabled
- * is non-zero. The returned handle is opaque; on failure the function returns
- * NULL.
- *
- * @param aec_mode             one of SMALT_APM_AEC_OFF / _MOBILE / _AEC3.
- * @param ns_enabled           non-zero to enable noise suppression.
- * @param ns_use_denoiser      non-zero to derive the suppression level from
- *                             ns_denoiser_intensity.
- * @param ns_denoiser_intensity the suppression intensity in [0, 1]; ignored when
- *                             ns_use_denoiser is zero.
- * @param agc_enabled          non-zero to enable the WebRTC gain controller.
- * @return an opaque APM handle on success, or NULL on failure.
+ *   RATE              sample rate of every stream, in hertz
+ *   CAPTURE_CHANNELS  channels of the capture input and output
+ *   RENDER_CHANNELS   channels of the render input
+ *   MC_CAPTURE        pipeline.multi_channel_capture
+ *   MC_RENDER         pipeline.multi_channel_render
+ *   DOWNMIX_FIRST     1 for DownmixMethod::kUseFirstChannel, 0 for kAverageChannels
+ *   AEC               SMALT_APM_AEC_*
+ *   NS                noise suppression level, -1 off, 0 kLow to 3 kVeryHigh
+ *   AGC1_MODE         gain_controller1.mode, -1 to disable gain_controller1
+ *   AGC1_TARGET       gain_controller1.target_level_dbfs
+ *   AGC1_COMPRESSION  gain_controller1.compression_gain_db
+ *   AGC1_LIMITER      gain_controller1.enable_limiter
+ *   ANALOG            gain_controller1.analog_gain_controller.enabled
+ *   ANALOG_STARTUP    analog_gain_controller.startup_min_volume
+ *   ANALOG_CLIPPED_MIN    analog_gain_controller.clipped_level_min
+ *   ANALOG_DIGITAL        analog_gain_controller.enable_digital_adaptive
+ *   ANALOG_CLIPPED_STEP   analog_gain_controller.clipped_level_step
+ *   ANALOG_CLIPPED_WAIT   analog_gain_controller.clipped_wait_frames
+ *   CP_ENABLED        clipping_predictor.enabled
+ *   CP_MODE           clipping_predictor.mode
+ *   CP_WINDOW         clipping_predictor.window_length
+ *   CP_REF_WINDOW     clipping_predictor.reference_window_length
+ *   CP_REF_DELAY      clipping_predictor.reference_window_delay
+ *   CP_USE_STEP       clipping_predictor.use_predicted_step
+ *   AGC2              gain_controller2.enabled
+ *   AGC2_ADAPTIVE     gain_controller2.adaptive_digital.enabled
+ *   AGC2_IVC          gain_controller2.input_volume_controller.enabled
+ *   HPF               high_pass_filter.enabled
  */
-void *cobalt_webrtc_apm_create(int32_t aec_mode,
-                               int32_t ns_enabled,
-                               int32_t ns_use_denoiser,
-                               float ns_denoiser_intensity,
-                               int32_t agc_enabled);
-
-/**
- * Feeds one 10 ms far-end render frame to the echo canceller as the reference.
- *
- * Mirrors webrtc::AudioProcessing::ProcessReverseStream: the most recently
- * rendered (played) frame is handed to the APM so the echo canceller can model
- * and subtract its leakage from the next captured frame. The frame is one
- * SMALT_APM_FRAME_SAMPLES (160-sample) 16 kHz mono float32 block, samples
- * normalized to [-1, 1].
- *
- * @param apm   the handle from cobalt_webrtc_apm_create; must not be NULL.
- * @param frame the far-end reference frame, SMALT_APM_FRAME_SAMPLES float32
- *              samples; must not be NULL.
- * @return SMALT_APM_OK on success, SMALT_APM_BAD_PARAM for a NULL argument, or
- *         SMALT_APM_ERROR when the underlying call fails.
- */
-int32_t cobalt_webrtc_apm_process_reverse(void *apm, const float *frame);
-
-/**
- * Conditions one 10 ms near-end capture frame in place.
- *
- * Mirrors webrtc::AudioProcessing::ProcessStream: it runs the configured echo
- * canceller (against the reference last supplied through
- * cobalt_webrtc_apm_process_reverse), the noise suppressor, and the gain
- * controller over the captured frame and writes the conditioned samples back
- * into the same buffer. The frame is one SMALT_APM_FRAME_SAMPLES (160-sample)
- * 16 kHz mono float32 block, samples normalized to [-1, 1].
- *
- * @param apm   the handle from cobalt_webrtc_apm_create; must not be NULL.
- * @param frame the near-end capture frame, conditioned in place,
- *              SMALT_APM_FRAME_SAMPLES float32 samples; must not be NULL.
- * @return SMALT_APM_OK on success, SMALT_APM_BAD_PARAM for a NULL argument, or
- *         SMALT_APM_ERROR when the underlying call fails.
- */
-int32_t cobalt_webrtc_apm_process(void *apm, float *frame);
-
-/**
- * Reports the running delay, in milliseconds, between the render and capture
- * streams to the echo canceller.
- *
- * Mirrors webrtc::AudioProcessing::set_stream_delay_ms: AEC3 uses this hint to
- * align the reference and capture streams. The caller supplies the platform's
- * measured round-trip render-to-capture delay; passing it each tick before
- * cobalt_webrtc_apm_process keeps the canceller aligned when the device latency
- * drifts.
- *
- * @param apm      the handle from cobalt_webrtc_apm_create; must not be NULL.
- * @param delay_ms the render-to-capture delay in milliseconds; non-negative.
- * @return SMALT_APM_OK on success, SMALT_APM_BAD_PARAM for a NULL handle.
- */
-int32_t cobalt_webrtc_apm_set_stream_delay_ms(void *apm, int32_t delay_ms);
-
-/**
- * Destroys an APM instance created by cobalt_webrtc_apm_create.
- *
- * Mirrors the APM destructor: NULL-safe, and must be called at most once per
- * handle.
- *
- * @param apm the handle, or NULL.
- */
-void cobalt_webrtc_apm_destroy(void *apm);
+#define SMALT_APM_I_RATE                0
+#define SMALT_APM_I_CAPTURE_CHANNELS    1
+#define SMALT_APM_I_RENDER_CHANNELS     2
+#define SMALT_APM_I_MC_CAPTURE          3
+#define SMALT_APM_I_MC_RENDER           4
+#define SMALT_APM_I_DOWNMIX_FIRST       5
+#define SMALT_APM_I_AEC                 6
+#define SMALT_APM_I_NS                  7
+#define SMALT_APM_I_AGC1_MODE           8
+#define SMALT_APM_I_AGC1_TARGET         9
+#define SMALT_APM_I_AGC1_COMPRESSION   10
+#define SMALT_APM_I_AGC1_LIMITER       11
+#define SMALT_APM_I_ANALOG             12
+#define SMALT_APM_I_ANALOG_STARTUP     13
+#define SMALT_APM_I_ANALOG_CLIPPED_MIN 14
+#define SMALT_APM_I_ANALOG_DIGITAL     15
+#define SMALT_APM_I_ANALOG_CLIPPED_STEP 16
+#define SMALT_APM_I_ANALOG_CLIPPED_WAIT 17
+#define SMALT_APM_I_CP_ENABLED         18
+#define SMALT_APM_I_CP_MODE            19
+#define SMALT_APM_I_CP_WINDOW          20
+#define SMALT_APM_I_CP_REF_WINDOW      21
+#define SMALT_APM_I_CP_REF_DELAY       22
+#define SMALT_APM_I_CP_USE_STEP        23
+#define SMALT_APM_I_AGC2               24
+#define SMALT_APM_I_AGC2_ADAPTIVE      25
+#define SMALT_APM_I_AGC2_IVC           26
+#define SMALT_APM_I_HPF                27
+#define SMALT_APM_I_COUNT              28
 
 /*
- * Extensions for the voice processor tests. cobalt_webrtc_apm_create_ex sets each knob directly: the
- * echo canceller as in cobalt_webrtc_apm_create, the noise suppression level
- * (-1 off, 0 kLow .. 3 kVeryHigh), and the gain controller 1 with its analog
- * controller (AgcManagerDirect) disabled, so GainControlImpl runs the legacy
- * WebRtcAgc in agc_mode (-1 off, 0 kAdaptiveAnalog, 1 kAdaptiveDigital,
- * 2 kFixedDigital) with the given target level, compression gain and limiter.
+ * Indices of the float parameter array of smalt_apm_create.
+ *
+ *   CLIPPED_RATIO     analog_gain_controller.clipped_ratio_threshold
+ *   CP_THRESHOLD      clipping_predictor.clipping_threshold
+ *   CP_CREST          clipping_predictor.crest_factor_margin
+ *   AGC2_FIXED_GAIN   gain_controller2.fixed_digital.gain_db
+ *   AGC2_HEADROOM     adaptive_digital.headroom_db
+ *   AGC2_MAX_GAIN     adaptive_digital.max_gain_db
+ *   AGC2_INITIAL_GAIN adaptive_digital.initial_gain_db
+ *   AGC2_MAX_CHANGE   adaptive_digital.max_gain_change_db_per_second
+ *   AGC2_MAX_NOISE    adaptive_digital.max_output_noise_level_dbfs
  */
-void *cobalt_webrtc_apm_create_ex(int32_t aec_mode,
-                                  int32_t ns_level,
-                                  int32_t agc_mode,
-                                  int32_t agc_target_level_dbfs,
-                                  int32_t agc_compression_gain_db,
-                                  int32_t agc_enable_limiter);
+#define SMALT_APM_F_CLIPPED_RATIO     0
+#define SMALT_APM_F_CP_THRESHOLD      1
+#define SMALT_APM_F_CP_CREST          2
+#define SMALT_APM_F_AGC2_FIXED_GAIN   3
+#define SMALT_APM_F_AGC2_HEADROOM     4
+#define SMALT_APM_F_AGC2_MAX_GAIN     5
+#define SMALT_APM_F_AGC2_INITIAL_GAIN 6
+#define SMALT_APM_F_AGC2_MAX_CHANGE   7
+#define SMALT_APM_F_AGC2_MAX_NOISE    8
+#define SMALT_APM_F_COUNT             9
+
+/*
+ * Creates an APM with the configuration of the two parameter arrays (see the
+ * index lists above), or returns NULL on failure.
+ */
+void *smalt_apm_create(const int32_t *ints, const float *floats);
+
+/*
+ * Feeds one 10 ms planar render frame (RENDER_CHANNELS channels) to
+ * ProcessReverseStream.
+ */
+int32_t smalt_apm_process_reverse(void *apm, const float *frame);
+
+/*
+ * Conditions one 10 ms planar capture frame (CAPTURE_CHANNELS channels) in
+ * place through ProcessStream.
+ */
+int32_t smalt_apm_process(void *apm, float *frame);
+
+/* Mirrors AudioProcessing::set_stream_delay_ms. */
+int32_t smalt_apm_set_stream_delay_ms(void *apm, int32_t delay_ms);
 
 /* Mirrors AudioProcessing::set_stream_analog_level. */
-int32_t cobalt_webrtc_apm_set_stream_analog_level(void *apm, int32_t level);
+int32_t smalt_apm_set_stream_analog_level(void *apm, int32_t level);
 
 /* Mirrors AudioProcessing::recommended_stream_analog_level. */
-int32_t cobalt_webrtc_apm_recommended_stream_analog_level(void *apm);
+int32_t smalt_apm_recommended_stream_analog_level(void *apm);
+
+/* Destroys an APM; NULL-safe. */
+void smalt_apm_destroy(void *apm);
+
+/*
+ * A PushSincResampler from source_frames to destination_frames samples per
+ * call; resample reads source_frames and writes destination_frames floats.
+ */
+void *smalt_resampler_create(int32_t source_frames, int32_t destination_frames);
+int32_t smalt_resampler_resample(void *resampler, const float *source, float *destination);
+void smalt_resampler_destroy(void *resampler);
+
+/*
+ * A SplittingFilter of one channel with num_bands bands (2 or 3) over frames
+ * of num_frames samples; analysis reads num_frames samples and writes the
+ * bands one after the other, synthesis the reverse.
+ */
+void *smalt_split_create(int32_t num_bands, int32_t num_frames);
+int32_t smalt_split_analysis(void *filter, const float *data, float *bands);
+int32_t smalt_split_synthesis(void *filter, const float *bands, float *data);
+void smalt_split_destroy(void *filter);
+
+/*
+ * The AGC2 voice activity detector (VoiceActivityDetectorWrapper with the
+ * default reset period and no SIMD) at sample_rate_hz; analyze reads one 10 ms
+ * mono frame in the 16-bit range and returns the speech probability.
+ */
+void *smalt_vad_create(int32_t sample_rate_hz);
+float smalt_vad_analyze(void *vad, const float *frame);
+void smalt_vad_destroy(void *vad);
 
 /*
  * Drives the legacy mobile echo canceller directly (WebRtcAecm_*), 16 kHz,
  * with the given echo mode (0..4) and comfort noise flag.
  */
-void *cobalt_webrtc_aecm_create(int32_t echo_mode, int32_t comfort_noise);
-int32_t cobalt_webrtc_aecm_buffer_farend(void *aecm, const int16_t *farend);
-int32_t cobalt_webrtc_aecm_process(void *aecm, const int16_t *noisy, const int16_t *clean, int16_t *out,
-                                   int32_t delay_ms);
-void cobalt_webrtc_aecm_destroy(void *aecm);
+void *smalt_aecm_create(int32_t echo_mode, int32_t comfort_noise);
+int32_t smalt_aecm_buffer_farend(void *aecm, const int16_t *farend);
+int32_t smalt_aecm_process(void *aecm, const int16_t *noisy, const int16_t *clean, int16_t *out,
+                           int32_t delay_ms);
+void smalt_aecm_destroy(void *aecm);
+
+/*
+ * Evaluates a libm function: 0 exp(x), 1 log(x), 2 pow(x, y), 3 log10(x),
+ * 4 sin(x).
+ */
+double smalt_libm(int32_t function, double x, double y);
+
+/*
+ * The voice activity detector of the analog gain controller
+ * (VoiceActivityDetector) at 16 kHz; process reads 160 samples and writes the
+ * RMS levels of the 10 ms results to out[0..2], their voice probabilities to
+ * out[3..5] and the last voice probability to out[6], returning the number of
+ * results (0 or 3).
+ */
+void *smalt_avad_create(void);
+int32_t smalt_avad_process(void *vad, const int16_t *audio, double *out);
+void smalt_avad_destroy(void *vad);
 
 #ifdef __cplusplus
 }

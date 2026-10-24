@@ -103,6 +103,8 @@ Contents
   46. CharLS
   47. libultrahdr
   48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
+  49. PFFFT
+  50. RNNoise
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -586,9 +588,9 @@ cat "$LIC/fdlibm-NOTICE"
 section "15. WebRTC (audio processing module)"
 cat <<'EOF'
 Project:      WebRTC, the audio processing module (AEC3 echo canceller, mobile
-              echo canceller, noise suppression, gain controller, high-pass
-              filter) and its signal processing library, as packaged by
-              webrtc-audio-processing 2.1
+              echo canceller, noise suppression, gain controllers, band
+              splitting, resampling, high-pass filter) and its signal
+              processing library, as packaged by webrtc-audio-processing 2.1
 Source:       https://webrtc.googlesource.com/src
               https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing
               (tag v2.1)
@@ -599,10 +601,17 @@ License:      BSD 3-Clause License, plus Google's additional IP rights grant
 Derived Smalt packages:
   audio.voice, audio.voice.internal, audio.voice.internal.aec3,
   audio.voice.internal.aecm, audio.voice.internal.agc,
-  audio.voice.internal.ns (VoiceProcessor: the capture path of
-  modules/audio_processing: aec3, aecm, agc/legacy with gain_control_impl,
-  ns, the capture high-pass filter, utility/delay_estimator and the
-  fixed-point routines of common_audio/signal_processing it uses)
+  audio.voice.internal.agc2, audio.voice.internal.ns (VoiceProcessor: both
+  signal paths of modules/audio_processing: aec3 with its multichannel
+  support, aecm, agc/legacy with gain_control_impl, the analog
+  gain controller of agc (agc_manager_direct, its voice activity detector
+  in vad and the iSAC pitch analysis of modules/audio_coding/codecs/isac),
+  agc2 (gain_controller2, the RNN voice activity detector, the adaptive
+  digital gain, the limiter, the input volume controller and the clipping
+  predictor), ns, the splitting filter and three-band filter bank, the push
+  sinc resampler, the capture high-pass filter, utility/delay_estimator,
+  common_audio/vad and the fixed-point routines of
+  common_audio/signal_processing it uses)
 
 Derivation: C++ code translated to Java, restructured, and in places
 vectorized with the Java Vector API.
@@ -631,7 +640,8 @@ License:      Ooura permissive notice (use, copy, modification and
 
 Derived Smalt packages:
   audio.voice.internal (OouraRealFft: the 128-point real FFT of the noise
-  suppressor)
+  suppressor and the 512-point one of the analog gain controller's voice
+  activity detector)
   audio.voice.internal.aec3 (Aec3Fft: the 128-point split-radix FFT of the
   echo canceller)
 
@@ -655,7 +665,9 @@ License:      MIT License; powf and its tables come from Arm's optimized
 
 Derived Smalt packages:
   audio.voice.internal (FloatMath: powf with __powf_log2_data and
-  __exp2f_data, tanhf, expm1f, cosf and sinf, rounded exactly as musl)
+  __exp2f_data, tanhf, expm1f, cosf, sinf and log10f; DoubleMath: exp, log
+  and pow with __exp_data, __log_data and __pow_log_data, log10, and sin
+  with __sin, __cos and __rem_pio2; all rounded exactly as musl)
 
 Derivation: C code and tables translated to Java.
 
@@ -1721,6 +1733,53 @@ Copyright:
 EOF
 license_start "Disclaimer and notices (doc/readme.dp.01.txt, source files)"
 cat "$LIC/iso13818-5-dist10-notice.txt"
+
+section "49. PFFFT"
+cat <<'EOF'
+Project:      PFFFT, Julien Pommier's FFT based on FFTPACKv4, as included in
+              WebRTC (third_party/pffft) and webrtc-audio-processing 2.1
+Source:       https://bitbucket.org/jpommier/pffft
+              https://webrtc.googlesource.com/src (third_party/pffft)
+License text: third_party/pffft/LICENSE of webrtc-audio-processing 2.1
+License:      FFTPACK license (BSD-style)
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (Pffft: the scalar real FFT of the RNN voice
+  activity detector, with the radix-2, 3, 4 and 5 butterflies, the
+  unordered and ordered layouts and the accumulating spectral product)
+
+Derivation: C code translated to Java.
+
+Copyright:
+  Copyright (c) 2013 Julien Pommier
+  Copyright (c) 2004 the University Corporation for Atmospheric Research
+EOF
+license_start "PFFFT license (LICENSE)"
+cat "$LIC/pffft-LICENSE"
+
+section "50. RNNoise"
+cat <<'EOF'
+Project:      RNNoise, as included in WebRTC (third_party/rnnoise) and
+              webrtc-audio-processing 2.1
+Source:       https://gitlab.xiph.org/xiph/rnnoise
+              https://webrtc.googlesource.com/src (third_party/rnnoise)
+License text: third_party/rnnoise/COPYING of webrtc-audio-processing 2.1
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (RnnVadWeights: the weights of the RNN voice
+  activity detector; RnnVad: the activation functions of rnn_activations.h)
+
+Derivation: tables copied and C code translated to Java.
+
+Copyright:
+  Copyright (c) 2017, Mozilla
+  Copyright (c) 2007-2017, Jean-Marc Valin
+  Copyright (c) 2005-2017, Xiph.Org Foundation
+  Copyright (c) 2003-2004, Mark Borgerding
+EOF
+license_start "RNNoise license (COPYING)"
+cat "$LIC/rnnoise-COPYING"
 } > "$OUT"
 
 echo "wrote $OUT"

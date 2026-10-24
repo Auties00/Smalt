@@ -26,6 +26,11 @@ import com.github.auties00.smalt.audio.opus.OpusDecoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusEncoder;
 import com.github.auties00.smalt.audio.opus.OpusEncoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusSignal;
+import com.github.auties00.smalt.audio.voice.AnalogGainControllerOptions;
+import com.github.auties00.smalt.audio.voice.ClippingPrediction;
+import com.github.auties00.smalt.audio.voice.EchoCancellation;
+import com.github.auties00.smalt.audio.voice.GainControl;
+import com.github.auties00.smalt.audio.voice.LevelControlOptions;
 import com.github.auties00.smalt.audio.voice.VoiceProcessor;
 import com.github.auties00.smalt.audio.voice.VoiceProcessorOptions;
 import com.github.auties00.smalt.audio.vorbis.VorbisDecoder;
@@ -66,6 +71,7 @@ final class AudioWorkloads {
     static List<WorkloadFactory> factories() {
         return List.of(
                 realtime("voice-processor", () -> voiceProcessor(6)),
+                realtime("voice-processor-layouts", () -> voiceProcessorLayouts(4)),
                 realtime("opus-rt-16000-20", () -> opusRealtime("opus-rt-16000-20", 6, 16000, 20)),
                 realtime("opus-rt-48000-20", () -> opusRealtime("opus-rt-48000-20", 6, 48000, 20)),
                 realtime("opus-rt-48000-10", () -> opusRealtime("opus-rt-48000-10", 6, 48000, 10)),
@@ -651,6 +657,88 @@ final class AudioWorkloads {
                 Blackhole.consume(Float.floatToRawIntBits(buffer[17]));
             }
         });
+    }
+
+    /**
+     * Returns a workload that runs the voice processor at the other rates and channel layouts and
+     * with every gain controller, on far-end speech and a microphone signal made of its echo and of
+     * near-end speech every third second, in 10 ms frames.
+     *
+     * <p>Every round creates a fresh processor in one of three configurations in turn, feeding the
+     * recommended microphone volume back: 48 kHz stereo with the multichannel echo canceller and
+     * the level controller with its input volume controller (band splitting into three bands, the
+     * RNN voice activity detector, the limiter); 32 kHz with the managed analog gain controller and
+     * clipping prediction (two bands, the analog controller's voice activity detector and pitch
+     * analysis); and 8 kHz with the mobile echo canceller and the adaptive digital gain controller
+     * (the resamplers).
+     *
+     * @param seconds the duration of each conversation, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload voiceProcessorLayouts(double seconds) {
+        var options = List.of(
+                VoiceProcessorOptions.forVoip().toBuilder().sampleRate(48000).captureChannels(2).renderChannels(2)
+                        .multichannelCapture(true).multichannelRender(true)
+                        .levelControl(LevelControlOptions.builder().inputVolumeController(true).build()).build(),
+                VoiceProcessorOptions.forVoip().toBuilder().sampleRate(32000).gainControl(GainControl.MANAGED_ANALOG)
+                        .analogGainController(AnalogGainControllerOptions.builder()
+                                .clippingPrediction(ClippingPrediction.CLIPPING_EVENT).build()).build(),
+                VoiceProcessorOptions.forVoip().toBuilder().sampleRate(8000).echoCancellation(EchoCancellation.MOBILE)
+                        .gainControl(GainControl.ADAPTIVE_DIGITAL).build());
+        var renders = new float[options.size()][];
+        var captures = new float[options.size()][];
+        for (var k = 0; k < options.size(); k++) {
+            var layout = options.get(k);
+            var rate = layout.sampleRate();
+            var far = SyntheticAudio.speech(rate, seconds);
+            var near = SyntheticAudio.speech(rate, seconds + 1.37);
+            var microphone = new float[far.length];
+            var delay = rate / 20;
+            for (var i = 0; i < microphone.length; i++) {
+                var echo = i >= delay ? 0.3f * far[i - delay] : 0;
+                var talk = i / rate % 3 == 2 ? 0.5f * near[near.length - 1 - i] : 0;
+                microphone[i] = echo + talk;
+            }
+            renders[k] = interleave(far, layout.renderChannels());
+            captures[k] = interleave(microphone, layout.captureChannels());
+        }
+        int[] round = {0};
+        return TrainingWorkload.of("voice-processor-layouts", () -> {
+            var k = round[0]++ % options.size();
+            var layout = options.get(k);
+            var processor = new VoiceProcessor(layout);
+            processor.setStreamDelayMs(50);
+            var renderLength = processor.frameSamples() * layout.renderChannels();
+            var captureLength = processor.frameSamples() * layout.captureChannels();
+            var buffer = new float[captureLength];
+            var level = 128;
+            for (var i = 0; i < captures[k].length / captureLength; i++) {
+                System.arraycopy(captures[k], i * captureLength, buffer, 0, captureLength);
+                processor.processRender(renders[k], i * renderLength);
+                processor.setAnalogLevel(level);
+                processor.processCapture(buffer, 0, buffer, 0);
+                level = processor.recommendedAnalogLevel();
+                Blackhole.consume(Float.floatToRawIntBits(buffer[17]));
+            }
+        });
+    }
+
+    /**
+     * Interleaves copies of a signal, each further channel 2 dB quieter.
+     *
+     * @param signal the samples
+     * @param channels the number of channels
+     * @return the interleaved samples
+     */
+    private static float[] interleave(float[] signal, int channels) {
+        var out = new float[signal.length * channels];
+        for (var c = 0; c < channels; c++) {
+            var gain = (float) StrictMath.pow(10, -2.0 * c / 20);
+            for (var i = 0; i < signal.length; i++) {
+                out[i * channels + c] = gain * signal[i];
+            }
+        }
+        return out;
     }
 
     /**

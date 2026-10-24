@@ -29,6 +29,7 @@ audio.voice.internal	audio
 audio.voice.internal.aec3	audio
 audio.voice.internal.aecm	audio
 audio.voice.internal.agc	audio
+audio.voice.internal.agc2	audio
 audio.voice.internal.ns	audio
 audio.vorbis	audio
 audio.vorbis.internal	audio

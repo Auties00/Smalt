@@ -71,6 +71,8 @@ Contents
   46. CharLS
   47. libultrahdr
   48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
+  49. PFFFT
+  50. RNNoise
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1897,9 +1899,9 @@ is preserved.
 ===============================================================================
 
 Project:      WebRTC, the audio processing module (AEC3 echo canceller, mobile
-              echo canceller, noise suppression, gain controller, high-pass
-              filter) and its signal processing library, as packaged by
-              webrtc-audio-processing 2.1
+              echo canceller, noise suppression, gain controllers, band
+              splitting, resampling, high-pass filter) and its signal
+              processing library, as packaged by webrtc-audio-processing 2.1
 Source:       https://webrtc.googlesource.com/src
               https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing
               (tag v2.1)
@@ -1910,10 +1912,17 @@ License:      BSD 3-Clause License, plus Google's additional IP rights grant
 Derived Smalt packages:
   audio.voice, audio.voice.internal, audio.voice.internal.aec3,
   audio.voice.internal.aecm, audio.voice.internal.agc,
-  audio.voice.internal.ns (VoiceProcessor: the capture path of
-  modules/audio_processing: aec3, aecm, agc/legacy with gain_control_impl,
-  ns, the capture high-pass filter, utility/delay_estimator and the
-  fixed-point routines of common_audio/signal_processing it uses)
+  audio.voice.internal.agc2, audio.voice.internal.ns (VoiceProcessor: both
+  signal paths of modules/audio_processing: aec3 with its multichannel
+  support, aecm, agc/legacy with gain_control_impl, the analog
+  gain controller of agc (agc_manager_direct, its voice activity detector
+  in vad and the iSAC pitch analysis of modules/audio_coding/codecs/isac),
+  agc2 (gain_controller2, the RNN voice activity detector, the adaptive
+  digital gain, the limiter, the input volume controller and the clipping
+  predictor), ns, the splitting filter and three-band filter bank, the push
+  sinc resampler, the capture high-pass filter, utility/delay_estimator,
+  common_audio/vad and the fixed-point routines of
+  common_audio/signal_processing it uses)
 
 Derivation: C++ code translated to Java, restructured, and in places
 vectorized with the Java Vector API.
@@ -2003,7 +2012,8 @@ License:      Ooura permissive notice (use, copy, modification and
 
 Derived Smalt packages:
   audio.voice.internal (OouraRealFft: the 128-point real FFT of the noise
-  suppressor)
+  suppressor and the 512-point one of the analog gain controller's voice
+  activity detector)
   audio.voice.internal.aec3 (Aec3Fft: the 128-point split-radix FFT of the
   echo canceller)
 
@@ -2037,7 +2047,9 @@ License:      MIT License; powf and its tables come from Arm's optimized
 
 Derived Smalt packages:
   audio.voice.internal (FloatMath: powf with __powf_log2_data and
-  __exp2f_data, tanhf, expm1f, cosf and sinf, rounded exactly as musl)
+  __exp2f_data, tanhf, expm1f, cosf, sinf and log10f; DoubleMath: exp, log
+  and pow with __exp_data, __log_data and __pow_log_data, log10, and sin
+  with __sin, __cos and __rem_pio2; all rounded exactly as musl)
 
 Derivation: C code and tables translated to Java.
 
@@ -5571,3 +5583,136 @@ and the makefiles (mc/decoder/makefile):
 
 ## Copyright (c) 1995 MPEG/audio software simulation group
 ## All Rights Reserved
+
+
+===============================================================================
+49. PFFFT
+===============================================================================
+
+Project:      PFFFT, Julien Pommier's FFT based on FFTPACKv4, as included in
+              WebRTC (third_party/pffft) and webrtc-audio-processing 2.1
+Source:       https://bitbucket.org/jpommier/pffft
+              https://webrtc.googlesource.com/src (third_party/pffft)
+License text: third_party/pffft/LICENSE of webrtc-audio-processing 2.1
+License:      FFTPACK license (BSD-style)
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (Pffft: the scalar real FFT of the RNN voice
+  activity detector, with the radix-2, 3, 4 and 5 butterflies, the
+  unordered and ordered layouts and the accumulating spectral product)
+
+Derivation: C code translated to Java.
+
+Copyright:
+  Copyright (c) 2013 Julien Pommier
+  Copyright (c) 2004 the University Corporation for Atmospheric Research
+
+-------------------------------------------------------------------------------
+PFFFT license (LICENSE)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2013  Julien Pommier ( pommier@modartt.com )
+
+Based on original fortran 77 code from FFTPACKv4 from NETLIB,
+authored by Dr Paul Swarztrauber of NCAR, in 1985.
+
+As confirmed by the NCAR fftpack software curators, the following
+FFTPACKv5 license applies to FFTPACKv4 sources. My changes are
+released under the same terms.
+
+FFTPACK license:
+
+http://www.cisl.ucar.edu/css/software/fftpack5/ftpk.html
+
+Copyright (c) 2004 the University Corporation for Atmospheric
+Research ("UCAR"). All rights reserved. Developed by NCAR's
+Computational and Information Systems Laboratory, UCAR,
+www.cisl.ucar.edu.
+
+Redistribution and use of the Software in source and binary forms,
+with or without modification, is permitted provided that the
+following conditions are met:
+
+- Neither the names of NCAR's Computational and Information Systems
+Laboratory, the University Corporation for Atmospheric Research,
+nor the names of its sponsors or contributors may be used to
+endorse or promote products derived from this Software without
+specific prior written permission.
+
+- Redistributions of source code must retain the above copyright
+notices, this list of conditions, and the disclaimer below.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions, and the disclaimer below in the
+documentation and/or other materials provided with the
+distribution.
+
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING, BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE CONTRIBUTORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+
+===============================================================================
+50. RNNoise
+===============================================================================
+
+Project:      RNNoise, as included in WebRTC (third_party/rnnoise) and
+              webrtc-audio-processing 2.1
+Source:       https://gitlab.xiph.org/xiph/rnnoise
+              https://webrtc.googlesource.com/src (third_party/rnnoise)
+License text: third_party/rnnoise/COPYING of webrtc-audio-processing 2.1
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  audio.voice.internal.agc2 (RnnVadWeights: the weights of the RNN voice
+  activity detector; RnnVad: the activation functions of rnn_activations.h)
+
+Derivation: tables copied and C code translated to Java.
+
+Copyright:
+  Copyright (c) 2017, Mozilla
+  Copyright (c) 2007-2017, Jean-Marc Valin
+  Copyright (c) 2005-2017, Xiph.Org Foundation
+  Copyright (c) 2003-2004, Mark Borgerding
+
+-------------------------------------------------------------------------------
+RNNoise license (COPYING)
+-------------------------------------------------------------------------------
+
+Copyright (c) 2017, Mozilla
+Copyright (c) 2007-2017, Jean-Marc Valin
+Copyright (c) 2005-2017, Xiph.Org Foundation
+Copyright (c) 2003-2004, Mark Borgerding
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+- Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+- Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+- Neither the name of the Xiph.Org Foundation nor the names of its
+contributors may be used to endorse or promote products derived from
+this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE FOUNDATION
+OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.

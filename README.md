@@ -679,7 +679,7 @@ tags); the tests use exiftool and ffprobe as independent readers.
 | Color management: ICC v2/v4 profiles (matrix/TRC, `lut8`, `lut16`, `lutAtoB`/`lutBtoA`, floating-point `multiProcessElement` `D2Bn`/`B2Dn` tables with segmented curves, matrices and float lookup tables, gray, RGB, CMYK, n-color, L*a*b* and XYZ connection spaces), device link, abstract and named color (`ncl2`) profiles, chains of profiles, transforms with the four intents and black point compensation, built-in sRGB, Display P3, Adobe RGB, ProPhoto, BT.709, BT.2020 and gray profiles, CICP mapping of every H.273 primaries set (CIE XYZ included) and transfer (the logarithmic, BT.1361 and SMPTE ST 428-1 ones included), PQ and HLG profiles read from and written as ICC v4.4 `cicp`-tagged profiles, PQ/HLG to SDR tone mapping (BT.2390 EETF), SDR to PQ/HLG with the BT.2408 reference white, PQ to and from HLG through display light (BT.2390), HDR gamut conversion and tone mapping to a target's peak | `smalt-core` | `image.color` | Little CMS 2.17 (MIT); ITU-R BT.2100, BT.2390, BT.2408, SMPTE ST 2084, ARIB STD-B67, ICC.1:2022 |
 | HDR gain maps: ISO 21496-1 metadata (binary and Adobe `hdrgm` XMP), rendering of an image for a display headroom to 16-bit PQ or HLG with its content light level, computation of a gain map from two renditions (`GainMaps`) | `smalt-core` | `image.gainmap` | ISO 21496-1 as libavif and libultrahdr implement it, the Adobe gain map specification; libultrahdr (fraction search), libavif (gain range without outliers) |
 | Audio resampling, channel mixing, FIFO | `smalt-core` | `audio.process` | textbook Kaiser-windowed sinc design |
-| Voice processing: echo cancellation (AEC3), noise suppression, high-pass filter | `smalt-audio` | `audio.voice` | WebRTC audio processing module; Ooura FFT; musl and fdlibm math (royalty-free WebRTC grant in `PATENTS`) |
+| Voice processing at 8, 16, 32 and 48 kHz with up to 8 capture and render channels (band splitting and three-band filter bank, multichannel AEC3): echo cancellation (AEC3 and the mobile echo canceller), noise suppression, high-pass filter, the legacy gain controller in its digital and analog modes, the analog gain controller with clipping prediction, and the AGC2 level controller (adaptive digital gain with the RNN voice activity detector, saturation protector, limiter, input volume controller) | `smalt-audio` | `audio.voice` | WebRTC audio processing module, bit-exact with its scalar build; PFFFT; RNNoise weights; Ooura FFT; musl and fdlibm math (royalty-free WebRTC grant in `PATENTS`) |
 | Loudness: momentary, short-term and integrated loudness, loudness range, sample and true peak (ITU-R BS.1770-4, EBU R128, Tech 3341 and 3342 minimum requirements), any channel layout, bounded memory; silence detection; loudness normalization gains | `smalt-core` | `audio.loudness` | libebur128 (MIT) |
 
 Everything in `image.ops` of `smalt-core`. Inputs are never modified and results are new pictures, except
@@ -1186,7 +1186,9 @@ checks a FLAC source's MD5 signature on the way.
 - After `AudioReader.seek`, AMR output converges to that of a decode from the start over a few hundred
   milliseconds, and AC-3 and E-AC-3 dither differs, since the dither generator continues across frames;
   the other codecs except Opus and AAC give the same samples bit for bit.
-- Voice processing runs at 16 kHz mono; WebRTC's analog gain controller and AGC2 are not ported.
+- The pitch analysis of the voice detector of `GainControl.MANAGED_ANALOG` reads zeros where WebRTC reads
+  outside the bounds of its correlation surface, so a frame with a pitch peak at its border may get another voice
+  probability than WebRTC gives it.
 - Over HTTP, fragmented MP4 needs one request per fragment, and Matroska with its `Tags` at the end two extra
   requests. `AudioReader.seek` on Matroska Vorbis or AAC, and on AAC Main, LTP, LD and ELD with SBR in any
   container, restarts from the start of the track (exact, but slower), and AAC seeks are bit-identical only
@@ -2107,7 +2109,9 @@ software of the H.264 and HEVC standards (HM with its SCM screen content coding 
 [VTM](https://vcgit.hhi.fraunhofer.de/jvet/VVCSoftware_VTM) reference software of VVC, [fdlibm](https://www.netlib.org/fdlibm/),
 [WebRTC](https://webrtc.googlesource.com/src)'s audio processing module (as packaged by
 [webrtc-audio-processing](https://gitlab.freedesktop.org/pulseaudio/webrtc-audio-processing)), Takuya
-Ooura's [FFT package](http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html), [musl](https://musl.libc.org/),
+Ooura's [FFT package](http://www.kurims.kyoto-u.ac.jp/~ooura/fft.html), Julien Pommier's
+[PFFFT](https://bitbucket.org/jpommier/pffft), [RNNoise](https://gitlab.xiph.org/xiph/rnnoise),
+[musl](https://musl.libc.org/),
 [dav1d](https://code.videolan.org/videolan/dav1d), [libaom](https://aomedia.googlesource.com/aom),
 [libavif](https://github.com/AOMediaCodec/libavif), [giflib](https://sourceforge.net/projects/giflib/),
 Anthony Dekker's NeuQuant, [Little CMS](https://www.littlecms.com/), the PacketVideo AAC decoder, the
