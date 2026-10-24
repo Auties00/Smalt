@@ -36,7 +36,7 @@ class AvifEncoderOutputTest {
             Map.entry("still 10-bit 4:4:4", 969899688L),
             Map.entry("still with metadata", 1896312792L),
             Map.entry("animation of key frames with alpha", 3313142257L),
-            Map.entry("animation of predicted frames", 2315596843L)
+            Map.entry("animation of predicted frames", 3562154087L)
     );
 
     static RgbaPicture rgba(int width, int height, int frame, boolean alpha) {

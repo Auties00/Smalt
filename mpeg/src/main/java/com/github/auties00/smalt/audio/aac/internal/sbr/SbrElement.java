@@ -14,6 +14,10 @@ import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
  * through the banks) without a high band. Corrupt extension data never fails the decode; the
  * element ignores it until the next valid payload.
  *
+ * <p>The low delay spectral band replication of AAC-ELD runs low delay QMF banks with one QMF slot per
+ * time slot, reads the low delay time grid, and takes its first header from the configuration; it has
+ * no parametric stereo.
+ *
  * <p>Instances are not thread-safe.
  */
 public final class SbrElement {
@@ -34,9 +38,15 @@ public final class SbrElement {
     private final int sbrRate;
 
     /**
-     * The number of SBR time slots per frame, 16 or 15.
+     * The number of SBR time slots per frame: 16 or 15, for the low delay tool also the frame's
+     * number of QMF slots.
      */
     private final int timeSlots;
+
+    /**
+     * Whether the element runs the low delay spectral band replication of AAC-ELD.
+     */
+    private final boolean lowDelay;
 
     /**
      * The channels of the element, one or two.
@@ -110,6 +120,16 @@ public final class SbrElement {
     private byte[] payload = new byte[64];
 
     /**
+     * The reader over {@link #payload}, restarted for every payload.
+     */
+    private final AacBitReader payloadReader = new AacBitReader(payload);
+
+    /**
+     * The number of bits the last valid payload took.
+     */
+    private long consumed;
+
+    /**
      * Creates the decoder of one channel element.
      *
      * @param channelCount the element's channels: 1 for a single channel or LFE element, 2
@@ -123,17 +143,38 @@ public final class SbrElement {
      */
     public SbrElement(int channelCount, int coreRate, int frameLength, boolean downsampled,
                       boolean parametricStereo) {
+        this(channelCount, coreRate, frameLength, downsampled, parametricStereo, false);
+    }
+
+    /**
+     * Creates the decoder of one channel element, optionally with the low delay spectral band
+     * replication of AAC-ELD.
+     *
+     * @param channelCount the element's channels: 1 for a single channel or LFE element, 2
+     * for a channel pair
+     * @param coreRate the core sampling rate
+     * @param frameLength the number of core samples per frame: 1024 or 960, or 512 or 480 for the low
+     * delay tool
+     * @param downsampled whether the output stays at the core rate (32-band synthesis)
+     * instead of twice it
+     * @param parametricStereo whether a single channel element decodes parametric stereo into
+     * two output channels; ignored by the low delay tool
+     * @param lowDelay whether the element runs the low delay tool
+     */
+    public SbrElement(int channelCount, int coreRate, int frameLength, boolean downsampled,
+                      boolean parametricStereo, boolean lowDelay) {
         this.frameLength = frameLength;
         this.sbrRate = 2 * coreRate;
-        this.timeSlots = frameLength / 64;
+        this.lowDelay = lowDelay;
+        this.timeSlots = lowDelay ? frameLength / 32 : frameLength / 64;
         var bands = downsampled ? 32 : 64;
         this.channels = new SbrChannel[channelCount];
         this.data = new SbrFrameData[channelCount];
         for (var c = 0; c < channelCount; c++) {
-            channels[c] = new SbrChannel(frameLength, bands, SbrKernels.INSTANCE);
+            channels[c] = new SbrChannel(frameLength, bands, SbrKernels.INSTANCE, lowDelay);
             data[c] = new SbrFrameData();
         }
-        var stereoOutput = channelCount == 1 && parametricStereo;
+        var stereoOutput = channelCount == 1 && parametricStereo && !lowDelay;
         this.stereo = stereoOutput ? new PsDecoder() : null;
         this.stereoSynthesis = stereoOutput ? new QmfSynthesis(bands, SbrKernels.INSTANCE) : null;
         var outputs = stereoOutput ? 2 : channelCount;
@@ -161,6 +202,45 @@ public final class SbrElement {
     }
 
     /**
+     * Takes the header of the element from a configuration, as AAC-ELD carries the first header of
+     * each element in its {@code ld_sbr_header}.
+     *
+     * @param config the configuration bytes
+     * @param bitOffset the bit offset of the {@code sbr_header}
+     */
+    public void configure(byte[] config, int bitOffset) {
+        var reader = new AacBitReader(config);
+        reader.skip(bitOffset);
+        incoming.read(reader);
+        header.copy(incoming);
+        tablesValid = tables.update(header, sbrRate);
+        for (var channel : channels) {
+            channel.reset();
+        }
+        headerReceived = true;
+    }
+
+    /**
+     * Parses the low delay extension payload of an AAC-ELD frame, which follows the channel elements
+     * without a length.
+     *
+     * <p>The payload is read from the bits {@code reader} has left, up to {@code available}; the reader
+     * advances past the payload, or by {@code available} bits when the payload does not parse, which
+     * leaves the frame without extension data.
+     *
+     * @param reader the reader positioned at the payload
+     * @param available the number of bits the payload may take
+     * @param crc whether the payload starts with a CRC
+     */
+    public void parseLowDelay(AacBitReader reader, long available, boolean crc) {
+        var start = reader.bitPosition();
+        parse(reader, available, crc);
+        if (frameData) {
+            reader.seek(start + consumed);
+        }
+    }
+
+    /**
      * Parses one extension payload, the content of a fill element of type
      * {@code EXT_SBR_DATA} or {@code EXT_SBR_DATA_CRC} after its type.
      *
@@ -185,7 +265,8 @@ public final class SbrElement {
         seen = true;
         frameData = false;
         try {
-            frameData = read(new AacBitReader(payload, 0, bytes), bits, crc);
+            payloadReader.reset(payload, 0, bytes);
+            frameData = read(payloadReader, bits, crc);
         } catch (MediaException exception) {
             frameData = false;
         }
@@ -207,7 +288,8 @@ public final class SbrElement {
         if (crc) {
             reader.read(10);
         }
-        if (reader.readFlag()) {
+        var headerFlag = reader.readFlag();
+        if (headerFlag) {
             incoming.read(reader);
             if (!headerReceived || !incoming.sameTables(header)) {
                 header.copy(incoming);
@@ -231,6 +313,7 @@ public final class SbrElement {
         if (reader.bitPosition() > bits) {
             throw new MediaException.Malformed("SBR extension payload overrun");
         }
+        consumed = reader.bitPosition();
         return true;
     }
 
@@ -244,7 +327,7 @@ public final class SbrElement {
             reader.read(4);
         }
         var channel = data[0];
-        channel.readGrid(reader, timeSlots);
+        readGrid(channel, reader);
         channel.readDirections(reader);
         channel.readInverseFiltering(reader, tables.noiseBands);
         channel.readEnvelope(reader, tables, header.ampResolution, false);
@@ -265,7 +348,7 @@ public final class SbrElement {
         var left = data[0];
         var right = data[1];
         if (reader.readFlag()) {
-            left.readGrid(reader, timeSlots);
+            readGrid(left, reader);
             right.copyGrid(left);
             left.readDirections(reader);
             right.readDirections(reader);
@@ -276,8 +359,8 @@ public final class SbrElement {
             right.readEnvelope(reader, tables, header.ampResolution, true);
             right.readNoise(reader, tables.noiseBands, true);
         } else {
-            left.readGrid(reader, timeSlots);
-            right.readGrid(reader, timeSlots);
+            readGrid(left, reader);
+            readGrid(right, reader);
             left.readDirections(reader);
             right.readDirections(reader);
             left.readInverseFiltering(reader, tables.noiseBands);
@@ -290,6 +373,20 @@ public final class SbrElement {
         left.readHarmonics(reader, tables.highBands);
         right.readHarmonics(reader, tables.highBands);
         readExtended(reader);
+    }
+
+    /**
+     * Reads the time grid of a channel: {@code sbr_grid}, or {@code sbr_ld_grid} for the low delay tool.
+     *
+     * @param channel the channel's frame data
+     * @param reader the payload reader
+     */
+    private void readGrid(SbrFrameData channel, AacBitReader reader) {
+        if (lowDelay) {
+            channel.readLowDelayGrid(reader, timeSlots);
+        } else {
+            channel.readGrid(reader, timeSlots);
+        }
     }
 
     /**
@@ -337,8 +434,10 @@ public final class SbrElement {
      * for a single channel element with parametric stereo
      * @param stereoActive whether a single channel element with parametric stereo outputs two
      * channels in this frame
+     * @param gains the dynamic range control gains of each of the element's channels, 64 per
+     * slot for the frame's slots and six slots of look-ahead, or {@code null} for none
      */
-    public void decode(float[][] core, float[][] out, boolean stereoActive) {
+    public void decode(float[][] core, float[][] out, boolean stereoActive, float[][] gains) {
         for (var c = 0; c < channels.length; c++) {
             channels[c].analyze(core[c]);
         }
@@ -363,6 +462,15 @@ public final class SbrElement {
                 channels[c].assemble(active, tables.kx, channels[c].highRe, channels[c].highIm, 0);
             }
         }
+        if (gains != null) {
+            for (var c = 0; c < channels.length; c++) {
+                if (withStereo) {
+                    scale(matrixRe[c], matrixIm[c], gains[c], slots, SbrChannel.HIGH_LEAD);
+                } else {
+                    scale(channels[c].highRe, channels[c].highIm, gains[c], slots, 0);
+                }
+            }
+        }
         if (withStereo) {
             var usb = active ? tables.kx + tables.m : 32;
             stereo.process(matrixRe[0], matrixIm[0], matrixRe[1], matrixIm[1], slots, usb);
@@ -383,6 +491,27 @@ public final class SbrElement {
     }
 
     /**
+     * Scales a subband matrix by the dynamic range control gains, ISO/IEC 14496-3 subclause
+     * 4.5.2.7.5.
+     *
+     * @param re the real parts, 64 subbands per slot
+     * @param im the imaginary parts
+     * @param gains the gain of each subband of each slot
+     * @param slots the number of slots of the frame
+     * @param lookahead the number of following slots whose five lowest subbands are scaled too
+     */
+    private static void scale(float[] re, float[] im, float[] gains, int slots, int lookahead) {
+        for (var slot = 0; slot < slots + lookahead; slot++) {
+            var bands = slot < slots ? 64 : 5;
+            var row = slot * 64;
+            for (var k = 0; k < bands; k++) {
+                re[row + k] *= gains[row + k];
+                im[row + k] *= gains[row + k];
+            }
+        }
+    }
+
+    /**
      * Dequantizes the resolved scalefactors of every channel into envelope energies and noise
      * floor ratios as ISO/IEC 14496-3 specifies, combining the level and balance
      * channels of a coupled pair.
@@ -396,18 +525,18 @@ public final class SbrElement {
             for (var l = 0; l < level.envelopes; l++) {
                 var bands = tables.bands(level.resolution[l]);
                 for (var k = 0; k < bands; k++) {
-                    var base = 64 * Math.pow(2, level.envelope[l][k] / a + 1);
+                    var base = 64 * StrictMath.pow(2, level.envelope[l][k] / a + 1);
                     var right = balance.envelope[l][k];
-                    channels[0].envelopeEnergy[l][k] = base / (1 + Math.pow(2, (pan - right) / a));
-                    channels[1].envelopeEnergy[l][k] = base / (1 + Math.pow(2, (right - pan) / a));
+                    channels[0].envelopeEnergy[l][k] = base / (1 + StrictMath.pow(2, (pan - right) / a));
+                    channels[1].envelopeEnergy[l][k] = base / (1 + StrictMath.pow(2, (right - pan) / a));
                 }
             }
             for (var l = 0; l < level.noiseEnvelopes; l++) {
                 for (var k = 0; k < tables.noiseBands; k++) {
-                    var base = Math.pow(2, 6 - level.noise[l][k] + 1);
+                    var base = StrictMath.pow(2, 6 - level.noise[l][k] + 1);
                     var right = balance.noise[l][k];
-                    channels[0].noiseFloor[l][k] = base / (1 + Math.pow(2, 12 - right));
-                    channels[1].noiseFloor[l][k] = base / (1 + Math.pow(2, right - 12));
+                    channels[0].noiseFloor[l][k] = base / (1 + StrictMath.pow(2, 12 - right));
+                    channels[1].noiseFloor[l][k] = base / (1 + StrictMath.pow(2, right - 12));
                 }
             }
             return;
@@ -418,12 +547,12 @@ public final class SbrElement {
             for (var l = 0; l < frame.envelopes; l++) {
                 var bands = tables.bands(frame.resolution[l]);
                 for (var k = 0; k < bands; k++) {
-                    channels[c].envelopeEnergy[l][k] = 64 * Math.pow(2, frame.envelope[l][k] / a);
+                    channels[c].envelopeEnergy[l][k] = 64 * StrictMath.pow(2, frame.envelope[l][k] / a);
                 }
             }
             for (var l = 0; l < frame.noiseEnvelopes; l++) {
                 for (var k = 0; k < tables.noiseBands; k++) {
-                    channels[c].noiseFloor[l][k] = Math.pow(2, 6 - frame.noise[l][k]);
+                    channels[c].noiseFloor[l][k] = StrictMath.pow(2, 6 - frame.noise[l][k]);
                 }
             }
         }

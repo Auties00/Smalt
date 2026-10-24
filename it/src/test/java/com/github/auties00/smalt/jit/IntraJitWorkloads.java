@@ -37,10 +37,10 @@ final class IntraJitWorkloads {
         return frames;
     }
 
-    static JitWorkload.Workload proresDecode(long bound) {
+    static JitWorkload.Workload proresDecode() {
         var frames = proresFrames();
         var decoder = new ProResDecoder(ProResDecoderOptions.builder().threads(1).build());
-        return JitWorkload.named("proresdec", bound, () -> {
+        return JitWorkload.named("proresdec", () -> {
             for (var frame : frames) {
                 sink += decoder.decodeFrame(frame, 0, frame.length).width();
             }
@@ -48,11 +48,11 @@ final class IntraJitWorkloads {
         });
     }
 
-    static JitWorkload.Workload proresEncode(long bound) {
+    static JitWorkload.Workload proresEncode() {
         var pictures = JitWorkload.synthesize(320, 240, 2);
         var encoder = new ProResEncoder(320, 240, ProResEncoderOptions.of(ProResProfile.STANDARD).toBuilder()
                 .threads(1).build());
-        return JitWorkload.named("proresenc", bound, () -> {
+        return JitWorkload.named("proresenc", () -> {
             for (var picture : pictures) {
                 sink += encoder.encodeFrame(new VideoFrame(picture, Packet.NO_TIMESTAMP, 0, true)).size();
             }
@@ -60,7 +60,7 @@ final class IntraJitWorkloads {
         });
     }
 
-    static JitWorkload.Workload dnxhdDecode(long bound) {
+    static JitWorkload.Workload dnxhdDecode() {
         var encoder = new DnxhdEncoder(320, 240, DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_SQ).toBuilder()
                 .threads(1).build());
         var frames = new ArrayList<byte[]>();
@@ -68,7 +68,7 @@ final class IntraJitWorkloads {
             frames.add(encoder.encodeFrame(new VideoFrame(picture, Packet.NO_TIMESTAMP, 0, true)).data());
         }
         var decoder = new DnxhdDecoder(DnxhdDecoderOptions.builder().threads(1).build());
-        return JitWorkload.named("dnxhddec", bound, () -> {
+        return JitWorkload.named("dnxhddec", () -> {
             for (var frame : frames) {
                 sink += decoder.decodeFrame(frame, 0, frame.length).width();
             }
@@ -76,11 +76,11 @@ final class IntraJitWorkloads {
         });
     }
 
-    static JitWorkload.Workload dnxhdEncode(long bound) {
+    static JitWorkload.Workload dnxhdEncode() {
         var pictures = JitWorkload.synthesize(320, 240, 2);
         var encoder = new DnxhdEncoder(320, 240, DnxhdEncoderOptions.of(DnxhdProfile.DNXHR_HQ).toBuilder()
                 .threads(1).build());
-        return JitWorkload.named("dnxhdenc", bound, () -> {
+        return JitWorkload.named("dnxhdenc", () -> {
             for (var picture : pictures) {
                 sink += encoder.encodeFrame(new VideoFrame(picture, Packet.NO_TIMESTAMP, 0, true)).size();
             }

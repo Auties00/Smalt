@@ -6,6 +6,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -193,7 +194,7 @@ final class MovieParser {
             } else if (box.type() == BoxTypes.TREX) {
                 body.fullBoxHeader();
                 var trackId = body.s32();
-                body.u32();
+                var description = body.u32();
                 var duration = body.u32();
                 var size = body.u32();
                 var flags = body.s32();
@@ -202,6 +203,7 @@ final class MovieParser {
                         track.defaultDuration = duration;
                         track.defaultSize = size;
                         track.defaultFlags = flags;
+                        track.defaultDescription = descriptionIndex(description, track.entries.length);
                         break;
                     }
                 }
@@ -232,7 +234,8 @@ final class MovieParser {
 
     /**
      * Keeps the track identifiers a {@code tref} box lists under {@code chap}, the QuickTime
-     * chapter tracks of a track.
+     * chapter tracks of a track, and under {@code scal}, the tracks whose samples the samples of a
+     * scalable or multiview H.264 track extend (ISO/IEC 14496-15).
      *
      * @param tref the box payload
      * @param track receives the identifiers
@@ -240,7 +243,8 @@ final class MovieParser {
     private static void parseChapterReferences(BoxCursor tref, Mp4Track track) {
         while (tref.hasBox()) {
             var reference = tref.nextBox();
-            if (reference.type() != FourCc.of("chap")) {
+            var chapters = reference.type() == FourCc.of("chap");
+            if (!chapters && reference.type() != FourCc.of("scal")) {
                 continue;
             }
             var body = reference;
@@ -248,7 +252,12 @@ final class MovieParser {
             while (body.remaining() >= 4 && ids.size() < 16) {
                 ids.add((int) body.u32());
             }
-            track.chapterTracks = ids.stream().mapToInt(Integer::intValue).toArray();
+            var array = ids.stream().mapToInt(Integer::intValue).toArray();
+            if (chapters) {
+                track.chapterTracks = array;
+            } else {
+                track.scalableTracks = array;
+            }
         }
     }
 
@@ -266,6 +275,7 @@ final class MovieParser {
             switch (box.type()) {
                 case BoxTypes.TKHD -> parseTrackHeader(box, track);
                 case BoxTypes.EDTS -> parseEdits(box, track);
+                case BoxTypes.UDTA -> parseTrackUserData(box, track);
                 case BoxTypes.MDIA -> mdia = box;
                 default -> {
                     if (box.type() == FourCc.of("tref")) {
@@ -350,42 +360,15 @@ final class MovieParser {
     }
 
     /**
-     * Rejects a sample description whose data reference points to another file.
-     *
-     * @param stsd a cursor over the {@code stsd} payload, not moved
-     * @param selfContained whether each data reference is self-contained, or {@code null}
-     * @param track the track, for diagnostics
-     * @throws MediaException.Unsupported if the samples are stored in another file
-     */
-    private static void checkDataReference(BoxCursor stsd, boolean[] selfContained, Mp4Track track) {
-        if (selfContained == null) {
-            return;
-        }
-        var cursor = stsd.duplicate();
-        if (cursor.remaining() < 8 + 16) {
-            return;
-        }
-        cursor.skip(8);
-        var entry = cursor.nextBox();
-        if (entry.remaining() < 8) {
-            return;
-        }
-        entry.skip(6);
-        var index = entry.u16();
-        if (index >= 1 && index <= selfContained.length && !selfContained[index - 1]) {
-            throw new MediaException.Unsupported("mp4 external data reference",
-                    "the samples of track " + track.fileId + " are stored in another file");
-        }
-    }
-
-    /**
      * Parses a {@code tkhd} box.
      *
      * @param tkhd the box payload
      * @param track the track being built
      */
     private static void parseTrackHeader(BoxCursor tkhd, Mp4Track track) {
-        var version = tkhd.fullBoxHeader() >>> 24;
+        var header = tkhd.fullBoxHeader();
+        var version = header >>> 24;
+        track.enabled = (header & Mp4TrackMetadata.ENABLED) != 0;
         if (version == 1) {
             tkhd.skip(16);
             track.fileId = tkhd.s32();
@@ -403,6 +386,33 @@ final class MovieParser {
         track.matrix = matrix;
         track.headerWidth = (int) (tkhd.u32() >>> 16);
         track.headerHeight = (int) (tkhd.u32() >>> 16);
+    }
+
+    /**
+     * Parses the {@code udta} box of a track: its {@code name}, its {@code kind} boxes, and the tags of its
+     * {@code meta} box and text atoms. A damaged box is skipped, as the metadata is descriptive.
+     *
+     * @param udta the box payload
+     * @param track the track being built
+     */
+    private static void parseTrackUserData(BoxCursor udta, Mp4Track track) {
+        new MetadataReader(track.userTags).readUserData(udta.duplicate());
+        while (udta.hasBox()) {
+            try {
+                var box = udta.nextBox();
+                if (box.type() == BoxTypes.NAME) {
+                    var name = box.string(box.remaining()).strip();
+                    track.name = name.isEmpty() ? null : name;
+                } else if (box.type() == FourCc.of("kind")) {
+                    box.fullBoxHeader();
+                    var scheme = box.string();
+                    var value = box.string();
+                    track.kinds.addAll(Mp4TrackMetadata.dispositions(scheme, value));
+                }
+            } catch (MediaException.Malformed exception) {
+                return;
+            }
+        }
     }
 
     /**
@@ -543,8 +553,10 @@ final class MovieParser {
         if (stsd == null) {
             throw new MediaException.Malformed("track " + track.fileId + " has no stsd");
         }
-        checkDataReference(stsd, selfContained, track);
-        track.entry = SampleEntry.parse(stsd, track.handler, limits);
+        var errors = new ArrayList<MediaException>();
+        track.entries = SampleEntry.parseAll(stsd, track.handler, limits, selfContained, errors);
+        track.entryErrors = errors.toArray(new MediaException[0]);
+        track.entry = track.entries[0];
 
         var sizes = new SizeReader(stsz, stz2);
         var sampleCount = sizes.count;
@@ -556,18 +568,20 @@ final class MovieParser {
         var pcmGrouping = track.entry.codec().isPcm() && sizes.constant > 0 && allDeltasOne(timing);
         if (pcmGrouping) {
             track.samples = expandPcm(track, sizes, chunkOffsets, stscEntries, sampleCount);
+            track.selectBaseEntry();
             return;
         }
         var capacity = (int) Math.min(Math.min(sampleCount, coverable(chunkOffsets, stscEntries)), Integer.MAX_VALUE);
         var table = new SampleTable(limits, capacity);
         track.samples = table;
-        var filled = placeSamples(table, sizes, chunkOffsets, stscEntries, sampleCount);
+        var filled = placeSamples(table, sizes, chunkOffsets, stscEntries, sampleCount, track.entries.length);
         applyTiming(table, timing, composition, filled);
         applySync(table, stss, stps, sdtp, filled);
         if (stss != null && randomAccess != null) {
             markRandomAccess(table, randomAccess, 0, filled);
         }
         table.count = filled;
+        track.selectBaseEntry();
     }
 
     /**
@@ -804,9 +818,11 @@ final class MovieParser {
      * @param chunkOffsets the chunk offsets
      * @param stsc the sample-to-chunk entries
      * @param sampleCount the declared number of samples
+     * @param descriptions the number of sample descriptions of the track
      * @return the number of samples the chunks cover, at most {@code sampleCount}
      */
-    private static int placeSamples(SampleTable table, SizeReader sizes, long[] chunkOffsets, long[] stsc, long sampleCount) {
+    private static int placeSamples(SampleTable table, SizeReader sizes, long[] chunkOffsets, long[] stsc, long sampleCount,
+                                    int descriptions) {
         var entries = stsc.length / 3;
         var index = 0;
         for (var entry = 0; entry < entries && index < sampleCount; entry++) {
@@ -814,6 +830,7 @@ final class MovieParser {
             var last = entry + 1 < entries ? stsc[(entry + 1) * 3] - 1 : chunkOffsets.length;
             last = Math.min(last, chunkOffsets.length);
             var perChunk = stsc[entry * 3 + 1];
+            var description = descriptionIndex(stsc[entry * 3 + 2], descriptions);
             for (var chunk = first; chunk < last && index < sampleCount; chunk++) {
                 var offset = chunkOffsets[(int) chunk];
                 var inChunk = Math.min(perChunk, sampleCount - index);
@@ -821,12 +838,26 @@ final class MovieParser {
                     var size = sizes.next(index);
                     table.offsets[index] = offset;
                     table.sizes[index] = size;
+                    table.setDescription(index, description);
                     offset += size;
                     index++;
                 }
             }
         }
         return index;
+    }
+
+    /**
+     * Converts a one-based sample description index into an index of the parsed descriptions.
+     *
+     * @param value the {@code sample_description_index} of an {@code stsc} entry, a {@code tfhd}
+     * or a {@code trex}
+     * @param descriptions the number of parsed descriptions
+     * @return the zero-based index; the first description for a value out of range, such as the
+     * zero of files that leave the field unset
+     */
+    static int descriptionIndex(long value, int descriptions) {
+        return value >= 1 && value <= descriptions ? (int) value - 1 : 0;
     }
 
     /**
@@ -1001,10 +1032,6 @@ final class MovieParser {
      * @return the packet index
      */
     private SampleTable expandPcm(Mp4Track track, SizeReader sizes, long[] chunkOffsets, long[] stsc, long sampleCount) {
-        var frameBytes = sizes.constant;
-        if (frameBytes == 1 && track.entry.frameBytes() > 1) {
-            frameBytes = track.entry.frameBytes();
-        }
         var entries = stsc.length / 3;
         var packets = 0L;
         var covered = 0L;
@@ -1032,6 +1059,12 @@ final class MovieParser {
             var first = stsc[entry * 3] - 1;
             var last = Math.min(entry + 1 < entries ? stsc[(entry + 1) * 3] - 1 : chunkOffsets.length, chunkOffsets.length);
             var perChunk = stsc[entry * 3 + 1];
+            var description = descriptionIndex(stsc[entry * 3 + 2], track.entries.length);
+            var described = track.entries[description] != null ? track.entries[description] : track.entry;
+            var frameBytes = sizes.constant;
+            if (frameBytes == 1 && described.frameBytes() > 1) {
+                frameBytes = described.frameBytes();
+            }
             for (var chunk = first; chunk < last && frame < sampleCount; chunk++) {
                 var offset = chunkOffsets[(int) chunk];
                 var inChunk = Math.min(perChunk, sampleCount - frame);
@@ -1042,6 +1075,7 @@ final class MovieParser {
                         throw new MediaException.Malformed("PCM packet of " + bytes + " bytes is too large");
                     }
                     table.add(offset, (int) bytes, frame, frames, 0, true);
+                    table.setDescription(table.count - 1, description);
                     offset += bytes;
                     frame += frames;
                     inChunk -= frames;

@@ -1052,7 +1052,7 @@ public final class ZlibDeflater {
 
     static {
         for (var i = 0; i < 256; i++) {
-            MANTISSA_LOG[i] = (int) Math.round(256 * Math.log(1 + i / 256.0) / Math.log(2));
+            MANTISSA_LOG[i] = (int) Math.round(256 * StrictMath.log(1 + i / 256.0) / StrictMath.log(2));
         }
     }
 
