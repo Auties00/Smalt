@@ -79,6 +79,44 @@ class Jp2RobustnessTest {
     }
 
     @Test
+    @DisplayName("mutated and truncated HTJ2K output fails only with media exceptions not caused by a bug")
+    void highThroughput() {
+        var inputs = new byte[][]{
+                encoded(Jp2EncoderOptions.lossless().toBuilder().highThroughput(true).codeBlockSize(16, 16).build()),
+                encoded(Jp2EncoderOptions.lossy(8).toBuilder().highThroughput(true).compressionRatios(30, 8)
+                        .codeBlockStyles(java.util.Set.of(Jp2CodeBlockStyle.VERTICALLY_CAUSAL)).build())};
+        var random = new Random(15);
+        assertTimeoutPreemptively(Duration.ofSeconds(180), () -> {
+            for (var input : inputs) {
+                for (var length = 0; length < input.length; length += 5) {
+                    decodeStrictly(Arrays.copyOf(input, length));
+                }
+                for (var round = 0; round < 300; round++) {
+                    var data = input.clone();
+                    var flips = 1 + random.nextInt(6);
+                    for (var i = 0; i < flips; i++) {
+                        data[random.nextInt(data.length)] = (byte) random.nextInt(256);
+                    }
+                    decodeStrictly(data);
+                }
+            }
+        });
+    }
+
+    static void decodeStrictly(byte[] data) {
+        try {
+            Jp2Decoder.decodeChannels(MediaSource.of(data));
+        } catch (MediaException exception) {
+            for (var cause = exception.getCause(); cause != null; cause = cause.getCause()) {
+                if (cause instanceof IndexOutOfBoundsException || cause instanceof NullPointerException
+                        || cause instanceof ArithmeticException || cause instanceof NegativeArraySizeException) {
+                    throw new AssertionError("decoder bug behind " + exception, cause);
+                }
+            }
+        }
+    }
+
+    @Test
     @DisplayName("every truncation of a small tiled file fails only with media exceptions")
     void truncations() {
         var data = encoded(Jp2EncoderOptions.lossless().toBuilder().tileSize(16, 16).build());
