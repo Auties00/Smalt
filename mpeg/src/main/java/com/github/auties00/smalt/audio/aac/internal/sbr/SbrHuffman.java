@@ -15,7 +15,8 @@ import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
  *
  * @implNote This implementation takes the trees from the PacketVideo AAC decoder,
  * which encodes the spectral band replication and parametric stereo codebooks of ISO/IEC 14496-3 in
- * this form.
+ * this form; the phase codebooks of parametric stereo, which that decoder lacks, are built from
+ * the codeword tables of ISO/IEC 14496-3 in the same form.
  */
 final class SbrHuffman {
     /**
@@ -216,6 +217,27 @@ final class SbrHuffman {
             -39, -38, -41, -40, -51, 51, 52, 59, 53, 56, 54, 55, -35, -34, -37, -36,
             57, 58, -94, -93, -84, -44, -80, -48
     };
+
+    /**
+     * The codebook of the inter-channel phase differences coded in frequency (ISO/IEC 14496-3
+     * Table 8.B.20).
+     */
+    static final byte[] IPD_FREQUENCY = {1, -64, 2, 3, -63, 6, 5, 4, -62, -57, -61, -58, -60, -59};
+
+    /**
+     * The codebook of the inter-channel phase differences coded in time (Table 8.B.20).
+     */
+    static final byte[] IPD_TIME = {1, -64, 3, 2, -63, -57, 5, 4, -62, -58, -59, 6, -60, -61};
+
+    /**
+     * The codebook of the overall phase differences coded in frequency (Table 8.B.21).
+     */
+    static final byte[] OPD_FREQUENCY = {1, -64, 2, 3, -57, -63, 5, 4, -62, 6, -61, -58, -59, -60};
+
+    /**
+     * The codebook of the overall phase differences coded in time (Table 8.B.21).
+     */
+    static final byte[] OPD_TIME = {1, -64, 3, 2, -63, -57, 4, 5, -59, -62, -58, 6, -60, -61};
 
     /**
      * Prevents instantiation.

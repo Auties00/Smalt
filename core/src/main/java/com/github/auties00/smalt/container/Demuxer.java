@@ -3,10 +3,12 @@ package com.github.auties00.smalt.container;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Splits a container into the packets of its elementary streams.
@@ -61,6 +63,18 @@ public interface Demuxer extends AutoCloseable {
      */
     default Map<String, String> trackMetadata(int trackId) {
         return Map.of();
+    }
+
+    /**
+     * Returns the dispositions the container flags one track with, such as the default track or forced subtitles.
+     *
+     * @implSpec The default implementation returns an empty set.
+     *
+     * @param trackId the identifier of the track
+     * @return the dispositions; unmodifiable, empty for an unknown track or a container that stores none
+     */
+    default Set<TrackDisposition> trackDisposition(int trackId) {
+        return Set.of();
     }
 
     /**

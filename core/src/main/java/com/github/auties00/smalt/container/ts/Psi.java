@@ -1,11 +1,13 @@
 package com.github.auties00.smalt.container.ts;
 
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
+import com.github.auties00.smalt.internal.tags.TsDescriptors;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.function.Consumer;
 
 /**
@@ -24,9 +26,19 @@ final class Psi {
     static final int PMT_TABLE = 0x02;
 
     /**
+     * The {@code table_id} of an SCTE 35 {@code splice_info_section}.
+     */
+    static final int SPLICE_INFO_TABLE = 0xFC;
+
+    /**
      * The largest section, header included: a private section's 12-bit length plus its header.
      */
     private static final int MAX_SECTION = 4096;
+
+    /**
+     * The largest number of registration descriptors kept per descriptor loop.
+     */
+    private static final int MAX_REGISTRATIONS = 8;
 
     /**
      * The registration {@code format_identifier} of ID3 timed metadata ({@code "ID3 "}).
@@ -58,6 +70,21 @@ final class Psi {
      */
     static final int HDMV = fourCc("HDMV");
 
+    /**
+     * The registration {@code format_identifier} of AV1 ({@code "AV01"}).
+     */
+    static final int AV1 = fourCc("AV01");
+
+    /**
+     * The registration {@code format_identifier} of SMPTE ST 302 AES3 data ({@code "BSSD"}).
+     */
+    static final int AES3 = fourCc("BSSD");
+
+    /**
+     * The registration {@code format_identifier} of SCTE 35 programs ({@code "CUEI"}).
+     */
+    static final int CUEI = fourCc("CUEI");
+
     private Psi() {
         throw new AssertionError();
     }
@@ -86,11 +113,12 @@ final class Psi {
      * Describes an elementary stream as its program map entry declares it.
      *
      * @param pid the PID of the stream
+     * @param trackId the identifier of the track the stream feeds: its PID, unless the stream continues a track
+     * first carried on another PID or that PID is taken by another track
      * @param streamType the {@code stream_type}
-     * @param registration the {@code format_identifier} of the stream's registration descriptor, or
-     * {@code 0}
-     * @param programRegistration the {@code format_identifier} of the program's registration
-     * descriptor, or {@code 0}
+     * @param registrations the {@code format_identifier}s of the stream's registration descriptors, in order
+     * @param programRegistrations the {@code format_identifier}s of the program's registration descriptors, in
+     * order
      * @param language the ISO 639-2 language code, or {@code null}
      * @param ac3Descriptor whether a DVB AC-3 descriptor (tag {@code 0x6A}) is present
      * @param eac3Descriptor whether a DVB enhanced AC-3 descriptor (tag {@code 0x7A}) is present
@@ -99,20 +127,100 @@ final class Psi {
      * @param id3Metadata whether a metadata descriptor (tag {@code 0x26}) announces ID3
      * @param dvbSubtitles whether a DVB subtitling descriptor (tag {@code 0x59}) is present
      * @param teletext whether a DVB teletext descriptor (tag {@code 0x56}) is present
+     * @param audioType the {@code audio_type} of the first language of the ISO 639 language descriptor, or
+     * {@code -1}
+     * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
      */
-    record StreamEntry(int pid, int streamType, int registration, int programRegistration, String language,
-                       boolean ac3Descriptor, boolean eac3Descriptor, int opusChannels, boolean id3Metadata,
-                       boolean dvbSubtitles, boolean teletext) {
+    record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
+                       List<Integer> programRegistrations, String language, boolean ac3Descriptor,
+                       boolean eac3Descriptor, int opusChannels, boolean id3Metadata, boolean dvbSubtitles,
+                       boolean teletext, int audioType, String name) {
+        /**
+         * Returns whether a registration descriptor of the stream carries an identifier.
+         *
+         * @param identifier the {@code format_identifier}
+         * @return {@code true} when one does
+         */
+        boolean registered(int identifier) {
+            return registrations.contains(identifier);
+        }
+
+        /**
+         * Returns whether a registration descriptor of the program carries an identifier.
+         *
+         * @param identifier the {@code format_identifier}
+         * @return {@code true} when one does
+         */
+        boolean programRegistered(int identifier) {
+            return programRegistrations.contains(identifier);
+        }
+
+        /**
+         * Returns this entry feeding another track.
+         *
+         * @param id the track identifier
+         * @return the entry
+         */
+        StreamEntry withTrackId(int id) {
+            return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
+                    eac3Descriptor, opusChannels, id3Metadata, dvbSubtitles, teletext, audioType, name);
+        }
+
+        /**
+         * Returns whether another entry declares the same coding: stream type, registrations, coding descriptors
+         * and language, whatever its PID.
+         *
+         * @param other the entry
+         * @return {@code true} for the same coding
+         */
+        boolean sameCoding(StreamEntry other) {
+            return streamType == other.streamType && registrations.equals(other.registrations)
+                    && programRegistrations.equals(other.programRegistrations)
+                    && Objects.equals(language, other.language) && ac3Descriptor == other.ac3Descriptor
+                    && eac3Descriptor == other.eac3Descriptor && opusChannels == other.opusChannels
+                    && id3Metadata == other.id3Metadata && dvbSubtitles == other.dvbSubtitles
+                    && teletext == other.teletext;
+        }
     }
 
     /**
      * Describes a program map section.
      *
      * @param number the {@code program_number}
+     * @param version the {@code version_number}
      * @param pcrPid the {@code PCR_PID}
      * @param streams the elementary streams, in section order
      */
-    record PmtSection(int number, int pcrPid, List<StreamEntry> streams) {
+    record PmtSection(int number, int version, int pcrPid, List<StreamEntry> streams) {
+        /**
+         * Returns whether another section maps the same streams: the same PIDs with the same codings, in order.
+         *
+         * @param other the section
+         * @return {@code true} when nothing but the version or the clock PID differs
+         */
+        boolean sameStreams(PmtSection other) {
+            if (streams.size() != other.streams.size()) {
+                return false;
+            }
+            for (var index = 0; index < streams.size(); index++) {
+                var mine = streams.get(index);
+                var theirs = other.streams.get(index);
+                if (mine.pid() != theirs.pid() || !mine.sameCoding(theirs)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Returns whether a long-form section applies now rather than announcing the next version.
+     *
+     * @param section the whole section
+     * @return {@code true} when its {@code current_next_indicator} is set
+     */
+    static boolean isCurrent(byte[] section) {
+        return section.length > 5 && (section[5] & 0x01) != 0;
     }
 
     /**
@@ -143,6 +251,7 @@ final class Psi {
             return null;
         }
         var number = (section[3] & 0xFF) << 8 | (section[4] & 0xFF);
+        var version = (section[5] >> 1) & 0x1F;
         var pcrPid = (section[8] & 0x1F) << 8 | (section[9] & 0xFF);
         var infoLength = (section[10] & 0x0F) << 8 | (section[11] & 0xFF);
         var end = section.length - 4;
@@ -163,11 +272,12 @@ final class Psi {
             }
             var descriptors = new Descriptors(section, position, length);
             position += length;
-            streams.add(new StreamEntry(pid, type, descriptors.registration, programDescriptors.registration,
-                    descriptors.language, descriptors.ac3, descriptors.eac3, descriptors.opusChannels,
-                    descriptors.id3, descriptors.subtitles, descriptors.teletext));
+            streams.add(new StreamEntry(pid, pid, type, List.copyOf(descriptors.registrations),
+                    List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
+                    descriptors.eac3, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
+                    descriptors.teletext, descriptors.audioType, descriptors.name));
         }
-        return new PmtSection(number, pcrPid, streams);
+        return new PmtSection(number, version, pcrPid, streams);
     }
 
     /**
@@ -176,9 +286,9 @@ final class Psi {
      */
     private static final class Descriptors {
         /**
-         * The registration {@code format_identifier}, or {@code 0}.
+         * The registration {@code format_identifier}s, in order.
          */
-        int registration;
+        final List<Integer> registrations = new ArrayList<>(1);
 
         /**
          * The ISO 639-2 language code, or {@code null}.
@@ -216,6 +326,16 @@ final class Psi {
         boolean teletext;
 
         /**
+         * The {@code audio_type} of the language descriptor, or {@code -1}.
+         */
+        int audioType = -1;
+
+        /**
+         * The component name, or {@code null}.
+         */
+        String name;
+
+        /**
          * Reads a descriptor loop.
          *
          * @param data the section
@@ -234,16 +354,20 @@ final class Psi {
                 }
                 switch (tag) {
                     case 0x05 -> {
-                        if (size >= 4) {
-                            registration = (data[body] & 0xFF) << 24 | (data[body + 1] & 0xFF) << 16
-                                    | (data[body + 2] & 0xFF) << 8 | (data[body + 3] & 0xFF);
+                        if (size >= 4 && registrations.size() < MAX_REGISTRATIONS) {
+                            registrations.add((data[body] & 0xFF) << 24 | (data[body + 1] & 0xFF) << 16
+                                    | (data[body + 2] & 0xFF) << 8 | (data[body + 3] & 0xFF));
                         }
                     }
                     case 0x0A -> {
                         if (size >= 3 && isLetters(data, body)) {
                             language = new String(data, body, 3, StandardCharsets.US_ASCII).toLowerCase(java.util.Locale.ROOT);
                         }
+                        if (size >= 4) {
+                            audioType = data[body + 3] & 0xFF;
+                        }
                     }
+                    case TsDescriptors.COMPONENT_NAME -> name = TsDescriptors.multipleString(data, body, size);
                     case 0x26 -> id3 |= metadataIsId3(data, body, size);
                     case 0x56 -> teletext = true;
                     case 0x59 -> subtitles = true;
@@ -324,6 +448,28 @@ final class Psi {
          * The bytes of the section being collected.
          */
         private final byte[] buffer = new byte[MAX_SECTION];
+
+        /**
+         * Whether short-form sections that end with a {@code CRC_32} (SCTE 35 splice information) are accepted
+         * besides long-form ones.
+         */
+        private final boolean shortForm;
+
+        /**
+         * Constructs an assembler of long-form sections.
+         */
+        SectionAssembler() {
+            this(false);
+        }
+
+        /**
+         * Constructs an assembler.
+         *
+         * @param shortForm whether short-form sections ending with a {@code CRC_32} are accepted too
+         */
+        SectionAssembler(boolean shortForm) {
+            this.shortForm = shortForm;
+        }
 
         /**
          * The number of bytes collected.
@@ -422,8 +568,8 @@ final class Psi {
          * @param section a whole section, its {@code CRC_32} included
          * @return {@code true} for a usable section
          */
-        private static boolean isValid(byte[] section) {
-            if ((section[1] & 0x80) == 0) {
+        private boolean isValid(byte[] section) {
+            if ((section[1] & 0x80) == 0 && !shortForm) {
                 return false;
             }
             return section.length >= 12 && Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, section, 0, section.length) == 0;

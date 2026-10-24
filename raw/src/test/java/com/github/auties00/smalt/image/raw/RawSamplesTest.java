@@ -55,7 +55,7 @@ class RawSamplesTest {
             "NEF_D300S_LOSSLESS_14, NEF, 4288, 2848, RGGB, 14, true, NIKON D300S, 0",
             "NEF_D5600_LOSSY_12_SPLIT, NEF, 6000, 4000, RGGB, 12, true, NIKON D5600, 12800",
             "NEF_D7000_LOSSY_14_SPLIT, NEF, 4928, 3264, RGGB, 14, true, NIKON D7000, 0",
-            "NEF_E5700, NEF, 2576, 1924, YCGM, 12, false, E5700, 0",
+            "NEF_E5700, NEF, 2576, 1924, GMYC, 12, false, E5700, 0",
             "NEF_E8400, NEF, 3280, 2454, BGGR, 12, true, E8400, 0",
             "NEF_E8800, NEF, 3280, 2454, BGGR, 12, true, E8800, 0",
             "ARW_NEX6_CRAW_12, ARW, 4912, 3264, RGGB, 14, true, NEX-6, 200",
