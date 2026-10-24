@@ -3,12 +3,18 @@
 package com.github.auties00.smalt.audio.amr.internal.nb;
 
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.MAX_16;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.add;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.divS;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.extractH;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.fxpMac;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lMac;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lMult;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.lShl;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.mpy32;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.normL;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.round;
 import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.shr;
+import static com.github.auties00.smalt.audio.amr.internal.nb.BasicOps.sub;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.GP_CLIP;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.L_FRAME_BY2;
 import static com.github.auties00.smalt.audio.amr.internal.nb.Constants.L_INTER_SRCH;
@@ -129,7 +135,7 @@ final class ClosedLoopPitch {
         var t0Frac = lag[1];
         ana[anaOffset++] = lag[3];
         Filters.predLt3or6(exc, excOffset, t0, t0Frac, L_SUBFR, lag[2] != 0, work);
-        CodebookCorrelation.convolve(exc, excOffset, h1, h1Offset, yl, 0, L_SUBFR);
+        CodebookCorrelation.convolve(exc, excOffset, h1, h1Offset, yl, 0, L_SUBFR, overflow);
         var gainPit = gPitch(mode, xn, yl, gCoeff, overflow);
         var gpcFlag = false;
         var gpLimit = MAX_16;
@@ -153,10 +159,10 @@ final class ClosedLoopPitch {
             }
         }
         for (var i = 0; i < L_SUBFR; i++) {
-            var lTemp = (yl[i] * gainPit) >> 14;
-            xn2[i] = (short) (xn[i] - (short) lTemp);
-            lTemp = (exc[excOffset + i] * gainPit) >> 14;
-            res2[i] -= (short) lTemp;
+            var lTemp = lShl(lMult(yl[i], gainPit, overflow), (short) 1);
+            xn2[i] = sub(xn[i], extractH(lTemp), overflow);
+            lTemp = lShl(lMult(exc[excOffset + i], gainPit, overflow), (short) 1);
+            res2[i] = sub(res2[i], extractH(lTemp), overflow);
         }
         result[0] = t0;
         result[1] = t0Frac;
@@ -181,46 +187,56 @@ final class ClosedLoopPitch {
     private void normCorr(short[] exc, int excOffset, short[] xn, short[] h, int hOffset, int tMin, int tMax,
                           Flag overflow) {
         var k = -tMin;
-        CodebookCorrelation.convolve(exc, excOffset + k, h, hOffset, excf, 0, L_SUBFR);
-        var s = 0;
+        CodebookCorrelation.convolve(exc, excOffset + k, h, hOffset, excf, 0, L_SUBFR, overflow);
+        var energy = 0L;
         for (var j = 0; j < L_SUBFR; j++) {
             var temp = excf[j];
             scaledExcf[j] = (short) (temp >> 2);
-            s += temp * temp;
+            energy += temp * temp;
         }
         short[] sExcf;
-        int hFac;
+        short hFac;
         int scaling;
-        if (s <= (67108864 >> 1)) {
+        if (Math.min(energy << 1, Integer.MAX_VALUE) <= 67108864) {
             sExcf = excf;
-            hFac = 12;
+            hFac = 15 - 12;
             scaling = 0;
         } else {
             sExcf = scaledExcf;
-            hFac = 14;
+            hFac = 15 - 12 - 2;
             scaling = 2;
         }
         for (var i = tMin; i <= tMax; i++) {
-            s = 0;
-            var s2 = 0;
+            var sum = 0L;
+            var magnitude = 0L;
+            energy = 0L;
             for (var j = 0; j < L_SUBFR; j++) {
-                s += xn[j] * sExcf[j];
-                s2 += sExcf[j] * sExcf[j];
+                var product = xn[j] * sExcf[j];
+                sum += product;
+                magnitude += Math.abs(product);
+                energy += sExcf[j] * sExcf[j];
             }
-            s2 = s2 << 1;
-            s2 = FixedMath.invSqrt(s2);
-            var normH = (short) (s2 >> 16);
-            var normL = (short) ((s2 >> 1) - (normH << 15));
-            var corrH = (short) (s >> 15);
-            var corrL = (short) (s - (corrH << 15));
-            s = mpy32(corrH, corrL, normH, normL);
-            corrV[i - tMin] = (short) s;
+            var norm = FixedMath.invSqrt((int) Math.min(energy << 1, Integer.MAX_VALUE));
+            var normH = (short) (norm >> 16);
+            var normL = (short) ((norm >> 1) - (normH << 15));
+            int corr;
+            if (magnitude <= 0x3FFFFFFFL) {
+                corr = (int) sum << 1;
+            } else {
+                corr = 0;
+                for (var j = 0; j < L_SUBFR; j++) {
+                    corr = lMac(corr, xn[j], sExcf[j], overflow);
+                }
+            }
+            var corrH = (short) (corr >> 16);
+            var corrL = (short) ((corr >> 1) - (corrH << 15));
+            corrV[i - tMin] = extractH(lShl(mpy32(corrH, corrL, normH, normL), (short) 16));
             if (i != tMax) {
                 k--;
                 var temp = exc[excOffset + k];
                 for (var j = L_SUBFR - 1; j > 0; j--) {
-                    s = (temp * h[hOffset + j]) >> hFac;
-                    sExcf[j] = (short) ((short) s + sExcf[j - 1]);
+                    var product = lShl(lMult(temp, h[hOffset + j], overflow), hFac);
+                    sExcf[j] = add(extractH(product), sExcf[j - 1], overflow);
                 }
                 sExcf[0] = (short) (temp >> scaling);
             }
@@ -233,9 +249,10 @@ final class ClosedLoopPitch {
      * @param index the index of the integer lag in {@link #corrV}
      * @param frac the fraction
      * @param flag3 whether the fraction is in thirds
+     * @param overflow the saturation flag
      * @return the interpolated correlation
      */
-    private short interpol3or6(int index, int frac, boolean flag3) {
+    private short interpol3or6(int index, int frac, boolean flag3, Flag overflow) {
         if (flag3) {
             frac <<= 1;
         }
@@ -245,12 +262,12 @@ final class ClosedLoopPitch {
             x--;
         }
         var c2 = UP_SAMP_MAX - frac;
-        var s = 0x04000;
+        var s = 0;
         for (var m = 0; m < L_INTER_SRCH; m++) {
-            s = fxpMac(corrV[x - m], INTER_6[frac + UP_SAMP_MAX * m], s);
-            s = fxpMac(corrV[x + 1 + m], INTER_6[c2 + UP_SAMP_MAX * m], s);
+            s = lMac(s, corrV[x - m], INTER_6[frac + UP_SAMP_MAX * m], overflow);
+            s = lMac(s, corrV[x + 1 + m], INTER_6[c2 + UP_SAMP_MAX * m], overflow);
         }
-        return (short) (s >> 15);
+        return round(s, overflow);
     }
 
     /**
@@ -259,11 +276,12 @@ final class ClosedLoopPitch {
      * @param tMin the smallest lag of {@link #corrV}
      * @param lastFrac the last fraction searched
      * @param flag3 whether the fraction is in thirds
+     * @param overflow the saturation flag
      */
-    private void searchFrac(int tMin, int lastFrac, boolean flag3) {
-        var max = interpol3or6(lag[0] - tMin, lag[1], flag3);
+    private void searchFrac(int tMin, int lastFrac, boolean flag3, Flag overflow) {
+        var max = interpol3or6(lag[0] - tMin, lag[1], flag3, overflow);
         for (var i = lag[1] + 1; i <= lastFrac; i++) {
-            var corrInt = interpol3or6(lag[0] - tMin, i, flag3);
+            var corrInt = interpol3or6(lag[0] - tMin, i, flag3, overflow);
             if (corrInt > max) {
                 max = corrInt;
                 lag[1] = (short) i;
@@ -426,18 +444,18 @@ final class ClosedLoopPitch {
                 tmpLag = t0Max - 4;
             }
             if (lag[0] == tmpLag || lag[0] == tmpLag - 1) {
-                searchFrac(tMin, lastFrac, flag3);
+                searchFrac(tMin, lastFrac, flag3, overflow);
             } else if (lag[0] == tmpLag - 2) {
                 lag[1] = 0;
-                searchFrac(tMin, lastFrac, flag3);
+                searchFrac(tMin, lastFrac, flag3, overflow);
             } else if (lag[0] == tmpLag + 1) {
                 lastFrac = 0;
-                searchFrac(tMin, lastFrac, flag3);
+                searchFrac(tMin, lastFrac, flag3, overflow);
             } else {
                 lag[1] = 0;
             }
         } else {
-            searchFrac(tMin, lastFrac, flag3);
+            searchFrac(tMin, lastFrac, flag3, overflow);
         }
         if (flag3) {
             var flag4 = mode == Mode.MR475 || mode == Mode.MR515 || mode == Mode.MR59 || mode == Mode.MR67;
@@ -484,57 +502,53 @@ final class ClosedLoopPitch {
      */
     private static short gPitch(int mode, short[] xn, short[] y1, short[] gCoeff, Flag overflow) {
         overflow.value = false;
-        var s = 0;
+        var energy = 0L;
         for (var i = 0; i < L_SUBFR; i++) {
-            s = fxpMac(y1[i], y1[i], s);
+            energy += y1[i] * y1[i];
         }
         short yy;
         short expYy;
-        if (s >= 0 && s < 0x40000000) {
-            s <<= 1;
-            s += 1;
+        if (1 + 2 * energy <= Integer.MAX_VALUE) {
+            var s = (int) (1 + 2 * energy);
             expYy = normL(s);
             yy = round(s << expYy, overflow);
         } else {
-            s = 0;
+            overflow.value = true;
+            var s = 1;
             for (var i = 0; i < L_SUBFR; i++) {
-                var tmp = (short) (y1[i] >> 2);
-                s = fxpMac(tmp, tmp, s);
+                var scaled = (short) (y1[i] >> 2);
+                s = lMac(s, scaled, scaled, overflow);
             }
-            s <<= 1;
-            s += 1;
             expYy = normL(s);
-            yy = round(s << expYy, overflow);
+            yy = round(lShl(s, expYy), overflow);
             expYy = (short) (expYy - 4);
         }
-        s = 0;
         overflow.value = false;
+        var sum = 1L;
+        var saturates = false;
         for (var i = 0; i < L_SUBFR; i++) {
-            var lTemp = xn[i] * y1[i];
-            var s1 = s;
-            s = s1 + lTemp;
-            if ((s1 ^ lTemp) > 0 && (s1 ^ s) < 0) {
-                overflow.value = true;
+            var product = xn[i] * y1[i];
+            sum += 2L * product;
+            if (product == 0x40000000 || sum > Integer.MAX_VALUE || sum < Integer.MIN_VALUE) {
+                saturates = true;
                 break;
             }
         }
         short xy;
         short expXy;
-        if (!overflow.value) {
-            s <<= 1;
-            s += 1;
+        if (!saturates) {
+            var s = (int) sum;
             expXy = normL(s);
-            xy = round(s << expXy, overflow);
+            xy = round(lShl(s, expXy), overflow);
         } else {
-            s = 0;
+            overflow.value = true;
+            var s = 1;
             for (var i = 0; i < L_SUBFR; i++) {
-                s = fxpMac(xn[i], y1[i] >> 2, s);
+                s = lMac(s, xn[i], (short) (y1[i] >> 2), overflow);
             }
-            s <<= 1;
-            s += 1;
             expXy = normL(s);
-            xy = round(s << expXy, overflow);
-            expXy = (short) (expXy - 4);
+            xy = round(lShl(s, expXy), overflow);
+            expXy = (short) (expXy - 2);
         }
         gCoeff[0] = yy;
         gCoeff[1] = (short) (15 - expYy);

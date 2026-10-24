@@ -13,7 +13,7 @@ import java.util.Objects;
  * Creates the decoder for an audio track.
  *
  * <p>The decoder comes from the first {@link AudioCodecProvider} that decodes the track's codec.
- * The Smalt artifacts decode AAC (the LC core of every AAC profile), AMR-NB and AMR-WB
+ * The Smalt artifacts decode AAC (Main, LC, SSR, LTP and ER LTP, with HE-AAC), AMR-NB and AMR-WB
  * ({@code smalt-mpeg}), MP3, MP2, Opus, Vorbis and FLAC ({@code smalt-audio}) and every
  * uncompressed PCM variant (core); a
  * codec no provider decodes raises {@link MediaException.Unsupported} naming it and, when a
@@ -30,7 +30,7 @@ public final class AudioDecoders {
     /**
      * Returns whether a codec can be decoded with the artifacts present at run time.
      *
-     * @param codec the codec
+     * @param codec the codec to look up
      * @return {@code true} when {@link #create(AudioTrack, AudioDecoderOptions)} accepts tracks of
      *         it
      * @throws NullPointerException if {@code codec} is {@code null}
@@ -80,7 +80,7 @@ public final class AudioDecoders {
     /**
      * Finds the provider that decodes a codec.
      *
-     * @param codec the codec
+     * @param codec the codec to look up
      * @return the first provider whose {@link AudioCodecProvider#decodes(Codec)} accepts
      *         {@code codec}, or {@code null} when none does
      */
