@@ -1,13 +1,24 @@
 package com.github.auties00.smalt.audio.mp3;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
+import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Tolerance;
+import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Packet;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.function.Consumer;
+import java.util.stream.Stream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
@@ -30,7 +41,11 @@ class Mp3ConformanceTest {
     private static final Tolerance MINIMP3 = Tolerance.psnr(96);
 
     private static void assertCompliant(String name, boolean layer3, boolean strictLength) {
-        var decoded = Mp3Vectors.decode(Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit")));
+        // the free-format vector has its bitrate index rewritten after coding, so every CRC word fails; minimp3's
+        // references of the ILL vectors are the stereo base of their multichannel extension
+        var options = Mp3DecoderOptions.builder().crcCheck(!name.equals("l2-nonstandard-free_format"))
+                .multichannel(!name.startsWith("ILL")).build();
+        var decoded = Mp3Vectors.decode(Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit")), options);
         var ours = Mp3Vectors.toS16(decoded.interleaved());
         var reference = Mp3Vectors.readPcm(Mp3Vectors.read(Mp3Vectors.fetch(name + ".pcm")));
         var frame = decoded.channels() * 1152;
@@ -92,15 +107,64 @@ class Mp3ConformanceTest {
         assertCompliant(name, true, false);
     }
 
+    static Stream<String> illegalStreamNames() {
+        return Stream.of("ILL2_center2", "ILL2_dual", "ILL2_dynx22", "ILL2_dynx31", "ILL2_dynx32", "ILL2_ext_switching",
+                "ILL2_layer1", "ILL2_layer3", "ILL2_mono", "ILL2_multilingual", "ILL2_overalloc1", "ILL2_prediction",
+                "ILL2_samples", "ILL2_scf63", "ILL2_tca21", "ILL2_tca30", "ILL2_tca30_PC", "ILL2_tca31_PC",
+                "ILL2_tca31_mtx0", "ILL2_tca31_mtx2", "ILL2_tca32_PC", "ILL2_wrongcrc", "ILL4_ext_id1", "ILL4_sync",
+                "ILL4_wrong_length1", "ILL4_wrong_length2", "ILL4_wrongcrc");
+    }
+
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"ILL2_center2", "ILL2_dual", "ILL2_dynx22", "ILL2_dynx31", "ILL2_dynx32", "ILL2_ext_switching",
-            "ILL2_layer1", "ILL2_layer3", "ILL2_mono", "ILL2_multilingual", "ILL2_overalloc1", "ILL2_prediction",
-            "ILL2_samples", "ILL2_scf63", "ILL2_tca21", "ILL2_tca30", "ILL2_tca30_PC", "ILL2_tca31_PC", "ILL2_tca31_mtx0",
-            "ILL2_tca31_mtx2", "ILL2_tca32_PC", "ILL2_wrongcrc", "ILL4_ext_id1", "ILL4_sync", "ILL4_wrong_length1",
-            "ILL4_wrong_length2", "ILL4_wrongcrc"})
-    @DisplayName("MPEG-2 extension and illegal-stream vectors decode to their reference exactly in length")
+    @MethodSource("illegalStreamNames")
+    @DisplayName("MPEG-2 extension and illegal-stream vectors decode their stereo base to the reference exactly in length")
     void illegalStreams(String name) {
         assertCompliant(name, false, true);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("illegalStreamNames")
+    @DisplayName("with the multichannel extension on, every frame decodes either exactly as its stereo base or to "
+            + "more channels of the same length")
+    void illegalStreamsMultichannel(String name) {
+        var data = Mp3Vectors.read(Mp3Vectors.fetch(name + ".bit"));
+        var base = buffers(data, Mp3DecoderOptions.builder().multichannel(false).build());
+        var full = buffers(data, Mp3DecoderOptions.defaults());
+        assertEquals(base.size(), full.size(), name + ": buffer count");
+        for (var i = 0; i < base.size(); i++) {
+            var stereo = base.get(i);
+            var multichannel = full.get(i);
+            assertEquals(stereo[0].length, multichannel[0].length, name + ": frame " + i + " length");
+            if (multichannel.length == stereo.length) {
+                for (var c = 0; c < stereo.length; c++) {
+                    assertArrayEquals(stereo[c], multichannel[c], name + ": frame " + i + " channel " + c);
+                }
+            } else {
+                assertTrue(multichannel.length > stereo.length, name + ": frame " + i + " has "
+                        + multichannel.length + " channels");
+            }
+        }
+    }
+
+    /** Decodes a stream to a copy of the planes of every buffer, untrimmed. */
+    private static List<float[][]> buffers(byte[] data, Mp3DecoderOptions options) {
+        var out = new ArrayList<float[][]>();
+        try (var demuxer = new MpegAudioDemuxer(MediaSource.of(data));
+             var decoder = new Mp3Decoder((AudioTrack) demuxer.tracks().getFirst(), options)) {
+            Consumer<AudioBuffer> sink = buffer -> {
+                var planes = new float[buffer.channels()][];
+                for (var c = 0; c < planes.length; c++) {
+                    planes[c] = Arrays.copyOf(buffer.plane(c), buffer.frames());
+                }
+                out.add(planes);
+            };
+            Packet packet;
+            while ((packet = demuxer.read()) != null) {
+                decoder.decode(packet, sink);
+            }
+            decoder.flush(sink);
+        }
+        return out;
     }
 
     @ParameterizedTest(name = "{0}")

@@ -30,7 +30,6 @@ public final class Catalog {
 
     /** The audio codecs Smalt does not encode, with the ffmpeg encoder, container and sample rate. */
     private static final Map<Codec, String[]> FFMPEG_AUDIO = Map.of(
-            Codec.MP2, new String[]{"mp2", "mp2", "44100"},
             Codec.SPEEX, new String[]{"libspeex", "ogg", "16000"});
 
     private static final Map<Codec, Streams.Encoded> CACHE = new ConcurrentHashMap<>();

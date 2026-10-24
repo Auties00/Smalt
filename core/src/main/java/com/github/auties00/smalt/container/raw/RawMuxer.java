@@ -54,8 +54,9 @@ import java.util.Objects;
  * encoder's {@code STREAMINFO} with its MD5 signature and seek table) and to fill in a
  * {@code STREAMINFO} total sample count and frame size bounds still declared as unknown, and an
  * MP3 stream gets a Xing tag frame (see {@link RawMuxerOptions#xingTag()}) whose frame count,
- * byte count and seek table are filled in by {@link #finish()}. The sink is written from its
- * position at construction and is never closed by the muxer. Instances are not thread-safe.
+ * byte count, seek table and LAME tag (the encoder delay and padding of gapless playback) are filled
+ * in by {@link #finish()}. The sink is written from its position at construction and is never closed
+ * by the muxer. Instances are not thread-safe.
  */
 public final class RawMuxer implements Muxer {
     /**
@@ -65,9 +66,9 @@ public final class RawMuxer implements Muxer {
 
     /**
      * The size of the Xing payload after the side information: the tag word, the flags, the frame
-     * and byte counts and the 100-entry seek table.
+     * and byte counts, the 100-entry seek table, the quality indicator and the LAME tag.
      */
-    private static final int XING_PAYLOAD = 4 + 4 + 4 + 4 + 100;
+    private static final int XING_PAYLOAD = 4 + 4 + 4 + 4 + 100 + 4 + LameTag.SIZE;
 
     /**
      * The output sink.
@@ -95,6 +96,11 @@ public final class RawMuxer implements Muxer {
     private int xingSize;
 
     /**
+     * The sampling rate of the first MP3 frame, which the tag frame shares.
+     */
+    private int xingRate;
+
+    /**
      * The byte offset of each MP3 frame after the tag frame, relative to the tag frame.
      */
     private long[] frameOffsets = new long[0];
@@ -114,6 +120,28 @@ public final class RawMuxer implements Muxer {
      * {@code -2} before the first frame.
      */
     private int commonBitrate = -2;
+
+    /**
+     * The smallest bitrate of the MP3 frames after the tag frame, in kilobits per second.
+     */
+    private int minimumKbps = Integer.MAX_VALUE;
+
+    /**
+     * The samples per channel the MP3 frames after the tag frame decode to, or {@code -1} once a
+     * frame without a valid header is written.
+     */
+    private long frameSamples;
+
+    /**
+     * The sum of the durations of the MP3 packets, in the track time base, or {@code -1} once a
+     * packet without a duration is written.
+     */
+    private long packetDurations;
+
+    /**
+     * The CRC-16 of the MP3 frames after the tag frame, as the LAME tag records it.
+     */
+    private int musicCrc;
 
     /**
      * The sink position at construction, where the stream starts.
@@ -391,6 +419,8 @@ public final class RawMuxer implements Muxer {
                 }
                 if (xingPosition >= 0) {
                     recordFrame(packet.data());
+                    packetDurations = packet.duration() > 0 && packetDurations >= 0
+                            ? packetDurations + packet.duration() : -1;
                 }
                 output.write(ByteBuffer.wrap(packet.data()));
             }
@@ -414,6 +444,7 @@ public final class RawMuxer implements Muxer {
             return;
         }
         commonBitrate = MpegAudioHeader.bitrateIndex(header);
+        xingRate = MpegAudioHeader.sampleRate(header);
         var template = (header & 0xFFFE0C00) | 0x00010000 | (header & 0xC0) | (header & 0x0F);
         var needed = MpegAudioHeader.SIZE + MpegAudioHeader.sideInfoBytes(template) + XING_PAYLOAD;
         for (var index = commonBitrate; index < 15; index++) {
@@ -423,7 +454,7 @@ public final class RawMuxer implements Muxer {
                 xingHeader = candidate;
                 xingSize = size;
                 xingPosition = output.position();
-                output.write(ByteBuffer.wrap(xingFrame(new byte[100], 0, 0)));
+                output.write(ByteBuffer.wrap(xingFrame(new byte[100], 0, 0, null)));
                 streamBytes = size;
                 return;
             }
@@ -441,8 +472,20 @@ public final class RawMuxer implements Muxer {
         }
         frameOffsets[frameCount++] = streamBytes;
         streamBytes += frame.length;
-        if (frame.length >= MpegAudioHeader.SIZE && commonBitrate >= 0
-                && MpegAudioHeader.bitrateIndex(MpegAudioHeader.read(frame, 0)) != commonBitrate) {
+        musicCrc = LameTag.crc(musicCrc, frame, 0, frame.length);
+        var header = frame.length >= MpegAudioHeader.SIZE ? MpegAudioHeader.read(frame, 0) : 0;
+        if (!MpegAudioHeader.isValid(header)) {
+            frameSamples = -1;
+            commonBitrate = -1;
+            return;
+        }
+        if (frameSamples >= 0) {
+            frameSamples += MpegAudioHeader.samplesPerFrame(header);
+        }
+        if (!MpegAudioHeader.isFreeFormat(header)) {
+            minimumKbps = Math.min(minimumKbps, MpegAudioHeader.bitrateKbps(header));
+        }
+        if (commonBitrate >= 0 && MpegAudioHeader.bitrateIndex(header) != commonBitrate) {
             commonBitrate = -1;
         }
     }
@@ -450,23 +493,69 @@ public final class RawMuxer implements Muxer {
     /**
      * Returns the Xing tag frame: the reserved header, silent side information, then the
      * {@code Xing} word ({@code Info} when every frame has the same bitrate), the flags (frame
-     * count, byte count and seek table present), the counts and the seek table.
+     * count, byte count, seek table and quality present), the counts, the seek table, a zero
+     * quality and the LAME tag, or zeros in its place.
      *
      * @param toc the seek table
      * @param frames the number of audio frames after the tag frame
      * @param bytes the number of bytes from the tag frame on
+     * @param gapless the encoder delay and padding in samples, or {@code null} to leave the LAME tag
+     * out
      * @return the frame
      */
-    private byte[] xingFrame(byte[] toc, int frames, long bytes) {
+    private byte[] xingFrame(byte[] toc, int frames, long bytes, int[] gapless) {
         var frame = new ByteWriter(xingSize);
         frame.u32be(xingHeader & 0xFFFFFFFFL);
         frame.bytes(new byte[MpegAudioHeader.sideInfoBytes(xingHeader)]);
         frame.bytes((commonBitrate >= 0 ? "Info" : "Xing").getBytes(StandardCharsets.ISO_8859_1));
-        frame.u32be(7);
+        frame.u32be(15);
         frame.u32be(frames);
         frame.u32be(Math.min(bytes, 0xFFFFFFFFL));
         frame.bytes(toc);
-        return Arrays.copyOf(frame.toByteArray(), xingSize);
+        frame.u32be(0);
+        var tagged = Arrays.copyOf(frame.toByteArray(), xingSize);
+        if (gapless != null) {
+            var kbps = commonBitrate >= 0 ? MpegAudioHeader.bitrateKbps(xingHeader & ~0xF000 | commonBitrate << 12)
+                    : minimumKbps == Integer.MAX_VALUE ? 0 : minimumKbps;
+            LameTag.write(tagged, MpegAudioHeader.SIZE + MpegAudioHeader.sideInfoBytes(xingHeader) + 120,
+                    commonBitrate >= 0, kbps, gapless[0], gapless[1], bytes, musicCrc);
+        }
+        return tagged;
+    }
+
+    /**
+     * Returns the encoder delay and padding the LAME tag records for the stream written, from the
+     * track's {@link AudioTrack#skipSamples()} and its duration, or, when the track declares no
+     * duration, the sum of the packet durations.
+     *
+     * <p>The LAME tag counts the delay after the 529 samples of decoder delay of the synthesis
+     * filterbank and the padding from the end of the signal to 529 samples past the end of the
+     * decoded frames, so that a reader drops {@code delay + 529} decoded samples and keeps
+     * {@code frames * samplesPerFrame - delay - padding}.
+     *
+     * @return the delay and padding, or {@code null} when the track carries no gapless information
+     * or a value does not fit the tag's 12-bit fields
+     */
+    private int[] gapless() {
+        if (!(track instanceof AudioTrack audio) || frameSamples <= 0 || xingRate <= 0) {
+            return null;
+        }
+        var skip = audio.skipSamples();
+        long content;
+        var sampleBase = Rational.timeBaseOf(xingRate);
+        if (track.duration() >= 0) {
+            content = track.timeBase().rescale(track.duration(), sampleBase);
+        } else if (packetDurations > 0) {
+            content = track.timeBase().rescale(packetDurations, sampleBase) - skip;
+        } else {
+            return null;
+        }
+        var delay = skip - LameTag.DECODER_DELAY;
+        var padding = frameSamples - skip - content + LameTag.DECODER_DELAY;
+        if (delay < 0 || delay > LameTag.MAX_FIELD || content < 0 || padding < 0 || padding > LameTag.MAX_FIELD) {
+            return null;
+        }
+        return new int[]{(int) delay, (int) padding};
     }
 
     /**
@@ -482,7 +571,7 @@ public final class RawMuxer implements Muxer {
         }
         var end = output.position();
         output.position(xingPosition);
-        output.write(ByteBuffer.wrap(xingFrame(toc, frameCount, streamBytes)));
+        output.write(ByteBuffer.wrap(xingFrame(toc, frameCount, streamBytes, gapless())));
         output.position(end);
     }
 

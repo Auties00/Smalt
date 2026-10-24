@@ -17,6 +17,8 @@ import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
+import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp3EncoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusEncoder;
@@ -374,6 +376,23 @@ final class AudioJitWorkloads {
             sink += packet.size();
         };
         return JitWorkload.named("mp3enc", () -> {
+            packets[0] = 0;
+            feed(music, block, buffer -> encoder.encode(buffer, output));
+            return packets[0];
+        });
+    }
+
+    /** Encodes synthetic 48 kHz stereo music to 192 kbit/s MPEG audio Layer II, the encoder's defaults. */
+    static JitWorkload.Workload mp2Encode(double seconds) {
+        var music = music(48000, seconds);
+        var encoder = new Mp2Encoder(Mp2EncoderOptions.defaults());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 48000, AudioReaderOptions.DEFAULT_BLOCK_FRAMES);
+        int[] packets = {0};
+        Consumer<Packet> output = packet -> {
+            packets[0]++;
+            sink += packet.size();
+        };
+        return JitWorkload.named("mp2enc", () -> {
             packets[0] = 0;
             feed(music, block, buffer -> encoder.encode(buffer, output));
             return packets[0];

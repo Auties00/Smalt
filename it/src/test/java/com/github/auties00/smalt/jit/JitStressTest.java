@@ -60,7 +60,7 @@ class JitStressTest {
                 "webpanim:concurrent=2:frames=6");
         var audio = new ArrayList<>(List.of("opusvoice", "opuscall", "aacenc",
                 "ac3",
-                "flacenc", "alacenc", "mp3enc",
+                "flacenc", "alacenc", "mp3enc", "mp2enc",
                 "resample", "voice", "amrnb", "amrwb", "heaac"));
         if (ffmpeg) {
             audio.add("mp3dec:input=" + lameStream());

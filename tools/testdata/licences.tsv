@@ -34,6 +34,7 @@ https://raw.githubusercontent.com/webmproject/libwebp-test-data/	libwebp test da
 https://raw.pixls.us/	RAW samples archive (raw.pixls.us): CC0-1.0 per file (stated by the archive)
 https://standards.iso.org/ittf/PubliclyAvailableStandards/	ISO/IEC publicly available standards (conformance and reference data): ISO terms of the free download; used for testing only, never redistributed
 https://standards.iso.org/iso-iec/	ISO/IEC electronic inserts of published standards: ISO terms of the free download; used for testing only, never redistributed
+https://web.archive.org/web/	Wayback Machine copies of the ISO/IEC publicly available standards tree (over HTTPS): ISO terms; used for testing only, never redistributed
 http://web.archive.org/web/	Wayback Machine copies of the ISO/IEC publicly available standards tree: ISO terms; used for testing only, never redistributed
 https://storage.googleapis.com/downloads.webmproject.org/	WebM project test vectors (VP8, VP9): BSD-3-Clause (WebM project)
 https://storage.googleapis.com/aom-test-data/	AOMedia libaom test vectors: BSD-2-Clause with the AOMedia Patent License 1.0

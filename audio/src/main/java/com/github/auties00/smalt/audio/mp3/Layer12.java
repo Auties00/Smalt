@@ -30,7 +30,7 @@ final class Layer12 {
      * The allocation band groups of MPEG-1 Layer II at high rates (ISO/IEC 11172-3 Tables B.2a
      * and B.2b).
      */
-    private static final int[] ALLOC_LAYER2_MPEG1 = {0, 4, 3, 16, 4, 8, 32, 3, 12, 40, 2, 7};
+    static final int[] ALLOC_LAYER2_MPEG1 = {0, 4, 3, 16, 4, 8, 32, 3, 12, 40, 2, 7};
 
     /**
      * The allocation band groups of MPEG-1 Layer II at low rates (ISO/IEC 11172-3 Tables B.2c
@@ -61,6 +61,12 @@ final class Layer12 {
     private final int[] allocation = new int[64];
 
     /**
+     * The allocation index as coded of each band and channel, indexed {@code 2 * band + channel}; a
+     * band above the joint stereo bound gives both channels the coded index.
+     */
+    private final int[] rawAllocation = new int[64];
+
+    /**
      * The scalefactor selection code of each band and channel.
      */
     private final int[] scfsiCodes = new int[64];
@@ -69,6 +75,18 @@ final class Layer12 {
      * The three scale gains of each band and channel, six per band.
      */
     private final float[] scales = new float[3 * 64];
+
+    /**
+     * The scalefactor index behind each entry of {@link #scales}, 63 where the band has no
+     * allocation.
+     */
+    private final int[] scaleIndices = new int[3 * 64];
+
+    /**
+     * The bit position, in the frame reader, where the bits the CRC-16 protects end: after the
+     * allocation (Layer I) or after the scalefactor selection (Layer II).
+     */
+    private int protectedEnd;
 
     /**
      * Builds {@link #DEQUANTIZATION}.
@@ -106,17 +124,23 @@ final class Layer12 {
                 nextGroup += groups[group + 2];
                 group += 3;
             }
-            var code = codes[tableOffset + bs.read(width)];
+            var index = bs.read(width);
+            var code = codes[tableOffset + index];
             allocation[2 * i] = code;
+            rawAllocation[2 * i] = index;
             if (i < stereoBands) {
-                code = codes[tableOffset + bs.read(width)];
+                index = bs.read(width);
+                code = codes[tableOffset + index];
             }
             allocation[2 * i + 1] = stereoBands != 0 ? code : 0;
+            rawAllocation[2 * i + 1] = stereoBands != 0 ? index : 0;
         }
+        Arrays.fill(rawAllocation, 2 * totalBands, rawAllocation.length, 0);
         var layer1 = MpegAudioHeader.layer(header) == 1;
         for (var i = 0; i < 2 * totalBands; i++) {
             scfsiCodes[i] = allocation[i] != 0 ? (layer1 ? 2 : bs.read(2)) : 6;
         }
+        protectedEnd = bs.position;
         readScalefactors(bs, 2 * totalBands);
         for (var i = stereoBands; i < totalBands; i++) {
             allocation[2 * i + 1] = 0;
@@ -134,32 +158,61 @@ final class Layer12 {
         var mode = MpegAudioHeader.mode(header);
         var stereo = mode == MpegAudioHeader.MODE_MONO ? 0
                 : mode == MpegAudioHeader.MODE_JOINT_STEREO ? (MpegAudioHeader.modeExtension(header) << 2) + 4 : 32;
-        int[] groups;
-        int bands;
-        if (MpegAudioHeader.layer(header) == 1) {
-            groups = ALLOC_LAYER1;
-            bands = 32;
-        } else if (!MpegAudioHeader.isMpeg1(header)) {
-            groups = ALLOC_LAYER2_MPEG2;
-            bands = 30;
-        } else {
-            var rateIndex = MpegAudioHeader.sampleRateIndex(header);
-            var kbps = MpegAudioHeader.bitrateKbps(header) >> (mode != MpegAudioHeader.MODE_MONO ? 1 : 0);
-            if (kbps == 0) {
-                kbps = 192;
-            }
-            groups = ALLOC_LAYER2_MPEG1;
-            bands = 27;
-            if (kbps < 56) {
-                groups = ALLOC_LAYER2_MPEG1_LOW;
-                bands = rateIndex == 2 ? 12 : 8;
-            } else if (kbps >= 96 && rateIndex != 1) {
-                bands = 30;
-            }
-        }
+        var bands = bandCount(header);
         totalBands = bands;
         stereoBands = Math.min(stereo, bands);
-        return groups;
+        return bandGroups(header);
+    }
+
+    /**
+     * Returns the number of subbands a frame codes: 32 for Layer I, and for Layer II the
+     * {@code sblimit} of the allocation table its version, sampling rate and bitrate per channel
+     * select.
+     *
+     * @param header the frame header
+     * @return the number of coded subbands, from 8 to 32
+     */
+    static int bandCount(int header) {
+        if (MpegAudioHeader.layer(header) == 1) {
+            return 32;
+        }
+        if (!MpegAudioHeader.isMpeg1(header)) {
+            return 30;
+        }
+        var kbps = perChannelKbps(header);
+        if (kbps < 56) {
+            return MpegAudioHeader.sampleRateIndex(header) == 2 ? 12 : 8;
+        }
+        return kbps >= 96 && MpegAudioHeader.sampleRateIndex(header) != 1 ? 30 : 27;
+    }
+
+    /**
+     * Returns the allocation band groups of a frame.
+     *
+     * @param header the frame header
+     * @return the groups as {@code (table offset, code width, band count)} triples, the table
+     * offset indexing {@link Mp3Tables#BIT_ALLOCATION_CODES}
+     */
+    static int[] bandGroups(int header) {
+        if (MpegAudioHeader.layer(header) == 1) {
+            return ALLOC_LAYER1;
+        }
+        if (!MpegAudioHeader.isMpeg1(header)) {
+            return ALLOC_LAYER2_MPEG2;
+        }
+        return perChannelKbps(header) < 56 ? ALLOC_LAYER2_MPEG1_LOW : ALLOC_LAYER2_MPEG1;
+    }
+
+    /**
+     * Returns the bitrate per channel of a Layer II frame that selects its allocation table,
+     * with free-format frames counted as 192 kbit/s.
+     *
+     * @param header the frame header
+     * @return the bitrate in kilobits per second
+     */
+    private static int perChannelKbps(int header) {
+        var kbps = MpegAudioHeader.bitrateKbps(header) >> (MpegAudioHeader.mode(header) != MpegAudioHeader.MODE_MONO ? 1 : 0);
+        return kbps == 0 ? 192 : kbps;
     }
 
     /**
@@ -172,13 +225,16 @@ final class Layer12 {
         var out = 0;
         for (var i = 0; i < bands; i++) {
             var s = 0.0f;
+            var index = 63;
             var code = allocation[i];
             var mask = code != 0 ? 4 + ((19 >> scfsiCodes[i]) & 3) : 0;
             for (var m = 4; m != 0; m >>= 1) {
                 if ((mask & m) != 0) {
                     var b = bs.read(6);
                     s = DEQUANTIZATION[code * 3 - 6 + b % 3] * (float) ((1 << 21) >> (b / 3));
+                    index = b;
                 }
+                scaleIndices[out] = index;
                 scales[out++] = s;
             }
         }
@@ -239,6 +295,38 @@ final class Layer12 {
                 grbuf[dst + k + 576] *= right;
             }
         }
+    }
+
+    /**
+     * Returns the allocation index of a band and channel of the frame read last, as the bit allocation
+     * table numbers it.
+     *
+     * @param band the subband
+     * @param channel the channel, 0 or 1
+     * @return the index, 0 where the band is not coded
+     */
+    int allocationIndex(int band, int channel) {
+        return rawAllocation[2 * band + channel];
+    }
+
+    /**
+     * Returns the scalefactor index of a band, channel and block of the frame read last.
+     *
+     * @param band the subband
+     * @param channel the channel, 0 or 1
+     * @param part the block of twelve slots, 0 to 2
+     * @return the index, 63 where the band of the channel has no allocation
+     */
+    int scaleIndex(int band, int channel, int part) {
+        return scaleIndices[6 * band + 3 * channel + part];
+    }
+
+    /**
+     * {@return the bit position, in the reader passed to {@link #readScaleInfo}, where the bits the
+     * CRC-16 of the frame protects end}
+     */
+    int protectedEnd() {
+        return protectedEnd;
     }
 
     /**

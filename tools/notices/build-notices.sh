@@ -102,6 +102,7 @@ Contents
   45. OpenHTJ2K
   46. CharLS
   47. libultrahdr
+  48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1672,6 +1673,33 @@ printf '\n'
 cat "$LIC/libultrahdr-adobe-NOTICE"
 license_start "Apache License, Version 2.0 (libultrahdr LICENSE)"
 cat "$LIC/libultrahdr-LICENSE"
+
+section "48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)"
+cat <<'EOF'
+Project:      the MPEG-2 audio reference software of ISO/IEC 13818-5, the ISO
+              MPEG Audio Subgroup Software Simulation Group's distribution 10
+Source:       c039486_ISO_IEC_13818-5_2005_Reference_Software.zip (mpeg2audio)
+              of ISO's Publicly Available Standards
+License text: the disclaimer of doc/readme.dp.01.txt and the notices of the
+              source files
+License:      free of license fee or royalty, as is; use in products
+              conforming to ISO/IEC 11172-3 and 13818-3
+
+Derived Smalt packages:
+  audio.mp3 (Mp2FrameEncoder: the Layer I and II scalefactors, scalefactor
+  selection, bit allocation, quantization and bitstream formatting of
+  lsf/encoder/encode.c; Mp2Psychoacoustics: psychoacoustic model 1 of
+  lsf/encoder/tonal.c; Mp2PsychoTables: the critical band and threshold
+  tables of lsf/encoder/tables; Mp2Multichannel: the multichannel extension
+  decoding of mc/decoder/decode.c and common.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  ISO MPEG Audio Subgroup Software Simulation Group (1995, 1996)
+EOF
+license_start "Disclaimer and notices (doc/readme.dp.01.txt, source files)"
+cat "$LIC/iso13818-5-dist10-notice.txt"
 } > "$OUT"
 
 echo "wrote $OUT"

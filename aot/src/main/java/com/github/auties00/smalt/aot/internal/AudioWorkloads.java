@@ -13,8 +13,11 @@ import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
 import com.github.auties00.smalt.audio.flac.FlacDecoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
+import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp3EncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp3StereoMode;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.opus.OpusApplication;
 import com.github.auties00.smalt.audio.opus.OpusChannelMapping;
@@ -44,7 +47,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
- * Vorbis, FLAC, ALAC and MP3 encoding and decoding, and the voice processor, each on synthetic speech or
+ * Vorbis, FLAC, ALAC, MP3 and MP2 encoding and decoding, and the voice processor, each on synthetic speech or
  * music and keeping its codecs across rounds as a long-running application does.
  */
 final class AudioWorkloads {
@@ -89,7 +92,12 @@ final class AudioWorkloads {
                 file("flac-decode-32", () -> flacDecodeIntegers(3)),
                 file("mp3-encode", () -> mp3Encode("mp3-encode", Mp3EncoderOptions.defaults(), 6)),
                 file("mp3-encode-vbr", () -> mp3Encode("mp3-encode-vbr", Mp3EncoderOptions.ofVariableBitrate(2), 6)),
-                file("mp3-decode", AudioWorkloads::mp3Decode));
+                file("mp3-decode", AudioWorkloads::mp3Decode),
+                file("mp2-encode", () -> mp2Encode("mp2-encode", Mp2EncoderOptions.defaults(), 6)),
+                file("mp2-encode-joint", () -> mp2Encode("mp2-encode-joint", Mp2EncoderOptions.builder()
+                        .bitrate(128_000).stereoMode(Mp3StereoMode.JOINT_STEREO).crc(true).build(), 4)),
+                file("mp1-encode", () -> mp2Encode("mp1-encode", Mp2EncoderOptions.builder().layer(1).build(), 3)),
+                file("mp2-decode", AudioWorkloads::mp2Decode));
     }
 
     /**
@@ -536,6 +544,47 @@ final class AudioWorkloads {
             files.add(out.toByteArray());
         }
         return TrainingWorkload.of("mp3-decode", () -> {
+            for (var file : files) {
+                try (var reader = AudioReader.open(MediaSource.of(file))) {
+                    for (var decoded = reader.read(); decoded != null; decoded = reader.read()) {
+                        AudioStreams.consume(decoded);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes 48 kHz stereo music as MPEG audio Layer I or II, one stream across rounds.
+     *
+     * @param name    the name of the workload
+     * @param options the encoder settings, whose format is 48 kHz stereo
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload mp2Encode(String name, Mp2EncoderOptions options, double seconds) {
+        var encoder = new Mp2Encoder(options);
+        return AudioStreams.encode(name, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000, encoder);
+    }
+
+    /**
+     * Returns a workload that decodes two MPEG audio files through {@link AudioReader}: four seconds of music
+     * that Smalt's own encoder produced in Layer II joint stereo with CRC words and in Layer I.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload mp2Decode() {
+        var music = SyntheticAudio.music(48000, 4);
+        var files = new ArrayList<byte[]>();
+        for (var options : List.of(Mp2EncoderOptions.builder().bitrate(128_000).stereoMode(Mp3StereoMode.JOINT_STEREO)
+                .crc(true).build(), Mp2EncoderOptions.builder().layer(1).build())) {
+            var out = new ByteArrayOutputStream();
+            for (Packet packet : AudioStreams.encodeAll(new Mp2Encoder(options), music, ChannelLayout.STEREO, 48000)) {
+                out.writeBytes(packet.data());
+            }
+            files.add(out.toByteArray());
+        }
+        return TrainingWorkload.of("mp2-decode", () -> {
             for (var file : files) {
                 try (var reader = AudioReader.open(MediaSource.of(file))) {
                     for (var decoded = reader.read(); decoded != null; decoded = reader.read()) {

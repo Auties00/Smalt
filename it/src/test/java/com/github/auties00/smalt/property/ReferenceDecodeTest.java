@@ -103,6 +103,8 @@ class ReferenceDecodeTest {
             entry(Codec.AAC, of(OutputContainer.M4A, "aac", Tolerance.snr(110))),
             entry(Codec.MP3, of(OutputContainer.MP3, "mp3float", Tolerance.snr(110)
                     .and(Tolerance.iso11172(Tolerance.Iso11172Accuracy.FULL)))),
+            entry(Codec.MP2, of(OutputContainer.MP3, "mp2float", Tolerance.snr(110)
+                    .and(Tolerance.iso11172(Tolerance.Iso11172Accuracy.FULL)))),
             // ffmpeg's Ogg demuxer leaves the end of a stream on one page untrimmed: the common samples compare
             entry(Codec.VORBIS, of(OutputContainer.OGG, "vorbis", Tolerance.snr(110))),
             // the catalog's Opus stream is stereo at 48 kHz; RFC 6716's conformance criterion and the float paths

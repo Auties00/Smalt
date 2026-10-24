@@ -439,6 +439,7 @@ public final class JitWorkload {
             case "alacenc" -> AudioJitWorkloads.alacEncode(seconds(options, 6));
             case "mp3dec" -> AudioJitWorkloads.mp3Decode(Path.of(options.get("input")));
             case "mp3enc" -> AudioJitWorkloads.mp3Encode(seconds(options, 6));
+            case "mp2enc" -> AudioJitWorkloads.mp2Encode(seconds(options, 6));
             case "resample" -> AudioJitWorkloads.resample(seconds(options, 10));
             case "voice" -> AudioJitWorkloads.voiceCall(seconds(options, 6));
             case "jpegsend" -> ImageJitWorkloads.jpegSend(Integer.parseInt(options.getOrDefault("count", "2")));
