@@ -37,7 +37,13 @@ core/src/test/resources/samples/ogg/chained.ogg	10178	143e9c49ce5401aa9da89334a3
 core/src/test/resources/samples/ogg/flac.oga	34014	35fbcd1131ae0a7cec861958eb461ad41ada8cfe68916840d89af93f1b1959f9	make-samples.sh
 core/src/test/resources/samples/ogg/opus.opus	10841	ac8202a28ae12f6b7f4e381d83ee823cc7dace2f6d6e69ab50584fb053bc39d3	make-samples.sh
 core/src/test/resources/samples/ogg/vorbis.ogg	18054	fb11a857110af7946c0609e0074b65588e749df24fb3d6fc7c16af4bf67f7f70	make-samples.sh
+core/src/test/resources/samples/subtitle/cues.ass	894	28c0d1e3d67dc413e092dba6d84d36e0649ebebf9f18564c9ddd114c17a2a2b8	make-subtitle-samples.py
+core/src/test/resources/samples/subtitle/cues.lrc	146	625e00b2024d074306ad6a98ac307d355a381f189da20e41d7f9775d6a73f18f	make-subtitle-samples.py
+core/src/test/resources/samples/subtitle/cues.smi	530	a4ec1ad7a566e9941f401a0f97eed4a655d3ba2198eae6c30813408a08da921d	make-subtitle-samples.py
 core/src/test/resources/samples/subtitle/cues.srt	127	bc8c292dba31a375d35e1d2a6510599fb037e57083e7091514ef12a6022f63ec	make-samples.sh
+core/src/test/resources/samples/subtitle/cues.ssa	625	9240537a0ca81e54cdd9261485e87a3cd0f6f099e050e0ff257a23a5df7068f5	make-subtitle-samples.py
+core/src/test/resources/samples/subtitle/cues.sub	59	b6ed5b74bf9812abc4258eefd0cc2e5847bb02d6da2f025a76077c99b97d437f	make-subtitle-samples.py
+core/src/test/resources/samples/subtitle/cues.ttml	556	1d190975a620a6e653f6aa19bb803e0282e010c36ac7170c736a8f424eefa103	make-subtitle-samples.py
 core/src/test/resources/samples/subtitle/cues.vtt	152	96b11a2f961e3aaba170d8749e4cca59654371f6878612f56d438d1f854eaba0	make-samples.sh
 core/src/test/resources/samples/ts/av1-scte35.ts	19740	8a3eeb3fe3cbe469c76c6e9325e0e84f8b7cb0f08e2de5fa9cf6abbf5f89366f	make-samples.sh, make-ts-samples.py
 core/src/test/resources/samples/ts/h264-aac.ts	56024	1d1be5df58c4e151117773533d98c3de47efa31ec059d491622a1be7870fefe9	make-samples.sh

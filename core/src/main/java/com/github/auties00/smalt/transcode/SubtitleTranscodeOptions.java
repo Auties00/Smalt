@@ -65,9 +65,9 @@ public final class SubtitleTranscodeOptions {
     /**
      * Returns options that convert every text subtitle track to a codec.
      *
-     * @param codec the text subtitle codec to produce
+     * @param codec the text subtitle codec or {@link Codec#TTML}, to produce
      * @return the options
-     * @throws IllegalArgumentException if {@code codec} is not a text subtitle codec
+     * @throws IllegalArgumentException if {@code codec} is neither a text subtitle codec nor TTML
      */
     public static SubtitleTranscodeOptions encode(Codec codec) {
         return new Builder().mode(StreamMode.ENCODE).codec(codec).build();
@@ -107,8 +107,10 @@ public final class SubtitleTranscodeOptions {
      * and converted otherwise, to {@link #codec()} or the first codec of
      * {@link OutputContainer#subtitleCodecs()}; a stream the container cannot carry in any form is
      * left out. {@link StreamMode#ENCODE} always converts, which also rewrites the markup of a stream
-     * kept in its codec. Converting keeps the text, line breaks and the bold, italic and underline
-     * styles ({@link com.github.auties00.smalt.subtitle.Subtitles}).
+     * kept in its codec. Converting keeps the text, line breaks, styles, colors, fonts, placements and karaoke
+     * times as far as the target codec holds them, an ASS stream with the look of its styles
+     * ({@link com.github.auties00.smalt.subtitle.Subtitles}). A TTML stream is copied only when nothing is
+     * trimmed, as its documents count time from the start of the input, and converted otherwise.
      *
      * <p>Copied streams keep their packets, retimed to the output timeline; converted streams are
      * decoded into cues, cut to the kept time range, and encoded again. A cue still shown at the start
@@ -270,11 +272,11 @@ public final class SubtitleTranscodeOptions {
          * Builds the options.
          *
          * @return the options
-         * @throws IllegalArgumentException if the track identifier is negative or the codec is not a
-         * text subtitle codec
+         * @throws IllegalArgumentException if the track identifier is negative or the codec is neither a
+         * text subtitle codec nor TTML
          */
         public SubtitleTranscodeOptions build() {
-            if (codec != null && !codec.isSubtitle()) {
+            if (codec != null && !codec.isSubtitle() && codec != Codec.TTML) {
                 throw new IllegalArgumentException("codec " + codec.displayName() + " is not a text subtitle codec");
             }
             var id = byId ? Checks.nonNegative("track identifier", trackId) : -1;

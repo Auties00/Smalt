@@ -64,7 +64,8 @@ class DeepNestingTest {
                 new Input("MP4 user data boxes nested " + DEPTH + " deep", () -> mp4("udta", false)),
                 new Input("MP4 metadata boxes nested " + DEPTH + " deep", () -> mp4("meta", true)),
                 new Input("AVI lists nested " + DEPTH + " deep", DeepNestingTest::avi),
-                new Input("MP3 whose ID3 tables of contents nest 2000 deep", () -> id3Chain(2000)));
+                new Input("MP3 whose ID3 tables of contents nest 2000 deep", () -> id3Chain(2000)),
+                new Input("TTML spans nested " + DEPTH + " deep", () -> ttml(DEPTH)));
     }
 
     @Nested
@@ -129,6 +130,13 @@ class DeepNestingTest {
             }
             Hostile.assertNoHiddenFailure("XMP", malformed);
         }
+    }
+
+    static byte[] ttml(int depth) {
+        var builder = new StringBuilder("<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div><p begin=\"0s\" end=\"1s\">");
+        builder.append("<span>".repeat(depth)).append("deep").append("</span>".repeat(depth));
+        builder.append("</p></div></body></tt>");
+        return builder.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     static byte[] xml(int depth) {

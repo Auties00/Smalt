@@ -1,18 +1,27 @@
 package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.internal.subtitle.CueMerger;
+import com.github.auties00.smalt.internal.subtitle.TtmlWriter;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
 import com.github.auties00.smalt.subtitle.SubtitleDecoder;
 import com.github.auties00.smalt.subtitle.SubtitleEncoder;
+import com.github.auties00.smalt.subtitle.SubtitleMarkup;
+import com.github.auties00.smalt.subtitle.Subtitles;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
+import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Copies or converts one text subtitle track.
@@ -20,10 +29,12 @@ import java.util.Map;
  * <p>A copied track keeps its packets and configuration; each packet is moved to the output
  * timeline and cut to the kept range (a packet that starts before the range start begins at zero,
  * one that ends after the range end stops there), and packets wholly outside the range are
- * dropped. A converted track decodes each packet into a cue ({@link SubtitleDecoder}), joins the
- * pieces of cues an MP4 track split, cuts the cue to the kept range in the same way, and encodes
- * it for the output codec ({@link SubtitleEncoder}); a WebVTT or ASS track converted to the same
- * codec keeps its header.
+ * dropped. A converted track decodes each packet into its cues in the output codec's markup
+ * ({@link SubtitleDecoder#decodeAll(Packet, SubtitleMarkup)}, so that an ASS style's look and the
+ * placements and karaoke times carry over), joins the pieces of cues an MP4 track split, cuts each cue to
+ * the kept range in the same way, and encodes it for the output codec ({@link SubtitleEncoder}); a WebVTT
+ * or ASS track converted to the same codec keeps its header. A track converted to TTML becomes one
+ * document holding every cue, written when the stage finishes.
  *
  * <p>After the transcode seeks to a trimmed start, the stage is first {@linkplain #prime(Packet) primed}
  * with the packets that start before the range, read from the start of the input; the packets the
@@ -68,6 +79,16 @@ final class SubtitleStage implements Stage {
      * The joiner of split cues of a converted track, or {@code null} for a copied one.
      */
     private final CueMerger merger;
+
+    /**
+     * The markup of the output codec.
+     */
+    private final SubtitleMarkup markup;
+
+    /**
+     * The cues of a track converted to TTML, written as one document at the end, or {@code null}.
+     */
+    private final List<SubtitleCue> document;
 
     /**
      * The end of the last packet written, on the output timeline in microseconds.
@@ -130,15 +151,20 @@ final class SubtitleStage implements Stage {
             this.decoder = null;
             this.encoder = null;
             this.merger = null;
+            this.markup = null;
+            this.document = null;
         } else {
-            var created = SubtitleEncoder.track(codec, outputId).toBuilder().language(source.language().orElse(null));
+            var created = (codec == Codec.TTML ? TtmlWriter.track(outputId) : SubtitleEncoder.track(codec, outputId))
+                    .toBuilder().language(source.language().orElse(null));
             if ((codec == Codec.WEBVTT || codec == Codec.ASS) && codec == source.codec()) {
                 source.codecConfig().ifPresent(created::codecConfig);
             }
             this.declared = created.build();
             this.decoder = new SubtitleDecoder(source);
-            this.encoder = new SubtitleEncoder(declared);
-            this.merger = new CueMerger(this::writeCue);
+            this.encoder = codec == Codec.TTML ? null : new SubtitleEncoder(declared);
+            this.merger = new CueMerger(this::writeCue, source.codec() == Codec.TTML);
+            this.markup = Subtitles.markupOf(codec);
+            this.document = codec == Codec.TTML ? new ArrayList<>() : null;
         }
         output.declare(declared);
     }
@@ -209,15 +235,13 @@ final class SubtitleStage implements Stage {
             copyPacket(packet);
             return;
         }
-        var cue = decoder.decode(packet);
-        if (cue == null) {
-            return;
+        for (var cue : decoder.decodeAll(packet, markup)) {
+            if (endMicros >= 0 && cue.startMicros() >= endMicros) {
+                done = true;
+                return;
+            }
+            merger.offer(cue);
         }
-        if (endMicros >= 0 && cue.startMicros() >= endMicros) {
-            done = true;
-            return;
-        }
-        merger.offer(cue);
     }
 
     /**
@@ -261,7 +285,11 @@ final class SubtitleStage implements Stage {
         }
         var outputStart = Math.max(0, cue.startMicros() - startMicros);
         var outputEnd = Math.max(outputStart, end - startMicros);
-        output.write(encoder.encode(cue.withTiming(outputStart, outputEnd), decoder.markup()));
+        if (document != null) {
+            document.add(cue.withTiming(outputStart, outputEnd));
+        } else {
+            output.write(encoder.encode(cue.withTiming(outputStart, outputEnd), markup));
+        }
         position = Math.max(position, outputEnd);
     }
 
@@ -269,6 +297,17 @@ final class SubtitleStage implements Stage {
     public void finish() {
         if (merger != null) {
             merger.finish();
+        }
+        if (document != null) {
+            document.sort(Comparator.comparingLong(SubtitleCue::startMicros));
+            var end = 0L;
+            for (var cue : document) {
+                end = Math.max(end, cue.endMicros());
+            }
+            var duration = Rational.MICROSECONDS.rescale(end, declared.timeBase());
+            output.write(new Packet(declared.id(), TtmlWriter.write(document, markup), 0, 0, Math.max(1, duration),
+                    Set.of(PacketFlag.KEY), PacketSideData.NONE));
+            document.clear();
         }
         done = true;
     }

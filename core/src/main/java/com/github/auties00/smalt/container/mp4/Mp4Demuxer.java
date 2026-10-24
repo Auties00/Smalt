@@ -21,6 +21,7 @@ import com.github.auties00.smalt.internal.io.SegmentBacked;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalRecords;
+import com.github.auties00.smalt.internal.subtitle.QuickTimeText;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
 import com.github.auties00.smalt.io.MediaSource;
@@ -69,7 +70,8 @@ import java.util.Set;
  * and auxiliary video ({@code auxv}) tracks of HEIF and AVIF sequences are video tracks too. Every
  * other handler (text, subtitles, timecode, timed metadata, hint) becomes a
  * {@link com.github.auties00.smalt.track.DataTrack}: 3GPP timed text ({@code tx3g}) is
- * {@link Codec#MOV_TEXT}, WebVTT ({@code wvtt}) is {@link Codec#WEBVTT} and TTML ({@code stpp}) is
+ * {@link Codec#MOV_TEXT}, and so is QuickTime text media ({@code text}), its samples and description
+ * converted to the 3GPP form, WebVTT ({@code wvtt}) is {@link Codec#WEBVTT} and TTML ({@code stpp}) is
  * {@link Codec#TTML}, except in the chapter tracks a {@code chap} reference names, which stay
  * {@link Codec#DATA}. Each WebVTT sample is returned as one packet per cue it shows (none for an
  * empty sample), all with the sample's timing, in the {@link Codec#WEBVTT} packet form; every
@@ -391,6 +393,11 @@ public final class Mp4Demuxer implements Demuxer {
     private final Set<Integer> webVttTracks;
 
     /**
+     * The identifiers of the QuickTime text tracks, whose samples are converted to 3GPP timed text.
+     */
+    private final Set<Integer> quickTimeTextTracks;
+
+    /**
      * The cue packets of a WebVTT sample not returned yet.
      */
     private final ArrayDeque<Packet> pendingCues = new ArrayDeque<>();
@@ -540,6 +547,7 @@ public final class Mp4Demuxer implements Demuxer {
                 }
             }
             var webVtt = new HashSet<Integer>();
+            var quickTimeText = new HashSet<Integer>();
             mergeLayerConfigs(parser.tracks);
             for (var track : parser.tracks) {
                 track.selectBaseEntry();
@@ -563,12 +571,16 @@ public final class Mp4Demuxer implements Demuxer {
                 if (described.codec() == Codec.WEBVTT) {
                     webVtt.add(described.id());
                 }
+                if (described.codec() == Codec.MOV_TEXT && track.entry.format() == SampleEntry.TEXT) {
+                    quickTimeText.add(described.id());
+                }
                 if (track.samples.count > 0 || (lazy && track.entry != null)) {
                     activeTracks.add(track);
                 }
             }
             this.tracks = Collections.unmodifiableList(publicTracks);
             this.webVttTracks = Set.copyOf(webVtt);
+            this.quickTimeTextTracks = Set.copyOf(quickTimeText);
             this.metadata = Collections.unmodifiableMap(buildMetadata(scan.fileType, parser.metadata));
             this.durationMicros = computeDuration(parser, !scan.fragments.isEmpty());
             this.active = activeTracks.toArray(new Mp4Track[0]);
@@ -765,6 +777,17 @@ public final class Mp4Demuxer implements Demuxer {
     @Override
     public List<AttachedPicture> attachedPictures() {
         return pictures;
+    }
+
+    /**
+     * Returns whether the packets of a track are converted from the stored samples, so that their sizes differ
+     * from the sample table's: the samples of QuickTime text tracks, returned as 3GPP timed text.
+     *
+     * @param trackId the identifier of the track
+     * @return {@code true} for a QuickTime text track
+     */
+    boolean convertsSamples(int trackId) {
+        return quickTimeTextTracks.contains(trackId);
     }
 
     /**
@@ -1180,6 +1203,9 @@ public final class Mp4Demuxer implements Demuxer {
                     return pending;
                 }
                 var packet = nextPacket();
+                if (packet != null && !quickTimeTextTracks.isEmpty() && quickTimeTextTracks.contains(packet.trackId())) {
+                    return packet.withData(QuickTimeText.sample(packet.data()));
+                }
                 if (packet == null || webVttTracks.isEmpty() || !webVttTracks.contains(packet.trackId())) {
                     return packet;
                 }
@@ -1748,6 +1774,13 @@ public final class Mp4Demuxer implements Demuxer {
             info.dts = decode - track.compositionShift;
             info.duration = Integer.toUnsignedLong(samples.durations[index]);
             info.keyframe = samples.isKeyframe(index);
+            if (!quickTimeTextTracks.isEmpty() && quickTimeTextTracks.contains(track.id)) {
+                var converted = QuickTimeText.sample(Arrays.copyOfRange(info.data, info.dataOffset,
+                        info.dataOffset + info.size));
+                info.data = converted;
+                info.dataOffset = 0;
+                info.size = converted.length;
+            }
             return true;
         } catch (MediaException exception) {
             throw exception;

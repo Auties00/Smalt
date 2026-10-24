@@ -27,6 +27,8 @@ def generator(root, relative):
         return "make-tag-samples.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
+    if relative.startswith("subtitle/") and relative not in ("subtitle/cues.srt", "subtitle/cues.vtt"):
+        return "make-subtitle-samples.py"
     return "make-samples.sh"
 
 

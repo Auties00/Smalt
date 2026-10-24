@@ -296,7 +296,8 @@ public enum Codec {
     WEBVTT(TrackKind.DATA, "webvtt"),
 
     /**
-     * 3GPP timed text (3GPP TS 26.245), the {@code tx3g} subtitles of MP4 and MOV files.
+     * 3GPP timed text (3GPP TS 26.245), the {@code tx3g} subtitles of MP4 and MOV files, and the QuickTime
+     * {@code text} media the MP4 demuxer converts to it.
      *
      * <p>A packet is one text sample: a 16-bit big-endian text length, the text in UTF-8, then
      * the text modifier boxes ({@code styl}, {@code hlit}, {@code tbox} and the others); a
@@ -309,12 +310,14 @@ public enum Codec {
 
     /**
      * Advanced SubStation Alpha (and SubStation Alpha) subtitles, the Matroska {@code S_TEXT/ASS}
-     * and {@code S_TEXT/SSA} codecs.
+     * and {@code S_TEXT/SSA} codecs and the events of {@code .ass} and {@code .ssa} files.
      *
      * <p>A packet holds one event in UTF-8 in the Matroska block form: the fields
      * {@code ReadOrder, Layer, Style, Name, MarginL, MarginR, MarginV, Effect, Text} separated by
-     * commas, its override tags kept as text. The configuration is the script header in UTF-8:
-     * the {@code [Script Info]} and styles sections and the {@code [Events]} format line.
+     * commas, its override tags kept as text, the layer 0 for an SSA event. The configuration is the script
+     * header in UTF-8: every line of the script but its {@code Dialogue} lines, so the {@code [Script Info]} and
+     * styles sections, the {@code [Events]} format line and any other section; its {@code ScriptType} and styles
+     * section tell an SSA (v4.00) script from an ASS (v4.00+) one.
      */
     ASS(TrackKind.DATA, "ass"),
 
@@ -334,7 +337,7 @@ public enum Codec {
      * http://www.w3.org/ns/ttml\0\0\0
      * }
      * The packets are documents rather than cues, so this is not one of the text formats of
-     * {@link #isSubtitle()}.
+     * {@link #isSubtitle()}; the {@code subtitle} package decodes their cues.
      */
     TTML(TrackKind.DATA, "ttml"),
 

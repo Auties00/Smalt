@@ -175,6 +175,13 @@ class MuxDemuxIdentityTest {
         if (container.format() == ContainerFormat.MATROSKA) {
             tick = Math.max(tick, 1001);
         }
+        if (container.format() == ContainerFormat.MICRODVD) {
+            // MicroDVD counts frames, 24000/1001 per second by default: half a frame
+            tick = Math.max(tick, 1_001_000 / 48 + 1);
+        } else if (container.format() == ContainerFormat.ASS || container.format() == ContainerFormat.LRC) {
+            // SSA, ASS and LRC count centiseconds
+            tick = Math.max(tick, 5001);
+        }
         // A container with a timeline of its own is compared from its middle packet on, whose time it does not
         // derive from the stream start (the first Vorbis packet of an Ogg stream decodes to nothing).
         var own = anchorsItsOwnTimeline(container, original.track().codec());

@@ -55,7 +55,9 @@ class DemuxerBehaviorTest {
     /**
      * The seek precision of the samples whose index is coarser than their packets, by sample path.
      */
-    private static final Map<String, SeekPrecision> PRECISION = Map.of();
+    private static final Map<String, SeekPrecision> PRECISION = Map.of(
+            // a cue that started earlier and is still shown at the target is returned first
+            "subtitle/cues.ass", SeekPrecision.AT_OR_BEFORE);
 
     static Stream<String> samples() {
         return BehaviorSamples.list(SAMPLES).stream();

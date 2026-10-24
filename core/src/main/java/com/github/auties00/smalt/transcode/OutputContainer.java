@@ -171,7 +171,39 @@ public enum OutputContainer {
     /**
      * A WebVTT ({@code .vtt}) subtitle file, holding one subtitle stream.
      */
-    WEBVTT(ContainerFormat.WEBVTT, "vtt", "text/vtt", List.of(), List.of());
+    WEBVTT(ContainerFormat.WEBVTT, "vtt", "text/vtt", List.of(), List.of()),
+
+    /**
+     * An Advanced SubStation Alpha ({@code .ass}, v4.00+) script, holding one subtitle stream; an SSA script
+     * is converted to ASS.
+     */
+    ASS(ContainerFormat.ASS, "ass", "text/x-ssa", List.of(), List.of()),
+
+    /**
+     * A SubStation Alpha ({@code .ssa}, v4.00) script, holding one subtitle stream; an ASS script is
+     * converted to SSA.
+     */
+    SSA(ContainerFormat.ASS, "ssa", "text/x-ssa", List.of(), List.of()),
+
+    /**
+     * A TTML document ({@code .ttml}) in the IMSC 1.0.1 text profile, holding one subtitle stream.
+     */
+    TTML(ContainerFormat.TTML, "ttml", "application/ttml+xml", List.of(), List.of()),
+
+    /**
+     * A SAMI ({@code .smi}) subtitle file, holding one subtitle stream per language.
+     */
+    SAMI(ContainerFormat.SAMI, "smi", "application/x-sami", List.of(), List.of()),
+
+    /**
+     * An LRC ({@code .lrc}) lyrics file, holding one subtitle stream.
+     */
+    LRC(ContainerFormat.LRC, "lrc", "application/x-lrc", List.of(), List.of()),
+
+    /**
+     * A MicroDVD ({@code .sub}) subtitle file at 24000/1001 frames per second, holding one subtitle stream.
+     */
+    MICRODVD(ContainerFormat.MICRODVD, "sub", "text/x-microdvd", List.of(), List.of());
 
     /**
      * The container format written.
@@ -270,7 +302,8 @@ public enum OutputContainer {
      * when the file cannot carry a stream's own codec and the caller names none.
      *
      * <p>MP4 and QuickTime files carry 3GPP timed text and WebVTT, Matroska files SubRip, ASS and WebVTT, WebM
-     * files and WebVTT files WebVTT, SubRip files SubRip; the other files carry no subtitles.
+     * files and WebVTT files WebVTT, SubRip, SAMI and MicroDVD files SubRip, SSA and ASS files ASS, TTML files
+     * TTML and LRC files WebVTT; the other files carry no subtitles.
      *
      * @return the codecs, empty when the file carries no subtitles; unmodifiable
      */
@@ -278,8 +311,10 @@ public enum OutputContainer {
         return switch (this) {
             case MP4, MOV -> List.of(Codec.MOV_TEXT, Codec.WEBVTT);
             case MATROSKA -> List.of(Codec.SUBRIP, Codec.ASS, Codec.WEBVTT);
-            case WEBM, WEBVTT -> List.of(Codec.WEBVTT);
-            case SRT -> List.of(Codec.SUBRIP);
+            case WEBM, WEBVTT, LRC -> List.of(Codec.WEBVTT);
+            case SRT, SAMI, MICRODVD -> List.of(Codec.SUBRIP);
+            case ASS, SSA -> List.of(Codec.ASS);
+            case TTML -> List.of(Codec.TTML);
             default -> List.of();
         };
     }
@@ -394,7 +429,10 @@ public enum OutputContainer {
      * {@code ivf}, {@code mp3}, {@code flac}, {@code amr}, {@code ac3} and {@code avi} to their constants,
      * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
      * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code ts}
-     * to {@link #MPEG_TS}, {@code srt} to {@link #SRT} and {@code vtt} to {@link #WEBVTT}; no extension
+     * to {@link #MPEG_TS}, {@code srt} to {@link #SRT}, {@code vtt} to {@link #WEBVTT}, {@code ass} and
+     * {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml}, {@code dfxp} and {@code xml} to
+     * {@link #TTML}, {@code smi} and {@code sami} to {@link #SAMI}, {@code lrc} to {@link #LRC} and
+     * {@code sub} to {@link #MICRODVD}; no extension
      * maps to {@link #OGG_FLAC}, whose {@code oga} maps to {@link #OGG}. Matching ignores case.
      *
      * @param fileName a file name such as {@code "clip.webm"}, or a bare extension
@@ -428,6 +466,12 @@ public enum OutputContainer {
             case "avi" -> AVI;
             case "srt" -> SRT;
             case "vtt" -> WEBVTT;
+            case "ass" -> ASS;
+            case "ssa" -> SSA;
+            case "ttml", "dfxp", "xml" -> TTML;
+            case "smi", "sami" -> SAMI;
+            case "lrc" -> LRC;
+            case "sub" -> MICRODVD;
             default -> null;
         });
     }

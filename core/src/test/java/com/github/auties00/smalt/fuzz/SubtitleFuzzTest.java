@@ -18,12 +18,14 @@ import com.github.auties00.smalt.track.Rational;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Fuzz targets of the subtitle readers: the cues of any file ({@link Subtitles#read}), the cue packets of every
- * text subtitle codec ({@link SubtitleDecoder}) and the markup converters ({@link Subtitles#convertText}).
+ * Fuzz targets of the subtitle readers: the cues of any file ({@link Subtitles#read}: SubRip, WebVTT, SSA, ASS,
+ * TTML, SAMI, LRC, MicroDVD and the subtitle tracks of MP4 and Matroska files), the packets of every text subtitle
+ * codec and of TTML ({@link SubtitleDecoder}, in its own markup and converted to each other) and the markup
+ * converters ({@link Subtitles#convertText}).
  */
 class SubtitleFuzzTest {
     /** The codecs of the cue target, chosen by the options byte modulo their count. */
-    private static final Codec[] CODECS = {Codec.SUBRIP, Codec.WEBVTT, Codec.MOV_TEXT, Codec.ASS};
+    private static final Codec[] CODECS = {Codec.SUBRIP, Codec.WEBVTT, Codec.MOV_TEXT, Codec.ASS, Codec.TTML};
 
     /** The most cues of a file whose markup is converted. */
     private static final int MAX_CUES = 64;
@@ -47,7 +49,11 @@ class SubtitleFuzzTest {
         for (var index = 0; index < input.packets().size(); index++) {
             var part = input.packets().get(index);
             var packet = new Packet(1, part.data(), index * 1000L, index * 1000L, 900, true);
-            run.value("cue " + index, () -> decoder.decode(packet)).ifPresent(cue -> convert(run, cue));
+            run.value("cue " + index, () -> decoder.decodeAll(packet)).ifPresent(cues -> cues.stream().limit(MAX_CUES)
+                    .forEach(cue -> convert(run, cue)));
+            for (var markup : SubtitleMarkup.values()) {
+                run.step("cue " + index + " as " + markup, () -> decoder.decodeAll(packet, markup));
+            }
         }
     }
 

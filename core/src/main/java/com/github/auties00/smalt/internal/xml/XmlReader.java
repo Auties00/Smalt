@@ -1,4 +1,4 @@
-package com.github.auties00.smalt.metadata;
+package com.github.auties00.smalt.internal.xml;
 
 import com.github.auties00.smalt.MediaException;
 
@@ -9,7 +9,7 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Parses the XML subset XMP packets use into a namespace-resolved element tree.
+ * Parses the XML subset XMP packets and TTML documents use into a namespace-resolved element tree.
  *
  * <p>Elements, attributes, character data, CDATA sections, comments and processing instructions
  * are supported, with namespace declarations, the five predefined entities and numeric character
@@ -19,11 +19,11 @@ import java.util.Map;
  * other than tab, line feed and carriage return) are dropped from character data and attribute
  * values, as {@link #escape} drops them, so that a parsed value survives being written back.
  */
-final class XmlReader {
+public final class XmlReader {
     /**
      * The namespace of the {@code xml:} prefix.
      */
-    static final String XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
+    public static final String XML_NAMESPACE = "http://www.w3.org/XML/1998/namespace";
 
     /**
      * The deepest element nesting accepted.
@@ -67,7 +67,7 @@ final class XmlReader {
      * @throws MediaException.Malformed if the document is not well formed, declares a document type, or nests too
      * deeply
      */
-    static Element parse(String text) {
+    public static Element parse(String text) {
         var reader = new XmlReader(text);
         reader.skipMisc();
         if (reader.position >= text.length() || text.charAt(reader.position) != '<') {
@@ -334,7 +334,7 @@ final class XmlReader {
      * @return the text
      * @throws MediaException.Malformed if a reference is unknown or invalid
      */
-    static String unescape(String raw) {
+    public static String unescape(String raw) {
         if (raw.indexOf('&') < 0 && !hasControl(raw)) {
             return raw;
         }
@@ -414,7 +414,7 @@ final class XmlReader {
      * @param text the text to escape
      * @return the escaped text
      */
-    static String escape(String text) {
+    public static String escape(String text) {
         var result = new StringBuilder(text.length() + 16);
         for (var i = 0; i < text.length(); i++) {
             var c = text.charAt(i);
@@ -445,7 +445,7 @@ final class XmlReader {
      * @param children the child elements and text, in order
      * @param declared the namespace declarations of this element, keyed by prefix
      */
-    record Element(String namespace, String name, String prefix, List<Attribute> attributes, List<Object> children,
+    public record Element(String namespace, String name, String prefix, List<Attribute> attributes, List<Object> children,
                    Map<String, String> declared) {
         /**
          * Returns whether the element has a namespace and local name.
@@ -454,7 +454,7 @@ final class XmlReader {
          * @param name the local name
          * @return {@code true} on a match
          */
-        boolean is(String namespace, String name) {
+        public boolean is(String namespace, String name) {
             return this.namespace.equals(namespace) && this.name.equals(name);
         }
 
@@ -465,7 +465,7 @@ final class XmlReader {
          * @param name the local name
          * @return the value, or {@code null}
          */
-        String attribute(String namespace, String name) {
+        public String attribute(String namespace, String name) {
             for (var attribute : attributes) {
                 if (attribute.namespace().equals(namespace) && attribute.name().equals(name)) {
                     return attribute.value();
@@ -479,7 +479,7 @@ final class XmlReader {
          *
          * @return the elements in order
          */
-        List<Element> elements() {
+        public List<Element> elements() {
             var result = new ArrayList<Element>();
             for (var child : children) {
                 if (child instanceof Element element) {
@@ -494,7 +494,7 @@ final class XmlReader {
          *
          * @return the text
          */
-        String text() {
+        public String text() {
             var result = new StringBuilder();
             for (var child : children) {
                 if (child instanceof String string) {
@@ -513,6 +513,6 @@ final class XmlReader {
      * @param prefix the prefix written
      * @param value the value, references replaced
      */
-    record Attribute(String namespace, String name, String prefix, String value) {
+    public record Attribute(String namespace, String name, String prefix, String value) {
     }
 }

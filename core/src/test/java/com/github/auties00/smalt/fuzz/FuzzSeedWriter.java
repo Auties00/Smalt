@@ -213,6 +213,10 @@ class FuzzSeedWriter {
 
         copy(SubtitleFuzzTest.class, "read", "valid-cues.srt", Files.writeString(srt, SRT));
         write(SubtitleFuzzTest.class, "read", "valid-cues.vtt", VTT.getBytes(StandardCharsets.UTF_8));
+        for (var sample : List.of("cues.ass", "cues.ssa", "cues.ttml", "cues.smi", "cues.lrc", "cues.sub")) {
+            copy(SubtitleFuzzTest.class, "read", "valid-" + sample, Path.of("src", "test", "resources", "samples",
+                    "subtitle", sample));
+        }
         copy(SubtitleFuzzTest.class, "read", "valid-mov-text.mp4", ffmpeg("mp4", args(video(32, 32, 2),
                 List.of("-i", srt.toString())), "-map", "0", "-map", "1", "-c:v", "libx264", "-preset", "ultrafast",
                 "-c:s", "mov_text"));
@@ -415,6 +419,7 @@ class FuzzSeedWriter {
                 0, 1, 2, 18, -1, -1, -1, -1};
         write(SubtitleFuzzTest.class, "cues", "valid-mov-text.bin", cues(2, null, new String(movText,
                 StandardCharsets.ISO_8859_1), "\u0000\u0003two"));
+        write(SubtitleFuzzTest.class, "cues", "valid-ttml.bin", cues(4, null, TTML_SEED));
         write(SubtitleFuzzTest.class, "cues", "valid-ass.bin", cues(3, ASS_HEADER,
                 "0,0,Default,,0,0,0,,{\\i1}Hello{\\i0}\\Nworld", "1,0,Default,,0,0,0,,two"));
         write(SubtitleFuzzTest.class, "markup", "valid-subrip.txt",
@@ -517,6 +522,11 @@ class FuzzSeedWriter {
         out.putInt(4, out.position() - 8);
         return Arrays.copyOf(out.array(), out.position());
     }
+
+    /** The document of the TTML seed: two timed paragraphs with a style, a span and a line break. */
+    private static final String TTML_SEED = "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:tts=\"http://www.w3.org/ns/ttml#styling\">"
+            + "<body><div><p begin=\"0s\" end=\"1s\">Hello <span tts:fontStyle=\"italic\">there</span></p>"
+            + "<p begin=\"1s\" end=\"2s\">two<br/>lines</p></div></body></tt>";
 
     private static byte[] cues(int codec, String config, String... texts) {
         // mov_text samples are binary, carried here as ISO 8859-1 strings

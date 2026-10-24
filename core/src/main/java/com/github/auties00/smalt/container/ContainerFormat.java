@@ -87,6 +87,33 @@ public enum ContainerFormat {
     WEBVTT,
 
     /**
+     * A SubStation Alpha ({@code .ssa}, v4.00) or Advanced SubStation Alpha ({@code .ass}, v4.00+) script,
+     * starting with {@code [Script Info]}.
+     */
+    ASS,
+
+    /**
+     * A TTML document ({@code .ttml}, {@code .dfxp}, {@code .xml}): W3C TTML, DFXP and the IMSC profiles, an
+     * XML document whose root element is {@code tt}.
+     */
+    TTML,
+
+    /**
+     * A SAMI ({@code .smi}) subtitle file, starting with a {@code SAMI} tag.
+     */
+    SAMI,
+
+    /**
+     * An LRC ({@code .lrc}) lyrics file of {@code [mm:ss.xx]} time tags.
+     */
+    LRC,
+
+    /**
+     * A MicroDVD ({@code .sub}) subtitle file of {@code {start}{end}} frame-numbered cues.
+     */
+    MICRODVD,
+
+    /**
      * An H.264 elementary stream in the Annex B byte stream format ({@code .h264}): start-code prefixed NAL
      * units, with the parameter sets in front of every key frame. Written only.
      */

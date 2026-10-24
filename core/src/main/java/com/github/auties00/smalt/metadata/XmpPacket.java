@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.metadata;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.xml.XmlReader;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

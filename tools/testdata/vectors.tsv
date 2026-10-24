@@ -825,6 +825,9 @@ smoke	ijg6b-testimg.jpg	5756	ff6133bb58d3dae4f13ecbe05256dc4aaa05b17786b2c67f172
 smoke	ijg6b-testimg.ppm	101484	b64a47d529e289e5570648db9f0385d9b240448724cdde7716fa0139b121d491	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testimg.ppm
 smoke	ijg6b-testimgp.jpg	5645	e9486e697b7082a324fe2812310303e13b0ddf67b073eacb4b9d8a53e50b7ea7	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testimgp.jpg
 smoke	ijg6b-testprog.jpg	5655	24770f706b81b40a71944af3b39aad8a3f7ffb21c4f2725447022e518222d823	https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/jpeg-6b/testprog.jpg
+# The W3C IMSC test suite (w3c/imsc-tests at commit b7f88fe, the IMSC 1.0.1 to 1.3 text and image profile
+# documents; W3C Test Suite License or W3C 3-clause BSD License), for core's ImscConformanceTest.
+smoke	imsc-tests-b7f88fe.zip	4386602	d917dd9329ea3edd5baa03e0be538b66a4789fcd5d86c1a07ffb12e67c9259cb	https://codeload.github.com/w3c/imsc-tests/zip/b7f88fee6a181126931a254408440f38d8985224
 smoke	iso13818-4-audio-test01.tar.gz	322629	13ef1cc7df90e562fb9c1e1f3c7932b80e795d9de68f883fd85b840c17fd64e6	https://web.archive.org/web/20210427id_/https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Audio/test01.tar.gz
 smoke	iso13818-4-audio-test02.tar.gz	470079	7df96764f5e8dc015dd30084c5c22b0b1001d7dd581ea6119a89925ab7ad2f0f	https://web.archive.org/web/20210427id_/https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Audio/test02.tar.gz
 smoke	iso13818-4-audio-test03.tar.gz	560444	2c7315fe17cfa984addf35256cd89c84961e3b61de3a0530c16bdcd14c460777	https://web.archive.org/web/20210427id_/https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Audio/test03.tar.gz

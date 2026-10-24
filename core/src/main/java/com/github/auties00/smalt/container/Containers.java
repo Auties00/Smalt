@@ -24,8 +24,19 @@ import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.container.ogg.OggDemuxer;
 import com.github.auties00.smalt.container.ogg.OggMuxer;
 import com.github.auties00.smalt.container.raw.RawMuxer;
+import com.github.auties00.smalt.container.subtitle.AssDemuxer;
+import com.github.auties00.smalt.container.subtitle.AssMuxer;
+import com.github.auties00.smalt.container.subtitle.AssScriptType;
+import com.github.auties00.smalt.container.subtitle.LrcDemuxer;
+import com.github.auties00.smalt.container.subtitle.LrcMuxer;
+import com.github.auties00.smalt.container.subtitle.MicroDvdDemuxer;
+import com.github.auties00.smalt.container.subtitle.MicroDvdMuxer;
+import com.github.auties00.smalt.container.subtitle.SamiDemuxer;
+import com.github.auties00.smalt.container.subtitle.SamiMuxer;
 import com.github.auties00.smalt.container.subtitle.SubRipDemuxer;
 import com.github.auties00.smalt.container.subtitle.SubRipMuxer;
+import com.github.auties00.smalt.container.subtitle.TtmlDemuxer;
+import com.github.auties00.smalt.container.subtitle.TtmlMuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttMuxer;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
@@ -35,8 +46,13 @@ import com.github.auties00.smalt.container.wav.WavMuxer;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.subtitle.AssFile;
+import com.github.auties00.smalt.internal.subtitle.LrcText;
+import com.github.auties00.smalt.internal.subtitle.MicroDvdText;
+import com.github.auties00.smalt.internal.subtitle.SamiText;
 import com.github.auties00.smalt.internal.subtitle.SubRipText;
 import com.github.auties00.smalt.internal.subtitle.TextFiles;
+import com.github.auties00.smalt.internal.subtitle.TtmlDocument;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.internal.tags.Id3v2Tag;
 import com.github.auties00.smalt.io.MediaSource;
@@ -63,8 +79,11 @@ import java.util.function.Predicate;
  * MPEG transport streams by the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
- * two consecutive consistent frame headers. Text subtitle files are recognized last: a WebVTT file
- * by its {@code WEBVTT} signature, a SubRip file by a timing line among its first lines.
+ * two consecutive consistent frame headers. Text subtitle files are recognized last, in this order: a
+ * WebVTT file by its {@code WEBVTT} signature, a TTML document by its {@code tt} root element, a SAMI file
+ * by its {@code SAMI} tag, an SSA or ASS script by its {@code [Script Info]} section, a SubRip file by a
+ * timing line among its first lines, a MicroDVD file by a {@code {start}{end}} first line, and an LRC
+ * file by a time or ID tag on its first line.
  *
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
@@ -194,6 +213,11 @@ public final class Containers {
             case AC3 -> new Ac3Demuxer(source, options);
             case SUBRIP -> new SubRipDemuxer(source, options);
             case WEBVTT -> new WebVttDemuxer(source, options);
+            case ASS -> new AssDemuxer(source, options);
+            case TTML -> new TtmlDemuxer(source, options);
+            case SAMI -> new SamiDemuxer(source, options);
+            case LRC -> new LrcDemuxer(source, options);
+            case MICRODVD -> new MicroDvdDemuxer(source, options);
             case AVI -> new AviDemuxer(source, options);
             // TODO: read H.264 and HEVC Annex B and AV1 OBU elementary streams, which detect() does not recognize yet
             case H264, HEVC, AV1 -> throw new MediaException.Unsupported(format.name().toLowerCase(Locale.ROOT)
@@ -224,6 +248,11 @@ public final class Containers {
             case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1 -> RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
             case WEBVTT -> WebVttMuxer.supports(codec);
+            case ASS -> AssMuxer.supports(codec);
+            case TTML -> TtmlMuxer.supports(codec);
+            case SAMI -> SamiMuxer.supports(codec);
+            case LRC -> LrcMuxer.supports(codec);
+            case MICRODVD -> MicroDvdMuxer.supports(codec);
             case AVI -> AviMuxer.supports(codec);
         };
     }
@@ -270,6 +299,11 @@ public final class Containers {
             case MPEG_TS -> new TsMuxer(output);
             case SUBRIP -> new SubRipMuxer(output);
             case WEBVTT -> new WebVttMuxer(output);
+            case ASS -> new AssMuxer(output);
+            case TTML -> new TtmlMuxer(output);
+            case SAMI -> new SamiMuxer(output);
+            case LRC -> new LrcMuxer(output);
+            case MICRODVD -> new MicroDvdMuxer(output);
             case AVI -> new AviMuxer(output);
         };
     }
@@ -287,6 +321,8 @@ public final class Containers {
      *   <li>{@link OutputContainer#MATROSKA} and {@link OutputContainer#WEBM} get a
      *       {@link MatroskaMuxer} with the {@link MatroskaMuxerOptions#matroska()} and
      *       {@link MatroskaMuxerOptions#webm()} options;</li>
+     *   <li>{@link OutputContainer#ASS} and {@link OutputContainer#SSA} get an {@link AssMuxer} that writes
+     *       that version of the format;</li>
      *   <li>every other profile gets the muxer {@link #openMuxer(ContainerFormat, MediaSink)} returns
      *       for its {@linkplain OutputContainer#format() format}; for {@link OutputContainer#OGG_FLAC},
      *       {@link OutputContainer#AC3} and {@link OutputContainer#EAC3} it rejects a track of a codec
@@ -310,6 +346,8 @@ public final class Containers {
             case MATROSKA -> new MatroskaMuxer(output, MatroskaMuxerOptions.matroska());
             case WEBM -> new MatroskaMuxer(output, MatroskaMuxerOptions.webm());
             case OGG_FLAC, AC3, EAC3 -> new FormatMuxer(container, openMuxer(container.format(), output));
+            case ASS -> new AssMuxer(output, AssScriptType.V4_PLUS);
+            case SSA -> new AssMuxer(output, AssScriptType.V4);
             default -> openMuxer(container.format(), output);
         };
     }
@@ -447,11 +485,12 @@ public final class Containers {
     }
 
     /**
-     * Recognizes a text subtitle file from its leading bytes: a WebVTT file by its signature, a
-     * SubRip file by a timing line as the first or second of its first non-blank lines.
+     * Recognizes a text subtitle file from its leading bytes: a WebVTT, TTML, SAMI, SSA or ASS file by its
+     * signature, a SubRip file by a timing line as the first or second of its first non-blank lines, then a
+     * MicroDVD or LRC file by its first line.
      *
      * @param header the leading bytes of the input
-     * @return {@link ContainerFormat#WEBVTT}, {@link ContainerFormat#SUBRIP}, or {@code null}
+     * @return the text subtitle format, or {@code null}
      */
     private static ContainerFormat detectText(byte[] header) {
         if (header.length == 0) {
@@ -460,6 +499,15 @@ public final class Containers {
         var text = TextFiles.decode(header);
         if (WebVttText.isSignature(text)) {
             return ContainerFormat.WEBVTT;
+        }
+        if (TtmlDocument.isSignature(text)) {
+            return ContainerFormat.TTML;
+        }
+        if (SamiText.isSignature(text)) {
+            return ContainerFormat.SAMI;
+        }
+        if (AssFile.isSignature(text)) {
+            return ContainerFormat.ASS;
         }
         var times = new long[2];
         var seen = 0;
@@ -473,6 +521,12 @@ public final class Containers {
             if (++seen == 2) {
                 break;
             }
+        }
+        if (MicroDvdText.isSignature(text)) {
+            return ContainerFormat.MICRODVD;
+        }
+        if (LrcText.isSignature(text)) {
+            return ContainerFormat.LRC;
         }
         return null;
     }

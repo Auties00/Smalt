@@ -21,6 +21,7 @@ import com.github.auties00.smalt.internal.heif.DataReferences;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalRecords;
+import com.github.auties00.smalt.internal.subtitle.QuickTimeText;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Interlacing;
@@ -98,6 +99,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * The XML subtitle sample entry type of TTML ({@code stpp}).
      */
     static final int STPP = 0x73747070;
+
+    /**
+     * The QuickTime text media sample entry type ({@code text}).
+     */
+    static final int TEXT = 0x74657874;
 
     /**
      * The WebVTT configuration box type ({@code vttC}).
@@ -797,7 +803,9 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     /**
      * Parses a sample entry of a track that is neither video nor audio.
      *
-     * <p>A 3GPP timed text entry ({@code tx3g}) is {@link Codec#MOV_TEXT}, a WebVTT entry
+     * <p>A 3GPP timed text entry ({@code tx3g}) is {@link Codec#MOV_TEXT}, and so is a QuickTime text
+     * entry ({@code text}), its description converted to a {@code tx3g} configuration (the demuxer
+     * converts its samples); a WebVTT entry
      * ({@code wvtt}, ISO/IEC 14496-30) is {@link Codec#WEBVTT} whose configuration is the text of
      * its {@code vttC} box, and an XML subtitle entry ({@code stpp}) whose namespace, schema
      * location and auxiliary MIME type fields are well formed is {@link Codec#TTML}; every other
@@ -811,7 +819,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     private static SampleEntry parseData(int format, BoxCursor payload) {
         byte[] config = null;
         var codec = switch (format) {
-            case TX3G -> Codec.MOV_TEXT;
+            case TX3G, TEXT -> Codec.MOV_TEXT;
             case WVTT -> Codec.WEBVTT;
             case STPP -> Codec.TTML;
             default -> Codec.DATA;
@@ -824,6 +832,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         config = child.rest();
                     }
                 }
+            } else if (format == TEXT) {
+                config = QuickTimeText.config(payload.rest());
             } else {
                 config = payload.rest();
             }

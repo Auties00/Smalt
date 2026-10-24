@@ -417,13 +417,13 @@ final class AvTranscode {
         if (subtitles.trackId().isPresent()) {
             var id = subtitles.trackId().getAsInt();
             var track = trackById(tracks, id);
-            if (!track.codec().isSubtitle()) {
+            if (!track.codec().isSubtitle() && track.codec() != Codec.TTML) {
                 throw new IllegalArgumentException("track " + id + " is not a text subtitle track");
             }
             selected.add(track);
         } else {
             for (var track : tracks) {
-                if (track.codec().isSubtitle()) {
+                if (track.codec().isSubtitle() || track.codec() == Codec.TTML) {
                     selected.add(track);
                     if (!subtitles.allTracks()) {
                         break;
@@ -442,7 +442,8 @@ final class AvTranscode {
                 if (!container.supports(target)) {
                     throw new IllegalArgumentException(container + " cannot carry " + target.displayName());
                 }
-            } else if (container.supports(codec)) {
+            } else if (container.supports(codec) && !(codec == Codec.TTML && (start > 0 || end >= 0)
+                    && container.format() != ContainerFormat.TTML)) {
                 target = codec;
             } else if (!container.subtitleCodecs().isEmpty()) {
                 target = container.subtitleCodecs().getFirst();

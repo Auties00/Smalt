@@ -13,6 +13,8 @@ import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.internal.subtitle.AssScript;
+import com.github.auties00.smalt.internal.subtitle.TextFiles;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.internal.tags.Ebml;
@@ -84,8 +86,9 @@ import java.util.Set;
  *       {@link Codec#PCM_S64LE}.</li>
  *   <li>Text subtitles: WebVTT ({@code D_WEBVTT/SUBTITLES}, with the WebVTT header as
  *       {@code CodecPrivate} in Matroska when it holds more than the signature, none in WebM),
- *       and in Matroska only SubRip ({@code S_TEXT/UTF8}, none) and ASS ({@code S_TEXT/ASS}, the
- *       script header). Subtitle packets become {@code BlockGroup}s with a {@code BlockDuration};
+ *       and in Matroska only SubRip ({@code S_TEXT/UTF8}, none) and ASS ({@code S_TEXT/ASS}, or
+ *       {@code S_TEXT/SSA} for a v4.00 script, the script header). Subtitle packets become {@code BlockGroup}s
+ *       with a {@code BlockDuration};
  *       a WebVTT block holds the cue identifier line, the settings line and the payload. Subtitle
  *       tracks get no cue points.</li>
  *   <li>Other data, in Matroska only: a {@link Codec#DATA} track whose
@@ -1565,7 +1568,9 @@ public final class MatroskaMuxer implements Muxer {
             this.flags = flags;
             this.video = track.kind() == TrackKind.VIDEO;
             this.sparse = track.kind() == TrackKind.DATA;
-            this.codecId = codecId(track.codec());
+            this.codecId = track.codec() == Codec.ASS && track.codecConfig()
+                    .map(bytes -> AssScript.parse(TextFiles.decode(bytes)).isSsa()).orElse(false)
+                    ? "S_TEXT/SSA" : codecId(track.codec());
             this.trackType = video ? 1 : sparse ? TRACK_TYPE_SUBTITLE : 2;
             this.conversion = switch (track.codec()) {
                 case PCM_S8 -> 1;

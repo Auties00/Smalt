@@ -123,7 +123,8 @@ public final class Mp4Remuxer {
                 }
                 long packets;
                 try {
-                    if (demuxer instanceof Mp4Demuxer indexed && plannable(copies, format, options.brand())) {
+                    if (demuxer instanceof Mp4Demuxer indexed && plannable(copies, format, options.brand())
+                            && copies.stream().noneMatch(copy -> indexed.convertsSamples(copy.input.id()))) {
                         muxer.streamAfter(plan(indexed, copies, muxerOptions));
                     } else if (format != ContainerFormat.MP4 && input.size() > MdatSpool.MEMORY_LIMIT && LocalSource.isLocal(input)) {
                         var header = planByReading(input, format, options, muxerOptions);

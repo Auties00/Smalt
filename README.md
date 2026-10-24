@@ -607,20 +607,32 @@ dash.js and Shaka Player do.
 ### Subtitles
 
 Text subtitle tracks are `DataTrack`s with the codecs `SUBRIP`, `WEBVTT`, `MOV_TEXT` and `ASS`
-(`Codec.isSubtitle()`); each packet carries one cue. Package `subtitle` (core) decodes and encodes cues,
-reads them from any file (`SubtitleReader`, `Subtitles.read`) and converts their markup: bold, italic and
-underline survive every conversion, WebVTT character references are decoded and escaped, a SubRip
-`{\anN}` placement becomes WebVTT `line`/`align` settings, and other markup (colors, fonts, voices,
-classes) is dropped. TTML tracks (`Codec.TTML`, MP4 `stpp`) carry whole documents rather than cues; Smalt
-reads, writes and remuxes them unchanged but does not decode them.
+(`Codec.isSubtitle()`), each packet one cue, and `TTML`, each packet a document of cues. Package `subtitle`
+(core) decodes and encodes cues, reads them from any file (`SubtitleReader`, `Subtitles.read`), writes every text
+subtitle file (`Subtitles.write`) and converts their markup through one styled model: bold, italic, underline
+and strikeout, text and background colors, fonts and font sizes, the placement (a numpad alignment such as
+`{\an8}`, the WebVTT `line`/`position`/`align` settings, an ASS `\pos`, a TTML region), karaoke times (ASS
+`\k`, WebVTT timestamp tags, 3GPP `krok`, LRC word times) and the speaker (a WebVTT voice, the ASS `Name`) carry over
+as far as the target holds them; WebVTT classes and regions, ruby and ASS animations, borders and shadows do not.
+Decoding with the track in view (`SubtitleDecoder.decode(packet, markup)`, `SubtitleReader` with a markup, the
+transcoder) gives an ASS event the bold, italic, underline, strikeout, color and alignment of its style and scales
+positions and sizes from the script resolution. Legacy files without a byte order mark are decoded in the
+encoding `SubtitleReaderOptions.charset` or `DemuxerOptions.charset` names, or one detected among UTF-8, UTF-16,
+Shift_JIS, EUC-JP, EUC-KR, GBK, Big5, Windows-1251 and KOI8-R (Windows-1252 otherwise); every text subtitle file
+is read from sources of known or unknown size.
 
 | Format | Read | Write | Package | Source |
 |---|---|---|---|---|
-| SubRip (`.srt`) | yes: UTF-8, UTF-16 and Windows-1252, any line breaks, missing counters and blank lines, unsorted cues | yes | `container.subtitle` | de facto format |
+| SubRip (`.srt`) | yes: any encoding (detected or named), any line breaks, missing counters and blank lines, unsorted cues, ASS override blocks | yes | `container.subtitle` | de facto format |
 | WebVTT (`.vtt`) | yes: header with `STYLE`, `REGION` and `NOTE` blocks, identifiers, settings | yes | `container.subtitle` | W3C WebVTT |
-| MP4 3GPP timed text (`tx3g`) | yes, `styl` runs as bold/italic/underline | yes, overlapping cues merged into gapless samples | `container.mp4` | 3GPP TS 26.245 |
+| SSA (`.ssa`, v4.00) and ASS (`.ass`, v4.00+) | yes: the header (info, styles, `Comment` events, `[Fonts]` and other sections) as the track configuration, events in their own `Format` order as Matroska blocks with their read order, layers, styles, names, margins and effects | yes, the script's own version or converted (`AssMuxer(sink, AssScriptType)`, `OutputContainer.ASS`/`SSA`), events back in read order; Matroska `S_TEXT/SSA` for a v4.00 script | `container.subtitle` | SSA v4.00 and ASS v4.00+ specifications, libass behavior |
+| TTML (`.ttml`, `.dfxp`), IMSC 1.0.1 to 1.3 | yes: one `Codec.TTML` document, decoded to cues with the TTML timing model (par and seq, clock, frame, tick and offset times, frame rate multiplier, drop frames), referential, region and inline styles, `set` animations and region placement | yes, IMSC 1.0.1 text profile documents; a single document unchanged | `container.subtitle` | W3C TTML1/TTML2, IMSC 1.1, checked against imscJS on the W3C IMSC test suite |
+| SAMI (`.smi`) | yes: one SubRip track per language class, its `lang` and `Name`, the `META` charset | yes, one class per track | `container.subtitle` | Microsoft SAMI |
+| LRC (`.lrc`) | yes: one WebVTT track, repeated time tags, enhanced word times as timestamp tags, `offset`, `length` and ID tags | yes, with the title, artist and album tags | `container.subtitle` | de facto format |
+| MicroDVD (`.sub`) | yes: one SubRip track, the declared or given frame rate (24000/1001 by default), `y`, `c`, `f` and `s` control codes | yes, at a given frame rate (0.001 to 1000, declared with three decimals and frames counted at the declared rate) | `container.subtitle` | de facto format |
+| MP4 3GPP timed text (`tx3g`) and QuickTime text (`text`) | yes: `styl` styles, colors, fonts (`ftab`) and sizes against the default style, `hlit`/`hclr` as a background, `krok` karaoke, the justification and a `tbox` as the placement; QuickTime text converted to 3GPP samples (Mac OS Roman text, TextEdit style scraps) | yes (`tx3g`), overlapping cues merged into gapless samples, `styl`, `hlit`, `hclr` and `krok` written, and a `tbox` for anchored cues under an entry with a default text box | `container.mp4` | 3GPP TS 26.245, QuickTime File Format |
 | MP4 WebVTT (`wvtt`) | yes, one packet per cue, the pieces of split cues joined by the readers | yes, overlapping cues cut into `vttc`/`vtte` samples | `container.mp4` | ISO/IEC 14496-30 |
-| MP4 TTML (`stpp`), `Codec.TTML` | yes, one document per packet with the `stpp` fields as configuration; carried only, not decoded to cues | yes (MP4, MOV and fragmented MP4), one document per sample, an empty document in each gap; overlapping documents rejected | `container.mp4` | ISO/IEC 14496-30, W3C TTML |
+| MP4 TTML (`stpp`), `Codec.TTML` | yes, one document per packet with the `stpp` fields as configuration, decoded to cues | yes (MP4, MOV and fragmented MP4), one document per sample, an empty document in each gap; overlapping documents rejected | `container.mp4` | ISO/IEC 14496-30, W3C TTML |
 | Matroska SubRip (`S_TEXT/UTF8`) and ASS (`S_TEXT/ASS`, `S_TEXT/SSA`) | yes, ASS events passed through | yes (Matroska only) | `container.matroska` | Matroska codec specs |
 | Matroska and WebM WebVTT (`S_TEXT/WEBVTT`, `D_WEBVTT/*`) | yes | yes, as `D_WEBVTT/SUBTITLES` | `container.matroska` | Matroska and WebM specs |
 
@@ -763,7 +775,7 @@ checked by `PillowOracleTest` (inputs, outputs and the mapping of each call in
 the common ffmpeg command lines. It reads every container above plus animated GIF, APNG and WebP, and writes
 MP4, M4A, fragmented MP4, QuickTime MOV, Matroska, WebM, Ogg (Opus, Vorbis, FLAC; `OGG_FLAC` picks FLAC), WAV,
 AIFF, ADTS, IVF, MPEG-TS, AVI, the raw MP3, FLAC, AMR, AC-3 and E-AC-3 streams, H.264 and HEVC Annex B and AV1 OBU
-elementary streams, and SubRip and WebVTT files. Which codecs it can encode depends on the
+elementary streams, and SubRip, WebVTT, SSA, ASS, TTML, SAMI, LRC and MicroDVD files. Which codecs it can encode depends on the
 artifacts present: H.264, AAC, AMR, AC-3 and E-AC-3 need `smalt-mpeg`, VP9, AV1, ProRes and DNxHD need `smalt-video`, VP8
 Motion-JPEG and Motion JPEG 2000 need `smalt-image`, Opus, FLAC, ALAC, MP3 and Vorbis need `smalt-audio`; PCM is in core. There is no
 HEVC encoder, so HEVC streams (an `.h265` output included) can only be copied. A QuickTime output gets ProRes 422 HQ by default (or DNxHR HQ),
@@ -788,7 +800,7 @@ checks a FLAC source's MD5 signature on the way.
 | Key frame interval, or no periodic key frames (`VideoTranscodeOptions.keyframeInterval`, `VideoEncoderOptions.keyframeInterval`) | yes (H.264, VP8, VP9, AV1; ProRes, DNxHD and Motion-JPEG are all key frames) | - |
 | Resample, remix (mix levels, Lt/Rt, a caller's matrix: `AudioTranscodeOptions.mixing`), gain, sample format (PCM codec) | yes | - |
 | Loudness normalization (two passes: measure the kept range, then apply the gain under a true-peak ceiling, or reach the target and keep the ceiling with a true-peak limiter; or one pass that follows the loudness as it encodes, `singlePassNormalization`) | yes | - |
-| Subtitles: SubRip, WebVTT, 3GPP timed text, ASS | converted to what the container carries (also to `.srt` and `.vtt` files), cut to the kept range; a cue still shown at a trimmed start is kept however early it began | copied, retimed and cut to the kept range, likewise |
+| Subtitles: SubRip, WebVTT, 3GPP timed text, ASS, TTML | converted to what the container carries (also to `.srt`, `.vtt`, `.ass`, `.ssa`, `.ttml`, `.smi`, `.lrc` and `.sub` files), cut to the kept range; a cue still shown at a trimmed start is kept however early it began | copied, retimed and cut to the kept range, likewise |
 | Image convert, scale, crop, flatten, byte budget | yes (first frame of animations; animated output needs an animation encoder; an animation fits the budget by quality, then size, then dropped frames) | byte-identical pass-through when nothing changes |
 
 ### Capture
@@ -1198,9 +1210,13 @@ checks a FLAC source's MD5 signature on the way.
   the media, an AAC object type that predicts from the start of the stream (Main, LTP, LD, ELD with low delay
   SBR) converges during its pre-roll instead of matching a decode of the whole stream. A fragmented MP4, Ogg, WAV, AIFF or subtitle file cannot store a codec configuration change,
   and an MP4 sample description of another codec than the track's first is rejected when a sample uses it.
-- MP4 TTML (`stpp`): `Codec.TTML` tracks are carried by the MP4 demuxer and muxers and `Mp4Remuxer` only; the
-  `subtitle` package does not decode their documents to cues, so the transcoder neither converts nor copies them,
-  and TTML files are not read. The image resources an IMSC image profile document references through
+- Subtitles: TTML documents decode to text cues; the images of IMSC image profile documents are not decoded, and
+  a paragraph of a document that defines regions but selects none is not shown, as TTML specifies. A cue's
+  placement is written to 3GPP timed text only under a sample entry with a default text box (a `tbox` is
+  measured in a region, which the default sample entry, with an empty box, leaves to the track size the track
+  model does not carry). Automatic encoding detection covers the encodings listed under Subtitles; others need the charset
+  option. SAMI files are written in UTF-8, MicroDVD and LRC files without the styles a line only partly has.
+- MP4 TTML (`stpp`): the image resources an IMSC image profile document references through
   sub-samples stay inside the sample, without the `subs` box that delimits them. ffmpeg (7.1) cannot write
   fragmented TTML; it reads Smalt's.
 - MP4 muxing: a fragmented file with a
@@ -2228,8 +2244,9 @@ for AC-3 and E-AC-3; SMPTE RDD 5 (film grain), RDD 36 (ProRes), ST 2019-1 (VC-3)
 [Zstandard](https://github.com/facebook/zstd) format documentation with its golden test files; the .xz file
 format; Adobe's TIFF and
 [DNG](https://helpx.adobe.com/camera-raw/desktop/dng-and-file-formats/digital-negative.html)
-specifications, EXIF, XMP, IPTC and the ICC profile format; the W3C's PNG, WebVTT and Compositing and
-Blending specifications; RFC 8216 and MPEG-DASH; ITU-T H.273, ITU-R BT.2100, BT.2390 and BS.1770, ISO 21496-1, the Adobe gain map specification, Google's Ultra HDR
+specifications, EXIF, XMP, IPTC and the ICC profile format; the W3C's PNG, WebVTT, TTML and IMSC, and Compositing and
+Blending specifications; 3GPP TS 26.245 (timed text) and Apple's QuickTime File Format; the SubStation Alpha v4.00+
+script format, with [libass](https://github.com/libass/libass) settling how players read scripts; RFC 8216 and MPEG-DASH; ITU-T H.273, ITU-R BT.2100, BT.2390 and BS.1770, ISO 21496-1, the Adobe gain map specification, Google's Ultra HDR
 image format and Apple's description of its HDR gain map, CIPA DC-007, and EBU R 128
 with EBU Tech 3341 and 3342, EBU Tech 3306 (RF64), ATSC A/65 and the MPEG-DASH role scheme for track metadata, and
 the tag mapping of [MusicBrainz Picard](https://picard-docs.musicbrainz.org/)'s documentation for the native names of
@@ -2256,13 +2273,14 @@ tiff2rgba, [zstd](https://github.com/facebook/zstd) and [XZ Utils](https://tukaa
 pbmtojbg and jbgtopbm, [tifffile](https://github.com/cgohlke/tifffile) and [imagecodecs](https://github.com/cgohlke/imagecodecs),
 [OpenSlide](https://openslide.org/), [libvips](https://www.libvips.org/), Pillow, Little CMS,
 [zimg](https://github.com/sekrit-twc/zimg) (through FFmpeg's zscale filter),
-ExifTool, Adobe DNG Converter, the Fraunhofer [FDK AAC](https://github.com/mstorsjo/fdk-aac) library, and the Dolby Digital
+ExifTool, Adobe DNG Converter, Sandflow's [imscJS](https://github.com/sandflow/imscJS), the IMSC reference
+implementation, the Fraunhofer [FDK AAC](https://github.com/mstorsjo/fdk-aac) library, and the Dolby Digital
 Plus decoder of Windows Media Foundation. Code Intelligence's [Jazzer](https://github.com/CodeIntelligenceTesting/jazzer),
 on LLVM's libFuzzer, fuzzes every parser and decoder, and Google's
 [ClusterFuzzLite](https://google.github.io/clusterfuzzlite/) runs it in CI. The test
 vectors and samples they run on come from the ITU-T and ISO conformance suites, the WebM project, the
 Alliance for Open Media, the JPEG XL conformance suite, [Xiph.Org](https://media.xiph.org/)'s test media,
-Willem van Schaik's PngSuite, Jason Summers's BMP Suite, the Matroska test files, Nokia's HEIF samples, libavif's gain map test files, the FFmpeg FATE suite, Dolby's
+Willem van Schaik's PngSuite, Jason Summers's BMP Suite, the W3C IMSC test suite, the Matroska test files, Nokia's HEIF samples, libavif's gain map test files, the FFmpeg FATE suite, Dolby's
 Online Delivery Kit, the OpenSlide test data and raw.pixls.us. [JaCoCo](https://www.jacoco.org/) maps what the
 tests cover and [jcstress](https://github.com/openjdk/jcstress) stresses the concurrent code.
 [JUnit](https://junit.org/), [JMH](https://github.com/openjdk/jmh) and

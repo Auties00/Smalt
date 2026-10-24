@@ -1,9 +1,12 @@
 package com.github.auties00.smalt.subtitle;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.internal.subtitle.AssEvents;
+import com.github.auties00.smalt.internal.subtitle.AssScript;
 import com.github.auties00.smalt.internal.subtitle.Markup;
 import com.github.auties00.smalt.internal.subtitle.TextFiles;
 import com.github.auties00.smalt.internal.subtitle.TimedText;
+import com.github.auties00.smalt.internal.subtitle.TtmlDocument;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -11,19 +14,33 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 
 /**
  * Turns the packets of a text subtitle track into {@link SubtitleCue}s.
  *
- * <p>Each packet is decoded on its own, in the packet form its codec documents
- * ({@link Codec#SUBRIP}, {@link Codec#WEBVTT}, {@link Codec#MOV_TEXT}, {@link Codec#ASS}). The cue
- * starts at the packet's presentation timestamp (its decoding timestamp when it has none, the end
- * of the previous cue when it has neither) and lasts the packet's duration. Its text keeps the
- * markup of {@link #markup()}: SubRip for SubRip and 3GPP timed text (whose {@code styl} runs
- * become {@code <b>}, {@code <i>} and {@code <u>} tags), WebVTT, or the text field of the ASS
- * event with its override blocks. Text is read as UTF-8, falling back to Windows-1252 for bytes
- * that are not valid UTF-8, with line breaks normalized to line feeds.
+ * <p>Each packet is decoded on its own, in the packet form its codec documents ({@link Codec#SUBRIP},
+ * {@link Codec#WEBVTT}, {@link Codec#MOV_TEXT}, {@link Codec#ASS}, {@link Codec#TTML}). A cue starts at
+ * the packet's presentation timestamp (its decoding timestamp when it has none, the end of the previous
+ * cue when it has neither) and lasts the packet's duration; the cues of a TTML document keep the times
+ * the document gives them, cut to the packet's span. Text is read as UTF-8, falling back to Windows-1252
+ * for bytes that are not valid UTF-8, with line breaks normalized to line feeds.
+ *
+ * <p>Cues come in the markup of {@link #markup()} unless another is asked for:
+ * <ul>
+ *   <li>SubRip and WebVTT cues are the packet text, a WebVTT cue with its identifier and settings;</li>
+ *   <li>ASS cues are the text field of the event, with the event's {@code Layer, Style, Name, MarginL,
+ *       MarginR, MarginV, Effect} fields as the settings;</li>
+ *   <li>3GPP timed text and TTML cues are SubRip text: bold, italic, underline (and strikeout for TTML)
+ *       as tags, and the colors, fonts and sizes that differ from the track defaults as {@code <font>} tags,
+ *       with an {@code {\anN}} placement.</li>
+ * </ul>
+ * Decoding into another markup ({@link #decode(Packet, SubtitleMarkup)}) converts with the whole track in
+ * view: an ASS event gets the bold, italic, underline, strikeout, color and alignment of its style from
+ * the script header, and positions and font sizes are scaled from the script resolution; karaoke times
+ * and placements carry over where the target markup has them.
  *
  * <p>An instance is not thread-safe.
  */
@@ -34,6 +51,16 @@ public final class SubtitleDecoder {
     private final Track track;
 
     /**
+     * The script of an ASS track, or {@code null}.
+     */
+    private final AssScript script;
+
+    /**
+     * The sample entry of a 3GPP timed text track, or {@code null}.
+     */
+    private final TimedText.Config timedText;
+
+    /**
      * The end of the previous cue in microseconds.
      */
     private long previousEnd;
@@ -41,15 +68,18 @@ public final class SubtitleDecoder {
     /**
      * Constructs a decoder for a track.
      *
-     * @param track the track; its codec must be a text subtitle codec
-     * @throws NullPointerException     if {@code track} is {@code null}
-     * @throws IllegalArgumentException if the track's codec is not a text subtitle codec
+     * @param track the track; its codec must be a text subtitle codec or {@link Codec#TTML}
+     * @throws IllegalArgumentException if the track's codec is neither a text subtitle codec nor TTML
      */
     public SubtitleDecoder(Track track) {
         this.track = Objects.requireNonNull(track, "track");
-        if (!track.codec().isSubtitle()) {
+        if (!track.codec().isSubtitle() && track.codec() != Codec.TTML) {
             throw new IllegalArgumentException(track.codec().displayName() + " is not a text subtitle codec");
         }
+        var config = track.codecConfig().orElse(null);
+        this.script = track.codec() == Codec.ASS
+                ? AssScript.parse(config == null ? "" : TextFiles.decode(config)) : null;
+        this.timedText = track.codec() == Codec.MOV_TEXT ? TimedText.Config.parse(config) : null;
     }
 
     /**
@@ -64,8 +94,8 @@ public final class SubtitleDecoder {
     /**
      * Returns the markup convention of the decoded cue text.
      *
-     * @return {@link SubtitleMarkup#SUBRIP} for SubRip and 3GPP timed text tracks, {@link SubtitleMarkup#WEBVTT}
-     *         or {@link SubtitleMarkup#ASS} for those tracks
+     * @return {@link SubtitleMarkup#SUBRIP} for SubRip, 3GPP timed text and TTML tracks,
+     * {@link SubtitleMarkup#WEBVTT} or {@link SubtitleMarkup#ASS} for those tracks
      */
     public SubtitleMarkup markup() {
         return Markup.of(track.codec());
@@ -76,11 +106,57 @@ public final class SubtitleDecoder {
      *
      * @param packet a packet of the track
      * @return the cue, or {@code null} when the packet shows nothing (an empty 3GPP timed text
-     *         sample, which clears the screen, or a packet whose text is blank)
-     * @throws NullPointerException if {@code packet} is {@code null}
+     * sample, which clears the screen, or a packet whose text is blank)
+     * @throws IllegalStateException if the track is a TTML track, whose packets hold several cues
+     * ({@link #decodeAll(Packet)})
      */
     public SubtitleCue decode(Packet packet) {
+        return decode(packet, markup());
+    }
+
+    /**
+     * Decodes one packet into a markup.
+     *
+     * <p>In the track's own markup this is {@link #decode(Packet)}.
+     *
+     * @param packet a packet of the track
+     * @param markup the markup of the returned cue
+     * @return the cue, or {@code null} when the packet shows nothing
+     * @throws IllegalStateException if the track is a TTML track, whose packets hold several cues
+     */
+    public SubtitleCue decode(Packet packet, SubtitleMarkup markup) {
         Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(markup, "markup");
+        if (track.codec() == Codec.TTML) {
+            throw new IllegalStateException("a TTML packet holds a document of cues; decode it with decodeAll");
+        }
+        var cues = decodeAll(packet, markup);
+        return cues.isEmpty() ? null : cues.getFirst();
+    }
+
+    /**
+     * Decodes one packet into every cue it holds, in its own markup.
+     *
+     * @param packet a packet of the track
+     * @return the cues in start order: none or one for a text subtitle codec, every cue of the document,
+     * cut to the packet's span, for TTML
+     * @throws MediaException.Malformed if a TTML packet is not a well-formed document
+     */
+    public List<SubtitleCue> decodeAll(Packet packet) {
+        return decodeAll(packet, markup());
+    }
+
+    /**
+     * Decodes one packet into every cue it holds, in a markup.
+     *
+     * @param packet a packet of the track
+     * @param markup the markup of the returned cues
+     * @return the cues in start order
+     * @throws MediaException.Malformed if a TTML packet is not a well-formed document
+     */
+    public List<SubtitleCue> decodeAll(Packet packet, SubtitleMarkup markup) {
+        Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(markup, "markup");
         var timeBase = track.timeBase();
         var time = packet.pts() != Packet.NO_TIMESTAMP ? packet.pts() : packet.dts();
         var start = time == Packet.NO_TIMESTAMP ? previousEnd : micros(timeBase, time);
@@ -88,30 +164,86 @@ public final class SubtitleDecoder {
         var end = Math.max(start, time == Packet.NO_TIMESTAMP ? start + micros(timeBase, duration)
                 : micros(timeBase, saturatingAdd(time, duration)));
         previousEnd = end;
-        String text;
-        var identifier = "";
-        var settings = "";
+        var own = markup();
         switch (track.codec()) {
-            case WEBVTT -> {
-                var cue = WebVttSamples.cue(packet);
-                text = cue.payload();
-                identifier = cue.identifier();
-                settings = cue.settings();
+            case TTML -> {
+                var result = new ArrayList<SubtitleCue>();
+                var span = packet.duration() > 0 ? end : Long.MAX_VALUE;
+                for (var cue : TtmlDocument.parse(packet.data()).cues()) {
+                    var cueStart = Math.max(cue.startMicros(), start);
+                    var cueEnd = Math.min(cue.endMicros(), span);
+                    if (cueEnd <= cueStart || cue.text().plain().isBlank()) {
+                        continue;
+                    }
+                    result.add(Markup.toCue(cue.text(), cueStart, cueEnd, markup, Markup.Context.NONE));
+                }
+                return result;
             }
             case MOV_TEXT -> {
                 if (TimedText.isEmpty(packet.data())) {
-                    return null;
+                    return List.of();
                 }
-                text = TimedText.decodeText(packet.data());
+                var styled = TimedText.decode(packet.data(), timedText, timeBase);
+                return single(styled.plain().isBlank() ? null : trimmed(Markup.toCue(styled, start, end, markup,
+                        Markup.Context.NONE)));
             }
-            case ASS -> text = AssEvents.text(stripTrailingLineBreaks(utf8(packet)));
-            default -> text = utf8(packet);
+            case WEBVTT -> {
+                var sample = WebVttSamples.cue(packet);
+                var cue = new SubtitleCue(start, end, stripTrailingLineBreaks(sample.payload()), sample.identifier(),
+                        sample.settings());
+                return single(cue.text().isBlank() ? null : convert(cue, own, markup));
+            }
+            case ASS -> {
+                var event = AssEvents.parseBlock(stripTrailingLineBreaks(utf8(packet)));
+                var cue = new SubtitleCue(start, end, stripTrailingLineBreaks(event.text()), "", event.fields());
+                if (Markup.plain(cue.text(), SubtitleMarkup.ASS).isBlank()) {
+                    return List.of();
+                }
+                if (markup == SubtitleMarkup.ASS) {
+                    return List.of(cue);
+                }
+                var context = new Markup.Context(start, end, script, event.style());
+                var styled = Markup.parseCue(cue, SubtitleMarkup.ASS, context);
+                return single(trimmed(Markup.toCue(styled, start, end, markup, Markup.Context.NONE)));
+            }
+            default -> {
+                var text = stripTrailingLineBreaks(utf8(packet));
+                return single(text.isBlank() ? null : convert(SubtitleCue.of(start, end, text), own, markup));
+            }
         }
-        text = stripTrailingLineBreaks(text);
-        if (text.isBlank()) {
-            return null;
-        }
-        return new SubtitleCue(start, end, text, identifier, settings);
+    }
+
+    /**
+     * Converts a cue from the track's markup.
+     *
+     * @param cue the cue in the track's markup
+     * @param from the track's markup
+     * @param to the markup asked for
+     * @return the cue in {@code to}
+     */
+    private static SubtitleCue convert(SubtitleCue cue, SubtitleMarkup from, SubtitleMarkup to) {
+        return from == to ? cue : trimmed(Subtitles.convert(cue, from, to));
+    }
+
+    /**
+     * Returns a list of at most one cue.
+     *
+     * @param cue the cue, or {@code null}
+     * @return the list
+     */
+    private static List<SubtitleCue> single(SubtitleCue cue) {
+        return cue == null ? List.of() : List.of(cue);
+    }
+
+    /**
+     * Removes the line feeds that end a cue text.
+     *
+     * @param cue the subtitle cue
+     * @return the cue without trailing line feeds
+     */
+    private static SubtitleCue trimmed(SubtitleCue cue) {
+        var text = stripTrailingLineBreaks(cue.text());
+        return text.equals(cue.text()) ? cue : cue.withText(text);
     }
 
     /**
