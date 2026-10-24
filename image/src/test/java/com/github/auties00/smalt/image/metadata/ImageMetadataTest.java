@@ -243,6 +243,20 @@ class ImageMetadataTest {
     @DisplayName("JPEG")
     class Jpeg {
         @Test
+        @DisplayName("reads the metadata of a file that ends before its image data, but does not edit it")
+        void noImageData() {
+            // the start-of-image marker and a comment, then the end of the file
+            var image = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xFE, 0, 4, 'h', 'i'};
+            assertEquals(List.of("hi"), ImageMetadata.read(image).comments());
+            assertThrows(MediaException.Malformed.class, () -> ImageMetadataEditor.apply(image,
+                    ImageMetadataEdit.stripAll()));
+            var ended = new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xFE, 0, 4, 'h', 'i', (byte) 0xFF,
+                    (byte) 0xD9};
+            assertArrayEquals(new byte[]{(byte) 0xFF, (byte) 0xD8, (byte) 0xFF, (byte) 0xD9},
+                    ImageMetadataEditor.apply(ended, ImageMetadataEdit.stripAll()));
+        }
+
+        @Test
         @DisplayName("splits a large XMP packet into Extended XMP and reads it back merged")
         void extendedXmp() {
             var large = "x".repeat(100_000);
@@ -408,7 +422,7 @@ class ImageMetadataTest {
     @DisplayName("HEIF and TIFF")
     class HeifAndTiff {
         @Test
-        @DisplayName("reads TIFF metadata and refuses to edit it")
+        @DisplayName("reads and strips the metadata of a TIFF file written by ffmpeg and exiftool")
         void tiff() {
             var image = MetadataSupport.exiftoolWrite("meta.tif", com.github.auties00.smalt.testkit.Fixtures.read(
                     com.github.auties00.smalt.testkit.Fixtures.testImage("tif", 32, 32, List.of())),
@@ -417,22 +431,24 @@ class ImageMetadataTest {
             assertEquals(new ExifValue.Ascii("Tiff Artist"), metadata.exif().orElseThrow().ifd0().get(0x013B));
             assertEquals("Tiff title", metadata.xmp().orElseThrow().text(XmpPacket.DC, "title").orElseThrow());
             assertEquals("Roma", metadata.iptc().orElseThrow().string(IptcData.Field.CITY).orElseThrow());
-            assertThrows(MediaException.Unsupported.class, () -> ImageMetadataEditor.stripAll(image));
             assertSame(image, ImageMetadataEditor.apply(image, ImageMetadataEdit.keepAll()));
+            var stripped = ImageMetadataEditor.stripAll(image);
+            var bare = ImageMetadata.read(stripped);
+            assertTrue(bare.xmp().isEmpty() && bare.iptc().isEmpty());
+            assertFalse(bare.exif().map(exif -> exif.ifd0().containsKey(0x013B)).orElse(false));
+            TiffMetadataTest.assertOnlyMetadataChanged(image, stripped);
+            TiffMetadataTest.assertPagesIdentical(image, stripped);
+            var tags = MetadataSupport.exiftoolRead(stripped, "meta-stripped.tif");
+            assertNull(tags.get("IFD0:Artist"), tags.toString());
+            assertNull(tags.get("XMP-dc:Title"));
+            assertNull(tags.get("IPTC:City"));
         }
 
         @Test
         @DisplayName("reads and edits the EXIF and XMP items of an AVIF file, keeping the image item")
         void avif() {
-            Oracle.assume(Oracle.Tool.FFMPEG);
-            byte[] avif;
-            try {
-                avif = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Fixtures.testImage("avif",
-                        64, 64, List.of("-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "8")));
-            } catch (RuntimeException exception) {
-                org.junit.jupiter.api.Assumptions.abort("ffmpeg cannot write AVIF: " + exception.getMessage());
-                return;
-            }
+            var avif = com.github.auties00.smalt.testkit.Fixtures.read(com.github.auties00.smalt.testkit.Fixtures.testImage(
+                    "avif", 64, 64, List.of("-c:v", "libaom-av1", "-still-picture", "1", "-cpu-used", "8")));
             var image = MetadataSupport.exiftoolWrite("meta.avif", avif, List.of("-EXIF:Artist=Avif Artist",
                     "-XMP-dc:Title=Avif title", "-GPSLatitude=45.4642", "-GPSLatitudeRef=N", "-XMP-photoshop:City=Milano"));
             var metadata = ImageMetadata.read(image);
@@ -460,8 +476,9 @@ class ImageMetadataTest {
                     .toBuilder().xmp(XmpPacket.empty().with(XmpPacket.DC, "title", "Fresh")).build());
             assertEquals("Fresh", MetadataSupport.exiftoolRead(added, "added.avif").get("XMP-dc:Title"));
             assertArrayEquals(primaryItem(avif), primaryItem(added));
-            assertThrows(MediaException.Unsupported.class, () -> ImageMetadataEditor.apply(image,
-                    ImageMetadataEdit.keepAll().toBuilder().removeIccProfile().build()));
+            // the file has no ICC profile to remove
+            assertSame(image, ImageMetadataEditor.apply(image, ImageMetadataEdit.keepAll().toBuilder().removeIccProfile()
+                    .build()));
         }
 
         static byte[] primaryItem(byte[] heif) {

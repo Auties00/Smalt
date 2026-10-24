@@ -1,8 +1,10 @@
 package com.github.auties00.smalt.container.raw;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.nal.NalRecords;
@@ -34,7 +36,10 @@ import java.util.Objects;
  *   <li>FLAC: the {@code fLaC} marker and metadata blocks of the track configuration, then the
  *       frames (a native {@code .flac} file);</li>
  *   <li>AMR-NB and AMR-WB: the {@code #!AMR} or {@code #!AMR-WB} magic, then the storage-format
- *       frames (an {@code .amr} file, RFC 4867 section 5);</li>
+ *       frames (an {@code .amr} file, RFC 4867 section 5); a track of 2 to 15 channels gets the
+ *       multichannel magic {@code #!AMR_MC1.0} or {@code #!AMR-WB_MC1.0} and its channel count,
+ *       and each of its packets must hold one frame-block, the frames of every channel in the
+ *       channel order of RFC 3551 section 4.1;</li>
  *   <li>AC-3 and E-AC-3: the sync frames, back to back (an {@code .ac3} or {@code .ec3}
  *       file);</li>
  *   <li>H.264 and HEVC: an Annex B byte stream; length-prefixed NAL units become start-code
@@ -136,6 +141,11 @@ public final class RawMuxer implements Muxer {
     private byte[] parameterSets = new byte[0];
 
     /**
+     * The codec configuration of the packets being written, initially the track's.
+     */
+    private byte[] config;
+
+    /**
      * The configuration of a FLAC track: the declared one, or the one
      * {@link #updateCodecConfig(int, byte[])} last stored.
      */
@@ -165,6 +175,11 @@ public final class RawMuxer implements Muxer {
      * Whether the stream header was written.
      */
     private boolean started;
+
+    /**
+     * The channel count of an AMR track.
+     */
+    private int amrChannels;
 
     /**
      * Whether {@link #finish()} or {@link #close()} ran.
@@ -211,8 +226,9 @@ public final class RawMuxer implements Muxer {
      * Returns whether an elementary-stream file format can carry a codec.
      *
      * <p>{@link ContainerFormat#MPEG_AUDIO} carries MP3 and MP2, {@link ContainerFormat#FLAC} FLAC,
-     * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, and {@link ContainerFormat#AC3} AC-3 and
-     * E-AC-3; every other format is not an elementary stream this muxer writes.
+     * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
+     * and {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC} and {@link ContainerFormat#AV1}
+     * their codec; every other format is not an elementary stream this muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track
@@ -226,6 +242,9 @@ public final class RawMuxer implements Muxer {
             case FLAC -> codec == Codec.FLAC;
             case AMR -> codec == Codec.AMR_NB || codec == Codec.AMR_WB;
             case AC3 -> codec == Codec.AC3 || codec == Codec.EAC3;
+            case H264 -> codec == Codec.H264;
+            case HEVC -> codec == Codec.HEVC;
+            case AV1 -> codec == Codec.AV1;
             default -> false;
         };
     }
@@ -233,8 +252,8 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the codec has no raw form, or the configuration a FLAC, H.264 or HEVC track
-     * needs is missing or invalid
+     * @throws IllegalArgumentException if the codec has no raw form, the configuration a FLAC, H.264 or HEVC track
+     * needs is missing or invalid, or an AMR track has more than 15 channels
      * @throws IllegalStateException if a track was already declared or the muxer is finished
      */
     @Override
@@ -279,9 +298,18 @@ public final class RawMuxer implements Muxer {
             }
             case AV1 -> parameterSets = config != null && config.length > 4
                     ? Arrays.copyOfRange(config, 4, config.length) : new byte[0];
+            case AMR_NB, AMR_WB -> {
+                amrChannels = track instanceof AudioTrack audio
+                        ? audio.layout().map(ChannelLayout::channels).orElse(1) : 1;
+                if (amrChannels > 15) {
+                    throw new IllegalArgumentException("an AMR storage file holds at most 15 channels, not "
+                            + amrChannels);
+                }
+            }
             default -> {
             }
         }
+        this.config = config;
         this.track = track;
     }
 
@@ -319,9 +347,14 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the packet belongs to another track, or an H.264 or HEVC packet is not made
-     * of length-prefixed NAL units
+     * <p>A packet that changes the codec configuration of an H.264, HEVC or AV1 stream replaces the
+     * parameter sets or sequence header repeated before the key frames from then on.
+     *
+     * @throws IllegalArgumentException if the packet belongs to another track, an H.264 or HEVC packet is not made
+     * of length-prefixed NAL units, or a new H.264 or HEVC configuration cannot be parsed
      * @throws IllegalStateException if no track was declared or the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a stream
+     * that is not H.264, HEVC or AV1
      */
     @Override
     public void writePacket(Packet packet) {
@@ -334,6 +367,26 @@ public final class RawMuxer implements Muxer {
         }
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
+        }
+        var newConfig = ConfigChanges.changed(packet, config);
+        if (newConfig != null) {
+            switch (track.codec()) {
+                case H264, HEVC -> {
+                    var parsed = track.codec() == Codec.H264 ? NalRecords.parseAvc(newConfig)
+                            : NalRecords.parseHevc(newConfig);
+                    if (parsed == null) {
+                        throw new IllegalArgumentException("the new " + track.codec().displayName()
+                                + " configuration cannot be parsed");
+                    }
+                    lengthSize = parsed.lengthSize();
+                    parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+                }
+                case AV1 -> parameterSets = newConfig.length > 4 ? Arrays.copyOfRange(newConfig, 4, newConfig.length)
+                        : new byte[0];
+                default -> throw ConfigChanges.unsupported("a raw " + track.codec().displayName() + " stream",
+                        packet.trackId());
+            }
+            config = newConfig;
         }
         if (!started) {
             writeHeader();
@@ -522,7 +575,8 @@ public final class RawMuxer implements Muxer {
     }
 
     /**
-     * Writes what precedes the first packet: the FLAC marker and metadata, or the AMR magic.
+     * Writes what precedes the first packet: the FLAC marker and metadata, or the AMR magic and,
+     * for a multichannel track, the channel description.
      */
     private void writeHeader() {
         started = true;
@@ -533,8 +587,19 @@ public final class RawMuxer implements Muxer {
                     output.write(ByteBuffer.wrap(MuxerTags.id3v2(tags)));
                 }
             }
-            case AMR_NB -> output.write(ByteBuffer.wrap("#!AMR\n".getBytes(StandardCharsets.ISO_8859_1)));
-            case AMR_WB -> output.write(ByteBuffer.wrap("#!AMR-WB\n".getBytes(StandardCharsets.ISO_8859_1)));
+            case AMR_NB, AMR_WB -> {
+                var wideband = track.codec() == Codec.AMR_WB;
+                if (amrChannels > 1) {
+                    var magic = (wideband ? "#!AMR-WB_MC1.0\n" : "#!AMR_MC1.0\n")
+                            .getBytes(StandardCharsets.ISO_8859_1);
+                    var header = Arrays.copyOf(magic, magic.length + 4);
+                    header[header.length - 1] = (byte) amrChannels;
+                    output.write(ByteBuffer.wrap(header));
+                } else {
+                    var magic = wideband ? "#!AMR-WB\n" : "#!AMR\n";
+                    output.write(ByteBuffer.wrap(magic.getBytes(StandardCharsets.ISO_8859_1)));
+                }
+            }
             default -> {
             }
         }

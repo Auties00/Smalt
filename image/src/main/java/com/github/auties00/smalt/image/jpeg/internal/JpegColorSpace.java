@@ -31,5 +31,10 @@ public enum JpegColorSpace {
     /**
      * Y, Cb, Cr and K components: the Adobe transform of inverted CMYK.
      */
-    YCCK
+    YCCK,
+
+    /**
+     * Two or more than four components, to which JPEG gives no color meaning.
+     */
+    UNKNOWN
 }
