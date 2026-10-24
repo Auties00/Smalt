@@ -1,0 +1,13 @@
+# image dump of vectors/libwebp-test-data-alpha_no_compression.webp; regenerate with -Dsmalt.test.updateDumps=true
+format WEBP
+info ImageInfo[format=WEBP, width=16, height=16, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 16x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2533598d u=5d33e6df v=170bfb1d a=46f6845a
+  format=WEBP orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none
+scaled 4x4
+picture 16x16 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2533598d u=5d33e6df v=170bfb1d a=46f6845a
+  format=WEBP orientation=NORMAL source=16x16
+  icc=none exif=none xmp=none
+  profile=none

@@ -50,7 +50,7 @@ class OpusRealtimeApiTest {
     @DisplayName("encoder")
     class Encoder {
         @ParameterizedTest
-        @CsvSource({"44100, 1", "16000, 3", "16000, 0"})
+        @CsvSource({"44100, 1", "16000, 256", "16000, 0"})
         @DisplayName("rejects unsupported formats")
         void rejectsFormats(int rate, int channels) {
             assertThrows(IllegalArgumentException.class,

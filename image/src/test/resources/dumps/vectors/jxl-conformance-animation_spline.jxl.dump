@@ -1,0 +1,74 @@
+# image dump of vectors/jxl-conformance-animation_spline.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=320, height=320, hasAlpha=false, animated=true, frameCount=60, orientation=NORMAL]
+decode
+picture 320x320 rgba8 alpha=false crc=951be428
+  format=JXL orientation=NORMAL source=320x320
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+scaled 80x80
+picture 320x320 rgba8 alpha=false crc=951be428
+  format=JXL orientation=NORMAL source=320x320
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+animation 320x320 loops=0 frames=60
+frame 0 ts=0 dur=20000 320x320 rgba8 alpha=false crc=951be428
+frame 1 ts=20000 dur=20000 320x320 rgba8 alpha=false crc=c79ed985
+frame 2 ts=40000 dur=20000 320x320 rgba8 alpha=false crc=7832b188
+frame 3 ts=60000 dur=20000 320x320 rgba8 alpha=false crc=9d0508eb
+frame 4 ts=80000 dur=20000 320x320 rgba8 alpha=false crc=a1cece22
+frame 5 ts=100000 dur=20000 320x320 rgba8 alpha=false crc=c3af3a42
+frame 6 ts=120000 dur=20000 320x320 rgba8 alpha=false crc=4252d899
+frame 7 ts=140000 dur=20000 320x320 rgba8 alpha=false crc=139df3ba
+frame 8 ts=160000 dur=20000 320x320 rgba8 alpha=false crc=e1435c93
+frame 9 ts=180000 dur=20000 320x320 rgba8 alpha=false crc=a505702d
+frame 10 ts=200000 dur=20000 320x320 rgba8 alpha=false crc=a9107be3
+frame 11 ts=220000 dur=20000 320x320 rgba8 alpha=false crc=8959312f
+frame 12 ts=240000 dur=20000 320x320 rgba8 alpha=false crc=a07569df
+frame 13 ts=260000 dur=20000 320x320 rgba8 alpha=false crc=4b04077d
+frame 14 ts=280000 dur=20000 320x320 rgba8 alpha=false crc=cc895be2
+frame 15 ts=300000 dur=20000 320x320 rgba8 alpha=false crc=ef97a8cd
+frame 16 ts=320000 dur=20000 320x320 rgba8 alpha=false crc=02af2d42
+frame 17 ts=340000 dur=20000 320x320 rgba8 alpha=false crc=161eb2ba
+frame 18 ts=360000 dur=20000 320x320 rgba8 alpha=false crc=b34e2ea6
+frame 19 ts=380000 dur=20000 320x320 rgba8 alpha=false crc=0a6de3c6
+frame 20 ts=400000 dur=20000 320x320 rgba8 alpha=false crc=80711de4
+frame 21 ts=420000 dur=20000 320x320 rgba8 alpha=false crc=7ca4cb4b
+frame 22 ts=440000 dur=20000 320x320 rgba8 alpha=false crc=17916808
+frame 23 ts=460000 dur=20000 320x320 rgba8 alpha=false crc=3a626b29
+frame 24 ts=480000 dur=20000 320x320 rgba8 alpha=false crc=58bb431f
+frame 25 ts=500000 dur=20000 320x320 rgba8 alpha=false crc=91560596
+frame 26 ts=520000 dur=20000 320x320 rgba8 alpha=false crc=26c3d95f
+frame 27 ts=540000 dur=20000 320x320 rgba8 alpha=false crc=04dbecfb
+frame 28 ts=560000 dur=20000 320x320 rgba8 alpha=false crc=d381e023
+frame 29 ts=580000 dur=20000 320x320 rgba8 alpha=false crc=2954ec6b
+frame 30 ts=600000 dur=20000 320x320 rgba8 alpha=false crc=7d25768d
+frame 31 ts=620000 dur=20000 320x320 rgba8 alpha=false crc=6c539c15
+frame 32 ts=640000 dur=20000 320x320 rgba8 alpha=false crc=1b1962e5
+frame 33 ts=660000 dur=20000 320x320 rgba8 alpha=false crc=7f0d20cd
+frame 34 ts=680000 dur=20000 320x320 rgba8 alpha=false crc=79cd2c1f
+frame 35 ts=700000 dur=20000 320x320 rgba8 alpha=false crc=afea400e
+frame 36 ts=720000 dur=20000 320x320 rgba8 alpha=false crc=397b26aa
+frame 37 ts=740000 dur=20000 320x320 rgba8 alpha=false crc=5d8f81f3
+frame 38 ts=760000 dur=20000 320x320 rgba8 alpha=false crc=213dbeb5
+frame 39 ts=780000 dur=20000 320x320 rgba8 alpha=false crc=54211d3f
+frame 40 ts=800000 dur=20000 320x320 rgba8 alpha=false crc=828bbe64
+frame 41 ts=820000 dur=20000 320x320 rgba8 alpha=false crc=6a7ac9ed
+frame 42 ts=840000 dur=20000 320x320 rgba8 alpha=false crc=0491d1b9
+frame 43 ts=860000 dur=20000 320x320 rgba8 alpha=false crc=c2dda885
+frame 44 ts=880000 dur=20000 320x320 rgba8 alpha=false crc=9ffe0bbd
+frame 45 ts=900000 dur=20000 320x320 rgba8 alpha=false crc=cc0ad9a6
+frame 46 ts=920000 dur=20000 320x320 rgba8 alpha=false crc=068c60b3
+frame 47 ts=940000 dur=20000 320x320 rgba8 alpha=false crc=1de0e08b
+frame 48 ts=960000 dur=20000 320x320 rgba8 alpha=false crc=8e813fd1
+frame 49 ts=980000 dur=20000 320x320 rgba8 alpha=false crc=c51ee831
+frame 50 ts=1000000 dur=20000 320x320 rgba8 alpha=false crc=88245578
+frame 51 ts=1020000 dur=20000 320x320 rgba8 alpha=false crc=f37c99ec
+frame 52 ts=1040000 dur=20000 320x320 rgba8 alpha=false crc=0f3b4827
+frame 53 ts=1060000 dur=20000 320x320 rgba8 alpha=false crc=daee2f96
+frame 54 ts=1080000 dur=20000 320x320 rgba8 alpha=false crc=27c7eb1a
+frame 55 ts=1100000 dur=20000 320x320 rgba8 alpha=false crc=fc2b4302
+frame 56 ts=1120000 dur=20000 320x320 rgba8 alpha=false crc=a810ff5b
+frame 57 ts=1140000 dur=20000 320x320 rgba8 alpha=false crc=6bab4d2a
+frame 58 ts=1160000 dur=20000 320x320 rgba8 alpha=false crc=a67789ef
+frame 59 ts=1180000 dur=20000 320x320 rgba8 alpha=false crc=60b33606
