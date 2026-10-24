@@ -1,0 +1,19 @@
+# image dump of resources/jxl/features/progressive-lossless.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=160, height=120, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 160x120 rgba8 alpha=false crc=1c614ae8
+  format=JXL orientation=NORMAL source=160x120
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+scaled 40x30
+picture 40x30 rgba8 alpha=false crc=2cdb960f
+  format=JXL orientation=NORMAL source=160x120
+  icc=512:5b447eb9 exif=none xmp=none
+  profile=ColorProfile[RGB_D65_SRG_Rel_SRG, RGB, DISPLAY, v4.4.0]
+decoder preview
+null
+decoder gain map
+null
+decoder boxes
+[]

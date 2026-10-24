@@ -1,0 +1,49 @@
+# The licence or terms of use of every source of vectors.tsv and clips.tsv, by URL prefix; see testdata.py. None of
+# this data is committed or redistributed: the tests download it into the local cache. Columns:
+# prefix	licence
+http://download.osgeo.org/libtiff/	libtiff test images (pics-3.8.0): libtiff licence (BSD-style)
+https://download.osgeo.org/libtiff/	libtiff source distribution: libtiff licence (BSD-style)
+http://philip.html5.org/tests/apng/	APNG tests by Philip Taylor: public domain (stated on the test page)
+http://www.schaik.com/pngsuite/	PngSuite by Willem van Schaik: free use, copying and distribution (stated in the suite)
+https://archive.org/download/	LibriVox recordings: public domain
+https://codeload.github.com/AcademySoftwareFoundation/rawtoaces-data/	rawtoaces-data: Apache-2.0 (repository licence); camera files under their contributors' terms
+https://entropymine.com/jason/bmpsuite/	BMP Suite by Jason Summers: free use (stated with the suite); used for testing only, never redistributed
+https://fate-suite.ffmpeg.org/	FFmpeg FATE samples: no licence stated; used for testing only, never redistributed
+https://samples.ffmpeg.org/	FFmpeg samples archive: no licence stated; used for testing only, never redistributed
+https://trac.ffmpeg.org/raw-attachment/	FFmpeg bug tracker attachments: no licence stated; used for testing only, never redistributed
+https://media.githubusercontent.com/media/MPEGGroup/FileFormatConformance/	MPEG file format conformance (ISO/IEC 14496-32): the licence of the MPEGGroup repository (its LICENSE file); used for testing only, never redistributed
+https://raw.githubusercontent.com/MPEGGroup/FileFormatConformance/	MPEG file format conformance (ISO/IEC 14496-32): the licence of the MPEGGroup repository (its LICENSE file); used for testing only, never redistributed
+https://media.xiph.org/	Xiph.org test media (derf collection): sequences of various origins, for research and testing
+https://people.xiph.org/~xiphmont/test-vectors/	Xiph.org Vorbis test vectors: BSD-style (Xiph.org Foundation)
+https://openslide.cs.cmu.edu/download/openslide-testdata/	OpenSlide test data: per-file licences in its index (CC0, CC-BY or "freely redistributable")
+https://opus-codec.org/static/testvectors/	Opus test vectors (RFC 8251): BSD-3-Clause (IETF Trust / Xiph.org)
+https://ott.dolby.com/	Dolby Digital Plus sample kit: Dolby's terms for evaluation samples; used for testing only, never redistributed
+https://raw.githubusercontent.com/AOMediaCodec/av1-avif/	AVIF test files (AOMediaCodec/av1-avif): BSD-2-Clause (repository licence)
+https://raw.githubusercontent.com/Dash-Industry-Forum/livesim-content/	DASH-IF livesim-content: Apache-2.0
+https://raw.githubusercontent.com/bigcat88/pillow_heif/	pillow_heif test images: BSD-3-Clause (repository licence)
+https://raw.githubusercontent.com/google/skia/	Skia resources: BSD-3-Clause
+https://raw.githubusercontent.com/ietf-wg-cellar/flac-test-files/	IETF CELLAR FLAC test files: CC0-1.0 (stated in the repository)
+https://raw.githubusercontent.com/ietf-wg-cellar/matroska-test-files/	IETF CELLAR Matroska test files: the licence of the repository; used for testing only, never redistributed
+https://raw.githubusercontent.com/libjpeg-turbo/libjpeg-turbo/	libjpeg-turbo test images: IJG / BSD-3-Clause (libjpeg-turbo LICENSE.md)
+https://raw.githubusercontent.com/libjxl/conformance/	libjxl conformance: BSD-3-Clause
+https://raw.githubusercontent.com/lieff/minimp3/	minimp3 test vectors (ISO/IEC 11172-4 streams): CC0-1.0 repository; the streams are ISO conformance data
+https://raw.githubusercontent.com/nokiatech/heif_conformance/	Nokia HEIF conformance files: the Nokia licence of the repository (evaluation and testing); used for testing only, never redistributed
+https://raw.githubusercontent.com/saucecontrol/Compact-ICC-Profiles/	Compact ICC Profiles: CC0-1.0
+https://raw.githubusercontent.com/uclouvain/openjpeg-data/	OpenJPEG test data: BSD-2-Clause repository; conformance files from ISO/IEC 15444-4
+https://raw.githubusercontent.com/webmproject/libwebp-test-data/	libwebp test data: BSD-3-Clause (WebM project)
+https://raw.pixls.us/	RAW samples archive (raw.pixls.us): CC0-1.0 per file (stated by the archive)
+https://standards.iso.org/ittf/PubliclyAvailableStandards/	ISO/IEC publicly available standards (conformance and reference data): ISO terms of the free download; used for testing only, never redistributed
+https://standards.iso.org/iso-iec/	ISO/IEC electronic inserts of published standards: ISO terms of the free download; used for testing only, never redistributed
+https://web.archive.org/web/	Wayback Machine copies of the ISO/IEC publicly available standards tree (over HTTPS): ISO terms; used for testing only, never redistributed
+http://web.archive.org/web/	Wayback Machine copies of the ISO/IEC publicly available standards tree: ISO terms; used for testing only, never redistributed
+https://storage.googleapis.com/downloads.webmproject.org/	WebM project test vectors (VP8, VP9): BSD-3-Clause (WebM project)
+https://storage.googleapis.com/aom-test-data/	AOMedia libaom test vectors: BSD-2-Clause with the AOMedia Patent License 1.0
+https://storage.googleapis.com/jxl-conformance/	libjxl conformance data: BSD-3-Clause
+https://www.3gpp.org/ftp/Specs/	3GPP specification archives (AMR, AMR-WB test vectors): 3GPP copyright, free download; used for testing only, never redistributed
+https://www.gstatic.com/webp/	Google WebP gallery samples: CC-BY 3.0 (WebP gallery)
+https://www.itu.int/wftp3/av-arch/	ITU-T conformance bitstreams (H.264, H.265, T.800 series): ITU terms of the free download; used for testing only, never redistributed
+https://www.itu.int/wftp3/Public/t/testsignal/SpeImage/T83/	ITU-T T.83 (ISO/IEC 10918-2) compliance test data from the ITU test signal server: no licence stated; used for testing only, never redistributed
+https://www.itu.int/wftp3/Public/t/testsignal/SpeImage/T87/	ITU-T T.87 (ISO/IEC 14495-1) conformance data set from the ITU test signal server (HP's images for testing product conformance): no licence stated; used for testing only, never redistributed
+https://raw.githubusercontent.com/AOMediaCodec/libavif/	libavif test data: BSD-2-Clause (the repository's LICENSE); used for testing only, never redistributed
+https://raw.githubusercontent.com/MPEGGroup/DASHSchema/	MPEG-DASH MPD schema of ISO/IEC 23009-1 (MPEGGroup/DASHSchema): use subject to the ISO/IEC Directives; used for testing only, never redistributed
+https://www.w3.org/	W3C XLink and XML schemas: W3C Document License

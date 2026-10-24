@@ -1,6 +1,6 @@
 /**
- * Image metadata: EXIF, XMP, IPTC and ICC profiles read from every image format and edited in JPEG, PNG, WebP
- * and GIF files without re-encoding them ({@link ImageMetadata}, {@link ImageMetadataEditor}).
+ * Image metadata: EXIF, XMP, IPTC and ICC profiles read from every image format and edited in JPEG, PNG, WebP,
+ * GIF, HEIC, AVIF and TIFF files without re-encoding them ({@link ImageMetadata}, {@link ImageMetadataEditor}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}
