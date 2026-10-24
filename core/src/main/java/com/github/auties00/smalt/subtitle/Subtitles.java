@@ -3,6 +3,7 @@ package com.github.auties00.smalt.subtitle;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.internal.subtitle.Markup;
 import com.github.auties00.smalt.internal.subtitle.TtmlWriter;
 import com.github.auties00.smalt.io.MediaSink;
@@ -12,6 +13,7 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.Track;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -64,9 +66,9 @@ public final class Subtitles {
      * Returns the markup convention of the cue text a subtitle codec's packets decode to.
      *
      * @param codec the subtitle codec
-     * @return {@link SubtitleMarkup#SUBRIP} for SubRip, 3GPP timed text and TTML, {@link SubtitleMarkup#WEBVTT}
-     * and {@link SubtitleMarkup#ASS} for WebVTT and ASS
-     * @throws IllegalArgumentException if {@code codec} is neither a text subtitle codec nor TTML
+     * @return {@link SubtitleMarkup#SUBRIP} for SubRip, 3GPP timed text, TTML and the caption codecs,
+     * {@link SubtitleMarkup#WEBVTT} and {@link SubtitleMarkup#ASS} for WebVTT and ASS
+     * @throws IllegalArgumentException if {@code codec} is neither a text subtitle codec, TTML nor a caption codec
      */
     public static SubtitleMarkup markupOf(Codec codec) {
         return Markup.of(Objects.requireNonNull(codec, "codec"));
@@ -136,8 +138,8 @@ public final class Subtitles {
     /**
      * Reads every cue of the first subtitle track of a file.
      *
-     * @param source the input: a SubRip, WebVTT, SSA, ASS, TTML, SAMI, LRC or MicroDVD file, or an MP4 or
-     * Matroska file with a subtitle track
+     * @param source the input: a SubRip, WebVTT, SSA, ASS, TTML, SAMI, LRC or MicroDVD file, or an MP4, Matroska
+     * or MPEG transport stream file with a text subtitle or caption track
      * @return the cues in start order, their text in the track's markup
      * ({@link SubtitleReader#markup()})
      * @throws MediaException.Unsupported if the input is not a recognized container or has no
@@ -168,6 +170,65 @@ public final class Subtitles {
             }
         }
         return cues;
+    }
+
+    /**
+     * Reads every cue of the first bitmap subtitle track of a file.
+     *
+     * @param source the input: a {@code .sup} file, the {@code .sub} file of a VobSub pair, or an MP4, Matroska or
+     * MPEG transport stream file with a PGS, DVB or DVD subtitle track
+     * @return the cues in start order
+     * @throws MediaException.Unsupported if the input is not a recognized container or has no bitmap subtitle track
+     * @throws MediaException.Malformed if the input is corrupt
+     * @throws MediaException.LimitExceeded if a picture exceeds the default limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<BitmapCue> readBitmaps(MediaSource source) {
+        return readBitmaps(source, SubtitleReaderOptions.defaults());
+    }
+
+    /**
+     * Reads every cue of a bitmap subtitle track of a file.
+     *
+     * <p>Of the options, the track identifier selects the track (the first bitmap subtitle track by default) and
+     * the limits bound the demuxer and the pictures; the markup, text and caption settings do not apply.
+     *
+     * @param source the input
+     * @param options the track to read and the limits
+     * @return the cues in start order
+     * @throws MediaException.Unsupported if the input is not a recognized container or lacks the selected bitmap
+     * subtitle track
+     * @throws MediaException.Malformed if the input is corrupt
+     * @throws MediaException.LimitExceeded if a picture exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static List<BitmapCue> readBitmaps(MediaSource source, SubtitleReaderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        try (var demuxer = Containers.openDemuxer(source, DemuxerOptions.builder().limits(options.limits()).build())) {
+            Track selected = null;
+            for (var track : demuxer.tracks()) {
+                if (track.codec().isBitmapSubtitle()
+                        && (options.trackId().isEmpty() || options.trackId().getAsInt() == track.id())) {
+                    selected = track;
+                    break;
+                }
+            }
+            if (selected == null) {
+                throw new MediaException.Unsupported("subtitles", options.trackId().isPresent()
+                        ? "the input has no bitmap subtitle track " + options.trackId().getAsInt()
+                        : "the input has no bitmap subtitle track");
+            }
+            var decoder = new BitmapSubtitleDecoder(selected, options.limits());
+            var cues = new ArrayList<BitmapCue>();
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                if (packet.trackId() == selected.id()) {
+                    cues.addAll(decoder.decode(packet));
+                }
+            }
+            cues.addAll(decoder.flush());
+            return cues;
+        }
     }
 
     /**

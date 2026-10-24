@@ -51,6 +51,25 @@ public enum Codec {
     H263(TrackKind.VIDEO, "h263"),
 
     /**
+     * ISO/IEC 11172-2 MPEG-1 video, {@code stream_type 0x01} of MPEG transport streams and the Matroska
+     * {@code V_MPEG1} codec.
+     *
+     * <p>A packet is one picture as the elementary stream codes it, from its start codes on. The closed captions it
+     * carries in ATSC user data are read by {@link com.github.auties00.smalt.subtitle.ClosedCaptions}.
+     */
+    MPEG1_VIDEO(TrackKind.VIDEO, "mpeg1video"),
+
+    /**
+     * ITU-T H.262 / ISO/IEC 13818-2 MPEG-2 video, {@code stream_type 0x02} of MPEG transport streams and the
+     * Matroska {@code V_MPEG2} codec.
+     *
+     * <p>A packet is one picture as the elementary stream codes it, from its start codes on (the transport stream
+     * demuxer passes one PES packet per packet). The closed captions it carries in ATSC user data are read by
+     * {@link com.github.auties00.smalt.subtitle.ClosedCaptions}.
+     */
+    MPEG2_VIDEO(TrackKind.VIDEO, "mpeg2video"),
+
+    /**
      * Motion JPEG: every frame is an independent JPEG.
      */
     MJPEG(TrackKind.VIDEO, "mjpeg"),
@@ -350,6 +369,90 @@ public enum Codec {
     TTML(TrackKind.DATA, "ttml"),
 
     /**
+     * Blu-ray Presentation Graphic Stream bitmap subtitles (HDMV PGS): {@code .sup} files, the Matroska
+     * {@code S_HDMV/PGS} codec and {@code stream_type 0x90} of MPEG transport streams.
+     *
+     * <p>A packet holds one or more segments, each a segment type byte, a 16-bit big-endian length and the segment
+     * body: the segments of a {@code .sup} file without their {@code "PG"} marker and timestamps. A display set (a
+     * presentation composition segment, then the window, palette and object definition segments it uses, then an
+     * end segment) comes in one packet or spread over consecutive packets; the presentation timestamp of the packet
+     * holding the presentation composition segment is the time the display set is shown. The track has no
+     * configuration. {@link com.github.auties00.smalt.subtitle.BitmapSubtitleDecoder} decodes the pictures.
+     */
+    PGS(TrackKind.DATA, "hdmv_pgs_subtitle"),
+
+    /**
+     * DVB bitmap subtitles (ETSI EN 300 743): {@code stream_type 0x06} with a subtitling descriptor in MPEG transport
+     * streams and the Matroska {@code S_DVBSUB} codec.
+     *
+     * <p>A packet holds the subtitling segments of one PES packet, each starting with the sync byte {@code 0x0F},
+     * without the {@code data_identifier}, {@code subtitle_stream_id} and {@code end_of_PES_data_field_marker} of
+     * the PES data field. Its presentation timestamp is the time the display set it holds is shown. The
+     * configuration, when the track has one, is the body of the subtitling descriptor, eight bytes per subtitle
+     * service:
+     * {@snippet :
+     * ISO_639_language_code (3 bytes), subtitling_type (1), composition_page_id (2), ancillary_page_id (2)
+     * }
+     * The first service is the one decoded; a track without a configuration decodes the first page it meets.
+     */
+    DVB_SUBTITLE(TrackKind.DATA, "dvb_subtitle"),
+
+    /**
+     * DVD subpicture bitmap subtitles (VobSub): the {@code .idx} and {@code .sub} file pair, the Matroska
+     * {@code S_VOBSUB} codec and the MP4 {@code mp4s} sample entry with object type {@code 0xE0}.
+     *
+     * <p>A packet is one subpicture unit: its 16-bit big-endian size, the run-length coded pixels and the display
+     * control sequences, whose delays count from the packet's presentation timestamp. The configuration, when the
+     * track has one, is the VobSub index header in UTF-8, as Matroska stores it: the lines of an {@code .idx} file
+     * before its first stream, among them {@code size: 720x480} and the 16 colors of
+     * {@code palette: 000000, ...}. A track without a configuration shows its pictures in a 720 by 576 frame (480
+     * for a 29.97 Hz source) with a gray palette.
+     */
+    DVD_SUBTITLE(TrackKind.DATA, "dvd_subtitle"),
+
+    /**
+     * DVB teletext (ETSI EN 300 706, carried in MPEG transport streams as ETSI EN 300 472 describes):
+     * {@code stream_type 0x06} with a teletext descriptor.
+     *
+     * <p>A packet is the PES data field of one PES packet: the {@code data_identifier} byte, then the data units,
+     * each a {@code data_unit_id}, a {@code data_unit_length} and, for teletext data units, the 44 bytes of one
+     * teletext packet as transmitted (least significant bit first). The configuration, when the track has one, is
+     * the body of the teletext descriptor, five bytes per page:
+     * {@snippet :
+     * ISO_639_language_code (3 bytes), teletext_type (5 bits) and magazine_number (3 bits), page_number (BCD byte)
+     * }
+     * {@link com.github.auties00.smalt.subtitle.SubtitleDecoder} decodes the text of one page.
+     */
+    DVB_TELETEXT(TrackKind.DATA, "dvb_teletext"),
+
+    /**
+     * CEA-608 (line 21) closed captions, the {@code c608} closed caption tracks of QuickTime files.
+     *
+     * <p>A packet holds the caption data of one video frame as ATSC A/53 {@code cc_data} constructs, three bytes
+     * each:
+     * {@snippet :
+     * marker_bits (5 bits, 11111), cc_valid (1 bit), cc_type (2 bits), cc_data_1 (8 bits), cc_data_2 (8 bits)
+     * }
+     * with {@code cc_type} 0 for the byte pairs of field 1 (channels CC1, CC2 and text channels T1, T2) and 1 for
+     * those of field 2 (CC3, CC4, T3, T4), the data bytes with their odd parity bits. The track has no
+     * configuration. {@link com.github.auties00.smalt.subtitle.SubtitleDecoder} decodes the text of one channel.
+     */
+    CEA_608(TrackKind.DATA, "eia_608"),
+
+    /**
+     * CEA-708 digital television closed captions, the {@code c708} closed caption tracks of QuickTime files, and
+     * the closed captions carried inside H.264, HEVC and MPEG-2 video
+     * ({@link com.github.auties00.smalt.subtitle.ClosedCaptions}).
+     *
+     * <p>A packet holds the caption data of one video frame as the {@code cc_data} constructs of {@link #CEA_608},
+     * of every {@code cc_type}: 2 and 3 for the bytes of the DTVCC caption channel packets (3 starting a packet)
+     * and 0 and 1 for the CEA-608 compatibility byte pairs. The track has no configuration.
+     * {@link com.github.auties00.smalt.subtitle.SubtitleDecoder} decodes the text of one caption service or of one
+     * CEA-608 channel.
+     */
+    CEA_708(TrackKind.DATA, "cea_708"),
+
+    /**
      * A data, subtitle, or metadata stream.
      */
     DATA(TrackKind.DATA, "data");
@@ -428,5 +531,24 @@ public enum Codec {
      */
     public boolean isSubtitle() {
         return this == SUBRIP || this == WEBVTT || this == MOV_TEXT || this == ASS;
+    }
+
+    /**
+     * Returns whether this constant is one of the bitmap subtitle formats, whose cues are pictures.
+     *
+     * @return {@code true} for {@link #PGS}, {@link #DVB_SUBTITLE} and {@link #DVD_SUBTITLE}
+     */
+    public boolean isBitmapSubtitle() {
+        return this == PGS || this == DVB_SUBTITLE || this == DVD_SUBTITLE;
+    }
+
+    /**
+     * Returns whether this constant is one of the caption formats: streams of text that a stateful decoder
+     * builds into cues, a page or a screen at a time.
+     *
+     * @return {@code true} for {@link #DVB_TELETEXT}, {@link #CEA_608} and {@link #CEA_708}
+     */
+    public boolean isCaption() {
+        return this == DVB_TELETEXT || this == CEA_608 || this == CEA_708;
     }
 }

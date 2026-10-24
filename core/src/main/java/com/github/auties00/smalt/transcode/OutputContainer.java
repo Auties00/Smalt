@@ -210,7 +210,12 @@ public enum OutputContainer {
     /**
      * A MicroDVD ({@code .sub}) subtitle file at 24000/1001 frames per second, holding one subtitle stream.
      */
-    MICRODVD(ContainerFormat.MICRODVD, "sub", "text/x-microdvd", List.of(), List.of());
+    MICRODVD(ContainerFormat.MICRODVD, "sub", "text/x-microdvd", List.of(), List.of()),
+
+    /**
+     * A Blu-ray presentation graphic stream file ({@code .sup}), holding one PGS bitmap subtitle stream.
+     */
+    SUP(ContainerFormat.SUP, "sup", "application/x-pgs", List.of(), List.of());
 
     /**
      * The container format written.

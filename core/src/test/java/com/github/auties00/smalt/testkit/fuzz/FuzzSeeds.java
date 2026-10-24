@@ -23,7 +23,9 @@ import java.util.List;
  * <p>Seeds live where Jazzer looks for the inputs of a fuzz test, {@code
  * src/test/resources/<package>/<Class>Inputs/<method>/}, so that a normal build replays them and a fuzzing run
  * starts from them. A seed named {@code valid-*} must be accepted by every step of its target
- * ({@link FuzzRegressions} checks it).
+ * ({@link FuzzRegressions} checks it). The writers write under {@code -Dsmalt.fuzz.seedRoot} instead of the module
+ * directory when it is set, so that a run on another machine can hand the seeds back as files (for example under
+ * {@code target/media-fixtures}, which CI uploads).
  */
 public final class FuzzSeeds {
     /** The prefix of the seeds every step of a target must accept. */
@@ -70,7 +72,9 @@ public final class FuzzSeeds {
      */
     public static void write(String fuzzClass, String method, String name, byte[] data) {
         try {
-            var directory = directory(fuzzClass, method);
+            var root = System.getProperty("smalt.fuzz.seedRoot");
+            var directory = root == null || root.isBlank() ? directory(fuzzClass, method)
+                    : Path.of(root).resolve(directory(fuzzClass, method));
             Files.createDirectories(directory);
             Files.write(directory.resolve(name), data);
         } catch (IOException exception) {

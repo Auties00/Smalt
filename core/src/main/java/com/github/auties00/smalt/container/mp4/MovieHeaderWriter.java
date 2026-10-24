@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.container.mp4;
 
+import com.github.auties00.smalt.internal.subtitle.bitmap.VobSubHeader;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
@@ -146,6 +147,10 @@ final class MovieHeaderWriter {
             width = video.width();
             height = video.height();
             matrix = DisplayMatrix.of(video.orientation(), width, height);
+        } else if (track.codec() == Codec.DVD_SUBTITLE) {
+            var header = VobSubHeader.parse(track.track.codecConfig().orElse(null));
+            width = header.width() > 0 ? header.width() : 720;
+            height = header.height() > 0 ? header.height() : 480;
         }
         writeMatrix(writer, matrix);
         writer.u32((long) width << 16);
@@ -162,6 +167,8 @@ final class MovieHeaderWriter {
         return switch (codec) {
             case MOV_TEXT -> BoxTypes.SBTL;
             case TTML -> BoxTypes.SUBT;
+            case DVD_SUBTITLE -> BoxTypes.SUBP;
+            case CEA_608, CEA_708 -> BoxTypes.CLCP;
             default -> BoxTypes.TEXT;
         };
     }
@@ -171,8 +178,8 @@ final class MovieHeaderWriter {
      * holding the media information header, a self-contained {@code dinf} and the sample table.
      *
      * <p>The handler is {@code soun} for audio, {@code sbtl} for {@link Codec#MOV_TEXT}, {@code subt}
-     * (with a {@code sthd} media header) for {@link Codec#TTML}, {@code text} for other text tracks
-     * and {@code vide} for video.
+     * (with a {@code sthd} media header) for {@link Codec#TTML}, {@code subp} for {@link Codec#DVD_SUBTITLE},
+     * {@code clcp} for the closed caption codecs, {@code text} for other text tracks and {@code vide} for video.
      *
      * @param writer the destination
      * @param track the track the box describes

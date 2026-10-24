@@ -2,6 +2,7 @@ package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.internal.subtitle.CueMerger;
 import com.github.auties00.smalt.internal.subtitle.TtmlWriter;
+import com.github.auties00.smalt.subtitle.CaptionService;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
 import com.github.auties00.smalt.subtitle.SubtitleDecoder;
 import com.github.auties00.smalt.subtitle.SubtitleEncoder;
@@ -128,17 +129,18 @@ final class SubtitleStage implements Stage {
     /**
      * Constructs a stage and declares its output track.
      *
-     * @param source the input track, whose codec is a text subtitle codec
+     * @param source the input track, whose codec is a text subtitle, bitmap subtitle or caption codec
      * @param codec the output codec; the source codec copies the packets unless {@code convert}
      * is set
      * @param convert whether to decode and encode even when the codec does not change
+     * @param service the caption service decoded from a caption track, or {@code null} for another track
      * @param outputId the output track identifier
      * @param output the muxer receiving the packets
      * @param startMicros the start of the kept range, in microseconds
      * @param endMicros the end of the kept range in microseconds, or {@code -1} for the end of the track
      */
-    SubtitleStage(Track source, Codec codec, boolean convert, int outputId, OutputMuxer output, long startMicros,
-                  long endMicros) {
+    SubtitleStage(Track source, Codec codec, boolean convert, CaptionService service, int outputId,
+                  OutputMuxer output, long startMicros, long endMicros) {
         this.source = source;
         this.copy = !convert && codec == source.codec();
         this.output = output;
@@ -160,7 +162,7 @@ final class SubtitleStage implements Stage {
                 source.codecConfig().ifPresent(created::codecConfig);
             }
             this.declared = created.build();
-            this.decoder = new SubtitleDecoder(source);
+            this.decoder = new SubtitleDecoder(source, service);
             this.encoder = codec == Codec.TTML ? null : new SubtitleEncoder(declared);
             this.merger = new CueMerger(this::writeCue, source.codec() == Codec.TTML);
             this.markup = Subtitles.markupOf(codec);
@@ -295,6 +297,13 @@ final class SubtitleStage implements Stage {
 
     @Override
     public void finish() {
+        if (decoder != null && !done) {
+            for (var cue : decoder.flush(markup)) {
+                if (endMicros < 0 || cue.startMicros() < endMicros) {
+                    merger.offer(cue);
+                }
+            }
+        }
         if (merger != null) {
             merger.finish();
         }

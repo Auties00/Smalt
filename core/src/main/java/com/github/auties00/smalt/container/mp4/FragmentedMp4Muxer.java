@@ -494,6 +494,8 @@ public final class FragmentedMp4Muxer implements Muxer {
         ConfigChanges.reject(packet, track.media.config, "fragmented MP4");
         if (track.media.codec() == Codec.PRORES && !Mp4Muxer.hasProResPrefix(packet.data())) {
             packet = packet.withData(Mp4Muxer.withProResPrefix(packet.data()));
+        } else if (track.media.codec() == Codec.CEA_608 || track.media.codec() == Codec.CEA_708) {
+            packet = packet.withData(Mp4Muxer.captionSample(track.media, packet));
         }
         if (!started) {
             started = true;

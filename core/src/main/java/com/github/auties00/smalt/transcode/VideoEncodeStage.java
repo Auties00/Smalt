@@ -28,8 +28,10 @@ import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoEncoder;
 import com.github.auties00.smalt.video.VideoEncoderOptions;
 import com.github.auties00.smalt.video.VideoEncoders;
+import com.github.auties00.smalt.video.FrameSideData;
 import com.github.auties00.smalt.video.VideoFrame;
 
+import java.io.ByteArrayOutputStream;
 import java.util.List;
 
 /**
@@ -147,6 +149,11 @@ final class VideoEncodeStage implements Stage {
      * The nominal duration of one input frame in the input time base, at least {@code 1}.
      */
     private final long nominalDuration;
+
+    /**
+     * The closed captions of the kept frames not yet handed to the encoder, as {@code cc_data} constructs.
+     */
+    private final ByteArrayOutputStream captions = new ByteArrayOutputStream();
 
     /**
      * The cues burned in, known before the first frame, or {@code null} without burned-in subtitles.
@@ -358,6 +365,7 @@ final class VideoEncodeStage implements Stage {
             }
             pending = null;
         }
+        frame.sideData().closedCaptions().ifPresent(captions::writeBytes);
         show(frame.picture(), pts, frame.duration() > 0 ? frame.duration() : nominalDuration, scan);
     }
 
@@ -616,7 +624,12 @@ final class VideoEncodeStage implements Stage {
             }
             lastEncoderPts = pts;
             var length = Math.max(1, timeBase.rescale(duration, encoderTime));
-            encoder.encode(new VideoFrame(picture, pts, length, false), VideoEncodeStage.this::write);
+            var sideData = FrameSideData.NONE;
+            if (captions.size() >= 3) {
+                sideData = FrameSideData.builder().closedCaptions(captions.toByteArray()).build();
+                captions.reset();
+            }
+            encoder.encode(new VideoFrame(picture, pts, length, false, sideData), VideoEncodeStage.this::write);
         }
 
         /**

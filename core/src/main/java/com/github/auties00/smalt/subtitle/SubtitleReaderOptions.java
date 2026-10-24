@@ -44,13 +44,22 @@ public final class SubtitleReaderOptions {
      */
     private final Rational subtitleFrameRate;
 
+    /**
+     * The caption service decoded, or {@code null} for each track's default.
+     */
+    private final CaptionService captionService;
+
+    private final boolean embeddedCaptions;
+
     private SubtitleReaderOptions(int trackId, SubtitleMarkup markup, MediaLimits limits, Charset charset,
-                                  Rational subtitleFrameRate) {
+                                  Rational subtitleFrameRate, CaptionService captionService, boolean embeddedCaptions) {
         this.trackId = trackId;
         this.markup = markup;
         this.limits = limits;
         this.charset = charset;
         this.subtitleFrameRate = subtitleFrameRate;
+        this.captionService = captionService;
+        this.embeddedCaptions = embeddedCaptions;
     }
 
     /**
@@ -82,8 +91,9 @@ public final class SubtitleReaderOptions {
     }
 
     /**
-     * {@return the identifier of the track read, zero or more, or empty for the first text subtitle
-     * track; empty by default}
+     * {@return the identifier of the track read, zero or more, or empty for the first text subtitle, TTML or
+     * caption track (or, with {@link #embeddedCaptions()}, the first video track that can carry captions); empty by
+     * default}
      */
     public OptionalInt trackId() {
         return trackId < 0 ? OptionalInt.empty() : OptionalInt.of(trackId);
@@ -123,22 +133,43 @@ public final class SubtitleReaderOptions {
         return Optional.ofNullable(subtitleFrameRate);
     }
 
+    /**
+     * {@return the caption service read from a caption track or from the captions carried in video, or empty for the
+     * track's default ({@link CaptionService#defaultFor}); empty by default}
+     *
+     * <p>A service the selected track cannot carry (a teletext page for a closed caption track) leaves the track's
+     * default.
+     */
+    public Optional<CaptionService> captionService() {
+        return Optional.ofNullable(captionService);
+    }
+
+    /**
+     * {@return whether the reader reads the closed captions carried in a video track rather than a subtitle track;
+     * {@code false} by default}
+     */
+    public boolean embeddedCaptions() {
+        return embeddedCaptions;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof SubtitleReaderOptions that && trackId == that.trackId && markup == that.markup
                 && limits.equals(that.limits) && Objects.equals(charset, that.charset)
-                && Objects.equals(subtitleFrameRate, that.subtitleFrameRate);
+                && Objects.equals(subtitleFrameRate, that.subtitleFrameRate)
+                && Objects.equals(captionService, that.captionService) && embeddedCaptions == that.embeddedCaptions;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(trackId, markup, limits, charset, subtitleFrameRate);
+        return Objects.hash(trackId, markup, limits, charset, subtitleFrameRate, captionService, embeddedCaptions);
     }
 
     @Override
     public String toString() {
         return "SubtitleReaderOptions[trackId=" + trackId() + ", markup=" + markup() + ", limits=" + limits
-                + ", charset=" + charset() + ", subtitleFrameRate=" + subtitleFrameRate() + "]";
+                + ", charset=" + charset() + ", subtitleFrameRate=" + subtitleFrameRate() + ", captionService="
+                + captionService() + ", embeddedCaptions=" + embeddedCaptions + "]";
     }
 
     /**
@@ -158,6 +189,8 @@ public final class SubtitleReaderOptions {
         private MediaLimits limits = MediaLimits.DEFAULT;
         private Charset charset;
         private Rational subtitleFrameRate;
+        private CaptionService captionService;
+        private boolean embeddedCaptions;
 
         private Builder() {
         }
@@ -168,6 +201,8 @@ public final class SubtitleReaderOptions {
             this.limits = options.limits;
             this.charset = options.charset;
             this.subtitleFrameRate = options.subtitleFrameRate;
+            this.captionService = options.captionService;
+            this.embeddedCaptions = options.embeddedCaptions;
         }
 
         /**
@@ -182,7 +217,7 @@ public final class SubtitleReaderOptions {
         }
 
         /**
-         * Selects the first text subtitle track; see {@link SubtitleReaderOptions#trackId()}.
+         * Selects the first text subtitle, TTML or caption track; see {@link SubtitleReaderOptions#trackId()}.
          *
          * @return this builder
          */
@@ -267,6 +302,38 @@ public final class SubtitleReaderOptions {
         }
 
         /**
+         * Sets the caption service read; see {@link SubtitleReaderOptions#captionService()}.
+         *
+         * @param captionService the value
+         * @return this builder
+         */
+        public Builder captionService(CaptionService captionService) {
+            this.captionService = Objects.requireNonNull(captionService, "captionService");
+            return this;
+        }
+
+        /**
+         * Reads each caption track's default service; see {@link SubtitleReaderOptions#captionService()}.
+         *
+         * @return this builder
+         */
+        public Builder defaultCaptionService() {
+            this.captionService = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the captions carried in video are read; see {@link SubtitleReaderOptions#embeddedCaptions()}.
+         *
+         * @param embeddedCaptions the value
+         * @return this builder
+         */
+        public Builder embeddedCaptions(boolean embeddedCaptions) {
+            this.embeddedCaptions = embeddedCaptions;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -279,7 +346,8 @@ public final class SubtitleReaderOptions {
                     || subtitleFrameRate.denominator() <= 0)) {
                 throw new IllegalArgumentException("the subtitle frame rate must be positive, not " + subtitleFrameRate);
             }
-            return new SubtitleReaderOptions(id, markup, limits, charset, subtitleFrameRate);
+            return new SubtitleReaderOptions(id, markup, limits, charset, subtitleFrameRate, captionService,
+                    embeddedCaptions);
         }
     }
 }

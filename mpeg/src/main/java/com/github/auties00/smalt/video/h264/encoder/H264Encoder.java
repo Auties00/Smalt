@@ -6,11 +6,15 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoEncoder;
 import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.h264.encoder.internal.CaptionSei;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderConfig;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderCore;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderEngine;
 import com.github.auties00.smalt.video.h264.encoder.internal.WideCore;
 
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -59,6 +63,10 @@ import java.util.function.Consumer;
  * packet is stamped one time base unit after the previous one and rate control treats the frame
  * as lasting one nominal frame.
  *
+ * <p>A frame carrying closed captions ({@link com.github.auties00.smalt.video.FrameSideData#closedCaptions()})
+ * gets them back in its access unit, as ATSC A/72 caption data in {@code user_data_registered_itu_t_t35} SEI
+ * messages placed before its first slice, at most 31 constructs per message.
+ *
  * <p>The target bitrate can follow a congestion controller while frames are being encoded (see
  * {@link #setTargetBitrate(long)}), and {@link #stats()} reports the counters a sender needs.
  *
@@ -92,6 +100,11 @@ public final class H264Encoder implements VideoEncoder {
     private final EncoderConfig config;
 
     private final EncoderEngine engine;
+
+    /**
+     * The caption data of the frames not yet coded, by the presentation timestamp the engine stamped them with.
+     */
+    private final Map<Long, byte[]> captions = new HashMap<>();
 
     /**
      * Constructs an encoder for a picture size with {@link H264EncoderOptions#defaults()}.
@@ -215,9 +228,39 @@ public final class H264Encoder implements VideoEncoder {
         Objects.requireNonNull(frame, "frame");
         Objects.requireNonNull(output, "output");
         var packet = engine.encode(frame.picture(), frame.pts(), Math.max(0, frame.duration()));
+        var pts = engine.lastSubmittedPts();
+        frame.sideData().closedCaptions().ifPresent(data -> captions.merge(pts, data, H264Encoder::join));
         if (packet != null) {
-            output.accept(packet);
+            output.accept(withCaptions(packet));
         }
+    }
+
+    /**
+     * Adds the caption data of a packet's frame to the packet.
+     *
+     * @param packet a packet the engine produced
+     * @return the packet, with a caption SEI NAL unit when its frame carried captions
+     */
+    private Packet withCaptions(Packet packet) {
+        if (captions.isEmpty()) {
+            return packet;
+        }
+        var data = captions.remove(packet.pts());
+        return data == null ? packet : packet.withData(CaptionSei.insert(packet.data(),
+                options.packetFormat() == H264PacketFormat.ANNEX_B, data));
+    }
+
+    /**
+     * Joins the caption data of frames that share a timestamp.
+     *
+     * @param first the earlier frame's constructs
+     * @param second the later frame's constructs
+     * @return a new array
+     */
+    private static byte[] join(byte[] first, byte[] second) {
+        var joined = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, joined, first.length, second.length);
+        return joined;
     }
 
     /**
@@ -232,8 +275,9 @@ public final class H264Encoder implements VideoEncoder {
     public void flush(Consumer<Packet> output) {
         Objects.requireNonNull(output, "output");
         for (var packet = engine.flush(); packet != null; packet = engine.flush()) {
-            output.accept(packet);
+            output.accept(withCaptions(packet));
         }
+        captions.clear();
     }
 
     /**

@@ -67,7 +67,11 @@ import java.util.Set;
  * ({@code S_TEXT/ASS}, {@code S_TEXT/SSA}) and {@link Codec#WEBVTT} ({@code S_TEXT/WEBVTT} and
  * the WebM {@code D_WEBVTT} codecs); WebVTT blocks are returned in the {@link Codec#WEBVTT} packet
  * form, the identifier and settings moved from the block addition or the block's leading lines to
- * the side data. Clusters of unknown
+ * the side data. Bitmap subtitle tracks are {@link Codec#PGS} ({@code S_HDMV/PGS}),
+ * {@link Codec#DVB_SUBTITLE} ({@code S_DVBSUB}, its five-byte {@code CodecPrivate} turned into a subtitling
+ * descriptor entry) and {@link Codec#DVD_SUBTITLE} ({@code S_VOBSUB}, the VobSub index header as configuration);
+ * {@code V_MPEG1} and {@code V_MPEG2} tracks are {@link Codec#MPEG1_VIDEO} and {@link Codec#MPEG2_VIDEO}. Clusters
+ * of unknown
  * size (live WebM)
  * end at the next top-level element. The default edition of {@code Chapters} becomes
  * {@link #chapters()}, and attachments whose media type is an image become

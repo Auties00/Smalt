@@ -4,9 +4,12 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
+import com.github.auties00.smalt.internal.caption.CcData;
 import com.github.auties00.smalt.internal.sei.DisplaySei;
 import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
 import com.github.auties00.smalt.video.h264.internal.H264BitReader;
+
+import java.io.ByteArrayOutputStream;
 
 /**
  * Collects the supplemental enhancement information messages the decoder uses (ITU-T H.265 D.2):
@@ -70,6 +73,11 @@ public final class HevcSei {
      * The display orientation message of the next picture, or {@code null}.
      */
     public DisplaySei.OrientationMessage orientation;
+
+    /**
+     * The {@code cc_data} constructs of the ATSC caption messages of the next picture.
+     */
+    public final ByteArrayOutputStream captions = new ByteArrayOutputStream();
 
     /**
      * The hash type of the last decoded picture hash message, or -1 when none is pending.
@@ -213,6 +221,7 @@ public final class HevcSei {
                             pictureTiming = rbsp[position] & 0xFF;
                         }
                     }
+                    case 4 -> CcData.t35(rbsp, position, position + payloadSize, captions);
                     case 6 -> parseRecoveryPoint(rbsp, position, payloadSize);
                     case 19 -> {
                         payloadReader.init(rbsp, position, payloadSize);
@@ -322,10 +331,11 @@ public final class HevcSei {
 
     /**
      * Forgets the messages that apply only to the next picture: the recovery point, the picture
-     * timing, the film grain characteristics, the frame packing arrangement and the display
-     * orientation.
+     * timing, the film grain characteristics, the frame packing arrangement, the display
+     * orientation and the caption data.
      */
     public void clearPictureMessages() {
+        captions.reset();
         recoveryPoint = false;
         alphaChannelPending = false;
         pictureTiming = -1;

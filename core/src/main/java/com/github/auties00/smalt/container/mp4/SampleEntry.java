@@ -112,6 +112,27 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     static final int VTT_CONFIG = 0x76747443;
 
     /**
+     * The MPEG-4 systems sample entry type ({@code mp4s}), which carries DVD subpictures with object type
+     * {@code 0xE0}.
+     */
+    static final int MP4S = 0x6D703473;
+
+    /**
+     * The QuickTime CEA-608 closed caption sample entry type ({@code c608}).
+     */
+    static final int C608 = 0x63363038;
+
+    /**
+     * The QuickTime CEA-708 closed caption sample entry type ({@code c708}).
+     */
+    static final int C708 = 0x63373038;
+
+    /**
+     * The {@code objectTypeIndication} of DVD subpictures.
+     */
+    static final int VOBSUB_OBJECT_TYPE = 0xE0;
+
+    /**
      * The speakers of the ISO/IEC 23091-3 (formerly 23001-8) {@code OutputChannelPosition} codes 0
      * to 31, as used by the {@code chnl} box: the surround pair (Ls, Rs) and the side surround pairs
      * are the side speakers, the rear surround pair (Lsr, Rsr) the back speakers; codes 30 and 31
@@ -404,6 +425,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     case 0x6C -> Codec.MJPEG;
                     case 0x6E -> Codec.JPEG2000;
                     case 0x20 -> Codec.MPEG4_PART2;
+                    case 0x60, 0x61, 0x62, 0x63, 0x64, 0x65 -> Codec.MPEG2_VIDEO;
+                    case 0x6A -> Codec.MPEG1_VIDEO;
                     default -> Codec.UNKNOWN_VIDEO;
                 };
                 config = esds == null ? null : esds.specificInfo();
@@ -853,8 +876,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * converts its samples); a WebVTT entry
      * ({@code wvtt}, ISO/IEC 14496-30) is {@link Codec#WEBVTT} whose configuration is the text of
      * its {@code vttC} box, and an XML subtitle entry ({@code stpp}) whose namespace, schema
-     * location and auxiliary MIME type fields are well formed is {@link Codec#TTML}; every other
-     * entry is {@link Codec#DATA}.
+     * location and auxiliary MIME type fields are well formed is {@link Codec#TTML}; an MPEG-4 systems
+     * entry ({@code mp4s}) whose {@code esds} declares object type {@code 0xE0} is {@link Codec#DVD_SUBTITLE}, its
+     * configuration the decoder specific information (the 16 palette entries); a QuickTime closed caption entry is
+     * {@link Codec#CEA_608} ({@code c608}) or {@link Codec#CEA_708} ({@code c708}), without a configuration (the
+     * demuxer converts its samples); every other entry is {@link Codec#DATA}.
      *
      * @param format the entry type
      * @param payload the entry payload
@@ -867,10 +893,30 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             case TX3G, TEXT -> Codec.MOV_TEXT;
             case WVTT -> Codec.WEBVTT;
             case STPP -> Codec.TTML;
+            case C608 -> Codec.CEA_608;
+            case C708 -> Codec.CEA_708;
             default -> Codec.DATA;
         };
+        if (codec == Codec.CEA_608 || codec == Codec.CEA_708) {
+            return new SampleEntry(format, codec, null, 0, 0, null, null, null, 0, 0, null, 0, 0);
+        }
         if (payload.remaining() > 8) {
             payload.skip(8);
+            if (format == MP4S) {
+                for (var child : children(payload)) {
+                    if (child.type() == BoxTypes.ESDS) {
+                        var esds = parseEsds(child);
+                        if (esds != null && esds.objectType() == VOBSUB_OBJECT_TYPE) {
+                            codec = Codec.DVD_SUBTITLE;
+                            config = esds.specificInfo();
+                        }
+                    }
+                }
+                if (codec != Codec.DVD_SUBTITLE) {
+                    config = null;
+                }
+                return new SampleEntry(format, codec, config, 0, 0, null, null, null, 0, 0, null, 0, 0);
+            }
             if (codec == Codec.WEBVTT) {
                 for (var child : children(payload)) {
                     if (child.type() == VTT_CONFIG) {

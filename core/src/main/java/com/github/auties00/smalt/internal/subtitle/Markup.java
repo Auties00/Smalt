@@ -107,13 +107,13 @@ public final class Markup {
      * Returns the markup convention of the cue text a codec's packets decode to.
      *
      * @param codec the subtitle codec
-     * @return {@link SubtitleMarkup#SUBRIP} for SubRip, 3GPP timed text and TTML,
+     * @return {@link SubtitleMarkup#SUBRIP} for SubRip, 3GPP timed text, TTML and the caption codecs,
      * {@link SubtitleMarkup#WEBVTT} and {@link SubtitleMarkup#ASS} for WebVTT and ASS
      * @throws IllegalArgumentException if the codec is not a subtitle codec
      */
     public static SubtitleMarkup of(Codec codec) {
         return switch (codec) {
-            case SUBRIP, MOV_TEXT, TTML -> SubtitleMarkup.SUBRIP;
+            case SUBRIP, MOV_TEXT, TTML, CEA_608, CEA_708, DVB_TELETEXT -> SubtitleMarkup.SUBRIP;
             case WEBVTT -> SubtitleMarkup.WEBVTT;
             case ASS -> SubtitleMarkup.ASS;
             default -> throw new IllegalArgumentException(codec.displayName() + " is not a subtitle codec");

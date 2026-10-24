@@ -518,6 +518,11 @@ final class DecoderFrame {
     DisplaySei.OrientationMessage orientation;
 
     /**
+     * The {@code cc_data} constructs of the caption messages of the frame's access units, or {@code null}.
+     */
+    byte[] closedCaptions;
+
+    /**
      * The {@code pic_struct} of the picture timing message of the frame's first access unit, or
      * -1.
      */

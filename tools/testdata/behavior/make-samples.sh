@@ -133,3 +133,18 @@ printf 'WEBVTT\n\nNOTE a comment block\n\n00:00.000 --> 00:00.400 align:start\nH
     > "$out/subtitle/cues.vtt"
 
 python -I "$(dirname "$0")/make-wav-samples.py" "$out"
+
+bitmap="$(dirname "$0")/make-bitmap-caption-samples.py"
+python -I "$bitmap" sup "$out/subtitle/pgs.sup"
+python -I "$bitmap" dvb "$out/ts/dvb-subtitles.ts"
+python -I "$bitmap" teletext "$out/ts/teletext.ts"
+captions="$(mktemp -d)"
+python -I "$bitmap" vobsub "$out/subtitle/vobsub.sub" "$captions/vobsub.idx"
+cp "$out/subtitle/vobsub.sub" "$captions/vobsub.sub"
+ff -i "$out/subtitle/pgs.sup" -map 0 -c copy "$out/matroska/pgs.mkv"
+ff -i "$captions/vobsub.idx" -map 0 -c copy "$out/matroska/vobsub.mkv"
+ff -i "$captions/vobsub.idx" -map 0 -c copy "$out/mp4/vobsub.mp4"
+ff -f lavfi -i "testsrc=s=64x48:r=30000/1001:d=3" -c:v libx264 -pix_fmt yuv420p -bf 0 -g 30 -x264-params aud=1     "$captions/raw.h264"
+python -I "$bitmap" captions "$captions/raw.h264" "$captions/captions.h264"
+ff -fflags +genpts -r 30000/1001 -f h264 -i "$captions/captions.h264" -c copy "$out/ts/h264-captions.ts"
+rm -rf "$captions"

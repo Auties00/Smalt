@@ -244,6 +244,11 @@ public final class HevcFrame {
     public DisplaySei.OrientationMessage orientation;
 
     /**
+     * The {@code cc_data} constructs of the caption messages of the picture's access unit, or {@code null}.
+     */
+    public byte[] closedCaptions;
+
+    /**
      * Whether decoding the picture failed, so its samples are concealed.
      */
     public boolean damaged;
@@ -492,6 +497,7 @@ public final class HevcFrame {
         filmGrain = null;
         framePacking = null;
         orientation = null;
+        closedCaptions = null;
         damaged = false;
         picOutputFlag = false;
         discardable = false;

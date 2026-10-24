@@ -98,6 +98,11 @@ final class MuxTrack {
     int count;
 
     /**
+     * The {@code cdp_hdr_sequence_cntr} of the next caption distribution packet of a CEA-708 track.
+     */
+    int cdpSequence;
+
+    /**
      * The duration of the last packet in media timescale units, or {@code 0} when unknown.
      */
     long lastDuration;

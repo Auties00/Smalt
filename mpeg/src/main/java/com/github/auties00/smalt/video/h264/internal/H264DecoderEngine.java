@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.caption.CcData;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.internal.sei.DisplaySei;
@@ -18,6 +19,7 @@ import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.FrameSideData;
 import com.github.auties00.smalt.video.VideoLayer;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -786,6 +788,11 @@ public final class H264DecoderEngine {
      * The display orientation message of the next picture's access unit, or {@code null}.
      */
     private DisplaySei.OrientationMessage pendingOrientation;
+
+    /**
+     * The {@code cc_data} constructs of the ATSC caption messages of the next picture's access unit.
+     */
+    private final ByteArrayOutputStream pendingCaptions = new ByteArrayOutputStream();
 
     /**
      * The payload of the picture timing message of the next picture's access unit, followed by
@@ -2133,8 +2140,8 @@ public final class H264DecoderEngine {
      * Scans an SEI message list for the messages the decoder uses: the picture timing (ITU-T H.264
      * D.1.3), the recovery point (D.1.8), the film grain characteristics (D.1.21), the frame
      * packing arrangement (D.1.26), the display orientation (D.1.27), the mastering display color
-     * volume (D.1.29), the content light level (D.1.31) and the alternative transfer
-     * characteristics (D.1.32).
+     * volume (D.1.29), the content light level (D.1.31), the alternative transfer
+     * characteristics (D.1.32) and the ATSC A/72 caption data of the registered user data messages (D.1.6).
      *
      * <p>The messages apply to the next picture. The high-dynamic-range metadata persists until an
      * SEI message replaces it; a message too short for its syntax, or malformed, is ignored.
@@ -2174,6 +2181,7 @@ public final class H264DecoderEngine {
                     Arrays.fill(pendingTiming, payloadSize, payloadSize + H264BitReader.PADDING, (byte) 0);
                     pendingTimingSize = payloadSize;
                 }
+                case 4 -> CcData.t35(rbsp, position, position + payloadSize, pendingCaptions);
                 case 6 -> recoveryPointPending = true;
                 case 19 -> {
                     seiReader.init(rbsp, position, payloadSize);
@@ -2398,12 +2406,18 @@ public final class H264DecoderEngine {
      */
     private void takeDisplayMessages(DecoderFrame frame, H264Sps sps, boolean first) {
         var picStruct = takePicStruct(sps);
+        var captions = pendingCaptions.size() == 0 ? null : pendingCaptions.toByteArray();
         if (first) {
             frame.picStruct = picStruct;
             frame.filmGrain = pendingFilmGrain;
             frame.framePacking = pendingFramePacking;
             frame.orientation = pendingOrientation;
+            frame.closedCaptions = captions;
         } else {
+            if (captions != null) {
+                frame.closedCaptions = frame.closedCaptions == null ? captions
+                        : concat(frame.closedCaptions, captions);
+            }
             if (frame.filmGrain == null) {
                 frame.filmGrain = pendingFilmGrain;
             }
@@ -2426,6 +2440,20 @@ public final class H264DecoderEngine {
         pendingFilmGrain = null;
         pendingFramePacking = null;
         pendingOrientation = null;
+        pendingCaptions.reset();
+    }
+
+    /**
+     * Joins two byte arrays.
+     *
+     * @param first the leading bytes
+     * @param second the trailing bytes
+     * @return a new array
+     */
+    private static byte[] concat(byte[] first, byte[] second) {
+        var joined = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, joined, first.length, second.length);
+        return joined;
     }
 
     /**
@@ -4188,6 +4216,10 @@ public final class H264DecoderEngine {
         }
         var sideData = DisplaySei.sideData(fieldOrder, DisplaySei.repeatedFields(frame.picStruct), packing,
                 orientation);
+        if (frame.closedCaptions != null && frame.closedCaptions.length >= 3) {
+            sideData = sideData.toBuilder().closedCaptions(Arrays.copyOf(frame.closedCaptions,
+                    frame.closedCaptions.length - frame.closedCaptions.length % 3)).build();
+        }
         if (viewTagged || depth) {
             var voIdx = depth && viewExtension != null && frame.voIdx < viewExtension.fullVoIdx.length
                     ? viewExtension.fullVoIdx[frame.voIdx] : frame.voIdx;

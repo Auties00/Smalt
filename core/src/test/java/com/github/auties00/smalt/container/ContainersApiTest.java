@@ -159,6 +159,11 @@ class ContainersApiTest {
         @EnumSource(ContainerFormat.class)
         @DisplayName("creates a muxer for every format")
         void format(ContainerFormat format) {
+            if (format == ContainerFormat.VOBSUB) {
+                // a VobSub pair is two files, written by VobSubMuxer
+                assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer(format, MediaSink.memory()));
+                return;
+            }
             try (var muxer = Containers.openMuxer(format, MediaSink.memory())) {
                 assertNotNull(muxer);
             }

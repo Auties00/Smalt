@@ -114,6 +114,19 @@ public enum ContainerFormat {
     MICRODVD,
 
     /**
+     * A Blu-ray presentation graphic stream file ({@code .sup}): {@code "PG"}-headed PGS segments.
+     */
+    SUP,
+
+    /**
+     * VobSub subtitles: the MPEG program stream of DVD subpictures of a {@code .sub} file, with the {@code .idx}
+     * index that names its palette and languages. Recognized from either file; a demuxer opened from a source reads
+     * the program stream alone, and {@link com.github.auties00.smalt.container.subtitle.VobSubDemuxer} and
+     * {@link com.github.auties00.smalt.container.subtitle.VobSubMuxer} read and write the pair.
+     */
+    VOBSUB,
+
+    /**
      * An H.264 elementary stream in the Annex B byte stream format ({@code .h264}, {@code .264}): start-code
      * prefixed NAL units.
      */

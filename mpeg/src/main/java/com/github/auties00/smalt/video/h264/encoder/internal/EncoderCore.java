@@ -1059,6 +1059,11 @@ public final class EncoderCore implements EncoderEngine {
         return encodeNext();
     }
 
+    @Override
+    public long lastSubmittedPts() {
+        return lastSubmittedPts;
+    }
+
     /**
      * Encodes the pictures still queued, one per call.
      *

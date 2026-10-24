@@ -11,7 +11,7 @@ import com.github.auties00.smalt.track.Packet;
  *
  * <p>An instance is not thread-safe.
  */
-sealed interface Stage extends AutoCloseable permits VideoEncodeStage, AudioEncodeStage, CopyStage, SubtitleStage {
+sealed interface Stage extends AutoCloseable permits VideoEncodeStage, AudioEncodeStage, CopyStage, SubtitleStage, CaptionStage {
     /**
      * Returns the identifier of the input track the stage reads.
      *

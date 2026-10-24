@@ -2,18 +2,20 @@ package com.github.auties00.smalt.video;
 
 import com.github.auties00.smalt.image.Orientation;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 
 /**
  * Holds the display information a decoder attaches to one {@link VideoFrame}: how the frame's
  * fields are scanned and repeated, whether it packs the two views of a stereoscopic pair, how
- * to orient it for display, and which layer of a multi-layer stream it shows.
+ * to orient it for display, which layer of a multi-layer stream it shows, and the closed captions it carries.
  *
  * <p>Decoders fill the entries from the messages the stream carries (for H.264 and HEVC, the
- * picture timing, frame packing arrangement and display orientation SEI messages, the layers an
+ * picture timing, frame packing arrangement, display orientation and caption SEI messages, the layers an
  * HEVC video parameter set describes and the views of an H.264 multiview stream) and leave the
- * others absent; a frame the stream says nothing about carries {@link #NONE}.
+ * others absent; a frame the stream says nothing about carries {@link #NONE}. An encoder that can carry an entry
+ * in its bitstream writes it.
  *
  * <p>Instances are immutable and thread-safe.
  */
@@ -21,7 +23,7 @@ public final class FrameSideData {
     /**
      * The side data of a frame that carries none.
      */
-    public static final FrameSideData NONE = new FrameSideData(null, 0, null, null, null);
+    public static final FrameSideData NONE = new FrameSideData(null, 0, null, null, null, null);
 
     /**
      * The scan of the frame, or {@code null}.
@@ -49,6 +51,11 @@ public final class FrameSideData {
     private final VideoLayer layer;
 
     /**
+     * The caption data of the frame, or {@code null}.
+     */
+    private final byte[] closedCaptions;
+
+    /**
      * Constructs side data from validated components.
      *
      * @param fieldOrder the scan, or {@code null}
@@ -56,14 +63,16 @@ public final class FrameSideData {
      * @param framePacking the packing, or {@code null}
      * @param orientation the orientation, or {@code null}
      * @param layer the layer, or {@code null}
+     * @param closedCaptions the caption data, owned by the instance, or {@code null}
      */
     private FrameSideData(FieldOrder fieldOrder, int repeatedFields, FramePacking framePacking,
-                          Orientation orientation, VideoLayer layer) {
+                          Orientation orientation, VideoLayer layer, byte[] closedCaptions) {
         this.fieldOrder = fieldOrder;
         this.repeatedFields = repeatedFields;
         this.framePacking = framePacking;
         this.orientation = orientation;
         this.layer = layer;
+        this.closedCaptions = closedCaptions;
     }
 
     /**
@@ -87,6 +96,7 @@ public final class FrameSideData {
         builder.framePacking = framePacking;
         builder.orientation = orientation;
         builder.layer = layer;
+        builder.closedCaptions = closedCaptions;
         return builder;
     }
 
@@ -156,31 +166,60 @@ public final class FrameSideData {
     }
 
     /**
+     * Returns the closed captions the frame carries, as ATSC A/53 {@code cc_data} constructs.
+     *
+     * <p>The bytes are the constructs of the {@link com.github.auties00.smalt.track.Codec#CEA_708} packet form,
+     * three per construct, in the order the stream carries them: for H.264 and HEVC, those of the ATSC caption SEI
+     * messages of the picture's access unit, attached to the frame in output order. The H.264 encoder writes them
+     * back as such a message.
+     *
+     * @return a copy of the caption data, or empty when the frame carries none
+     */
+    public Optional<byte[]> closedCaptions() {
+        return closedCaptions == null ? Optional.empty() : Optional.of(closedCaptions.clone());
+    }
+
+    /**
      * Returns whether this side data carries nothing.
      *
      * @return whether every entry is absent or zero
      */
     public boolean isEmpty() {
         return fieldOrder == null && repeatedFields == 0 && framePacking == null && orientation == null
-                && layer == null;
+                && layer == null && closedCaptions == null;
     }
 
+    /**
+     * Compares side data by every entry, the caption data by content.
+     *
+     * @param other the object to compare
+     * @return {@code true} when every entry is equal
+     */
     @Override
     public boolean equals(Object other) {
         return other instanceof FrameSideData that && fieldOrder == that.fieldOrder
                 && repeatedFields == that.repeatedFields && Objects.equals(framePacking, that.framePacking)
-                && orientation == that.orientation && Objects.equals(layer, that.layer);
+                && orientation == that.orientation && Objects.equals(layer, that.layer)
+                && Arrays.equals(closedCaptions, that.closedCaptions);
     }
 
+    /**
+     * Returns a hash code consistent with {@link #equals(Object)}.
+     *
+     * @return the hash code
+     */
     @Override
     public int hashCode() {
-        return Objects.hash(fieldOrder, repeatedFields, framePacking, orientation, layer);
+        return Objects.hash(fieldOrder, repeatedFields, framePacking, orientation, layer) * 31
+                + Arrays.hashCode(closedCaptions);
     }
 
     @Override
     public String toString() {
         return "FrameSideData[fieldOrder=" + fieldOrder + ", repeatedFields=" + repeatedFields
-                + ", framePacking=" + framePacking + ", orientation=" + orientation + ", layer=" + layer + ']';
+                + ", framePacking=" + framePacking + ", orientation=" + orientation + ", layer=" + layer
+                + ", closedCaptions=" + (closedCaptions == null ? "none" : closedCaptions.length / 3 + " constructs")
+                + ']';
     }
 
     /**
@@ -202,6 +241,11 @@ public final class FrameSideData {
          * The layer the frame was decoded from, or {@code null}.
          */
         private VideoLayer layer;
+
+        /**
+         * The caption data, or {@code null}.
+         */
+        private byte[] closedCaptions;
 
         /**
          * Constructs an empty builder.
@@ -309,16 +353,42 @@ public final class FrameSideData {
         }
 
         /**
+         * Sets the closed captions of the frame; see {@link FrameSideData#closedCaptions()}.
+         *
+         * @param closedCaptions the value, copied
+         * @return this builder
+         * @throws IllegalArgumentException if the length of {@code closedCaptions} is not a positive multiple of 3
+         */
+        public Builder closedCaptions(byte[] closedCaptions) {
+            if (closedCaptions.length == 0 || closedCaptions.length % 3 != 0) {
+                throw new IllegalArgumentException("caption data of " + closedCaptions.length
+                        + " bytes is not a whole number of cc_data constructs");
+            }
+            this.closedCaptions = closedCaptions.clone();
+            return this;
+        }
+
+        /**
+         * Removes the closed captions of the frame; see {@link FrameSideData#closedCaptions()}.
+         *
+         * @return this builder
+         */
+        public Builder noClosedCaptions() {
+            this.closedCaptions = null;
+            return this;
+        }
+
+        /**
          * Builds the side data, {@link FrameSideData#NONE} when every entry is absent.
          *
          * @return the side data
          */
         public FrameSideData build() {
             if (fieldOrder == null && repeatedFields == 0 && framePacking == null && orientation == null
-                    && layer == null) {
+                    && layer == null && closedCaptions == null) {
                 return NONE;
             }
-            return new FrameSideData(fieldOrder, repeatedFields, framePacking, orientation, layer);
+            return new FrameSideData(fieldOrder, repeatedFields, framePacking, orientation, layer, closedCaptions);
         }
     }
 }

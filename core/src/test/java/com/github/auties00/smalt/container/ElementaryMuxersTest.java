@@ -322,7 +322,9 @@ class ElementaryMuxersTest {
         @DisplayName("creates a muxer for every writable format and reports which codecs it carries")
         void createMuxer() {
             for (var format : ContainerFormat.values()) {
-                assertInstanceOf(Muxer.class, Containers.openMuxer(format, MediaSink.memory()));
+                if (format != ContainerFormat.VOBSUB) {
+                    assertInstanceOf(Muxer.class, Containers.openMuxer(format, MediaSink.memory()));
+                }
             }
             assertTrue(Containers.isMuxable(ContainerFormat.AVI, Codec.MPEG4_PART2));
             assertFalse(Containers.isMuxable(ContainerFormat.AVI, Codec.OPUS));

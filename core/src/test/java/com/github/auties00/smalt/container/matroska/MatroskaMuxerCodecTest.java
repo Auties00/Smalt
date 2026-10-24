@@ -316,7 +316,7 @@ class MatroskaMuxerCodecTest {
         @DisplayName("writes the handler as codec identifier, the configuration and timed blocks, with a track type per prefix")
         void roundTrip() {
             var config = new byte[]{1, 2, 3, 4, 5};
-            var tracks = List.<Track>of(pcm(1), data(2, "S_HDMV/PGS", null), data(3, "M_SMALT/TEST", config),
+            var tracks = List.<Track>of(pcm(1), data(2, "S_HDMV/TEXTST", null), data(3, "M_SMALT/TEST", config),
                     data(4, "B_VOBBTN", null));
             var packets = new ArrayList<Packet>();
             for (var block = 0; block < 100; block++) {
@@ -355,7 +355,7 @@ class MatroskaMuxerCodecTest {
             }
             var probe = ContainerProbe.probe(MuxSupport.save("data-tracks.mkv", output));
             var pgs = probe.streams().get(1);
-            assertEquals("hdmv_pgs_subtitle", pgs.codecName());
+            assertEquals("hdmv_text_subtitle", pgs.codecName());
             assertEquals("subtitle", pgs.get("codec_type"));
             var probed = probe.packetsOf(1);
             var written = packets.stream().filter(packet -> packet.trackId() == 2).toList();

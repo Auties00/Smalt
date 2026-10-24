@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.matroska;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.ColorInfo;
@@ -91,6 +92,9 @@ import java.util.Set;
  *       with a {@code BlockDuration};
  *       a WebVTT block holds the cue identifier line, the settings line and the payload. Subtitle
  *       tracks get no cue points.</li>
+ *   <li>Bitmap subtitles, in Matroska only: PGS ({@code S_HDMV/PGS}, none), DVB subtitles ({@code S_DVBSUB}, the
+ *       composition page, ancillary page and subtitling type of the first subtitling descriptor entry) and DVD
+ *       subpictures ({@code S_VOBSUB}, the VobSub index header), written like text subtitles.</li>
  *   <li>Other data, in Matroska only: a {@link Codec#DATA} track whose
  *       {@link com.github.auties00.smalt.track.DataTrack#handler() handler} is a Matroska codec
  *       identifier (a capital letter other than {@code V} and {@code A}, an underscore and
@@ -551,6 +555,9 @@ public final class MatroskaMuxer implements Muxer {
             case SUBRIP -> "S_TEXT/UTF8";
             case ASS -> "S_TEXT/ASS";
             case WEBVTT -> "D_WEBVTT/SUBTITLES";
+            case PGS -> "S_HDMV/PGS";
+            case DVB_SUBTITLE -> "S_DVBSUB";
+            case DVD_SUBTITLE -> "S_VOBSUB";
             default -> null;
         };
     }
@@ -1660,7 +1667,9 @@ public final class MatroskaMuxer implements Muxer {
                         codecPrivate = options.docType() == MatroskaDocType.WEBM
                                 || header.equals(WebVttText.DEFAULT_HEADER) ? null : header.getBytes(StandardCharsets.UTF_8);
                     }
-                    case SUBRIP -> codecPrivate = null;
+                    case SUBRIP, PGS -> codecPrivate = null;
+                    case DVB_SUBTITLE -> codecPrivate = BitmapTrackConfigs.matroskaDvb(config);
+                    case DVD_SUBTITLE -> codecPrivate = BitmapTrackConfigs.vobSubHeader(config);
                     case DATA -> {
                         configureData();
                         codecPrivate = config;

@@ -1223,7 +1223,7 @@ public final class HevcDecoderEngine {
      * @param alphaPending whether an alpha channel information message arrived
      */
     private record Messages(int timing, FilmGrainParameters filmGrain, DisplaySei.FramePackingMessage framePacking,
-                            DisplaySei.OrientationMessage orientation,
+                            DisplaySei.OrientationMessage orientation, byte[] captions,
                             boolean transferPending, boolean alphaPending) {
     }
 
@@ -1236,7 +1236,8 @@ public final class HevcDecoderEngine {
      */
     private static Messages takeMessages(HevcSei sei) {
         var messages = new Messages(sei.pictureTiming, sei.filmGrain, sei.framePacking, sei.orientation,
-                sei.transferPending, sei.alphaChannelPending);
+                sei.captions.size() == 0 ? null : sei.captions.toByteArray(), sei.transferPending,
+                sei.alphaChannelPending);
         sei.clearPictureMessages();
         return messages;
     }
@@ -1271,6 +1272,7 @@ public final class HevcDecoderEngine {
         frame.filmGrain = messages.filmGrain();
         frame.framePacking = messages.framePacking();
         frame.orientation = messages.orientation();
+        frame.closedCaptions = messages.captions();
         if (newSequence && !messages.alphaPending()) {
             state.sei.alphaChannel = null;
         }

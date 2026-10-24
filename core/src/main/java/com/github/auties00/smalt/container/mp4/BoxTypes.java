@@ -715,6 +715,16 @@ final class BoxTypes {
     static final int SUBT = 0x73756274;
 
     /**
+     * The MPEG-4 subpicture handler type ({@code subp}).
+     */
+    static final int SUBP = 0x73756270;
+
+    /**
+     * The QuickTime closed caption handler type ({@code clcp}).
+     */
+    static final int CLCP = 0x636C6370;
+
+    /**
      * The subtitle media header box ({@code sthd}).
      */
     static final int STHD = 0x73746864;

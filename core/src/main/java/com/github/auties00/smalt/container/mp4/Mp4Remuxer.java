@@ -179,16 +179,16 @@ public final class Mp4Remuxer {
         var tracks = demuxer.tracks();
         var copies = new ArrayList<Copy>();
         if (brand != Mp4MuxerOptions.Brand.M4A) {
-            var video = select(tracks, TrackKind.VIDEO, options.videoSelection());
+            var video = select(tracks, TrackKind.VIDEO, options.videoSelection(), brand);
             if (!video.isEmpty()) {
                 copies.add(prepareVideo(video.getFirst(), copies.size() + 1, format, brand));
             }
         }
-        for (var audio : select(tracks, TrackKind.AUDIO, options.audioSelection())) {
+        for (var audio : select(tracks, TrackKind.AUDIO, options.audioSelection(), brand)) {
             copies.add(prepareAudio(audio, copies.size() + 1, format, brand));
         }
         if (brand != Mp4MuxerOptions.Brand.M4A) {
-            for (var text : select(tracks, TrackKind.DATA, options.subtitleSelection())) {
+            for (var text : select(tracks, TrackKind.DATA, options.subtitleSelection(), brand)) {
                 copies.add(prepareText(text, copies.size() + 1, brand));
             }
         }
@@ -240,18 +240,21 @@ public final class Mp4Remuxer {
      * @param tracks the input tracks
      * @param kind the kind wanted; {@link TrackKind#DATA} selects subtitle tracks
      * @param selection the selection of the options
+     * @param brand the output brand: the first or every subtitle track is selected among those it can carry
      * @return the tracks, in output order; empty when none is selected or the input has none of
      * the kind
      * @throws IllegalArgumentException if an identifier names no track of the kind
      */
-    private static List<Track> select(List<Track> tracks, TrackKind kind, RemuxOptions.Selection selection) {
+    private static List<Track> select(List<Track> tracks, TrackKind kind, RemuxOptions.Selection selection,
+                                      Mp4MuxerOptions.Brand brand) {
         var result = new ArrayList<Track>();
         switch (selection.mode()) {
             case NONE -> {
             }
             case FIRST, ALL -> {
                 for (var track : tracks) {
-                    if (matches(track, kind)) {
+                    if (matches(track, kind) && (kind != TrackKind.DATA || !track.codec().isBitmapSubtitle()
+                            && !track.codec().isCaption() || Mp4Muxer.supports(brand, track.codec()))) {
                         result.add(track);
                         if (selection.mode() == RemuxOptions.Mode.FIRST) {
                             break;
@@ -283,12 +286,14 @@ public final class Mp4Remuxer {
      * Returns whether a track is of a selected kind.
      *
      * @param track the input track
-     * @param kind the kind; {@link TrackKind#DATA} stands for subtitle tracks, of a text subtitle
-     * format or TTML
+     * @param kind the kind; {@link TrackKind#DATA} stands for subtitle tracks, of a text or bitmap subtitle
+     * format, TTML or a caption format
      * @return {@code true} when the track has the kind
      */
     private static boolean matches(Track track, TrackKind kind) {
-        return kind == TrackKind.DATA ? track.codec().isSubtitle() || track.codec() == Codec.TTML : track.kind() == kind;
+        var codec = track.codec();
+        return kind == TrackKind.DATA ? codec.isSubtitle() || codec == Codec.TTML || codec.isBitmapSubtitle()
+                || codec.isCaption() : track.kind() == kind;
     }
 
     /**
@@ -469,6 +474,7 @@ public final class Mp4Remuxer {
                 case JPEG2000 -> brand != Mp4MuxerOptions.Brand.MJ2
                         && Jp2Frames.isHeader(output.codecConfig().orElse(null));
                 case MOV_TEXT, WEBVTT, TTML -> format == ContainerFormat.MP4;
+                case CEA_608, CEA_708 -> false;
                 default -> true;
             };
             if (!plannable) {

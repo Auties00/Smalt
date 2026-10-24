@@ -27,6 +27,10 @@ def generator(root, relative):
         return "make-tag-samples.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
+    if relative in ("subtitle/pgs.sup", "subtitle/vobsub.sub", "ts/dvb-subtitles.ts", "ts/teletext.ts"):
+        return "make-bitmap-caption-samples.py"
+    if relative in ("matroska/pgs.mkv", "matroska/vobsub.mkv", "mp4/vobsub.mp4", "ts/h264-captions.ts"):
+        return "make-samples.sh, make-bitmap-caption-samples.py"
     if relative.startswith("subtitle/") and relative not in ("subtitle/cues.srt", "subtitle/cues.vtt"):
         return "make-subtitle-samples.py"
     return "make-samples.sh"

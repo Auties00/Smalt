@@ -21,6 +21,7 @@ import com.github.auties00.smalt.internal.io.SegmentBacked;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalRecords;
+import com.github.auties00.smalt.internal.caption.QuickTimeCaptions;
 import com.github.auties00.smalt.internal.subtitle.QuickTimeText;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
@@ -71,8 +72,11 @@ import java.util.Set;
  * other handler (text, subtitles, timecode, timed metadata, hint) becomes a
  * {@link com.github.auties00.smalt.track.DataTrack}: 3GPP timed text ({@code tx3g}) is
  * {@link Codec#MOV_TEXT}, and so is QuickTime text media ({@code text}), its samples and description
- * converted to the 3GPP form, WebVTT ({@code wvtt}) is {@link Codec#WEBVTT} and TTML ({@code stpp}) is
- * {@link Codec#TTML}, except in the chapter tracks a {@code chap} reference names, which stay
+ * converted to the 3GPP form, WebVTT ({@code wvtt}) is {@link Codec#WEBVTT}, TTML ({@code stpp}) is
+ * {@link Codec#TTML}, DVD subpictures ({@code mp4s} with object type {@code 0xE0}) are {@link Codec#DVD_SUBTITLE}
+ * with a VobSub index header built from the palette and the track size, and QuickTime closed captions
+ * ({@code c608}, {@code c708}) are {@link Codec#CEA_608} and {@link Codec#CEA_708}, their samples converted to
+ * {@code cc_data} constructs, except in the chapter tracks a {@code chap} reference names, which stay
  * {@link Codec#DATA}. Each WebVTT sample is returned as one packet per cue it shows (none for an
  * empty sample), all with the sample's timing, in the {@link Codec#WEBVTT} packet form; every
  * other sample is one packet. Codec
@@ -398,6 +402,12 @@ public final class Mp4Demuxer implements Demuxer {
     private final Set<Integer> quickTimeTextTracks;
 
     /**
+     * The identifiers of the QuickTime closed caption tracks, whose samples are converted to {@code cc_data}
+     * constructs.
+     */
+    private final Set<Integer> captionTracks;
+
+    /**
      * The cue packets of a WebVTT sample not returned yet.
      */
     private final ArrayDeque<Packet> pendingCues = new ArrayDeque<>();
@@ -548,6 +558,7 @@ public final class Mp4Demuxer implements Demuxer {
             }
             var webVtt = new HashSet<Integer>();
             var quickTimeText = new HashSet<Integer>();
+            var captions = new HashSet<Integer>();
             mergeLayerConfigs(parser.tracks);
             for (var track : parser.tracks) {
                 track.selectBaseEntry();
@@ -574,6 +585,9 @@ public final class Mp4Demuxer implements Demuxer {
                 if (described.codec() == Codec.MOV_TEXT && track.entry.format() == SampleEntry.TEXT) {
                     quickTimeText.add(described.id());
                 }
+                if (described.codec() == Codec.CEA_608 || described.codec() == Codec.CEA_708) {
+                    captions.add(described.id());
+                }
                 if (track.samples.count > 0 || (lazy && track.entry != null)) {
                     activeTracks.add(track);
                 }
@@ -581,6 +595,7 @@ public final class Mp4Demuxer implements Demuxer {
             this.tracks = Collections.unmodifiableList(publicTracks);
             this.webVttTracks = Set.copyOf(webVtt);
             this.quickTimeTextTracks = Set.copyOf(quickTimeText);
+            this.captionTracks = Set.copyOf(captions);
             this.metadata = Collections.unmodifiableMap(buildMetadata(scan.fileType, parser.metadata));
             this.durationMicros = computeDuration(parser, !scan.fragments.isEmpty());
             this.active = activeTracks.toArray(new Mp4Track[0]);
@@ -787,7 +802,7 @@ public final class Mp4Demuxer implements Demuxer {
      * @return {@code true} for a QuickTime text track
      */
     boolean convertsSamples(int trackId) {
-        return quickTimeTextTracks.contains(trackId);
+        return quickTimeTextTracks.contains(trackId) || captionTracks.contains(trackId);
     }
 
     /**
@@ -1205,6 +1220,9 @@ public final class Mp4Demuxer implements Demuxer {
                 var packet = nextPacket();
                 if (packet != null && !quickTimeTextTracks.isEmpty() && quickTimeTextTracks.contains(packet.trackId())) {
                     return packet.withData(QuickTimeText.sample(packet.data()));
+                }
+                if (packet != null && !captionTracks.isEmpty() && captionTracks.contains(packet.trackId())) {
+                    return packet.withData(QuickTimeCaptions.toCcData(packet.data()));
                 }
                 if (packet == null || webVttTracks.isEmpty() || !webVttTracks.contains(packet.trackId())) {
                     return packet;
@@ -1776,6 +1794,12 @@ public final class Mp4Demuxer implements Demuxer {
             info.keyframe = samples.isKeyframe(index);
             if (!quickTimeTextTracks.isEmpty() && quickTimeTextTracks.contains(track.id)) {
                 var converted = QuickTimeText.sample(Arrays.copyOfRange(info.data, info.dataOffset,
+                        info.dataOffset + info.size));
+                info.data = converted;
+                info.dataOffset = 0;
+                info.size = converted.length;
+            } else if (!captionTracks.isEmpty() && captionTracks.contains(track.id)) {
+                var converted = QuickTimeCaptions.toCcData(Arrays.copyOfRange(info.data, info.dataOffset,
                         info.dataOffset + info.size));
                 info.data = converted;
                 info.dataOffset = 0;

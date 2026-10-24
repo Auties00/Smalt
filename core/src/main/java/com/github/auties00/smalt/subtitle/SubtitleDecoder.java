@@ -1,6 +1,12 @@
 package com.github.auties00.smalt.subtitle;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.caption.CaptionStream;
+import com.github.auties00.smalt.internal.caption.CaptionTimeline;
+import com.github.auties00.smalt.internal.caption.Cea608Decoder;
+import com.github.auties00.smalt.internal.caption.Cea708Decoder;
+import com.github.auties00.smalt.internal.caption.TeletextDecoder;
+import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.subtitle.AssEvents;
 import com.github.auties00.smalt.internal.subtitle.AssScript;
 import com.github.auties00.smalt.internal.subtitle.Markup;
@@ -17,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Turns the packets of a text subtitle track into {@link SubtitleCue}s.
@@ -42,6 +49,16 @@ import java.util.Objects;
  * the script header, and positions and font sizes are scaled from the script resolution; karaoke times
  * and placements carry over where the target markup has them.
  *
+ * <p>Caption tracks ({@link Codec#CEA_608}, {@link Codec#CEA_708}, {@link Codec#DVB_TELETEXT}) are decoded
+ * statefully, one {@link CaptionService} at a time, in SubRip markup: italics, underline and colors other than white
+ * as tags, a caption in the upper half of the screen with the alignment {@code {\an8}}, rows from top to bottom
+ * without their leading and trailing spaces. A caption cue is complete once the caption that replaces or erases it
+ * arrives, so {@link #decodeAll(Packet)} returns the cues that end at the packet and {@link #flush()} the one shown
+ * after the last packet. A pop-on caption is one cue from the command that shows it to the one that removes it; a
+ * roll-up or paint-on caption, which grows a character at a time, is one cue per line or paint, showing the text
+ * complete at the next carriage return, erase or flip, from the time its first character appeared; a teletext page
+ * is one cue from the packet that carried its header to the next version of the page.
+ *
  * <p>An instance is not thread-safe.
  */
 public final class SubtitleDecoder {
@@ -66,20 +83,75 @@ public final class SubtitleDecoder {
     private long previousEnd;
 
     /**
+     * The decoder of a caption track, or {@code null}.
+     */
+    private final CaptionStream captions;
+
+    /**
+     * The caption service decoded, or {@code null}.
+     */
+    private final CaptionService service;
+
+    /**
+     * The caption cues completed by the packet decoded.
+     */
+    private final List<SubtitleCue> completed = new ArrayList<>();
+
+    /**
+     * The markup the caption cues are written in.
+     */
+    private SubtitleMarkup requested = SubtitleMarkup.SUBRIP;
+
+    /**
      * Constructs a decoder for a track.
      *
-     * @param track the track; its codec must be a text subtitle codec or {@link Codec#TTML}
-     * @throws IllegalArgumentException if the track's codec is neither a text subtitle codec nor TTML
+     * <p>A caption track is decoded for its {@linkplain CaptionService#defaultFor(Track) default service}.
+     *
+     * @param track the track; its codec must be a text subtitle codec, {@link Codec#TTML} or a caption codec
+     * @throws IllegalArgumentException if the track's codec is none of these
      */
     public SubtitleDecoder(Track track) {
+        this(track, track.codec().isCaption() ? CaptionService.defaultFor(track) : null);
+    }
+
+    /**
+     * Constructs a decoder for one service of a caption track.
+     *
+     * @param track the track; its codec must be a text subtitle codec, {@link Codec#TTML} or a caption codec
+     * @param service the caption service decoded, or {@code null} for a track that is not a caption track
+     * @throws IllegalArgumentException if the track's codec is none of these, if {@code service} is {@code null} for
+     * a caption track or cannot be read from it, or if a service is given for another track
+     */
+    public SubtitleDecoder(Track track, CaptionService service) {
         this.track = Objects.requireNonNull(track, "track");
-        if (!track.codec().isSubtitle() && track.codec() != Codec.TTML) {
-            throw new IllegalArgumentException(track.codec().displayName() + " is not a text subtitle codec");
+        var codec = track.codec();
+        if (!codec.isSubtitle() && codec != Codec.TTML && !codec.isCaption()) {
+            throw new IllegalArgumentException(codec.displayName() + " is not a text subtitle or caption codec");
         }
+        if (codec.isCaption() != (service != null)) {
+            throw new IllegalArgumentException(codec.isCaption() ? "a caption track needs a caption service"
+                    : codec.displayName() + " tracks have no caption services");
+        }
+        if (service != null && !service.readableFrom(codec)) {
+            throw new IllegalArgumentException(service + " cannot be read from a " + codec.displayName() + " track");
+        }
+        this.service = service;
         var config = track.codecConfig().orElse(null);
-        this.script = track.codec() == Codec.ASS
+        this.script = codec == Codec.ASS
                 ? AssScript.parse(config == null ? "" : TextFiles.decode(config)) : null;
-        this.timedText = track.codec() == Codec.MOV_TEXT ? TimedText.Config.parse(config) : null;
+        this.timedText = codec == Codec.MOV_TEXT ? TimedText.Config.parse(config) : null;
+        if (service == null) {
+            this.captions = null;
+            return;
+        }
+        var timeline = new CaptionTimeline((start, end, text) -> completed.add(
+                Markup.toCue(text, start, end, requested, Markup.Context.NONE)));
+        this.captions = switch (service.kind()) {
+            case CEA_608 -> new Cea608Decoder(timeline, service.number());
+            case CEA_708 -> new Cea708Decoder(timeline, service.number());
+            case TELETEXT -> new TeletextDecoder(timeline, service.number(),
+                    teletextGroup(track.language().orElse("")));
+        };
     }
 
     /**
@@ -102,13 +174,22 @@ public final class SubtitleDecoder {
     }
 
     /**
+     * Returns the caption service decoded.
+     *
+     * @return the service, empty for a track that is not a caption track
+     */
+    public Optional<CaptionService> service() {
+        return Optional.ofNullable(service);
+    }
+
+    /**
      * Decodes one packet.
      *
      * @param packet a packet of the track
      * @return the cue, or {@code null} when the packet shows nothing (an empty 3GPP timed text
      * sample, which clears the screen, or a packet whose text is blank)
-     * @throws IllegalStateException if the track is a TTML track, whose packets hold several cues
-     * ({@link #decodeAll(Packet)})
+     * @throws IllegalStateException if the track is a TTML track, whose packets hold several cues, or a caption
+     * track, whose cues end at later packets ({@link #decodeAll(Packet)})
      */
     public SubtitleCue decode(Packet packet) {
         return decode(packet, markup());
@@ -122,13 +203,17 @@ public final class SubtitleDecoder {
      * @param packet a packet of the track
      * @param markup the markup of the returned cue
      * @return the cue, or {@code null} when the packet shows nothing
-     * @throws IllegalStateException if the track is a TTML track, whose packets hold several cues
+     * @throws IllegalStateException if the track is a TTML track, whose packets hold several cues, or a caption
+     * track
      */
     public SubtitleCue decode(Packet packet, SubtitleMarkup markup) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(markup, "markup");
         if (track.codec() == Codec.TTML) {
             throw new IllegalStateException("a TTML packet holds a document of cues; decode it with decodeAll");
+        }
+        if (captions != null) {
+            throw new IllegalStateException("caption cues end at later packets; decode them with decodeAll");
         }
         var cues = decodeAll(packet, markup);
         return cues.isEmpty() ? null : cues.getFirst();
@@ -139,7 +224,7 @@ public final class SubtitleDecoder {
      *
      * @param packet a packet of the track
      * @return the cues in start order: none or one for a text subtitle codec, every cue of the document,
-     * cut to the packet's span, for TTML
+     * cut to the packet's span, for TTML, the cues that end at the packet for a caption track
      * @throws MediaException.Malformed if a TTML packet is not a well-formed document
      */
     public List<SubtitleCue> decodeAll(Packet packet) {
@@ -165,6 +250,17 @@ public final class SubtitleDecoder {
                 : micros(timeBase, saturatingAdd(time, duration)));
         previousEnd = end;
         var own = markup();
+        if (captions != null) {
+            requested = markup;
+            completed.clear();
+            Guards.malformed(track.codec().displayName() + " packet", () -> {
+                captions.decode(packet.data(), start);
+                return null;
+            });
+            var result = List.copyOf(completed);
+            completed.clear();
+            return result;
+        }
         switch (track.codec()) {
             case TTML -> {
                 var result = new ArrayList<SubtitleCue>();
@@ -211,6 +307,67 @@ public final class SubtitleDecoder {
                 return single(text.isBlank() ? null : convert(SubtitleCue.of(start, end, text), own, markup));
             }
         }
+    }
+
+    /**
+     * Ends the caption shown after the last packet, in the track's markup.
+     *
+     * @return the cue still shown, ending at the end of the last packet (its time plus its duration), or an empty
+     * list when nothing is shown or the track is not a caption track
+     */
+    public List<SubtitleCue> flush() {
+        return flush(markup());
+    }
+
+    /**
+     * Ends the caption shown after the last packet, in a markup.
+     *
+     * <p>The decoder then starts afresh, as after {@link #reset()}.
+     *
+     * @param markup the markup of the returned cue
+     * @return the cue still shown, or an empty list when nothing is shown or the track is not a caption track
+     */
+    public List<SubtitleCue> flush(SubtitleMarkup markup) {
+        Objects.requireNonNull(markup, "markup");
+        if (captions == null) {
+            return List.of();
+        }
+        requested = markup;
+        completed.clear();
+        captions.finish(previousEnd);
+        var result = List.copyOf(completed);
+        completed.clear();
+        reset();
+        return result;
+    }
+
+    /**
+     * Discards the caption shown and the state built from earlier packets, as after a seek.
+     */
+    public void reset() {
+        previousEnd = 0;
+        if (captions != null) {
+            captions.reset();
+        }
+    }
+
+    /**
+     * Returns the teletext character set group a language implies when the stream designates none.
+     *
+     * @param language the ISO 639-2 code of the track's language, empty when unknown
+     * @return the designation code group of ETSI EN 300 706 table 32
+     */
+    private static int teletextGroup(String language) {
+        return switch (language) {
+            case "cze", "ces", "slo", "slk", "pol", "hun" -> 0x08;
+            case "tur" -> 0x10;
+            case "srp", "hrv", "scc", "scr", "slv", "rum", "ron" -> 0x18;
+            case "rus", "bul", "ukr", "bel", "mkd", "est", "lav", "lit" -> 0x20;
+            case "gre", "ell" -> 0x30;
+            case "ara" -> 0x40;
+            case "heb" -> 0x50;
+            default -> 0x00;
+        };
     }
 
     /**

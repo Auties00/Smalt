@@ -157,6 +157,7 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.capture,
             com.github.auties00.smalt.raw;
     exports com.github.auties00.smalt.internal.nal to com.github.auties00.smalt.mpeg;
+    exports com.github.auties00.smalt.internal.caption to com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.plane to
             com.github.auties00.smalt.image,
             com.github.auties00.smalt.video,

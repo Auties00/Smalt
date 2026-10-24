@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.internal.caption.QuickTimeCaptions;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
@@ -343,9 +344,9 @@ public final class Mp4Muxer implements Muxer {
      * {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
      * {@link Mp4MuxerOptions.Brand#MJ2} add Motion JPEG 2000; {@link Mp4MuxerOptions.Brand#MP4} and
      * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VP8, VP9, AV1, MPEG-4 Part 2, H.263, Motion-JPEG, the
-     * 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats, {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT}
-     * and {@link Codec#TTML}; only {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law and
-     * mu-law.
+     * 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats, {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT},
+     * {@link Codec#TTML}, {@link Codec#DVD_SUBTITLE}, {@link Codec#CEA_608} and {@link Codec#CEA_708}; only
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law and mu-law.
      *
      * @param brand the brand of the file
      * @param codec the codec of the track
@@ -356,7 +357,8 @@ public final class Mp4Muxer implements Muxer {
         return switch (Objects.requireNonNull(codec, "codec")) {
             case AAC, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
             case JPEG2000 -> brand != Mp4MuxerOptions.Brand.M4A;
-            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, H263, MJPEG, MOV_TEXT, WEBVTT, TTML, PCM_S16LE, PCM_S16BE,
+            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, H263, MJPEG, MOV_TEXT, WEBVTT, TTML, DVD_SUBTITLE, CEA_608,
+                 CEA_708, PCM_S16LE, PCM_S16BE,
                  PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE ->
                     brand == Mp4MuxerOptions.Brand.MP4 || brand == Mp4MuxerOptions.Brand.QUICKTIME;
             case PRORES, DNXHD, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> brand == Mp4MuxerOptions.Brand.QUICKTIME;
@@ -399,6 +401,12 @@ public final class Mp4Muxer implements Muxer {
      * {@link Codec#TTML} is an {@code stpp} track (with the {@code subt} handler) whose packets are
      * stored as they are, one document per sample; they must not overlap, and a gap, the start of
      * the track included, becomes a sample holding a TTML document that shows nothing.
+     * {@link Codec#DVD_SUBTITLE} is an {@code mp4s} track (with the {@code subp} handler) whose {@code esds} declares
+     * object type {@code 0xE0} and holds the 16 palette entries of the track's VobSub header as Y'CrCb, its track
+     * header the header's frame size. {@link Codec#CEA_608} and {@link Codec#CEA_708} are QuickTime closed caption
+     * tracks ({@code c608} and {@code c708}, with the {@code clcp} handler): each packet becomes a {@code cdat} and a
+     * {@code cdt2} atom holding its valid field 1 and field 2 byte pairs, or a {@code ccdp} atom holding a caption
+     * distribution packet with its constructs (at most 31) and the frame rate the packet's duration gives.
      *
      * @throws IllegalArgumentException if the id is already used, the codec is not supported, the
      * configuration it needs is missing, a TTML configuration is malformed or a DNxHD configuration
@@ -572,6 +580,10 @@ public final class Mp4Muxer implements Muxer {
         }
         var data = packet.data();
         for (var track : tracks) {
+            if (track.track.id() == packet.trackId()
+                    && (track.codec() == Codec.CEA_608 || track.codec() == Codec.CEA_708)) {
+                data = captionSample(track, packet);
+            }
             if (track.track.id() == packet.trackId() && track.codec() == Codec.PRORES && !hasProResPrefix(data)) {
                 data = withProResPrefix(data);
             } else if (track.track.id() == packet.trackId() && track.codec() == Codec.JPEG2000) {
@@ -584,6 +596,25 @@ public final class Mp4Muxer implements Muxer {
         }
         accept(packet.trackId(), data, 0, data.length, packet.pts(), packet.dts(), packet.duration(), packet.keyframe(),
                 spooling());
+    }
+
+    /**
+     * Converts a packet of a closed caption track to the sample QuickTime stores: {@code cdat} and {@code cdt2}
+     * atoms for CEA-608, a {@code ccdp} atom for CEA-708 with the frame rate the packet's duration gives (29.97 Hz
+     * when it has none).
+     *
+     * @param track the caption track
+     * @param packet a packet of the track, holding {@code cc_data} constructs
+     * @return the sample
+     */
+    static byte[] captionSample(MuxTrack track, Packet packet) {
+        if (track.codec() == Codec.CEA_608) {
+            return QuickTimeCaptions.toC608(packet.data());
+        }
+        var base = track.track.timeBase();
+        var rate = packet.duration() > 0 ? QuickTimeCaptions.frameRateCode(base.denominator(),
+                base.numerator() * packet.duration()) : 4;
+        return QuickTimeCaptions.toC708(packet.data(), rate, track.cdpSequence++ & 0xFFFF);
     }
 
     /**

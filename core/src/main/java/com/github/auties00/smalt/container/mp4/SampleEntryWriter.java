@@ -13,6 +13,7 @@ import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.nal.NalRecords;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.internal.subtitle.TimedText;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -61,6 +62,11 @@ final class SampleEntryWriter {
      * The {@code streamType} of a visual stream.
      */
     private static final int VISUAL_STREAM = 0x04;
+
+    /**
+     * The {@code streamType} DVD subpicture tracks declare in their {@code esds}.
+     */
+    private static final int SUBPICTURE_STREAM = 0x38;
 
     /**
      * The H.263 decoder configuration box type ({@code d263}).
@@ -138,6 +144,24 @@ final class SampleEntryWriter {
             case PRORES, DNXHD -> writeQuickTimeVisual(writer, track, (VideoTrack) described, config);
             case MOV_TEXT, WEBVTT -> writeText(writer, track.track);
             case TTML -> writeTtml(writer, track.track);
+            case DVD_SUBTITLE -> {
+                writer.begin(SampleEntry.MP4S);
+                writer.zeros(6);
+                writer.u16(1);
+                writer.beginFull(BoxTypes.ESDS, 0, 0);
+                new EsDescriptor(SampleEntry.VOBSUB_OBJECT_TYPE, SUBPICTURE_STREAM, maxSampleSize(plan),
+                        maxBitrate(plan), averageBitrate(plan),
+                        BitmapTrackConfigs.mp4FromVobSub(track.track.codecConfig().orElse(null)))
+                        .write(writer, plan.track.number);
+                writer.end();
+                writer.end();
+            }
+            case CEA_608, CEA_708 -> {
+                writer.begin(track.codec() == Codec.CEA_608 ? SampleEntry.C608 : SampleEntry.C708);
+                writer.zeros(6);
+                writer.u16(1);
+                writer.end();
+            }
             default -> {
                 if (track.pcmFrameBytes > 0) {
                     writePcm(writer, track, (AudioTrack) described);

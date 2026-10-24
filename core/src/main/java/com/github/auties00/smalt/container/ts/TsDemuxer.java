@@ -81,13 +81,18 @@ import java.util.function.Function;
  *       {@code splice_info_section}s, stamped with the program's latest decoding time when they
  *       arrive, and unparsed but for the {@code pts_adjustment}, rebased so that a splice time plus
  *       it is a time of the timeline the tracks share, in 90 kHz ticks;</li>
+ *   <li>subtitles: Blu-ray presentation graphic streams ({@code 0x90}) as {@link Codec#PGS}, one PES packet
+ *       (one segment, usually) per packet; DVB subtitles ({@code 0x06} with a subtitling descriptor) as
+ *       {@link Codec#DVB_SUBTITLE}, the segments of each PES packet with the descriptor body as the
+ *       configuration; DVB teletext ({@code 0x06} with a teletext descriptor) as {@link Codec#DVB_TELETEXT}, each
+ *       PES data field with the descriptor body as the configuration;</li>
+ *   <li>MPEG-1 and MPEG-2 video ({@code 0x01}, {@code 0x02}) as {@link Codec#MPEG1_VIDEO} and
+ *       {@link Codec#MPEG2_VIDEO}, one PES packet per packet;</li>
  *   <li>other PES streams: private data ({@code 0x06}, user private types from {@code 0x80})
- *       become data tracks with the handler {@code "private"}, {@code "dvb_subtitle"} or
- *       {@code "dvb_teletext"}, except that a {@code 0x06} stream without a descriptor whose first
- *       payload starts with an ADTS, LOAS, AC-3 or MPEG audio header or an MPEG-4 Part 2 start code
- *       is that audio or video (M2TS writers declare AAC and MPEG-4 Part 2 that way); MPEG-1/2
- *       video ({@code 0x01}, {@code 0x02}) and the other Blu-ray audio types are passed through one
- *       PES packet per packet.</li>
+ *       become data tracks with the handler {@code "private"}, except that a {@code 0x06} stream without a
+ *       descriptor whose first payload starts with an ADTS, LOAS, AC-3 or MPEG audio header or an MPEG-4 Part 2
+ *       start code is that audio or video (M2TS writers declare AAC and MPEG-4 Part 2 that way); the other
+ *       Blu-ray audio types are passed through one PES packet per packet.</li>
  * </ul>
  * Other section-carried streams (DSM-CC) are not exposed. The tracks are described from the first
  * {@link TsDemuxerOptions#probeBytes()} bytes, which are read again by the first {@link #read()}.
@@ -1298,7 +1303,8 @@ public final class TsDemuxer implements Demuxer {
     static ElementaryParser parserFor(Psi.StreamEntry stream, MediaLimits limits) {
         var hdmv = stream.programRegistered(Psi.HDMV);
         return switch (stream.streamType()) {
-            case 0x01, 0x02 -> new PesParser(stream, limits, Codec.UNKNOWN_VIDEO, null);
+            case 0x01 -> new PesParser(stream, limits, Codec.MPEG1_VIDEO, null);
+            case 0x02 -> new PesParser(stream, limits, Codec.MPEG2_VIDEO, null);
             case 0x03, 0x04 -> new MpegAudioParser(stream, limits);
             case 0x0F -> new AdtsParser(stream, limits);
             case 0x10 -> new Mpeg4VideoParser(stream, limits);
@@ -1313,7 +1319,7 @@ public final class TsDemuxer implements Demuxer {
             case 0x82, 0x83, 0x85, 0xA1, 0xA2 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null)
                     : new PesParser(stream, limits, Codec.DATA, "private");
             case 0x86 -> hdmv ? new PesParser(stream, limits, Codec.UNKNOWN_AUDIO, null) : new Scte35Parser(stream, limits);
-            case 0x90 -> new PesParser(stream, limits, Codec.DATA, hdmv ? "pgs" : "private");
+            case 0x90 -> new PesParser(stream, limits, Codec.PGS, null);
             case 0xEA -> new PesParser(stream, limits, Codec.UNKNOWN_VIDEO, null);
             case 0x06 -> privateParser(stream, limits);
             default -> stream.streamType() >= 0x80 ? new PesParser(stream, limits, Codec.DATA, "private") : null;
@@ -1348,10 +1354,10 @@ public final class TsDemuxer implements Demuxer {
             return new PesParser(stream, limits, Codec.DATA, PesParser.ID3_HANDLER);
         }
         if (stream.dvbSubtitles()) {
-            return new PesParser(stream, limits, Codec.DATA, "dvb_subtitle");
+            return new PesParser(stream, limits, Codec.DVB_SUBTITLE, null, stream.subtitling());
         }
         if (stream.teletext()) {
-            return new PesParser(stream, limits, Codec.DATA, "dvb_teletext");
+            return new PesParser(stream, limits, Codec.DVB_TELETEXT, null, stream.teletextPages());
         }
         return new SniffingParser(stream, limits);
     }

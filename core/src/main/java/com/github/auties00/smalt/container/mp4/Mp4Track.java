@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.io.FourCc;
@@ -987,7 +988,9 @@ final class Mp4Track {
                     .skipSamples(skipSamples)
                     .build();
             case DATA -> DataTrack.builder().id(id).codec(entry.codec()).timeBase(timeBase).duration(duration)
-                    .codecConfig(config.orElse(null))
+                    .codecConfig(entry.codec() == Codec.DVD_SUBTITLE
+                            ? BitmapTrackConfigs.vobSubFromMp4(config.orElse(null), headerWidth, headerHeight)
+                            : config.orElse(null))
                     .language(lang.orElse(null))
                     .handler(FourCc.printable(handler).trim())
                     .build();

@@ -608,8 +608,8 @@ public final class HevcDecoder implements VideoDecoder {
             return;
         }
         releaseHeldField(layer);
-        var sideData = sideData(DisplaySei.sideData(DisplaySei.fieldOrder(frame.picStruct),
-                DisplaySei.repeatedFields(frame.picStruct), packing, orientation), view);
+        var sideData = withCaptions(sideData(DisplaySei.sideData(DisplaySei.fieldOrder(frame.picStruct),
+                DisplaySei.repeatedFields(frame.picStruct), packing, orientation), view), frame.closedCaptions);
         var left = windowLeft;
         var top = windowTop;
         var width = windowWidth;
@@ -696,6 +696,28 @@ public final class HevcDecoder implements VideoDecoder {
      */
     private static FrameSideData sideData(FrameSideData sideData, VideoLayer view) {
         return view == null ? sideData : sideData.toBuilder().layer(view).build();
+    }
+
+    /**
+     * Adds the caption data of a picture to display information, after the caption data it already holds (that of
+     * the first field of a woven frame).
+     *
+     * @param sideData the display information
+     * @param captions the {@code cc_data} constructs of the picture, or {@code null}
+     * @return the display information
+     */
+    private static FrameSideData withCaptions(FrameSideData sideData, byte[] captions) {
+        if (captions == null || captions.length < 3) {
+            return sideData;
+        }
+        var whole = Arrays.copyOf(captions, captions.length - captions.length % 3);
+        var held = sideData.closedCaptions().orElse(null);
+        if (held != null) {
+            var joined = Arrays.copyOf(held, held.length + whole.length);
+            System.arraycopy(whole, 0, joined, held.length, whole.length);
+            whole = joined;
+        }
+        return sideData.toBuilder().closedCaptions(whole).build();
     }
 
     /**
@@ -1040,7 +1062,7 @@ public final class HevcDecoder implements VideoDecoder {
                 var result = layer.held;
                 layer.held = null;
                 output.accept(new VideoFrame(finish(layer, result), layer.heldPts, frameDuration, layer.heldKeyframe,
-                        layer.heldSideData));
+                        withCaptions(layer.heldSideData, frame.closedCaptions)));
                 return;
             }
             releaseHeldField(layer);
@@ -1058,8 +1080,8 @@ public final class HevcDecoder implements VideoDecoder {
             target = layer.wovenPicture;
         }
         writeField(layer, frame, source, target, parity, hasAlpha);
-        var sideData = sideData(DisplaySei.sideData(parity == TOP ? FieldOrder.TOP_FIRST : FieldOrder.BOTTOM_FIRST,
-                0, packing, orientation), view);
+        var sideData = withCaptions(sideData(DisplaySei.sideData(parity == TOP ? FieldOrder.TOP_FIRST
+                : FieldOrder.BOTTOM_FIRST, 0, packing, orientation), view), frame.closedCaptions);
         if (pairedWithPrevious) {
             fillField(target, 1 - parity);
             output.accept(new VideoFrame(finish(layer, target), pts, duration > 0 ? duration : Track.UNKNOWN_DURATION,

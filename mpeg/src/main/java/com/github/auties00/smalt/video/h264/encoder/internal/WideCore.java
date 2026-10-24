@@ -432,6 +432,11 @@ public final class WideCore implements EncoderEngine {
     }
 
     @Override
+    public long lastSubmittedPts() {
+        return lastPts;
+    }
+
+    @Override
     public Packet flush() {
         if (closed) {
             throw new IllegalStateException("encoder is closed");

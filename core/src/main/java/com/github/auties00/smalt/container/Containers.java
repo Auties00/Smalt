@@ -40,8 +40,11 @@ import com.github.auties00.smalt.container.subtitle.SamiMuxer;
 import com.github.auties00.smalt.container.raw.RawMuxerOptions;
 import com.github.auties00.smalt.container.subtitle.SubRipDemuxer;
 import com.github.auties00.smalt.container.subtitle.SubRipMuxer;
+import com.github.auties00.smalt.container.subtitle.SupDemuxer;
+import com.github.auties00.smalt.container.subtitle.SupMuxer;
 import com.github.auties00.smalt.container.subtitle.TtmlDemuxer;
 import com.github.auties00.smalt.container.subtitle.TtmlMuxer;
+import com.github.auties00.smalt.container.subtitle.VobSubDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttDemuxer;
 import com.github.auties00.smalt.container.subtitle.WebVttMuxer;
 import com.github.auties00.smalt.container.ts.TsDemuxer;
@@ -82,8 +85,10 @@ import java.util.function.Predicate;
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
- * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR, YUV4MPEG2) are recognized
- * exactly, MPEG transport streams by the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
+ * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR, YUV4MPEG2, the {@code "PG"}
+ * segments of a {@code .sup} file, the signature line of a VobSub index) are recognized exactly, a VobSub
+ * {@code .sub} file by a pack header followed by a subpicture PES packet, MPEG transport streams by the sync bytes
+ * of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
  * two consecutive consistent frame headers. Elementary video streams are recognized by their structure up to a
@@ -244,6 +249,15 @@ public final class Containers {
             case SAMI -> new SamiDemuxer(source, options);
             case LRC -> new LrcDemuxer(source, options);
             case MICRODVD -> new MicroDvdDemuxer(source, options);
+            case SUP -> new SupDemuxer(source, options);
+            case VOBSUB -> {
+                var header = read(source, 0, 64);
+                if (VobSubDemuxer.matchesIndex(header)) {
+                    throw new MediaException.Unsupported("vobsub index", "a VobSub index cannot be read without"
+                            + " its .sub file: open the pair with VobSubDemuxer");
+                }
+                yield new VobSubDemuxer(source, options);
+            }
             case AVI -> new AviDemuxer(source, options);
             case H264, HEVC -> new AnnexBDemuxer(source, ElementaryStreamOptions.of(options));
             case AV1, AV1_ANNEX_B -> new ObuDemuxer(source, ElementaryStreamOptions.of(options));
@@ -282,6 +296,8 @@ public final class Containers {
             case SAMI -> SamiMuxer.supports(codec);
             case LRC -> LrcMuxer.supports(codec);
             case MICRODVD -> MicroDvdMuxer.supports(codec);
+            case SUP -> SupMuxer.supports(codec);
+            case VOBSUB -> false;
             case AVI -> AviMuxer.supports(codec);
             case Y4M -> Y4mMuxer.supports(codec);
         };
@@ -313,6 +329,8 @@ public final class Containers {
      * @param format the container format
      * @param output the sink, written from its position and not closed by the muxer
      * @return the muxer, which the caller finishes and closes
+     * @throws IllegalArgumentException if {@code format} is {@link ContainerFormat#VOBSUB}, which writes two files
+     * ({@code VobSubMuxer})
      * @throws MediaException.Io if the sink position cannot be read
      */
     public static Muxer openMuxer(ContainerFormat format, MediaSink output) {
@@ -338,6 +356,8 @@ public final class Containers {
             case SAMI -> new SamiMuxer(output);
             case LRC -> new LrcMuxer(output);
             case MICRODVD -> new MicroDvdMuxer(output);
+            case SUP -> new SupMuxer(output);
+            case VOBSUB -> throw new IllegalArgumentException("VobSub writes two files: use VobSubMuxer");
             case AVI -> new AviMuxer(output);
             case Y4M -> new Y4mMuxer(output);
         };
@@ -484,6 +504,12 @@ public final class Containers {
         }
         if (IvfDemuxer.matches(header)) {
             return ContainerFormat.IVF;
+        }
+        if (SupDemuxer.matches(header)) {
+            return ContainerFormat.SUP;
+        }
+        if (VobSubDemuxer.matches(header) || VobSubDemuxer.matchesIndex(header)) {
+            return ContainerFormat.VOBSUB;
         }
         if (matches(header, 0, "#!AMR")) {
             return ContainerFormat.AMR;

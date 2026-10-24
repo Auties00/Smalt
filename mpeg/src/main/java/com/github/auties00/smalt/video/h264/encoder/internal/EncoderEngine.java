@@ -36,6 +36,14 @@ public interface EncoderEngine {
     Packet encode(Picture picture, long pts, long duration);
 
     /**
+     * Returns the timestamp the last frame given to {@link #encode(Picture, long, long)} was stamped with: its own,
+     * or the one the engine chose for a missing or non-increasing timestamp.
+     *
+     * @return the timestamp in time-base units, or {@link Packet#NO_TIMESTAMP} before the first frame
+     */
+    long lastSubmittedPts();
+
+    /**
      * Encodes the frames still held, one per call.
      *
      * @return the next packet, or {@code null} when none is left

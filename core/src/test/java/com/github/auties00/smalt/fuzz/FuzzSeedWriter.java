@@ -13,6 +13,9 @@ import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
+import com.github.auties00.smalt.testkit.subtitle.BitmapStreams;
+import com.github.auties00.smalt.testkit.subtitle.CaptionScript;
+import com.github.auties00.smalt.testkit.subtitle.TeletextWriter;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.video.RawPixelFormat;
@@ -431,6 +434,142 @@ class FuzzSeedWriter {
                 "<v Ann>Hi</v> <c.yellow.bg_blue>c</c> &amp; <00:00:01.000>k".getBytes(StandardCharsets.UTF_8));
         write(SubtitleFuzzTest.class, "markup", "valid-ass.txt",
                 "{\\i1}it{\\i0}\\N{\\b1\\c&H00FF00&}green{\\r}\\h end".getBytes(StandardCharsets.UTF_8));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the bitmap subtitle, caption and closed caption targets and demuxers")
+    void bitmapsAndCaptions() {
+        var header = ("# VobSub index file, v7 (do not modify this line!)\nsize: 720x480\npalette: 000000, ffffff, "
+                + "808080, ff0000, 00ff00, 0000ff, ffff00, ff00ff, 00ffff, 404040, c0c0c0, 800000, 008000, 000080, "
+                + "808000, 800080\n").getBytes(StandardCharsets.UTF_8);
+        byte[] service = {'e', 'n', 'g', 0x10, 0, 1, 0, 1};
+        var pgsIndices = BitmapStreams.indices(24, 6, (x, y) -> (x / 4 + y) % 3);
+        var pgsShow = join(BitmapStreams.pcs(720, 480, 0, 0x80, false, 0, new int[]{1, 0, 10, 400, 0}),
+                BitmapStreams.wds(new int[]{0, 10, 400, 24, 6}), BitmapStreams.pds(0, 0, new int[]{1, 235, 128, 128, 255},
+                        new int[]{2, 81, 90, 240, 160}),
+                join(BitmapStreams.ods(1, 24, 6, pgsIndices, 1000).toArray(new byte[0][])), BitmapStreams.pgsEnd());
+        var pgsClear = join(BitmapStreams.pcs(720, 480, 1, 0, false, 0), BitmapStreams.wds(), BitmapStreams.pgsEnd());
+        var dvbPixels = new BitmapStreams.DvbPixels().string(4).run4(10, 1).run4(6, 2).end4().endLine().bytes();
+        var dvbShow = join(BitmapStreams.dvbPage(1, 5, 2, new int[]{0, 20, 500}),
+                BitmapStreams.dvbRegion(1, 0, true, 16, 2, 2, 0, 0, new int[]{1, 0, 0}),
+                BitmapStreams.dvbObject(1, 1, dvbPixels, new byte[0], false), BitmapStreams.dvbEnd(1));
+        var dvbClear = join(BitmapStreams.dvbPage(1, 5, 2), BitmapStreams.dvbEnd(1));
+        var spuIndices = BitmapStreams.indices(16, 4, (x, y) -> (x + y) % 4);
+        var spu = BitmapStreams.spu(16, 4, spuIndices, 40, 400, 0, 20, new int[]{3, 2, 1, 0}, new int[]{15, 15, 8, 0},
+                false);
+        write(SubtitleFuzzTest.class, "bitmaps", "valid-pgs.bin", packets(0, null, pgsShow, pgsClear));
+        write(SubtitleFuzzTest.class, "bitmaps", "valid-dvb.bin", packets(1, service, dvbShow, dvbClear));
+        write(SubtitleFuzzTest.class, "bitmaps", "valid-dvd.bin", packets(2, header, spu));
+        var colcon = BitmapStreams.spu(16, 4, spuIndices, 40, 400, 0, 20, new int[]{3, 2, 1, 0},
+                new int[]{15, 15, 8, 0}, false, BitmapStreams.colcon(new int[]{400, 401, 44, 0x4560, 0xFF80, 50, 0x1230,
+                        0xF0F0}, new int[]{403, 410, 30, 0x7890, 0xFFF0}));
+        write(SubtitleFuzzTest.class, "bitmaps", "valid-dvd-colcon.bin", packets(2, header, colcon));
+
+        var ticks = com.github.auties00.smalt.track.Rational.timeBaseOf(90_000);
+        var pgs = com.github.auties00.smalt.track.DataTrack.builder().id(1).codec(Codec.PGS).timeBase(ticks).build();
+        var pgsPackets = List.of(new com.github.auties00.smalt.track.Packet(1, pgsShow, 9000, 9000, -1, true),
+                new com.github.auties00.smalt.track.Packet(1, pgsClear, 18000, 18000, -1, false));
+        var sup = mux(List.of(pgs), pgsPackets, com.github.auties00.smalt.container.subtitle.SupMuxer::new);
+        var mkv = mux(List.of(pgs), pgsPackets, com.github.auties00.smalt.container.matroska.MatroskaMuxer::new);
+        var dvb = com.github.auties00.smalt.track.DataTrack.builder().id(1).codec(Codec.DVB_SUBTITLE).timeBase(ticks)
+                .codecConfig(service).build();
+        var ts = mux(List.of(dvb), List.of(new com.github.auties00.smalt.track.Packet(1, dvbShow, 9000, 9000, -1, true),
+                new com.github.auties00.smalt.track.Packet(1, dvbClear, 90000, 90000, -1, true)), TsMuxer::new);
+        var dvd = com.github.auties00.smalt.track.DataTrack.builder().id(1).codec(Codec.DVD_SUBTITLE).timeBase(ticks)
+                .codecConfig(header).build();
+        var idx = MediaSink.memory();
+        var sub = MediaSink.memory();
+        try (var muxer = new com.github.auties00.smalt.container.subtitle.VobSubMuxer(idx, sub)) {
+            muxer.addTrack(dvd);
+            muxer.writePacket(new com.github.auties00.smalt.track.Packet(1, spu, 9000, 9000, 20 * 1024, true));
+            muxer.finish();
+        }
+        write(SubtitleFuzzTest.class, "readBitmaps", "valid-pgs.sup", sup);
+        write(SubtitleFuzzTest.class, "readBitmaps", "valid-pgs.mkv", mkv);
+        write(SubtitleFuzzTest.class, "readBitmaps", "valid-dvb.ts", ts);
+        write(SubtitleFuzzTest.class, "readBitmaps", "valid-vobsub.sub", sub.toByteArray());
+        write(DemuxerFuzzTest.class, "sup", "valid-pgs.sup", sup);
+        write(DemuxerFuzzTest.class, "vobSub", "valid-vobsub.sub", sub.toByteArray());
+        write(DemuxerFuzzTest.class, "mpegTs", "valid-dvb-subtitles.ts", ts);
+
+        var teletext = new TeletextWriter().header(8, 0x88, true, true, false, 1)
+                .row(8, 22, TeletextWriter.codes(new int[]{0x0B, 0x0B, 0x03}, "Teletext", 0x7B, 0x0A, 0x0A))
+                .enhancements(8, 62 | 0x04 << 6, 4 | 0x12 << 6 | 'e' << 11).packet();
+        var erase = new TeletextWriter().header(8, 0x88, true, true, false, 1).packet();
+        write(SubtitleFuzzTest.class, "captions", "valid-teletext.bin", packets(0,
+                new byte[]{'g', 'e', 'r', 0x02 << 3, (byte) 0x88}, teletext, erase));
+        var arabic = new TeletextWriter().header(8, 0x88, true, true, false, 0b111)
+                .row(8, 22, TeletextWriter.codes(new int[]{0x0B, 0x0B}, "(12) &SQOI{~S", 0x0A, 0x0A))
+                .enhancements(8, 62 | 0x04 << 6, 3 | 0x0F << 6 | 0x3C << 11).packet();
+        write(SubtitleFuzzTest.class, "captions", "valid-teletext-arabic.bin", packets(0,
+                new byte[]{'a', 'r', 'a', 0x02 << 3, (byte) 0x88}, arabic, erase));
+        var script = new CaptionScript().command(0, 1, 0x20).preamble(1, 1, 15, 0).text(2, 1, "Pop on")
+                .control(5, 1, 0x11, 0x2E).text(6, 1, "x").command(8, 1, 0x2F).command(16, 1, 0x2C)
+                .service(1, 1, join(new byte[]{(byte) 0x98, 0x38, 0x4A, 0, 0, 0x1F, 0}, "dtv".getBytes(
+                        StandardCharsets.US_ASCII))).service(16, 1, new byte[]{(byte) 0x8C, 0x01});
+        var cc = script.build(20, 10);
+        var field1 = new byte[cc.length][];
+        for (var frame = 0; frame < cc.length; frame++) {
+            field1[frame] = Arrays.copyOf(cc[frame], 6);
+        }
+        write(SubtitleFuzzTest.class, "captions", "valid-cea608.bin", packets(1, null, field1));
+        write(SubtitleFuzzTest.class, "captions", "valid-cea708.bin", packets(20, null, cc));
+
+        var h264 = new byte[cc.length][];
+        var hevc = new byte[cc.length][];
+        var mpeg2 = new byte[cc.length][];
+        for (var frame = 0; frame < cc.length; frame++) {
+            h264[frame] = prefixed(CaptionScript.seiUnit(cc[frame], false));
+            hevc[frame] = prefixed(CaptionScript.seiUnit(cc[frame], true));
+            mpeg2[frame] = join(new byte[]{0, 0, 1, 0, 0, 0x0F, (byte) 0xFF, (byte) 0xF8}, new byte[]{0, 0, 1,
+                    (byte) 0xB2}, CaptionScript.ga94(cc[frame]), new byte[]{0, 0, 1, 1, 0x12, 0x34});
+        }
+        write(SubtitleFuzzTest.class, "closedCaptions", "valid-h264.bin", packets(0, null, h264));
+        write(SubtitleFuzzTest.class, "closedCaptions", "valid-hevc.bin", packets(1, null, hevc));
+        write(SubtitleFuzzTest.class, "closedCaptions", "valid-mpeg2.bin", packets(2, null, mpeg2));
+    }
+
+    /** Returns a NAL unit behind a four-byte length. */
+    private static byte[] prefixed(byte[] unit) {
+        return join(new byte[]{(byte) (unit.length >>> 24), (byte) (unit.length >>> 16), (byte) (unit.length >>> 8),
+                (byte) unit.length}, unit);
+    }
+
+    /** Joins byte arrays. */
+    private static byte[] join(byte[]... parts) {
+        var out = new java.io.ByteArrayOutputStream();
+        for (var part : parts) {
+            out.writeBytes(part);
+        }
+        return out.toByteArray();
+    }
+
+    /** Returns the packets of a FuzzPackets input with one header field and a configuration, every packet key. */
+    private static byte[] packets(int options, byte[] config, byte[]... packets) {
+        var out = new java.io.ByteArrayOutputStream();
+        out.write(options);
+        if (config != null) {
+            out.writeBytes(config);
+        }
+        for (var packet : packets) {
+            out.writeBytes(FuzzPackets.MARKER);
+            out.write(1);
+            out.writeBytes(packet);
+        }
+        return out.toByteArray();
+    }
+
+    /** Muxes packets into memory. */
+    private static byte[] mux(List<com.github.auties00.smalt.track.Track> tracks,
+                              List<com.github.auties00.smalt.track.Packet> packets,
+                              java.util.function.Function<MediaSink, com.github.auties00.smalt.container.Muxer> factory) {
+        var sink = MediaSink.memory();
+        try (var muxer = factory.apply(sink)) {
+            tracks.forEach(muxer::addTrack);
+            packets.forEach(muxer::writePacket);
+            muxer.finish();
+        }
+        return sink.toByteArray();
     }
 
     @Test

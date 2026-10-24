@@ -24,6 +24,9 @@ import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.provider.Artifacts;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.subtitle.CaptionExtractor;
+import com.github.auties00.smalt.subtitle.CaptionService;
+import com.github.auties00.smalt.subtitle.ClosedCaptions;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
 import com.github.auties00.smalt.subtitle.SubtitleDecoder;
 import com.github.auties00.smalt.subtitle.SubtitleMarkup;
@@ -198,7 +201,11 @@ final class AvTranscode {
         var tracks = demuxer.tracks();
         var video = selectVideo(tracks);
         var audio = selectAudio(tracks);
-        var subtitles = planSubtitles(tracks);
+        var subtitles = new ArrayList<>(planSubtitles(tracks));
+        var captions = planCaptions(video, subtitles);
+        if (captions != null) {
+            subtitles.add(captions);
+        }
         if (video == null && audio.isEmpty() && subtitles.isEmpty()) {
             throw new IllegalArgumentException("the options select no stream of the input");
         }
@@ -212,8 +219,8 @@ final class AvTranscode {
         if (start == 0 && end < 0 && brand != null && remuxable(format)
                 && (videoPlan == null || videoPlan.copy() && Mp4Muxer.supports(brand, videoPlan.track().codec()))
                 && audioPlans.stream().allMatch(plan -> plan.copy() && Mp4Muxer.supports(brand, plan.track().codec()))
-                && subtitles.stream().allMatch(plan -> !plan.convert() && plan.codec() == plan.track().codec()
-                && Mp4Muxer.supports(brand, plan.codec()))) {
+                && subtitles.stream().allMatch(plan -> !plan.convert() && !plan.embedded()
+                && plan.codec() == plan.track().codec() && Mp4Muxer.supports(brand, plan.codec()))) {
             var subtitleTracks = new ArrayList<Track>();
             for (var plan : subtitles) {
                 subtitleTracks.add(plan.track());
@@ -237,15 +244,20 @@ final class AvTranscode {
                 stages.add(createAudioStage(plan, muxer.reserve(), muxer));
             }
             for (var plan : subtitles) {
-                stages.add(new SubtitleStage(plan.track(), plan.codec(), plan.convert(), muxer.reserve(), muxer, start, end));
+                var service = plan.track().codec().isCaption()
+                        ? options.subtitles().captionService().filter(chosen -> chosen.readableFrom(plan.track().codec()))
+                        .orElse(CaptionService.defaultFor(plan.track())) : null;
+                var stage = new SubtitleStage(plan.track(), plan.codec(), plan.convert(), service, muxer.reserve(),
+                        muxer, start, end);
+                stages.add(plan.embedded() ? new CaptionStage(new CaptionExtractor(video), stage) : stage);
             }
             normalizeLoudness(stages);
             if (start > 0 && options.seeking() && demuxer.isSeekable() && burnStage == null) {
                 seek(demuxer, stages);
             }
-            var byTrack = new HashMap<Integer, Stage>();
+            var byTrack = new HashMap<Integer, List<Stage>>();
             for (var stage : stages) {
-                byTrack.put(stage.sourceTrackId(), stage);
+                byTrack.computeIfAbsent(stage.sourceTrackId(), _ -> new ArrayList<>()).add(stage);
             }
             while (!allDone(stages)) {
                 cancellation.check();
@@ -256,9 +268,11 @@ final class AvTranscode {
                 if (packet.trackId() == burnTrackId) {
                     burnStage.acceptSubtitle(packet);
                 }
-                var stage = byTrack.get(packet.trackId());
-                if (stage != null) {
-                    stage.accept(packet);
+                var receivers = byTrack.get(packet.trackId());
+                if (receivers != null) {
+                    for (var stage : receivers) {
+                        stage.accept(packet);
+                    }
                     report(stages, false);
                 }
             }
@@ -415,8 +429,10 @@ final class AvTranscode {
      * @param track the input track
      * @param codec the output codec
      * @param convert whether the stream is decoded and encoded rather than copied
+     * @param embedded whether the stream is the closed captions carried in the video track {@code track} stands
+     * for, extracted from its packets
      */
-    private record SubtitlePlan(Track track, Codec codec, boolean convert) {
+    private record SubtitlePlan(Track track, Codec codec, boolean convert, boolean embedded) {
     }
 
     /**
@@ -439,13 +455,13 @@ final class AvTranscode {
         if (subtitles.trackId().isPresent()) {
             var id = subtitles.trackId().getAsInt();
             var track = trackById(tracks, id);
-            if (!track.codec().isSubtitle() && track.codec() != Codec.TTML) {
-                throw new IllegalArgumentException("track " + id + " is not a text subtitle track");
+            if (!isSubtitleTrack(track)) {
+                throw new IllegalArgumentException("track " + id + " is not a subtitle or caption track");
             }
             selected.add(track);
         } else {
             for (var track : tracks) {
-                if (track.codec().isSubtitle() || track.codec() == Codec.TTML) {
+                if (isSubtitleTrack(track)) {
                     selected.add(track);
                     if (!subtitles.allTracks()) {
                         break;
@@ -458,6 +474,22 @@ final class AvTranscode {
         var plans = new ArrayList<SubtitlePlan>();
         for (var track : selected) {
             var codec = track.codec();
+            if (codec.isBitmapSubtitle()) {
+                var copyable = container.supports(codec) && subtitles.mode() != StreamMode.ENCODE
+                        && subtitles.codec().map(codec::equals).orElse(true);
+                if (copyable) {
+                    plans.add(new SubtitlePlan(track, codec, false, false));
+                    if (!container.carriesSeveralTracks()) {
+                        break;
+                    }
+                } else if (explicit) {
+                    throw new MediaException.Unsupported(codec.displayName(), "the " + codec.displayName()
+                            + " subtitles are pictures, which cannot be converted to text, and " + (container.supports(codec)
+                            ? "the options ask for " + subtitles.codec().map(Codec::displayName).orElse("conversion")
+                            : container + " cannot carry them"));
+                }
+                continue;
+            }
             Codec target;
             if (subtitles.codec().isPresent()) {
                 target = subtitles.codec().get();
@@ -479,12 +511,52 @@ final class AvTranscode {
                         + " subtitles into " + container + ": " + (container.supports(codec)
                         ? "the options ask for " + target.displayName() : container + " cannot carry " + codec.displayName()));
             }
-            plans.add(new SubtitlePlan(track, target, subtitles.mode() == StreamMode.ENCODE));
+            plans.add(new SubtitlePlan(track, target, subtitles.mode() == StreamMode.ENCODE, false));
             if (!container.carriesSeveralTracks()) {
                 break;
             }
         }
         return plans;
+    }
+
+    /**
+     * Returns whether a track is a subtitle stream a transcode may keep: text, TTML, bitmap or caption.
+     *
+     * @param track the input track
+     * @return {@code true} for a subtitle or caption track
+     */
+    private static boolean isSubtitleTrack(Track track) {
+        var codec = track.codec();
+        return codec.isSubtitle() || codec == Codec.TTML || codec.isBitmapSubtitle() || codec.isCaption();
+    }
+
+    /**
+     * Plans the text subtitle stream made of the closed captions the selected video track carries, when the options
+     * ask for it.
+     *
+     * @param video the selected video track, or {@code null}
+     * @param subtitles the subtitle streams already planned
+     * @return the plan, or {@code null} when the options do not ask for the captions, the video codec carries none
+     * or the container carries no text subtitles
+     * @throws IllegalArgumentException if the options ask for the captions and the container carries no text
+     * subtitles, or carries one track and a subtitle stream already fills it
+     */
+    private SubtitlePlan planCaptions(Track video, List<SubtitlePlan> subtitles) {
+        var settings = options.subtitles();
+        if (!settings.closedCaptions() || settings.mode() == StreamMode.DROP || video == null
+                || !ClosedCaptions.carries(video.codec())) {
+            return null;
+        }
+        var container = options.container();
+        var target = settings.codec().orElse(container.subtitleCodecs().isEmpty() ? null
+                : container.subtitleCodecs().getFirst());
+        if (target == null || !container.supports(target)) {
+            throw new IllegalArgumentException(container + " files cannot carry the closed captions as text subtitles");
+        }
+        if (!container.carriesSeveralTracks() && !subtitles.isEmpty()) {
+            throw new IllegalArgumentException(container + " files hold one subtitle stream, already taken");
+        }
+        return new SubtitlePlan(ClosedCaptions.track(video), target, true, true);
     }
 
     /**

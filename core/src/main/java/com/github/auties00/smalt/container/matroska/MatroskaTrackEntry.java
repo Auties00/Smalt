@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.matroska;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.Languages;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.container.internal.WaveFormat;
@@ -597,6 +598,8 @@ final class MatroskaTrackEntry {
                 case "V_VP9" -> Codec.VP9;
                 case "V_AV1" -> Codec.AV1;
                 case "V_MPEG4/ISO/SP", "V_MPEG4/ISO/ASP", "V_MPEG4/ISO/AP" -> Codec.MPEG4_PART2;
+                case "V_MPEG1" -> Codec.MPEG1_VIDEO;
+                case "V_MPEG2" -> Codec.MPEG2_VIDEO;
                 case "V_MJPEG" -> Codec.MJPEG;
                 case "V_JPEG2000" -> Codec.JPEG2000;
                 case "V_PRORES" -> Codec.PRORES;
@@ -714,10 +717,18 @@ final class MatroskaTrackEntry {
             case "S_TEXT/UTF8", "S_TEXT/ASCII" -> Codec.SUBRIP;
             case "S_TEXT/ASS", "S_TEXT/SSA", "S_ASS", "S_SSA" -> Codec.ASS;
             case "S_TEXT/WEBVTT" -> Codec.WEBVTT;
+            case "S_HDMV/PGS" -> Codec.PGS;
+            case "S_DVBSUB" -> Codec.DVB_SUBTITLE;
+            case "S_VOBSUB" -> Codec.DVD_SUBTITLE;
             default -> codecId.startsWith("D_WEBVTT") ? Codec.WEBVTT : Codec.DATA;
         };
+        var config = switch (codec) {
+            case PGS -> null;
+            case DVB_SUBTITLE -> BitmapTrackConfigs.dvbFromMatroska(codecPrivate, lang.orElse(null));
+            default -> codecPrivate;
+        };
         return DataTrack.builder().id(id).codec(codec).timeBase(timeBase).duration(duration(segmentBase, segmentDuration))
-                .codecConfig(codecPrivate)
+                .codecConfig(config)
                 .language(lang.orElse(null))
                 .handler(codecId)
                 .build();

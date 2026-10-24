@@ -125,16 +125,34 @@ final class Psi {
      * @param opusChannels the {@code channel_config_code} of a DVB Opus extension descriptor, or
      * {@code -1}
      * @param id3Metadata whether a metadata descriptor (tag {@code 0x26}) announces ID3
-     * @param dvbSubtitles whether a DVB subtitling descriptor (tag {@code 0x59}) is present
-     * @param teletext whether a DVB teletext descriptor (tag {@code 0x56}) is present
+     * @param subtitling the body of the DVB subtitling descriptor (tag {@code 0x59}), or {@code null} when absent
+     * @param teletextPages the body of the DVB teletext descriptor (tag {@code 0x56}), or {@code null} when absent
      * @param audioType the {@code audio_type} of the first language of the ISO 639 language descriptor, or
      * {@code -1}
      * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
      */
     record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
                        List<Integer> programRegistrations, String language, boolean ac3Descriptor,
-                       boolean eac3Descriptor, int opusChannels, boolean id3Metadata, boolean dvbSubtitles,
-                       boolean teletext, int audioType, String name) {
+                       boolean eac3Descriptor, int opusChannels, boolean id3Metadata, byte[] subtitling,
+                       byte[] teletextPages, int audioType, String name) {
+        /**
+         * Returns whether a DVB subtitling descriptor is present.
+         *
+         * @return {@code true} when one is
+         */
+        boolean dvbSubtitles() {
+            return subtitling != null;
+        }
+
+        /**
+         * Returns whether a DVB teletext descriptor is present.
+         *
+         * @return {@code true} when one is
+         */
+        boolean teletext() {
+            return teletextPages != null;
+        }
+
         /**
          * Returns whether a registration descriptor of the stream carries an identifier.
          *
@@ -163,7 +181,7 @@ final class Psi {
          */
         StreamEntry withTrackId(int id) {
             return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
-                    eac3Descriptor, opusChannels, id3Metadata, dvbSubtitles, teletext, audioType, name);
+                    eac3Descriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name);
         }
 
         /**
@@ -178,8 +196,8 @@ final class Psi {
                     && programRegistrations.equals(other.programRegistrations)
                     && Objects.equals(language, other.language) && ac3Descriptor == other.ac3Descriptor
                     && eac3Descriptor == other.eac3Descriptor && opusChannels == other.opusChannels
-                    && id3Metadata == other.id3Metadata && dvbSubtitles == other.dvbSubtitles
-                    && teletext == other.teletext;
+                    && id3Metadata == other.id3Metadata && Arrays.equals(subtitling, other.subtitling)
+                    && Arrays.equals(teletextPages, other.teletextPages);
         }
     }
 
@@ -316,14 +334,14 @@ final class Psi {
         boolean id3;
 
         /**
-         * Whether a subtitling descriptor is present.
+         * The body of the subtitling descriptor, or {@code null}.
          */
-        boolean subtitles;
+        byte[] subtitles;
 
         /**
-         * Whether a teletext descriptor is present.
+         * The body of the teletext descriptor, or {@code null}.
          */
-        boolean teletext;
+        byte[] teletext;
 
         /**
          * The {@code audio_type} of the language descriptor, or {@code -1}.
@@ -369,8 +387,8 @@ final class Psi {
                     }
                     case TsDescriptors.COMPONENT_NAME -> name = TsDescriptors.multipleString(data, body, size);
                     case 0x26 -> id3 |= metadataIsId3(data, body, size);
-                    case 0x56 -> teletext = true;
-                    case 0x59 -> subtitles = true;
+                    case 0x56 -> teletext = Arrays.copyOfRange(data, body, body + size);
+                    case 0x59 -> subtitles = Arrays.copyOfRange(data, body, body + size);
                     case 0x6A -> ac3 = true;
                     case 0x7A -> eac3 = true;
                     case 0x7F -> {

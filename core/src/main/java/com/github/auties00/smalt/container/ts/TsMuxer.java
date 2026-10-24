@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
@@ -80,6 +81,13 @@ import java.util.PriorityQueue;
  *       Blu-ray channel assignment is chosen by the channel count (and, for three and four
  *       channels, by whether the layout has a back center or a front center). A PCM packet is cut
  *       into PES packets of at most 5 ms (Blu-ray) or 40 ms (ST 302);</li>
+ *   <li>bitmap subtitles and teletext, id {@code 0xBD}: PGS ({@code 0x90}, with the {@code "HDMV"} registration for
+ *       the program, as Blu-ray defines the type), one PES packet per packet; DVB
+ *       subtitles ({@code 0x06} with the subtitling descriptor of the track's configuration, or one for page 1),
+ *       each packet's segments framed by the {@code data_identifier}, {@code subtitle_stream_id} and end marker of
+ *       the PES data field; DVB teletext ({@code 0x06} with the teletext descriptor of the track's configuration,
+ *       or one for subtitle page 888), each packet a PES data field, written with the fixed 45-byte PES header and
+ *       the stuffing data units that fill the last transport packet, as ETSI EN 300 472 requires;</li>
  *   <li>data tracks, id {@code 0xBD}: a track whose handler is {@code "id3"} becomes ID3 timed
  *       metadata ({@code 0x15} with the metadata pointer and metadata descriptors of the HLS
  *       timed metadata convention), one whose handler is {@code "scte35"} SCTE 35 splice
@@ -142,6 +150,11 @@ public final class TsMuxer implements Muxer {
      * The payload capacity of a transport packet without an adaptation field.
      */
     private static final int PAYLOAD = 184;
+
+    /**
+     * The {@code PES_header_data_length} of a teletext PES packet, which makes its header 45 bytes long.
+     */
+    private static final int TELETEXT_HEADER_LENGTH = 0x24;
 
     /**
      * The 90 kHz time base of PES timestamps.
@@ -384,12 +397,12 @@ public final class TsMuxer implements Muxer {
      *
      * @param codec the codec of a track to add
      * @return {@code true} for H.264, HEVC, AV1, MPEG-4 Part 2, AAC, MP3, MP2, AC-3, E-AC-3, Opus, 16-bit and
-     * 24-bit PCM, and data
+     * 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
             case H264, HEVC, AV1, MPEG4_PART2, AAC, MP3, MP2, AC3, EAC3, OPUS, PCM_S16LE, PCM_S16BE, PCM_S24LE,
-                 PCM_S24BE, DATA -> true;
+                 PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
             default -> false;
         };
     }
@@ -427,7 +440,7 @@ public final class TsMuxer implements Muxer {
      * configuration an H.264, HEVC, MPEG-4 Part 2, AAC or Opus track needs is missing or cannot be
      * expressed in a transport stream, the configuration of an AV1 track is not an {@code av1C} record, a PCM
      * track has a rate, channel count or layout no PCM carriage of a transport stream supports, or Blu-ray
-     * linear PCM and SCTE 35 would share the program
+     * linear PCM or PGS subtitles and SCTE 35 would share the program
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
     @Override
@@ -449,10 +462,11 @@ public final class TsMuxer implements Muxer {
         }
         var stream = new Stream(track, options.firstPid() + streams.size());
         configure(stream);
-        var hdmv = stream.lpcm || streams.stream().anyMatch(other -> other.lpcm);
+        var hdmv = blurayType(stream) || streams.stream().anyMatch(TsMuxer::blurayType);
         var cue = stream.splice || streams.stream().anyMatch(other -> other.splice);
         if (hdmv && cue) {
-            throw new IllegalArgumentException("Blu-ray linear PCM gives stream type 0x86 another meaning than SCTE 35");
+            throw new IllegalArgumentException("Blu-ray linear PCM and PGS subtitles make stream type 0x86 DTS-HD audio,"
+                    + " not SCTE 35");
         }
         streams.add(stream);
         if (pcrStream == null || (track.kind() == TrackKind.VIDEO && pcrStream.track.kind() != TrackKind.VIDEO)) {
@@ -581,6 +595,29 @@ public final class TsMuxer implements Muxer {
                 descriptors.u8(2);
                 descriptors.u8(0x80);
                 descriptors.u8(stream.opusCode);
+            }
+            case PGS -> {
+                stream.streamType = 0x90;
+                stream.streamId = 0xBD;
+            }
+            case DVB_SUBTITLE -> {
+                stream.streamType = 0x06;
+                stream.streamId = 0xBD;
+                stream.dvbSubtitle = true;
+                var body = BitmapTrackConfigs.dvbDescriptor(config, track.language().orElse(null));
+                descriptors.u8(0x59);
+                descriptors.u8(body.length);
+                descriptors.bytes(body);
+            }
+            case DVB_TELETEXT -> {
+                stream.streamType = 0x06;
+                stream.streamId = 0xBD;
+                stream.teletext = true;
+                var body = config != null && config.length >= 5 && config.length <= 250
+                        ? Arrays.copyOf(config, config.length - config.length % 5) : defaultTeletext(track);
+                descriptors.u8(0x56);
+                descriptors.u8(body.length);
+                descriptors.bytes(body);
             }
             case DATA -> {
                 stream.streamId = 0xBD;
@@ -1067,6 +1104,8 @@ public final class TsMuxer implements Muxer {
             case DATA -> {
                 if (stream.splice) {
                     writeSplice(stream, packet);
+                } else if (stream.dvbSubtitle) {
+                    writePes(stream, dvbSubtitlePayload(packet.data()), ptsOut, ptsOut, true);
                 } else {
                     writePes(stream, packet.data(), ptsOut, ptsOut, true);
                 }
@@ -1547,7 +1586,11 @@ public final class TsMuxer implements Muxer {
             currentPcr = Math.max(currentPcr, target);
         }
         var withDts = dtsOut != ptsOut;
-        var headerLength = withDts ? 10 : 5;
+        var timestamps = withDts ? 10 : 5;
+        var headerLength = stream.teletext ? TELETEXT_HEADER_LENGTH : timestamps;
+        if (stream.teletext) {
+            payload = teletextPayload(payload);
+        }
         var length = 3 + headerLength + payload.length;
         if (length > 0xFFFF && stream.track.kind() != TrackKind.VIDEO) {
             throw new IllegalArgumentException("a " + stream.track.codec().displayName() + " packet of " + payload.length
@@ -1565,6 +1608,9 @@ public final class TsMuxer implements Muxer {
         writeTimestamp(pes, withDts ? 3 : 2, ptsOut);
         if (withDts) {
             writeTimestamp(pes, 1, dtsOut);
+        }
+        for (var stuffing = timestamps; stuffing < headerLength; stuffing++) {
+            pes.u8(0xFF);
         }
         pes.bytes(payload);
         var bytes = pes.toByteArray();
@@ -1595,6 +1641,71 @@ public final class TsMuxer implements Muxer {
             first = false;
             commit(pcr);
         }
+    }
+
+    /**
+     * Returns whether a stream uses a stream type that only Blu-ray programs define, Blu-ray linear PCM ({@code 0x80})
+     * or presentation graphics ({@code 0x90}), so that the program carries the {@code "HDMV"} registration.
+     *
+     * @param stream the declared stream to check
+     * @return {@code true} for those streams
+     */
+    private static boolean blurayType(Stream stream) {
+        return stream.lpcm || stream.streamType == 0x90;
+    }
+
+    /**
+     * Wraps the segments of a DVB subtitle packet in a PES data field: the {@code data_identifier} and
+     * {@code subtitle_stream_id}, then the segments, then the end marker.
+     *
+     * @param segments the packet payload
+     * @return the PES payload
+     */
+    private static byte[] dvbSubtitlePayload(byte[] segments) {
+        var payload = new byte[segments.length + 3];
+        payload[0] = 0x20;
+        System.arraycopy(segments, 0, payload, 2, segments.length);
+        payload[payload.length - 1] = (byte) 0xFF;
+        return payload;
+    }
+
+    /**
+     * Pads a teletext PES data field with stuffing data units so that the PES packet, whose header is
+     * {@link #TELETEXT_HEADER_LENGTH} bytes long, fills whole transport packets (ETSI EN 300 472 clause 4.2).
+     *
+     * @param payload the PES data field
+     * @return the padded data field
+     */
+    private static byte[] teletextPayload(byte[] payload) {
+        var total = 9 + TELETEXT_HEADER_LENGTH + payload.length;
+        var missing = (PAYLOAD - total % PAYLOAD) % PAYLOAD;
+        if (missing == 0) {
+            return payload;
+        }
+        var padded = Arrays.copyOf(payload, payload.length + missing);
+        var position = payload.length;
+        while (missing >= 46) {
+            padded[position] = (byte) 0xFF;
+            padded[position + 1] = 0x2C;
+            Arrays.fill(padded, position + 2, position + 46, (byte) 0xFF);
+            position += 46;
+            missing -= 46;
+        }
+        Arrays.fill(padded, position, padded.length, (byte) 0xFF);
+        return padded;
+    }
+
+    /**
+     * Returns the teletext descriptor body of a track without one: an initial subtitle page 888 in the track's
+     * language.
+     *
+     * @param track the teletext track, whose language names the page
+     * @return the descriptor body
+     */
+    private static byte[] defaultTeletext(Track track) {
+        var language = track.language().filter(code -> code.length() == 3).orElse("und")
+                .getBytes(StandardCharsets.US_ASCII);
+        return new byte[]{language[0], language[1], language[2], 0x02 << 3, (byte) 0x88};
     }
 
     /**
@@ -1728,7 +1839,7 @@ public final class TsMuxer implements Muxer {
         pmt.u16be(0xE000 | (pcrStream != null ? pcrStream.pid : NULL_PID));
         var id3 = streams.stream().filter(stream -> stream.id3).findFirst().orElse(null);
         var program = new ByteWriter(32);
-        if (streams.stream().anyMatch(stream -> stream.lpcm)) {
+        if (streams.stream().anyMatch(TsMuxer::blurayType)) {
             registration(program, "HDMV");
         }
         if (streams.stream().anyMatch(stream -> stream.splice)) {
@@ -1899,6 +2010,17 @@ public final class TsMuxer implements Muxer {
          * The PES {@code stream_id}.
          */
         int streamId;
+
+        /**
+         * Whether the stream is DVB subtitles, whose packets get the PES data field framing.
+         */
+        boolean dvbSubtitle;
+
+        /**
+         * Whether the stream is DVB teletext, whose PES packets have a fixed header length and fill whole
+         * transport packets.
+         */
+        boolean teletext;
 
         /**
          * The descriptors of the program map entry.
