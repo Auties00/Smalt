@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.voice;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -23,7 +24,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * The public behavior of {@link VoiceProcessor}: options and argument validation, the
@@ -335,7 +335,7 @@ class VoiceProcessorTest {
         @ValueSource(booleans = {false, true})
         @DisplayName("cancels at least 40 dB of echo at every delay, across a path change and under drift")
         void echoReturnLossEnhancement(boolean vectorize) {
-            assumeTrue(!vectorize || Simd.ENABLED, "Vector API not enabled");
+            Skip.unless(!vectorize || Simd.ENABLED, "simd:disabled", "Vector API not enabled");
             for (var scenario : VoiceScenarios.suite(SECONDS)) {
                 if (scenario.name().equals("noise only") || scenario.name().equals("silence")) {
                     continue;
@@ -348,7 +348,7 @@ class VoiceProcessorTest {
         @Test
         @DisplayName("the vector kernels cancel the echo within 1 dB of the scalar ones")
         void vectorMatchesScalar() {
-            assumeTrue(Simd.ENABLED, "Vector API not enabled");
+            Skip.unlessVector(Simd.ENABLED);
             for (var delay : new int[]{20, 250, 500}) {
                 var scenario = VoiceScenarios.farEndOnly(SECONDS, delay);
                 var scalar = medianErle(scenario, process(new VoiceProcessor(VoiceProcessorOptions.forVoip(), false, true), scenario));
@@ -473,7 +473,7 @@ class VoiceProcessorTest {
         @MethodSource("com.github.auties00.smalt.audio.voice.VoiceProcessorTest#stageCombinations")
         @DisplayName("NaN, infinite and full-scale samples keep the output finite and in range")
         void hostileSamples(String name, boolean vectorize) {
-            assumeTrue(!vectorize || Simd.ENABLED, "Vector API not enabled");
+            Skip.unless(!vectorize || Simd.ENABLED, "simd:disabled", "Vector API not enabled");
             var processor = new VoiceProcessor(STAGES.get(name), vectorize, true);
             processor.setAnalogLevel(128);
             var random = new SplittableRandom(5);
@@ -533,15 +533,14 @@ class VoiceProcessorTest {
         @MethodSource("com.github.auties00.smalt.audio.voice.VoiceProcessorTest#stageCombinations")
         @DisplayName("allocates nothing per frame in steady state")
         void steadyState(String name, boolean vectorize) throws Exception {
-            assumeTrue(!vectorize || Simd.ENABLED, "Vector API not enabled");
+            Skip.unless(!vectorize || Simd.ENABLED, "simd:disabled", "Vector API not enabled");
             Object threads;
             Method allocated;
             try {
                 threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean").invoke(null);
                 allocated = Class.forName("com.sun.management.ThreadMXBean").getMethod("getCurrentThreadAllocatedBytes");
             } catch (ReflectiveOperationException | RuntimeException exception) {
-                assumeTrue(false, "thread allocation counter unavailable: " + exception);
-                return;
+                throw Skip.now("env:allocation-counter", "thread allocation counter unavailable: " + exception);
             }
             var scenario = VoiceScenarios.doubleTalk(SECONDS, 100);
             var processor = new VoiceProcessor(STAGES.get(name), vectorize, true);

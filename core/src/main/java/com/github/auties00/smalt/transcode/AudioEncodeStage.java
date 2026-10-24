@@ -8,6 +8,9 @@ import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioStreamDecoder;
 import com.github.auties00.smalt.audio.AudioStreamDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.DoubleAudioBuffer;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
+import com.github.auties00.smalt.audio.SampleFormat;
 import com.github.auties00.smalt.audio.loudness.LoudnessMeter;
 import com.github.auties00.smalt.audio.loudness.LoudnessNormalization;
 import com.github.auties00.smalt.audio.loudness.LoudnessStats;
@@ -30,10 +33,14 @@ import com.github.auties00.smalt.track.Rational;
  * before the start instead of reading from it ({@link #measure(Demuxer)}, then
  * {@link #startAfterSeek(AudioStreamDecoder.Timing)}), the decoder restarts sample-accurately at
  * the start, resampling in phase with a decode from the beginning of the track, so the encoder
- * receives the same samples either way. Encoder packets go to the muxer one packet late, so the
- * last one can be shortened to end at the last kept sample: muxers turn that into the end trim
- * (the final Ogg granule position, the MP4 edit list, the Matroska discard padding), so a player
- * outputs exactly the kept samples.
+ * receives the same samples either way. When the samples need no conversion (same rate and layout,
+ * no gain) and both codecs code integers, the decoder outputs the source's integers and the encoder
+ * takes them, so a lossless source re-encodes losslessly at any sample size; failing that, an encoder
+ * that takes 64-bit floats receives them, exact for 64-bit float sources. A lossless encoder keeps the
+ * sample size the track declares, or else the one its codec configuration declares. Encoder packets
+ * go to the muxer one packet late, so the last one can be shortened to end at the last kept sample:
+ * muxers turn that into the end trim (the final Ogg granule position, the MP4 edit list, the Matroska
+ * discard padding), so a player outputs exactly the kept samples.
  *
  * <p>An instance is not thread-safe.
  */
@@ -70,9 +77,27 @@ final class AudioEncodeStage implements Stage {
     private final EncoderTail tail;
 
     /**
-     * The block moving samples from the decoder to the encoder.
+     * The block moving float samples from the decoder to the encoder, or {@code null} on the exact
+     * paths.
      */
     private final AudioBuffer block;
+
+    /**
+     * The planes moving integer samples from the decoder to the encoder, or {@code null} unless the
+     * decoder outputs integers.
+     */
+    private final int[][] integerPlanes;
+
+    /**
+     * The block wrapping {@link #integerPlanes}, recreated when the sample size becomes known.
+     */
+    private IntegerAudioBuffer integerBlock;
+
+    /**
+     * The block moving double samples from the decoder to the encoder, or {@code null} unless the
+     * decoder outputs doubles.
+     */
+    private final DoubleAudioBuffer doubleBlock;
 
     /**
      * The linear gain, {@code 1} for none.
@@ -123,20 +148,43 @@ final class AudioEncodeStage implements Stage {
         AudioEncoder created = null;
         AudioStreamDecoder probe = null;
         AudioStreamDecoder decoding = null;
-        var probeOptions = AudioStreamDecoderOptions.builder().limits(limits).build();
+        var probeOptions = AudioStreamDecoderOptions.builder().limits(limits)
+                .verifyIntegrity(options.verifyIntegrity()).build();
         AudioStreamDecoderOptions decodingOptions;
         try {
-            probe = AudioStreamDecoder.create(source, probeOptions);
+            var integerOptions = probeOptions.toBuilder().sampleFormat(SampleFormat.INTEGER).build();
+            try {
+                probe = AudioStreamDecoder.create(source, integerOptions);
+            } catch (MediaException.Unsupported exception) {
+                // the source codec has no integer samples: the double or float path decodes it
+                probe = AudioStreamDecoder.create(source, probeOptions);
+            }
+            var integers = probe.sampleFormat() == SampleFormat.INTEGER;
             var rate = options.sampleRate().orElse(probe.sampleRate());
             var layout = options.outputLayout(probe.layout());
-            created = createEncoder(codec, rate, layout, options, source.bitsPerSample());
-            if (created.sampleRate() == probe.sampleRate() && created.layout().equals(probe.layout())) {
+            // a container may leave the size of a lossless codec's samples to its configuration (FLAC or ALAC in
+            // Matroska), which the integer decoder reads
+            var bits = source.bitsPerSample() > 0 ? source.bitsPerSample() : integers ? probe.bitsPerSample() : 0;
+            created = createEncoder(codec, rate, layout, options, bits);
+            var unconverted = created.sampleRate() == probe.sampleRate() && created.layout().equals(probe.layout());
+            var exact = unconverted && options.gainDb() == 0 && options.loudnessNormalization().isEmpty();
+            if (exact && integers && created.supportsIntegerInput()) {
+                decoding = probe;
+                decodingOptions = integerOptions;
+            } else if (unconverted && !integers && !(exact && created.supportsDoubleInput())) {
                 decoding = probe;
                 decodingOptions = probeOptions;
             } else {
                 probe.close();
-                decodingOptions = AudioStreamDecoderOptions.of(created.sampleRate(), created.layout()).toBuilder()
-                        .limits(limits).build();
+                probe = null;
+                if (exact && created.supportsDoubleInput()) {
+                    decodingOptions = probeOptions.toBuilder().sampleFormat(SampleFormat.DOUBLE).build();
+                } else if (unconverted) {
+                    decodingOptions = probeOptions;
+                } else {
+                    decodingOptions = AudioStreamDecoderOptions.of(created.sampleRate(), created.layout()).toBuilder()
+                            .limits(limits).verifyIntegrity(options.verifyIntegrity()).build();
+                }
                 decoding = AudioStreamDecoder.create(source, decodingOptions);
             }
             probe = null;
@@ -160,8 +208,11 @@ final class AudioEncodeStage implements Stage {
         this.dropRemaining = Rational.MICROSECONDS.rescale(startMicros, samples);
         this.dropAtStart = dropRemaining;
         this.keep = endMicros < 0 ? Long.MAX_VALUE : Rational.MICROSECONDS.rescale(endMicros - startMicros, samples);
-        this.gain = (float) Math.pow(10, options.gainDb() / 20);
-        this.block = new AudioBuffer(encoder.layout(), rate, BLOCK_FRAMES);
+        this.gain = (float) StrictMath.pow(10, options.gainDb() / 20);
+        var format = decoder.sampleFormat();
+        this.block = format == SampleFormat.FLOAT ? new AudioBuffer(encoder.layout(), rate, BLOCK_FRAMES) : null;
+        this.integerPlanes = format == SampleFormat.INTEGER ? new int[encoder.layout().channels()][BLOCK_FRAMES] : null;
+        this.doubleBlock = format == SampleFormat.DOUBLE ? new DoubleAudioBuffer(encoder.layout(), rate, BLOCK_FRAMES) : null;
         this.declared = EncoderTail.track(encoder, outputId)
                 .language(source.language().orElse(null))
                 .duration(keep == Long.MAX_VALUE ? -1 : keep)
@@ -278,7 +329,7 @@ final class AudioEncodeStage implements Stage {
             }
         }
         LoudnessStats loudness = meter.stats();
-        gain = (float) Math.pow(10, normalization.gainDb(loudness) / 20);
+        gain = (float) StrictMath.pow(10, normalization.gainDb(loudness) / 20);
     }
 
     @Override
@@ -299,6 +350,10 @@ final class AudioEncodeStage implements Stage {
      * Moves every decoded sample through the trim and the gain into the encoder.
      */
     private void drain() {
+        if (block == null) {
+            drainExact();
+            return;
+        }
         var planes = block.planes();
         int frames;
         while (!done && (frames = decoder.read(planes, 0, BLOCK_FRAMES)) > 0) {
@@ -330,6 +385,47 @@ final class AudioEncodeStage implements Stage {
             }
             block.setFrames(frames);
             encoder.encode(block, tail);
+            written += frames;
+        }
+    }
+
+    /**
+     * Moves every decoded integer or double sample through the trim into the encoder.
+     */
+    private void drainExact() {
+        Object[] planes = integerPlanes != null ? integerPlanes : doubleBlock.planes();
+        int frames;
+        while (!done && (frames = integerPlanes != null ? decoder.readIntegers(integerPlanes, 0, BLOCK_FRAMES)
+                : decoder.readDoubles(doubleBlock.planes(), 0, BLOCK_FRAMES)) > 0) {
+            if (dropRemaining > 0) {
+                var offset = (int) Math.min(dropRemaining, frames);
+                dropRemaining -= offset;
+                frames -= offset;
+                if (frames == 0) {
+                    continue;
+                }
+                for (var plane : planes) {
+                    System.arraycopy(plane, offset, plane, 0, frames);
+                }
+            }
+            if (written + frames >= keep) {
+                frames = (int) (keep - written);
+                done = true;
+            }
+            if (frames <= 0) {
+                break;
+            }
+            if (integerPlanes != null) {
+                var bits = decoder.bitsPerSample();
+                if (integerBlock == null || integerBlock.bitsPerSample() != bits) {
+                    integerBlock = new IntegerAudioBuffer(encoder.layout(), encoder.sampleRate(), bits, integerPlanes, 0);
+                }
+                integerBlock.setFrames(frames);
+                encoder.encode(integerBlock, tail);
+            } else {
+                doubleBlock.setFrames(frames);
+                encoder.encode(doubleBlock, tail);
+            }
             written += frames;
         }
     }
