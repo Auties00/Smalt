@@ -6,17 +6,37 @@ import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.loudness.LoudnessMeter;
+import com.github.auties00.smalt.audio.loudness.LoudnessNormalization;
+import com.github.auties00.smalt.audio.loudness.LoudnessNormalizer;
+import com.github.auties00.smalt.audio.loudness.TruePeakLimiter;
+import com.github.auties00.smalt.audio.loudness.TruePeakLimiterOptions;
+import com.github.auties00.smalt.audio.pcm.PcmDither;
+import com.github.auties00.smalt.audio.pcm.PcmEncoder;
+import com.github.auties00.smalt.audio.pcm.PcmEncoderOptions;
+import com.github.auties00.smalt.audio.process.ChannelMixer;
+import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
 import com.github.auties00.smalt.audio.process.Resampler;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
 import com.github.auties00.smalt.container.matroska.MatroskaMuxerOptions;
 import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
+import com.github.auties00.smalt.container.mp4.Mp4Muxer;
+import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
+import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
+import com.github.auties00.smalt.container.mp4.RemuxOptions;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
+import com.github.auties00.smalt.image.Channel8Picture;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.ColorPrimaries;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelLayout;
+import com.github.auties00.smalt.image.Rgba16Picture;
+import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
 import com.github.auties00.smalt.image.ops.BlendMode;
@@ -33,6 +53,7 @@ import com.github.auties00.smalt.image.ops.Interpolation;
 import com.github.auties00.smalt.image.ops.QuantizeMethod;
 import com.github.auties00.smalt.image.ops.QuantizeOptions;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
+import com.github.auties00.smalt.image.ops.ResizeOptions;
 import com.github.auties00.smalt.image.ops.RotationCanvas;
 import com.github.auties00.smalt.image.ops.SmartCropStrategy;
 import com.github.auties00.smalt.image.ops.ToneCurve;
@@ -80,10 +101,12 @@ final class TranscodeWorkloads {
                 file("containers", TranscodeWorkloads::containers),
                 file("image-convert", () -> imageConvert(2)),
                 file("image-resize", TranscodeWorkloads::imageResize),
+                file("image-deep", TranscodeWorkloads::imageDeep),
                 file("image-effects", () -> imageEffects(1)),
                 file("color-management", TranscodeWorkloads::colorManagement),
                 file("resample", () -> resample(10)),
-                file("loudness", () -> loudness(10)));
+                file("loudness", () -> loudness(10)),
+                file("audio-processing", () -> audioProcessing(10)));
     }
 
     /**
@@ -113,8 +136,9 @@ final class TranscodeWorkloads {
 
     /**
      * Returns a workload that remuxes a synthetic MP4 with H.264 video and AAC audio to
-     * fragmented MP4, Matroska and MPEG-TS, writes stereo PCM as WAV, and probes and demuxes every
-     * file, the source included.
+     * fragmented MP4, Matroska and MPEG-TS, remuxes the Matroska file back to MP4 with
+     * {@link Mp4Remuxer}, writes stereo PCM as WAV, as a QuickTime movie, as an ISO MP4 and as a
+     * fragmented MP4, and probes and demuxes every file, the source included.
      *
      * @return the workload
      */
@@ -154,6 +178,22 @@ final class TranscodeWorkloads {
                 muxer.finish();
             }
             files.add(wav.toByteArray());
+            var remuxed = MediaSink.memory();
+            Mp4Remuxer.remux(MediaSource.of(files.get(2)), remuxed, RemuxOptions.video());
+            files.add(remuxed.toByteArray());
+            List<Function<MediaSink, Muxer>> pcmMuxers = List.of(
+                    sink -> new Mp4Muxer(sink, Mp4MuxerOptions.quickTime()),
+                    sink -> new Mp4Muxer(sink, Mp4MuxerOptions.mp4()),
+                    FragmentedMp4Muxer::new);
+            for (var factory : pcmMuxers) {
+                var sink = MediaSink.memory();
+                try (var muxer = factory.apply(sink)) {
+                    muxer.addTrack(pcmTrack);
+                    muxer.writePacket(new Packet(1, pcm, 0, 0, pcm.length / 4, true));
+                    muxer.finish();
+                }
+                files.add(sink.toByteArray());
+            }
             for (var file : files) {
                 Blackhole.consume(Media.probe(MediaSource.of(file)).hashCode());
                 try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
@@ -227,6 +267,73 @@ final class TranscodeWorkloads {
     }
 
     /**
+     * The color descriptions of the per-pixel matrices the deep image workload converts with.
+     */
+    private static final List<ColorInfo> CICP_COLORS = List.of(
+            new ColorInfo(MatrixCoefficients.BT2020_CL, ColorRange.LIMITED, ColorPrimaries.BT2020,
+                    TransferCharacteristics.BT2020_10),
+            new ColorInfo(MatrixCoefficients.ICTCP, ColorRange.LIMITED, ColorPrimaries.BT2020, TransferCharacteristics.PQ),
+            new ColorInfo(MatrixCoefficients.YCGCO_RE, ColorRange.FULL, ColorPrimaries.BT709,
+                    TransferCharacteristics.SRGB));
+
+    /**
+     * Returns a workload that runs the high-bit-depth and linear-light paths on 640x360 pictures:
+     * 16-bit and 10-bit resizes with every filter (premultiplied and opaque), linear-light resizes at
+     * 8 and 16 bits, the 16-bit color conversions (the per-pixel constant-luminance, ICtCp and YCgCo-Re
+     * matrices included) and 16-bit flattening, which exercise every method
+     * of the double-precision resampling kernel; and the channel picture paths: CMYK conversions to
+     * RGBA at both depths, sample type conversions, resizes of 8-bit, 16-bit and floating-point
+     * channels with and without alpha, orientation and a color transform.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload imageDeep() {
+        var yuv = SyntheticVideo.natural(640, 360, 1).getFirst();
+        var rgba = SyntheticImages.rgba(yuv, true);
+        var deep = ImageOps.toSixteenBit(rgba);
+        var opaque = ImageOps.toSixteenBit(SyntheticImages.rgba(yuv, false));
+        var planar = ImageOps.toBitDepth(yuv, 10);
+        var linear = ResizeOptions.builder().filter(ResizeFilter.LANCZOS3).linearLight(true).build();
+        var cmyk = Channel8Picture.allocate(640, 360, PixelLayout.CMYK);
+        var source = SyntheticImages.rgba(yuv, false).pixels();
+        System.arraycopy(source, 0, cmyk.pixels(), 0, Math.min(source.length, cmyk.pixels().length));
+        var transform = ColorTransform.create(ColorProfile.srgb(), ColorProfile.displayP3());
+        var small = ImageOps.crop(deep, 0, 0, 160, 90);
+        var smallRgba = ImageOps.toEightBit((Rgba16Picture) small);
+        return TrainingWorkload.of("image-deep", () -> {
+            for (var filter : ResizeFilter.values()) {
+                Blackhole.consume(ImageOps.resize(deep, 320, 180, filter).width());
+                Blackhole.consume(ImageOps.resize(opaque, 480, 270, filter).width());
+                Blackhole.consume(ImageOps.resize(planar, 320, 180, filter).width());
+            }
+            Blackhole.consume(ImageOps.resize(rgba, 320, 180, linear).width());
+            Blackhole.consume(ImageOps.resize(deep, 800, 450, linear).width());
+            var converted = ImageOps.toRgba16(planar);
+            Blackhole.consume(ImageOps.toYuv16(converted, ChromaFormat.YUV420, ColorInfo.BT709_LIMITED, 10).y()[4097]);
+            Blackhole.consume(ImageOps.toRgba(planar).pixels()[4097]);
+            for (var color : CICP_COLORS) {
+                var coded = ImageOps.toYuv16(small, ChromaFormat.YUV420, color, 10);
+                Blackhole.consume(ImageOps.toRgba16(coded).pixels()[4097]);
+                Blackhole.consume(ImageOps.toYuv(smallRgba, ChromaFormat.YUV444, color).y()[4097]);
+            }
+            Blackhole.consume(ImageOps.flatten(deep, 0xFFFFFF).width());
+            var channels = ImageOps.toChannel8(rgba);
+            var floating = ImageOps.toChannelFloat(deep);
+            Blackhole.consume(ImageOps.toRgba(cmyk).pixels()[4097]);
+            Blackhole.consume(ImageOps.toRgba16(ImageOps.toChannel16(cmyk)).pixels()[4097]);
+            Blackhole.consume(ImageOps.toRgba16(floating).pixels()[4097]);
+            Blackhole.consume(ImageOps.toChannel8(floating).pixels()[4097]);
+            for (var filter : List.of(ResizeFilter.BILINEAR, ResizeFilter.LANCZOS3, ResizeFilter.NEAREST)) {
+                Blackhole.consume(ImageOps.resize(channels, 320, 180, filter).width());
+                Blackhole.consume(ImageOps.resize(cmyk, 480, 270, filter).width());
+                Blackhole.consume(ImageOps.resize(floating, 320, 180, filter).width());
+            }
+            Blackhole.consume(ImageOps.orient(cmyk, Orientation.ROTATE_90).width());
+            Blackhole.consume(ImageOps.convertColor(channels, transform).width());
+        });
+    }
+
+    /**
      * Returns a workload that runs the effects of the picture operations on a 640x360 picture:
      * exact and box Gaussian blurs, an unsharp mask, convolution, a median, tone adjustments,
      * compositing with two blend modes, and bilinear and bicubic rotations, which together
@@ -262,7 +369,8 @@ final class TranscodeWorkloads {
 
     /**
      * Returns a workload that converts 8-bit Display P3 pixels to sRGB, 16-bit Adobe RGB pixels to
-     * Display P3, and a picture with BT.2020 PQ color to SDR sRGB.
+     * Display P3, a picture with BT.2020 PQ color to SDR sRGB, 16-bit sRGB pixels to BT.2020 PQ, 8-bit
+     * sRGB pixels to BT.2020 HLG, and 16-bit PQ pixels to HLG with BT.709 primaries.
      *
      * @return the workload
      */
@@ -275,10 +383,22 @@ final class TranscodeWorkloads {
         var deepOutput = new short[deep.pixels().length];
         var hdr = SyntheticVideo.hdr(640, 360);
         var pixels = picture.width() * picture.height();
+        var pq = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRange.LIMITED, ColorPrimaries.BT2020,
+                TransferCharacteristics.PQ));
+        var toPq = ColorTransform.create(ColorProfile.srgb(), pq);
+        var toHlg = ColorTransform.create(ColorProfile.srgb(), ColorProfile.of(new ColorInfo(MatrixCoefficients.BT2020_NCL,
+                ColorRange.LIMITED, ColorPrimaries.BT2020, TransferCharacteristics.HLG)));
+        var pqToHlg = ColorTransform.create(pq, ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709,
+                ColorRange.LIMITED, ColorPrimaries.BT709, TransferCharacteristics.HLG)));
+        var hdrOutput = new short[deep.pixels().length];
         return TrainingWorkload.of("color-management", () -> {
             toSrgb.transform(picture.pixels(), 0, 4, output, 0, 4, pixels);
             toP3.transform(deep.pixels(), 0, 4, deepOutput, 0, 4, pixels);
             Blackhole.consume(output[4097] + deepOutput[4097]);
+            toPq.transform(deep.pixels(), 0, 4, hdrOutput, 0, 4, pixels);
+            pqToHlg.transform(hdrOutput, 0, 4, deepOutput, 0, 4, pixels);
+            toHlg.transform(picture.pixels(), 0, 4, output, 0, 4, pixels);
+            Blackhole.consume(output[4097] + deepOutput[4097] + hdrOutput[4097]);
             Blackhole.consume(ImageOps.toSrgb(hdr).pixels()[4097]);
         });
     }
@@ -323,5 +443,40 @@ final class TranscodeWorkloads {
             SyntheticAudio.feed(music, block, meter::accept);
             Blackhole.consume(Double.doubleToRawLongBits(meter.integrated() + meter.loudnessRange() + meter.truePeak()));
         });
+    }
+
+    /**
+     * Returns a workload that runs stereo music through the sample processors in blocks: a Lt/Rt
+     * mixer, a variable-ratio resampler whose ratio drifts every block, single-pass loudness
+     * normalization, a true-peak limiter, and a noise-shaped 16-bit PCM encoder.
+     *
+     * @param seconds the music processed per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload audioProcessing(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var mixer = new ChannelMixer(ChannelLayout.STEREO, ChannelLayout.STEREO, ChannelMixerOptions.builder()
+                .stereoDownmix(ChannelMixerOptions.StereoDownmix.LT_RT)
+                .matrix(new double[][]{{0.9, 0.1}, {0.1, 0.9}}).build());
+        var resampler = new Resampler(48000, 48000, 2, Resampler.Quality.STANDARD);
+        var normalizer = new LoudnessNormalizer(ChannelLayout.STEREO, 48000, LoudnessNormalization.forStreaming());
+        var limiter = new TruePeakLimiter(2, 48000, TruePeakLimiterOptions.of(-2));
+        var encoder = new PcmEncoder(PcmEncoderOptions.of(Codec.PCM_S16LE, 48000, ChannelLayout.STEREO).toBuilder()
+                .dither(PcmDither.NOISE_SHAPED).build());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 48000, AudioStreams.BLOCK_FRAMES);
+        var mixed = new float[2][AudioStreams.BLOCK_FRAMES];
+        var resampled = new float[2][2 * AudioStreams.BLOCK_FRAMES];
+        var normalized = new float[2][normalizer.delay() + 2 * AudioStreams.BLOCK_FRAMES];
+        var limited = new AudioBuffer(ChannelLayout.STEREO, 48000, normalizer.delay() + 2 * AudioStreams.BLOCK_FRAMES);
+        int[] blocks = {0};
+        return TrainingWorkload.of("audio-processing", () -> SyntheticAudio.feed(music, block, buffer -> {
+            mixer.process(buffer.planes(), mixed, buffer.frames());
+            resampler.setRatio(1 + 0.001 * ((blocks[0]++ % 7) - 3));
+            var frames = resampler.process(mixed, buffer.frames(), resampled, 0);
+            frames = normalizer.process(resampled, 0, frames, normalized, 0);
+            frames = limiter.process(normalized, 0, frames, limited.planes(), 0);
+            limited.setFrames(frames);
+            encoder.encode(limited, packet -> Blackhole.consume(packet.data().length));
+        }));
     }
 }

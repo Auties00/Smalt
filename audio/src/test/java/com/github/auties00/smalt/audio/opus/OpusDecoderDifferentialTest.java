@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -24,9 +25,14 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * Compares the decoder with libopus as run by ffmpeg ({@code -c:a libopus}, float output) on
  * Ogg Opus files that ffmpeg's libopus encoder produced across applications, bitrates, frame
- * durations, rate-control modes and channel layouts, including 5.1 with mapping family 1.
+ * durations, rate-control modes and channel layouts, including 5.1 with mapping family 1. Each
+ * channel must pass {@code opus_compare} against libopus' decode, the RFC 6716 conformance
+ * criterion, and reach 60 dB of SNR, because both decoders run the same float reconstruction.
  */
 class OpusDecoderDifferentialTest {
+    /** The rule each decoded channel meets against libopus' decode of it. */
+    private static final Tolerance TOLERANCE = Tolerance.opusCompare(1, 48000).and(Tolerance.snr(60));
+
     /** A decoded stream: interleaved samples, the channel count and the rate. */
     record Decoded(float[] samples, int channels, int sampleRate) {
     }
@@ -87,6 +93,15 @@ class OpusDecoderDifferentialTest {
         return out;
     }
 
+    /** Returns one channel of interleaved samples. */
+    static float[] channel(float[] interleaved, int channels, int channel) {
+        var out = new float[interleaved.length / channels];
+        for (var i = 0; i < out.length; i++) {
+            out[i] = interleaved[i * channels + channel];
+        }
+        return out;
+    }
+
     /** Returns the SNR of one interleaved channel. */
     static double channelSnr(float[] expected, float[] actual, int channels, int channel) {
         var frames = Math.min(expected.length, actual.length) / channels;
@@ -123,7 +138,7 @@ class OpusDecoderDifferentialTest {
             "6,audio,256000,20,on,tones",
             "6,audio,96000,10,off,tones"
     })
-    @DisplayName("matches libopus's float decode within 60 dB SNR on ffmpeg-encoded Ogg Opus")
+    @DisplayName("matches libopus's float decode by opus_compare and 60 dB SNR on ffmpeg-encoded Ogg Opus")
     void matchesLibopus(int channels, String application, int bitrate, String duration, String vbr, String kind) {
         Oracle.assume(Oracle.Tool.FFMPEG);
         var options = new ArrayList<>(List.of("-ac", Integer.toString(channels), "-c:a", "libopus",
@@ -137,9 +152,8 @@ class OpusDecoderDifferentialTest {
         assertEquals(reference.length, ours.samples().length, "decoded length");
         var minimum = Double.POSITIVE_INFINITY;
         for (var c = 0; c < channels; c++) {
-            var snr = channelSnr(reference, ours.samples(), channels, c);
-            minimum = Math.min(minimum, snr);
-            assertTrue(snr >= 60, "channel " + c + " SNR " + snr + " dB");
+            minimum = Math.min(minimum, channelSnr(reference, ours.samples(), channels, c));
+            TOLERANCE.assertPcm("channel " + c, channel(reference, channels, c), channel(ours.samples(), channels, c));
         }
         System.err.printf("[opus-decode-diff] %d ch %s %d bps %s ms vbr %s: min SNR %.1f dB, %s%n", channels, application,
                 bitrate, duration, vbr, minimum, java.util.Arrays.equals(reference, ours.samples()) ? "bit-exact" : "not bit-exact");

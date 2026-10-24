@@ -199,13 +199,17 @@ class OpusUnifiedApiTest {
         }
 
         @Test
-        @DisplayName("keeps multistream tracks to their own layout and to packet decoding")
+        @DisplayName("decodes multistream tracks packet by packet and mixes them down on request")
         void multistream() {
             var head = new OpusHead(1, 3, 0, 48000, 0, 255, 2, 0, new int[]{1, 255, 0}).toBytes();
             var decoder = new OpusDecoder(track(head));
-            assertThrows(IllegalStateException.class, () -> decoder.conceal(new float[960 * 3], 0, 960));
-            assertThrows(MediaException.Unsupported.class,
-                    () -> new OpusDecoder(track(head), OpusDecoderOptions.defaults().toBuilder().channels(1).build()));
+            assertEquals(3, decoder.layout().channels());
+            assertEquals(960, decoder.conceal(new float[960 * 3], 0, 960));
+            assertEquals(960, decoder.conceal(new short[960 * 3], 0, 960));
+            assertThrows(IndexOutOfBoundsException.class, () -> decoder.conceal(new float[960 * 3 - 1], 0, 960));
+            var mono = new OpusDecoder(track(head), OpusDecoderOptions.defaults().toBuilder().channels(1).build());
+            assertEquals(ChannelLayout.MONO, mono.layout());
+            assertEquals(480, mono.conceal(new float[480], 0, 480));
             assertThrows(MediaException.LimitExceeded.class,
                     () -> new OpusDecoder(track(head), OpusDecoderOptions.defaults().toBuilder()
                             .limits(MediaLimits.builder().maxChannels(2).build()).build()));

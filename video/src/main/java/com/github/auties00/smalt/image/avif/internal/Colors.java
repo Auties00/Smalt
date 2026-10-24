@@ -7,7 +7,14 @@ import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.internal.color.YcgcoR;
+import com.github.auties00.smalt.internal.heif.HeifItem;
+import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.video.av1.internal.SequenceHeader;
 
@@ -70,5 +77,62 @@ final class Colors {
                 .withChromaSiting(siting)
                 .withMasteringDisplay(mastering)
                 .withContentLightLevel(lightLevel);
+    }
+
+    /**
+     * Applies the color properties of a derived image item to the color description of its input.
+     *
+     * @param base the description of the input samples
+     * @param item the derived item
+     * @return {@code base} with the code points and range of the item's {@code nclx} property and its
+     * {@code clli} and {@code mdcv} properties applied, where present
+     */
+    static ColorInfo override(ColorInfo base, HeifItem item) {
+        var result = base;
+        var nclx = item.property(HeifProperty.ColorNclx.class);
+        if (nclx != null) {
+            result = result.withMatrix(MatrixCoefficients.of(nclx.matrix()))
+                    .withRange(nclx.fullRange() ? ColorRange.FULL : ColorRange.LIMITED)
+                    .withPrimaries(ColorPrimaries.of(nclx.primaries()))
+                    .withTransfer(TransferCharacteristics.of(nclx.transfer()));
+        }
+        var lightLevel = item.property(HeifProperty.ContentLightLevel.class);
+        if (lightLevel != null) {
+            result = result.withContentLightLevel(HeifPictures.contentLightLevel(lightLevel));
+        }
+        var mastering = item.property(HeifProperty.MasteringDisplay.class);
+        if (mastering != null) {
+            result = result.withMasteringDisplay(HeifPictures.masteringDisplay(mastering));
+        }
+        return result;
+    }
+
+    /**
+     * Returns whether a source decodes to 8-bit RGBA rather than to 8-bit Y'CbCr in the default 8-bit mode.
+     *
+     * <p>The YCgCo-Re and YCgCo-Ro matrices tie the R'G'B' depth to the sample depth, so 8-bit samples would keep
+     * only 6 or 7 bits of R'G'B'. Such a source decodes at its own depth and {@link #toEightBit} converts it.
+     *
+     * @param matrix the matrix coefficients of the source
+     * @param depth the bit depth of the source
+     * @return {@code true} for a YCgCo-R matrix deeper than 8 bits
+     */
+    static boolean reducesToRgb(MatrixCoefficients matrix, int depth) {
+        return depth > 8 && YcgcoR.applies(matrix);
+    }
+
+    /**
+     * Reduces a picture decoded at its own depth to the default 8-bit output: a YCgCo-Re or YCgCo-Ro
+     * {@link Yuv16Picture} to 8-bit RGBA, any other {@link Yuv16Picture} or {@link Rgba16Picture} with
+     * {@link ImageOps#toEightBit(Picture)}.
+     *
+     * @param picture the picture decoded at its own depth, or already 8-bit
+     * @return the 8-bit picture
+     */
+    static Picture toEightBit(Picture picture) {
+        return switch (picture) {
+            case Yuv16Picture yuv when YcgcoR.applies(yuv.color().matrix()) -> ImageOps.toRgba(yuv);
+            default -> ImageOps.toEightBit(picture);
+        };
     }
 }

@@ -1,0 +1,42 @@
+# demux dump of ivf/vp8.ivf; regenerate with -Dsmalt.test.updateDumps=true
+format IVF
+duration 2000000
+seekable true
+track 0 VIDEO VP8 timebase=1/15 duration=? config=none
+  video 160x120 orientation=NORMAL rate=15/1
+packets 30
+0 t0 pts=0 dts=0 dur=? flags=KEY size=4280 crc=6267b73b
+1 t0 pts=1 dts=1 dur=? flags=- size=578 crc=eff10c85
+2 t0 pts=2 dts=2 dur=? flags=- size=523 crc=0e52df2f
+3 t0 pts=3 dts=3 dur=? flags=- size=456 crc=4292ff1a
+4 t0 pts=4 dts=4 dur=? flags=- size=547 crc=96451d02
+5 t0 pts=5 dts=5 dur=? flags=- size=568 crc=53439fe4
+6 t0 pts=6 dts=6 dur=? flags=- size=457 crc=9dd1decb
+7 t0 pts=7 dts=7 dur=? flags=- size=1283 crc=c1849eb4
+8 t0 pts=8 dts=8 dur=? flags=- size=269 crc=453726ac
+9 t0 pts=9 dts=9 dur=? flags=- size=409 crc=e411b929
+10 t0 pts=10 dts=10 dur=? flags=KEY size=3766 crc=92d06183
+11 t0 pts=11 dts=11 dur=? flags=- size=637 crc=3876d409
+12 t0 pts=12 dts=12 dur=? flags=- size=432 crc=91cef55e
+13 t0 pts=13 dts=13 dur=? flags=- size=402 crc=59ced862
+14 t0 pts=14 dts=14 dur=? flags=- size=460 crc=2f0ec4cd
+15 t0 pts=15 dts=15 dur=? flags=- size=572 crc=df3a274e
+16 t0 pts=16 dts=16 dur=? flags=- size=383 crc=e4e4a0a2
+17 t0 pts=17 dts=17 dur=? flags=- size=1445 crc=09bb093a
+18 t0 pts=18 dts=18 dur=? flags=- size=390 crc=c2a760d2
+19 t0 pts=19 dts=19 dur=? flags=- size=244 crc=42f7eed7
+20 t0 pts=20 dts=20 dur=? flags=KEY size=4071 crc=658a3f9d
+21 t0 pts=21 dts=21 dur=? flags=- size=365 crc=25eb8d48
+22 t0 pts=22 dts=22 dur=? flags=- size=444 crc=1c603005
+23 t0 pts=23 dts=23 dur=? flags=- size=301 crc=4690206f
+24 t0 pts=24 dts=24 dur=? flags=- size=459 crc=16a37bca
+25 t0 pts=25 dts=25 dur=? flags=- size=293 crc=6c952b9a
+26 t0 pts=26 dts=26 dur=? flags=- size=416 crc=f17514f3
+27 t0 pts=27 dts=27 dur=? flags=- size=825 crc=fc58d122
+28 t0 pts=28 dts=28 dur=? flags=- size=430 crc=0944e677
+29 t0 pts=29 dts=29 dur=? flags=- size=376 crc=fb25a20f
+seek 0: t0@0
+seek 666666: t0@0
+seek 1333333: t0@10
+seek 2000000: end
+seek -1000000: t0@0

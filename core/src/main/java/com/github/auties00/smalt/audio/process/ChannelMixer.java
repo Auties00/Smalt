@@ -3,6 +3,7 @@ package com.github.auties00.smalt.audio.process;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 
+import java.util.List;
 import java.util.Objects;
 
 /**
@@ -31,12 +32,33 @@ import java.util.Objects;
  *   <li>a missing back center is split at -3 dB each into the back pair when the output has
  *       it, else into the side pair when the output has that, else into back left and right,
  *       which then fold into the front speakers at -3 dB (a total of -6 dB per side);</li>
- *   <li>the low-frequency channel is dropped unless the output has one;</li>
- *   <li>top speakers fold into the speaker below them at -3 dB;</li>
+ *   <li>the front wide pair goes to front left and right at gain {@code 1}, and the surround
+ *       direct pair to the side surrounds, at gain {@code 1} when the input lacks side surrounds
+ *       and at -3 dB when it has them;</li>
+ *   <li>the low-frequency channel is dropped unless the output has one (or a low-frequency mix level
+ *       is set, see below); the second low-frequency
+ *       channel goes to it, at gain {@code 1} when the input lacks the first and at -3 dB when it
+ *       has it;</li>
+ *   <li>top speakers fold into the speaker below them at -3 dB, and bottom speakers into the
+ *       speaker above them at -3 dB;</li>
  *   <li>{@link Speaker#UNKNOWN} channels are mapped by index, input channel {@code i} to output
  *       channel {@code i}; when every speaker of either layout is unknown, all channels are mapped
  *       by index.</li>
  * </ul>
+ *
+ * <p>The -3 dB gains of the rules above are fixed, except three that {@link ChannelMixerOptions} sets:
+ * the center folded into front left and right ({@link ChannelMixerOptions#centerMixLevel()}), the last
+ * fold of a surround into the front speaker of its side ({@link ChannelMixerOptions#surroundMixLevel()})
+ * and the low-frequency channel, dropped by default ({@link ChannelMixerOptions#lfeMixLevel()}). With
+ * those levels at {@code clev} and {@code slev}, 5.1 to stereo is the ATSC A/52 Lo/Ro downmix
+ * {@code L + clev C + slev BL} and {@code R + clev C + slev BR}. Under
+ * {@link ChannelMixerOptions.StereoDownmix#LT_RT} a stereo output is the A/52 Lt/Rt downmix instead:
+ * the input is first folded by the rules into front left, right and center and a back pair, and then
+ * {@snippet :
+ * Lt = L + clev * C - slev * (BL + BR)
+ * Rt = R + clev * C + slev * (BL + BR)
+ * }
+ * A caller's matrix ({@link ChannelMixerOptions#matrix()}) replaces the rules altogether.
  *
  * <p>By default the matrix is not normalized: a downmix such as 5.1 to stereo sums up to
  * {@code 1 + 0.707 + 0.707} into each output and can exceed full scale, so the caller clips (or
@@ -57,6 +79,12 @@ public final class ChannelMixer {
      * The deepest chain of folds followed when routing a speaker the output lacks.
      */
     private static final int MAX_FOLDS = 6;
+
+    /**
+     * The layout an input is folded into before the Lt/Rt matrix: FL, FR, FC, BL, BR.
+     */
+    private static final ChannelLayout LT_RT_FOLD = new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
+            Speaker.FRONT_CENTER, Speaker.BACK_LEFT, Speaker.BACK_RIGHT));
 
     /**
      * The mixing kernel selected for this JVM.
@@ -119,10 +147,40 @@ public final class ChannelMixer {
      * @throws NullPointerException if a layout is {@code null}
      */
     public ChannelMixer(ChannelLayout input, ChannelLayout output, boolean normalize) {
+        this(input, output, ChannelMixerOptions.builder().normalize(normalize).build());
+    }
+
+    /**
+     * Creates a mixer with the given settings.
+     *
+     * @param input the layout of the input planes
+     * @param output the layout of the output planes
+     * @param options the mix levels, stereo downmix, normalization or caller's matrix
+     * @throws IllegalArgumentException if the options hold a matrix whose dimensions are not
+     * {@code output.channels()} rows of {@code input.channels()} coefficients
+     */
+    public ChannelMixer(ChannelLayout input, ChannelLayout output, ChannelMixerOptions options) {
         this.input = Objects.requireNonNull(input, "input");
         this.output = Objects.requireNonNull(output, "output");
-        var coefficients = build(input, output);
-        if (normalize) {
+        Objects.requireNonNull(options, "options");
+        var custom = options.matrixOrNull();
+        double[][] coefficients;
+        if (custom != null) {
+            if (custom.length != output.channels() || custom[0].length != input.channels()) {
+                throw new IllegalArgumentException("a " + custom.length + "x" + custom[0].length
+                        + " mix matrix cannot mix " + input.channels() + " into " + output.channels() + " channels");
+            }
+            coefficients = new double[custom.length][];
+            for (var row = 0; row < custom.length; row++) {
+                coefficients[row] = custom[row].clone();
+            }
+        } else if (options.stereoDownmix() == ChannelMixerOptions.StereoDownmix.LT_RT
+                && output.equals(ChannelLayout.STEREO) && !isMono(input)) {
+            coefficients = matrixEncoded(input, options);
+        } else {
+            coefficients = build(input, output, options);
+        }
+        if (options.normalize()) {
             for (var row : coefficients) {
                 var sum = 0.0;
                 for (var value : row) {
@@ -168,13 +226,37 @@ public final class ChannelMixer {
     }
 
     /**
-     * Builds the unnormalized coefficient matrix by the rules on the class.
+     * Builds the unnormalized Lt/Rt matrix of a stereo output by the rules on the class.
      *
-     * @param input  the input layout
-     * @param output the output layout
+     * @param input the input layout
+     * @param options the mix levels
      * @return the coefficients, indexed {@code [output][input]}
      */
-    private static double[][] build(ChannelLayout input, ChannelLayout output) {
+    private static double[][] matrixEncoded(ChannelLayout input, ChannelMixerOptions options) {
+        if (allUnknown(input)) {
+            return build(input, ChannelLayout.STEREO, options);
+        }
+        var folded = build(input, LT_RT_FOLD, options);
+        var center = options.centerMixLevel();
+        var surround = options.surroundMixLevel();
+        var result = new double[2][input.channels()];
+        for (var i = 0; i < input.channels(); i++) {
+            var mono = folded[3][i] + folded[4][i];
+            result[0][i] = folded[0][i] + center * folded[2][i] - surround * mono;
+            result[1][i] = folded[1][i] + center * folded[2][i] + surround * mono;
+        }
+        return result;
+    }
+
+    /**
+     * Builds the unnormalized coefficient matrix by the rules on the class.
+     *
+     * @param input the input layout
+     * @param output the output layout
+     * @param options the mix levels
+     * @return the coefficients, indexed {@code [output][input]}
+     */
+    private static double[][] build(ChannelLayout input, ChannelLayout output, ChannelMixerOptions options) {
         var outputs = output.channels();
         var inputs = input.channels();
         var result = new double[outputs][inputs];
@@ -199,7 +281,7 @@ public final class ChannelMixer {
             return result;
         }
         if (isMono(output)) {
-            var stereo = build(input, ChannelLayout.STEREO);
+            var stereo = build(input, ChannelLayout.STEREO, options);
             for (var i = 0; i < inputs; i++) {
                 result[0][i] = 0.5 * (stereo[0][i] + stereo[1][i]);
             }
@@ -220,7 +302,7 @@ public final class ChannelMixer {
                 continue;
             }
             var column = new double[outputs];
-            if (!route(speaker, 1.0, input, output, column, 0) && i < outputs
+            if (!route(speaker, 1.0, input, output, options, column, 0) && i < outputs
                     && output.speakers().get(i) == Speaker.UNKNOWN) {
                 column[i] = 1;
             }
@@ -239,12 +321,13 @@ public final class ChannelMixer {
      * @param gain    the gain accumulated so far
      * @param input   the input layout
      * @param output  the output layout
+     * @param options the mix levels
      * @param column  accumulates the contribution to each output channel
      * @param depth   the number of folds already applied
      * @return whether any contribution reached the output
      */
     private static boolean route(Speaker speaker, double gain, ChannelLayout input, ChannelLayout output,
-                                 double[] column, int depth) {
+                                 ChannelMixerOptions options, double[] column, int depth) {
         var index = output.indexOf(speaker);
         if (index >= 0) {
             column[index] += gain;
@@ -256,31 +339,53 @@ public final class ChannelMixer {
         var next = depth + 1;
         var folded = gain * MINUS_3DB;
         return switch (speaker) {
-            case FRONT_CENTER -> route(Speaker.FRONT_LEFT, folded, input, output, column, next)
-                    | route(Speaker.FRONT_RIGHT, folded, input, output, column, next);
-            case FRONT_LEFT, FRONT_RIGHT -> route(Speaker.FRONT_CENTER, folded, input, output, column, next);
-            case FRONT_LEFT_OF_CENTER -> route(Speaker.FRONT_LEFT, gain, input, output, column, next);
-            case FRONT_RIGHT_OF_CENTER -> route(Speaker.FRONT_RIGHT, gain, input, output, column, next);
-            case BACK_LEFT -> surround(Speaker.SIDE_LEFT, Speaker.FRONT_LEFT, gain, input, output, column, next);
-            case BACK_RIGHT -> surround(Speaker.SIDE_RIGHT, Speaker.FRONT_RIGHT, gain, input, output, column, next);
-            case SIDE_LEFT -> surround(Speaker.BACK_LEFT, Speaker.FRONT_LEFT, gain, input, output, column, next);
-            case SIDE_RIGHT -> surround(Speaker.BACK_RIGHT, Speaker.FRONT_RIGHT, gain, input, output, column, next);
+            case FRONT_CENTER -> {
+                var center = gain * options.centerMixLevel();
+                yield route(Speaker.FRONT_LEFT, center, input, output, options, column, next)
+                        | route(Speaker.FRONT_RIGHT, center, input, output, options, column, next);
+            }
+            case FRONT_LEFT, FRONT_RIGHT -> route(Speaker.FRONT_CENTER, folded, input, output, options, column, next);
+            case FRONT_LEFT_OF_CENTER -> route(Speaker.FRONT_LEFT, gain, input, output, options, column, next);
+            case FRONT_RIGHT_OF_CENTER -> route(Speaker.FRONT_RIGHT, gain, input, output, options, column, next);
+            case BACK_LEFT -> surround(Speaker.SIDE_LEFT, Speaker.FRONT_LEFT, gain, input, output, options, column,
+                    next);
+            case BACK_RIGHT -> surround(Speaker.SIDE_RIGHT, Speaker.FRONT_RIGHT, gain, input, output, options, column,
+                    next);
+            case SIDE_LEFT -> surround(Speaker.BACK_LEFT, Speaker.FRONT_LEFT, gain, input, output, options, column,
+                    next);
+            case SIDE_RIGHT -> surround(Speaker.BACK_RIGHT, Speaker.FRONT_RIGHT, gain, input, output, options, column,
+                    next);
             case BACK_CENTER -> {
                 var sides = output.indexOf(Speaker.BACK_LEFT) < 0 || output.indexOf(Speaker.BACK_RIGHT) < 0;
                 var useSides = sides && output.indexOf(Speaker.SIDE_LEFT) >= 0 && output.indexOf(Speaker.SIDE_RIGHT) >= 0;
                 yield useSides
-                        ? route(Speaker.SIDE_LEFT, folded, input, output, column, next)
-                        | route(Speaker.SIDE_RIGHT, folded, input, output, column, next)
-                        : route(Speaker.BACK_LEFT, folded, input, output, column, next)
-                        | route(Speaker.BACK_RIGHT, folded, input, output, column, next);
+                        ? route(Speaker.SIDE_LEFT, folded, input, output, options, column, next)
+                        | route(Speaker.SIDE_RIGHT, folded, input, output, options, column, next)
+                        : route(Speaker.BACK_LEFT, folded, input, output, options, column, next)
+                        | route(Speaker.BACK_RIGHT, folded, input, output, options, column, next);
             }
-            case TOP_CENTER, TOP_FRONT_CENTER -> route(Speaker.FRONT_CENTER, folded, input, output, column, next);
-            case TOP_FRONT_LEFT -> route(Speaker.FRONT_LEFT, folded, input, output, column, next);
-            case TOP_FRONT_RIGHT -> route(Speaker.FRONT_RIGHT, folded, input, output, column, next);
-            case TOP_BACK_LEFT -> route(Speaker.BACK_LEFT, folded, input, output, column, next);
-            case TOP_BACK_RIGHT -> route(Speaker.BACK_RIGHT, folded, input, output, column, next);
-            case TOP_BACK_CENTER -> route(Speaker.BACK_CENTER, folded, input, output, column, next);
-            case LOW_FREQUENCY, UNKNOWN -> false;
+            case TOP_CENTER, TOP_FRONT_CENTER -> route(Speaker.FRONT_CENTER, folded, input, output, options, column,
+                    next);
+            case TOP_FRONT_LEFT -> route(Speaker.FRONT_LEFT, folded, input, output, options, column, next);
+            case TOP_FRONT_RIGHT -> route(Speaker.FRONT_RIGHT, folded, input, output, options, column, next);
+            case TOP_BACK_LEFT -> route(Speaker.BACK_LEFT, folded, input, output, options, column, next);
+            case TOP_BACK_RIGHT -> route(Speaker.BACK_RIGHT, folded, input, output, options, column, next);
+            case TOP_BACK_CENTER -> route(Speaker.BACK_CENTER, folded, input, output, options, column, next);
+            case TOP_SIDE_LEFT -> route(Speaker.SIDE_LEFT, folded, input, output, options, column, next);
+            case TOP_SIDE_RIGHT -> route(Speaker.SIDE_RIGHT, folded, input, output, options, column, next);
+            case BOTTOM_FRONT_CENTER -> route(Speaker.FRONT_CENTER, folded, input, output, options, column, next);
+            case BOTTOM_FRONT_LEFT -> route(Speaker.FRONT_LEFT, folded, input, output, options, column, next);
+            case BOTTOM_FRONT_RIGHT -> route(Speaker.FRONT_RIGHT, folded, input, output, options, column, next);
+            case WIDE_LEFT -> route(Speaker.FRONT_LEFT, gain, input, output, options, column, next);
+            case WIDE_RIGHT -> route(Speaker.FRONT_RIGHT, gain, input, output, options, column, next);
+            case SURROUND_DIRECT_LEFT -> route(Speaker.SIDE_LEFT, input.indexOf(Speaker.SIDE_LEFT) >= 0 ? folded : gain,
+                    input, output, options, column, next);
+            case SURROUND_DIRECT_RIGHT -> route(Speaker.SIDE_RIGHT,
+                    input.indexOf(Speaker.SIDE_RIGHT) >= 0 ? folded : gain, input, output, options, column, next);
+            case LOW_FREQUENCY_2 -> route(Speaker.LOW_FREQUENCY,
+                    input.indexOf(Speaker.LOW_FREQUENCY) >= 0 ? folded : gain, input, output, options, column, next);
+            case LOW_FREQUENCY -> lowFrequency(gain * options.lfeMixLevel(), output, column);
+            case UNKNOWN -> false;
         };
     }
 
@@ -293,24 +398,53 @@ public final class ChannelMixer {
      * @param gain        the gain accumulated so far
      * @param input       the input layout
      * @param output      the output layout
+     * @param options     the mix levels
      * @param column      accumulates the contribution to each output channel
      * @param depth       the number of folds already applied
      * @return whether any contribution reached the output
      */
     private static boolean surround(Speaker counterpart, Speaker front, double gain, ChannelLayout input,
-                                    ChannelLayout output, double[] column, int depth) {
+                                    ChannelLayout output, ChannelMixerOptions options, double[] column, int depth) {
         var index = output.indexOf(counterpart);
         if (index >= 0) {
             column[index] += input.indexOf(counterpart) >= 0 ? gain * MINUS_3DB : gain;
             return true;
         }
-        return route(front, gain * MINUS_3DB, input, output, column, depth);
+        return route(front, gain * options.surroundMixLevel(), input, output, options, column, depth);
+    }
+
+    /**
+     * Routes the low-frequency channel of an output that lacks one: to the center, or else to front
+     * left and right at -3 dB.
+     *
+     * @param gain the gain accumulated so far times the low-frequency mix level
+     * @param output the output layout
+     * @param column accumulates the contribution to each output channel
+     * @return whether any contribution reached the output
+     */
+    private static boolean lowFrequency(double gain, ChannelLayout output, double[] column) {
+        if (gain == 0) {
+            return false;
+        }
+        var center = output.indexOf(Speaker.FRONT_CENTER);
+        if (center >= 0) {
+            column[center] += gain;
+            return true;
+        }
+        var left = output.indexOf(Speaker.FRONT_LEFT);
+        var right = output.indexOf(Speaker.FRONT_RIGHT);
+        if (left < 0 || right < 0) {
+            return false;
+        }
+        column[left] += gain * MINUS_3DB;
+        column[right] += gain * MINUS_3DB;
+        return true;
     }
 
     /**
      * Returns whether a layout is a single channel feeding the center or no declared position.
      *
-     * @param layout the layout
+     * @param layout the speakers to test
      * @return {@code true} for mono
      */
     private static boolean isMono(ChannelLayout layout) {
@@ -324,7 +458,7 @@ public final class ChannelMixer {
     /**
      * Returns whether no speaker of a layout has a declared position.
      *
-     * @param layout the layout
+     * @param layout the speakers to test
      * @return {@code true} when every speaker is {@link Speaker#UNKNOWN}
      */
     private static boolean allUnknown(ChannelLayout layout) {
