@@ -90,6 +90,27 @@ public final class Guards {
     }
 
     /**
+     * Runs a body that reads untrusted input and already reports its own failures, translating only the resource
+     * failures that escape it: an {@link OutOfMemoryError} or a {@link StackOverflowError} becomes
+     * {@link MediaException.LimitExceeded}, and every other failure propagates unchanged.
+     *
+     * @param what the input, a noun phrase for messages
+     * @param body the work to run
+     * @param <T> the result type
+     * @return the result of {@code body}
+     * @throws MediaException.LimitExceeded if {@code body} runs out of memory or stack
+     */
+    public static <T> T bounded(String what, Supplier<T> body) {
+        try {
+            return body.get();
+        } catch (OutOfMemoryError error) {
+            throw outOfMemory(what);
+        } catch (StackOverflowError error) {
+            throw tooDeep(what);
+        }
+    }
+
+    /**
      * Runs an encoding body under the encoder policy.
      *
      * @param what the output, a noun phrase for messages

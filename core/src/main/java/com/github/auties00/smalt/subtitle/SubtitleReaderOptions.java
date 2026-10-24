@@ -1,16 +1,20 @@
 package com.github.auties00.smalt.subtitle;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.track.Rational;
 
+import java.nio.charset.Charset;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link SubtitleReader}: which track it reads, the markup of the cues it
- * returns and the limits of the demuxer. Instances are immutable and thread-safe; create them with
- * {@link #builder()} or a preset such as {@link #defaults()}.
+ * returns, the text encoding and MicroDVD frame rate of subtitle files and the limits of the demuxer.
+ * Instances are immutable and thread-safe; create them with {@link #builder()} or a preset such as
+ * {@link #defaults()}.
  */
 public final class SubtitleReaderOptions {
     /**
@@ -30,15 +34,28 @@ public final class SubtitleReaderOptions {
 
     private final MediaLimits limits;
 
-    private SubtitleReaderOptions(int trackId, SubtitleMarkup markup, MediaLimits limits) {
+    /**
+     * The text encoding, or {@code null} to detect it.
+     */
+    private final Charset charset;
+
+    /**
+     * The MicroDVD frame rate, or {@code null} for the file's or the default.
+     */
+    private final Rational subtitleFrameRate;
+
+    private SubtitleReaderOptions(int trackId, SubtitleMarkup markup, MediaLimits limits, Charset charset,
+                                  Rational subtitleFrameRate) {
         this.trackId = trackId;
         this.markup = markup;
         this.limits = limits;
+        this.charset = charset;
+        this.subtitleFrameRate = subtitleFrameRate;
     }
 
     /**
-     * Returns the default options: the first text subtitle track, in its own markup, under
-     * {@link MediaLimits#defaults()}.
+     * Returns the default options: the first text subtitle track, in its own markup, the text encoding
+     * detected, under {@link MediaLimits#defaults()}.
      *
      * @return the options
      */
@@ -86,27 +103,49 @@ public final class SubtitleReaderOptions {
         return limits;
     }
 
+    /**
+     * {@return the character encoding of subtitle files without a byte order mark, or empty to detect it;
+     * empty by default}
+     *
+     * <p>The meaning is that of {@link DemuxerOptions#charset()}.
+     */
+    public Optional<Charset> charset() {
+        return Optional.ofNullable(charset);
+    }
+
+    /**
+     * {@return the frame rate of MicroDVD frame numbers, or empty for the rate the file declares or
+     * 24000/1001; empty by default}
+     *
+     * <p>The meaning is that of {@link DemuxerOptions#subtitleFrameRate()}.
+     */
+    public Optional<Rational> subtitleFrameRate() {
+        return Optional.ofNullable(subtitleFrameRate);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof SubtitleReaderOptions that && trackId == that.trackId && markup == that.markup
-                && limits.equals(that.limits);
+                && limits.equals(that.limits) && Objects.equals(charset, that.charset)
+                && Objects.equals(subtitleFrameRate, that.subtitleFrameRate);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(trackId, markup, limits);
+        return Objects.hash(trackId, markup, limits, charset, subtitleFrameRate);
     }
 
     @Override
     public String toString() {
-        return "SubtitleReaderOptions[trackId=" + trackId() + ", markup=" + markup() + ", limits=" + limits + "]";
+        return "SubtitleReaderOptions[trackId=" + trackId() + ", markup=" + markup() + ", limits=" + limits
+                + ", charset=" + charset() + ", subtitleFrameRate=" + subtitleFrameRate() + "]";
     }
 
     /**
      * Assembles {@link SubtitleReaderOptions} setting by setting.
      *
      * <p>Setters reject {@code null} and store their value unchecked; {@link #build()} checks the
-     * track identifier. Instances are not thread-safe.
+     * track identifier and the frame rate. Instances are not thread-safe.
      */
     public static final class Builder {
         /**
@@ -117,6 +156,8 @@ public final class SubtitleReaderOptions {
         private long trackId = FIRST_TRACK;
         private SubtitleMarkup markup;
         private MediaLimits limits = MediaLimits.DEFAULT;
+        private Charset charset;
+        private Rational subtitleFrameRate;
 
         private Builder() {
         }
@@ -125,6 +166,8 @@ public final class SubtitleReaderOptions {
             this.trackId = options.trackId < 0 ? FIRST_TRACK : options.trackId;
             this.markup = options.markup;
             this.limits = options.limits;
+            this.charset = options.charset;
+            this.subtitleFrameRate = options.subtitleFrameRate;
         }
 
         /**
@@ -181,14 +224,62 @@ public final class SubtitleReaderOptions {
         }
 
         /**
+         * Sets the text encoding of subtitle files; see {@link SubtitleReaderOptions#charset()}.
+         *
+         * @param charset the value
+         * @return this builder
+         */
+        public Builder charset(Charset charset) {
+            this.charset = Objects.requireNonNull(charset, "charset");
+            return this;
+        }
+
+        /**
+         * Detects the text encoding of subtitle files; see {@link SubtitleReaderOptions#charset()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticCharset() {
+            this.charset = null;
+            return this;
+        }
+
+        /**
+         * Sets the MicroDVD frame rate; see {@link SubtitleReaderOptions#subtitleFrameRate()}.
+         *
+         * @param frameRate the value, in frames per second
+         * @return this builder
+         */
+        public Builder subtitleFrameRate(Rational frameRate) {
+            this.subtitleFrameRate = Objects.requireNonNull(frameRate, "frameRate");
+            return this;
+        }
+
+        /**
+         * Uses the MicroDVD frame rate the file declares, or 24000/1001; see
+         * {@link SubtitleReaderOptions#subtitleFrameRate()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticSubtitleFrameRate() {
+            this.subtitleFrameRate = null;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
-         * @throws IllegalArgumentException if the track identifier is negative
+         * @throws IllegalArgumentException if the track identifier is negative or the frame rate is not
+         * positive
          */
         public SubtitleReaderOptions build() {
             var id = trackId == FIRST_TRACK ? -1 : Checks.nonNegative("track identifier", (int) trackId);
-            return new SubtitleReaderOptions(id, markup, limits);
+            if (subtitleFrameRate != null && (subtitleFrameRate.numerator() <= 0
+                    || subtitleFrameRate.denominator() <= 0)) {
+                throw new IllegalArgumentException("the subtitle frame rate must be positive, not " + subtitleFrameRate);
+            }
+            return new SubtitleReaderOptions(id, markup, limits, charset, subtitleFrameRate);
         }
     }
 }
