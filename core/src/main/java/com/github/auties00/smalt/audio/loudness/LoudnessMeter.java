@@ -731,11 +731,22 @@ public final class LoudnessMeter {
      * @return the loudness in LUFS, negative infinity when no 400 ms block passes the gates
      */
     public double integrated() {
+        return gatedLoudness(blockCounts, blockEnergies);
+    }
+
+    /**
+     * Returns the integrated loudness of a histogram of 400 ms blocks laid out like the meter's.
+     *
+     * @param counts the block count of each bin
+     * @param energies the summed block energies of each bin
+     * @return the loudness in LUFS, negative infinity when no block passes the gates
+     */
+    static double gatedLoudness(long[] counts, double[] energies) {
         var count = 0L;
         var sum = 0.0;
         for (var bin = 0; bin < BINS; bin++) {
-            count += blockCounts[bin];
-            sum += blockEnergies[bin];
+            count += counts[bin];
+            sum += energies[bin];
         }
         if (count == 0) {
             return Double.NEGATIVE_INFINITY;
@@ -744,10 +755,32 @@ public final class LoudnessMeter {
         count = 0;
         sum = 0;
         for (var bin = first; bin < BINS; bin++) {
-            count += blockCounts[bin];
-            sum += blockEnergies[bin];
+            count += counts[bin];
+            sum += energies[bin];
         }
         return count == 0 ? Double.NEGATIVE_INFINITY : loudnessOf(sum / count);
+    }
+
+    /**
+     * Adds the 400 ms blocks measured so far to a histogram laid out like the meter's, so that
+     * several programs can be gated together as one.
+     *
+     * @param counts the block count of each bin, of {@link #histogramBins()} entries, updated
+     * @param energies the summed block energies of each bin, of {@link #histogramBins()} entries,
+     * updated
+     */
+    void addBlocksTo(long[] counts, double[] energies) {
+        for (var bin = 0; bin < BINS; bin++) {
+            counts[bin] += blockCounts[bin];
+            energies[bin] += blockEnergies[bin];
+        }
+    }
+
+    /**
+     * {@return the number of bins of the gating histograms}
+     */
+    static int histogramBins() {
+        return BINS;
     }
 
     /**

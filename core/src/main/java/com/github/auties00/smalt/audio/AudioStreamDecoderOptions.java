@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.audio;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
 import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Objects;
@@ -13,21 +14,24 @@ import java.util.OptionalInt;
  */
 public final class AudioStreamDecoderOptions {
     private static final AudioStreamDecoderOptions DEFAULTS =
-            new AudioStreamDecoderOptions(0, null, MediaLimits.DEFAULT, SampleFormat.FLOAT, false);
+            new AudioStreamDecoderOptions(0, null, MediaLimits.DEFAULT, SampleFormat.FLOAT, false,
+                    ChannelMixerOptions.defaults());
 
     private final int sampleRate;
     private final ChannelLayout layout;
     private final MediaLimits limits;
     private final SampleFormat sampleFormat;
     private final boolean verifyIntegrity;
+    private final ChannelMixerOptions mixing;
 
     private AudioStreamDecoderOptions(int sampleRate, ChannelLayout layout, MediaLimits limits,
-                                      SampleFormat sampleFormat, boolean verifyIntegrity) {
+                                      SampleFormat sampleFormat, boolean verifyIntegrity, ChannelMixerOptions mixing) {
         this.sampleRate = sampleRate;
         this.layout = layout;
         this.limits = limits;
         this.sampleFormat = sampleFormat;
         this.verifyIntegrity = verifyIntegrity;
+        this.mixing = mixing;
     }
 
     /**
@@ -112,6 +116,18 @@ public final class AudioStreamDecoderOptions {
         return verifyIntegrity;
     }
 
+    /**
+     * {@return how decoded channels are mixed to {@link #layout()}; {@link ChannelMixerOptions#defaults()}
+     * by default}
+     *
+     * <p>Decoded blocks whose layout equals the output layout are not mixed, unless the options hold a
+     * caller's matrix, which is then applied to every block (and which needs
+     * {@link SampleFormat#FLOAT} output).
+     */
+    public ChannelMixerOptions mixing() {
+        return mixing;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof AudioStreamDecoderOptions that
@@ -119,18 +135,19 @@ public final class AudioStreamDecoderOptions {
                 && Objects.equals(layout, that.layout)
                 && limits.equals(that.limits)
                 && sampleFormat == that.sampleFormat
-                && verifyIntegrity == that.verifyIntegrity;
+                && verifyIntegrity == that.verifyIntegrity
+                && mixing.equals(that.mixing);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(sampleRate, layout, limits, sampleFormat, verifyIntegrity);
+        return Objects.hash(sampleRate, layout, limits, sampleFormat, verifyIntegrity, mixing);
     }
 
     @Override
     public String toString() {
         return "AudioStreamDecoderOptions[sampleRate=" + sampleRate + ", layout=" + layout + ", limits=" + limits
-                + ", sampleFormat=" + sampleFormat + ", verifyIntegrity=" + verifyIntegrity + "]";
+                + ", sampleFormat=" + sampleFormat + ", verifyIntegrity=" + verifyIntegrity + ", mixing=" + mixing + "]";
     }
 
     /**
@@ -145,6 +162,7 @@ public final class AudioStreamDecoderOptions {
         private MediaLimits limits;
         private SampleFormat sampleFormat;
         private boolean verifyIntegrity;
+        private ChannelMixerOptions mixing;
 
         private Builder(AudioStreamDecoderOptions options) {
             this.sampleRate = options.sampleRate();
@@ -152,6 +170,7 @@ public final class AudioStreamDecoderOptions {
             this.limits = options.limits;
             this.sampleFormat = options.sampleFormat;
             this.verifyIntegrity = options.verifyIntegrity;
+            this.mixing = options.mixing;
         }
 
         /**
@@ -232,14 +251,29 @@ public final class AudioStreamDecoderOptions {
         }
 
         /**
+         * Sets how decoded channels are mixed; see {@link AudioStreamDecoderOptions#mixing()}.
+         *
+         * @param mixing the value
+         * @return this builder
+         */
+        public Builder mixing(ChannelMixerOptions mixing) {
+            this.mixing = Objects.requireNonNull(mixing, "mixing");
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the sample rate is not positive
+         * @throws IllegalArgumentException if the sample rate is not positive, or the mixing holds a
+         * caller's matrix and the sample format is not {@link SampleFormat#FLOAT}
          */
         public AudioStreamDecoderOptions build() {
             var rate = sampleRate.isPresent() ? Checks.positive("sample rate", sampleRate.getAsInt()) : 0;
-            return new AudioStreamDecoderOptions(rate, layout, limits, sampleFormat, verifyIntegrity);
+            if (mixing.matrix().isPresent() && sampleFormat != SampleFormat.FLOAT) {
+                throw new IllegalArgumentException("a mix matrix needs FLOAT output, not " + sampleFormat);
+            }
+            return new AudioStreamDecoderOptions(rate, layout, limits, sampleFormat, verifyIntegrity, mixing);
         }
     }
 }

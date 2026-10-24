@@ -3,6 +3,7 @@ package com.github.auties00.smalt.audio;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.process.AudioFifo;
 import com.github.auties00.smalt.audio.process.ChannelMixer;
+import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
 import com.github.auties00.smalt.audio.process.Resampler;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
@@ -202,6 +203,16 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private ChannelMixer mixer;
 
     /**
+     * The settings every {@link #mixer} is created with.
+     */
+    private final ChannelMixerOptions mixing;
+
+    /**
+     * Whether {@link #mixing} holds a caller's matrix, which applies even between equal layouts.
+     */
+    private final boolean customMatrix;
+
+    /**
      * The layout {@link #mixer} converts from.
      */
     private ChannelLayout mixerInput;
@@ -372,6 +383,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
         this.config = track.codecConfig().orElse(null);
         this.outputRate = options.sampleRate().orElse(decoder.sampleRate());
         this.outputLayout = options.layout().orElse(decoder.layout());
+        this.mixing = options.mixing();
+        this.customMatrix = mixing.matrix().isPresent();
         this.format = options.sampleFormat();
         if (format != SampleFormat.FLOAT) {
             if (outputRate != decoder.sampleRate() || !outputLayout.equals(decoder.layout())) {
@@ -1339,11 +1352,11 @@ public final class AudioStreamDecoder implements AutoCloseable {
             }
             input = shifted;
         }
-        if (buffer.layout().equals(outputLayout)) {
+        if (buffer.layout().equals(outputLayout) && !customMatrix) {
             return input;
         }
         if (mixer == null || !buffer.layout().equals(mixerInput)) {
-            mixer = new ChannelMixer(buffer.layout(), outputLayout);
+            mixer = new ChannelMixer(buffer.layout(), outputLayout, mixing);
             mixerInput = buffer.layout();
         }
         if (mixed == null || mixed[0].length < frames) {

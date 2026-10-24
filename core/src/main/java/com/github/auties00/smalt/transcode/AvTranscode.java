@@ -374,7 +374,7 @@ final class AvTranscode {
      */
     private void normalizeLoudness(List<Stage> stages) {
         var normalization = options.audio().loudnessNormalization();
-        if (normalization.isEmpty()) {
+        if (normalization.isEmpty() || options.audio().singlePassNormalization()) {
             return;
         }
         for (var stage : stages) {

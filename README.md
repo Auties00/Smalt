@@ -490,7 +490,7 @@ them, so files exchanged with ffmpeg differ in these known ways:
 | E-AC-3 (Dolby Digital Plus) | yes: independent and dependent substreams (7.1 and other custom channel maps, AC-3 cores extended by an E-AC-3 dependent substream), 1 to 6 blocks per frame, reduced sampling rates, spectral extension, enhanced coupling, adaptive hybrid transform with gain-adaptive quantization, transient pre-noise processing; the Dolby Atmos (JOC) object audio is reported and its channel bed decoded | yes: one independent substream for mono to 5.1, and every program beyond 5.1 whose channels have custom channel map locations (7.0, 7.1, 6.1, 5.1.2, 7.1.2, 7.1.4, 9.1, 11.1 and the like) as a 5.1 core plus dependent substreams with custom channel maps, one whenever it holds the extra channels; 32, 44.1 and 48 kHz with 1, 2, 3 or 6 blocks per frame and 16, 22.05 and 24 kHz with 6, any constant bit rate up to frames of 2048 words per substream (1024 kbit/s at 48 kHz with 6 blocks, 6144 kbit/s with 1), the AC-3 tools plus frame-based exponent strategies and spectral extension (from 44 to 92 kbit/s per channel); the adaptive hybrid transform, transient pre-noise processing (frames held until the frames their data concerns are coded) and enhanced coupling on request; the metadata of `Ac3Metadata`, with the mixing and informational metadata of the independent substream, and dynamic range words | `smalt-mpeg` | `audio.ac3` | spec (ATSC A/52 Annex E, ETSI TS 102 366, ETSI TS 103 420) | **may be covered by Dolby patents**; not covered by the MIT license |
 | FLAC | yes: 4 to 32-bit samples, also as their integers bit for bit (`decodeIntegers`, `SampleFormat.INTEGER`) or exact doubles; the `STREAMINFO` MD5 signature checked on request (`AudioDecoderOptions.verifyIntegrity`) | yes: libFLAC's compression levels 0-8, 4 to 32-bit integer (planar, interleaved or `IntegerAudioBuffer` blocks of any sample size) or float input, every stereo mode, MD5 and seek table | `smalt-audio` | `audio.flac` | libFLAC | none |
 | ALAC (Apple Lossless) | yes: 16/20/24/32-bit, 1-8 channels, from MP4 and Matroska, also as their integers bit for bit (32-bit streams of Apple's reference encoder included) or exact doubles | yes: 16, 20, 24 and 32-bit integer or float input, 1-8 channels, adaptive stereo matrixing and predictor search (or Apple's fast mode), escaped and partial frames, any frame length from 16 to 65536; packets byte-identical to Apple's reference encoder | `smalt-audio` | `audio.alac` | Apple's ALAC (Apache-2.0) | none (royalty-free) |
-| PCM (integer and float, any layout) | yes; integer formats up to 32 bits and G.711 also as their integers bit for bit, every format as doubles (64-bit floats unchanged) | 8 to 64-bit, integer and float, either byte order, G.711 A-law and mu-law, through the containers that carry it, from float, integer or double samples | `smalt-core` | `audio.pcm` | spec | none |
+| PCM (integer and float, any layout) | yes; integer formats up to 32 bits and G.711 also as their integers bit for bit, every format as doubles (64-bit floats unchanged) | 8 to 64-bit, integer and float, either byte order, G.711 A-law and mu-law, through the containers that carry it, from float, integer or double samples; triangular, high-pass triangular or noise-shaped dither for 8, 16 and 24-bit output (`PcmEncoderOptions.dither`) | `smalt-core` | `audio.pcm` | spec; Lipshitz, Vanderkooy and Wannamaker (dither, E-weighted noise shaping) | none |
 | AMR-NB, AMR-WB | yes, bit-exact with the 3GPP fixed-point decoders (TS 26.073, TS 26.173): every mode, mode changes on any frame, comfort noise (SID) and DTX, bad and lost frame concealment, homing; storage-format frames from `.amr`, MP4/3GP `samr`/`sawb` and Matroska (`A_AMR/NB`, `A_AMR/WB`, `A_MS/ACM`), and the frame-blocks of multichannel `.amr` files (one decoder state per channel); the TS 26.074 sequences pass in linear PCM and through G.711 A-law and mu-law | yes, bit-exact with the 3GPP encoders: AMR-NB in every mode with DTX and VAD option 1 or 2, AMR-WB in every mode with VAD and DTX; mode changes on any frame | `smalt-mpeg` | `audio.amr` | AMR-NB decoder and encoder and AMR-WB decoder: opencore-amr (PacketVideo, Apache-2.0); AMR-WB encoder: vo-amrwbenc (VisualOn, Apache-2.0), its arithmetic aligned with TS 26.173 (passes TS 26.174, so its frames differ from `libvo_amrwbenc` on loud or unusual input); both derived from the 3GPP reference code | **patent pool** (VoiceAge, AMR-WB); AMR-NB patents are held by its developers; not covered by the MIT license |
 
 Where the AC-3 and E-AC-3 specifications leave room or disagree, the decoder follows what Dolby's encoders
@@ -689,9 +689,9 @@ them in each stream's `tags()` and `disposition()`.
 | Color conversion and chroma upsampling | `smalt-core` | `image.ops` | libjpeg-turbo; ITU-T H.273 |
 | Color management: ICC v2/v4 profiles (matrix/TRC, `lut8`, `lut16`, `lutAtoB`/`lutBtoA`, floating-point `multiProcessElement` `D2Bn`/`B2Dn` tables with segmented curves, matrices and float lookup tables, gray, RGB, CMYK, n-color, L*a*b* and XYZ connection spaces), device link, abstract and named color (`ncl2`) profiles, chains of profiles, transforms with the four intents and black point compensation, built-in sRGB, Display P3, Adobe RGB, ProPhoto, BT.709, BT.2020 and gray profiles, CICP mapping of every H.273 primaries set (CIE XYZ included) and transfer (the logarithmic, BT.1361 and SMPTE ST 428-1 ones included), PQ and HLG profiles read from and written as ICC v4.4 `cicp`-tagged profiles, PQ/HLG to SDR tone mapping (BT.2390 EETF), SDR to PQ/HLG with the BT.2408 reference white, PQ to and from HLG through display light (BT.2390), HDR gamut conversion and tone mapping to a target's peak | `smalt-core` | `image.color` | Little CMS 2.17 (MIT); ITU-R BT.2100, BT.2390, BT.2408, SMPTE ST 2084, ARIB STD-B67, ICC.1:2022 |
 | HDR gain maps: ISO 21496-1 metadata (binary and Adobe `hdrgm` XMP), rendering of an image for a display headroom to 16-bit PQ or HLG with its content light level, computation of a gain map from two renditions (`GainMaps`) | `smalt-core` | `image.gainmap` | ISO 21496-1 as libavif and libultrahdr implement it, the Adobe gain map specification; libultrahdr (fraction search), libavif (gain range without outliers) |
-| Audio resampling, channel mixing, FIFO | `smalt-core` | `audio.process` | textbook Kaiser-windowed sinc design |
+| Audio resampling (also with a variable ratio for clock drift, `Resampler.setRatio`), channel mixing (ITU-R BS.775 rules, AC-3 center, surround and LFE mix levels, ATSC A/52 Lo/Ro and Lt/Rt downmixes, a caller's matrix, `ChannelMixerOptions`), FIFO | `smalt-core` | `audio.process` | textbook Kaiser-windowed sinc design; ATSC A/52 section 7.8 |
 | Voice processing at 8, 16, 32 and 48 kHz with up to 8 capture and render channels (band splitting and three-band filter bank, multichannel AEC3): echo cancellation (AEC3 and the mobile echo canceller), noise suppression, high-pass filter, the legacy gain controller in its digital and analog modes, the analog gain controller with clipping prediction, and the AGC2 level controller (adaptive digital gain with the RNN voice activity detector, saturation protector, limiter, input volume controller) | `smalt-audio` | `audio.voice` | WebRTC audio processing module, bit-exact with its scalar build; PFFFT; RNNoise weights; Ooura FFT; musl and fdlibm math (royalty-free WebRTC grant in `PATENTS`) |
-| Loudness: momentary, short-term and integrated loudness, loudness range, sample and true peak (ITU-R BS.1770-4, EBU R128, Tech 3341 and 3342 minimum requirements), any channel layout, bounded memory; silence detection; loudness normalization gains | `smalt-core` | `audio.loudness` | libebur128 (MIT) |
+| Loudness: momentary, short-term and integrated loudness, loudness range, sample and true peak (ITU-R BS.1770-4, EBU R128, Tech 3341 and 3342 minimum requirements), any channel layout, bounded memory; silence detection; loudness normalization gains, single-pass normalization (`LoudnessNormalizer`) and a look-ahead true-peak limiter (`TruePeakLimiter`); ReplayGain 2.0 track and album gains, written as `REPLAYGAIN_*` tags or Opus `R128_*` tags (RFC 7845) and applied by `AudioReader` (`AudioReaderOptions.replayGain`) | `smalt-core` | `audio.loudness` | libebur128 (MIT); ReplayGain 2.0 specification, RFC 7845 |
 
 Everything in `image.ops` of `smalt-core`. Inputs are never modified and results are new pictures, except
 those of a `YuvConverter` (below). Every operation keeps the input's depth, 8 or 16 bits, unless it names one.
@@ -786,8 +786,8 @@ checks a FLAC source's MD5 signature on the way.
 | Anamorphic video (`SampleAspectMode`) | samples kept with the ratio recorded (scaled by an uneven resize) where the container stores one, else resampled to square samples | ratio kept |
 | Frame rate (drop / repeat), pixel format | yes | - |
 | Key frame interval, or no periodic key frames (`VideoTranscodeOptions.keyframeInterval`, `VideoEncoderOptions.keyframeInterval`) | yes (H.264, VP8, VP9, AV1; ProRes, DNxHD and Motion-JPEG are all key frames) | - |
-| Resample, remix, gain, sample format (PCM codec) | yes | - |
-| Loudness normalization (two passes: measure the kept range, then apply the gain under a true-peak ceiling) | yes | - |
+| Resample, remix (mix levels, Lt/Rt, a caller's matrix: `AudioTranscodeOptions.mixing`), gain, sample format (PCM codec) | yes | - |
+| Loudness normalization (two passes: measure the kept range, then apply the gain under a true-peak ceiling, or reach the target and keep the ceiling with a true-peak limiter; or one pass that follows the loudness as it encodes, `singlePassNormalization`) | yes | - |
 | Subtitles: SubRip, WebVTT, 3GPP timed text, ASS | converted to what the container carries (also to `.srt` and `.vtt` files), cut to the kept range; a cue still shown at a trimmed start is kept however early it began | copied, retimed and cut to the kept range, likewise |
 | Image convert, scale, crop, flatten, byte budget | yes (first frame of animations; animated output needs an animation encoder; an animation fits the budget by quality, then size, then dropped frames) | byte-identical pass-through when nothing changes |
 
@@ -1166,6 +1166,13 @@ checks a FLAC source's MD5 signature on the way.
   channel pair of 32-bit samples that keeps every byte (33-bit side information, which Apple's encoder never writes)
   raises `MediaException.Unsupported`. The `STREAMINFO` MD5 check needs a decode from the stream's first frame, so a
   read that seeks first is not checked.
+- Sample processing: the Lt/Rt downmix is the ATSC A/52 matrix, which sums the surrounds without the 90 degree
+  phase shift some matrix surround encoders apply. The variable-ratio resampler keeps the anti-aliasing filter of
+  the nominal rates, so a ratio far from the nominal one (it accepts a factor of two) aliases more than a resampler
+  built for the new rates; clock drift stays far below that. The noise-shaped PCM dither uses a filter designed for
+  44.1 kHz at every rate. The true-peak limiter aims 0.02 dB under its ceiling, and a lossy encoder that follows it
+  can add overshoot of its own. Single-pass loudness normalization levels changes slower than a few seconds and
+  raises pauses by a few decibels before it holds its gain; the two-pass normalization keeps the dynamics.
 - The MP4 demuxer reads the compressed boxes of ISO/IEC 14496-12 clause 8.20 (`!mov`, `!mof`, `!six`, `!ssx`)
   and QuickTime compressed movies (`cmov` with the `zlib` algorithm, the only one QuickTime writes; another raises
   `MediaException.Unsupported`), and writing the tags of such a file stores its movie box uncompressed; a tag
@@ -1525,11 +1532,19 @@ var options = TranscodeOptions.of(OutputContainer.M4A).toBuilder()
         .audio(AudioTranscodeOptions.builder().loudnessNormalization(LoudnessNormalization.forPodcast()).build())
         .build();
 Transcoder.transcode(Path.of("episode.wav"), Path.of("episode.m4a"), options);
+
+// ReplayGain 2.0: tag an album (R128_* fields for Opus files), then play it at album gain
+var gains = Loudness.writeReplayGain(List.of(Path.of("01.flac"), Path.of("02.flac")));
+try (var source = MediaSource.of(Path.of("01.flac"));
+     var reader = AudioReader.open(source, AudioReaderOptions.builder().replayGain(ReplayGain.Mode.ALBUM).build())) {
+    System.out.printf("album gain %.2f dB%n", reader.replayGainDb());
+}
 ```
 
 `LoudnessMeter` measures a stream of `AudioBuffer`s with bounded memory and passes the EBU Tech 3341 and
 3342 minimum requirements; `SilenceDetector` finds the stretches below a level that last long enough, like
-ffmpeg's `silencedetect`.
+ffmpeg's `silencedetect`. `LoudnessNormalizer` normalizes a stream in one pass, and `TruePeakLimiter` keeps a
+stream's true peak under a ceiling; `ReplayGainScanner` computes the ReplayGain 2.0 gains of an album.
 
 ### Convert subtitles
 

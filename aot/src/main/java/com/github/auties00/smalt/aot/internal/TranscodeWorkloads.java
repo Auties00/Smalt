@@ -6,6 +6,15 @@ import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.loudness.LoudnessMeter;
+import com.github.auties00.smalt.audio.loudness.LoudnessNormalization;
+import com.github.auties00.smalt.audio.loudness.LoudnessNormalizer;
+import com.github.auties00.smalt.audio.loudness.TruePeakLimiter;
+import com.github.auties00.smalt.audio.loudness.TruePeakLimiterOptions;
+import com.github.auties00.smalt.audio.pcm.PcmDither;
+import com.github.auties00.smalt.audio.pcm.PcmEncoder;
+import com.github.auties00.smalt.audio.pcm.PcmEncoderOptions;
+import com.github.auties00.smalt.audio.process.ChannelMixer;
+import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
 import com.github.auties00.smalt.audio.process.Resampler;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Muxer;
@@ -96,7 +105,8 @@ final class TranscodeWorkloads {
                 file("image-effects", () -> imageEffects(1)),
                 file("color-management", TranscodeWorkloads::colorManagement),
                 file("resample", () -> resample(10)),
-                file("loudness", () -> loudness(10)));
+                file("loudness", () -> loudness(10)),
+                file("audio-processing", () -> audioProcessing(10)));
     }
 
     /**
@@ -433,5 +443,39 @@ final class TranscodeWorkloads {
             SyntheticAudio.feed(music, block, meter::accept);
             Blackhole.consume(Double.doubleToRawLongBits(meter.integrated() + meter.loudnessRange() + meter.truePeak()));
         });
+    }
+
+    /**
+     * Returns a workload that runs stereo music through the sample processors in blocks: a mixer
+     * with a caller's matrix, a variable-ratio resampler whose ratio drifts every block, single-pass loudness
+     * normalization, a true-peak limiter, and a noise-shaped 16-bit PCM encoder.
+     *
+     * @param seconds the music processed per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload audioProcessing(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var mixer = new ChannelMixer(ChannelLayout.STEREO, ChannelLayout.STEREO,
+                ChannelMixerOptions.ofMatrix(new double[][]{{0.9, 0.1}, {0.1, 0.9}}));
+        var resampler = new Resampler(48000, 48000, 2, Resampler.Quality.STANDARD);
+        var normalizer = new LoudnessNormalizer(ChannelLayout.STEREO, 48000, LoudnessNormalization.forStreaming());
+        var limiter = new TruePeakLimiter(2, 48000, TruePeakLimiterOptions.of(-2));
+        var encoder = new PcmEncoder(PcmEncoderOptions.of(Codec.PCM_S16LE, 48000, ChannelLayout.STEREO).toBuilder()
+                .dither(PcmDither.NOISE_SHAPED).build());
+        var block = new AudioBuffer(ChannelLayout.STEREO, 48000, AudioStreams.BLOCK_FRAMES);
+        var mixed = new float[2][AudioStreams.BLOCK_FRAMES];
+        var resampled = new float[2][2 * AudioStreams.BLOCK_FRAMES];
+        var normalized = new float[2][normalizer.delay() + 2 * AudioStreams.BLOCK_FRAMES];
+        var limited = new AudioBuffer(ChannelLayout.STEREO, 48000, normalizer.delay() + 2 * AudioStreams.BLOCK_FRAMES);
+        int[] blocks = {0};
+        return TrainingWorkload.of("audio-processing", () -> SyntheticAudio.feed(music, block, buffer -> {
+            mixer.process(buffer.planes(), mixed, buffer.frames());
+            resampler.setRatio(1 + 0.001 * ((blocks[0]++ % 7) - 3));
+            var frames = resampler.process(mixed, buffer.frames(), resampled, 0);
+            frames = normalizer.process(resampled, 0, frames, normalized, 0);
+            frames = limiter.process(normalized, 0, frames, limited.planes(), 0);
+            limited.setFrames(frames);
+            encoder.encode(limited, packet -> Blackhole.consume(packet.data().length));
+        }));
     }
 }

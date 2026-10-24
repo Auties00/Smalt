@@ -29,7 +29,9 @@ import java.util.function.Consumer;
  * to the most negative code and {@code +1.0} to the most positive one; unsigned 8-bit samples are
  * offset by 128. This scaling is the inverse of {@link PcmDecoder}'s, so samples decoded from an
  * integer format encode back to the same codes. G.711 samples are first quantized to 16 bits.
- * No dither is applied.
+ * With {@link PcmEncoderOptions#dither()} other than {@link PcmDither#NONE}, an 8, 16 or 24-bit
+ * format adds that dither (and its noise shaping) to the scaled sample before rounding, and codes
+ * {@code -1.0} and {@code +1.0} like any other sample, clipped to the code range.
  *
  * <p>The encoder also takes integer samples ({@link #encode(IntegerAudioBuffer, Consumer)}), which
  * an integer format of {@code n} bits codes after shifting them left to {@code n} bits when they
@@ -86,6 +88,18 @@ public final class PcmEncoder implements AudioEncoder {
     private static final int[] ALAW_SEGMENT_END = {0x1F, 0x3F, 0x7F, 0xFF, 0x1FF, 0x3FF, 0x7FF, 0xFFF};
 
     /**
+     * The error-feedback filter of {@link PcmDither#NOISE_SHAPED}: the five-tap E-weighted filter of
+     * Lipshitz, Vanderkooy and Wannamaker, JAES 39(11), 1991, applied to the last five errors.
+     */
+    private static final double[] SHAPING = {2.033, -2.165, 1.959, -1.590, 0.6149};
+
+    /**
+     * The largest magnitude of a fed-back error, in LSB: the dither plus the rounding error, so that a
+     * clipped sample cannot drive the feedback loop away.
+     */
+    private static final double MAX_ERROR = 1.5;
+
+    /**
      * The configuration.
      */
     private final PcmEncoderOptions options;
@@ -126,6 +140,32 @@ public final class PcmEncoder implements AudioEncoder {
     private long emitted;
 
     /**
+     * The dither added before rounding.
+     */
+    private final PcmDither dither;
+
+    /**
+     * The size in bits of the codes that are dithered, or 0 when the format is not dithered.
+     */
+    private final int ditherBits;
+
+    /**
+     * The state of each channel's pseudo-random generator, or {@code null} without dither.
+     */
+    private final long[] random;
+
+    /**
+     * The last uniform value of each channel, for {@link PcmDither#TRIANGULAR_HIGH_PASS}.
+     */
+    private final double[] previousUniform;
+
+    /**
+     * The last {@code SHAPING.length} errors of each channel, newest first, for
+     * {@link PcmDither#NOISE_SHAPED}.
+     */
+    private final double[][] errors;
+
+    /**
      * Constructs an encoder producing signed 16-bit little-endian samples from 48 kHz stereo input.
      */
     public PcmEncoder() {
@@ -143,6 +183,20 @@ public final class PcmEncoder implements AudioEncoder {
         this.channels = options.layout().channels();
         this.bytesPerSample = PcmDecoder.bytesPerSample(codec);
         this.frameBytes = bytesPerSample * channels;
+        this.dither = options.dither();
+        var dithered = dither != PcmDither.NONE && switch (codec) {
+            case PCM_U8, PCM_S8, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE -> true;
+            default -> false;
+        };
+        this.ditherBits = dithered ? bytesPerSample * 8 : 0;
+        this.random = dithered ? new long[channels] : null;
+        this.previousUniform = dithered ? new double[channels] : null;
+        this.errors = dithered ? new double[channels][SHAPING.length] : null;
+        if (dithered) {
+            for (var channel = 0; channel < channels; channel++) {
+                random[channel] = 0x9E37_79B9_7F4A_7C15L * (channel + 1);
+            }
+        }
     }
 
     /**
@@ -286,9 +340,19 @@ public final class PcmEncoder implements AudioEncoder {
             for (var c = 0; c < channels; c++) {
                 var offset = pendingFrames * frameBytes + c * bytesPerSample;
                 if (floats != null) {
-                    convert(floats[c], consumed, pending, offset, frameBytes, count);
+                    if (ditherBits != 0) {
+                        convertDithered(floats[c], c, consumed, pending, offset, frameBytes, count);
+                    } else {
+                        convert(floats[c], consumed, pending, offset, frameBytes, count);
+                    }
                 } else if (integers != null) {
-                    convertIntegers(integers[c], bits, consumed, pending, offset, frameBytes, count);
+                    if (ditherBits != 0 && bits > ditherBits) {
+                        convertIntegersDithered(integers[c], bits, c, consumed, pending, offset, frameBytes, count);
+                    } else {
+                        convertIntegers(integers[c], bits, consumed, pending, offset, frameBytes, count);
+                    }
+                } else if (ditherBits != 0) {
+                    convertDoublesDithered(doubles[c], c, consumed, pending, offset, frameBytes, count);
                 } else {
                     convertDoubles(doubles[c], consumed, pending, offset, frameBytes, count);
                 }
@@ -391,6 +455,120 @@ public final class PcmEncoder implements AudioEncoder {
                 }
             }
         }
+    }
+
+    /**
+     * Converts float samples of one channel into dithered codes of {@link #ditherBits} bits.
+     *
+     * @param source the channel's plane
+     * @param channel the channel index
+     * @param from the index of the first sample
+     * @param target the packet
+     * @param offset the index of the first coded sample in {@code target}
+     * @param stride the distance between consecutive coded samples, one frame
+     * @param count the number of samples
+     */
+    private void convertDithered(float[] source, int channel, int from, byte[] target, int offset, int stride,
+                                 int count) {
+        var scale = Math.scalb(1.0, ditherBits - 1);
+        var max = (1L << (ditherBits - 1)) - 1;
+        var min = -max - 1;
+        var position = offset;
+        for (var i = from; i < from + count; i++, position += stride) {
+            putCode(target, position, dither(clip(source[i]) * scale, channel, min, max));
+        }
+    }
+
+    /**
+     * Converts double samples of one channel into dithered codes of {@link #ditherBits} bits.
+     *
+     * @param source the channel's plane
+     * @param channel the channel index
+     * @param from the index of the first sample
+     * @param target the packet
+     * @param offset the index of the first coded sample in {@code target}
+     * @param stride the distance between consecutive coded samples, one frame
+     * @param count the number of samples
+     */
+    private void convertDoublesDithered(double[] source, int channel, int from, byte[] target, int offset, int stride,
+                                        int count) {
+        var scale = Math.scalb(1.0, ditherBits - 1);
+        var max = (1L << (ditherBits - 1)) - 1;
+        var min = -max - 1;
+        var position = offset;
+        for (var i = from; i < from + count; i++, position += stride) {
+            putCode(target, position, dither(clip(source[i]) * scale, channel, min, max));
+        }
+    }
+
+    /**
+     * Converts integer samples wider than {@link #ditherBits} bits into dithered codes of that size.
+     *
+     * @param source the channel's plane
+     * @param bits the sample size of {@code source}, above {@link #ditherBits}
+     * @param channel the channel index
+     * @param from the index of the first sample
+     * @param target the packet
+     * @param offset the index of the first coded sample in {@code target}
+     * @param stride the distance between consecutive coded samples, one frame
+     * @param count the number of samples
+     */
+    private void convertIntegersDithered(int[] source, int bits, int channel, int from, byte[] target, int offset,
+                                         int stride, int count) {
+        var scale = Math.scalb(1.0, ditherBits - bits);
+        var max = (1L << (ditherBits - 1)) - 1;
+        var min = -max - 1;
+        var position = offset;
+        for (var i = from; i < from + count; i++, position += stride) {
+            putCode(target, position, dither(source[i] * scale, channel, min, max));
+        }
+    }
+
+    /**
+     * Rounds one scaled sample to a code after adding the dither, updating the channel's state.
+     *
+     * @param scaled the sample in units of the code's LSB
+     * @param channel the channel index
+     * @param min the smallest code
+     * @param max the largest code
+     * @return the code
+     */
+    private long dither(double scaled, int channel, long min, long max) {
+        var history = errors[channel];
+        var value = scaled;
+        if (dither == PcmDither.NOISE_SHAPED) {
+            value -= SHAPING[0] * history[0] + SHAPING[1] * history[1] + SHAPING[2] * history[2]
+                    + SHAPING[3] * history[3] + SHAPING[4] * history[4];
+        }
+        double noise;
+        if (dither == PcmDither.TRIANGULAR_HIGH_PASS) {
+            var uniform = uniform(channel);
+            noise = uniform - previousUniform[channel];
+            previousUniform[channel] = uniform;
+        } else {
+            noise = uniform(channel) + uniform(channel);
+        }
+        var code = Math.clamp((long) Math.floor(value + noise + 0.5), min, max);
+        if (dither == PcmDither.NOISE_SHAPED) {
+            System.arraycopy(history, 0, history, 1, history.length - 1);
+            history[0] = Math.clamp(code - value, -MAX_ERROR, MAX_ERROR);
+        }
+        return code;
+    }
+
+    /**
+     * Returns the next value of a channel's generator, uniform in {@code [-1/2, 1/2)}.
+     *
+     * @param channel the channel index
+     * @return the value
+     */
+    private double uniform(int channel) {
+        // SplitMix64 (Steele, Lea and Flood, "Fast Splittable Pseudorandom Number Generators", 2014)
+        var state = random[channel] += 0x9E37_79B9_7F4A_7C15L;
+        state = (state ^ (state >>> 30)) * 0xBF58_476D_1CE4_E5B9L;
+        state = (state ^ (state >>> 27)) * 0x94D0_49BB_1331_11EBL;
+        state ^= state >>> 31;
+        return (state >>> 11) * 0x1p-53 - 0.5;
     }
 
     /**

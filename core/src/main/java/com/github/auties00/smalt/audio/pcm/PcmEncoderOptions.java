@@ -22,18 +22,21 @@ public final class PcmEncoderOptions {
     public static final int MAX_FRAMES_PER_PACKET = 1 << 20;
 
     private static final PcmEncoderOptions DEFAULTS = new PcmEncoderOptions(Codec.PCM_S16LE, 48_000, ChannelLayout.STEREO,
-            DEFAULT_FRAMES_PER_PACKET);
+            DEFAULT_FRAMES_PER_PACKET, PcmDither.NONE);
 
     private final Codec codec;
     private final int sampleRate;
     private final ChannelLayout layout;
     private final int framesPerPacket;
+    private final PcmDither dither;
 
-    private PcmEncoderOptions(Codec codec, int sampleRate, ChannelLayout layout, int framesPerPacket) {
+    private PcmEncoderOptions(Codec codec, int sampleRate, ChannelLayout layout, int framesPerPacket,
+                              PcmDither dither) {
         this.codec = codec;
         this.sampleRate = sampleRate;
         this.layout = layout;
         this.framesPerPacket = framesPerPacket;
+        this.dither = dither;
     }
 
     /**
@@ -113,24 +116,37 @@ public final class PcmEncoderOptions {
         return framesPerPacket;
     }
 
+    /**
+     * {@return the dither added before samples are rounded to an integer format; {@link PcmDither#NONE}
+     * by default}
+     *
+     * <p>Dither applies to the 8, 16 and 24-bit integer formats, from float and double input and from
+     * integer input wider than the format; G.711, 32 and 64-bit integer and float formats are coded
+     * without it, as is integer input that fits the format.
+     */
+    public PcmDither dither() {
+        return dither;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof PcmEncoderOptions that
                 && codec == that.codec
                 && sampleRate == that.sampleRate
                 && layout.equals(that.layout)
-                && framesPerPacket == that.framesPerPacket;
+                && framesPerPacket == that.framesPerPacket
+                && dither == that.dither;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(codec, sampleRate, layout, framesPerPacket);
+        return Objects.hash(codec, sampleRate, layout, framesPerPacket, dither);
     }
 
     @Override
     public String toString() {
         return "PcmEncoderOptions[codec=" + codec + ", sampleRate=" + sampleRate + ", layout=" + layout
-                + ", framesPerPacket=" + framesPerPacket + "]";
+                + ", framesPerPacket=" + framesPerPacket + ", dither=" + dither + "]";
     }
 
     /**
@@ -144,12 +160,14 @@ public final class PcmEncoderOptions {
         private int sampleRate;
         private ChannelLayout layout;
         private int framesPerPacket;
+        private PcmDither dither;
 
         private Builder(PcmEncoderOptions options) {
             this.codec = options.codec;
             this.sampleRate = options.sampleRate;
             this.layout = options.layout;
             this.framesPerPacket = options.framesPerPacket;
+            this.dither = options.dither;
         }
 
         /**
@@ -211,6 +229,17 @@ public final class PcmEncoderOptions {
         }
 
         /**
+         * Sets the dither; see {@link PcmEncoderOptions#dither()}.
+         *
+         * @param dither the value
+         * @return this builder
+         */
+        public Builder dither(PcmDither dither) {
+            this.dither = Objects.requireNonNull(dither, "dither");
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -223,7 +252,7 @@ public final class PcmEncoderOptions {
             }
             Checks.positive("sample rate", sampleRate);
             Checks.inRange("frames per packet", framesPerPacket, 1, MAX_FRAMES_PER_PACKET);
-            return new PcmEncoderOptions(codec, sampleRate, layout, framesPerPacket);
+            return new PcmEncoderOptions(codec, sampleRate, layout, framesPerPacket, dither);
         }
     }
 }

@@ -13,7 +13,10 @@ import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.audio.SampleFormat;
 import com.github.auties00.smalt.audio.loudness.LoudnessMeter;
 import com.github.auties00.smalt.audio.loudness.LoudnessNormalization;
+import com.github.auties00.smalt.audio.loudness.LoudnessNormalizer;
 import com.github.auties00.smalt.audio.loudness.LoudnessStats;
+import com.github.auties00.smalt.audio.loudness.TruePeakLimiter;
+import com.github.auties00.smalt.audio.loudness.TruePeakLimiterOptions;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.internal.codec.EncoderTail;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -29,7 +32,9 @@ import com.github.auties00.smalt.track.Rational;
  * of the kept range, stops after the end, applies the gain, and encodes. With a loudness
  * normalization, {@link #normalize(Demuxer, LoudnessNormalization, Cancellation)} first decodes the
  * kept range from a second demuxer and measures it, and the gain it computes replaces the
- * requested one. When the demuxer seeks
+ * requested one; a peak-limiting normalization then runs the samples through a
+ * {@link TruePeakLimiter}, and a single-pass one through a {@link LoudnessNormalizer} instead of the
+ * measuring pass. When the demuxer seeks
  * before the start instead of reading from it ({@link #measure(Demuxer)}, then
  * {@link #startAfterSeek(AudioStreamDecoder.Timing)}), the decoder restarts sample-accurately at
  * the start, resampling in phase with a decode from the beginning of the track, so the encoder
@@ -124,6 +129,28 @@ final class AudioEncodeStage implements Stage {
      */
     private long written;
 
+    /**
+     * The number of kept samples passed on towards the encoder, ahead of {@link #written} by the
+     * frames a processor withholds.
+     */
+    private long taken;
+
+    /**
+     * The single-pass loudness normalizer the samples go through, or {@code null}.
+     */
+    private final LoudnessNormalizer normalizer;
+
+    /**
+     * The true-peak limiter the samples go through, or {@code null}.
+     */
+    private final TruePeakLimiter limiter;
+
+    /**
+     * The block holding the output of {@link #normalizer} or {@link #limiter}, or {@code null}
+     * without one.
+     */
+    private final AudioBuffer processed;
+
     private boolean done;
 
     /**
@@ -166,7 +193,8 @@ final class AudioEncodeStage implements Stage {
             // Matroska), which the integer decoder reads
             var bits = source.bitsPerSample() > 0 ? source.bitsPerSample() : integers ? probe.bitsPerSample() : 0;
             created = createEncoder(codec, rate, layout, options, bits);
-            var unconverted = created.sampleRate() == probe.sampleRate() && created.layout().equals(probe.layout());
+            var unconverted = created.sampleRate() == probe.sampleRate() && created.layout().equals(probe.layout())
+                    && options.mixing().matrix().isEmpty();
             var exact = unconverted && options.gainDb() == 0 && options.loudnessNormalization().isEmpty();
             if (exact && integers && created.supportsIntegerInput()) {
                 decoding = probe;
@@ -183,7 +211,8 @@ final class AudioEncodeStage implements Stage {
                     decodingOptions = probeOptions;
                 } else {
                     decodingOptions = AudioStreamDecoderOptions.of(created.sampleRate(), created.layout()).toBuilder()
-                            .limits(limits).verifyIntegrity(options.verifyIntegrity()).build();
+                            .limits(limits).verifyIntegrity(options.verifyIntegrity()).mixing(options.mixing())
+                            .build();
                 }
                 decoding = AudioStreamDecoder.create(source, decodingOptions);
             }
@@ -213,6 +242,22 @@ final class AudioEncodeStage implements Stage {
         this.block = format == SampleFormat.FLOAT ? new AudioBuffer(encoder.layout(), rate, BLOCK_FRAMES) : null;
         this.integerPlanes = format == SampleFormat.INTEGER ? new int[encoder.layout().channels()][BLOCK_FRAMES] : null;
         this.doubleBlock = format == SampleFormat.DOUBLE ? new DoubleAudioBuffer(encoder.layout(), rate, BLOCK_FRAMES) : null;
+        var normalization = options.loudnessNormalization().orElse(null);
+        var ceiling = normalization == null ? null : normalization.truePeakCeilingDb();
+        if (normalization != null && options.singlePassNormalization()) {
+            this.normalizer = new LoudnessNormalizer(encoder.layout(), rate, normalization);
+            this.limiter = null;
+            this.processed = new AudioBuffer(encoder.layout(), rate, normalizer.delay() + BLOCK_FRAMES);
+        } else if (normalization != null && normalization.peakLimiting() && ceiling.isPresent()) {
+            this.normalizer = null;
+            this.limiter = new TruePeakLimiter(encoder.layout().channels(), rate,
+                    TruePeakLimiterOptions.of(Math.clamp(ceiling.getAsDouble(), -60, 0)));
+            this.processed = new AudioBuffer(encoder.layout(), rate, Math.max(BLOCK_FRAMES, limiter.delay()));
+        } else {
+            this.normalizer = null;
+            this.limiter = null;
+            this.processed = null;
+        }
         this.declared = EncoderTail.track(encoder, outputId)
                 .language(source.language().orElse(null))
                 .duration(keep == Long.MAX_VALUE ? -1 : keep)
@@ -369,8 +414,8 @@ final class AudioEncodeStage implements Stage {
                     System.arraycopy(plane, offset, plane, 0, frames);
                 }
             }
-            if (written + frames >= keep) {
-                frames = (int) (keep - written);
+            if (taken + frames >= keep) {
+                frames = (int) (keep - taken);
                 done = true;
             }
             if (frames <= 0) {
@@ -383,8 +428,28 @@ final class AudioEncodeStage implements Stage {
                     }
                 }
             }
-            block.setFrames(frames);
-            encoder.encode(block, tail);
+            taken += frames;
+            if (processed == null) {
+                block.setFrames(frames);
+                encoder.encode(block, tail);
+                written += frames;
+            } else if (normalizer != null) {
+                encodeProcessed(normalizer.process(planes, 0, frames, processed.planes(), 0));
+            } else {
+                encodeProcessed(limiter.process(planes, 0, frames, processed.planes(), 0));
+            }
+        }
+    }
+
+    /**
+     * Encodes the frames a processor wrote into {@link #processed}.
+     *
+     * @param frames the number of frames written
+     */
+    private void encodeProcessed(int frames) {
+        if (frames > 0) {
+            processed.setFrames(frames);
+            encoder.encode(processed, tail);
             written += frames;
         }
     }
@@ -408,13 +473,14 @@ final class AudioEncodeStage implements Stage {
                     System.arraycopy(plane, offset, plane, 0, frames);
                 }
             }
-            if (written + frames >= keep) {
-                frames = (int) (keep - written);
+            if (taken + frames >= keep) {
+                frames = (int) (keep - taken);
                 done = true;
             }
             if (frames <= 0) {
                 break;
             }
+            taken += frames;
             if (integerPlanes != null) {
                 var bits = decoder.bitsPerSample();
                 if (integerBlock == null || integerBlock.bitsPerSample() != bits) {
@@ -435,6 +501,11 @@ final class AudioEncodeStage implements Stage {
         if (!done) {
             decoder.finish();
             drain();
+        }
+        if (normalizer != null) {
+            encodeProcessed(normalizer.flush(processed.planes(), 0));
+        } else if (limiter != null) {
+            encodeProcessed(limiter.flush(processed.planes(), 0));
         }
         encoder.flush(tail);
         tail.finish(written + encoder.delay());
