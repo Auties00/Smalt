@@ -422,6 +422,104 @@ class FlacEncoderTest {
             }
         }
 
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"matroska", "ogg"})
+        @DisplayName("Matroska and Ogg store the final STREAMINFO on a seekable sink and keep the initial one on a stream")
+        void finalStreamInfo(String container, @TempDir Path directory) throws Exception {
+            var samples = signal(Shape.MUSIC, 2, 24, 70_001, 12);
+            var options = FlacEncoderOptions.defaults().toBuilder().bitsPerSample(24)
+                    .format(48_000, ChannelLayout.STEREO).build();
+            var encoded = encode(options, samples);
+            var seekable = MediaSink.memory();
+            muxFinal(container, seekable, encoded);
+            var stream = new java.io.ByteArrayOutputStream();
+            try (var sink = MediaSink.of(stream)) {
+                muxFinal(container, sink, encoded);
+            }
+            var files = List.of(seekable.toByteArray(), stream.toByteArray());
+            for (var index = 0; index < files.size(); index++) {
+                var finalForm = index == 0;
+                var source = MediaSource.of(files.get(index));
+                try (var demuxer = container.equals("ogg") ? new com.github.auties00.smalt.container.ogg.OggDemuxer(source)
+                        : new MatroskaDemuxer(source)) {
+                    var track = (AudioTrack) demuxer.tracks().getFirst();
+                    var config = track.codecConfig().orElseThrow();
+                    var expected = finalForm ? encoded.config() : encoded.initialConfig();
+                    assertArrayEquals(Arrays.copyOfRange(expected, 8, 42), Arrays.copyOfRange(config, 8, 42),
+                            finalForm ? "final STREAMINFO" : "initial STREAMINFO");
+                    var decoded = decodeAll(demuxer, track, 2);
+                    assertArrayEquals(samples[0], decoded[0]);
+                    assertArrayEquals(samples[1], decoded[1]);
+                    if (finalForm) {
+                        assertEquals(samples[0].length, read(config, 21, 5) & 0xFFFFFFFFFL, "total samples");
+                        assertArrayEquals(md5(samples, 24), Arrays.copyOfRange(config, 26, 42), "MD5");
+                    } else {
+                        assertEquals(0, read(config, 26, 8) | read(config, 34, 8), "no MD5 before the end");
+                    }
+                }
+            }
+            if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
+                var path = directory.resolve("final." + (container.equals("ogg") ? "oga" : "mka"));
+                Files.write(path, seekable.toByteArray());
+                Oracle.assertDecodesCleanly(path);
+                var native24 = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-i",
+                        path.toString(), "-map", "0:a:0", "-c:a", "copy", "-f", "flac", "-"));
+                var extracted = directory.resolve("extracted.flac");
+                Files.write(extracted, native24);
+                assertArrayEquals(md5(samples, 24), Arrays.copyOfRange(native24, 26, 42), "MD5 ffmpeg copies out");
+                assertEquals(samples[0].length, read(native24, 21, 5) & 0xFFFFFFFFFL, "total samples ffmpeg copies out");
+                var pcm = Oracle.run(Oracle.Tool.FFMPEG, Duration.ofMinutes(1), List.of("-v", "error", "-i",
+                        extracted.toString(), "-f", "s24le", "-"));
+                assertArrayEquals(md5(samples, 24), java.security.MessageDigest.getInstance("MD5").digest(pcm),
+                        "ffmpeg's decode of the stored stream matches the samples");
+                if (Oracle.find(Oracle.Tool.FLAC).isPresent()) {
+                    Oracle.run(Oracle.Tool.FLAC, Duration.ofMinutes(1), List.of("-t", "-s", "-w", extracted.toString()));
+                }
+            }
+        }
+
+        private static void muxFinal(String container, MediaSink sink, FlacEncoding.Encoded encoded) {
+            try (var muxer = container.equals("ogg") ? new com.github.auties00.smalt.container.ogg.OggMuxer(sink)
+                    : new MatroskaMuxer(sink)) {
+                muxer.addTrack(FlacEncoding.track(encoded.initialConfig(), 48_000));
+                for (var packet : encoded.packets()) {
+                    muxer.writePacket(packet);
+                }
+                muxer.updateCodecConfig(0, encoded.config());
+                muxer.finish();
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"MATROSKA", "OGG"})
+        @DisplayName("a transcode to Matroska or Ogg FLAC stores the final STREAMINFO")
+        void transcodeToContainer(String name, @TempDir Path directory) throws Exception {
+            var wav = com.github.auties00.smalt.testkit.Fixtures.ffmpeg("wav", List.of("-f", "lavfi", "-i",
+                    "aevalsrc=exprs=0.5*sin(2*PI*440*t)|0.4*sin(2*PI*660*t):s=44100:d=7"), List.of("-c:a", "pcm_s16le"));
+            var container = com.github.auties00.smalt.transcode.OutputContainer.valueOf(name);
+            assertTrue(container.supports(Codec.FLAC));
+            var sink = MediaSink.memory();
+            com.github.auties00.smalt.transcode.Transcoder.transcode(MediaSource.of(wav), sink,
+                    com.github.auties00.smalt.transcode.TranscodeOptions.of(container).toBuilder()
+                            .audio(com.github.auties00.smalt.transcode.AudioTranscodeOptions.encode(Codec.FLAC))
+                            .build());
+            var source = MediaSource.of(sink.toByteArray());
+            try (var demuxer = name.equals("OGG") ? new com.github.auties00.smalt.container.ogg.OggDemuxer(source)
+                    : new MatroskaDemuxer(source)) {
+                var track = (AudioTrack) demuxer.tracks().getFirst();
+                assertEquals(Codec.FLAC, track.codec());
+                var config = track.codecConfig().orElseThrow();
+                assertEquals(7L * 44_100, read(config, 21, 5) & 0xFFFFFFFFFL, "total samples");
+                var decoded = decodeAll(demuxer, track, 2);
+                assertArrayEquals(md5(decoded, 16), Arrays.copyOfRange(config, 26, 42), "MD5 of the decoded samples");
+            }
+            if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
+                var path = directory.resolve("transcoded." + (name.equals("OGG") ? "oga" : "mka"));
+                Files.write(path, sink.toByteArray());
+                Oracle.assertDecodesCleanly(path);
+            }
+        }
+
         @Test
         @DisplayName("a transcode to native FLAC stores the final STREAMINFO and seek table")
         void transcode(@TempDir Path directory) throws Exception {

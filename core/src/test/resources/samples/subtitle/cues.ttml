@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tts="http://www.w3.org/ns/ttml#styling" xml:lang="en">
+  <head>
+    <layout>
+      <region xml:id="bottom" tts:origin="10% 10%" tts:extent="80% 80%" tts:displayAlign="after" tts:textAlign="center"/>
+    </layout>
+  </head>
+  <body region="bottom">
+    <div>
+      <p begin="00:00:00.000" end="00:00:00.400">Hello</p>
+      <p begin="0.5s" end="0.9s"><span tts:fontStyle="italic">World</span></p>
+      <p begin="1.25s" end="2s">Two<br/>lines</p>
+    </div>
+  </body>
+</tt>
