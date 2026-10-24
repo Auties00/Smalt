@@ -58,7 +58,9 @@ class SubtitleTranscodeTest {
     private static byte[] transcode(byte[] input, TranscodeOptions options) {
         var sink = MediaSink.memory();
         Transcoder.transcode(MediaSource.of(input), sink, options);
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("subtitle-transcode.bin", data);
+        return data;
     }
 
     private static byte[] ffmpegSrt(Path input) {
@@ -76,13 +78,22 @@ class SubtitleTranscodeTest {
      * Builds a Matroska file with 7 s of PCM audio, a SubRip track and an ASS track.
      */
     private static byte[] matroska() {
-        var audio = PcmPackets.tone(Codec.PCM_S16LE, 48_000, ChannelLayout.STEREO, 7 * 48_000);
+        return matroska(CUES, 48_000, 7);
+    }
+
+    /**
+     * Builds a Matroska file with PCM audio of a rate and length, a SubRip track and an ASS track
+     * carrying the same cues.
+     */
+    private static byte[] matroska(List<SubtitleCue> cues, int sampleRate, int seconds) {
+        var layout = sampleRate == 48_000 ? ChannelLayout.STEREO : ChannelLayout.MONO;
+        var audio = PcmPackets.tone(Codec.PCM_S16LE, sampleRate, layout, seconds * sampleRate);
         var subrip = SubtitleEncoder.track(Codec.SUBRIP, 2).toBuilder().language("eng").build();
         var ass = SubtitleEncoder.track(Codec.ASS, 3).toBuilder().language("ita").build();
         var packets = new ArrayList<Packet>(audio.packets());
         var subripEncoder = new SubtitleEncoder(subrip);
         var assEncoder = new SubtitleEncoder(ass);
-        for (var cue : CUES) {
+        for (var cue : cues) {
             packets.add(subripEncoder.encode(cue, SubtitleMarkup.SUBRIP));
             packets.add(assEncoder.encode(cue, SubtitleMarkup.SUBRIP));
         }
@@ -95,7 +106,9 @@ class SubtitleTranscodeTest {
             packets.forEach(muxer::writePacket);
             muxer.finish();
         }
-        return sink.toByteArray();
+        var data = sink.toByteArray();
+        com.github.auties00.smalt.testkit.validate.Validators.assertValid("subtitle-source.mkv", data);
+        return data;
     }
 
     @Nested
@@ -180,6 +193,100 @@ class SubtitleTranscodeTest {
                     .range(1_000_000, 5_500_000).build());
             assertEquals(List.of(SubtitleCue.of(0, 1_000_000, "<i>One</i> & two"), SubtitleCue.of(1_500_000, 3_000_000, "Three\nfour"),
                     SubtitleCue.of(4_000_000, 4_500_000, "<b>Five</b>")), cues(copied, 2));
+        }
+
+        @Test
+        @DisplayName("keeps a cue still on screen at a trimmed start far past the seek point")
+        void longCueAtTrimmedStart() {
+            // a 60 s cue starting 25 s before the trimmed start, a cue in the cluster the seek lands in,
+            // and two cues after the start; 8 kHz mono PCM keeps the 70 s file small
+            var cues = List.of(
+                    SubtitleCue.of(5_000_000, 65_000_000, "Long"),
+                    SubtitleCue.of(29_000_000, 31_000_000, "Edge"),
+                    SubtitleCue.of(31_000_000, 33_000_000, "After"),
+                    SubtitleCue.of(40_000_000, 41_000_000, "Late"));
+            var input = matroska(cues, 8_000, 70);
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(input))) {
+                assertTrue(demuxer.isSeekable(), "the test needs the seeking path");
+            }
+            var expected = List.of(SubtitleCue.of(0, 35_000_000, "Long"), SubtitleCue.of(0, 1_000_000, "Edge"),
+                    SubtitleCue.of(1_000_000, 3_000_000, "After"), SubtitleCue.of(10_000_000, 11_000_000, "Late"));
+            var trimmed = TranscodeOptions.of(OutputContainer.MATROSKA).toBuilder().start(30_000_000).build();
+            var copied = transcode(input, trimmed);
+            assertEquals(expected, cues(copied, 2));
+            assertEquals(expected, cues(copied, 3));
+            assertEquals(expected, cues(transcode(input, TranscodeOptions.of(OutputContainer.SRT).toBuilder()
+                    .start(30_000_000).build()), -1));
+            var unseeked = transcode(input, trimmed.toBuilder().seeking(false).build());
+            assertEquals(cues(unseeked, 2), cues(copied, 2));
+            var mp4 = transcode(input, TranscodeOptions.of(OutputContainer.MP4).toBuilder()
+                    .subtitles(SubtitleTranscodeOptions.builder().trackId(2).build()).build());
+            // 3GPP timed text cannot overlap cues, so the MP4 splits them; the seeked trim must still
+            // equal a trim that decodes from the start
+            var mp4Trim = TranscodeOptions.of(OutputContainer.SRT).toBuilder().start(30_000_000).build();
+            var mp4Cues = cues(transcode(mp4, mp4Trim), -1);
+            assertEquals(cues(transcode(mp4, mp4Trim.toBuilder().seeking(false).build()), -1), mp4Cues);
+            assertEquals(0, mp4Cues.getFirst().startMicros());
+            assertTrue(mp4Cues.getFirst().text().startsWith("Long"), mp4Cues.toString());
+            var webm = transcode(input, TranscodeOptions.of(OutputContainer.WEBM).toBuilder().noAudio()
+                    .range(30_000_000, 39_000_000).build());
+            assertEquals(List.of(SubtitleCue.of(0, 9_000_000, "Long"), SubtitleCue.of(0, 1_000_000, "Edge"),
+                    SubtitleCue.of(1_000_000, 3_000_000, "After")), cues(webm, -1));
+        }
+
+        @Test
+        @DisplayName("keeps a cue that appears with another and is stored far after its time")
+        void lateCueAtTrimmedStart() {
+            var cues = List.of(
+                    SubtitleCue.of(5_000_000, 65_000_000, "Long"),
+                    SubtitleCue.of(5_000_000, 65_000_000, "Late stored"),
+                    SubtitleCue.of(31_000_000, 33_000_000, "After"));
+            var audio = PcmPackets.tone(Codec.PCM_S16LE, 8_000, ChannelLayout.MONO, 70 * 8_000);
+            var subrip = SubtitleEncoder.track(Codec.SUBRIP, 2);
+            var encoder = new SubtitleEncoder(subrip);
+            var packets = new ArrayList<Packet>(audio.packets());
+            packets.add(encoder.encode(cues.get(0), SubtitleMarkup.SUBRIP));
+            packets.add(encoder.encode(cues.get(2), SubtitleMarkup.SUBRIP));
+            packets.sort(Comparator.comparingLong(packet -> (packet.trackId() == 2 ? subrip : audio.track()).timeBase()
+                    .toMicros(packet.pts())));
+            // the second cue goes after the audio of 50 s, past the reach of the subtitle scan
+            var late = encoder.encode(cues.get(1), SubtitleMarkup.SUBRIP);
+            var at = 0;
+            while (packets.get(at).trackId() == 2 || audio.track().timeBase().toMicros(packets.get(at).pts()) < 50_000_000) {
+                at++;
+            }
+            packets.add(at, late);
+            var sink = MediaSink.memory();
+            try (var muxer = new MatroskaMuxer(sink)) {
+                muxer.addTrack(audio.track());
+                muxer.addTrack(subrip);
+                packets.forEach(muxer::writePacket);
+                muxer.finish();
+            }
+            var input = sink.toByteArray();
+            var expected = List.of(SubtitleCue.of(0, 35_000_000, "Long"), SubtitleCue.of(0, 35_000_000, "Late stored"),
+                    SubtitleCue.of(1_000_000, 3_000_000, "After"));
+            var trimmed = TranscodeOptions.of(OutputContainer.SRT).toBuilder().start(30_000_000).build();
+            assertEquals(expected, cues(transcode(input, trimmed.toBuilder().seeking(false).build()), -1));
+            assertEquals(expected, cues(transcode(input, trimmed), -1));
+        }
+
+        @Test
+        @DisplayName("keeps a cue still on screen at a trimmed start of a source read once")
+        void longCueAtTrimmedStartOfStream() {
+            var cues = List.of(
+                    SubtitleCue.of(5_000_000, 65_000_000, "Long"),
+                    SubtitleCue.of(31_000_000, 33_000_000, "After"));
+            var input = matroska(cues, 8_000, 70);
+            var expected = List.of(SubtitleCue.of(0, 35_000_000, "Long"), SubtitleCue.of(1_000_000, 3_000_000, "After"));
+            for (var container : List.of(OutputContainer.MATROSKA, OutputContainer.SRT)) {
+                var trimmed = TranscodeOptions.of(container).toBuilder().start(30_000_000).build();
+                var sink = MediaSink.memory();
+                // a memory-only stream source fails any read of the bytes a parser already released
+                Transcoder.transcode(MediaSource.of(new java.io.ByteArrayInputStream(input), input.length,
+                        com.github.auties00.smalt.io.StreamSourceOptions.memoryOnly()), sink, trimmed);
+                assertEquals(expected, cues(sink.toByteArray(), container == OutputContainer.SRT ? -1 : 2), container.name());
+            }
         }
 
         @Test
