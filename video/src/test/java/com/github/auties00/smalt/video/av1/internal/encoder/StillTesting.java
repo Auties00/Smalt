@@ -27,6 +27,10 @@ import java.util.SplittableRandom;
  * with the module's decoder, and comparison with the encoder's reconstruction.
  */
 public final class StillTesting {
+    /** The cached foreman CIF clip of the clip tier. */
+    private static final Path FOREMAN = Path.of(System.getProperty("smalt.test.clips",
+            Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips").toString()), "foreman.yuv");
+
     private StillTesting() {
     }
 
@@ -57,9 +61,14 @@ public final class StillTesting {
         };
     }
 
+    /** {@return whether the foreman CIF clip is cached, so that {@link #foreman} reads it} */
+    public static boolean hasForeman() {
+        return Files.isRegularFile(FOREMAN);
+    }
+
     /** Reads a frame of the cached foreman CIF clip as 4:2:0 planes, or a synthetic picture when absent. */
     public static Planes foreman(int frame) {
-        var file = Path.of(System.getProperty("user.home"), ".smalt", "cache", "clips", "foreman.yuv");
+        var file = FOREMAN;
         if (!Files.isRegularFile(file)) {
             return synthetic(352, 288, SequenceHeader.LAYOUT_I420, 8, 7);
         }

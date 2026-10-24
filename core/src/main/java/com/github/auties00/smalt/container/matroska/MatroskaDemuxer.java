@@ -13,6 +13,7 @@ import com.github.auties00.smalt.container.internal.SeekFilter;
 import com.github.auties00.smalt.container.internal.SeekIndex;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
+import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
@@ -69,7 +70,12 @@ import java.util.Objects;
  * end at the next top-level element. The default edition of {@code Chapters} becomes
  * {@link #chapters()}, and attachments whose media type is an image become
  * {@link #attachedPictures()} (a file named like {@code cover.jpg} as the front cover). Track
- * names and the tags that target one track become {@link #trackMetadata(int)}.
+ * names and the tags that target one track become {@link #trackMetadata(int)}. A video track's
+ * {@code DisplayWidth} and {@code DisplayHeight}, against its pixel size after the
+ * {@code PixelCrop} elements and in any known {@code DisplayUnit}, give its sample aspect ratio,
+ * and {@code FlagInterlaced} with {@code FieldOrder} its scan
+ * ({@link VideoTrack#sampleAspectRatio()},
+ * {@link VideoTrack#interlacing()}).
  *
  * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the
  * first video track (of any track when there is no video) name the cluster holding the last key
@@ -96,7 +102,7 @@ import java.util.Objects;
  * and {@link #read()} returns the frames read on the way first. The track keeps its time base,
  * and its {@code CodecDelay} skip is rescaled to the decoded rate.
  * Frames of tracks with {@code ContentEncodings} are decoded: header stripping prepends the
- * stripped bytes and zlib inflates, bounded by the allocation limit; encrypted tracks raise
+ * stripped bytes, and zlib, bzlib and LZO1X decompress, bounded by the allocation limit; encrypted tracks raise
  * {@link MediaException.Unsupported}.
  *
  * <p>Damage inside a cluster (an invalid element header, or an element that overruns its cluster)
@@ -1190,7 +1196,7 @@ public final class MatroskaDemuxer implements Demuxer {
             return false;
         }
         var bytes = new byte[4];
-        if (source.read(position, bytes, 0, 4) < 4) {
+        if (SourceBytes.readAvailable(source, position, bytes, 0, 4) < 4) {
             return false;
         }
         return ((bytes[0] & 0xFF) << 24 | (bytes[1] & 0xFF) << 16 | (bytes[2] & 0xFF) << 8 | (bytes[3] & 0xFF))
@@ -1907,7 +1913,7 @@ public final class MatroskaDemuxer implements Demuxer {
         var limit = sourceSize >= 0 ? Math.min(sourceSize, segmentEnd) : segmentEnd;
         while (position + 4 <= limit) {
             var length = (int) Math.min(buffer.length, limit - position);
-            var read = source.read(position, buffer, 0, length);
+            var read = SourceBytes.readAvailable(source, position, buffer, 0, length);
             if (read < 4) {
                 return -1;
             }

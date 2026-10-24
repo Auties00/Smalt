@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.vp8;
 
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
@@ -63,9 +64,7 @@ final class WebpTools {
         try {
             Files.createDirectories(CACHE);
             var input = CACHE.resolve("i420-" + hash(HexFormat.of().formatHex(sha(yuv))) + ".yuv");
-            if (!Files.isRegularFile(input)) {
-                Files.write(input, yuv);
-            }
+            Scratch.share(input, yuv);
             var arguments = new ArrayList<>(List.of("-s", Integer.toString(width), Integer.toString(height)));
             arguments.addAll(options);
             return cwebp(input, arguments);

@@ -56,14 +56,44 @@ public enum Codec {
     MJPEG(TrackKind.VIDEO, "mjpeg"),
 
     /**
+     * Motion JPEG 2000 (ISO/IEC 15444-3): every frame is an independent JPEG 2000 image.
+     *
+     * <p>A packet is one frame in one of three forms: a JP2 file (a frame that starts with the JPEG 2000 signature
+     * box), a raw codestream (one that starts with the {@code SOC} and {@code SIZ} markers {@code FF 4F FF 51}), or
+     * the sequence of boxes a Motion JPEG 2000 sample holds, one Contiguous Codestream box ({@code jp2c}) for a
+     * progressive frame and two, the earlier field first, for an interlaced one, possibly with a JP2 Header box
+     * ({@code jp2h}) that describes them. The configuration, when the track has one, is the JP2 Header box (header
+     * included) of the {@code mjp2} sample entry: it declares the color space and the channels of the frames whose
+     * packet carries no JP2 header of its own.
+     */
+    JPEG2000(TrackKind.VIDEO, "jpeg2000"),
+
+    /**
      * Apple ProRes.
      */
     PRORES(TrackKind.VIDEO, "prores"),
 
     /**
      * Avid DNxHD and DNxHR, the VC-3 format of SMPTE ST 2019-1.
+     *
+     * <p>A packet is one frame: its coding units (two for field-encoded interlaced frames),
+     * possibly followed by the alpha Avid's QuickTime encoders store after the video and the size
+     * of the video part in four big-endian bytes. The configuration is the QuickTime sample entry
+     * type in ASCII ({@code AVdn} or {@code AVdh}), optionally followed by the extension atoms of
+     * Avid's sample descriptions ({@code ACLR}, {@code APRG}, {@code ARES}, {@code AALP} and
+     * {@code ADHR}, sizes and types included), which QuickTime and Matroska muxers write into the
+     * sample description; an {@code AALP} atom declares the alpha stored after the video.
      */
     DNXHD(TrackKind.VIDEO, "dnxhd"),
+
+    /**
+     * Xiph.Org Theora.
+     *
+     * <p>A packet is one frame; an empty packet repeats the previous frame, and a frame whose frame type bit (bit 6
+     * of its first byte) is clear is a key frame. The configuration is the three Theora headers (identification,
+     * comment and setup), Xiph-laced as for {@link #VORBIS}.
+     */
+    THEORA(TrackKind.VIDEO, "theora"),
 
     /**
      * An animated GIF treated as a video stream.
@@ -121,6 +151,15 @@ public enum Codec {
     AMR_WB(TrackKind.AUDIO, "amr-wb"),
 
     /**
+     * Xiph.Org Speex speech.
+     *
+     * <p>A packet holds the number of frames the configuration declares. The configuration is the 80-byte
+     * {@code "Speex   "} identification header, which gives the sampling rate, channel count, frame size and frames
+     * per packet.
+     */
+    SPEEX(TrackKind.AUDIO, "speex"),
+
+    /**
      * Dolby Digital (AC-3).
      */
     AC3(TrackKind.AUDIO, "ac3"),
@@ -129,6 +168,23 @@ public enum Codec {
      * Dolby Digital Plus (E-AC-3).
      */
     EAC3(TrackKind.AUDIO, "eac3"),
+
+    /**
+     * DTS Coherent Acoustics (ETSI TS 102 114), including DTS-HD frames, whose extension substream follows the core
+     * frame.
+     *
+     * <p>A packet is one frame in the 16-bit big-endian form, which starts with the sync word {@code 0x7FFE8001}.
+     * The track has no configuration.
+     */
+    DTS(TrackKind.AUDIO, "dts"),
+
+    /**
+     * Dolby TrueHD.
+     *
+     * <p>A packet is one access unit; the units that open with a major sync are the key frames. The track has no
+     * configuration.
+     */
+    TRUEHD(TrackKind.AUDIO, "truehd"),
 
     /**
      * Uncompressed signed 16-bit little-endian PCM.
@@ -159,6 +215,16 @@ public enum Codec {
      * Uncompressed signed 32-bit big-endian PCM.
      */
     PCM_S32BE(TrackKind.AUDIO, "pcm_s32be"),
+
+    /**
+     * Uncompressed signed 64-bit little-endian PCM.
+     */
+    PCM_S64LE(TrackKind.AUDIO, "pcm_s64le"),
+
+    /**
+     * Uncompressed signed 64-bit big-endian PCM.
+     */
+    PCM_S64BE(TrackKind.AUDIO, "pcm_s64be"),
 
     /**
      * Uncompressed 32-bit little-endian IEEE float PCM.
@@ -253,6 +319,26 @@ public enum Codec {
     ASS(TrackKind.DATA, "ass"),
 
     /**
+     * Timed Text Markup Language (W3C TTML, including its IMSC profiles), the ISO/IEC 14496-30
+     * {@code stpp} subtitles of MP4 files.
+     *
+     * <p>A packet is one TTML document in XML, as an MP4 sample stores it, covering the packet's
+     * presentation timestamp and duration; its time expressions count from the start of the
+     * track, not of the packet. Packets follow each other without overlapping. The configuration
+     * is the body of the {@code stpp} sample entry after its eight leading bytes: the
+     * {@code namespace}, {@code schema_location} and {@code auxiliary_mime_types} fields as
+     * null-terminated UTF-8 strings (the first a space-separated list of the XML namespaces the
+     * documents use, the others possibly empty), then any child boxes of the entry, such as
+     * {@code btrt}. A track without a configuration uses the TTML namespace alone:
+     * {@snippet :
+     * http://www.w3.org/ns/ttml\0\0\0
+     * }
+     * The packets are documents rather than cues, so this is not one of the text formats of
+     * {@link #isSubtitle()}.
+     */
+    TTML(TrackKind.DATA, "ttml"),
+
+    /**
      * A data, subtitle, or metadata stream.
      */
     DATA(TrackKind.DATA, "data");
@@ -319,7 +405,7 @@ public enum Codec {
             case PCM_S16LE, PCM_S16BE -> OptionalInt.of(16);
             case PCM_S24LE, PCM_S24BE -> OptionalInt.of(24);
             case PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE -> OptionalInt.of(32);
-            case PCM_F64LE, PCM_F64BE -> OptionalInt.of(64);
+            case PCM_S64LE, PCM_S64BE, PCM_F64LE, PCM_F64BE -> OptionalInt.of(64);
             default -> OptionalInt.empty();
         };
     }

@@ -11,22 +11,26 @@ package com.github.auties00.smalt.image.jp2.internal;
  * @param precinctHeight the base-2 logarithm of the precinct height
  * @param precinctsWide the number of precinct columns
  * @param precinctsHigh the number of precinct rows
- * @param bands the sub-bands: LL alone for the lowest resolution, otherwise HL, LH and HH; shared,
- * not copied
+ * @param bands the sub-bands: LL alone for the lowest resolution, otherwise HL, LH and HH, or the sub-bands of an
+ * arbitrary decomposition level in packet order; shared, not copied
+ * @param depthX the number of horizontal decompositions from the tile-component to this resolution
+ * @param depthY the number of vertical decompositions from the tile-component to this resolution
+ * @param node the node of an arbitrary decomposition this resolution is, or {@code null} for the dyadic
+ * decomposition
  */
-record Resolution(int x0, int y0, int x1, int y1, int precinctWidth, int precinctHeight, int precinctsWide,
-                  int precinctsHigh, Band[] bands) {
+record Resolution(long x0, long y0, long x1, long y1, int precinctWidth, int precinctHeight, int precinctsWide,
+                  int precinctsHigh, Band[] bands, int depthX, int depthY, SubbandNode node) {
     /**
      * {@return the width in samples}
      */
     int width() {
-        return x1 - x0;
+        return (int) (x1 - x0);
     }
 
     /**
      * {@return the height in samples}
      */
     int height() {
-        return y1 - y0;
+        return (int) (y1 - y0);
     }
 }
