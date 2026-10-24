@@ -2,6 +2,7 @@ package com.github.auties00.smalt.audio.loudness;
 
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.transcode.AudioTranscodeOptions;
@@ -52,7 +53,7 @@ class ReplayGainFfmpegTest {
                 "format_tags", "-of", "default=noprint_wrappers=1", file.toString()));
         for (var line : output.split("\\R")) {
             var separator = line.indexOf('=');
-            if (separator > 0 && line.substring(0, separator).toUpperCase(Locale.ROOT).endsWith(key)) {
+            if (separator > 0 && line.substring(0, separator).toUpperCase(Locale.ROOT).equals("TAG:" + key)) {
                 return line.substring(separator + 1).strip();
             }
         }
@@ -91,9 +92,19 @@ class ReplayGainFfmpegTest {
                     file.getFileName(), gain.trackGainDb(), gain.albumGainDb(), -18 - track, -18 - album);
             assertEquals(-18 - track, gain.trackGainDb(), 0.1, "track gain against ebur128");
             assertEquals(-18 - album, gain.albumGainDb(), 0.15, "album gain against ebur128 of the concatenation");
-            assertEquals(String.format(Locale.ROOT, "%.2f dB", gain.trackGainDb()), probedTag(file, "REPLAYGAIN_TRACK_GAIN"));
-            assertEquals(String.format(Locale.ROOT, "%.2f dB", gain.albumGainDb()), probedTag(file, "REPLAYGAIN_ALBUM_GAIN"));
-            assertEquals(gain.trackPeak(), Double.parseDouble(probedTag(file, "REPLAYGAIN_TRACK_PEAK")), 1e-6);
+            // Matroska names the album values REPLAYGAIN_GAIN/PEAK at the album target and the track values the
+            // same at the TRACK target, which ffprobe prefixes with "TRACK/".
+            var matroska = extension.equals("mka");
+            var trackGainKey = matroska ? "TRACK/REPLAYGAIN_GAIN" : "REPLAYGAIN_TRACK_GAIN";
+            var albumGainKey = matroska ? "REPLAYGAIN_GAIN" : "REPLAYGAIN_ALBUM_GAIN";
+            var trackPeakKey = matroska ? "TRACK/REPLAYGAIN_PEAK" : "REPLAYGAIN_TRACK_PEAK";
+            assertEquals(String.format(Locale.ROOT, "%.2f dB", gain.trackGainDb()), probedTag(file, trackGainKey));
+            assertEquals(String.format(Locale.ROOT, "%.2f dB", gain.albumGainDb()), probedTag(file, albumGainKey));
+            assertEquals(gain.trackPeak(), Double.parseDouble(probedTag(file, trackPeakKey)), 1e-6);
+            var read = ReplayGain.fromTags(TagEditor.read(file));
+            assertEquals(gain.trackGainDb(), read.trackGainDb(), 0.005, "Smalt reads the track gain back");
+            assertEquals(gain.albumGainDb(), read.albumGainDb(), 0.005, "Smalt reads the album gain back");
+            assertEquals(gain.trackPeak(), read.trackPeak(), 1e-6, "Smalt reads the track peak back");
         }
     }
     /** Builds 20 s of a stereo three-note chord whose level steps every 4 s. */
