@@ -6,7 +6,7 @@ import java.util.Arrays;
 
 /**
  * Decodes the arithmetic-coded entropy data of sequential and progressive scans (T.81 Annex D and
- * sections F.1.4, F.2.4, G.1.3, G.2).
+ * sections F.1.4, F.2.4, G.1.3, G.2) and of lossless scans (H.1.2.3, H.2).
  *
  * <p>The decoder reads the unstuffed segments of {@link EntropySegments}. Past the end of a
  * segment it reads zero bytes, which is the convention of T.81 for arithmetic-coded data that
@@ -23,7 +23,7 @@ final class ArithmeticScanDecoder {
      * {@code Qe}, next state after an LPS, next state after an MPS, and the MPS switch flag, plus a
      * final state with a fixed estimate of 0.5 for bypass decisions (T.851 Table 5).
      */
-    private static final int[] STATE_TABLE = {
+    static final int[] STATE_TABLE = {
             0x5a1d, 1, 1, 1, 0x2586, 14, 2, 0, 0x1114, 16, 3, 0, 0x080b, 18, 4, 0,
             0x03d8, 20, 5, 0, 0x01da, 23, 6, 0, 0x00e5, 25, 7, 0, 0x006f, 28, 8, 0,
             0x0036, 30, 9, 0, 0x001a, 33, 10, 0, 0x000d, 35, 11, 0, 0x0006, 9, 12, 0,
@@ -73,6 +73,11 @@ final class ArithmeticScanDecoder {
     private static final int AC_BINS = 256;
 
     /**
+     * The number of conditioning bins per table of a lossless scan (T.81 H.1.2.3.2).
+     */
+    private static final int LOSSLESS_BINS = 158;
+
+    /**
      * The zigzag to natural order map, padded to 80 entries.
      */
     private static final int[] ZIGZAG = JpegTables.ZIGZAG;
@@ -93,6 +98,16 @@ final class ArithmeticScanDecoder {
     private final byte[][] acStats = new byte[16][AC_BINS];
 
     /**
+     * The lossless conditioning statistics of each table slot, created on first use.
+     */
+    private byte[][] losslessStats;
+
+    /**
+     * The table slot of each component of the lossless scan being decoded.
+     */
+    private int[] losslessSlots;
+
+    /**
      * The single statistics bin with a fixed estimate of 0.5.
      */
     private final byte[] fixedBin = new byte[1];
@@ -106,6 +121,11 @@ final class ArithmeticScanDecoder {
      * The DC conditioning context of each scan component.
      */
     private final int[] dcContext = new int[4];
+
+    /**
+     * Whether the scan belongs to a differential frame, whose DC coefficients are not predicted.
+     */
+    private boolean differential;
 
     /**
      * The coefficients of one block in natural order, used in pixel mode.
@@ -229,6 +249,7 @@ final class ArithmeticScanDecoder {
         this.dcLower = dcLower;
         this.dcUpper = dcUpper;
         this.acThreshold = acThreshold;
+        this.differential = target.differential;
         var usesDc = !progressive || (scan.ss == 0 && scan.ah == 0);
         var usesAc = !progressive || scan.ss != 0;
         for (var ci = 0; ci < components; ci++) {
@@ -393,6 +414,9 @@ final class ArithmeticScanDecoder {
      * @return {@code false} when a decoding error occurred
      */
     private boolean decodeDc(int ci) {
+        if (differential) {
+            lastDc[ci] = 0;
+        }
         var stats = dcStats[dcSlots[ci]];
         var st = dcContext[ci];
         if (decision(stats, st) == 0) {
@@ -432,6 +456,89 @@ final class ArithmeticScanDecoder {
         }
         lastDc[ci] = (lastDc[ci] + v) & 0xFFFF;
         return true;
+    }
+
+    /**
+     * Starts decoding a lossless scan whose segments were just loaded, resetting the statistics of
+     * its tables.
+     *
+     * @param slots the conditioning table slot of each scan component, from 0 to 15
+     */
+    void startLossless(int[] slots) {
+        if (losslessStats == null) {
+            losslessStats = new byte[16][LOSSLESS_BINS];
+        }
+        losslessSlots = slots;
+        for (var slot : slots) {
+            Arrays.fill(losslessStats[slot], (byte) 0);
+        }
+        data = segments.data();
+        segment = 0;
+        startSegment(segments.start(0), segments.end(0));
+        nextRestart = 0;
+    }
+
+    /**
+     * Processes a restart boundary of a lossless scan: resynchronizes on the next restart marker
+     * and resets the statistics and registers.
+     */
+    void restartLossless() {
+        var next = segments.resync(segment, nextRestart);
+        if (next >= 0) {
+            segment = next;
+            startSegment(segments.start(next), segments.end(next));
+        } else {
+            startSegment(0, 0);
+        }
+        nextRestart = (nextRestart + 1) & 7;
+        for (var slot : losslessSlots) {
+            Arrays.fill(losslessStats[slot], (byte) 0);
+        }
+    }
+
+    /**
+     * Decodes one difference of a lossless scan with the two-dimensional statistical model of
+     * T.81 H.1.2.3: the decision tree of the DC differences with the context {@code S0} of the
+     * neighboring differences and the magnitude context {@code X1} of the difference above.
+     *
+     * <p>After a decoding error (a magnitude category beyond 15), every difference up to the next
+     * restart boundary decodes as zero.
+     *
+     * @param slot the conditioning table slot of the component
+     * @param s0 the context of the zero decision, {@code L_Context(Da, Db)}, from 0 to 96
+     * @param x1 the context of the first magnitude decision, 100 or 129
+     * @return the difference, from -32768 to 32768
+     */
+    int losslessDifference(int slot, int s0, int x1) {
+        if (ct == -1) {
+            return 0;
+        }
+        var stats = losslessStats[slot];
+        if (decision(stats, s0) == 0) {
+            return 0;
+        }
+        var sign = decision(stats, s0 + 1);
+        var st = s0 + 2 + sign;
+        var m = decision(stats, st);
+        if (m != 0) {
+            st = x1;
+            while (decision(stats, st) != 0) {
+                if ((m <<= 1) == 0x8000) {
+                    ct = -1;
+                    return 0;
+                }
+                st++;
+            }
+        }
+        var v = m;
+        st += 14;
+        while ((m >>= 1) != 0) {
+            if (decision(stats, st) != 0) {
+                v |= m;
+            }
+        }
+        v += 1;
+        return sign != 0 ? -v : v;
     }
 
     /**
