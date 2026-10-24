@@ -485,6 +485,24 @@ final class MacroblockAnalyzer {
     private int nxnBestCost;
 
     /**
+     * Whether the samples above-right of the macroblock must not be used for prediction, because intra
+     * refresh has not refreshed them yet.
+     */
+    private boolean avoidTopRight;
+
+    /**
+     * Whether the block under intra mode evaluation is the top-right 4x4 block of a macroblock that
+     * must not predict from the samples above-right of it.
+     */
+    private boolean nxnAvoidTopRight;
+
+    /**
+     * The largest horizontal vector, in quarter samples, of a macroblock that intra refresh keeps from
+     * predicting from columns it has not refreshed, or {@link Integer#MAX_VALUE} for no limit.
+     */
+    private int refreshLimitX = Integer.MAX_VALUE;
+
+    /**
      * Constructs an analyzer.
      *
      * @param settings the stream settings
@@ -541,7 +559,7 @@ final class MacroblockAnalyzer {
      * Prepares the analysis of a macroblock row.
      *
      * @param sync the CABAC context states of the row above after its second macroblock, or
-     * {@code null} for the first row
+     * {@code null} for the first row of a slice
      */
     void startRow(byte[] sync) {
         previousQp = picture.sliceQp;
@@ -554,6 +572,14 @@ final class MacroblockAnalyzer {
                 System.arraycopy(sync, 0, rowStates.states, 0, CabacTables.CONTEXTS);
             }
         }
+    }
+
+    /**
+     * Prepares the analysis of a slice that starts in the middle of a macroblock row: the rate
+     * estimates start from the slice's initial state.
+     */
+    void startSlice() {
+        startRow(null);
     }
 
     /**
@@ -575,13 +601,18 @@ final class MacroblockAnalyzer {
      * next call. Its reconstruction is in the picture; every table entry except the quantizer,
      * which depends on the raster order, is committed.
      *
+     * <p>Intra refresh, when the picture has a refresh band, codes the macroblocks of the band as
+     * intra macroblocks that do not predict from the samples above-right of the band, and keeps the
+     * vectors of the macroblocks left of the band inside the columns the reference picture refreshed.
+     *
      * @param mbX the macroblock column
      * @param mbY the macroblock row
      * @param forcePcm whether the macroblock must be coded as {@code I_PCM}
+     * @param sliceStart the address of the first macroblock of the macroblock's slice
      * @return the decided macroblock
      */
-    Macroblock analyze(int mbX, int mbY, boolean forcePcm) {
-        ctx.moveTo(mbX, mbY, settings.mbWidth(), 0);
+    Macroblock analyze(int mbX, int mbY, boolean forcePcm, int sliceStart) {
+        ctx.moveTo(mbX, mbY, settings.mbWidth(), sliceStart);
         var source = picture.source;
         var rec = picture.reconstruction;
         srcLuma = source.lumaOrigin + mbY * 16 * source.lumaStride + mbX * 16;
@@ -598,9 +629,16 @@ final class MacroblockAnalyzer {
         rdBestStatesValid = false;
         skipLumaReady = false;
         skipChromaReady = false;
+        var refreshing = picture.pSlice && mbX >= picture.refreshStart && mbX < picture.refreshEnd;
+        avoidTopRight = refreshing && mbX == picture.refreshEnd - 1 && mbX < settings.mbWidth() - 1;
+        refreshLimitX = picture.pSlice && mbX < picture.refreshStart
+                ? 64 * (picture.refreshStart - mbX) - REFRESH_MARGIN : Integer.MAX_VALUE;
+        search.setHorizontalLimit(refreshLimitX);
         Macroblock chosen;
         if (forcePcm) {
             chosen = preparePcm();
+        } else if (refreshing) {
+            chosen = decideIntraSlice();
         } else {
             chosen = picture.pSlice ? asSkip(decideInter()) : picture.bSlice ? decideB() : decideIntraSlice();
         }
@@ -798,6 +836,15 @@ final class MacroblockAnalyzer {
     }
 
     /**
+     * The quarter samples that the horizontal vector limit of intra refresh keeps from the first
+     * column a reference picture did not refresh: 22 luma samples, for the 16 samples of the
+     * macroblock, the 3 to the right that the six-tap filter reads and the 3 left of a band edge that
+     * the deblocking filter alters from the samples of an unrefreshed column, less 3 quarter samples
+     * of fractional position.
+     */
+    private static final int REFRESH_MARGIN = 85;
+
+    /**
      * Analyzes Intra_4x4, and Intra_8x8 when enabled, leaving the better one's luma
      * reconstruction in the picture.
      *
@@ -810,7 +857,7 @@ final class MacroblockAnalyzer {
      * @return the better of the two candidates by SATD cost
      */
     private Macroblock analyzeIntraNxNBest(long limit) {
-        if (!transform8x8Mode) {
+        if (!transform8x8Mode || avoidTopRight) {
             return analyzeIntraNxN(i4Mb, false, limit);
         }
         var i4 = analyzeIntraNxN(i4Mb, false);
@@ -833,7 +880,7 @@ final class MacroblockAnalyzer {
         if (i4.cost < rdBest.cost) {
             keepBest(i4);
         }
-        if (transform8x8Mode) {
+        if (transform8x8Mode && !avoidTopRight) {
             var i8 = analyzeIntraNxN(i8Mb, true);
             codeIntraChroma(i8);
             rdCost(i8, rdBest.cost);
@@ -1017,6 +1064,7 @@ final class MacroblockAnalyzer {
             var recOffset = recLuma + y4 * 4 * stride + x4 * 4;
             var srcOffset = srcLuma + y4 * 4 * source.lumaStride + x4 * 4;
             nxnEight = eight;
+            nxnAvoidTopRight = avoidTopRight && x4 == 3 && y4 == 0;
             nxnTop = hasTop;
             nxnTopRight = hasTopRight;
             nxnLeft = hasLeft;
@@ -1095,7 +1143,8 @@ final class MacroblockAnalyzer {
      */
     private void tryNxNMode(int mode) {
         if (mode < 0 || (nxnTried & (1 << mode)) != 0
-                || !IntraPredictor.isAvailableNxN(mode, nxnTop, nxnLeft, nxnTopLeft)) {
+                || !IntraPredictor.isAvailableNxN(mode, nxnTop, nxnLeft, nxnTopLeft)
+                || nxnAvoidTopRight && (mode == 3 || mode == 7)) {
             return;
         }
         nxnTried |= 1 << mode;
@@ -1742,7 +1791,7 @@ final class MacroblockAnalyzer {
         var y = ctx.mbY * 16 + (mvy >> 2);
         var margin = Frame.LUMA_PAD - 6;
         return x >= -margin && y >= -margin && x + 17 <= settings.codedWidth() + margin
-                && y + 17 <= settings.codedHeight() + margin;
+                && y + 17 <= settings.codedHeight() + margin && mvx <= refreshLimitX;
     }
 
     /**
@@ -1876,7 +1925,7 @@ final class MacroblockAnalyzer {
      */
     private void tryCandidate(int packed) {
         var clamped = search.clamp(packed);
-        search.tryInteger((MotionPredictor.x(clamped) + 2) >> 2, (MotionPredictor.y(clamped) + 2) >> 2);
+        search.tryInteger(search.roundX(MotionPredictor.x(clamped)), (MotionPredictor.y(clamped) + 2) >> 2);
     }
 
     /**

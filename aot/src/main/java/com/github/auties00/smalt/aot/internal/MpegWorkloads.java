@@ -20,16 +20,19 @@ import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
 import com.github.auties00.smalt.audio.amr.AmrVad;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264Encoder;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderSpeed;
+import com.github.auties00.smalt.video.h264.encoder.H264FieldCoding;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
 
 import java.io.ByteArrayOutputStream;
@@ -71,11 +74,11 @@ final class MpegWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the HEVC, HEIC, MPEG-4 Part 2 and H.263 decoders and the interlaced (field pictures, MBAFF
-        //  frames), high bit depth, 4:2:2, 4:4:4 (color planes coded together or separately) and lossless paths of the
+        // TODO: train the HEVC, HEIC, MPEG-4 Part 2 and H.263 decoders and the separate color plane path of the
         //  H.264 decoder, which need streams that no Smalt encoder produces
         return List.of(
                 realtime("h264-encode-rt-t1", () -> h264Encode(1, null, null)),
+                realtime("h264-encode-rt-tools", MpegWorkloads::h264RealtimeTools),
                 realtime("h264-encode-rt-t2", () -> h264Encode(2, null, null)),
                 realtime("h264-decode-rt-t1", () -> h264Decode(1, true)),
                 realtime("h264-session-t2", () -> VideoStreams.session("h264-session-t2", Codec.H264,
@@ -88,6 +91,8 @@ final class MpegWorkloads {
                 file("h264-encode-fast-high-t1", () -> h264Encode(1, H264EncoderSpeed.FAST, H264Profile.HIGH)),
                 file("h264-encode-fastest-baseline-t1",
                         () -> h264Encode(1, H264EncoderSpeed.FASTEST, H264Profile.CONSTRAINED_BASELINE)),
+                file("h264-encode-extended", MpegWorkloads::h264ExtendedEncode),
+                file("h264-decode-extended", MpegWorkloads::h264ExtendedDecode),
                 file("h264-decode-t1", () -> h264Decode(1, false)),
                 file("h264-decode-t2", () -> h264Decode(2, false)),
                 file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
@@ -135,6 +140,82 @@ final class MpegWorkloads {
                 + (profile == H264Profile.CONSTRAINED_BASELINE ? "baseline" : profile.name().toLowerCase(Locale.ROOT))
                 + "-t" + threads;
         return VideoStreams.encode(name, new H264Encoder(WIDTH, HEIGHT, options));
+    }
+
+    /**
+     * Returns a workload that encodes with the real-time H.264 stream tools: a slice size limit with fixed
+     * slices, periodic intra refresh, and three temporal layers.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264RealtimeTools() {
+        var base = H264EncoderOptions.forRealtime().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE);
+        var encoders = List.of(new H264Encoder(WIDTH, HEIGHT, base.slices(2).maxSliceBytes(1200).build()),
+                new H264Encoder(WIDTH, HEIGHT, base.slices(1).noMaxSliceBytes().intraRefresh(8).build()),
+                new H264Encoder(WIDTH, HEIGHT, base.noIntraRefresh().temporalLayers(3).build()));
+        var rounds = new ArrayList<Runnable>();
+        for (var encoder : encoders) {
+            rounds.add(VideoStreams.encodeRound(encoder));
+        }
+        return TrainingWorkload.of("h264-encode-rt-tools", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * The options of the streams of the H.264 extended engine the extended workloads code and decode: 10-bit
+     * 4:2:0, 10-bit 4:2:2 macroblock pairs, lossless 4:4:4, 4:0:0, and field pictures with CAVLC.
+     *
+     * @return the options
+     */
+    private static List<H264EncoderOptions> extendedOptions() {
+        var base = H264EncoderOptions.forFile().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE)
+                .speed(H264EncoderSpeed.FAST);
+        return List.of(
+                base.profile(H264Profile.HIGH_10).bitDepth(10).build(),
+                base.profile(H264Profile.HIGH_422).chromaFormat(ChromaFormat.YUV422)
+                        .fieldOrder(FieldOrder.TOP_FIRST).build(),
+                base.profile(H264Profile.HIGH_444_PREDICTIVE).bitDepth(8)
+                        .chromaFormat(ChromaFormat.YUV444)
+                        .fieldOrder(FieldOrder.PROGRESSIVE).lossless(true).build(),
+                base.lossless(false).profile(H264Profile.HIGH)
+                        .chromaFormat(ChromaFormat.MONOCHROME).build(),
+                base.chromaFormat(ChromaFormat.YUV420)
+                        .fieldOrder(FieldOrder.BOTTOM_FIRST)
+                        .fieldCoding(H264FieldCoding.FIELD_PICTURES)
+                        .cavlc(true).build());
+    }
+
+    /**
+     * Returns a workload that encodes with the H.264 extended engine: high bit depths, 4:2:2, 4:4:4, 4:0:0,
+     * lossless coding, macroblock pairs, field pictures and CAVLC.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264ExtendedEncode() {
+        var rounds = new ArrayList<Runnable>();
+        var options = extendedOptions();
+        for (var option : options) {
+            rounds.add(VideoStreams.encodeRound(new H264Encoder(WIDTH, HEIGHT, option)));
+        }
+        return TrainingWorkload.of("h264-encode-extended", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that decodes the streams of the H.264 extended engine, which select the decoder's high bit
+     * depth, 4:2:2, 4:4:4, lossless, macroblock pair and field picture paths.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264ExtendedDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var options : extendedOptions()) {
+            var encoder = new H264Encoder(WIDTH, HEIGHT, options);
+            var codecConfig = encoder.codecConfig().orElse(null);
+            var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                    VideoStreams.DECODED_FRAMES / 8));
+            rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, codecConfig),
+                    H264DecoderOptions.builder().highBitDepth(true).build())));
+        }
+        return TrainingWorkload.of("h264-decode-extended", () -> rounds.forEach(Runnable::run));
     }
 
     /**

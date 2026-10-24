@@ -179,6 +179,30 @@ public final class H264DecoderEngine {
     }
 
     /**
+     * Describes the sample planes of a decoded picture, borders included: the 16-bit planes hold
+     * the samples when the stream is deeper than 8 bits, the 8-bit planes otherwise.
+     *
+     * @param luma the 8-bit luma plane, or {@code null}
+     * @param cb the 8-bit Cb plane, or {@code null}
+     * @param cr the 8-bit Cr plane, or {@code null}
+     * @param luma16 the 16-bit luma plane, or {@code null}
+     * @param cb16 the 16-bit Cb plane, or {@code null}
+     * @param cr16 the 16-bit Cr plane, or {@code null}
+     * @param lumaStride the luma row stride
+     * @param chromaStride the chroma row stride
+     * @param lumaOrigin the index of luma sample {@code (0, 0)}
+     * @param chromaOrigin the index of chroma sample {@code (0, 0)}
+     */
+    public record DecodedPlanes(byte[] luma, byte[] cb, byte[] cr, short[] luma16, short[] cb16, short[] cr16,
+                                int lumaStride, int chromaStride, int lumaOrigin, int chromaOrigin) {
+    }
+
+    /**
+     * The frame holding the picture finished last, or {@code null}.
+     */
+    private DecoderFrame lastFinished;
+
+    /**
      * The resource limits.
      */
     private final MediaLimits limits;
@@ -1023,6 +1047,26 @@ public final class H264DecoderEngine {
         engine.viewsRequested = true;
         engine.maxTemporalId = maxTemporalId;
         this.depthEngine = engine;
+    }
+
+    /**
+     * Returns the sample planes of the frame that holds the picture finished last, for an encoder
+     * that predicts from the pictures this engine reconstructs; the planes are those of the
+     * decoder's frame, valid until the next packet, and after a field picture hold that field's
+     * rows.
+     *
+     * <p>Only an engine decoding on the calling thread finishes pictures before
+     * {@link #endPacket()} returns.
+     *
+     * @return the planes, or {@code null} before the first picture
+     */
+    public DecodedPlanes lastFinishedPicture() {
+        var frame = lastFinished;
+        if (frame == null) {
+            return null;
+        }
+        return new DecodedPlanes(frame.luma, frame.cb, frame.cr, frame.luma16, frame.cb16, frame.cr16,
+                frame.lumaStride, frame.chromaStride, frame.lumaOrigin, frame.chromaOrigin);
     }
 
     /**
@@ -3413,6 +3457,7 @@ public final class H264DecoderEngine {
         } else {
             startCurrentJob();
         }
+        lastFinished = frame;
         view.lastPicture.frameNum = slice.frameNum;
         view.lastPicture.ppsId = slice.ppsId;
         view.lastPicture.fieldPic = slice.fieldPic;

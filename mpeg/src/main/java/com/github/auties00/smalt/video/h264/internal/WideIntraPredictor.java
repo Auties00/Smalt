@@ -10,7 +10,7 @@ package com.github.auties00.smalt.video.h264.internal;
  * are substituted as the standard specifies, or with the mid-gray value
  * {@code 1 << (bitDepth - 1)} for modes that a conforming stream would not use without them.
  */
-final class WideIntraPredictor {
+public final class WideIntraPredictor {
     /**
      * The top reference samples {@code p[x, -1]}, {@code x} from 0 to 15.
      */
@@ -54,7 +54,7 @@ final class WideIntraPredictor {
     /**
      * Constructs a predictor with its own reference sample buffers.
      */
-    WideIntraPredictor() {
+    public WideIntraPredictor() {
     }
 
     /**
@@ -63,7 +63,7 @@ final class WideIntraPredictor {
      * @param bitDepthLuma the luma bit depth, 8 to 14
      * @param bitDepthChroma the chroma bit depth, 8 to 14
      */
-    void setBitDepths(int bitDepthLuma, int bitDepthChroma) {
+    public void setBitDepths(int bitDepthLuma, int bitDepthChroma) {
         lumaGray = 1 << (bitDepthLuma - 1);
         lumaMax = (1 << bitDepthLuma) - 1;
         chromaGray = 1 << (bitDepthChroma - 1);
@@ -82,7 +82,7 @@ final class WideIntraPredictor {
      * @param hasTopLeft whether {@code p[-1, -1]} is available
      * @param hasTopRight whether {@code p[x, -1]} for {@code x} 4 to 7 are available
      */
-    void predict4x4(int mode, short[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
+    public void predict4x4(int mode, short[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
                     boolean hasTopLeft, boolean hasTopRight) {
         var top = this.top;
         var left = this.left;
@@ -300,7 +300,7 @@ final class WideIntraPredictor {
      * @param hasTopLeft whether {@code p[-1, -1]} is available
      * @param hasTopRight whether {@code p[x, -1]} for {@code x} 8 to 15 are available
      */
-    void predict8x8(int mode, short[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
+    public void predict8x8(int mode, short[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
                     boolean hasTopLeft, boolean hasTopRight) {
         var top = this.top;
         var left = this.left;
@@ -421,7 +421,7 @@ final class WideIntraPredictor {
      * @param hasTop whether the top references are available
      * @param hasTopLeft whether the corner reference is available
      */
-    void predict16x16(int mode, short[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
+    public void predict16x16(int mode, short[] plane, int offset, int stride, boolean hasLeft, boolean hasTop,
                       boolean hasTopLeft) {
         var above = offset - stride;
         switch (mode) {
@@ -501,7 +501,7 @@ final class WideIntraPredictor {
      * @param hasTop whether the top references are available
      * @param hasTopLeft whether the corner reference is available
      */
-    void predictChroma(int mode, short[] plane, int offset, int stride, int rows, int leftBlocks, boolean hasTop,
+    public void predictChroma(int mode, short[] plane, int offset, int stride, int rows, int leftBlocks, boolean hasTop,
                        boolean hasTopLeft) {
         var above = offset - stride;
         var blockRows = rows >> 2;
