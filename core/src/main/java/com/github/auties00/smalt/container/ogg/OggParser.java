@@ -21,10 +21,13 @@ import java.util.Map;
  * Turns the pages of an Ogg physical stream into the packets of its logical streams.
  *
  * <p>Logical streams are numbered in the order their beginning-of-stream pages appear, across
- * chained links; a link starts whenever a beginning-of-stream page follows a page that is not
- * one. Packets are reassembled across pages following libogg's rules: a lost page (a gap in the
- * page sequence numbers) discards the packet in progress, and a continued page whose preceding
- * part was lost has its leading fragment dropped. Header packets feed the stream's
+ * chained links, from the first index the parser is given; a link starts whenever a
+ * beginning-of-stream page follows a page that is not one, and links are numbered from the first
+ * link index the parser is given. A parser may start at the first page of any link, so that it
+ * numbers that link's streams as a parser started at the beginning of the file does. Packets are
+ * reassembled across pages following libogg's rules: a lost page (a gap in the page sequence
+ * numbers) discards the packet in progress, and a continued page whose preceding part was lost has
+ * its leading fragment dropped. Header packets feed the stream's
  * {@link OggMapping}; data packets are timestamped from the page granule positions.
  *
  * <p>Data packets are stamped backwards from the granule position of the page they end on: the
@@ -33,11 +36,13 @@ import java.util.Map;
  * are held until a granule position arrives. The end-of-stream page is stamped forward instead,
  * because its granule position may carry end trimming: its last packet's duration is shortened so
  * it ends at the granule's time, and a stream whose first data page is also its last starts at
- * granule zero.
+ * granule zero. Packets whose mapping gives them no duration are stamped with the time of the
+ * granule position of the page they end on, the end-of-stream page included.
  *
- * <p>In scan mode data packets are not copied; the parser only records what the demuxer needs to
- * describe the tracks: headers, the first-packet anchor and the last granule position of every
- * stream.
+ * <p>In scan mode data packets are not copied, except for mappings that observe them (Ogg
+ * Skeleton); the parser only records what the demuxer needs to describe the tracks and links:
+ * headers, comments, the first-packet anchor and the last granule position of every stream, and
+ * where every link starts.
  */
 final class OggParser {
     /**
@@ -76,9 +81,39 @@ final class OggParser {
     final ArrayDeque<Packet> output = new ArrayDeque<>();
 
     /**
-     * The comment tags of the first link.
+     * Every link seen, in file order.
      */
-    final Map<String, String> metadata = new LinkedHashMap<>();
+    final List<Link> links = new ArrayList<>();
+
+    /**
+     * The streams by index.
+     */
+    private final Map<Integer, Stream> byIndex = new HashMap<>();
+
+    /**
+     * The index the next stream gets.
+     */
+    private int nextIndex;
+
+    /**
+     * The index of the first link this parser reads.
+     */
+    final int firstLink;
+
+    /**
+     * The links whose numbering is fixed, or {@code null}.
+     */
+    private Plan plan;
+
+    /**
+     * The index the next stream of a link outside {@link #plan} gets.
+     */
+    private int unplannedIndex;
+
+    /**
+     * The number of links outside {@link #plan} seen.
+     */
+    private int unplannedLinks;
 
     /**
      * The start time of every link in microseconds, used to offset chained links, or
@@ -102,17 +137,6 @@ final class OggParser {
     boolean exhausted;
 
     /**
-     * The offset of the first page after the header pages of the first link's streams, where
-     * their data pages start.
-     */
-    long dataStart;
-
-    /**
-     * The chapters and pictures of the comment headers of the first link.
-     */
-    final Annotations annotations = new Annotations();
-
-    /**
      * Constructs a parser reading from the start of a source.
      *
      * @param source the Ogg input
@@ -120,9 +144,74 @@ final class OggParser {
      * @param scan whether to only scan
      */
     OggParser(MediaSource source, MediaLimits limits, boolean scan) {
-        this.reader = new OggPageReader(source, 0);
+        this(source, limits, scan, 0, 0, 0);
+    }
+
+    /**
+     * Constructs a parser reading from the first page of a link.
+     *
+     * @param source the Ogg input
+     * @param limits the resource bounds
+     * @param scan whether to only scan
+     * @param start the offset of the link's first beginning-of-stream page, or of bytes before it
+     * @param firstIndex the index of the link's first stream
+     * @param firstLink the index of the link
+     */
+    OggParser(MediaSource source, MediaLimits limits, boolean scan, long start, int firstIndex, int firstLink) {
+        this.reader = new OggPageReader(source, start);
         this.limits = limits;
         this.scan = scan;
+        this.nextIndex = firstIndex;
+        this.firstLink = firstLink;
+        this.link = firstLink;
+    }
+
+    /**
+     * Holds the numbering of the links a demuxer described.
+     *
+     * @param starts the offset of the first page of every link, in link order
+     * @param firstIndexes the index of the first stream of every link
+     * @param streamCount the number of streams of every described link together
+     */
+    record Plan(long[] starts, int[] firstIndexes, int streamCount) {
+    }
+
+    /**
+     * Fixes the numbering of links and streams: a link starting at one of the plan's offsets gets
+     * the plan's link index and stream indices, and any other link gets a link index past the
+     * plan's links and stream indices from the plan's stream count on, which no described track
+     * uses.
+     *
+     * @param plan the numbering, applied to the links met from now on
+     */
+    void setPlan(Plan plan) {
+        this.plan = plan;
+        this.unplannedIndex = Math.max(unplannedIndex, plan.streamCount());
+    }
+
+    /**
+     * Returns the stream with an index.
+     *
+     * @param index the stream index
+     * @return the stream, or {@code null} when this parser has not seen it
+     */
+    Stream stream(int index) {
+        return byIndex.get(index);
+    }
+
+    /**
+     * Returns the link with an index.
+     *
+     * @param index the link index
+     * @return the link, or {@code null} when this parser has not seen it
+     */
+    Link link(int index) {
+        for (var candidate : links) {
+            if (candidate.index == index) {
+                return candidate;
+            }
+        }
+        return null;
     }
 
     /**
@@ -139,7 +228,7 @@ final class OggParser {
      *
      * <p>The next pages are read from {@code position}; each stream forgets its partial packet
      * and the state its mapping carries from packet to packet, and stamps the packets of its next
-     * pages from the first granule position it meets, as it did at the start of the stream.
+     * pages back from the first granule position it meets.
      *
      * @param position the offset of a page, or of bytes before one
      */
@@ -154,22 +243,30 @@ final class OggParser {
 
     /**
      * Starts recording the offsets of the pages this parser accepts, for
-     * {@link #trustPages(OggParser)}.
+     * {@link #recordedPages()}.
      */
     void recordPages() {
         reader.recordPages();
     }
 
     /**
-     * Makes this parser skip the CRC of every page another parser over the same source recorded.
+     * Returns the offsets of the pages accepted since {@link #recordPages()}, which a parser over
+     * the same source can trust with {@link #trustPages(long[], int)}.
      *
-     * @param recorder a parser that ran {@link #recordPages()} from the start of the source
+     * @return the array holding the increasing offsets in its first {@link #recordedCount()}
+     *         entries, or {@code null} when not recording
      */
-    void trustPages(OggParser recorder) {
-        var offsets = recorder.reader.recordedPages();
-        if (offsets != null) {
-            reader.trustPages(offsets, recorder.reader.recordedCount());
-        }
+    long[] recordedPages() {
+        return reader.recordedPages();
+    }
+
+    /**
+     * Returns the number of recorded page offsets.
+     *
+     * @return the count
+     */
+    int recordedCount() {
+        return reader.recordedCount();
     }
 
     /**
@@ -213,16 +310,23 @@ final class OggParser {
         var serial = reader.serial;
         var stream = active.get(serial);
         if ((reader.flags & OggPageReader.FLAG_BOS) != 0) {
-            if (linkHeadersDone) {
-                link++;
-                linkHeadersDone = false;
+            if (links.isEmpty() || linkHeadersDone) {
+                startLink();
             }
+            linkHeadersDone = false;
             if (streams.size() >= MAX_STREAMS) {
                 throw new MediaException.Malformed("Ogg file with more than " + MAX_STREAMS + " logical streams");
             }
-            stream = new Stream(streams.size(), serial, link);
+            stream = new Stream(nextIndex++, serial, links.getLast());
+            if (links.getLast().planned) {
+                unplannedIndex = Math.max(unplannedIndex, nextIndex);
+            } else if (plan != null) {
+                unplannedIndex = nextIndex;
+            }
             streams.add(stream);
+            byIndex.put(stream.index, stream);
             active.put(serial, stream);
+            stream.owner.beginningsEnd = reader.position();
         } else {
             linkHeadersDone = true;
             if (stream == null) {
@@ -231,6 +335,116 @@ final class OggParser {
         }
         stream.consume();
         return true;
+    }
+
+    /**
+     * Starts the link whose first beginning-of-stream page is the current page.
+     */
+    private void startLink() {
+        var offset = reader.pageOffset;
+        var planned = false;
+        if (plan != null) {
+            var position = Arrays.binarySearch(plan.starts(), offset);
+            if (position >= 0) {
+                link = position;
+                nextIndex = plan.firstIndexes()[position];
+                planned = true;
+            } else {
+                link = plan.starts().length + unplannedLinks++;
+                nextIndex = unplannedIndex;
+            }
+        } else if (!links.isEmpty()) {
+            link++;
+        }
+        var started = new Link(link, offset);
+        started.planned = planned;
+        links.add(started);
+    }
+
+    /**
+     * Holds what the parser learned about one link.
+     */
+    static final class Link {
+        /**
+         * The link index.
+         */
+        final int index;
+
+        /**
+         * The offset of the link's first beginning-of-stream page.
+         */
+        final long start;
+
+        /**
+         * The offset of the first page after the link's header pages, where its data pages start.
+         */
+        long dataStart;
+
+        /**
+         * The offset after the link's last beginning-of-stream page.
+         */
+        long beginningsEnd;
+
+        /**
+         * Whether the link's numbering comes from the plan.
+         */
+        private boolean planned;
+
+        /**
+         * The streams of the link, in beginning-of-stream order.
+         */
+        final List<Stream> streams = new ArrayList<>();
+
+        /**
+         * The chapters and pictures of the comment headers of the link's streams.
+         */
+        final Annotations annotations = new Annotations();
+
+        /**
+         * The Ogg Skeleton descriptions of the link's streams, by serial number.
+         */
+        final Map<Integer, SkeletonMapping.Fisbone> fisbones = new HashMap<>();
+
+        /**
+         * Constructs a link.
+         *
+         * @param index the link index
+         * @param start the offset of its first page
+         */
+        private Link(int index, long start) {
+            this.index = index;
+            this.start = start;
+            this.dataStart = start;
+            this.beginningsEnd = start;
+        }
+
+        /**
+         * Returns the comment tags of every stream of the link, in stream order, a name repeated
+         * across streams joining its values with {@code "; "}.
+         *
+         * @return the tags; modifiable
+         */
+        Map<String, String> metadata() {
+            var merged = new LinkedHashMap<String, String>();
+            for (var stream : streams) {
+                for (var entry : stream.tags.entrySet()) {
+                    merged.merge(entry.getKey(), entry.getValue(), (previous, next) -> previous + "; " + next);
+                }
+            }
+            return merged;
+        }
+
+        /**
+         * Gives a stream of the link the granule mapping of its Skeleton description.
+         *
+         * @param stream a stream of the link whose mapping is known
+         */
+        private void describe(Stream stream) {
+            var fisbone = fisbones.get(stream.serial);
+            if (fisbone != null && stream.mapping instanceof OpaqueMapping opaque) {
+                opaque.describe(fisbone);
+            }
+        }
     }
 
     /**
@@ -248,9 +462,19 @@ final class OggParser {
         final int serial;
 
         /**
-         * The link the stream belongs to.
+         * The index of the link the stream belongs to.
          */
         final int link;
+
+        /**
+         * The link the stream belongs to.
+         */
+        final Link owner;
+
+        /**
+         * The tags of the stream's comment header, without the chapter and picture fields.
+         */
+        final Map<String, String> tags = new LinkedHashMap<>();
 
         /**
          * The codec mapping, chosen from the first packet.
@@ -343,12 +567,49 @@ final class OggParser {
          *
          * @param index the stream index
          * @param serial the serial number
-         * @param link the link index
+         * @param owner the link
          */
-        private Stream(int index, int serial, int link) {
+        private Stream(int index, int serial, Link owner) {
             this.index = index;
             this.serial = serial;
-            this.link = link;
+            this.link = owner.index;
+            this.owner = owner;
+            owner.streams.add(this);
+        }
+
+        /**
+         * Returns the tags that describe the stream: its comment tags, then the message header
+         * fields of its Ogg Skeleton description that the comments do not name.
+         *
+         * @return the tags; modifiable
+         */
+        Map<String, String> trackTags() {
+            var merged = new LinkedHashMap<>(tags);
+            var fisbone = owner.fisbones.get(serial);
+            if (fisbone != null) {
+                for (var entry : fisbone.fields().entrySet()) {
+                    merged.putIfAbsent(entry.getKey(), entry.getValue());
+                }
+            }
+            return merged;
+        }
+
+        /**
+         * Returns the language of the stream's Ogg Skeleton description.
+         *
+         * @return the {@code Language} field, or {@code null} when there is none
+         */
+        String skeletonLanguage() {
+            var fisbone = owner.fisbones.get(serial);
+            if (fisbone == null) {
+                return null;
+            }
+            for (var entry : fisbone.fields().entrySet()) {
+                if (entry.getKey().equalsIgnoreCase("Language")) {
+                    return entry.getValue();
+                }
+            }
+            return null;
         }
 
         /**
@@ -379,7 +640,7 @@ final class OggParser {
                 partialValid = false;
             }
             var dropLeading = continued && !partialValid;
-            var skipData = scan && headersDone && (anchored || !mapping.timestamped());
+            var skipData = scan && headersDone && (anchored || !mapping.timestamped()) && !mapping.observesData();
             var body = reader.body;
             var position = reader.bodyOffset;
             var runStart = -1;
@@ -477,9 +738,8 @@ final class OggParser {
             seenPage = false;
             pending.clear();
             ended = false;
-            if (anchored) {
-                resyncing = true;
-            }
+            anchored = true;
+            resyncing = true;
             if (mapping != null) {
                 mapping.reset();
             }
@@ -494,16 +754,15 @@ final class OggParser {
             if (!headersDone) {
                 if (mapping == null) {
                     mapping = OggMapping.detect(packet);
-                    mapping.annotations = link == 0 && !scan ? annotations : null;
+                    mapping.annotations = owner.annotations;
+                    owner.describe(this);
                 }
                 if (mapping.isHeader(headers, packet)) {
-                    mapping.header(headers, packet, limits, link == 0 ? metadata : null);
+                    mapping.header(headers, packet, limits, tags);
                     headers++;
                     if (headers >= mapping.headerCount()) {
                         headersDone = true;
-                        if (link == 0) {
-                            dataStart = Math.max(dataStart, reader.position());
-                        }
+                        owner.dataStart = Math.max(owner.dataStart, reader.position());
                         applyOffset();
                     }
                     return;
@@ -511,11 +770,37 @@ final class OggParser {
                 headersDone = true;
                 applyOffset();
             }
+            if (mapping.observesData()) {
+                mapping.observe(packet);
+                if (mapping instanceof SkeletonMapping skeleton) {
+                    describeStreams(skeleton);
+                }
+            }
             if (pending.size() == pendingDurations.length) {
                 pendingDurations = Arrays.copyOf(pendingDurations, pendingDurations.length * 2);
             }
             pendingDurations[pending.size()] = mapping.packetDuration(packet);
             pending.add(packet);
+        }
+
+        /**
+         * Records the {@code fisbone} descriptions a Skeleton packet carried and applies them to
+         * the streams of the link they describe.
+         *
+         * @param skeleton the mapping of this Skeleton stream
+         */
+        private void describeStreams(SkeletonMapping skeleton) {
+            SkeletonMapping.Fisbone fisbone;
+            while ((fisbone = skeleton.poll()) != null) {
+                if (owner.fisbones.size() >= MAX_STREAMS || owner.fisbones.putIfAbsent(fisbone.serial(), fisbone) != null) {
+                    continue;
+                }
+                for (var described : owner.streams) {
+                    if (described.serial == fisbone.serial() && described.mapping != null) {
+                        owner.describe(described);
+                    }
+                }
+            }
         }
 
         /**
@@ -547,7 +832,7 @@ final class OggParser {
                 }
                 // RFC 7845 section 4: an end-of-stream granule carries end trimming, so a stream whose
                 // first data page is also its last starts at granule zero
-                timestamp = last ? mapping.defaultStart() : mapping.granuleToTime(granule) - sum;
+                timestamp = last && sum > 0 ? mapping.defaultStart() : mapping.granuleToTime(granule) - sum;
                 firstTimestamp = timestamp;
                 anchored = true;
             } else if (resyncing) {
@@ -556,7 +841,7 @@ final class OggParser {
                 }
                 timestamp = mapping.granuleToTime(granule) - sum;
                 resyncing = false;
-            } else if (granule != -1 && !last) {
+            } else if (granule != -1 && (!last || sum == 0)) {
                 timestamp = mapping.granuleToTime(granule) - sum;
             } else {
                 timestamp = nextTimestamp;

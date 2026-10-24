@@ -2,11 +2,13 @@ package com.github.auties00.smalt.probe;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.OptionalLong;
+import java.util.Set;
 
 /**
  * Describes an audio stream of a probed file.
@@ -113,6 +115,11 @@ public final class AudioStreamInfo implements StreamInfo {
     @Override
     public Map<String, String> tags() {
         return fields.tags();
+    }
+
+    @Override
+    public Set<TrackDisposition> disposition() {
+        return fields.disposition();
     }
 
     /**

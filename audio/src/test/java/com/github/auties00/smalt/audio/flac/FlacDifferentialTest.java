@@ -4,6 +4,7 @@ import com.github.auties00.smalt.container.flac.FlacDemuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Packet;
 import org.junit.jupiter.api.DisplayName;
@@ -31,6 +32,9 @@ import static org.junit.jupiter.api.Assertions.*;
  * predictor option; ffmpeg outputs every sample left-justified in 32 bits.
  */
 class FlacDifferentialTest {
+    /** FLAC is lossless, so the decode equals ffmpeg's sample for sample. */
+    private static final Tolerance TOLERANCE = Tolerance.exact();
+
     /** One encoder configuration. */
     record Spec(String name, int rate, int channels, int bits, List<String> options, String signal) {
         @Override
@@ -155,12 +159,7 @@ class FlacDifferentialTest {
     }
 
     static void assertSamples(int[] expected, int[] actual, String label) {
-        assertEquals(expected.length, actual.length, label + ": sample count");
-        for (var i = 0; i < expected.length; i++) {
-            if (expected[i] != actual[i]) {
-                fail(label + ": sample " + i + " differs: ffmpeg " + expected[i] + ", ours " + actual[i]);
-            }
-        }
+        TOLERANCE.assertWithin(label, expected, actual);
     }
 
     @ParameterizedTest(name = "{0}")

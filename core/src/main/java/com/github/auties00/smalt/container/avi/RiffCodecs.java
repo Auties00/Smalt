@@ -28,6 +28,7 @@ final class RiffCodecs {
                  "SN40", "UNDF", "WAWV", "ZMP4", "DMK2", "DM4V", "QMP4" -> Codec.MPEG4_PART2;
             case "MJPG", "AVRN", "LJPG", "JPGL", "AVDJ", "DMB1", "MJLS", "ACDV", "QIVG", "SLMJ", "CJPG", "IJPG" ->
                     Codec.MJPEG;
+            case "MJ2C", "MJP2", "LJ2C", "LJ2K", "IPJ2", "AVJ2" -> Codec.JPEG2000;
             case "H263", "S263", "U263", "X263", "M263", "L263", "VX1K", "ZYGO", "VIV1", "T263", "LSVX" -> Codec.H263;
             case "VP80" -> Codec.VP8;
             case "VP90" -> Codec.VP9;
@@ -45,6 +46,7 @@ final class RiffCodecs {
     static String videoFourCc(Codec codec) {
         return switch (codec) {
             case MJPEG -> "MJPG";
+            case JPEG2000 -> "MJ2C";
             case MPEG4_PART2 -> "FMP4";
             case H264 -> "H264";
             case HEVC -> "HEVC";
