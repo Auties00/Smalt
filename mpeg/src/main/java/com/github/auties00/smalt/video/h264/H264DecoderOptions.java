@@ -26,10 +26,16 @@ public final class H264DecoderOptions {
 
     private final boolean realtime;
 
+    private final boolean highBitDepth;
+
+    private final boolean filmGrain;
+
     private H264DecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.threads = builder.threads;
         this.realtime = builder.realtime;
+        this.highBitDepth = builder.highBitDepth;
+        this.filmGrain = builder.filmGrain;
     }
 
     /**
@@ -105,20 +111,43 @@ public final class H264DecoderOptions {
         return realtime;
     }
 
+    /**
+     * {@return whether the pictures of streams deeper than 8 bits are handed out at their own depth
+     * as {@link com.github.auties00.smalt.image.Yuv16Picture Yuv16Picture}s rather than rounded to
+     * 8-bit {@link com.github.auties00.smalt.image.YuvPicture YuvPicture}s; {@code false} by default}
+     *
+     * <p>The pictures of 8-bit streams are always {@code YuvPicture}s.
+     */
+    public boolean highBitDepth() {
+        return highBitDepth;
+    }
+
+    /**
+     * {@return whether the decoder adds the film grain that film grain characteristics SEI
+     * messages describe to the frames; {@code true} by default}
+     *
+     * <p>When set, the grain of the frequency filtering model with additive blending is rendered
+     * as {@link H264Decoder} describes; when clear, frames hold the decoded samples as they are.
+     */
+    public boolean filmGrain() {
+        return filmGrain;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof H264DecoderOptions that && limits.equals(that.limits) && threads == that.threads
-                && realtime == that.realtime;
+                && realtime == that.realtime && highBitDepth == that.highBitDepth && filmGrain == that.filmGrain;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, threads, realtime);
+        return Objects.hash(limits, threads, realtime, highBitDepth, filmGrain);
     }
 
     @Override
     public String toString() {
-        return "H264DecoderOptions[limits=" + limits + ", threads=" + threads + ", realtime=" + realtime + "]";
+        return "H264DecoderOptions[limits=" + limits + ", threads=" + threads + ", realtime=" + realtime
+                + ", highBitDepth=" + highBitDepth + ", filmGrain=" + filmGrain + "]";
     }
 
     /**
@@ -134,14 +163,21 @@ public final class H264DecoderOptions {
 
         private boolean realtime;
 
+        private boolean highBitDepth;
+
+        private boolean filmGrain;
+
         private Builder() {
             this.limits = MediaLimits.DEFAULT;
+            this.filmGrain = true;
         }
 
         private Builder(H264DecoderOptions options) {
             this.limits = options.limits;
             this.threads = options.threads;
             this.realtime = options.realtime;
+            this.highBitDepth = options.highBitDepth;
+            this.filmGrain = options.filmGrain;
         }
 
         /**
@@ -174,6 +210,30 @@ public final class H264DecoderOptions {
          */
         public Builder realtime(boolean realtime) {
             this.realtime = realtime;
+            return this;
+        }
+
+        /**
+         * Sets whether pictures deeper than 8 bits keep their depth; see
+         * {@link H264DecoderOptions#highBitDepth()}.
+         *
+         * @param highBitDepth the value
+         * @return this builder
+         */
+        public Builder highBitDepth(boolean highBitDepth) {
+            this.highBitDepth = highBitDepth;
+            return this;
+        }
+
+        /**
+         * Sets whether the decoder adds film grain to the frames; see
+         * {@link H264DecoderOptions#filmGrain()}.
+         *
+         * @param filmGrain the value
+         * @return this builder
+         */
+        public Builder filmGrain(boolean filmGrain) {
+            this.filmGrain = filmGrain;
             return this;
         }
 

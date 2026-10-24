@@ -293,8 +293,17 @@ final class JpegFile implements ImageFile {
         return new ImageMetadata(ImageFormat.JPEG, exif, xmp, iptc, icc.profile(), comments, Map.of());
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * @throws MediaException.Malformed if the file ends before a scan or an end-of-image marker, so that it holds
+     * no image an edited copy could keep
+     */
     @Override
     public EditPlan plan(Resolved target) {
+        if (scanStart >= source.size()) {
+            throw new MediaException.Malformed("JPEG file ends before its image data");
+        }
         var replacements = new EnumMap<Kind, List<byte[]>>(Kind.class);
         if (!(target.exif() instanceof ImageMetadataEdit.Change.Keep)) {
             replacements.put(Kind.EXIF, target.exifBytes() == null ? List.of()

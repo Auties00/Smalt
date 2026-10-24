@@ -94,6 +94,13 @@ Contents
   37. Adobe Digital Negative (DNG) specification
   38. rawtoaces-data (camera spectral sensitivities)
   39. libdeflate
+  40. X3F tools
+  41. opusfile
+  42. libxaac
+  43. LERC (Limited Error Raster Compression)
+  44. OpenJPH
+  45. OpenHTJ2K
+  46. CharLS
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -116,17 +123,23 @@ Derived Smalt packages:
   audio.opus.internal.silk
 
 Derivation: a port of the float build of libopus 1.5.2 (CELT, SILK, the
-Opus framing, multistream and repacketizer layers, the tonality analysis and
-its MLP), including tables copied from the C sources.
+Opus framing, multistream, projection and repacketizer layers, the
+ambisonic mixing and demixing matrices, the tonality analysis and its MLP),
+including tables copied from the C sources.
 
 Copyright:
   Copyright 2001-2023 Xiph.Org, Skype Limited, Octasic,
                       Jean-Marc Valin, Timothy B. Terriberry,
                       CSIRO, Gregory Maxwell, Mark Borgerding,
                       Erik de Castro Lopo, Mozilla, Amazon
+  Copyright (c) 2017 Google Inc. (src/mapping_matrix.c,
+                      src/opus_projection_encoder.c,
+                      src/opus_projection_decoder.c)
 EOF
 license_start "libopus license (COPYING)"
 cat "$LIC/opus-COPYING"
+license_start "License of the projection files (header of src/mapping_matrix.c)"
+cat "$LIC/opus-mapping_matrix.c"
 
 section "2. KISS FFT (as modified in libopus)"
 cat <<'EOF'
@@ -166,12 +179,14 @@ Derived Smalt packages:
   image.webp.internal.riff
   video.vp8.internal
 
-Derivation: the WebP decoder and encoder (VP8L lossless codec, alpha
-coding and filters, animation encoding and decoding, RIFF container rules,
-YUV conversion) follow libwebp's src/dec, src/enc, src/dsp, src/utils,
-src/mux and src/demux; the lossy VP8 encoder in video.vp8.internal is a
-port of libwebp 1.6.0's src/enc and src/dsp encoder, including tables
-copied verbatim.
+Derivation: the WebP decoder and encoder (VP8L lossless codec and its
+near-lossless modes, alpha coding and filters, animation encoding and
+decoding, RIFF container rules, YUV conversion with dithering, and the
+sharp YUV conversion of sharpyuv/) follow libwebp's src/dec, src/enc,
+src/dsp, src/utils, src/mux, src/demux and sharpyuv; the lossy VP8 encoder
+in video.vp8.internal (multi-pass PSNR search and loop filter search
+included) is a port of libwebp 1.6.0's src/enc and src/dsp encoder,
+including tables copied verbatim.
 
 Copyright:
   Copyright (c) 2010, Google Inc. All rights reserved.
@@ -206,7 +221,14 @@ port of libvpx 1.17.0's one-pass real-time CBR path (vp8/encoder: onyx_if.c,
 encodeframe.c, rdopt.c, pickinter.c, mcomp.c, encodemb.c, tokenize.c,
 bitstream.c, ratectrl.c, picklpf.c, encodemv.c, modecosts.c, segmentation.c,
 vp8_skin_detection.c, and vp8/common/findnearmv.c) with the vpx_dsp C
-kernels it uses and its speed, threshold and cost tables. The VP9 decoder is
+kernels it uses and its speed, threshold and cost tables. Its good-quality
+usage ports libvpx 1.15.1's good-quality path (vp8/encoder: the first pass
+and the two-pass rate control of firstpass.c, the recode loop and the
+alternate reference coding of onyx_if.c, temporal_filter.c, the
+rate-distortion mode decision and split motion search of rdopt.c, the
+token costs of rdopt.c and tokenize.c, the full filter level search of
+picklpf.c, encodeintra.c and the minimum quantizer and split threshold
+tables of onyx_if.c). The VP9 decoder is
 a port of libvpx's VP9 decoder (vp9/decoder, vp9/common, vp9/vp9_dx_iface.c
 and the vpx_dsp C kernels it uses: inverse transforms, sub-pixel
 convolution, loop filters, intra prediction and their high bit depth
@@ -221,7 +243,14 @@ vp9_rd.c, vp9_picklpf.c, vp9_quantize.c, vp9_dct.c, vp9_encodemv.c and
 vp9_cost.c) with the vpx_dsp C kernels it uses (boolean encoder, forward
 transforms, sums of absolute differences, variances, Hadamard transforms,
 integral projections and skin detection) and its speed, threshold, rate
-model and cost tables.
+model and cost tables. Its good-quality usage, and its 4:2:2, 4:4:0, 4:4:4,
+10-bit and 12-bit coding, port libvpx 1.15.1's good-quality path
+(vp9/encoder: the rate-distortion partition and mode search of
+vp9_encodeframe.c, vp9_rdopt.c and vp9_rd.c, the first and second pass of
+vp9_firstpass.c, the two-pass rate control of vp9_ratectrl.c, the
+recode loop of vp9_encoder.c, vp9_temporal_filter.c and the filter level
+search of vp9_picklpf.c) and its high bit depth quantizer and token
+tables.
 
 Copyright:
   Copyright (c) 2010, The WebM Project authors. All rights reserved.
@@ -258,21 +287,32 @@ integer inverse DCTs, the accurate integer forward DCT, Huffman table
 optimization, the Huffman bit writer, color conversion, chroma upsampling
 and downsampling, quality scaling, quantization reciprocals, and ICC profile
 reassembly, including tables and constants taken from the C sources. The
-lossless transforms (JpegTransforms, JpegTransformOptions and, in
-image.jpeg.internal, LosslessTransform, CoefficientWriter and
-JpegTranscoder) port the jpegtran sample program: the coefficient
-rotations, flips, transpositions and crops of transupp.c, the transcoding
-of jctrans.c, the marker writer of jcmarker.c, the progressive Huffman
-encoder of jcphuff.c, the pass sequence of jcmaster.c, and the parameter
-handling of jpegtran.c. The accurate integer inverse DCT is also the inverse
-DCT of the MPEG-4 Part 2 and H.263 decoders.
+lossless transforms (JpegTransforms, JpegTransformOptions, JpegFill and,
+in image.jpeg.internal, LosslessTransform, LosslessEdit, CoefficientWriter
+and JpegTranscoder) port the jpegtran sample program: the coefficient
+rotations, flips, transpositions, crops, crop extensions, wipes, drops and
+quantization table adjustment of transupp.c, the transcoding of jctrans.c,
+the marker writer of jcmarker.c, the progressive Huffman encoder of
+jcphuff.c, the pass sequence and per-scan restart intervals of jcmaster.c,
+and the parameter handling of jpegtran.c. The encoder's coding modes (in
+image.jpeg.internal, JpegEncoding, SampleRows, ComponentBands,
+DctFrameEncoder, WideFdct, ArithmeticEncoder and LosslessFrameEncoder) port
+the compression library: the preprocessing and downsampling controllers
+(jcprepct.c, jcsample.c), color conversion at 8 to 16 bits with the CMYK
+and YCCK transforms (jccolor.c, cmyk.h) and the PPM sample rescaling
+(rdppm.c), the 8-bit and 12-bit forward DCT and quantization (jfdctint.c,
+jcdctmgr.c), the coefficient controller (jccoefct.c), the arithmetic
+encoder (jcarith.c, jaricom.c), the lossless compressor (jclossls.c,
+jcdiffct.c, jclhuff.c) and the parameter setup (jcparam.c, jcmaster.c). The
+accurate integer inverse DCT is also the inverse DCT of the MPEG-4 Part 2
+and H.263 decoders.
 
 This software is based in part on the work of the Independent JPEG Group.
 
 Copyright (as stated in the headers of the libjpeg-turbo source files the
 Java code derives from):
 EOF
-for f in jdmarker.c jdapimin.c jdmaster.c jdhuff.c jdphuff.c jdarith.c jaricom.c jidctint.c jidctred.c jfdctint.c jchuff.c jcdctmgr.c jcparam.c jdcolor.c jccolor.c jdsample.c jcsample.c jdicc.c jutils.c transupp.c jctrans.c jcphuff.c jcmarker.c jcmaster.c jpegtran.c; do
+for f in jdmarker.c jdapimin.c jdmaster.c jdhuff.c jdphuff.c jdarith.c jaricom.c jidctint.c jidctred.c jfdctint.c jchuff.c jcdctmgr.c jcparam.c jdcolor.c jccolor.c jdsample.c jcsample.c jdicc.c jutils.c transupp.c jctrans.c jcphuff.c jcmarker.c jcmaster.c jpegtran.c jcarith.c jccoefct.c jcprepct.c jclossls.c jcdiffct.c jclhuff.c cmyk.h rdppm.c; do
   jt_header "$f"
 done
 license_start "libjpeg-turbo license overview (LICENSE.md)"
@@ -294,6 +334,7 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (HuffmanTables; BandLayout, EncoderChannel,
   EncoderEngine, TnsEncoder, TransientDetector)
+  container.internal (AacHuffmanTables)
 
 Derivation: the AAC Huffman codeword and length values are taken from the
 tables of aacenc/src/aac_rom.c. The encoder's psychoacoustic model, block
@@ -500,12 +541,15 @@ Derived Smalt packages:
   video.h264.encoder.internal (CabacEncoder: the binary arithmetic encoder
   engine of source/Lib/TLibEncoder/TEncBinCoderCABAC.cpp)
   video.hevc.internal (CabacDecoder: the binary arithmetic decoder engine
-  of source/Lib/TLibDecoder/TDecBinCoderCABAC.cpp)
+  of source/Lib/TLibDecoder/TDecBinCoderCABAC.cpp; PaletteCoding: the
+  palette mode parsing and reconstruction of the HM-16.21+SCM-8.8 screen
+  content coding branch, source/Lib/TLibDecoder/TDecSbac.cpp and
+  TDecCu.cpp)
 
 Derivation: algorithm structure followed; H.264 and HEVC share the CABAC
 engine. The rest of the HEVC decoder is written from the ITU-T H.265
-specification; HM served as the reference decoder its output is compared
-with.
+specification; HM and HM-SCM served as the reference decoders its output
+is compared with.
 
 Copyright:
   Copyright (c) 2010-2026, ITU/ISO/IEC
@@ -731,27 +775,33 @@ section "20. libavif"
 cat <<'EOF'
 Project:      libavif, the reference library of the AV1 Image File Format
 Source:       https://github.com/AOMediaCodec/libavif
-              (revision e4db889c6b574bf221a380e9bddde0273c942023)
+              (revision e4db889c6b574bf221a380e9bddde0273c942023; the sample
+              transforms at revision b1e4d339c1ff5b547664c85f1713279f4997d694)
 License text: LICENSE at the root of the repository
 License:      BSD 2-Clause License
 
 Derived Smalt packages:
   internal.heif (the HEIF item parser: the container rules it enforces, the
   clean aperture arithmetic and the loop count of image sequences; the
-  limited-range alpha expansion of the image canvas)
+  limited-range alpha expansion of the image canvas; the operators of the
+  sample transform expressions, HeifSampleTransform)
   image.avif, image.avif.internal (AvifDecoder: the choice between the primary
   item and the image sequence, the color, alpha and grid tile selection, the
   grid validation, the limited-range alpha expansion and the unpremultiplying
-  of premultiplied alpha; AvifEncoder: the box layout of still images, alpha
+  of premultiplied alpha, the choice of the sample transform item shown in
+  place of the primary item; AvifEncoder: the box layout of still images, alpha
   auxiliary items, grids, Exif and XMP items and image sequences, the quality
   scale, the automatic tiling, the orientation properties and the RGB to YUV
   conversion defaults)
 
 Derivation: the semantics of src/read.c, src/write.c, src/avif.c, src/alpha.c
-and src/reformat.c followed in Java; no code was translated line by line.
+and src/reformat.c followed in Java, and the operators of
+src/sampletransform.c (Copyright 2024 Google LLC) ported; no other code was
+translated line by line.
 
 Copyright:
   Copyright 2019 Joe Drago. All rights reserved.
+  Copyright 2024 Google LLC
 EOF
 license_start "libavif license (LICENSE)"
 cat "$LIC/libavif-LICENSE"
@@ -876,17 +926,21 @@ Derived Smalt packages:
   and old-style bit order of tif_lzw.c; Predictor: the horizontal and
   floating-point predictors of tif_predict.c; ThunderScan: ThunderDecode of
   tif_thunder.c; CcittFaxDecoder: the end-of-line and fill-bit handling of
-  tif_fax3.c; TiffPageDecoder and SampleConverter: the extra-sample, palette,
+  tif_fax3.c; CcittFaxEncoder: Fax3Encode1DRow, Fax3Encode2DRow, putspan,
+  Fax3PutEOL and the row alignment of tif_fax3.c; TiffPageDecoder and SampleConverter: the extra-sample, palette,
   CMYK and YCbCr rules of tif_getimage.c; TiffJpeg: the old-style JPEG stream
   reconstruction of tif_ojpeg.c; LabTables: TIFFCIELabToRGBInit,
   TIFFCIELab16ToXYZ and TIFFXYZToRGB of tif_color.c with the display_sRGB
   constants of tif_getimage.c; SgiLog: the LogL and LogLuv decoders and
-  conversions of tif_luv.c and the chromaticity table of uvcode.h)
+  conversions of tif_luv.c and the chromaticity table of uvcode.h;
+  PixarLog: PixarLogMakeTables and the horizontalAccumulate functions of
+  tif_pixarlog.c; NeXT: NeXTDecode of tif_next.c; TiffLerc: the mask, alpha
+  and byte-order conventions of tif_lerc.c)
 
 Derivation: the YCbCr tables, the CIE L*a*b* conversion, the SGILog decoders
-and conversions, the uvcode.h table and ThunderDecode translated to Java; the
-other listed functions followed for their algorithms and conventions, with the
-Java code structured differently.
+and conversions, the uvcode.h table, the PixarLog tables, NeXTDecode and
+ThunderDecode translated to Java; the other listed functions followed for their
+algorithms and conventions, with the Java code structured differently.
 
 Copyright:
   Copyright (c) 1988-1997 Sam Leffler
@@ -894,6 +948,9 @@ Copyright:
   Copyright (c) 1985, 1986 The Regents of the University of California
   (tif_lzw.c)
   Copyright (c) 1997 Greg Ward Larson (tif_luv.c, uvcode.h)
+  Copyright (c) 1996-1997 Sam Leffler, Copyright (c) 1996 Pixar
+  (tif_pixarlog.c)
+  Copyright (c) 2018 Even Rouault (tif_lerc.c)
 EOF
 license_start "LibTIFF license (LICENSE.md)"
 cat "$LIC/libtiff-LICENSE.md"
@@ -1003,8 +1060,10 @@ absent from the AMR-NB code, was added. In the AMR-WB decoder, the arithmetic
 of the basic operators, filters, excitation, concealment and comfort noise
 routines was then aligned with the 3GPP TS 26.173 fixed-point reference (the
 normative specification of AMR-WB, release 18) wherever opencore departs from
-it, so that the decoder passes the TS 26.174 test sequences; no 3GPP source
-text was copied. The source files carry this notice about their 3GPP origin:
+it, so that the decoder passes the TS 26.174 test sequences, and the muting of
+the AMR-NB comfort noise was aligned with the TS 26.073 reference, which does
+not clamp the muted energy; no 3GPP source text was copied. The source files
+carry this notice about their 3GPP origin:
 
   Portions of this file are derived from the following 3GPP standard:
       3GPP TS 26.073 (AMR-NB) / 3GPP TS 26.173 (AMR-WB)
@@ -1092,9 +1151,13 @@ tile geometry and coding pipeline of tcd.c, the tier-1 coder of t1.c and its
 MQ coder (mqc.c, including the lookup tables), the tier-2 packet coder of t2.c,
 the packet iterators of pi.c, the tag trees of tgt.c, the bit I/O of bio.c,
 the wavelet transforms of dwt.c, the component transforms of mct.c, the rate
-allocation of tcd.c, and the sYCC, e-sYCC and CMYK conversions of the
-opj_decompress tool (src/bin/common/color.c), including tables and constants
-taken from the C sources.
+allocation of tcd.c, the high-throughput (HTJ2K) block decoder of ht_dec.c,
+the encoder's tile-part division, TLM and PLT writers, progression changes,
+region of interest segments, guard bits and the digital cinema and IMF
+profile parameters and checks of j2k.c, the coding options of the
+opj_compress tool (src/bin/jp2/opj_compress.c), and the sYCC, e-sYCC and CMYK
+conversions of the opj_decompress tool (src/bin/common/color.c), including
+tables and constants taken from the C sources.
 
 Copyright (as stated in the headers of the OpenJPEG source files the Java
 code derives from):
@@ -1115,6 +1178,9 @@ code derives from):
   Copyright (c) 2012, CS Systemes d'Information, France
   Copyright (c) 2012, Carl Hetherington
   Copyright (c) 2017, IntoPIX SA <support@intopix.com>
+  Copyright (c) 2021, Aous Naman (ht_dec.c)
+  Copyright (c) 2021, Kakadu Software Pty Ltd, Australia (ht_dec.c)
+  Copyright (c) 2021, The University of New South Wales, Australia (ht_dec.c)
 EOF
 license_start "OpenJPEG license (LICENSE)"
 cat "$LIC/openjpeg-LICENSE"
@@ -1162,7 +1228,9 @@ cat "$LIC/jxl-oxide-LICENSE-MIT"
 section "33. libjxl"
 cat <<'EOF'
 Project:      libjxl, the JPEG XL reference implementation
-              (commit 5f92f524f1407de323c409c360ab38cae1d97b27)
+              (commit 5f92f524f1407de323c409c360ab38cae1d97b27, and
+              release 0.11.2 for the spot color stage and the gain map
+              bundle)
 Home:         https://jpeg.org/jpegxl/
 Source:       https://github.com/libjxl/libjxl
 License text: LICENSE and PATENTS at the root of the repository
@@ -1170,6 +1238,7 @@ License:      BSD 3-Clause, with the Additional IP Rights Grant (Patents)
               reproduced below
 
 Derived Smalt packages:
+  image.jxl.internal.bitstream
   image.jxl.internal.color
   image.jxl.internal.header
   image.jxl.internal.jpeg
@@ -1184,7 +1253,10 @@ the sRGB curve (lib/jxl/cms) and the fast power function used by the BT.709,
 DCI and gamma curves (lib/jxl/base/fast_math-inl.h), the ICC profiles
 synthesized for enumerated color encodings, the rendering order of the
 frame pipeline (lib/jxl/render_pipeline), and the MCU grid of a JPEG scan
-of one subsampled component (lib/jxl/jpeg/dec_jpeg_data_writer.cc).
+of one subsampled component (lib/jxl/jpeg/dec_jpeg_data_writer.cc). The
+spot color blend and its place in the pipeline follow
+lib/jxl/render_pipeline/stage_spot.cc and lib/jxl/dec_cache.cc, and the
+layout of the jhgm gain map bundle follows lib/extras/gain_map.cc.
 
 Copyright:
   Copyright (c) the JPEG XL Project Authors.
@@ -1373,6 +1445,177 @@ Copyright:
 EOF
 license_start "X3F tools license (doc/copyright.txt)"
 cat "$LIC/x3f-tools-copyright.txt"
+
+section "41. opusfile"
+cat <<'EOF'
+Project:      opusfile, the Xiph.Org library for decoding Ogg Opus files,
+              version 0.12
+Home:         https://opus-codec.org/
+Source:       https://gitlab.xiph.org/xiph/opusfile
+License text: https://gitlab.xiph.org/xiph/opusfile/-/raw/v0.12/COPYING
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  audio.opus (OpusDownmix)
+
+Derivation: the stereo downmix matrices of three to eight channels in the
+Vorbis order (OP_STEREO_DOWNMIX in src/opusfile.c) are copied.
+
+Copyright:
+  Copyright (c) 1994-2013 Xiph.Org Foundation and contributors
+EOF
+license_start "opusfile license (COPYING)"
+cat "$LIC/opusfile-COPYING"
+
+section "42. libxaac"
+cat <<'EOF'
+Project:      libxaac, the Android extended HE-AAC decoder and encoder, at
+              commit 2fbadd57bca46693b7a077bcf1513131106d960c
+Source:       https://github.com/ittiam-systems/libxaac
+              https://android.googlesource.com/platform/external/libxaac
+License text: https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/LICENSE
+NOTICE:       https://raw.githubusercontent.com/ittiam-systems/libxaac/2fbadd57bca46693b7a077bcf1513131106d960c/NOTICE
+License:      Apache License, Version 2.0
+
+Derived Smalt packages:
+  audio.aac.internal (CodewordReordering, ReversibleScalefactors,
+  LowDelayWindows, SamplingTables)
+  audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData)
+
+Derivation: Huffman codeword reordering follows the codebook priorities,
+section sorting, segmentation and set-wise decoding of
+decoder/ixheaacd_huff_code_reorder.c; the RVLC and escape codeword tables
+and the decoding order of RVLC scalefactors are taken from
+decoder/ixheaacd_rev_vlc.c. The 512-sample AAC-ELD synthesis window is
+taken from low_delay_window_eld of encoder/ixheaace_rom.c, the CLD QMF
+prototype of low delay SBR from cld_fb_64_640 of encoder/ixheaace_sbr_rom.c,
+the scalefactor band offsets and TNS limits of 512- and 480-sample frames
+from decoder/ixheaacd_aac_rom.c, and the LD_TRAN envelope tables from
+decoder/ixheaacd_env_extr.c. The Java code is a new implementation; it is
+not a copy of the original files.
+
+Copyright:
+  Copyright (C) 2018, 2023 The Android Open Source Project
+  Ittiam Systems
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+EOF
+printf '\n'
+cat "$LIC/libxaac-NOTICE"
+license_start "Apache License, Version 2.0 (libxaac LICENSE)"
+cat "$LIC/libxaac-LICENSE"
+
+section "43. LERC (Limited Error Raster Compression)"
+cat <<'EOF'
+Project:      LERC, Esri's Limited Error Raster Compression library, version 4.2.0
+Source:       https://github.com/Esri/lerc
+License text: https://raw.githubusercontent.com/Esri/lerc/v4.2.0/LICENSE
+NOTICE:       https://raw.githubusercontent.com/Esri/lerc/v4.2.0/NOTICE
+License:      Apache License, Version 2.0, with the patent grant of its
+              clause 3 (see the NOTICE below)
+
+Derived Smalt packages:
+  image.internal.lerc (LercDecoder, BitStuffer, LercHuffman, LosslessFloat,
+  Lerc1)
+
+Derivation: the Lerc2 decoder of src/LercLib (Lerc.cpp, Lerc2.cpp, Lerc2.h,
+BitStuffer2.cpp, Huffman.cpp, BitMask.cpp, RLE.cpp), the lossless
+floating-point decoder of the fpl_ files (fpl_Lerc2Ext.cpp,
+fpl_EsriHuffman.cpp, fpl_Compression.cpp, fpl_Predictor.cpp,
+fpl_UnitTypes.cpp) and the Lerc1 decoder of src/LercLib/Lerc1Decode
+(CntZImage.cpp, BitStuffer.cpp) translated to Java.
+
+Copyright:
+  Copyright 2015-2026 Esri
+  Original coding 2021 Yuriy Yakimenko (the fpl_ files)
+
+Attribution notices from the upstream NOTICE file (Apache License 2.0,
+section 4(d)):
+EOF
+printf '\n'
+cat "$LIC/lerc-NOTICE"
+license_start "Apache License, Version 2.0 (LERC LICENSE)"
+cat "$LIC/lerc-LICENSE"
+
+section "44. OpenJPH"
+cat <<'EOF'
+Project:      OpenJPH, an implementation of HTJ2K (JPEG 2000 Part 15),
+              version 0.21.3
+Home:         https://github.com/aous72/OpenJPH
+Source:       https://github.com/aous72/OpenJPH (src/core/coding)
+License text: https://raw.githubusercontent.com/aous72/OpenJPH/0.21.3/LICENSE
+License:      BSD 2-Clause License
+
+Derived Smalt packages:
+  image.jp2.internal (HtEncoder, HtTables)
+
+Derivation: the HT cleanup pass encoder of ojph_block_encoder.cpp
+(ojph_encode_codeblock32 with its MEL, VLC and MagSgn writers and the
+termination of their byte-streams) translated to Java, and the CxtVLC tables
+of table0.h and table1.h with the decoding and encoding lookup tables built
+from them as ojph_block_common.cpp and ojph_block_encoder.cpp build them.
+
+Copyright:
+  Copyright (c) 2019, Aous Naman
+  Copyright (c) 2019, Kakadu Software Pty Ltd, Australia
+  Copyright (c) 2019, The University of New South Wales, Sydney, Australia
+EOF
+license_start "OpenJPH license (LICENSE)"
+cat "$LIC/openjph-LICENSE"
+
+section "45. OpenHTJ2K"
+cat <<'EOF'
+Project:      OpenHTJ2K, an HTJ2K (JPEG 2000 Part 15) codec
+              (commit dacb452ecb21f50e88a74bf860c60f4aafa8a602)
+Home:         https://github.com/osamu620/OpenHTJ2K
+Source:       https://github.com/osamu620/OpenHTJ2K (source/core/coding)
+License text: LICENSE at the root of the repository
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  image.jp2.internal (PacketDecoder)
+
+Derivation: the reading of the codeword lengths of HT code-blocks in packet
+headers follows j2k_precinct_subband::parse_packet_header of coding_units.cpp:
+the placeholder passes before the first HT cleanup pass and the
+classification of the code-blocks of a tile-component that mixes block
+coders.
+
+Copyright:
+  Copyright (c) 2019 - 2021, Osamu Watanabe
+EOF
+license_start "OpenHTJ2K license (LICENSE)"
+cat "$LIC/openhtj2k-LICENSE"
+
+section "46. CharLS"
+cat <<'EOF'
+Project:      CharLS, a JPEG-LS (ITU-T T.87 | ISO/IEC 14495-1) codec
+              (commit 1153c2529abf1d1740d245bcddb2b756df62df62)
+Home:         https://github.com/team-charls/charls
+Source:       https://github.com/team-charls/charls (src)
+License text: LICENSE.md at the root of the repository
+License:      BSD 3-Clause License
+
+Derived Smalt packages:
+  image.jpeg.internal (JpegLsModel, JpegLsBitReader, JpegLsDecoder,
+  JpegLsWriter)
+
+Derivation: the context modeling, prediction, Golomb coding and run mode
+arithmetic of jpegls_algorithm.hpp, regular_mode_context.hpp,
+run_mode_context.hpp, default_traits.hpp and
+jpegls_preset_coding_parameters.hpp; the scan decoder and encoder of
+scan_decoder.hpp, scan_decoder_core.hpp, scan_decoder_impl.hpp,
+scan_encoder.hpp, scan_encoder_core.hpp and scan_encoder_impl.hpp,
+including the bit stuffing; the marker segment reading and writing of
+jpeg_stream_reader.cpp, jpeg_stream_writer.cpp and charls_jpegls_encoder.cpp;
+and the HP color transforms of color_transform.hpp, translated to Java.
+
+Copyright:
+  Copyright (c) 2007, Jan de Vaan and Victor Derks (Team CharLS)
+EOF
+license_start "CharLS license (LICENSE.md)"
+cat "$LIC/charls-LICENSE.md"
 } > "$OUT"
 
 echo "wrote $OUT"

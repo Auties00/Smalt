@@ -49,7 +49,7 @@ class PcmEncoderTest {
                 plane[index] = switch (codec) {
                     case PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE -> random.nextFloat() * 2 - 1;
                     case PCM_ALAW, PCM_MULAW -> 0;
-                    case PCM_S32LE, PCM_S32BE -> (random.nextInt(1 << 24) - (1 << 23)) * 0x1p-23f;
+                    case PCM_S32LE, PCM_S32BE, PCM_S64LE, PCM_S64BE -> (random.nextInt(1 << 24) - (1 << 23)) * 0x1p-23f;
                     default -> {
                         var scale = 1 << (bits(codec) - 1);
                         yield (random.nextInt(2 * scale) - scale) / (float) scale;

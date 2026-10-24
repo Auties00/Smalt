@@ -177,7 +177,7 @@ class FragmentedMp4MuxerTest {
         MuxSupport.assertFfmpegClean("cmaf.mp4", joined.toByteArray());
         var twoTracks = new FragmentedMp4Muxer(MediaSink.memory(), FragmentedMp4MuxerOptions.cmaf());
         twoTracks.addTrack(source.tracks().getFirst());
-        assertThrows(IllegalArgumentException.class, () -> twoTracks.addTrack(pcmLike(7)));
+        assertThrows(IllegalArgumentException.class, () -> twoTracks.addTrack(eightBitPcm(7)));
     }
 
     @Test
@@ -383,7 +383,7 @@ class FragmentedMp4MuxerTest {
         @DisplayName("rejects unsupported codecs, undeclared tracks, decreasing and overflowing timestamps")
         void rejections() {
             try (var muxer = new FragmentedMp4Muxer(MediaSink.memory())) {
-                assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(pcmLike(0)));
+                assertThrows(IllegalArgumentException.class, () -> muxer.addTrack(eightBitPcm(0)));
                 assertFalse(FragmentedMp4Muxer.supports(Codec.VORBIS));
             }
             var input = Fixtures.read(Fixtures.tone("m4a", 440, 44_100, 2, 0.2, List.of("-c:a", "aac")));
@@ -408,20 +408,20 @@ class FragmentedMp4MuxerTest {
                 assertThrows(IllegalArgumentException.class, () -> muxer.writePacket(new Packet(track.id(), new byte[4], 1024, 1024, 1024, true)));
                 assertThrows(IllegalArgumentException.class,
                         () -> muxer.writePacket(new Packet(track.id(), new byte[4], Long.MAX_VALUE, Long.MAX_VALUE, 0, true)));
-                assertThrows(IllegalStateException.class, () -> muxer.addTrack(pcmLike(5)));
+                assertThrows(IllegalStateException.class, () -> muxer.addTrack(eightBitPcm(5)));
             }
         }
     }
 
-    private static Track pcmLike(int id) {
+    private static Track eightBitPcm(int id) {
         return AudioTrack.builder()
                 .id(id)
-                .codec(Codec.PCM_S16LE)
+                .codec(Codec.PCM_U8)
                 .timeBase(Rational.timeBaseOf(48_000))
                 .duration(-1)
                 .sampleRate(48_000)
                 .layout(ChannelLayout.MONO)
-                .bitsPerSample(16)
+                .bitsPerSample(8)
                 .skipSamples(0)
                 .build();
     }

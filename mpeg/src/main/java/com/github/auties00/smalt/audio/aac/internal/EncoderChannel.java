@@ -38,7 +38,7 @@ public final class EncoderChannel {
      * The masking ratio of tonal bands and of short windows: thresholds sit 29 dB below band
      * energies.
      */
-    private static final float MASKING_RATIO = (float) Math.pow(10, -2.9);
+    private static final float MASKING_RATIO = (float) StrictMath.pow(10, -2.9);
 
     /**
      * The signal-to-mask ratio of a tonal band, in decibels.
@@ -589,7 +589,7 @@ public final class EncoderChannel {
         var flatness = 3.0103f * (logSum / lines - fastLog2(sum / lines));
         var tonality = Math.clamp(flatness / TONAL_FLATNESS, 0, 1);
         var smr = noiseSmr + tonality * (TONAL_SMR - noiseSmr);
-        return (float) Math.pow(10, -smr / 10);
+        return (float) StrictMath.pow(10, -smr / 10);
     }
 
     /**
@@ -836,7 +836,7 @@ public final class EncoderChannel {
         var count = layout.count();
         var lowest = Integer.MAX_VALUE;
         var highestBound = 0;
-        var lowering = parameter < 0 ? (float) Math.pow(10, 3 * parameter) : 1;
+        var lowering = parameter < 0 ? (float) StrictMath.pow(10, 3 * parameter) : 1;
         for (var group = 0; group < groupCount; group++) {
             for (var band = 0; band < count; band++) {
                 var index = group * MAX_BANDS + band;
