@@ -1,0 +1,37 @@
+# demux dump of elementary/mpeg4.m4v; regenerate with -Dsmalt.test.updateDumps=true
+format MPEG4_VIDEO
+duration -1
+seekable false
+track 1 VIDEO MPEG4_PART2 timebase=1/90000 duration=? config=55:79d3b409
+  video 0x0 orientation=NORMAL
+packets 30
+0 t1 pts=0 dts=0 dur=? flags=KEY size=3613 crc=9583f35a
+1 t1 pts=? dts=? dur=? flags=- size=1665 crc=66ff2709
+2 t1 pts=? dts=? dur=? flags=- size=1057 crc=4b915cf0
+3 t1 pts=? dts=? dur=? flags=- size=1059 crc=7cbf9327
+4 t1 pts=? dts=? dur=? flags=- size=1828 crc=5dfb602b
+5 t1 pts=? dts=? dur=? flags=- size=1123 crc=f5840e7b
+6 t1 pts=? dts=? dur=? flags=- size=992 crc=f4f5763a
+7 t1 pts=? dts=? dur=? flags=- size=1552 crc=aee917a8
+8 t1 pts=? dts=? dur=? flags=- size=1196 crc=9d30664e
+9 t1 pts=? dts=? dur=? flags=- size=1160 crc=7f9483d6
+10 t1 pts=? dts=? dur=? flags=KEY size=4022 crc=874c8bcf
+11 t1 pts=? dts=? dur=? flags=- size=1183 crc=79745bce
+12 t1 pts=? dts=? dur=? flags=- size=1158 crc=eaba8f30
+13 t1 pts=? dts=? dur=? flags=- size=1876 crc=f889bb35
+14 t1 pts=? dts=? dur=? flags=- size=1307 crc=537d6689
+15 t1 pts=? dts=? dur=? flags=- size=1293 crc=0372435c
+16 t1 pts=? dts=? dur=? flags=- size=1432 crc=1d0357e9
+17 t1 pts=? dts=? dur=? flags=- size=1133 crc=2388a599
+18 t1 pts=? dts=? dur=? flags=- size=1218 crc=3df65d72
+19 t1 pts=? dts=? dur=? flags=KEY size=4084 crc=02240a23
+20 t1 pts=? dts=? dur=? flags=- size=982 crc=32bfa39a
+21 t1 pts=? dts=? dur=? flags=- size=864 crc=16ec0745
+22 t1 pts=? dts=? dur=? flags=- size=1458 crc=3fdfbabe
+23 t1 pts=? dts=? dur=? flags=- size=1303 crc=d6956629
+24 t1 pts=? dts=? dur=? flags=- size=1342 crc=2cc39ab8
+25 t1 pts=? dts=? dur=? flags=- size=1569 crc=ddc07c12
+26 t1 pts=? dts=? dur=? flags=- size=992 crc=a1340a84
+27 t1 pts=? dts=? dur=? flags=- size=1191 crc=2393993b
+28 t1 pts=? dts=? dur=? flags=KEY size=4113 crc=0c4e107b
+29 t1 pts=? dts=? dur=? flags=- size=957 crc=79eb6604

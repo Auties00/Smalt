@@ -1,13 +1,21 @@
 package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.container.internal.DiscardedFrames;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.internal.codec.DecodeOrderTimestamps;
+import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.plane.PictureCopy;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoDecoder;
+import com.github.auties00.smalt.video.VideoDecoderOptions;
+import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoEncoder;
 import com.github.auties00.smalt.video.VideoEncoderOptions;
 import com.github.auties00.smalt.video.VideoEncoders;
@@ -21,9 +29,12 @@ import com.github.auties00.smalt.video.VideoFrame;
  * copied and held until a later frame shows it is the one on screen at the start, then it is
  * output at the start with its remaining duration. Frames at or after the end are dropped, and
  * the output track declares the kept duration so the MP4 edit list ends exactly there. Frames
- * whose timestamps do not increase are dropped.
+ * whose timestamps do not increase are dropped, and so are the frames of packets flagged
+ * {@link com.github.auties00.smalt.track.PacketFlag#DISCARD}. A packet that changes the codec
+ * configuration drains the decoder and continues with one created from the new configuration.
  *
- * <p>Kept frames go through the {@link PictureOps} planned from the first frame, then through the
+ * <p>Kept frames go through the {@link PictureOps} planned from the first frame (with the sample
+ * aspect ratio the track declares or its configuration signals), then through the
  * frame-rate conversion when one is requested: the output gets one frame per tick of the target
  * rate, each showing the last input frame at or before the tick, so frames are dropped when the
  * input is faster and repeated when it is slower. The encoder is created on the first output
@@ -55,9 +66,32 @@ final class VideoEncodeStage implements Stage {
     private final VideoTrack source;
 
     /**
-     * The decoder of the input track, or {@code null} when frames are supplied directly.
+     * The decoder of the input track, or {@code null} when frames are supplied directly; replaced
+     * when a packet changes the codec configuration.
      */
-    private final VideoDecoder decoder;
+    private VideoDecoder decoder;
+
+    /**
+     * The options {@link #decoder} was created with, or {@code null} when frames are supplied
+     * directly.
+     */
+    private final VideoDecoderOptions decoderOptions;
+
+    /**
+     * The codec configuration of {@link #decoder}, or {@code null} when it has none.
+     */
+    private byte[] config;
+
+    /**
+     * The timestamps of the discarded packets whose frames have not been dropped yet.
+     */
+    private final DiscardedFrames discarded = new DiscardedFrames();
+
+    /**
+     * The presentation timestamps restored for decoding-order stamped packets, or {@code null} when
+     * the codec does not reorder frames.
+     */
+    private final DecodeOrderTimestamps reordered;
 
     private final Codec codec;
 
@@ -67,6 +101,11 @@ final class VideoEncodeStage implements Stage {
      * Whether the orientation is applied to the pixels.
      */
     private final boolean applyOrientation;
+
+    /**
+     * Whether non-square samples are resampled to square ones.
+     */
+    private final boolean applyAspect;
 
     /**
      * The constant output rate, or {@code null} to keep the input timing.
@@ -151,9 +190,13 @@ final class VideoEncodeStage implements Stage {
      * @param source the input track; for an animation, a track in microseconds
      * @param decoder the decoder of the input track, or {@code null} when frames are supplied
      * through {@link #acceptFrame(VideoFrame)}
+     * @param decoderOptions the options {@code decoder} was created with, or {@code null} without a
+     * decoder
      * @param codec the codec to produce
      * @param options the video settings
      * @param applyOrientation whether the orientation is applied to the pixels
+     * @param applyAspect whether non-square samples are resampled to square ones rather than their
+     * ratio kept
      * @param frameRate the constant output rate, or {@code null} to keep the input timing
      * @param outputId the output track identifier
      * @param output the muxer receiving the packets
@@ -161,14 +204,17 @@ final class VideoEncodeStage implements Stage {
      * @param endMicros the end of the kept range in microseconds, or {@code -1} for the end of the track
      * @param cancellation checked between frames
      */
-    VideoEncodeStage(VideoTrack source, VideoDecoder decoder, Codec codec, VideoTranscodeOptions options,
-                     boolean applyOrientation, Rational frameRate, int outputId, OutputMuxer output, long startMicros,
-                     long endMicros, Cancellation cancellation) {
+    VideoEncodeStage(VideoTrack source, VideoDecoder decoder, VideoDecoderOptions decoderOptions, Codec codec,
+                     VideoTranscodeOptions options, boolean applyOrientation, boolean applyAspect, Rational frameRate,
+                     int outputId, OutputMuxer output, long startMicros, long endMicros, Cancellation cancellation) {
         this.source = source;
         this.decoder = decoder;
+        this.decoderOptions = decoderOptions;
+        this.config = source.codecConfig().orElse(null);
         this.codec = codec;
         this.options = options;
         this.applyOrientation = applyOrientation;
+        this.applyAspect = applyAspect;
         this.frameRate = frameRate;
         this.outputId = outputId;
         this.output = output;
@@ -178,6 +224,7 @@ final class VideoEncodeStage implements Stage {
         this.end = endMicros < 0 ? -1 : Rational.MICROSECONDS.rescale(endMicros, timeBase);
         var rate = source.frameRate().orElse(DEFAULT_FRAME_RATE);
         this.nominalDuration = Math.max(1, rate.invert().rescale(1, timeBase));
+        this.reordered = DecodeOrderTimestamps.of(source.codec());
     }
 
     @Override
@@ -189,6 +236,18 @@ final class VideoEncodeStage implements Stage {
     public void accept(Packet packet) {
         if (done) {
             return;
+        }
+        var newConfig = ConfigChanges.changed(packet, config);
+        if (newConfig != null) {
+            decoder.flush(this::acceptFrame);
+            var replacement = VideoDecoders.create(source.toBuilder().codecConfig(newConfig).build(), decoderOptions);
+            decoder.close();
+            decoder = replacement;
+            config = newConfig;
+        }
+        discarded.note(packet);
+        if (reordered != null) {
+            reordered.note(packet);
         }
         decoder.decode(packet, this::acceptFrame);
     }
@@ -205,7 +264,10 @@ final class VideoEncodeStage implements Stage {
             return;
         }
         cancellation.check();
-        var pts = frame.pts();
+        var pts = reordered != null ? reordered.presentation(frame.pts()) : frame.pts();
+        if (pts != Packet.NO_TIMESTAMP && discarded.drop(pts)) {
+            return;
+        }
         if (pts == Packet.NO_TIMESTAMP) {
             pts = lastPts == Long.MIN_VALUE ? 0 : lastPts + nominalDuration;
         }
@@ -236,6 +298,8 @@ final class VideoEncodeStage implements Stage {
      * @param picture the picture, valid during the call
      * @param pts the presentation timestamp in the input time base, at or after the start
      * @param duration the display duration in the input time base
+     * @throws MediaException.LimitExceeded if a picture resampled to square samples exceeds the
+     * decoder limits, as a sample aspect ratio far from square can make it
      */
     private void show(Picture picture, long pts, long duration) {
         var time = pts - start;
@@ -244,9 +308,14 @@ final class VideoEncodeStage implements Stage {
         }
         duration = Math.max(duration, 1);
         if (ops == null) {
+            var aspect = VideoConfigs.sampleAspect(source);
             ops = PictureOps.plan(picture.width(), picture.height(), source.orientation(), applyOrientation,
                     options.crop().orElse(null), options::sizePlan, options.filter(), options.background(),
-                    options.chromaFormat().orElse(null), options.color().orElse(null));
+                    options.chromaFormat().orElse(null), options.color().orElse(null), aspect, applyAspect);
+            if (applyAspect && aspect != null && aspect.numerator() != aspect.denominator()) {
+                LimitChecks.checkPicture(decoderOptions != null ? decoderOptions.limits() : MediaLimits.DEFAULT,
+                        ops.resampledWidth(), ops.resampledHeight());
+            }
         }
         var processed = ops.apply(picture);
         if (frameRate == null) {
@@ -315,11 +384,16 @@ final class VideoEncodeStage implements Stage {
         var height = picture.height();
         var rate = frameRate != null ? frameRate : source.frameRate().orElse(DEFAULT_FRAME_RATE);
         var bitrate = options.bitrate().orElseGet(() -> defaultBitrate(width, height, rate));
-        var encoderOptions = VideoEncoderOptions.of(width, height, rate, bitrate).toBuilder().threads(options.threads())
-                .build();
+        var encoderBuilder = VideoEncoderOptions.of(width, height, rate, bitrate).toBuilder().threads(options.threads());
+        if (!options.periodicKeyframes()) {
+            encoderBuilder.noPeriodicKeyframes();
+        } else {
+            options.keyframeInterval().ifPresent(encoderBuilder::keyframeInterval);
+        }
+        var encoderOptions = encoderBuilder.build();
         encoder = VideoEncoders.create(codec, encoderOptions);
         var duration = end >= 0 ? timeBase.rescale(end - start, encoder.timeBase()) : -1;
-        declared = VideoTrack.builder()
+        var builder = VideoTrack.builder()
                 .id(outputId)
                 .codec(encoder.codec())
                 .timeBase(encoder.timeBase())
@@ -330,8 +404,13 @@ final class VideoEncodeStage implements Stage {
                 .orientation(ops.outputOrientation())
                 .frameRate(rate)
                 .color(options.color().orElse(null))
-                .duration(duration)
-                .build();
+                .duration(duration);
+        if (ops.outputSampleAspect() != null) {
+            // TODO: hand the ratio to encoders that signal one in band (the H.264 VUI writes 1:1) once
+            //  VideoEncoderOptions carries it, so that a later remux into a container without the field keeps it
+            builder.sampleAspectRatio(ops.outputSampleAspect());
+        }
+        declared = builder.build();
         output.declare(declared);
     }
 

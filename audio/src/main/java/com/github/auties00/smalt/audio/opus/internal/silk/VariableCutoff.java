@@ -98,8 +98,8 @@ final class VariableCutoff {
      * @param frame_length the number of samples
      */
     static void lpVariableCutoff(LpState psLP, short[] frame, int frameOff, int frame_length) {
-        var B_Q28 = new int[TRANSITION_NB];
-        var A_Q28 = new int[TRANSITION_NA];
+        var B_Q28 = psLP.B_Q28;
+        var A_Q28 = psLP.A_Q28;
         int fac_Q16;
         int ind;
 
