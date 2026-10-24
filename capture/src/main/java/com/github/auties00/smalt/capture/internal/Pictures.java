@@ -1,4 +1,4 @@
-package com.github.auties00.smalt.capture.internal.windows;
+package com.github.auties00.smalt.capture.internal;
 
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
@@ -10,7 +10,7 @@ import com.github.auties00.smalt.internal.plane.Planes;
 /**
  * Copies and rescales planar 4:2:0 pictures into the pictures a session delivers.
  */
-final class Pictures {
+public final class Pictures {
     /**
      * Prevents instantiation.
      */
@@ -27,7 +27,7 @@ final class Pictures {
      * @param color the color description
      * @return {@code previous} when it has this size and color, otherwise a new picture
      */
-    static YuvPicture reuse(YuvPicture previous, int width, int height, ColorInfo color) {
+    public static YuvPicture reuse(YuvPicture previous, int width, int height, ColorInfo color) {
         if (previous != null && previous.width() == width && previous.height() == height && previous.color().equals(color)) {
             return previous;
         }
@@ -42,7 +42,7 @@ final class Pictures {
      * @param source the picture to copy
      * @param target the picture receiving the samples
      */
-    static void copy(YuvPicture source, YuvPicture target) {
+    public static void copy(YuvPicture source, YuvPicture target) {
         var width = Math.min(source.width(), target.width());
         var height = Math.min(source.height(), target.height());
         Planes.copy(source.y(), 0, source.yStride(), target.y(), 0, target.yStride(), width, height);
@@ -61,7 +61,7 @@ final class Pictures {
      * @param source the picture to rescale
      * @param target the picture receiving the rescaled samples
      */
-    static void fit(YuvPicture source, YuvPicture target) {
+    public static void fit(YuvPicture source, YuvPicture target) {
         if (source.width() == target.width() && source.height() == target.height()) {
             copy(source, target);
             return;

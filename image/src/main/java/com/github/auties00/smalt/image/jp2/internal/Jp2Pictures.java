@@ -156,6 +156,11 @@ public final class Jp2Pictures {
                 planes[i] = cmyk[i];
                 precisions[i] = 8;
             }
+        } else if (count == 3 && space == Jp2ColorSpace.E_SRGB) {
+            for (var i = 0; i < 3; i++) {
+                planes[i] = esrgb(upsample(image, colors.get(i)), colors.get(i));
+                precisions[i] = colors.get(i).precision();
+            }
         } else if (count == 3 && converted(space)) {
             var three = colors.subList(0, 3).toArray(Jp2Channel[]::new);
             for (var i = 0; i < 3; i++) {
@@ -590,6 +595,30 @@ public final class Jp2Pictures {
             cr[i] = Math.clamp(luma + (int) (1.772 * (float) blue), 0, upb);
         }
         System.arraycopy(red, 0, y, 0, y.length);
+    }
+
+    /**
+     * Decodes an e-sRGB plane (PIMA 7667) to sRGB at the plane's precision {@code n}: the code
+     * {@code 255 * 2^(n - 9) * R' + 3 * 2^(n - 3)} of a nonlinear value {@code R'} is read back and
+     * clipped to the sRGB range [0, 1], which drops the values below black and above white that e-sRGB
+     * extends sRGB with.
+     *
+     * @param samples the e-sRGB samples, not modified
+     * @param channel the channel, for its precision and signedness
+     * @return the sRGB samples at the same precision, in a new array
+     */
+    private static int[] esrgb(int[] samples, Jp2Channel channel) {
+        var precision = channel.precision();
+        var black = 3 * Math.scalb(1.0, precision - 3);
+        var scale = 255 * Math.scalb(1.0, precision - 9);
+        var max = (1L << precision) - 1;
+        var offset = channel.signed() ? 1L << (precision - 1) : 0;
+        var result = new int[samples.length];
+        for (var i = 0; i < samples.length; i++) {
+            var value = Math.clamp((samples[i] + offset - black) / scale, 0.0, 1.0);
+            result[i] = (int) Math.round(value * max);
+        }
+        return result;
     }
 
     /**

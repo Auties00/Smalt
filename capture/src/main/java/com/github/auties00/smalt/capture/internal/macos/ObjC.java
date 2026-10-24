@@ -7,6 +7,7 @@ import java.lang.foreign.FunctionDescriptor;
 import java.lang.foreign.MemoryLayout;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.SegmentAllocator;
+import java.lang.foreign.StructLayout;
 import java.lang.foreign.SymbolLookup;
 import java.lang.invoke.MethodHandle;
 
@@ -240,6 +241,32 @@ final class ObjC {
      * Sends {@code void (id, SEL, CMTime)}.
      */
     private static final MethodHandle SEND_VOID_TIME = sendVoid(CmTime.LAYOUT);
+
+    /**
+     * The layout of {@code CGRect}: an origin and a size of two {@code CGFloat}s each.
+     */
+    static final StructLayout RECT = MemoryLayout.structLayout(JAVA_DOUBLE.withName("x"), JAVA_DOUBLE.withName("y"),
+            JAVA_DOUBLE.withName("width"), JAVA_DOUBLE.withName("height")).withName("CGRect");
+
+    /**
+     * Sends {@code BOOL f(id, SEL, NSInteger)}.
+     */
+    private static final MethodHandle SEND_BOOL_LONG = send(JAVA_BYTE, JAVA_LONG);
+
+    /**
+     * Sends {@code CGRect f(id, SEL)}.
+     */
+    private static final MethodHandle SEND_RECT = send(RECT);
+
+    /**
+     * Sends {@code void f(id, SEL, CGRect)}.
+     */
+    private static final MethodHandle SEND_VOID_RECT = sendVoid(RECT);
+
+    /**
+     * Sends {@code void f(id, SEL, double)}.
+     */
+    private static final MethodHandle SEND_VOID_DOUBLE = sendVoid(JAVA_DOUBLE);
 
     /**
      * The {@code alloc} selector.
@@ -694,6 +721,71 @@ final class ObjC {
                         MemorySegment third, MemorySegment fourth) {
         try {
             return (byte) SEND_BOOL_ID_LONG_ID_ID.invokeExact(receiver, selector, first, value, third, fourth) != 0;
+        } catch (Throwable failure) {
+            throw Native.rethrow(failure);
+        }
+    }
+
+    /**
+     * Sends a message with an {@code NSInteger} argument, returning a {@code BOOL}.
+     *
+     * @param value the argument
+     * @return the result
+     */
+    static boolean bool(MemorySegment receiver, MemorySegment selector, long value) {
+        try {
+            return (byte) SEND_BOOL_LONG.invokeExact(receiver, selector, value) != 0;
+        } catch (Throwable failure) {
+            throw Native.rethrow(failure);
+        }
+    }
+
+    /**
+     * Sends a message returning a {@code CGRect}.
+     *
+     * @param receiver the receiver, not {@code nil}: a structure-returning message to {@code nil}
+     * leaves the result undefined on x86_64
+     * @return the origin's x and y and the size's width and height
+     */
+    static double[] rect(MemorySegment receiver, MemorySegment selector) {
+        try (var arena = Arena.ofConfined()) {
+            var result = (MemorySegment) SEND_RECT.invokeExact((SegmentAllocator) arena, receiver, selector);
+            return result.toArray(JAVA_DOUBLE);
+        } catch (Throwable failure) {
+            throw Native.rethrow(failure);
+        }
+    }
+
+    /**
+     * Sends a message with a {@code CGRect} argument and no result.
+     *
+     * @param x the origin's x
+     * @param y the origin's y
+     * @param width the size's width
+     * @param height the size's height
+     */
+    static void callWithRect(MemorySegment receiver, MemorySegment selector, double x, double y, double width,
+                             double height) {
+        try (var arena = Arena.ofConfined()) {
+            var rect = arena.allocate(RECT);
+            rect.setAtIndex(JAVA_DOUBLE, 0, x);
+            rect.setAtIndex(JAVA_DOUBLE, 1, y);
+            rect.setAtIndex(JAVA_DOUBLE, 2, width);
+            rect.setAtIndex(JAVA_DOUBLE, 3, height);
+            SEND_VOID_RECT.invokeExact(receiver, selector, rect);
+        } catch (Throwable failure) {
+            throw Native.rethrow(failure);
+        }
+    }
+
+    /**
+     * Sends a message with a {@code double} argument and no result.
+     *
+     * @param value the argument
+     */
+    static void callWithDouble(MemorySegment receiver, MemorySegment selector, double value) {
+        try {
+            SEND_VOID_DOUBLE.invokeExact(receiver, selector, value);
         } catch (Throwable failure) {
             throw Native.rethrow(failure);
         }

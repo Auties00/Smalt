@@ -139,6 +139,7 @@ internal.subtitle	core
 internal.tags	core
 internal.task	core
 internal.tiff	core
+internal.xml	core
 io	core
 metadata	core
 preview	core

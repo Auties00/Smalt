@@ -494,6 +494,41 @@ class FlacIntegerOutputTest {
         }
 
         @Test
+        @DisplayName("a stream written before the blocking strategy bit, its frames numbered by sample, passes the check")
+        void legacyVariableBlocking() throws Exception {
+            // Like the IETF corpus file subset/27 (flake): no variable blocking bit, the frame headers code the
+            // first sample number, and STREAMINFO gives different minimum and maximum block sizes.
+            var sizes = new int[]{576, 1152, 4608, 576, 2304, 1000};
+            var total = Arrays.stream(sizes).sum();
+            var samples = uniform(2, 16, total, 27);
+            var packets = new ArrayList<Packet>();
+            var start = 0;
+            for (var size : sizes) {
+                var block = new long[2][size];
+                for (var c = 0; c < 2; c++) {
+                    for (var i = 0; i < size; i++) {
+                        block[c][i] = samples[c][start + i];
+                    }
+                }
+                var verbatim = FlacFrameBuilder.Subframe.of(FlacFrameBuilder.Predictor.verbatim());
+                var frame = FlacFrameBuilder.frame(false, start, 44_100, 16, 16, 1, block, size, verbatim, verbatim);
+                packets.add(new Packet(0, frame, 0, 0, 0, true));
+                start += size;
+            }
+            var config = FlacFrameBuilder.config(576, 4608, 44_100, 2, 16, total);
+            System.arraycopy(md5(samples, 16), 0, config, 26, 16);
+            try (var decoder = new FlacDecoder(track(config, 44_100), VERIFY)) {
+                assertArrayEquals(samples, decodeAll(decoder, packets, 2));
+                assertTrue(decoder.md5Verified());
+            }
+            var repeated = new ArrayList<>(packets);
+            repeated.add(3, packets.get(2));
+            try (var decoder = new FlacDecoder(track(config, 44_100), VERIFY)) {
+                assertThrows(MediaException.Malformed.class, () -> decodeAll(decoder, repeated, 2));
+            }
+        }
+
+        @Test
         @DisplayName("a decode that starts after the first frame, or a stream without a signature, is not checked")
         void unchecked() {
             var encoded = encoded(16);

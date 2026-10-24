@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.VideoDevices;
 import com.github.auties00.smalt.capture.CaptureDevice;
 import com.github.auties00.smalt.capture.CaptureMode;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
 import com.github.auties00.smalt.capture.VideoCaptureSession;
 import com.github.auties00.smalt.capture.internal.convert.YuvCoefficients;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -135,7 +136,7 @@ class WindowsCaptureTest {
         @DisplayName("captures even-sized, non-black frames with monotonic timestamps starting near zero")
         void capture(boolean gdi) throws InterruptedException {
             var screen = primary();
-            try (var session = ScreenSession.open(screen, new Rational(30, 1), gdi)) {
+            try (var session = ScreenSession.open(screen, ScreenCaptureOptions.builder().frameRate(30).build(), gdi)) {
                 assertEquals(!gdi, ((ScreenSession) session).duplicating());
                 assertEquals(screen.width() & ~1, session.width());
                 assertEquals(screen.height() & ~1, session.height());
@@ -278,7 +279,7 @@ class WindowsCaptureTest {
         void cost() throws InterruptedException {
             var screen = primary();
             for (var gdi : new boolean[]{false, true}) {
-                try (var session = ScreenSession.open(screen, new Rational(30, 1), gdi)) {
+                try (var session = ScreenSession.open(screen, ScreenCaptureOptions.builder().frameRate(30).build(), gdi)) {
                     for (var i = 0; i < 30; i++) {
                         session.read();
                     }
@@ -332,11 +333,11 @@ class WindowsCaptureTest {
                 var out = YuvPicture.allocate(width, height, ChromaFormat.YUV420, false, YuvCoefficients.BT709_LIMITED.color());
                 var converter = new BgraConverter();
                 for (var i = 0; i < 50; i++) {
-                    converter.convert(memory, 0, 4L * width, width, height, 0, null, out);
+                    converter.convert(memory, 0, 4L * width, width, height, 0, null, null, out);
                 }
                 var wall = System.nanoTime();
                 for (var i = 0; i < 100; i++) {
-                    converter.convert(memory, 0, 4L * width, width, height, 0, null, out);
+                    converter.convert(memory, 0, 4L * width, width, height, 0, null, null, out);
                 }
                 System.out.printf(Locale.ROOT, "1920x1080 BGRX to I420 from native memory: %.2f ms per frame%n",
                         (System.nanoTime() - wall) / 1e6 / 100);

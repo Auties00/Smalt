@@ -3,6 +3,7 @@ package com.github.auties00.smalt.internal.heif;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.HeifBuilder;
 import org.junit.jupiter.api.DisplayName;
@@ -220,6 +221,44 @@ class HeifFileTest {
             var data = simple();
             assertThrows(MediaException.LimitExceeded.class,
                     () -> HeifFile.parse(MediaSource.of(data), MediaLimits.builder().maxBytes(64).build()));
+        }
+
+        @Test
+        @DisplayName("rejects a meta box that runs past the end of the file without reserving its declared size")
+        void metaPastEnd() throws ReflectiveOperationException {
+            var data = simple();
+            var meta = (int) ByteArrays.u32be(data, 0);
+            assertEquals("meta", new String(data, meta + 4, 4, StandardCharsets.ISO_8859_1));
+            // Within the default byte limit, so only the end of the file can reject it.
+            ByteArrays.put32be(data, meta, (1 << 30) - 64);
+            var threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean")
+                    .invoke(null);
+            var allocated = Class.forName("com.sun.management.ThreadMXBean")
+                    .getMethod("getCurrentThreadAllocatedBytes");
+            var known = MediaSource.of(data);
+            var unknown = new MediaSource() {
+                @Override
+                public long size() {
+                    return -1;
+                }
+
+                @Override
+                public int read(long position, byte[] buffer, int offset, int length) {
+                    return known.read(position, buffer, offset, length);
+                }
+
+                @Override
+                public void close() {
+                }
+            };
+            for (var source : List.of(known, unknown)) {
+                var before = (long) allocated.invoke(threads);
+                var failure = assertThrows(MediaException.Malformed.class,
+                        () -> HeifFile.parse(source, MediaLimits.DEFAULT));
+                var bytes = (long) allocated.invoke(threads) - before;
+                assertTrue(failure.getMessage().contains("declares"), failure.getMessage());
+                assertTrue(bytes < 16 << 20, "allocated " + bytes + " bytes for a " + data.length + " byte file");
+            }
         }
 
         @Test

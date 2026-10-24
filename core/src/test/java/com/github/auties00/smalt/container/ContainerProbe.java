@@ -128,6 +128,28 @@ public final class ContainerProbe {
         return new Probe(streams, packets, format);
     }
 
+    /** Runs ffprobe for the bytes of every packet of a file, in the order of {@link Probe#packets()}. */
+    public static List<byte[]> packetData(Path file) {
+        Oracle.assume(Oracle.Tool.FFPROBE);
+        var output = Oracle.run(Oracle.Tool.FFPROBE, Duration.ofMinutes(2), List.of("-v", "error",
+                "-show_entries", "packet=data:packet_side_data=", "-show_data", "-of", "compact", file.toString()));
+        var data = new ArrayList<byte[]>();
+        for (var line : new String(output, StandardCharsets.UTF_8).split("\r?\n")) {
+            var fields = split(line);
+            if (fields.isEmpty() || !fields.getFirst().equals("packet")) {
+                continue;
+            }
+            var dump = "";
+            for (var field : fields.subList(1, fields.size())) {
+                if (field.startsWith("data=")) {
+                    dump = field.substring("data=".length());
+                }
+            }
+            data.add(hexdump(dump));
+        }
+        return data;
+    }
+
     /** Splits a compact line on unescaped '|' and resolves the escapes. */
     private static List<String> split(String line) {
         var result = new ArrayList<String>();

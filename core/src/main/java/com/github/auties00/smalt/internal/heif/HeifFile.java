@@ -306,9 +306,7 @@ public final class HeifFile {
                 if (meta != null) {
                     throw new MediaException.Malformed("heif: duplicate file-level meta box");
                 }
-                LimitChecks.checkAllocation(limits, payloadSize);
-                meta = new byte[(int) payloadSize];
-                source.readFully(payloadOffset, meta, 0, meta.length);
+                meta = readPayload(source, size, payloadOffset, payloadSize, limits);
             } else if (type.equals("moov")) {
                 if (movieOffset >= 0) {
                     throw new MediaException.Malformed("heif: duplicate moov box");
@@ -352,6 +350,50 @@ public final class HeifFile {
             done += read;
         }
         return done;
+    }
+
+    /**
+     * Reads the payload of a top-level box.
+     *
+     * <p>The payload must end within the source. When the size of the source is known, a payload
+     * that runs past its end is rejected before any memory is reserved for it; when it is not, the
+     * payload is read in chunks that grow with the bytes actually delivered, so a declared size
+     * never reserves more memory than twice the data the source holds.
+     *
+     * @param source the file
+     * @param size the size of the source, or a negative value when unknown
+     * @param offset the offset of the payload
+     * @param length the declared size of the payload
+     * @param limits the bound of the allocation
+     * @return the payload
+     * @throws MediaException.LimitExceeded if {@code length} exceeds the allocation limit
+     * @throws MediaException.Malformed if the source ends before the payload does
+     */
+    private static byte[] readPayload(MediaSource source, long size, long offset, long length, MediaLimits limits) {
+        LimitChecks.checkAllocation(limits, length);
+        if (size >= 0) {
+            if (length > size - offset) {
+                throw new MediaException.Malformed("heif: the meta box at offset " + offset + " declares "
+                        + length + " bytes but the file ends after " + Math.max(0, size - offset));
+            }
+            var payload = new byte[(int) length];
+            source.readFully(offset, payload, 0, payload.length);
+            return payload;
+        }
+        var payload = new byte[(int) Math.min(length, 1 << 16)];
+        var done = 0;
+        while (done < length) {
+            if (done == payload.length) {
+                payload = Arrays.copyOf(payload, (int) Math.min(length, 2L * payload.length));
+            }
+            var read = source.read(offset + done, payload, done, payload.length - done);
+            if (read <= 0) {
+                throw new MediaException.Malformed("heif: the meta box at offset " + offset + " declares "
+                        + length + " bytes but the file ends after " + done);
+            }
+            done += read;
+        }
+        return payload;
     }
 
     /**

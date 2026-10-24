@@ -1,11 +1,12 @@
 package com.github.auties00.smalt.capture.internal.macos;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.capture.CameraCaptureSession;
 import com.github.auties00.smalt.capture.CaptureDevice;
 import com.github.auties00.smalt.capture.CaptureMode;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
 import com.github.auties00.smalt.capture.VideoCaptureSession;
 import com.github.auties00.smalt.capture.internal.CaptureBackend;
-import com.github.auties00.smalt.track.Rational;
 
 import java.io.IOException;
 import java.util.List;
@@ -18,9 +19,12 @@ import java.util.function.Supplier;
  * frameworks only.
  *
  * <p>Cameras are enumerated and captured with AVFoundation ({@link MacCameras},
- * {@link MacCameraSession}); screens are enumerated with CoreGraphics ({@link MacDisplays}) and
+ * {@link MacCameraSession}), and their focus, exposure, white balance and zoom set through
+ * {@link AvFoundationControls}; screens are enumerated with CoreGraphics ({@link MacDisplays}) and
  * captured with ScreenCaptureKit ({@link MacStreamSession}) from macOS 12.3, or with
- * {@code CGDisplayCreateImage} snapshots ({@link MacSnapshotSession}) before. Every framework is
+ * {@code CGDisplayCreateImage} snapshots ({@link MacSnapshotSession}) before; windows are listed
+ * ({@link MacWindows}) and captured with ScreenCaptureKit only. Device changes are found by listing the
+ * devices again at a fixed interval. Every framework is
  * reached through the Foreign Function and Memory API: plain C functions directly, Objective-C
  * through {@code objc_msgSend}, delegates through a class built at run time
  * ({@link ObjcBridge}) and completion handlers through hand-built block literals
@@ -81,7 +85,7 @@ public final class MacCaptureBackend implements CaptureBackend {
     }
 
     @Override
-    public VideoCaptureSession open(CaptureDevice.Camera camera, CaptureMode mode) {
+    public CameraCaptureSession open(CaptureDevice.Camera camera, CaptureMode mode) {
         return guard("cannot open the camera " + camera.name(), () -> {
             var objc = bridge();
             return PlatformThreads.call(() -> MacCameraSession.open(objc, camera, mode));
@@ -89,7 +93,7 @@ public final class MacCaptureBackend implements CaptureBackend {
     }
 
     @Override
-    public VideoCaptureSession open(CaptureDevice.Screen screen, Rational frameRate) {
+    public VideoCaptureSession open(CaptureDevice.Screen screen, ScreenCaptureOptions options) {
         return guard("cannot open the screen " + screen.name(), () -> {
             if (!isDisplayId(screen)) {
                 throw new MediaException.Io("the screen " + screen.name() + " is not a macOS display",
@@ -97,13 +101,40 @@ public final class MacCaptureBackend implements CaptureBackend {
             }
             if (ScreenCaptureKit.AVAILABLE) {
                 var objc = bridge();
-                return PlatformThreads.call(() -> MacStreamSession.open(objc, screen, frameRate));
+                return PlatformThreads.call(() -> MacStreamSession.open(objc, screen, options));
             }
             if (CoreGraphics.canSnapshot()) {
-                return PlatformThreads.call(() -> MacSnapshotSession.open(screen, frameRate));
+                return PlatformThreads.call(() -> MacSnapshotSession.open(screen, options));
             }
             throw new MediaException.Unsupported("screen capture",
                     "this macOS version offers neither ScreenCaptureKit nor CGDisplayCreateImage");
+        });
+    }
+
+    @Override
+    public List<CaptureDevice.Window> windows() {
+        if (!ScreenCaptureKit.AVAILABLE) {
+            return List.of();
+        }
+        return guard("cannot list the windows", () -> {
+            var objc = bridge();
+            return PlatformThreads.call(() -> MacWindows.list(objc));
+        });
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @throws MediaException.Unsupported if ScreenCaptureKit is missing (macOS before 12.3)
+     */
+    @Override
+    public VideoCaptureSession open(CaptureDevice.Window window, ScreenCaptureOptions options) {
+        if (!ScreenCaptureKit.AVAILABLE) {
+            throw new MediaException.Unsupported("window capture", "window capture needs ScreenCaptureKit (macOS 12.3 or later)");
+        }
+        return guard("cannot open the window " + window.name(), () -> {
+            var objc = bridge();
+            return PlatformThreads.call(() -> MacStreamSession.open(objc, window, options));
         });
     }
 

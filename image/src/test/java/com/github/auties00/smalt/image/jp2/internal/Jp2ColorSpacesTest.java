@@ -424,4 +424,32 @@ class Jp2ColorSpacesTest {
             assertEquals(0, white[1][0]);
         }
     }
+
+    @Nested
+    @DisplayName("e-sRGB")
+    class ExtendedSrgb {
+        @ParameterizedTest(name = "{0} bits")
+        @ValueSource(ints = {10, 12, 16})
+        @DisplayName("codes of 255 * 2^(n-9) * R' + 3 * 2^(n-3) decode to R' clipped to sRGB")
+        void encoding(int precision) {
+            // R' of each channel: black, white, mid-gray, a quarter, below black and above white
+            double[][] values = {{0, 1, 0.5}, {0.25, 0.75, 1}, {-0.4, 1.2, 0.1}};
+            var pixels = new long[values.length][3];
+            for (var i = 0; i < values.length; i++) {
+                for (var c = 0; c < 3; c++) {
+                    pixels[i][c] = Math.round(255 * Math.scalb(1.0, precision - 9) * values[i][c]
+                            + 3 * Math.scalb(1.0, precision - 3));
+                }
+            }
+            var rgb = rgb16(file(20, null, precision, false, pixels));
+            for (var i = 0; i < values.length; i++) {
+                for (var c = 0; c < 3; c++) {
+                    var expected = Math.clamp(values[i][c], 0, 1) * 65535;
+                    // one code of the n-bit encoding, rescaled to 16 bits
+                    assertEquals(expected, rgb[i][c], 65535 / (255 * Math.scalb(1.0, precision - 9)) + 1,
+                            "pixel " + i + " channel " + c);
+                }
+            }
+        }
+    }
 }

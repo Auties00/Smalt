@@ -147,27 +147,38 @@ class Jp2ConformanceTest {
         @CsvSource({"mct3o, 3, 1, 0.2", "nlt1, 3, 2, 0.6"})
         @DisplayName("Part 2 codestreams decode every output component to its reference within their bounds")
         void extended(String name, int components, long peak, double error) {
-            compareExtended(name, components, peak, error);
+            compareExtended(name, components, components, peak, error);
         }
 
-        // FIXME: the wavelet-based multiple component transformation (ComponentTransforms.wavelet) decodes mct1 and
-        //  mct2 with a peak error of 255 and an MSE of about 1e4 against the insert's references
+        // mct1 holds 60 spectral bands, mct2 60 frames of 3 components
         @ParameterizedTest(name = "{0}.j2k")
-        @CsvSource({"mct1, 60", "mct2, 180"})
+        @CsvSource({"mct1, 60, 1", "mct2, 180, 3"})
         @DisplayName("wavelet-based multiple component transformations decode to their references within peak 4 and MSE 1")
-        void waveletBased(String name, int components) {
-            compareExtended(name, components, 4, 1);
+        void waveletBased(String name, int components, int group) {
+            compareExtended(name, components, group, 4, 1);
         }
 
-        private void compareExtended(String name, int components, long peakBound, double errorBound) {
+        /**
+         * Returns the number in the name of the reference file of an output component. The insert numbers the
+         * reference files in groups of consecutive components, the groups taken in the order their numbers sort as
+         * text, each number after the numbers it begins ("0", "10" to "19", "1", "20" to "29", "2" and so on): the
+         * file mct1-10.pgx holds output component 1, and mct2-30.pgx to mct2-32.pgx hold components 3 to 5.
+         */
+        private static int referenceNumber(int component, int components, int group) {
+            var groups = java.util.stream.IntStream.range(0, components / group).boxed()
+                    .sorted(java.util.Comparator.comparing(number -> number + "~")).toList();
+            return group * groups.get(component / group) + component % group;
+        }
+
+        private void compareExtended(String name, int components, int group, long peakBound, double errorBound) {
             var image = Jp2Decoder.decodeChannels(MediaSource.of(Jp2TestVectors.edition4(
                     "files/codestreams_extended/" + name + ".j2k")), OPTIONS);
             assertEquals(components, image.channels().size());
             var peak = 0L;
             var error = 0.0;
             for (var c = 0; c < components; c++) {
-                var expected = Jp2Testing.pgx(Jp2TestVectors.edition4("files/reference_extended/" + name + "-" + c
-                        + ".pgx"));
+                var expected = Jp2Testing.pgx(Jp2TestVectors.edition4("files/reference_extended/" + name + "-"
+                        + referenceNumber(c, components, group) + ".pgx"));
                 var actual = image.channels().get(c);
                 assertEquals(expected.width(), actual.width(), "width of component " + c);
                 assertEquals(expected.height(), actual.height(), "height of component " + c);

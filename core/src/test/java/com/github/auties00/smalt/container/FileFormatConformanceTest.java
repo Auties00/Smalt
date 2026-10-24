@@ -276,6 +276,20 @@ class FileFormatConformanceTest {
     record RawVideo(int frameSize) implements Expectation {
     }
 
+    /**
+     * The file has layered H.264 tracks (ISO/IEC 14496-15 clauses 7 and 8: a scalable or multiview layer in a track
+     * whose {@code tref}/{@code scal} box names the tracks it extends), whose packets the demuxer rebuilds into whole
+     * access units where ffprobe returns the stored samples. The file is compared with ffprobe as {@link Quirk} does,
+     * against ffprobe's packets with the packets of every layered track rebuilt here, independently of the demuxer,
+     * from the bytes ffprobe returns and the file's own boxes: for the {@code svc1}, {@code mvc1} and {@code mvc3}
+     * entries the latest samples at or before the packet's decoding time of the referenced tracks followed by the
+     * sample (implicit reconstruction), otherwise the sample with every aggregator (NAL unit type 30) replaced by the
+     * units it holds and every extractor (type 31) by the bytes it names, nothing when the referenced sample is absent.
+     * ffprobe names no codec for the {@code mvc1} to {@code mvc4} entries, which are H.264.
+     */
+    record Layered(ToLongFunction<Track> offset, boolean keyframes) implements Expectation {
+    }
+
     static final Map<String, Expectation> EXPECTATIONS = Map.ofEntries(
             Map.entry("published/isobmff/02_dref_edts_img.mp4", new Unsupported("mp4 external data reference")),
             Map.entry("published/isobmff/04_bifs_video.mp4", new Unsupported("mp4 external data reference")),
@@ -323,14 +337,20 @@ class FileFormatConformanceTest {
                     new Quirk(FileFormatConformanceTest::second, true)),
             Map.entry("under_consideration/isobmff_nalu/nalu_updates/hevc_hvc1_hvc2_implicit_v2.mp4",
                     new Quirk(FileFormatConformanceTest::second, true)),
-            // ffmpeg flags the first sample of an SVC enhancement layer fragment as not a key frame, though its sample
-            // flags declare a sync sample (the GPAC dump confirms ours)
-            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R2-0001.mp4", new Quirk(ConformanceTest::mp4Offset, false)),
-            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R2-0002.mp4", new Quirk(ConformanceTest::mp4Offset, false)),
-            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R2-0003.mp4", new Quirk(ConformanceTest::mp4Offset, false)),
-            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R3-0001.mp4", new Quirk(ConformanceTest::mp4Offset, false)),
-            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R3-0002.mp4", new Quirk(ConformanceTest::mp4Offset, false)),
-            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R3-0003.mp4", new Quirk(ConformanceTest::mp4Offset, false)),
+            // layered H.264 tracks; ffmpeg also flags the first sample of an SVC enhancement layer fragment as not a
+            // key frame, though its sample flags declare a sync sample (the GPAC dump confirms ours)
+            Map.entry("published/nalu/mvc/DDF_10s_25fps.mp4", new Layered(ConformanceTest::mp4Offset, true)),
+            Map.entry("published/nalu/mvc/DDF_10s_25fps-dynamic.mp4", new Layered(ConformanceTest::mp4Offset, true)),
+            Map.entry("published/nalu/mvc/DDF_10s_25fps-dynamic_rep-R1_seg-0005.3gs",
+                    new Layered(ConformanceTest::mp4Offset, true)),
+            Map.entry("published/nalu/mvc/DDF_10s_25fps-dynamic_rep-R2_seg-0005.3gs",
+                    new Layered(ConformanceTest::mp4Offset, true)),
+            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R2-0001.mp4", new Layered(ConformanceTest::mp4Offset, false)),
+            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R2-0002.mp4", new Layered(ConformanceTest::mp4Offset, false)),
+            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R2-0003.mp4", new Layered(ConformanceTest::mp4Offset, false)),
+            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R3-0001.mp4", new Layered(ConformanceTest::mp4Offset, false)),
+            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R3-0002.mp4", new Layered(ConformanceTest::mp4Offset, false)),
+            Map.entry("published/nalu/svc/mp4-live-LastTime-depRep-R3-0003.mp4", new Layered(ConformanceTest::mp4Offset, false)),
             // ffmpeg raises the presentation times of a fragmented track whose composition offsets go below zero
             // (trun version 1) by the most negative offset, where we keep them (tfdt plus the offset) and lower the
             // decoding times instead; the GPAC dump confirms ours
@@ -429,6 +449,7 @@ class FileFormatConformanceTest {
                 DemuxAssertions.assertMonotonicDts(ours);
             }
             case Quirk(var offset, var keyframes) -> demuxes(path, file, offset, keyframes);
+            case Layered(var offset, var keyframes) -> layered(path, file, offset, keyframes);
             case null -> demuxes(path, file, ConformanceTest::mp4Offset, true);
         }
     }
@@ -444,6 +465,273 @@ class FileFormatConformanceTest {
         DemuxAssertions.assertPacketsMatch(ours, probe, offset, true, 0, keyframes);
         DemuxAssertions.assertMonotonicDts(ours);
         assertMatchesDump(ours, dump(path));
+    }
+
+    /** The sample entries of the H.264 layers, and those of them that use implicit reconstruction. */
+    private static final Set<String> AVC_ENTRIES = Set.of("avc1", "avc2", "avc3", "avc4", "svc1", "svc2", "mvc1",
+            "mvc2", "mvc3", "mvc4");
+    private static final Set<String> IMPLICIT_ENTRIES = Set.of("svc1", "mvc1", "mvc3");
+
+    /** A track of the movie box, as {@link Layered} reads it: identifier, sample entry, NAL length size and scal list. */
+    private record TrackBoxes(int id, String entry, int lengthSize, List<Integer> scalable) {
+        boolean layered() {
+            return AVC_ENTRIES.contains(entry) && !scalable.isEmpty();
+        }
+    }
+
+    private void layered(String path, Path file, ToLongFunction<Track> offset, boolean keyframes) {
+        var probe = ContainerProbe.probe(file);
+        var data = ContainerProbe.packetData(file);
+        assertEquals(probe.packets().size(), data.size(), "ffprobe packet data count");
+        for (var index = 0; index < data.size(); index++) {
+            assertEquals(probe.packets().get(index).hash(), ContainerProbe.crc32(data.get(index)),
+                    "ffprobe packet " + index + " data");
+        }
+        var boxes = trackBoxes(file);
+        assertEquals(probe.streams().size(), boxes.size(), "tracks in the movie box");
+        var streamOf = new java.util.HashMap<Integer, Integer>();
+        for (var stream = 0; stream < boxes.size(); stream++) {
+            streamOf.put(boxes.get(stream).id(), stream);
+        }
+        var packets = new ArrayList<List<ContainerProbe.ProbePacket>>();
+        var samples = new ArrayList<List<byte[]>>();
+        for (var stream = 0; stream < boxes.size(); stream++) {
+            packets.add(new ArrayList<>());
+            samples.add(new ArrayList<>());
+        }
+        for (var index = 0; index < data.size(); index++) {
+            var packet = probe.packets().get(index);
+            packets.get(packet.stream()).add(packet);
+            samples.get(packet.stream()).add(data.get(index));
+        }
+        var rebuiltPackets = new ArrayList<ContainerProbe.ProbePacket>();
+        var rebuiltTracks = new java.util.HashSet<Integer>();
+        for (var index = 0; index < data.size(); index++) {
+            var packet = probe.packets().get(index);
+            if (!boxes.get(packet.stream()).layered()) {
+                rebuiltPackets.add(packet);
+                continue;
+            }
+            var visited = new java.util.HashSet<Integer>(List.of(packet.stream()));
+            var access = rebuild(packet.stream(), packet.dts(), data.get(index), boxes, streamOf, probe, packets,
+                    samples, visited, 0);
+            rebuiltPackets.add(new ContainerProbe.ProbePacket(packet.stream(), packet.pts(), packet.dts(),
+                    packet.duration(), access.length, packet.key(), packet.discard(), ContainerProbe.crc32(access)));
+        }
+        assertTrue(boxes.stream().anyMatch(TrackBoxes::layered), "the file has no layered track");
+        var streams = new ArrayList<ContainerProbe.ProbeStream>();
+        for (var stream : probe.streams()) {
+            var entry = boxes.get(stream.index()).entry();
+            if (entry.startsWith("mvc") && "unknown".equals(stream.codecName())) {
+                var fields = new java.util.LinkedHashMap<>(stream.fields());
+                fields.put("codec_name", "h264");
+                stream = new ContainerProbe.ProbeStream(stream.index(), fields, stream.extradata());
+            }
+            streams.add(stream);
+        }
+        var ours = ContainerProbe.demux(file, Mp4Demuxer::new);
+        for (var stream = 0; stream < boxes.size(); stream++) {
+            if (boxes.get(stream).layered()) {
+                rebuiltTracks.add(ours.tracks().get(stream).id());
+            }
+        }
+        DemuxAssertions.assertPacketsMatch(ours, new ContainerProbe.Probe(streams, rebuiltPackets, probe.format()),
+                offset, true, 0, keyframes);
+        DemuxAssertions.assertMonotonicDts(ours);
+        assertMatchesDump(ours, dump(path), rebuiltTracks);
+    }
+
+    /** Rebuilds the access unit of a sample of a layered track, as {@link Layered} describes. */
+    private static byte[] rebuild(int stream, long dts, byte[] sample, List<TrackBoxes> boxes,
+                                  Map<Integer, Integer> streamOf, ContainerProbe.Probe probe,
+                                  List<List<ContainerProbe.ProbePacket>> packets, List<List<byte[]>> samples,
+                                  Set<Integer> visited, int depth) {
+        var track = boxes.get(stream);
+        var out = new java.io.ByteArrayOutputStream();
+        if (IMPLICIT_ENTRIES.contains(track.entry())) {
+            for (var id : track.scalable()) {
+                var referenced = streamOf.get(id);
+                if (referenced == null || !visited.add(referenced)) {
+                    continue;
+                }
+                var time = rescale(dts, probe.streams().get(stream), probe.streams().get(referenced));
+                var aligned = aligned(packets.get(referenced), samples.get(referenced), time, 0);
+                if (aligned != null) {
+                    out.writeBytes(boxes.get(referenced).layered() && depth < 8
+                            ? rebuild(referenced, time, aligned, boxes, streamOf, probe, packets, samples, visited,
+                            depth + 1) : aligned);
+                }
+            }
+            out.writeBytes(sample);
+            return out.toByteArray();
+        }
+        var size = track.lengthSize();
+        var layerUnits = false;
+        for (var position = 0; position + size <= sample.length; ) {
+            var length = (int) field(sample, position, size);
+            if (length <= 0 || length > sample.length - position - size) {
+                break;
+            }
+            var type = sample[position + size] & 0x1F;
+            layerUnits |= type == 30 || type == 31;
+            position += size + length;
+        }
+        if (!layerUnits) {
+            return sample;
+        }
+        units(stream, dts, sample, 0, sample.length, boxes, streamOf, probe, packets, samples, out, 0);
+        return out.toByteArray();
+    }
+
+    /** Copies the NAL units of a range of a sample, unwrapping aggregators and resolving extractors. */
+    private static void units(int stream, long dts, byte[] sample, int from, int to, List<TrackBoxes> boxes,
+                              Map<Integer, Integer> streamOf, ContainerProbe.Probe probe,
+                              List<List<ContainerProbe.ProbePacket>> packets, List<List<byte[]>> samples,
+                              java.io.ByteArrayOutputStream out, int depth) {
+        var track = boxes.get(stream);
+        var size = track.lengthSize();
+        for (var position = from; position + size <= to; ) {
+            var length = (int) field(sample, position, size);
+            var start = position + size;
+            if (length < 0 || length > to - start) {
+                return;
+            }
+            var type = length > 0 ? sample[start] & 0x1F : 0;
+            if (type == 30 && length > 4 && depth < 8) {
+                // the aggregator's 4-byte NAL unit header (with the SVC or MVC extension) precedes its units
+                units(stream, dts, sample, start + 4, start + length, boxes, streamOf, probe, packets, samples, out,
+                        depth + 1);
+            } else if (type == 31 && length >= 6 + 2 * size) {
+                // ISO/IEC 14496-15 extractor: header, track_ref_index, sample_offset, data_offset, data_length
+                var reference = sample[start + 4] & 0xFF;
+                var sampleOffset = sample[start + 5];
+                var dataOffset = (int) field(sample, start + 6, size);
+                var dataLength = (int) field(sample, start + 6 + size, size);
+                var referenced = reference >= 1 && reference <= track.scalable().size()
+                        ? streamOf.get(track.scalable().get(reference - 1)) : null;
+                if (referenced != null && referenced != stream) {
+                    var time = rescale(dts, probe.streams().get(stream), probe.streams().get(referenced));
+                    var source = aligned(packets.get(referenced), samples.get(referenced), time, sampleOffset);
+                    if (source != null && dataOffset < source.length) {
+                        var end = dataLength == 0
+                                ? dataOffset + size + field(source, dataOffset, size)
+                                : (long) dataOffset + dataLength;
+                        out.write(source, dataOffset, (int) (Math.min(source.length, end) - dataOffset));
+                    }
+                }
+            } else {
+                out.write(sample, position, size + length);
+            }
+            position = start + length;
+        }
+    }
+
+    /** Returns the sample of a stream whose decoding time is the latest at or before a time, moved by a count. */
+    private static byte[] aligned(List<ContainerProbe.ProbePacket> packets, List<byte[]> samples, long time,
+                                  int offset) {
+        var found = -1;
+        for (var index = 0; index < packets.size(); index++) {
+            if (packets.get(index).dts() <= time) {
+                found = index;
+            }
+        }
+        var index = found + offset;
+        return found < 0 || index < 0 || index >= samples.size() ? null : samples.get(index);
+    }
+
+    /** Converts a decoding time of one stream to the time base of another. */
+    private static long rescale(long time, ContainerProbe.ProbeStream from, ContainerProbe.ProbeStream to) {
+        return Math.floorDiv(time * from.timeBaseNumerator() * to.timeBaseDenominator(),
+                from.timeBaseDenominator() * to.timeBaseNumerator());
+    }
+
+    /** Reads a big-endian unsigned field of one to four bytes, or {@code -1} past the end. */
+    private static long field(byte[] data, int position, int size) {
+        if (position < 0 || position + size > data.length) {
+            return -1;
+        }
+        long value = 0;
+        for (var index = 0; index < size; index++) {
+            value = (value << 8) | (data[position + index] & 0xFF);
+        }
+        return value;
+    }
+
+    /** Reads every track of the file's movie box, in file order. */
+    private static List<TrackBoxes> trackBoxes(Path file) {
+        byte[] bytes;
+        try {
+            bytes = Files.readAllBytes(file);
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
+        var moov = child(bytes, 0, bytes.length, "moov");
+        assertNotNull(moov, "no moov box");
+        var tracks = new ArrayList<TrackBoxes>();
+        for (var position = moov[0]; position + 8 <= moov[1]; ) {
+            var size = (int) field(bytes, position, 4);
+            var type = new String(bytes, position + 4, 4, StandardCharsets.ISO_8859_1);
+            if (type.equals("trak")) {
+                tracks.add(track(bytes, position + 8, position + size));
+            }
+            position += size;
+        }
+        return tracks;
+    }
+
+    private static TrackBoxes track(byte[] bytes, int from, int to) {
+        var tkhd = child(bytes, from, to, "tkhd");
+        assertNotNull(tkhd, "no tkhd box");
+        var id = (int) field(bytes, tkhd[0] + (bytes[tkhd[0]] == 1 ? 20 : 12), 4);
+        var scalable = new ArrayList<Integer>();
+        var tref = child(bytes, from, to, "tref");
+        var scal = tref == null ? null : child(bytes, tref[0], tref[1], "scal");
+        if (scal != null) {
+            for (var position = scal[0]; position + 4 <= scal[1]; position += 4) {
+                scalable.add((int) field(bytes, position, 4));
+            }
+        }
+        int[] stsd = null;
+        var mdia = child(bytes, from, to, "mdia");
+        var minf = mdia == null ? null : child(bytes, mdia[0], mdia[1], "minf");
+        var stbl = minf == null ? null : child(bytes, minf[0], minf[1], "stbl");
+        if (stbl != null) {
+            stsd = child(bytes, stbl[0], stbl[1], "stsd");
+        }
+        if (stsd == null || stsd[0] + 16 > stsd[1]) {
+            return new TrackBoxes(id, "", 4, scalable);
+        }
+        var entryStart = stsd[0] + 8;
+        var entryEnd = entryStart + (int) field(bytes, entryStart, 4);
+        var entry = new String(bytes, entryStart + 4, 4, StandardCharsets.ISO_8859_1);
+        var lengthSize = 4;
+        if (AVC_ENTRIES.contains(entry)) {
+            // the configuration records follow the 78 bytes of the visual sample entry; all three keep
+            // lengthSizeMinusOne in the low bits of their fifth byte
+            for (var name : List.of("avcC", "svcC", "mvcC")) {
+                var record = child(bytes, entryStart + 8 + 78, entryEnd, name);
+                if (record != null) {
+                    lengthSize = (bytes[record[0] + 4] & 3) + 1;
+                    break;
+                }
+            }
+        }
+        return new TrackBoxes(id, entry, lengthSize, scalable);
+    }
+
+    /** Returns the payload range (after the box header) of the first child box of a type, or {@code null}. */
+    private static int[] child(byte[] bytes, int from, int to, String type) {
+        for (var position = from; position + 8 <= to; ) {
+            var size = (int) field(bytes, position, 4);
+            if (size < 8 || size > to - position) {
+                return null;
+            }
+            if (new String(bytes, position + 4, 4, StandardCharsets.ISO_8859_1).equals(type)) {
+                return new int[]{position + 8, position + size};
+            }
+            position += size;
+        }
+        return null;
     }
 
     private void external(String path, Path file, String sibling) {
@@ -502,6 +790,14 @@ class FileFormatConformanceTest {
      * the sync sample flag.
      */
     private static void assertMatchesDump(ContainerProbe.Demuxed ours, GpacDump dump) {
+        assertMatchesDump(ours, dump, Set.of());
+    }
+
+    /**
+     * Compares like {@link #assertMatchesDump(ContainerProbe.Demuxed, GpacDump)}, without the sample sizes of the
+     * tracks whose packets are rebuilt access units ({@link Layered}), which the dump states for the stored samples.
+     */
+    private static void assertMatchesDump(ContainerProbe.Demuxed ours, GpacDump dump, Set<Integer> rebuilt) {
         if (dump == null) {
             return;
         }
@@ -524,7 +820,9 @@ class FileFormatConformanceTest {
                 var sample = samples.get(i);
                 var packet = packets.get(i);
                 var where = label + " sample " + i + " against the GPAC dump";
-                assertEquals(sample[0], packet.size(), where + ": size");
+                if (!rebuilt.contains(track.id())) {
+                    assertEquals(sample[0], packet.size(), where + ": size");
+                }
                 if (i > 0) {
                     assertEquals(samples.get(i - 1)[1], packet.dts() - packets.get(i - 1).dts(), where + ": decoding time");
                     if (packet.pts() != Packet.NO_TIMESTAMP && packets.getFirst().pts() != Packet.NO_TIMESTAMP) {

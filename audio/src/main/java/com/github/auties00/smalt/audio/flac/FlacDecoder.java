@@ -589,9 +589,9 @@ public final class FlacDecoder implements AudioDecoder {
                 return;
             }
             check = CHECK_CONTIGUOUS;
-            variableBlocking = header.variableBlocking();
+            variableBlocking = codesSampleNumber();
         } else if (check == CHECK_CONTIGUOUS
-                && (header.variableBlocking() != variableBlocking || number != expectedNumber)) {
+                && (codesSampleNumber() != variableBlocking || number != expectedNumber)) {
             check = CHECK_GAP;
         }
         if (check != CHECK_CONTIGUOUS) {
@@ -600,6 +600,19 @@ public final class FlacDecoder implements AudioDecoder {
         expectedNumber = variableBlocking ? number + blockSize : number + 1;
         md5.update(samples, channels, blockSize, bitsPerSample);
         hashedSamples += blockSize;
+    }
+
+    /**
+     * Returns whether the last frame header codes the number of its first sample rather than its
+     * frame number: when it declares variable blocking, and in streams written before the blocking
+     * strategy bit existed, whose {@code STREAMINFO} gives different minimum and maximum block sizes
+     * (as libFLAC reads them).
+     *
+     * @return {@code true} when the coded number counts samples
+     */
+    private boolean codesSampleNumber() {
+        return header.variableBlocking()
+                || streamInfo != null && streamInfo.minBlockSize() != streamInfo.maxBlockSize();
     }
 
     /**
