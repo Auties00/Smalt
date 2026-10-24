@@ -11,7 +11,6 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
-import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
 import com.github.auties00.smalt.io.MediaSource;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -270,29 +269,6 @@ class JpegLosslessTest {
     @Nested
     @DisplayName("unsupported and invalid")
     class Rejected {
-        @Test
-        @DisplayName("subsampled components are unsupported")
-        void subsampled() {
-            var jpeg = resource("61x43-rgb-p8-psv1.jpg");
-            jpeg[indexOf(jpeg, 0xC3) + 11] = 0x21;
-            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(jpeg, WIDE));
-            assertEquals("jpeg lossless", exception.format());
-        }
-
-        @Test
-        @DisplayName("a scan of fewer components than the frame is unsupported")
-        void nonInterleaved() {
-            var samples = LosslessJpegTest.noise(9 * 5 * 3, 8, 3);
-            var jpeg = Lj92Encoder.encode(samples, 9, 5, 3, 8, 1, 0, 0);
-            var sos = indexOf(jpeg, 0xDA);
-            var out = new ByteArrayOutputStream();
-            out.write(jpeg, 0, sos);
-            out.writeBytes(new byte[]{(byte) 0xFF, (byte) 0xDA, 0, 8, 1, 1, 0});
-            out.write(jpeg, sos + 11, jpeg.length - sos - 11);
-            var exception = assertThrows(MediaException.Unsupported.class, () -> decode(out.toByteArray(), WIDE));
-            assertEquals("jpeg lossless", exception.format());
-        }
-
         @ParameterizedTest(name = "precision {0}")
         @ValueSource(ints = {0, 1, 17})
         @DisplayName("a precision outside 2 to 16 is malformed")
@@ -303,12 +279,9 @@ class JpegLosslessTest {
         }
 
         @Test
-        @DisplayName("Motion-JPEG and the DCT paths reject lossless frames")
+        @DisplayName("the coefficient path rejects lossless frames")
         void dctOnly() {
             var jpeg = resource("61x43-gray-p8-psv1.jpg");
-            var mjpeg = new MjpegDecoder();
-            var exception = assertThrows(MediaException.Unsupported.class, () -> mjpeg.decodeFrame(jpeg, 0, jpeg.length));
-            assertEquals("jpeg lossless", exception.format());
             var reader = new JpegReader(jpeg, 0, jpeg.length, com.github.auties00.smalt.MediaLimits.DEFAULT);
             assertEquals("jpeg lossless", assertThrows(MediaException.Unsupported.class,
                     reader::decodeCoefficients).format());

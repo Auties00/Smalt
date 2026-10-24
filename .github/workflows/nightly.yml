@@ -1,30 +1,333 @@
-# Nightly: the full conformance tier (every vector and clip in tools/testdata), the JIT guard, the
-# next JDK's early-access build, and capture device enumeration on each OS.
+# Nightly: the full conformance tier (every vector, archive set and clip in tools/testdata but the Argon AV1
+# streams) with the oracle tools and oracle data, the whole suite on Linux arm64, the kernel JIT guard's nightly
+# scenario matrix and the JIT stress test on every OS, the bit-exact suites under C1 only and under C2 only, the
+# Argon AV1 streams in shards, the opt-in tests, the raw oracle coverage set on Windows, the next JDK's early-access
+# build, the capture devices on each OS (capture.yml), the Media Foundation comparison on Windows, and the check that
+# every skip of a job passed in another one. The it module also runs on the full tier on Windows and macOS every
+# night; on Saturdays (or when dispatched with jobs=weekly) every module does, on Windows, macOS and Linux arm64, one
+# module per job, downloading the vectors each module asks for.
 name: Nightly
 
 on:
   schedule:
     - cron: '30 2 * * *'
   workflow_dispatch:
+    inputs:
+      jobs:
+        description: Which jobs run (all, conformance, arm64, kernel-jit, jit-tiers, argon, opt-in, raw-coverage, early-access, capture or weekly)
+        default: all
 
 concurrency:
-  group: nightly
+  group: nightly-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
   contents: read
+  # the cache listing of .github/scripts/cache-policy.sh
+  actions: read
 
 env:
   JAVA_VERSION: '26'
 
 jobs:
-  # The full tier is about 6 GB of vectors plus 1.3 GB of clips, too much for the hosted runners'
-  # 10 GB repository cache to keep next to everything else, so it is downloaded on every run unless
-  # the repository variable SMALT_NIGHTLY_RUNNER names a self-hosted runner whose home keeps it.
+  # The oracle tools of the Linux runners, cached before the long jobs start.
+  oracles:
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs != 'capture'
+    uses: ./.github/workflows/oracle-tools.yml
+    with:
+      os: '["ubuntu-latest","ubuntu-24.04-arm"]'
+      clips-artifact: true
+      data-artifact: true
+
+  # The full tier is about 17 GB of vectors plus 1.3 GB of clips, more than the hosted runners' 10 GB repository
+  # cache holds next to the oracle tools and the smoke tier every branch restores, so the nightly downloads the
+  # vectors outside the smoke tier every night instead of caching them; the smoke vectors and the clips come from
+  # the cache entries of the default branch, the clips from the oracles job's artifact when their entry was evicted.
+  # When the repository variable SMALT_NIGHTLY_RUNNER names a self-hosted runner, its home keeps everything.
   full-conformance:
     name: full conformance tier
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'conformance') }}
     runs-on: ${{ vars.SMALT_NIGHTLY_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 300
+    timeout-minutes: 330
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+      SMALT_SKIP_JOB: linux-x64-vector-full
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Free disk space
+        if: runner.environment == 'github-hosted'
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - uses: ./.github/actions/oracles
+
+      - uses: ./.github/actions/testdata
+        with:
+          clips-artifact: 'true'
+
+      - name: Fetch the rest of the full tier
+        run: python tools/testdata/testdata.py fetch --tier full --exclude-set 'argon-*' --jobs 12
+
+      - uses: ./.github/actions/oracle-data
+        with:
+          artifact: 'true'
+
+      # Every vector a test asks for is recorded, so a vector added to a test without a manifest
+      # entry fails the run below instead of silently skipping forever.
+      - name: Build and test (Vector API), including the JIT guard
+        id: test
+        run: mvn -B -ntp -fae verify -Dsmalt.conformance.record=${{ runner.temp }}/requested.tsv
+
+      - name: Check the manifest covers every requested vector
+        if: always()
+        run: python tools/testdata/testdata.py record --check ${{ runner.temp }}/requested.tsv
+
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        run: |
+          python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-test-reports
+          path: |
+            **/target/surefire-reports/
+            */target/kernel-guard/*/*/result.tsv
+            it/target/kernel-guard-self/
+            **/hs_err_pid*.log
+            target/skips-*.tsv
+            oracle-versions.tsv
+          retention-days: 14
+
+  # The whole suite on Linux arm64 (NEON), whose kernels alone run on every push (ci.yml).
+  arm64:
+    name: full suite on Linux arm64
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'arm64') }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 330
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+      SMALT_SKIP_JOB: linux-arm64-vector-smoke
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      - uses: ./.github/actions/testdata
+        with:
+          clips-artifact: 'true'
+
+      - uses: ./.github/actions/oracle-data
+        with:
+          artifact: 'true'
+
+      - name: Build and test (Vector API), including the JIT guard
+        id: test
+        run: mvn -B -ntp -fae verify
+
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        run: |
+          python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: arm64-test-reports
+          path: |
+            **/target/surefire-reports/
+            */target/kernel-guard/*/*/result.tsv
+            it/target/kernel-guard-self/
+            **/hs_err_pid*.log
+            target/skips-*.tsv
+            oracle-versions.tsv
+          retention-days: 14
+
+  # The kernel JIT guard under its nightly scenarios (the pull-request ones, a polluted profile under C2 only and five
+  # more stress seeds) on every OS, its self-test, and the JIT stress test: mixed codec workloads in fresh JVMs that
+  # may allocate nothing from the Vector API fallback after warm-up (JitStressTest; ffmpeg-made streams on Linux).
+  kernel-jit:
+    name: kernel JIT guard and stress (${{ matrix.os }})
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'kernel-jit') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+        if: runner.os == 'Linux'
+
+      # The JIT stress test is opt-in elsewhere, so its outcomes here are the evidence the skip cover check of ci.yml
+      # needs for the skips of the other jobs.
+      - name: Name the job for the skip tools
+        shell: bash
+        run: echo "SMALT_SKIP_JOB=$(echo '${{ runner.os }}-${{ runner.arch }}-kernel-jit' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Guard, self-test and stress test
+        id: test
+        shell: bash
+        run: >
+          mvn -B -ntp -fae -pl kernel-lint,core,image,audio,video,mpeg,capture,raw,it verify
+          -Dtest='**/*KernelGuardTest,**/KernelGuardSelfTest,**/JitStressTest' -Dsurefire.failIfNoSpecifiedTests=false
+          -Dsmalt.jit.scenarios=nightly -Dsmalt.jit.stress=true
+
+      - name: Record the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+      - name: Upload the guard's results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-jit-${{ matrix.os }}
+          path: |
+            **/target/surefire-reports/
+            */target/kernel-guard/*/*/result.tsv
+            */target/kernel-guard/*/*/vm.log
+            it/target/kernel-guard-self/
+            it/target/jit-stress/*/stdout.log
+          retention-days: 14
+
+  # The suites whose output is pinned bit for bit (conformance vectors, golden dumps, oracle differentials), once with
+  # C1 alone and once with C2 alone, compiling early: a codec whose output depends on the compiler tier fails one of
+  # them against the same expected output. C1 does not intrinsify the Vector API, so under C1 every kernel would run
+  # the API's allocating Java fallback, a hundred times slower (the AV1 encoder goldens alone outlast the job); the C1
+  # leg runs the scalar twins instead, and the C2 leg the Vector API kernels, whose equality with their scalar twins
+  # the kernel JIT guard checks on C2 code at every vector width.
+  jit-tiers:
+    name: bit-exact suites (${{ matrix.tier }})
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'jit-tiers') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { tier: c1-only, flags: '-XX:TieredStopAtLevel=1', simd: false, skips: linux-x64-scalar-smoke }
+          - { tier: c2-only, flags: '-XX:-TieredCompilation -XX:CompileThresholdScaling=0.05', simd: true,
+              skips: linux-x64-vector-smoke }
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+      SMALT_SKIP_JOB: ${{ matrix.skips }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      - uses: ./.github/actions/testdata
+
+      - name: Bit-exact suites under ${{ matrix.tier }}
+        id: test
+        shell: bash
+        run: >
+          mvn -B -ntp -fae -pl core,image,audio,video,mpeg,raw verify
+          -Dtest='**/*Conformance*Test,**/*Golden*Test,**/*Behavior*Test,**/*Suite*Test,**/*Differential*Test,**/*Vectors*Test'
+          -Dsurefire.failIfNoSpecifiedTests=false -Dsmalt.test.simd=${{ matrix.simd }} "-Dsmalt.test.jvmArgs=${{ matrix.flags }}"
+
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jit-tiers-${{ matrix.tier }}
+          path: '**/target/surefire-reports/'
+          retention-days: 14
+
+  # Line and branch coverage of every module's tests on the smoke tier, as a map of the spec features no
+  # test exercises (tools/coverage/README.md). The agent changes how the JIT compiles, so this runs apart
+  # from the conformance job; it fails when an area falls below tools/coverage/baseline.tsv.
+  coverage:
+    name: coverage map
+    needs: oracles
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
     steps:
@@ -40,45 +343,79 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Install the oracle tools
-        if: runner.os == 'Linux'
+      - uses: ./.github/actions/oracles
+
+      - uses: ./.github/actions/testdata
+        with:
+          clips: 'false'
+
+      - name: Test with the coverage agent
+        run: mvn -B -ntp -fae -Pcoverage verify -Dmaven.test.failure.ignore=true
+
+      - name: Summarize and check the coverage
+        shell: bash
         run: |
-          if command -v apt-get > /dev/null; then
-            sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg webp
-          fi
+          status=0
+          python tools/coverage/coverage.py it/target/site/jacoco-aggregate/jacoco.xml --markdown coverage.md \
+            --tsv coverage.tsv --check tools/coverage/baseline.tsv || status=$?
+          cat coverage.md >> "$GITHUB_STEP_SUMMARY"
+          exit $status
 
-      - name: Free disk space
-        if: runner.environment == 'github-hosted'
-        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-
-      - name: Fetch the full test data
-        run: python tools/testdata/testdata.py fetch --tier full
-
-      # Every vector a test asks for is recorded, so a vector added to a test without a manifest
-      # entry fails the run below instead of silently skipping forever.
-      - name: Build and test (Vector API), including the JIT guard
-        run: mvn -B -ntp -fae verify -Dsmalt.conformance.record=${{ runner.temp }}/requested.tsv
-
-      - name: Check the manifest covers every requested vector
+      - name: Upload the coverage report
         if: always()
-        run: python tools/testdata/testdata.py record --check ${{ runner.temp }}/requested.tsv
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: |
+            it/target/site/jacoco-aggregate/
+            coverage.md
+            coverage.tsv
+          retention-days: 30
 
-      - name: Upload the test reports
+  # A quarter of the fuzz targets each night, in turn, fuzzed in a 256 MiB heap at the default thread
+  # stack: an allocation the limits do not bound becomes an oom- finding and unbounded recursion a crash.
+  # The findings are uploaded; tools/fuzz/README.md describes how to reproduce and save one.
+  fuzz-small-heap:
+    name: fuzz shard (256 MiB heap)
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Fuzz the shard of the day
+        shell: bash
+        run: |
+          shard=$(( 10#$(date -u +%j) % 4 ))
+          python tools/fuzz/fuzz.py budget --online --no-seeds --time 45 --memory 256 --select "shard=$shard/4"
+
+      - name: Upload the findings
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: nightly-test-reports
+          name: fuzz-small-heap-findings
           path: |
-            **/target/surefire-reports/
-            it/target/jit-guard/
+            target/fuzz/*/findings/
+            target/fuzz/*/fuzz.log
           retention-days: 14
 
   # The next feature release's early-access build: the incubating Vector API changes between
   # releases, so this is the early warning. Informational: it does not fail the workflow.
   jdk-early-access:
     name: JDK early access
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'early-access') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 150
     continue-on-error: true
     env:
       SMALT_CONFORMANCE_DOWNLOAD: 'false'
@@ -94,17 +431,11 @@ jobs:
         with:
           python-version: '3.x'
 
-      - name: Restore the smoke test data
-        id: smoke-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.smalt/cache/conformance
-          key: testdata-smoke-${{ hashFiles('tools/testdata/vectors.tsv') }}
-          enableCrossOsArchive: true
+      - uses: ./.github/actions/oracles
 
-      - name: Fetch the smoke test data
-        if: steps.smoke-cache.outputs.cache-hit != 'true'
-        run: python tools/testdata/testdata.py fetch --tier smoke --no-clips
+      - uses: ./.github/actions/testdata
+        with:
+          clips-artifact: 'true'
 
       # javac --release N cannot see the incubator modules of another release, so the EA build
       # compiles for its own feature version.
@@ -114,16 +445,35 @@ jobs:
           release=$(java -XshowSettings:properties -version 2>&1 | awk '/java.specification.version/ {print $3}')
           mvn -B -ntp -fae verify -Dsmalt.java.release="$release"
 
-  # No runner has a camera or a display server, so this mostly compiles each OS backend's bindings
-  # and enumerates no devices; the device tests skip.
+  # After oracles-desktop, whose cache entries hold the Windows and macOS ffmpeg that JavaSoundReadTest compares with.
   capture:
-    name: capture (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    name: capture devices
+    needs: oracles-desktop
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'capture') }}
+    uses: ./.github/workflows/capture.yml
+
+  # The Argon AV1 coverage streams (Av1ArgonTest, 6.4 GB in all, licence unstated: fetched by range requests from the
+  # suite's archive, never cached or redistributed), in shards whose groups each fit a runner's time and disk.
+  argon:
+    name: Argon AV1 streams (${{ matrix.shard }})
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'argon') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - { shard: profile0-core, groups: 'profile0_core' }
+          - { shard: profile1-core, groups: 'profile1_core' }
+          - { shard: profile2-core, groups: 'profile2_core' }
+          - { shard: special, groups: 'profile0_core_special,profile1_core_special,profile2_core_special,profile0_not_annexb,profile1_not_annexb,profile2_not_annexb,profile0_not_annexb_special,profile1_not_annexb_special,profile2_not_annexb_special,profile_switching,profile0_error,profile1_error,profile2_error' }
+          - { shard: profile0-stress, groups: 'profile0_stress' }
+          - { shard: profile1-stress, groups: 'profile1_stress' }
+          - { shard: profile2-stress, groups: 'profile2_stress' }
+          - { shard: large-scale-tile, groups: 'profile0_large_scale_tile,profile1_large_scale_tile,profile2_large_scale_tile,profile0_large_scale_tile_special,profile1_large_scale_tile_special,profile2_large_scale_tile_special' }
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+      SMALT_SKIP_JOB: linux-x64-argon-${{ matrix.shard }}
     steps:
       - uses: actions/checkout@v4
 
@@ -133,9 +483,408 @@ jobs:
           java-version: ${{ env.JAVA_VERSION }}
           cache: maven
 
-      - name: Capture tests
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Fetch the groups of the shard
+        shell: bash
+        run: |
+          sets=()
+          IFS=',' read -ra groups <<< "${{ matrix.groups }}"
+          for group in "${groups[@]}"; do sets+=(--set "argon-av1-$group"); done
+          python tools/testdata/testdata.py fetch "${sets[@]}" --jobs 16 --strict
+
+      - name: Decode the streams
+        id: test
+        run: >
+          mvn -B -ntp -fae -pl video -am verify -Dtest=Av1ArgonTest -Dsurefire.failIfNoSpecifiedTests=false
+          -Dsmalt.test.excludedGroups=none -Dgroups=argon -Dsmalt.test.argon=${{ matrix.groups }}
+          -Dsmalt.test.jvmArgs=-Xmx12g
+
+      - name: Record the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        run: python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+      - name: Upload the test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: argon-reports-${{ matrix.shard }}
+          path: |
+            video/target/surefire-reports/
+            video/hs_err_pid*.log
+          retention-days: 14
+
+  # The tests that run only when asked: the real-time VP8 quality report against libvpx (its BD-rate table is
+  # uploaded), the fuzz seed writers of every module followed by the fuzz targets on the seeds they wrote, and a
+  # short soak (soak.yml runs the long one weekly).
+  opt-in:
+    name: opt-in tests
+    needs: oracles
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'opt-in') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+      SMALT_SKIP_JOB: linux-x64-opt-in
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      - uses: ./.github/actions/testdata
+        with:
+          clips-artifact: 'true'
+
+      - name: Run the opt-in tests
+        id: test
+        run: >
+          mvn -B -ntp -fae -pl image -am verify -Dtest=Vp8RtQualityTest -Dsurefire.failIfNoSpecifiedTests=false
+          -Dvp8rt.quality=true -Dvp8rt.quality.out=${{ github.workspace }}/vp8rt-quality.md
+
+      # The writers derive some seeds with the runner's ffmpeg, so a seed that differs from the committed one is
+      # listed, not failed; the fuzz targets must then accept every written seed.
+      - name: Write the fuzz seeds and run the fuzz targets on them
+        id: seeds
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        shell: bash
+        env:
+          SMALT_CONFORMANCE_DOWNLOAD: 'true'
+        run: |
+          mvn -B -ntp -fae -pl core,audio,image,video,mpeg,raw -am verify -Dsmalt.fuzz.writeSeeds=true \
+            -Dtest='FuzzSeedWriter,CrwParserTest,MrwParserTest,X3fParserTest' -Dsurefire.failIfNoSpecifiedTests=false
+          {
+            echo "### Fuzz seeds that differ from the committed ones"
+            echo '```'
+            git status --short -- '*/src/test/resources/**/*Inputs/**'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          mvn -B -ntp -fae -pl core,audio,image,video,mpeg,raw -am verify -Dtest=FuzzRegressionTest \
+            -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Soak for ten minutes
+        id: soak
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        run: >
+          mvn -B -ntp -fae -pl it -am verify -Dtest=SoakTest -Dsurefire.failIfNoSpecifiedTests=false
+          -Dsmalt.soak.minutes=10 -Dsmalt.test.jvmArgs=-Xmx2g
+
+      - name: Record the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        run: python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv"
+
+      - name: Upload the outcomes and the report
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: |
+            target/outcomes-*.tsv
+            vp8rt-quality.md
+          retention-days: 30
+
+  # Adobe DNG Converter's DNG files of every ORF sample and every RW2 or RWL sample of raw format version 4 (about
+  # 6 GB, too large to cache), written and compared photosite for photosite on the same Windows runner.
+  raw-coverage:
+    name: raw oracle coverage (Windows)
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'raw-coverage') }}
+    runs-on: windows-latest
+    timeout-minutes: 330
+    env:
+      SMALT_SKIP_JOB: windows-x64-raw-coverage
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Convert the coverage samples
+        shell: bash
+        run: python -I tools/testdata/raw-oracle.py --coverage
+
+      - name: Compare every photosite
+        id: test
         shell: bash
         run: >
-          mvn -B -ntp -fae -pl capture -am verify
-          -Dtest='com/github/auties00/smalt/capture/**/*'
-          -Dsurefire.failIfNoSpecifiedTests=false
+          mvn -B -ntp -fae -pl raw -am verify -Dtest=RawOracleCoverageTest -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Record the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+  # The oracle tools of the Windows and macOS runners, for the Windows opt-in job, the capture devices and the weekly
+  # full tier.
+  oracles-desktop:
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'opt-in' || inputs.jobs == 'weekly' || inputs.jobs == 'capture'
+    uses: ./.github/workflows/oracle-tools.yml
+    with:
+      os: '["windows-latest","macos-latest"]'
+      data: false
+
+  # The Media Foundation comparison of the MPEG-4 interlaced direct streams (tools/testdata/mf-oracle), which only
+  # Windows runs.
+  opt-in-windows:
+    name: opt-in tests (Windows)
+    needs: oracles-desktop
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all' || inputs.jobs == 'opt-in') }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'false'
+      SMALT_SKIP_JOB: windows-x64-opt-in
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - uses: ./.github/actions/oracles
+
+      # Windows Server ships Media Foundation as an optional feature.
+      - name: Install Media Foundation
+        shell: pwsh
+        run: |
+          $feature = Get-WindowsFeature Server-Media-Foundation -ErrorAction SilentlyContinue
+          if ($feature -and -not $feature.Installed) { Install-WindowsFeature Server-Media-Foundation | Out-Null }
+
+      - name: Build the Media Foundation driver
+        shell: bash
+        run: bash tools/testdata/mf-oracle/build.sh "$RUNNER_TEMP/mf"
+
+      - name: Run the opt-in tests
+        id: test
+        shell: bash
+        run: >
+          mvn -B -ntp -fae -pl mpeg -am verify -Dtest=Mpeg4InterlacedDirectTest,Eac3MediaFoundationTest
+          -Dsurefire.failIfNoSpecifiedTests=false -Dsmalt.test.mfDecode="$RUNNER_TEMP/mf/MfDecode.exe"
+          -Dsmalt.test.mfAudioDecode="$RUNNER_TEMP/mf/MfAudioDecode.exe"
+
+      - name: Record the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+  # The jobs of the full tier on the other systems: every module on Windows, macOS and Linux arm64 on the Saturday
+  # nightly (or when dispatched with jobs=weekly), and the it module (the JIT guard) on Windows and macOS every other
+  # night (Linux runs it in the full conformance tier and the arm64 suite).
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.day.outputs.matrix }}
+    steps:
+      - id: day
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            weekly=${{ inputs.jobs == 'weekly' }}
+            nightly=${{ inputs.jobs == 'all' }}
+          else
+            weekly=$([ "$(date -u +%u)" = 6 ] && echo true || echo false)
+            nightly=true
+          fi
+          if [ "$weekly" = true ]; then
+            matrix='{"os":["windows-latest","macos-latest","ubuntu-24.04-arm"],"module":["core","image","audio","video","mpeg","raw","it"]}'
+          elif [ "$nightly" = true ]; then
+            matrix='{"os":["windows-latest","macos-latest"],"module":["it"]}'
+          else
+            matrix=''
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  # The full tier on Windows, macOS and Linux arm64, one module per job. Each job downloads the vectors its tests
+  # ask for (SMALT_CONFORMANCE_DOWNLOAD) instead of the whole tier, so neither the runners' disks nor the cache hold
+  # the 14 GB; the job summary reports the runtime of each, and the skip baseline gates each job.
+  weekly-full:
+    name: full tier (${{ matrix.os }}, ${{ matrix.module }})
+    needs: [plan, oracles, oracles-desktop]
+    if: ${{ !cancelled() && needs.plan.outputs.matrix != '' }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix || '{"os":["ubuntu-latest"],"module":["core"]}') }}
+    env:
+      SMALT_CONFORMANCE_DOWNLOAD: 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Name the job in the skip baseline
+        shell: bash
+        run: echo "SMALT_SKIP_JOB=$(echo '${{ runner.os }}-${{ runner.arch }}-vector-full' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - uses: ./.github/actions/oracles
+
+      # The smoke tier from the cache; the tests download the rest of the full tier.
+      - uses: ./.github/actions/testdata
+        with:
+          clips-artifact: 'true'
+
+      - uses: ./.github/actions/oracle-data
+        with:
+          artifact: 'true'
+
+      - name: Build the modules it needs
+        shell: bash
+        run: mvn -B -ntp -q -pl ${{ matrix.module }} -am install -DskipTests -Dmaven.javadoc.skip=true
+
+      - name: Test the module on the full tier
+        id: test
+        shell: bash
+        run: |
+          start=$(date +%s)
+          status=0
+          mvn -B -ntp -fae -pl ${{ matrix.module }} verify || status=$?
+          echo "| ${{ matrix.os }} | ${{ matrix.module }} | $(( ($(date +%s) - start) / 60 )) min |" >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB-${{ matrix.module }}.tsv" || true
+          python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB-${{ matrix.module }}.tsv" || true
+          python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}-${{ matrix.module }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: weekly-reports-${{ env.SMALT_SKIP_JOB }}-${{ matrix.module }}
+          path: |
+            ${{ matrix.module }}/target/surefire-reports/
+            ${{ matrix.module }}/hs_err_pid*.log
+            target/skips-*.tsv
+          retention-days: 14
+
+  # Every skip of a nightly job must have passed in another job: the device, opt-in and data skips in another nightly
+  # job (the capture, opt-in and raw coverage jobs), the simd and platform skips in another nightly job or in the
+  # latest CI run of this branch (of master when the branch has none), whose scalar and Windows and macOS jobs run
+  # the scalar twins and each system's own tests.
+  skip-cover:
+    name: skips run elsewhere
+    needs: [full-conformance, arm64, argon, opt-in, opt-in-windows, raw-coverage, capture, weekly-full]
+    if: ${{ !cancelled() && (github.event_name != 'workflow_dispatch' || inputs.jobs == 'all') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Download the outcomes
+        uses: actions/download-artifact@v4
+        with:
+          pattern: outcomes-*
+          path: reports
+
+      - name: Download the outcomes of the latest CI run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p ci
+          for branch in "$GITHUB_REF_NAME" master; do
+            run=$(gh run list -R "$GITHUB_REPOSITORY" --workflow ci.yml --branch "$branch" --status completed \
+              --limit 1 --json databaseId --jq '.[0].databaseId // empty' || true)
+            if [ -n "$run" ] && gh run download "$run" -R "$GITHUB_REPOSITORY" --pattern 'skips-*' --dir ci \
+                && [ -n "$(find ci -name 'outcomes-*.tsv')" ]; then
+              echo "evidence: CI run $run of $branch"
+              break
+            fi
+          done
+          find ci -name 'outcomes-*.tsv' | sed 's/^/evidence: /'
+
+      - name: Check every skip passed elsewhere
+        shell: bash
+        run: |
+          mapfile -t checked < <(find reports -name 'outcomes-*.tsv')
+          status=0
+          python tools/testdata/skips.py cover "${checked[@]}" --families device,opt-in,data \
+            --impossible tools/testdata/impossible-skips.tsv || status=1
+          evidence=()
+          while IFS= read -r file; do evidence+=(--evidence "$file"); done < <(find ci -name 'outcomes-*.tsv')
+          if [ "${#evidence[@]}" -gt 0 ]; then
+            python tools/testdata/skips.py cover "${checked[@]}" "${evidence[@]}" --families simd,platform \
+              --impossible tools/testdata/impossible-skips.tsv || status=1
+          else
+            echo "::error::no CI outcomes to check the simd and platform skips against"
+            status=1
+          fi
+          exit $status

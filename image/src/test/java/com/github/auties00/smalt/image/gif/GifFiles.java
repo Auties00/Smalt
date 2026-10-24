@@ -87,6 +87,36 @@ final class GifFiles {
         return this;
     }
 
+    /** Writes an application extension whose data is split into sub-blocks of at most 255 bytes. */
+    GifFiles application(String identifier, byte[] data) {
+        out.write(0x21);
+        out.write(0xFF);
+        out.write(11);
+        out.writeBytes(identifier.getBytes(StandardCharsets.US_ASCII));
+        subBlocks(data);
+        return this;
+    }
+
+    /** Writes an ICC profile extension (ICC.1 Annex B). */
+    GifFiles icc(byte[] profile) {
+        return application("ICCRGBG1012", profile);
+    }
+
+    /** Writes an XMP extension: the packet raw, then the 258-byte magic trailer of XMP part 3. */
+    GifFiles xmp(byte[] packet) {
+        out.write(0x21);
+        out.write(0xFF);
+        out.write(11);
+        out.writeBytes("XMP DataXMP".getBytes(StandardCharsets.US_ASCII));
+        out.writeBytes(packet);
+        out.write(1);
+        for (var value = 0xFF; value >= 0; value--) {
+            out.write(value);
+        }
+        out.write(0);
+        return this;
+    }
+
     GifFiles plainText() {
         out.write(0x21);
         out.write(0x01);
