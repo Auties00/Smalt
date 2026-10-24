@@ -25,7 +25,9 @@ import java.util.Objects;
  *
  * <p>Blocks are pulled with {@link #read()}, which returns {@code null} at the end; the returned
  * buffer is reused, so it is valid only until the next call. After {@link #seek(long)} the next
- * {@code read()} starts with the sample presented at the requested time.
+ * {@code read()} starts with the sample presented at the requested time. A reader opened with an
+ * exact {@link AudioReaderOptions#sampleFormat()} returns the codec's own integer samples through
+ * {@link #readIntegers()}, or 64-bit floats through {@link #readDoubles()}, in the same way.
  *
  * <p>Instances are not thread-safe.
  */
@@ -46,9 +48,26 @@ public final class AudioReader implements AutoCloseable {
     private final AudioStreamDecoderOptions decoderOptions;
 
     /**
-     * The block returned by {@link #read()}, reused across calls.
+     * The block returned by {@link #read()}, reused across calls, or {@code null} when the output is
+     * not float.
      */
     private final AudioBuffer block;
+
+    /**
+     * The block returned by {@link #readIntegers()}, recreated when the sample size becomes known,
+     * or {@code null} when the output is not integer.
+     */
+    private IntegerAudioBuffer integerBlock;
+
+    /**
+     * The block returned by {@link #readDoubles()}, or {@code null} when the output is not double.
+     */
+    private final DoubleAudioBuffer doubleBlock;
+
+    /**
+     * The largest number of samples per block.
+     */
+    private final int blockFrames;
 
     /**
      * The decoder of the track, replaced by every seek.
@@ -81,7 +100,11 @@ public final class AudioReader implements AutoCloseable {
         this.track = track;
         this.decoder = decoder;
         this.decoderOptions = decoderOptions;
-        this.block = new AudioBuffer(decoder.layout(), decoder.sampleRate(), blockFrames);
+        this.blockFrames = blockFrames;
+        var format = decoderOptions.sampleFormat();
+        this.block = format == SampleFormat.FLOAT ? new AudioBuffer(decoder.layout(), decoder.sampleRate(), blockFrames) : null;
+        this.doubleBlock = format == SampleFormat.DOUBLE
+                ? new DoubleAudioBuffer(decoder.layout(), decoder.sampleRate(), blockFrames) : null;
     }
 
     /**
@@ -103,11 +126,14 @@ public final class AudioReader implements AutoCloseable {
      * Creates a reader of the first audio track of a media file.
      *
      * @param source the input, read by the reader and not closed by it
-     * @param options the output rate, layout, block size and limits
+     * @param options the output rate, layout, sample format, block size and limits
      * @return the reader, which the caller closes
+     * @throws IllegalArgumentException if the sample format is not {@link SampleFormat#FLOAT} and
+     * the options ask for a rate or layout other than the codec's
      * @throws MediaException.Malformed if the container or the codec configuration is corrupt
      * @throws MediaException.Unsupported if the container is not recognized, has no audio track, or
-     * its audio codec is not decodable
+     * its audio codec is not decodable, or the sample format is {@link SampleFormat#INTEGER} and the
+     * codec has no integer output
      * @throws MediaException.Io if reading the source fails
      */
     public static AudioReader open(MediaSource source, AudioReaderOptions options) {
@@ -144,14 +170,14 @@ public final class AudioReader implements AutoCloseable {
     }
 
     /**
-     * {@return the sampling rate of the blocks {@link #read()} returns, in hertz}
+     * {@return the sampling rate of the blocks this reader returns, in hertz}
      */
     public int sampleRate() {
         return decoder.sampleRate();
     }
 
     /**
-     * {@return the channel layout of the blocks {@link #read()} returns}
+     * {@return the channel layout of the blocks this reader returns}
      */
     public ChannelLayout layout() {
         return decoder.layout();
@@ -166,22 +192,116 @@ public final class AudioReader implements AutoCloseable {
     }
 
     /**
+     * {@return the representation of the samples this reader returns}
+     */
+    public SampleFormat sampleFormat() {
+        return decoderOptions.sampleFormat();
+    }
+
+    /**
+     * Returns the sample size of the blocks {@link #readIntegers()} returns.
+     *
+     * @return the size in bits, from 1 to 32, or 0 when the output is not
+     * {@link SampleFormat#INTEGER}, or before the first block when the stream declares no size
+     */
+    public int bitsPerSample() {
+        return decoder.bitsPerSample();
+    }
+
+    /**
      * Returns the next block of converted samples.
      *
      * @return a block of up to {@link AudioReaderOptions#blockFrames()} samples per channel, valid
      * until the next call, or {@code null} at the end of the audio
-     * @throws IllegalStateException if the last {@link #seek(long)} failed
-     * @throws MediaException.Malformed if the container is corrupt or too many consecutive packets
-     * are corrupt
+     * @throws IllegalStateException if the last {@link #seek(long)} failed, or the sample format is
+     * not {@link SampleFormat#FLOAT}
+     * @throws MediaException.Malformed if the container is corrupt, too many consecutive packets are
+     * corrupt, or the stream fails the integrity check {@link AudioReaderOptions#verifyIntegrity()}
+     * requested
      * @throws MediaException.Io if reading the source fails
      */
     public AudioBuffer read() {
+        requireFormat(SampleFormat.FLOAT);
+        fill();
+        var frames = decoder.read(block.planes(), 0, blockFrames);
+        if (frames == 0) {
+            return null;
+        }
+        block.setFrames(frames);
+        return block;
+    }
+
+    /**
+     * Returns the next block of the codec's integer samples.
+     *
+     * @return a block of up to {@link AudioReaderOptions#blockFrames()} samples per channel of
+     * {@link #bitsPerSample()} bits, valid until the next call, or {@code null} at the end of the
+     * audio
+     * @throws IllegalStateException if the last {@link #seek(long)} failed, or the sample format is
+     * not {@link SampleFormat#INTEGER}
+     * @throws MediaException.Malformed if the container is corrupt, too many consecutive packets are
+     * corrupt, or the stream fails the integrity check {@link AudioReaderOptions#verifyIntegrity()}
+     * requested
+     * @throws MediaException.Io if reading the source fails
+     */
+    public IntegerAudioBuffer readIntegers() {
+        requireFormat(SampleFormat.INTEGER);
+        fill();
+        if (decoder.available() == 0) {
+            return null;
+        }
+        var bits = decoder.bitsPerSample();
+        if (integerBlock == null || integerBlock.bitsPerSample() != bits) {
+            integerBlock = new IntegerAudioBuffer(decoder.layout(), decoder.sampleRate(), bits, blockFrames);
+        }
+        integerBlock.setFrames(decoder.readIntegers(integerBlock.planes(), 0, blockFrames));
+        return integerBlock;
+    }
+
+    /**
+     * Returns the next block of 64-bit float samples.
+     *
+     * @return a block of up to {@link AudioReaderOptions#blockFrames()} samples per channel, valid
+     * until the next call, or {@code null} at the end of the audio
+     * @throws IllegalStateException if the last {@link #seek(long)} failed, or the sample format is
+     * not {@link SampleFormat#DOUBLE}
+     * @throws MediaException.Malformed if the container is corrupt, too many consecutive packets are
+     * corrupt, or the stream fails the integrity check {@link AudioReaderOptions#verifyIntegrity()}
+     * requested
+     * @throws MediaException.Io if reading the source fails
+     */
+    public DoubleAudioBuffer readDoubles() {
+        requireFormat(SampleFormat.DOUBLE);
+        fill();
+        var frames = decoder.readDoubles(doubleBlock.planes(), 0, blockFrames);
+        if (frames == 0) {
+            return null;
+        }
+        doubleBlock.setFrames(frames);
+        return doubleBlock;
+    }
+
+    /**
+     * Rejects a read of the wrong form or after a failed seek.
+     *
+     * @param format the form of the read
+     * @throws IllegalStateException if the last seek failed or the output is of another form
+     */
+    private void requireFormat(SampleFormat format) {
         if (seekFailed) {
             throw new IllegalStateException("the last seek failed; seek again before reading");
         }
-        var wanted = block.capacity();
+        if (decoderOptions.sampleFormat() != format) {
+            throw new IllegalStateException("the reader outputs " + decoderOptions.sampleFormat() + ", not " + format);
+        }
+    }
+
+    /**
+     * Decodes packets until a whole block is ready or the audio ends.
+     */
+    private void fill() {
         var trackId = track.id();
-        while (decoder.available() < wanted && !decoder.isDrained()) {
+        while (decoder.available() < blockFrames && !decoder.isDrained()) {
             var packet = demuxer.read();
             if (packet == null) {
                 decoder.finish();
@@ -191,12 +311,6 @@ public final class AudioReader implements AutoCloseable {
                 decoder.decode(packet);
             }
         }
-        var frames = decoder.read(block.planes(), 0, wanted);
-        if (frames == 0) {
-            return null;
-        }
-        block.setFrames(frames);
-        return block;
     }
 
     /**
@@ -207,13 +321,13 @@ public final class AudioReader implements AutoCloseable {
     }
 
     /**
-     * Positions the reader so that the next {@link #read()} starts at the sample presented at
-     * {@code micros}.
+     * Positions the reader so that the next {@link #read()}, {@link #readIntegers()} or
+     * {@link #readDoubles()} starts at the sample presented at {@code micros}.
      *
      * <p>From {@code micros} on, the output equals a decode from the start of the track, except that
-     * Opus output is not sample-exact until its filter memories have decayed and AAC
-     * noise-substituted bands may differ. A time before zero seeks to the start; a time at or past
-     * the end makes the next {@code read()} return {@code null}.
+     * Opus and AMR output is not sample-exact until the codec state has converged, and AAC
+     * noise-substituted bands and AC-3 and E-AC-3 dithered mantissas may differ. A time before zero
+     * seeks to the start; a time at or past the end makes the next {@code read()} return {@code null}.
      *
      * <p>A seek that fails with {@link MediaException.Malformed} or {@link MediaException.Io} leaves
      * the reader unusable until a later seek succeeds: {@code read()} throws
@@ -223,8 +337,9 @@ public final class AudioReader implements AutoCloseable {
      * @implNote This implementation pre-rolls by {@link AudioStreamDecoder.Timing#prerollMicros()}
      * after measuring, on the first seek, how the container's timestamps map to the decoder's output.
      * When container timestamps are coarser than a sample ({@link AudioStreamDecoder.Timing#isExact()}
-     * is {@code false}), it decodes from the start of the track and drops the samples before
-     * {@code micros}.
+     * is {@code false}), for AAC Main, LTP and LD, whose prediction state reaches back to the start
+     * of the stream, and for AAC-ELD with low delay spectral band replication, it decodes from the
+     * start of the track and drops the samples before {@code micros}.
      * @param micros the presentation time, in microseconds
      * @throws MediaException.Malformed if the index needed to seek is corrupt
      * @throws MediaException.Unsupported if the container cannot seek ({@link #isSeekable()} is
@@ -266,13 +381,15 @@ public final class AudioReader implements AutoCloseable {
     }
 
     /**
-     * Returns the stream decoder settings of reader options: their rate, layout and limits.
+     * Returns the stream decoder settings of reader options: their rate, layout, sample format,
+     * integrity check and limits.
      *
      * @param options the reader options
      * @return the stream decoder options
      */
     private static AudioStreamDecoderOptions decoderOptions(AudioReaderOptions options) {
-        var builder = AudioStreamDecoderOptions.builder().limits(options.limits());
+        var builder = AudioStreamDecoderOptions.builder().limits(options.limits())
+                .sampleFormat(options.sampleFormat()).verifyIntegrity(options.verifyIntegrity());
         options.sampleRate().ifPresent(builder::sampleRate);
         options.layout().ifPresent(builder::layout);
         return builder.build();

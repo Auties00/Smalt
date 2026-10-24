@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.voice.internal.aec3;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorShuffle;
@@ -36,11 +37,6 @@ final class VectorAec3Kernels {
      * The four-lane species.
      */
     private static final VectorSpecies<Float> NARROW = FloatVector.SPECIES_128;
-
-    /**
-     * Whether the platform's preferred vectors are at least 256 bits wide.
-     */
-    private static final boolean USE_WIDE = FloatVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
 
     /**
      * The exact class of the eight-lane vectors.
@@ -130,7 +126,7 @@ final class VectorAec3Kernels {
      * @return a new kernel
      */
     static MatchedFilterKernel matchedFilter() {
-        return USE_WIDE ? new WideMatchedFilterKernel() : new NarrowMatchedFilterKernel();
+        return Simd.WIDE ? new WideMatchedFilterKernel() : new NarrowMatchedFilterKernel();
     }
 
     /**
@@ -149,7 +145,7 @@ final class VectorAec3Kernels {
      * @return a new kernel
      */
     static AdaptiveFilterKernel adaptiveFilter() {
-        return USE_WIDE ? new WideAdaptiveFilterKernel() : new NarrowAdaptiveFilterKernel();
+        return Simd.WIDE ? new WideAdaptiveFilterKernel() : new NarrowAdaptiveFilterKernel();
     }
 
     /**
@@ -614,14 +610,14 @@ final class VectorAec3Kernels {
         }
 
         @Override
-        public void apply(float[] xRe, float[] xIm, int position, int numPartitions, float[] hRe, float[] hIm, float[] sRe,
-                          float[] sIm) {
+        public void apply(float[] xRe, float[] xIm, int position, int bufferSize, int numPartitions, float[] hRe,
+                          float[] hIm, float[] sRe, float[] sIm) {
             Arrays.fill(sRe, 0.f);
             Arrays.fill(sIm, 0.f);
             var index = position;
             for (var p = 0; p < numPartitions; ++p) {
                 applyPartition(xRe, xIm, index * FFT_LENGTH_BY_2_PLUS_1, hRe, hIm, p * FFT_LENGTH_BY_2_PLUS_1, sRe, sIm);
-                index = index < RenderBuffer.SIZE - 1 ? index + 1 : 0;
+                index = index < bufferSize - 1 ? index + 1 : 0;
             }
         }
 
@@ -657,12 +653,12 @@ final class VectorAec3Kernels {
         }
 
         @Override
-        public void adapt(float[] xRe, float[] xIm, int position, int numPartitions, float[] gRe, float[] gIm, float[] hRe,
-                          float[] hIm) {
+        public void adapt(float[] xRe, float[] xIm, int position, int bufferSize, int numPartitions, float[] gRe,
+                          float[] gIm, float[] hRe, float[] hIm) {
             var index = position;
             for (var p = 0; p < numPartitions; ++p) {
                 adaptPartition(xRe, xIm, index * FFT_LENGTH_BY_2_PLUS_1, gRe, gIm, hRe, hIm, p * FFT_LENGTH_BY_2_PLUS_1);
-                index = index < RenderBuffer.SIZE - 1 ? index + 1 : 0;
+                index = index < bufferSize - 1 ? index + 1 : 0;
             }
         }
 
@@ -698,20 +694,36 @@ final class VectorAec3Kernels {
         }
 
         @Override
-        public void frequencyResponse(int numPartitions, float[] hRe, float[] hIm, float[] h2) {
+        public void frequencyResponse(int numPartitions, int numChannels, float[] hRe, float[] hIm, float[] h2) {
             for (var p = 0; p < numPartitions; ++p) {
                 var o = p * FFT_LENGTH_BY_2_PLUS_1;
-                for (var j = 0; j < FFT_LENGTH_BY_2; j += 8) {
-                    var zero = WIDE_VECTOR.cast(FloatVector.zero(WIDE));
-                    var re = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, hRe, o + j));
-                    var im = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, hIm, o + j));
-                    var tmp = re.lanewise(VectorOperators.MUL, re).lanewise(VectorOperators.ADD, im.lanewise(VectorOperators.MUL, im));
-                    zero.blend(tmp, zero.compare(VectorOperators.LT, tmp)).intoArray(h2, o + j);
+                Arrays.fill(h2, o, o + FFT_LENGTH_BY_2_PLUS_1, 0.f);
+                for (var ch = 0; ch < numChannels; ++ch) {
+                    responsePartition(hRe, hIm, (p * numChannels + ch) * FFT_LENGTH_BY_2_PLUS_1, h2, o);
                 }
-                var j = FFT_LENGTH_BY_2;
-                var tmp = hRe[o + j] * hRe[o + j] + hIm[o + j] * hIm[o + j];
-                h2[o + j] = 0.f < tmp ? tmp : 0.f;
             }
+        }
+
+        /**
+         * Raises the power response of a partition to that of one of its render channels.
+         *
+         * @param hRe the real parts of the partitions
+         * @param hIm the imaginary parts of the partitions
+         * @param ho  the start of the channel's spectrum
+         * @param h2  the power responses, updated
+         * @param o   the start of the partition's power response
+         */
+        private static void responsePartition(float[] hRe, float[] hIm, int ho, float[] h2, int o) {
+            for (var j = 0; j < FFT_LENGTH_BY_2; j += 8) {
+                var re = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, hRe, ho + j));
+                var im = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, hIm, ho + j));
+                var tmp = re.lanewise(VectorOperators.MUL, re).lanewise(VectorOperators.ADD, im.lanewise(VectorOperators.MUL, im));
+                var current = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, h2, o + j));
+                current.blend(tmp, current.compare(VectorOperators.LT, tmp)).intoArray(h2, o + j);
+            }
+            var j = FFT_LENGTH_BY_2;
+            var tmp = hRe[ho + j] * hRe[ho + j] + hIm[ho + j] * hIm[ho + j];
+            h2[o + j] = h2[o + j] < tmp ? tmp : h2[o + j];
         }
 
         @Override
@@ -743,14 +755,14 @@ final class VectorAec3Kernels {
         }
 
         @Override
-        public void apply(float[] xRe, float[] xIm, int position, int numPartitions, float[] hRe, float[] hIm, float[] sRe,
-                          float[] sIm) {
+        public void apply(float[] xRe, float[] xIm, int position, int bufferSize, int numPartitions, float[] hRe,
+                          float[] hIm, float[] sRe, float[] sIm) {
             Arrays.fill(sRe, 0.f);
             Arrays.fill(sIm, 0.f);
             var index = position;
             for (var p = 0; p < numPartitions; ++p) {
                 applyPartition(xRe, xIm, index * FFT_LENGTH_BY_2_PLUS_1, hRe, hIm, p * FFT_LENGTH_BY_2_PLUS_1, sRe, sIm);
-                index = index < RenderBuffer.SIZE - 1 ? index + 1 : 0;
+                index = index < bufferSize - 1 ? index + 1 : 0;
             }
         }
 
@@ -786,12 +798,12 @@ final class VectorAec3Kernels {
         }
 
         @Override
-        public void adapt(float[] xRe, float[] xIm, int position, int numPartitions, float[] gRe, float[] gIm, float[] hRe,
-                          float[] hIm) {
+        public void adapt(float[] xRe, float[] xIm, int position, int bufferSize, int numPartitions, float[] gRe,
+                          float[] gIm, float[] hRe, float[] hIm) {
             var index = position;
             for (var p = 0; p < numPartitions; ++p) {
                 adaptPartition(xRe, xIm, index * FFT_LENGTH_BY_2_PLUS_1, gRe, gIm, hRe, hIm, p * FFT_LENGTH_BY_2_PLUS_1);
-                index = index < RenderBuffer.SIZE - 1 ? index + 1 : 0;
+                index = index < bufferSize - 1 ? index + 1 : 0;
             }
         }
 
@@ -827,20 +839,36 @@ final class VectorAec3Kernels {
         }
 
         @Override
-        public void frequencyResponse(int numPartitions, float[] hRe, float[] hIm, float[] h2) {
+        public void frequencyResponse(int numPartitions, int numChannels, float[] hRe, float[] hIm, float[] h2) {
             for (var p = 0; p < numPartitions; ++p) {
                 var o = p * FFT_LENGTH_BY_2_PLUS_1;
-                for (var j = 0; j < FFT_LENGTH_BY_2; j += 4) {
-                    var zero = NARROW_VECTOR.cast(FloatVector.zero(NARROW));
-                    var re = NARROW_VECTOR.cast(FloatVector.fromArray(NARROW, hRe, o + j));
-                    var im = NARROW_VECTOR.cast(FloatVector.fromArray(NARROW, hIm, o + j));
-                    var tmp = re.lanewise(VectorOperators.MUL, re).lanewise(VectorOperators.ADD, im.lanewise(VectorOperators.MUL, im));
-                    zero.blend(tmp, zero.compare(VectorOperators.LT, tmp)).intoArray(h2, o + j);
+                Arrays.fill(h2, o, o + FFT_LENGTH_BY_2_PLUS_1, 0.f);
+                for (var ch = 0; ch < numChannels; ++ch) {
+                    responsePartition(hRe, hIm, (p * numChannels + ch) * FFT_LENGTH_BY_2_PLUS_1, h2, o);
                 }
-                var j = FFT_LENGTH_BY_2;
-                var tmp = hRe[o + j] * hRe[o + j] + hIm[o + j] * hIm[o + j];
-                h2[o + j] = 0.f < tmp ? tmp : 0.f;
             }
+        }
+
+        /**
+         * Raises the power response of a partition to that of one of its render channels.
+         *
+         * @param hRe the real parts of the partitions
+         * @param hIm the imaginary parts of the partitions
+         * @param ho  the start of the channel's spectrum
+         * @param h2  the power responses, updated
+         * @param o   the start of the partition's power response
+         */
+        private static void responsePartition(float[] hRe, float[] hIm, int ho, float[] h2, int o) {
+            for (var j = 0; j < FFT_LENGTH_BY_2; j += 4) {
+                var re = NARROW_VECTOR.cast(FloatVector.fromArray(NARROW, hRe, ho + j));
+                var im = NARROW_VECTOR.cast(FloatVector.fromArray(NARROW, hIm, ho + j));
+                var tmp = re.lanewise(VectorOperators.MUL, re).lanewise(VectorOperators.ADD, im.lanewise(VectorOperators.MUL, im));
+                var current = NARROW_VECTOR.cast(FloatVector.fromArray(NARROW, h2, o + j));
+                current.blend(tmp, current.compare(VectorOperators.LT, tmp)).intoArray(h2, o + j);
+            }
+            var j = FFT_LENGTH_BY_2;
+            var tmp = hRe[ho + j] * hRe[ho + j] + hIm[ho + j] * hIm[ho + j];
+            h2[o + j] = h2[o + j] < tmp ? tmp : h2[o + j];
         }
 
         @Override
