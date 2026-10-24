@@ -123,7 +123,7 @@ class Mp4IntegerAtomsTest {
         assertEquals("120", tags.get("tmpo").orElseThrow());
         var probed = Media.probe(MediaSource.of(data)).tags();
         for (var code : List.of("stik", "hdvd", "pgap", "tvsn", "tves", "tmpo")) {
-            assertEquals(tags.get(code).orElseThrow(), probed.get(code), code + " in " + probed);
+            assertEquals(tags.get(code).orElseThrow(), probed.get(StandardTag.normalize(code)), code + " in " + probed);
         }
     }
 
@@ -148,7 +148,7 @@ class Mp4IntegerAtomsTest {
         var probed = Media.probe(MediaSource.of(data)).tags();
         for (var entry : VALUES.entrySet()) {
             assertEquals(entry.getValue(), read.get(entry.getKey()).orElseThrow(), entry.getKey());
-            assertEquals(entry.getValue(), probed.get(entry.getKey()), entry.getKey() + " in " + probed);
+            assertEquals(entry.getValue(), probed.get(StandardTag.normalize(entry.getKey())), entry.getKey() + " in " + probed);
         }
         assertArrayEquals(data, TagEditor.write(data, read, TagWriteOptions.defaults()), "a rewrite is the identity");
     }
@@ -224,7 +224,7 @@ class Mp4IntegerAtomsTest {
         assertEquals("65535", read.get("tmpo").orElseThrow());
         var probed = Media.probe(MediaSource.of(data)).tags();
         for (var code : List.of("xu32", "xs8a", "xu64", "xs24", "tmpo")) {
-            assertEquals(read.get(code).orElseThrow(), probed.get(code), code);
+            assertEquals(read.get(code).orElseThrow(), probed.get(StandardTag.normalize(code)), code);
         }
         var rewritten = TagEditor.write(data, read.toBuilder().set("xu32", "7").set(StandardTag.TITLE, "t").build(),
                 TagWriteOptions.defaults());

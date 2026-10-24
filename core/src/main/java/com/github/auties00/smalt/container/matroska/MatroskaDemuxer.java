@@ -27,6 +27,7 @@ import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.time.Instant;
@@ -41,6 +42,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Demuxes Matroska and WebM files, per RFC 8794 (EBML) and RFC 9559 (Matroska).
@@ -855,6 +857,7 @@ public final class MatroskaDemuxer implements Demuxer {
             var content = tag.payload();
             var trackUid = -1L;
             var global = true;
+            var typeValue = MatroskaTags.Targets.DEFAULT_TYPE_VALUE;
             var simpleTags = new ArrayList<EbmlCursor>();
             while (content.hasMore()) {
                 var element = content.next();
@@ -863,12 +866,13 @@ public final class MatroskaDemuxer implements Demuxer {
                     var targets = MatroskaTags.targets(payload.array(), payload.asElement(EbmlIds.TARGETS));
                     trackUid = targets.trackUid() != 0 ? targets.trackUid() : -1;
                     global = targets.global();
+                    typeValue = targets.typeValue();
                 } else if (element.id() == EbmlIds.SIMPLE_TAG) {
                     simpleTags.add(element.payload());
                 }
             }
             for (var simpleTag : simpleTags) {
-                parseSimpleTag(header, simpleTag, "", global, trackUid, 0);
+                parseSimpleTag(header, simpleTag, "", global, trackUid, typeValue, 0);
             }
         }
     }
@@ -881,9 +885,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * @param prefix the names of the enclosing tags joined with {@code '/'}, or empty
      * @param global whether the tag targets the whole segment
      * @param trackUid the targeted track UID, or {@code -1}
+     * @param typeValue the target type value of the tag, which names the level a ReplayGain value applies to
      * @param depth the current nesting
      */
-    private static void parseSimpleTag(SegmentHeader header, EbmlCursor body, String prefix, boolean global, long trackUid, int depth) {
+    private static void parseSimpleTag(SegmentHeader header, EbmlCursor body, String prefix, boolean global, long trackUid,
+                                       long typeValue, int depth) {
         if (depth > MAX_TAG_DEPTH) {
             return;
         }
@@ -903,7 +909,8 @@ public final class MatroskaDemuxer implements Demuxer {
         if (name == null) {
             return;
         }
-        var key = prefix.isEmpty() ? name : prefix + "/" + name;
+        var level = prefix.isEmpty() ? MatroskaTags.levelTag(name, typeValue) : null;
+        var key = level != null ? level.vorbisField() : prefix.isEmpty() ? name : prefix + "/" + name;
         if (value != null) {
             if (global && header.tags.size() < 1024) {
                 header.tags.putIfAbsent(key, value);
@@ -921,7 +928,7 @@ public final class MatroskaDemuxer implements Demuxer {
             }
         }
         for (var child : nested) {
-            parseSimpleTag(header, child, key, global, trackUid, depth + 1);
+            parseSimpleTag(header, child, key, global, trackUid, typeValue, depth + 1);
         }
     }
 
@@ -1041,6 +1048,19 @@ public final class MatroskaDemuxer implements Demuxer {
     @Override
     public Map<String, String> trackMetadata(int trackId) {
         return trackTags.getOrDefault(trackId, Map.of());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The dispositions are those of the flag elements of the {@code TrackEntry}: {@code FlagDefault} (set unless
+     * declared otherwise), {@code FlagForced}, {@code FlagHearingImpaired}, {@code FlagVisualImpaired},
+     * {@code FlagTextDescriptions}, {@code FlagOriginal} and {@code FlagCommentary}.
+     */
+    @Override
+    public Set<TrackDisposition> trackDisposition(int trackId) {
+        var entry = byNumber.get((long) trackId);
+        return entry == null ? Set.of() : Collections.unmodifiableSet(EnumSet.copyOf(entry.disposition));
     }
 
     @Override

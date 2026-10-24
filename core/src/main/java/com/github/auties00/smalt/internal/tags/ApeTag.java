@@ -176,6 +176,11 @@ public final class ApeTag {
         keys.put(StandardTag.GROUPING, "Grouping");
         keys.put(StandardTag.CREATION_TIME, "CREATION_TIME");
         keys.put(StandardTag.COMPILATION, "Compilation");
+        keys.put(StandardTag.CONDUCTOR, "Conductor");
+        keys.put(StandardTag.LYRICIST, "Lyricist");
+        for (var tag : StandardTag.values()) {
+            keys.putIfAbsent(tag, tag.vorbisField());
+        }
         return keys;
     }
 

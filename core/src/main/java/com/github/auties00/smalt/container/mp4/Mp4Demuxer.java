@@ -24,6 +24,7 @@ import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -31,6 +32,7 @@ import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.lang.foreign.MemorySegment;
@@ -40,6 +42,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -1010,6 +1013,61 @@ public final class Mp4Demuxer implements Demuxer {
     @Override
     public Map<String, String> metadata() {
         return metadata;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The tags of a track are the {@code name} of its {@code udta}, under {@code "title"}, and the tags of the
+     * {@code meta} box and text atoms of that {@code udta}.
+     */
+    @Override
+    public Map<String, String> trackMetadata(int trackId) {
+        var track = publicTrack(trackId);
+        if (track == null || track.name == null && track.userTags.isEmpty()) {
+            return Map.of();
+        }
+        var result = new LinkedHashMap<String, String>();
+        if (track.name != null) {
+            result.put(StandardTag.TITLE.key(), track.name);
+        }
+        track.userTags.forEach(result::putIfAbsent);
+        return Collections.unmodifiableMap(result);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A track is {@link TrackDisposition#DEFAULT} when its {@code tkhd} flags it as enabled; its other
+     * dispositions are those of the {@code kind} boxes of its {@code udta} in the DASH role scheme.
+     */
+    @Override
+    public Set<TrackDisposition> trackDisposition(int trackId) {
+        var track = publicTrack(trackId);
+        if (track == null) {
+            return Set.of();
+        }
+        var result = EnumSet.noneOf(TrackDisposition.class);
+        result.addAll(track.kinds);
+        if (track.enabled) {
+            result.add(TrackDisposition.DEFAULT);
+        }
+        return Collections.unmodifiableSet(result);
+    }
+
+    /**
+     * Returns the track with a public identifier.
+     *
+     * @param trackId the identifier the public track carries
+     * @return the track, or {@code null} when the file has none
+     */
+    private Mp4Track publicTrack(int trackId) {
+        for (var track : allTracks) {
+            if (track.id == trackId) {
+                return track;
+            }
+        }
+        return null;
     }
 
     @Override

@@ -23,6 +23,16 @@ public final class MuxerTags {
     }
 
     /**
+     * Returns whether tags hold nothing a container stores for the whole file.
+     *
+     * @param tags the tags whose track tags are not counted
+     * @return {@code true} when they hold no entry, picture or chapter, whatever their track tags
+     */
+    public static boolean isGlobalEmpty(MediaTags tags) {
+        return tags.entries().isEmpty() && tags.pictures().isEmpty() && tags.chapters().isEmpty();
+    }
+
+    /**
      * Encodes an MP4 {@code udta} box holding an iTunes {@code meta}/{@code ilst} and, with
      * chapters, a Nero {@code chpl} box.
      *
@@ -32,7 +42,7 @@ public final class MuxerTags {
      * atom, such as {@code tmpo}, is not an integer the atom holds
      */
     public static byte[] mp4UserData(MediaTags tags) {
-        if (tags.isEmpty()) {
+        if (isGlobalEmpty(tags)) {
             return new byte[0];
         }
         var out = new ByteWriter(4096);
@@ -56,7 +66,7 @@ public final class MuxerTags {
      * @return the tag, or an empty array for empty tags
      */
     public static byte[] id3v2(MediaTags tags) {
-        if (tags.isEmpty()) {
+        if (isGlobalEmpty(tags)) {
             return new byte[0];
         }
         return Id3v2Tag.encode(tags, List.of(), null, ID3_VERSION, 0, 0);
@@ -164,11 +174,46 @@ public final class MuxerTags {
      * @return the three elements in this order, each empty when there is nothing to write
      */
     public static byte[][] matroska(MediaTags tags) {
+        return matroska(tags, List.of());
+    }
+
+    /**
+     * Encodes the Matroska {@code Tags}, {@code Chapters} and {@code Attachments} elements, the {@code Tags}
+     * element holding the given track tags first.
+     *
+     * @param tags the tags, pictures and chapters to store
+     * @param trackTags the complete {@code Tag} elements of the tracks
+     * @return the three elements in this order, each empty when there is nothing to write
+     */
+    public static byte[][] matroska(MediaTags tags, List<byte[]> trackTags) {
         return new byte[][]{
-                MatroskaTags.encodeTags(tags, List.of()),
+                MatroskaTags.encodeTags(tags, trackTags),
                 MatroskaTags.encodeChapters(tags.chapters()),
                 MatroskaTags.encodeAttachments(tags.pictures(), List.of())
         };
+    }
+
+    /**
+     * Encodes the {@code LIST INFO} chunk of an AVI file: the first value of every entry {@code INFO} has an
+     * identifier for.
+     *
+     * @param tags the tags to store
+     * @return the complete chunk, or an empty array when no entry fits one
+     */
+    public static byte[] riffInfo(MediaTags tags) {
+        var chunk = RiffTagFile.infoList(tags.entries(), false, new HashSet<>());
+        return chunk != null ? chunk : new byte[0];
+    }
+
+    /**
+     * Encodes a Matroska {@code Tag} element targeting one track.
+     *
+     * @param trackUid the {@code TrackUID} of the track
+     * @param entries the tags of the track
+     * @return the complete element
+     */
+    public static byte[] matroskaTrackTag(long trackUid, List<MediaTags.Entry> entries) {
+        return MatroskaTags.encodeTrackTag(trackUid, entries);
     }
 
     /**
@@ -181,10 +226,10 @@ public final class MuxerTags {
      */
     public static List<byte[]> riffChunks(MediaTags tags, boolean aiff) {
         var result = new ArrayList<byte[]>();
-        if (tags.isEmpty()) {
+        if (isGlobalEmpty(tags)) {
             return result;
         }
-        var allText = RiffTagFile.encodeText(aiff, tags, result, new HashSet<>());
+        var allText = RiffTagFile.encodeText(aiff, aiff, tags, result, new HashSet<>());
         if (!allText || !tags.pictures().isEmpty() || !tags.chapters().isEmpty()) {
             result.add(RiffTagFile.chunk(aiff, aiff ? "ID3 " : "id3 ", id3v2(tags)));
         }

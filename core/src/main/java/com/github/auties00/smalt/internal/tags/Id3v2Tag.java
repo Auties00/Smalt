@@ -11,6 +11,8 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 
 import java.io.ByteArrayOutputStream;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -93,6 +95,16 @@ public final class Id3v2Tag {
      * The frames whose version 2.3 values are joined with {@code /}.
      */
     private static final String SLASH = "/";
+
+    /**
+     * The owner of the {@code UFID} frame holding the MusicBrainz recording identifier.
+     */
+    private static final String MUSICBRAINZ = "http://musicbrainz.org";
+
+    /**
+     * The {@code TXXX} description that stores a MusicBrainz recording identifier a {@code UFID} frame cannot hold.
+     */
+    private static final String MUSICBRAINZ_TRACK_ID = "MusicBrainz Track Id";
 
     /**
      * The tag version (2, 3 or 4).
@@ -427,6 +439,7 @@ public final class Id3v2Tag {
         String time = null;
         String timestamp = null;
         var lyricsSeen = false;
+        var ratingSeen = false;
         var dateIndex = -1;
         for (var frame : frames) {
             if ((frame.flags() & ENCRYPTED) != 0) {
@@ -489,6 +502,22 @@ public final class Id3v2Tag {
                     }
                     case "CHAP", "CTOC" -> chapterFrames.add(frame);
                     case "SEEK" -> {
+                    }
+                    case "UFID" -> {
+                        var identifier = musicBrainzId(data);
+                        if (identifier != null) {
+                            add(entries, StandardTag.MUSICBRAINZ_RECORDING_ID.key(), identifier);
+                        } else {
+                            opaque.add(frame);
+                        }
+                    }
+                    case "POPM" -> {
+                        var popularimeter = ratingSeen ? null : Popularimeter.parse(data);
+                        if (popularimeter != null) {
+                            ratingSeen = true;
+                            add(entries, StandardTag.RATING.key(), popularimeter.ratingText());
+                        }
+                        opaque.add(frame);
                     }
                     default -> {
                         if (id.length() == 4 && id.charAt(0) == 'T') {
@@ -666,7 +695,9 @@ public final class Id3v2Tag {
      * identifier, the form a demuxer reports.
      *
      * <p>A {@code TXXX} frame is keyed {@code TXXX:} followed by its description, and a comment
-     * {@code COMM} whatever its description. The values of one frame, and the values of frames
+     * {@code COMM} whatever its description, a {@code UFID} frame of owner {@code http://musicbrainz.org}
+     * {@code UFID} with its identifier, and the first {@code POPM} frame {@code POPM} with its rating as
+     * {@link StandardTag#RATING} describes it. The values of one frame, and the values of frames
      * with the same key, are joined with {@code "; "}; blank values and encrypted frames are
      * skipped.
      *
@@ -693,6 +724,16 @@ public final class Id3v2Tag {
                 }
             } else if (id.charAt(0) == 'T') {
                 putField(fields, id, String.join("; ", text(data)));
+            } else if (id.equals("UFID")) {
+                var identifier = musicBrainzId(data);
+                if (identifier != null) {
+                    putField(fields, id, identifier);
+                }
+            } else if (id.equals("POPM") && !fields.containsKey(id)) {
+                var popularimeter = Popularimeter.parse(data);
+                if (popularimeter != null) {
+                    putField(fields, id, popularimeter.ratingText());
+                }
             }
         }
         return fields;
@@ -825,6 +866,38 @@ public final class Id3v2Tag {
     }
 
     /**
+     * Decodes the identifier of a MusicBrainz {@code UFID} frame.
+     *
+     * @param data the frame content: a terminated ISO-8859-1 owner and up to 64 identifier bytes
+     * @return the identifier, or {@code null} for another owner or a blank identifier
+     */
+    private static String musicBrainzId(byte[] data) {
+        var ownerEnd = terminator(data, 0, data.length, 0);
+        if (ownerEnd >= data.length || !new String(data, 0, ownerEnd, StandardCharsets.ISO_8859_1).equals(MUSICBRAINZ)) {
+            return null;
+        }
+        var identifier = new String(data, ownerEnd + 1, data.length - ownerEnd - 1, StandardCharsets.ISO_8859_1).strip();
+        var end = identifier.indexOf(0);
+        identifier = end >= 0 ? identifier.substring(0, end) : identifier;
+        return identifier.isBlank() ? null : identifier;
+    }
+
+    /**
+     * Encodes the content of a MusicBrainz {@code UFID} frame.
+     *
+     * @param identifier the identifier, at most 64 printable ASCII characters
+     * @return the content
+     */
+    private static byte[] musicBrainzContent(String identifier) {
+        var out = new ByteWriter(64);
+        out.bytes(MUSICBRAINZ.getBytes(StandardCharsets.ISO_8859_1));
+        out.u8(0);
+        var bytes = identifier.getBytes(StandardCharsets.ISO_8859_1);
+        out.bytes(bytes);
+        return out.toByteArray();
+    }
+
+    /**
      * Decodes text in an ID3v2 encoding.
      *
      * @param data the bytes
@@ -936,6 +1009,14 @@ public final class Id3v2Tag {
             case "TCR" -> "TCOP";
             case "TPB" -> "TPUB";
             case "TBP" -> "TBPM";
+            case "TRC" -> "TSRC";
+            case "TST" -> "TSOT";
+            case "TSP" -> "TSOP";
+            case "TSA" -> "TSOA";
+            case "TS2" -> "TSO2";
+            case "TSC" -> "TSOC";
+            case "UFI" -> "UFID";
+            case "POP" -> "POPM";
             case "TXX" -> "TXXX";
             case "COM" -> "COMM";
             case "ULT" -> "USLT";
@@ -970,8 +1051,9 @@ public final class Id3v2Tag {
         for (var entry : tags.entries()) {
             grouped.computeIfAbsent(entry.key(), _ -> new ArrayList<>()).add(entry.value());
         }
+        var template = ratingTemplate(preserved);
         for (var group : grouped.entrySet()) {
-            writeEntry(out, group.getKey(), group.getValue(), major);
+            writeEntry(out, group.getKey(), group.getValue(), major, template);
         }
         for (var picture : tags.pictures()) {
             writeFrame(out, "APIC", 0, pictureContent(picture, major), major);
@@ -984,7 +1066,7 @@ public final class Id3v2Tag {
             writeChapters(out, tags.chapters(), major);
         }
         for (var frame : preserved) {
-            if ((frame.flags() & TAG_ALTER) == 0) {
+            if ((frame.flags() & TAG_ALTER) == 0 && frame != template) {
                 writePreserved(out, frame, major);
             }
         }
@@ -1028,11 +1110,34 @@ public final class Id3v2Tag {
      * @param key the tag key
      * @param values the values of the key, in order
      * @param major the version
+     * @param template the {@code POPM} frame whose e-mail address and counter a rating keeps, or {@code null}
      */
-    private static void writeEntry(ByteWriter out, String key, List<String> values, int major) {
+    private static void writeEntry(ByteWriter out, String key, List<String> values, int major, Frame template) {
         var standard = StandardTag.fromName(key);
         if (standard.isPresent()) {
             switch (standard.get()) {
+                case MUSICBRAINZ_RECORDING_ID -> {
+                    var identifier = values.getFirst();
+                    if (identifier.length() <= 64 && identifier.chars().allMatch(c -> c > 0x20 && c < 0x7F)) {
+                        writeFrame(out, "UFID", 0, musicBrainzContent(identifier), major);
+                    } else {
+                        writeUserText(out, MUSICBRAINZ_TRACK_ID, values, major);
+                    }
+                    return;
+                }
+                case RATING -> {
+                    var rating = Popularimeter.ratingByte(values.getFirst());
+                    if (rating >= 0) {
+                        var kept = template != null ? Popularimeter.parse(template.data()) : null;
+                        var popularimeter = kept != null ? new Popularimeter(kept.email(), rating, kept.counter())
+                                : new Popularimeter("", rating, new byte[0]);
+                        writeFrame(out, "POPM", template != null ? template.flags() & ~GROUPING : 0,
+                                popularimeter.content(), major);
+                        return;
+                    }
+                    writeUserText(out, standard.get().id3Description(), values, major);
+                    return;
+                }
                 case COMMENT -> {
                     writeFrame(out, "COMM", 0, describedContent(String.join("\n", values), major), major);
                     return;
@@ -1049,8 +1154,10 @@ public final class Id3v2Tag {
                     var frame = standard.get().id3Frame();
                     if (frame.isPresent()) {
                         writeFrame(out, frame.get(), 0, textContent(values, major, true), major);
-                        return;
+                    } else {
+                        writeUserText(out, standard.get().id3Description(), values, major);
                     }
+                    return;
                 }
             }
         }
@@ -1059,15 +1166,43 @@ public final class Id3v2Tag {
         } else if (key.length() == 4 && isValidId(key) && key.charAt(0) == 'W' && !key.equals("WXXX")) {
             writeFrame(out, key, 0, values.getFirst().getBytes(StandardCharsets.ISO_8859_1), major);
         } else {
-            var all = new ArrayList<String>(values.size() + 1);
-            all.add(key);
-            if (major == 3) {
-                all.add(String.join(SLASH, values));
-            } else {
-                all.addAll(values);
-            }
-            writeFrame(out, "TXXX", 0, textContent(all, major, false), major);
+            writeUserText(out, key, values, major);
         }
+    }
+
+    /**
+     * Writes a {@code TXXX} user text frame.
+     *
+     * @param out the destination
+     * @param description the frame description
+     * @param values the values of the tag, joined with {@code /} in version 2.3
+     * @param major the version
+     */
+    private static void writeUserText(ByteWriter out, String description, List<String> values, int major) {
+        var all = new ArrayList<String>(values.size() + 1);
+        all.add(description);
+        if (major == 3) {
+            all.add(String.join(SLASH, values));
+        } else {
+            all.addAll(values);
+        }
+        writeFrame(out, "TXXX", 0, textContent(all, major, false), major);
+    }
+
+    /**
+     * Returns the first carried-over {@code POPM} frame that decodes, the frame a rating replaces.
+     *
+     * @param preserved the opaque frames to carry over
+     * @return the frame, or {@code null}
+     */
+    private static Frame ratingTemplate(List<Frame> preserved) {
+        for (var frame : preserved) {
+            if (frame.id().equals("POPM") && frame.major() != 2 && (frame.flags() & ENCRYPTED) == 0
+                    && Popularimeter.parse(frame.data()) != null) {
+                return frame;
+            }
+        }
+        return null;
     }
 
     /**
@@ -1473,6 +1608,69 @@ public final class Id3v2Tag {
          */
         byte[] data() {
             return (flags & GROUPING) != 0 && content.length > 0 ? Arrays.copyOfRange(content, 1, content.length) : content;
+        }
+    }
+
+    /**
+     * The content of a {@code POPM} popularimeter frame.
+     *
+     * @param email the e-mail address of the user the rating belongs to, possibly empty
+     * @param rating the rating byte, from 0 (unknown) to 255
+     * @param counter the play counter bytes, possibly empty
+     */
+    record Popularimeter(String email, int rating, byte[] counter) {
+        /**
+         * Parses a frame's content.
+         *
+         * @param data the content
+         * @return the popularimeter, or {@code null} when the e-mail address is unterminated or the rating missing
+         */
+        static Popularimeter parse(byte[] data) {
+            var end = terminator(data, 0, data.length, 0);
+            if (end + 1 >= data.length) {
+                return null;
+            }
+            return new Popularimeter(new String(data, 0, end, StandardCharsets.ISO_8859_1), data[end + 1] & 0xFF,
+                    Arrays.copyOfRange(data, end + 2, data.length));
+        }
+
+        /**
+         * {@return the content}
+         */
+        byte[] content() {
+            var out = new ByteWriter(email.length() + 2 + counter.length);
+            out.bytes(email.getBytes(StandardCharsets.ISO_8859_1));
+            out.u8(0);
+            out.u8(rating);
+            out.bytes(counter);
+            return out.toByteArray();
+        }
+
+        /**
+         * {@return the rating as {@link StandardTag#RATING} text: five times the byte over 255, at most two
+         * decimals}
+         */
+        String ratingText() {
+            return BigDecimal.valueOf(rating * 5L).divide(BigDecimal.valueOf(255), 2, RoundingMode.HALF_UP)
+                    .stripTrailingZeros().toPlainString();
+        }
+
+        /**
+         * Converts {@link StandardTag#RATING} text to the nearest rating byte.
+         *
+         * @param text the rating, a number from 0 to 5
+         * @return the byte, or {@code -1} when the text is not such a number
+         */
+        static int ratingByte(String text) {
+            try {
+                var value = new BigDecimal(text.strip());
+                if (value.signum() < 0 || value.compareTo(BigDecimal.valueOf(5)) > 0) {
+                    return -1;
+                }
+                return value.multiply(BigDecimal.valueOf(51)).setScale(0, RoundingMode.HALF_UP).intValueExact();
+            } catch (NumberFormatException | ArithmeticException exception) {
+                return -1;
+            }
         }
     }
 

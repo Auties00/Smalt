@@ -7,9 +7,11 @@ import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
+import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -145,6 +147,11 @@ public final class Mp4Muxer implements Muxer {
      * The {@code udta} box the tags were encoded to, empty without tags.
      */
     private byte[] userData = new byte[0];
+
+    /**
+     * The tags of {@link #setTags(MediaTags)}, whose track tags go in the {@code trak} boxes.
+     */
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * The chapters of the tags, which also become a QuickTime chapter track.
@@ -503,7 +510,12 @@ public final class Mp4Muxer implements Muxer {
      * {@code tvsn}, {@code tves}, {@code plID} and the other store identifiers) take decimal
      * values. The chapters are also written as a QuickTime chapter track: a disabled text track,
      * after the declared tracks, whose samples hold the titles, follow the media data and are
-     * referenced through {@code tref/chap} by every audio and video track.
+     * referenced through {@code tref/chap} by every audio and video track. The tags of a declared
+     * track become a {@code udta} box at the end of its {@code trak}: its name in a {@code name}
+     * box, its dispositions in {@code kind} boxes of the DASH role scheme and its other entries in
+     * an iTunes {@code ilst}; the track is enabled in its {@code tkhd} when it is
+     * {@link com.github.auties00.smalt.track.TrackDisposition#DEFAULT} (the first video and the first
+     * audio track stay enabled when no track of their kind is), and a track without tags stays enabled.
      *
      * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
      * the atom holds
@@ -516,6 +528,7 @@ public final class Mp4Muxer implements Muxer {
         }
         this.userData = MuxerTags.mp4UserData(tags);
         this.chapters = tags.chapters();
+        this.tags = tags;
     }
 
     /**
@@ -1131,11 +1144,20 @@ public final class Mp4Muxer implements Muxer {
         for (var track : tracks) {
             media |= track.kind() == TrackKind.AUDIO || track.kind() == TrackKind.VIDEO;
         }
+        var kinds = new ArrayList<TrackKind>();
+        var described = new ArrayList<TrackTags>();
         for (var plan : plans) {
+            kinds.add(plan.track.kind());
+            described.add(tags.track(plan.track.track.id()).orElse(null));
+        }
+        var enabled = Mp4TrackMetadata.enabled(kinds, described);
+        for (var index = 0; index < plans.size(); index++) {
+            var plan = plans.get(index);
             var kind = plan.track.kind();
             var references = chapterTrack != null && (kind == TrackKind.AUDIO || kind == TrackKind.VIDEO
                     || !media && plan.track == tracks.getFirst());
-            writeTrack(writer, plan, dataStart, co64, references ? chapterId : -1);
+            writeTrack(writer, plan, dataStart, co64, references ? chapterId : -1, enabled[index],
+                    described.get(index));
         }
         if (chapterTrack != null) {
             writer.bytes(chapterTrack.trak(chapterId, movieTimescale, dataStart + chapterDataOffset, co64));
@@ -1153,10 +1175,13 @@ public final class Mp4Muxer implements Muxer {
      * @param dataStart the file offset of the first media data byte
      * @param co64 whether chunk offsets are 64-bit
      * @param chapterId the identifier of the chapter track the track references, or {@code -1}
+     * @param enabled whether the track is enabled
+     * @param described the tags of the track, or {@code null}
      */
-    private void writeTrack(BoxWriter writer, TrackPlan plan, long dataStart, boolean co64, int chapterId) {
+    private void writeTrack(BoxWriter writer, TrackPlan plan, long dataStart, boolean co64, int chapterId,
+                            boolean enabled, TrackTags described) {
         writer.begin(BoxTypes.TRAK);
-        MovieHeaderWriter.writeTrackHeader(writer, plan.track, plan.trackDuration);
+        MovieHeaderWriter.writeTrackHeader(writer, plan.track, plan.trackDuration, enabled);
         if (chapterId > 0) {
             writer.bytes(Mp4ChapterTrack.trackReference(chapterId));
         }
@@ -1179,6 +1204,9 @@ public final class Mp4Muxer implements Muxer {
         }
         MovieHeaderWriter.writeMedia(writer, plan.track, plan.mediaDuration,
                 media -> writeSampleTable(media, plan, dataStart, co64));
+        if (described != null) {
+            writer.bytes(Mp4TrackMetadata.userData(described));
+        }
         writer.end();
     }
 

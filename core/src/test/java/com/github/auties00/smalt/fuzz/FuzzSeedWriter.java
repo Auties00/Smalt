@@ -1,14 +1,26 @@
 package com.github.auties00.smalt.fuzz;
 
+import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.StandardTag;
+import com.github.auties00.smalt.metadata.TagEditor;
+import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.TrackDisposition;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -160,8 +172,9 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "avi", "valid-mpeg4-mp3.avi", ffmpeg("avi", args(video(32, 32, 2),
                 tone(8000, 0.2)), "-c:v", "mpeg4", "-q:v", "20", "-c:a", "libmp3lame", "-b:a", "8k"));
 
-        copy(DemuxerFuzzTest.class, "mpegTs", "valid-h264-aac.ts", ffmpeg("ts", av, "-c:v", "libx264",
-                "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k", "-ac", "1"));
+        var ts = ffmpeg("ts", av, "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-b:a", "16k", "-ac", "1");
+        copy(DemuxerFuzzTest.class, "mpegTs", "valid-h264-aac.ts", ts);
+        write(DemuxerFuzzTest.class, "mpegTs", "valid-h264-aac-names.ts", namedTracks(Files.readAllBytes(ts)));
         copy(DemuxerFuzzTest.class, "mpegTs", "valid-hevc-mp2.ts", ffmpeg("ts", args(video(32, 32, 2),
                 tone(16000, 0.2)), "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=0",
                 "-c:a", "mp2", "-b:a", "32k"));
@@ -186,6 +199,16 @@ class FuzzSeedWriter {
         copy(TagFuzzTest.class, "tags", "valid-opus.opus", opus);
         copy(TagFuzzTest.class, "tags", "valid-s16.wav", wav);
         copy(TagFuzzTest.class, "tags", "valid-vp9-opus-srt.mkv", mkv);
+        copy(TagFuzzTest.class, "tags", "valid-mpeg4-mp3.avi", ffmpeg("avi", args(video(32, 32, 2),
+                tone(8000, 0.2)), "-c:v", "mpeg4", "-q:v", "20", "-c:a", "libmp3lame", "-b:a", "8k"));
+        var taggedAmr = withTags(Files.readAllBytes(ffmpeg("amr", tone(8000, 0.2), "-c:a", "libopencore_amrnb",
+                "-ar", "8000")));
+        write(TagFuzzTest.class, "tags", "valid-nb-id3.amr", taggedAmr);
+        write(DemuxerFuzzTest.class, "amr", "valid-nb-id3.amr", taggedAmr);
+        write(TagFuzzTest.class, "tags", "valid-eac3-id3.eac3", withTags(Files.readAllBytes(ffmpeg("eac3",
+                tone(48000, 0.1), "-c:a", "eac3", "-b:a", "64k"))));
+        write(TagFuzzTest.class, "tags", "valid-s16-rifx.wav", rifx(Files.readAllBytes(wav)));
+        write(TagFuzzTest.class, "tags", "valid-h264-aac-names.ts", namedTracks(Files.readAllBytes(ts)));
         write(TagFuzzTest.class, "xmp", "valid-packet.xmp", XMP.getBytes(StandardCharsets.UTF_8));
 
         copy(SubtitleFuzzTest.class, "read", "valid-cues.srt", Files.writeString(srt, SRT));
@@ -425,6 +448,74 @@ class FuzzSeedWriter {
         var f32 = ffmpeg("wav", tone(8000, 0.02), "-c:a", "pcm_f32le");
         write(PcmFuzzTest.class, "pcm", "valid-f32le.bin", FuzzSeeds.packets(f32, Codec.PCM_F32LE,
                 codecs.indexOf(Codec.PCM_F32LE) << 1, 8));
+    }
+
+    /** Adds an ID3v2.4 tag without padding and an ID3v1 tag, both titled "Seed", to a raw stream. */
+    private static byte[] withTags(byte[] stream) {
+        return TagEditor.write(stream, MediaTags.builder().set(StandardTag.TITLE, "Seed").build(),
+                TagWriteOptions.builder().padding(0).id3v1Mode(TagWriteOptions.Id3v1Mode.ALWAYS).build());
+    }
+
+    /** Remuxes a transport stream with a component name for every track and the hearing-impaired audio type. */
+    private static byte[] namedTracks(byte[] ts) {
+        var sink = MediaSink.memory();
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(ts)); var muxer = new TsMuxer(sink)) {
+            var tags = MediaTags.builder();
+            for (var track : demuxer.tracks()) {
+                muxer.addTrack(track);
+                tags.track(TrackTags.of(track.id(), "Stream " + track.id(), TrackDisposition.HEARING_IMPAIRED));
+            }
+            muxer.setTags(tags.build());
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                muxer.writePacket(packet);
+            }
+            muxer.finish();
+        }
+        return sink.toByteArray();
+    }
+
+    /** Converts a 16-bit PCM WAV file to a big-endian RIFX file, its INFO entries included. */
+    private static byte[] rifx(byte[] wav) {
+        var in = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN);
+        var out = ByteBuffer.allocate(wav.length).order(ByteOrder.BIG_ENDIAN);
+        out.put("RIFX".getBytes(StandardCharsets.US_ASCII)).putInt(0).put("WAVE".getBytes(StandardCharsets.US_ASCII));
+        for (var position = 12; position + 8 <= wav.length; ) {
+            var id = new String(wav, position, 4, StandardCharsets.US_ASCII);
+            var size = in.getInt(position + 4);
+            var body = Arrays.copyOfRange(wav, position + 8, position + 8 + size);
+            position += 8 + size + (size & 1);
+            switch (id) {
+                case "fmt " -> {
+                    var fields = ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN);
+                    ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN).putShort(0, fields.getShort(0))
+                            .putShort(2, fields.getShort(2)).putInt(4, fields.getInt(4)).putInt(8, fields.getInt(8))
+                            .putShort(12, fields.getShort(12)).putShort(14, fields.getShort(14));
+                }
+                case "data" -> {
+                    for (var index = 0; index + 1 < body.length; index += 2) {
+                        var low = body[index];
+                        body[index] = body[index + 1];
+                        body[index + 1] = low;
+                    }
+                }
+                case "LIST" -> {
+                    for (var at = 4; at + 8 <= body.length; ) {
+                        var entry = ByteBuffer.wrap(body).order(ByteOrder.LITTLE_ENDIAN).getInt(at + 4);
+                        ByteBuffer.wrap(body).order(ByteOrder.BIG_ENDIAN).putInt(at + 4, entry);
+                        at += 8 + entry + (entry & 1);
+                    }
+                }
+                default -> {
+                    continue;
+                }
+            }
+            out.put(id.getBytes(StandardCharsets.US_ASCII)).putInt(body.length).put(body);
+            if ((body.length & 1) != 0) {
+                out.put((byte) 0);
+            }
+        }
+        out.putInt(4, out.position() - 8);
+        return Arrays.copyOf(out.array(), out.position());
     }
 
     private static byte[] cues(int codec, String config, String... texts) {

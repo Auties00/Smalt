@@ -267,7 +267,7 @@ final class FlacTagFile implements TagFile {
                 break;
             }
         }
-        var commentTags = tags.toBuilder().pictures(List.of()).build();
+        var commentTags = tags.toBuilder().pictures(List.of()).tracks(List.of()).build();
         var keepPictures = current.equals(tags.pictures());
         var out = new ByteWriter(4096);
         var pending = new ArrayList<Block>();

@@ -26,14 +26,17 @@ import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Holds one parsed {@code TrackEntry} and maps its {@code CodecID} to a {@link Track}, per the
@@ -120,6 +123,13 @@ final class MatroskaTrackEntry {
      * Whether the track is usable ({@code FlagEnabled}, set unless declared otherwise).
      */
     boolean enabled = true;
+
+    /**
+     * The dispositions of the flag elements: {@code FlagDefault} (set unless declared otherwise),
+     * {@code FlagForced}, {@code FlagHearingImpaired}, {@code FlagVisualImpaired},
+     * {@code FlagTextDescriptions}, {@code FlagOriginal} and {@code FlagCommentary}.
+     */
+    final Set<TrackDisposition> disposition = EnumSet.of(TrackDisposition.DEFAULT);
 
     /**
      * The {@code PixelWidth}.
@@ -215,6 +225,20 @@ final class MatroskaTrackEntry {
     Rational timeBase;
 
     /**
+     * Records the value of a flag element.
+     *
+     * @param value the disposition the flag names
+     * @param flag the element value, nonzero when set
+     */
+    private void flag(TrackDisposition value, long flag) {
+        if (flag != 0) {
+            disposition.add(value);
+        } else {
+            disposition.remove(value);
+        }
+    }
+
+    /**
      * Parses a {@code TrackEntry} element.
      *
      * @param entry the element data
@@ -240,6 +264,13 @@ final class MatroskaTrackEntry {
                 case EbmlIds.LANGUAGE_BCP47 -> track.languageBcp47 = body.string();
                 case EbmlIds.FLAG_ENABLED -> track.enabled = body.unsigned() != 0;
                 case EbmlIds.NAME -> track.name = body.string();
+                case EbmlIds.FLAG_DEFAULT -> track.flag(TrackDisposition.DEFAULT, body.unsigned());
+                case EbmlIds.FLAG_FORCED -> track.flag(TrackDisposition.FORCED, body.unsigned());
+                case EbmlIds.FLAG_HEARING_IMPAIRED -> track.flag(TrackDisposition.HEARING_IMPAIRED, body.unsigned());
+                case EbmlIds.FLAG_VISUAL_IMPAIRED -> track.flag(TrackDisposition.VISUAL_IMPAIRED, body.unsigned());
+                case EbmlIds.FLAG_TEXT_DESCRIPTIONS -> track.flag(TrackDisposition.DESCRIPTIONS, body.unsigned());
+                case EbmlIds.FLAG_ORIGINAL -> track.flag(TrackDisposition.ORIGINAL, body.unsigned());
+                case EbmlIds.FLAG_COMMENTARY -> track.flag(TrackDisposition.COMMENTARY, body.unsigned());
                 case EbmlIds.VIDEO -> track.parseVideo(body);
                 case EbmlIds.AUDIO -> track.parseAudio(body);
                 case EbmlIds.CONTENT_ENCODINGS -> track.parseEncodings(body);

@@ -23,6 +23,8 @@ def generator(root, relative):
         return "make-amr-mc-samples.py"
     if relative == "ts/av1-scte35.ts":
         return "make-samples.sh, make-ts-samples.py"
+    if relative == "amr/nb-tags.amr":
+        return "make-tag-samples.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
     return "make-samples.sh"

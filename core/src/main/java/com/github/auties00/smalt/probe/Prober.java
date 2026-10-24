@@ -2,6 +2,7 @@ package com.github.auties00.smalt.probe;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
@@ -17,6 +18,7 @@ import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
+import com.github.auties00.smalt.internal.tags.TagFiles;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -29,9 +31,11 @@ import com.github.auties00.smalt.track.VideoTrack;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * Implements {@link com.github.auties00.smalt.Media#probe}: recognizes the file, then describes an
@@ -74,7 +78,7 @@ final class Prober {
         var image = Images.detect(source).orElse(null);
         if (image != null) {
             var header = ImageHeaders.read(source, image);
-            var fields = new StreamFields(0, -1, null, header.durationMicros, -1, header.frames, Map.of());
+            var fields = new StreamFields(0, -1, null, header.durationMicros, -1, header.frames, Map.of(), Set.of());
             var stream = new ImageStreamInfo(fields, image, header.width, header.height, header.orientation,
                     header.bitDepth, header.alpha, header.animated, header.loops);
             var bitRate = size >= 0 && header.durationMicros > 0 ? size * 8_000_000L / header.durationMicros : -1;
@@ -109,7 +113,7 @@ final class Prober {
             var bytes = statistics != null ? statistics.sampleBytes().applyAsLong(track.id()) : -1;
             var bitRate = bytes >= 0 && duration > 0 ? bytes * 8_000_000L / duration : -1;
             var fields = new StreamFields(index, track.id(), track.language().orElse(null), duration, -1, frames,
-                    TagNames.normalize(demuxer.trackMetadata(track.id())));
+                    TagNames.normalize(demuxer.trackMetadata(track.id())), Set.copyOf(demuxer.trackDisposition(track.id())));
             streams.add(switch (track) {
                 case VideoTrack video -> {
                     longest = Math.max(longest, duration);
@@ -125,7 +129,13 @@ final class Prober {
         }
         var duration = demuxer.durationMicros() >= 0 ? demuxer.durationMicros() : longest;
         var bitRate = size >= 0 && duration > 0 ? size * 8_000_000L / duration : -1;
-        return new MediaInfo(demuxer.format(), null, size, duration, bitRate, streams, TagNames.normalize(demuxer.metadata()),
+        var metadata = demuxer.metadata();
+        if (demuxer.format() == ContainerFormat.WAV || demuxer.format() == ContainerFormat.AVI) {
+            var renamed = new LinkedHashMap<String, String>();
+            metadata.forEach((key, value) -> renamed.putIfAbsent(TagFiles.riffInfoKey(key), value));
+            metadata = renamed;
+        }
+        return new MediaInfo(demuxer.format(), null, size, duration, bitRate, streams, TagNames.normalize(metadata),
                 demuxer.chapters(), options.attachedPictures() ? demuxer.attachedPictures() : List.of());
     }
 
@@ -152,7 +162,7 @@ final class Prober {
      */
     private static StreamFields withBitRate(StreamFields fields, long bitRate) {
         return new StreamFields(fields.index(), fields.trackId(), fields.language(), fields.durationMicros(), bitRate,
-                fields.frameCount(), fields.tags());
+                fields.frameCount(), fields.tags(), fields.disposition());
     }
 
     /**

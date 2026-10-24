@@ -284,7 +284,7 @@ final class Id3StreamTagFile implements TagFile {
         var chapterFrames = content != null && !content.chapterFrames().isEmpty()
                 && content.chapters().equals(newTags.chapters()) && tags.getFirst().major() == major
                 ? content.chapterFrames() : null;
-        if (!newTags.isEmpty() || !preserved.isEmpty()) {
+        if (!MuxerTags.isGlobalEmpty(newTags) || !preserved.isEmpty()) {
             var minimal = Id3v2Tag.framesSize(newTags, preserved, chapterFrames, major) + Id3v2Tag.HEADER_SIZE;
             var exact = audioStart > 0 && minimal <= audioStart ? audioStart : 0;
             plan.bytes(Id3v2Tag.encode(newTags, preserved, chapterFrames, major, exact, options.padding()));

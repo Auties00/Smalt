@@ -16,6 +16,9 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.TrackTags;
+import com.github.auties00.smalt.track.TrackDisposition;
+import com.github.auties00.smalt.track.TrackKind;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -23,6 +26,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -51,6 +55,15 @@ import java.util.zip.GZIPInputStream;
  * ({@link Mp4ChapterTrack#supersedes(List, List)}). Chapter tracks are
  * kept while the chapters are unchanged and replaced otherwise; the {@code mdat} holding only
  * the samples of a replaced chapter track is reused as free space.
+ *
+ * <p>The track tags of every track but the chapter tracks come from the track's {@code udta}: its
+ * {@code name} box as the title, its {@code kind} boxes of the DASH role scheme and the enabled
+ * flag of its {@code tkhd} as the dispositions ({@link Mp4TrackMetadata}), and the items of its
+ * iTunes {@code meta} and its QuickTime text atoms as the other tags; the track identifier is the
+ * {@code track_ID}, or the next free identifier for a track whose {@code track_ID} is not
+ * positive or repeats an earlier one. A track whose tags change gets a new {@code udta} with those
+ * boxes (its other children kept) and the enabled flag its dispositions give; the first video and
+ * the first audio track stay enabled when no track of their kind would be.
  *
  * <p>The rewrite builds a new {@code moov}. When it fits the old {@code moov} plus the
  * {@code free} boxes that follow it, the remainder becomes a {@code free} box and nothing else
@@ -208,6 +221,11 @@ final class Mp4TagFile implements TagFile {
     private final Map<String, IntegerForm> integerForms;
 
     /**
+     * The tracks whose tags are read and written, in movie order, by {@code track_ID}.
+     */
+    private final Map<Long, TrackInfo> trackInfo = new LinkedHashMap<>();
+
+    /**
      * Parses the top-level boxes and the metadata of {@code moov}.
      *
      * @param source the file to parse; not closed
@@ -268,8 +286,167 @@ final class Mp4TagFile implements TagFile {
         this.chapterTracks = findChapterTracks();
         var opaque = new ArrayList<byte[]>();
         this.integerForms = new HashMap<>();
-        this.tags = decode(opaque);
+        var decoded = decode(opaque);
         this.opaqueItems = List.copyOf(opaque);
+        decodeTracks();
+        var withTracks = decoded.toBuilder();
+        for (var info : trackInfo.values()) {
+            withTracks.track(info.tags());
+        }
+        this.tags = withTracks.build();
+    }
+
+    /**
+     * Decodes the track tags of every track but the chapter tracks.
+     */
+    private void decodeTracks() {
+        var used = new HashSet<Long>();
+        var traks = new ArrayList<Mp4Boxes.Box>();
+        var ids = new ArrayList<Long>();
+        for (var child : Mp4Boxes.children(moov, moovPayload(), moov.length)) {
+            if (child.type().equals("trak")) {
+                var fileId = trackId(moov, child);
+                traks.add(child);
+                ids.add(fileId > 0 && fileId <= Integer.MAX_VALUE && used.add(fileId) ? fileId : 0);
+            }
+        }
+        var next = 1L;
+        for (var index = 0; index < traks.size(); index++) {
+            var trak = traks.get(index);
+            var fileId = trackId(moov, trak);
+            long publicId = ids.get(index);
+            if (publicId == 0) {
+                while (used.contains(next)) {
+                    next++;
+                }
+                publicId = next;
+                used.add(next);
+            }
+            if (fileId < 0 || chapterTracks.contains(fileId) || trackInfo.containsKey(fileId)) {
+                continue;
+            }
+            trackInfo.put(fileId, decodeTrack(trak, (int) publicId));
+        }
+    }
+
+    /**
+     * Decodes the track tags of one track.
+     *
+     * @param trak the {@code trak} box
+     * @param publicId the identifier the demuxer gives the track
+     * @return the track
+     */
+    private TrackInfo decodeTrack(Mp4Boxes.Box trak, int publicId) {
+        var children = Mp4Boxes.children(moov, trak.payload(), trak.end());
+        var tkhd = Mp4Boxes.find(children, "tkhd");
+        var enabled = tkhd == null || tkhd.size() < 12 || (moov[tkhd.payload() + 3] & Mp4TrackMetadata.ENABLED) != 0;
+        var disposition = EnumSet.noneOf(TrackDisposition.class);
+        if (enabled) {
+            disposition.add(TrackDisposition.DEFAULT);
+        }
+        var builder = MediaTags.builder();
+        var opaque = new ArrayList<byte[]>();
+        var udta = Mp4Boxes.find(children, "udta");
+        if (udta != null) {
+            var keys = new HashSet<String>();
+            var forms = new HashMap<>(integerForms);
+            for (var child : Mp4Boxes.children(moov, udta.payload(), udta.end())) {
+                switch (child.type()) {
+                    case "name" -> {
+                        var name = new String(moov, child.payload(), child.end() - child.payload(),
+                                StandardCharsets.UTF_8);
+                        var end = name.indexOf('\0');
+                        name = (end >= 0 ? name.substring(0, end) : name).strip();
+                        if (!name.isEmpty() && keys.add(StandardTag.TITLE.key())) {
+                            builder.add(StandardTag.TITLE.key(), name);
+                        }
+                    }
+                    case "kind" -> {
+                        var strings = kindStrings(child);
+                        if (strings != null) {
+                            disposition.addAll(Mp4TrackMetadata.dispositions(strings[0], strings[1]));
+                        }
+                    }
+                    case "meta" -> {
+                        if (isItunesMeta(child)) {
+                            var ilst = Mp4Boxes.find(Mp4Boxes.children(moov, metaChildren(child), child.end()), "ilst");
+                            if (ilst != null) {
+                                for (var item : Mp4Boxes.children(moov, ilst.payload(), ilst.end())) {
+                                    if (item.type().equals("covr") || !decodeItem(item, builder, keys)) {
+                                        opaque.add(Arrays.copyOfRange(moov, item.offset(), item.end()));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    default -> {
+                        var text = quickTimeText(child);
+                        if (text != null) {
+                            var key = keyOf(child.type());
+                            if (!text.isBlank() && keys.add(StandardTag.normalize(key).toLowerCase(Locale.ROOT))) {
+                                builder.add(key, text);
+                            }
+                        }
+                    }
+                }
+            }
+            integerForms.clear();
+            integerForms.putAll(forms);
+        }
+        var kind = switch (handlerType(trak)) {
+            case "soun" -> TrackKind.AUDIO;
+            case "vide" -> TrackKind.VIDEO;
+            default -> TrackKind.DATA;
+        };
+        var built = builder.build();
+        return new TrackInfo(new TrackTags(publicId, built.toBuilder().pictures(List.of()).build(), disposition), kind,
+                List.copyOf(opaque));
+    }
+
+    /**
+     * Decodes the scheme and value of a {@code kind} box.
+     *
+     * @param kind the box
+     * @return the scheme URI and the value, or {@code null} when they are not terminated
+     */
+    private String[] kindStrings(Mp4Boxes.Box kind) {
+        var start = kind.payload() + 4;
+        var schemeEnd = start;
+        while (schemeEnd < kind.end() && moov[schemeEnd] != 0) {
+            schemeEnd++;
+        }
+        if (schemeEnd >= kind.end()) {
+            return null;
+        }
+        var valueEnd = schemeEnd + 1;
+        while (valueEnd < kind.end() && moov[valueEnd] != 0) {
+            valueEnd++;
+        }
+        return new String[]{new String(moov, start, schemeEnd - start, StandardCharsets.UTF_8),
+                new String(moov, schemeEnd + 1, valueEnd - schemeEnd - 1, StandardCharsets.UTF_8)};
+    }
+
+    /**
+     * Returns whether a {@code kind} box stores a disposition: a role of the DASH role scheme that
+     * {@link Mp4TrackMetadata} maps, which a rewrite of the track's tags replaces. Other {@code kind}
+     * boxes, such as the {@code main} role or another scheme, are kept.
+     *
+     * @param kind the box
+     * @return {@code true} for a role that names a disposition
+     */
+    private boolean isRoleKind(Mp4Boxes.Box kind) {
+        var strings = kindStrings(kind);
+        return strings != null && !Mp4TrackMetadata.dispositions(strings[0], strings[1]).isEmpty();
+    }
+
+    /**
+     * Describes a track whose tags are read and written.
+     *
+     * @param tags the track tags as read
+     * @param kind the kind of the track, from its handler
+     * @param opaque the {@code ilst} items of its {@code udta} that are not decoded, each a complete box
+     */
+    private record TrackInfo(TrackTags tags, TrackKind kind, List<byte[]> opaque) {
     }
 
     /**
@@ -1039,6 +1216,21 @@ final class Mp4TagFile implements TagFile {
         private final Set<Long> referencing;
 
         /**
+         * The new tags of the tracks whose tags change, by {@code track_ID}.
+         */
+        private final Map<Long, TrackTags> changedTracks = new HashMap<>();
+
+        /**
+         * Whether each track whose tags change is enabled, by {@code track_ID}.
+         */
+        private final Map<Long, Boolean> enabledTracks = new HashMap<>();
+
+        /**
+         * Whether the opaque {@code ilst} items of a rebuilt track {@code udta} are kept.
+         */
+        private final boolean keepOpaque;
+
+        /**
          * The {@code mdat} holding the samples of the new chapter track, or an empty array.
          */
         private byte[] chapterData = new byte[0];
@@ -1056,8 +1248,27 @@ final class Mp4TagFile implements TagFile {
          * @throws MediaException.Unsupported if an integer atom holds a value it cannot store
          */
         Rewrite(MediaTags newTags, TagWriteOptions options) {
+            this.keepOpaque = options.preserveUnknown();
             var children = Mp4Boxes.children(moov, moovPayload(), moov.length);
             this.udta = buildUdta(Mp4Boxes.find(children, "udta"), newTags, options);
+            var kinds = new ArrayList<TrackKind>();
+            var effective = new ArrayList<TrackTags>();
+            var fileIds = new ArrayList<Long>();
+            for (var info : trackInfo.entrySet()) {
+                var replaced = newTags.track(info.getValue().tags().trackId());
+                if (replaced.isPresent() && !replaced.get().equals(info.getValue().tags())) {
+                    changedTracks.put(info.getKey(), replaced.get());
+                }
+                kinds.add(info.getValue().kind());
+                effective.add(replaced.orElse(info.getValue().tags()));
+                fileIds.add(info.getKey());
+            }
+            var enabled = Mp4TrackMetadata.enabled(kinds, effective);
+            for (var index = 0; index < fileIds.size(); index++) {
+                if (changedTracks.containsKey(fileIds.get(index))) {
+                    enabledTracks.put(fileIds.get(index), enabled[index]);
+                }
+            }
             var chapters = newTags.chapters();
             var keep = !chapterTracks.isEmpty() && chapters.equals(tags.chapters());
             this.dropping = !chapterTracks.isEmpty() && !keep;
@@ -1244,25 +1455,78 @@ final class Mp4TagFile implements TagFile {
          * @return the box
          */
         private byte[] rebuildTrack(Mp4Boxes.Box trak, long delta, long threshold, long reference) {
-            if (delta == 0 && !dropping && reference < 0) {
+            var id = trackId(moov, trak);
+            var described = changedTracks.get(id);
+            if (delta == 0 && !dropping && reference < 0 && described == null) {
                 return copy(trak);
             }
             var children = Mp4Boxes.children(moov, trak.payload(), trak.end());
             var hasReferences = Mp4Boxes.find(children, "tref") != null;
             var out = new ByteWriter(trak.size() + 64);
+            var udtaWritten = false;
             for (var child : children) {
                 switch (child.type()) {
                     case "tref" -> out.bytes(references(child, reference));
                     case "mdia" -> out.bytes(delta != 0
                             ? Mp4Boxes.box("mdia", relocate(moov, child.payload(), child.end(), delta, threshold, 0))
                             : copy(child));
+                    case "tkhd" -> {
+                        var tkhd = copy(child);
+                        if (described != null && child.size() >= child.header() + 4) {
+                            var at = child.header() + 3;
+                            tkhd[at] = (byte) (enabledTracks.get(id) ? tkhd[at] | Mp4TrackMetadata.ENABLED
+                                    : tkhd[at] & ~Mp4TrackMetadata.ENABLED);
+                        }
+                        out.bytes(tkhd);
+                    }
+                    case "udta" -> {
+                        if (described == null) {
+                            out.bytes(moov, child.offset(), child.size());
+                        } else if (!udtaWritten) {
+                            var opaque = keepOpaque ? trackInfo.get(id).opaque() : List.<byte[]>of();
+                            out.bytes(trackUserData(child, described, opaque));
+                            udtaWritten = true;
+                        }
+                    }
                     default -> out.bytes(moov, child.offset(), child.size());
                 }
                 if (child.type().equals("tkhd") && !hasReferences && reference >= 0) {
                     out.bytes(Mp4ChapterTrack.trackReference(reference));
                 }
             }
+            if (described != null && !udtaWritten) {
+                out.bytes(trackUserData(null, described, List.of()));
+            }
             return Mp4Boxes.box("trak", out.toByteArray());
+        }
+
+        /**
+         * Rebuilds the {@code udta} of a track with new tags: its {@code name} box, the {@code kind} boxes
+         * of the roles that name dispositions, its iTunes {@code meta} box and its QuickTime text atoms
+         * replaced, its other children kept.
+         *
+         * @param old the old {@code udta}, or {@code null}
+         * @param described the new tags of the track
+         * @param opaque the opaque {@code ilst} items of the old {@code meta}
+         * @return the box, or an empty array when nothing remains in it
+         */
+        private byte[] trackUserData(Mp4Boxes.Box old, TrackTags described, List<byte[]> opaque) {
+            var out = new ByteWriter(256);
+            if (old != null) {
+                for (var child : Mp4Boxes.children(moov, old.payload(), old.end())) {
+                    var replaced = switch (child.type()) {
+                        case "name" -> true;
+                        case "kind" -> isRoleKind(child);
+                        case "meta" -> isItunesMeta(child);
+                        default -> quickTimeText(child) != null;
+                    };
+                    if (!replaced) {
+                        out.bytes(moov, child.offset(), child.size());
+                    }
+                }
+            }
+            out.bytes(Mp4TrackMetadata.userDataChildren(described, opaque));
+            return out.size() == 0 ? new byte[0] : Mp4Boxes.box("udta", out.toByteArray());
         }
 
         /**
@@ -1644,7 +1908,7 @@ final class Mp4TagFile implements TagFile {
                 Mp4Boxes.box(out, code, item.toByteArray());
                 codes.add(code);
             } else {
-                var name = standard.isPresent() ? standard.get().vorbisField() : key;
+                var name = standard.isPresent() ? standard.get().mp4FreeformName() : key;
                 var item = new ByteWriter(64);
                 Mp4Boxes.box(item, "mean", concat(new byte[4], APPLE_MEAN.getBytes(StandardCharsets.UTF_8)));
                 Mp4Boxes.box(item, "name", concat(new byte[4], name.getBytes(StandardCharsets.UTF_8)));

@@ -112,9 +112,24 @@ final class MovieHeaderWriter {
      * @param duration the track duration, in movie timescale units
      */
     static void writeTrackHeader(BoxWriter writer, MuxTrack track, long duration) {
+        writeTrackHeader(writer, track, duration, true);
+    }
+
+    /**
+     * Writes the {@code tkhd} box of a track that is in the movie and in its preview, enabled or not.
+     *
+     * <p>An audio track gets full volume; a video track gets its dimensions and the matrix of its
+     * orientation.
+     *
+     * @param writer the destination
+     * @param track the track the box describes
+     * @param duration the track duration, in movie timescale units
+     * @param enabled whether the track is enabled, the track a player presents when the user expressed no preference
+     */
+    static void writeTrackHeader(BoxWriter writer, MuxTrack track, long duration, boolean enabled) {
         var audio = track.kind() == TrackKind.AUDIO;
         var wide = duration > U32_MAX;
-        writer.beginFull(BoxTypes.TKHD, wide ? 1 : 0, 3);
+        writer.beginFull(BoxTypes.TKHD, wide ? 1 : 0, enabled ? 3 : 2);
         writer.zeros(wide ? 16 : 8);
         writer.u32(track.number);
         writer.u32(0);

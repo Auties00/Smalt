@@ -142,8 +142,9 @@ class AmrDemuxerTest {
             assertEquals(probed(memory), probed(counted));
             assertEquals(opened, source.bytes, "the demux reads nothing after construction");
         }
-        // the magic is read once by itself before the walk
-        assertTrue(source.bytes <= data.length + 19, source.toString());
+        // the ID3v2 header probe, the magic and the block of the trailing tags are read once by themselves before
+        // the walk
+        assertTrue(source.bytes <= data.length + 10 + 19 + 4096, source.toString());
         assertEquals(1, source.requests, source.toString());
     }
 

@@ -6,9 +6,11 @@ import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
 import com.github.auties00.smalt.internal.io.FourCc;
+import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -247,6 +249,11 @@ public final class FragmentedMp4Muxer implements Muxer {
     private byte[] userData = new byte[0];
 
     /**
+     * The tags of {@link #setTags(MediaTags)}, whose track tags go in the {@code trak} boxes.
+     */
+    private MediaTags tags = MediaTags.empty();
+
+    /**
      * Whether a packet was accepted.
      */
     private boolean started;
@@ -403,7 +410,8 @@ public final class FragmentedMp4Muxer implements Muxer {
      * <p>The tags become a {@code udta} box at the end of the initialization segment's
      * {@code moov}: an iTunes {@code ilst} with cover art in {@code covr}, and a Nero {@code chpl}
      * box for the chapters. The iTunes integer atoms ({@code tmpo}, {@code rtng}, {@code stik} and
-     * the others {@link Mp4Muxer#setTags(MediaTags)} lists) take decimal values.
+     * the others {@link Mp4Muxer#setTags(MediaTags)} lists) take decimal values. The track tags go in
+     * the {@code trak} boxes and the enabled flags of their {@code tkhd}, as {@code Mp4Muxer} writes them.
      *
      * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
      * the atom holds
@@ -416,6 +424,7 @@ public final class FragmentedMp4Muxer implements Muxer {
         }
         // TODO: also write the chapters as a QuickTime chapter track, its samples in the first fragment.
         this.userData = MuxerTags.mp4UserData(tags);
+        this.tags = tags;
     }
 
     /**
@@ -662,8 +671,15 @@ public final class FragmentedMp4Muxer implements Muxer {
         writer.begin(BoxTypes.MOOV);
         MovieHeaderWriter.writeMovieHeader(writer, movieTimescale, 0, tracks.size() + 1);
         var patchable = output != null && output.isSeekable();
+        var kinds = new ArrayList<TrackKind>();
+        var described = new ArrayList<TrackTags>();
         for (var track : tracks) {
-            writeTrack(writer, track, patchable);
+            kinds.add(track.media.kind());
+            described.add(tags.track(track.media.track.id()).orElse(null));
+        }
+        var enabled = Mp4TrackMetadata.enabled(kinds, described);
+        for (var index = 0; index < tracks.size(); index++) {
+            writeTrack(writer, tracks.get(index), patchable, enabled[index], described.get(index));
         }
         writer.begin(BoxTypes.MVEX);
         if (patchable) {
@@ -708,11 +724,14 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @param writer the destination of the box
      * @param track the track the box describes
      * @param patchable whether the edit list duration is patched by {@link #finish()}
+     * @param enabled whether the track is enabled
+     * @param described the tags of the track, or {@code null}
      */
-    private void writeTrack(BoxWriter writer, FragmentTrack track, boolean patchable) {
+    private void writeTrack(BoxWriter writer, FragmentTrack track, boolean patchable, boolean enabled,
+                            TrackTags described) {
         var media = track.media;
         writer.begin(BoxTypes.TRAK);
-        MovieHeaderWriter.writeTrackHeader(writer, media, 0);
+        MovieHeaderWriter.writeTrackHeader(writer, media, 0, enabled);
         var mediaTime = track.mediaTime();
         if (mediaTime > 0) {
             writer.begin(BoxTypes.EDTS);
@@ -728,6 +747,9 @@ public final class FragmentedMp4Muxer implements Muxer {
             writer.end();
         }
         MovieHeaderWriter.writeMedia(writer, media, 0, table -> writeEmptySampleTable(table, media));
+        if (described != null) {
+            writer.bytes(Mp4TrackMetadata.userData(described));
+        }
         writer.end();
     }
 

@@ -10,6 +10,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.QuickTimeCompressedMovie;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -315,6 +316,7 @@ final class MovieParser {
             switch (box.type()) {
                 case BoxTypes.TKHD -> parseTrackHeader(box, track);
                 case BoxTypes.EDTS -> parseEdits(box, track);
+                case BoxTypes.UDTA -> parseTrackUserData(box, track);
                 case BoxTypes.MDIA -> mdia = box;
                 default -> {
                     if (box.type() == FourCc.of("tref")) {
@@ -395,7 +397,9 @@ final class MovieParser {
      * @param track the track being built
      */
     private static void parseTrackHeader(BoxCursor tkhd, Mp4Track track) {
-        var version = tkhd.fullBoxHeader() >>> 24;
+        var header = tkhd.fullBoxHeader();
+        var version = header >>> 24;
+        track.enabled = (header & Mp4TrackMetadata.ENABLED) != 0;
         if (version == 1) {
             tkhd.skip(16);
             track.fileId = tkhd.s32();
@@ -413,6 +417,33 @@ final class MovieParser {
         track.matrix = matrix;
         track.headerWidth = (int) (tkhd.u32() >>> 16);
         track.headerHeight = (int) (tkhd.u32() >>> 16);
+    }
+
+    /**
+     * Parses the {@code udta} box of a track: its {@code name}, its {@code kind} boxes, and the tags of its
+     * {@code meta} box and text atoms. A damaged box is skipped, as the metadata is descriptive.
+     *
+     * @param udta the box payload
+     * @param track the track being built
+     */
+    private static void parseTrackUserData(BoxCursor udta, Mp4Track track) {
+        new MetadataReader(track.userTags).readUserData(udta.duplicate());
+        while (udta.hasBox()) {
+            try {
+                var box = udta.nextBox();
+                if (box.type() == BoxTypes.NAME) {
+                    var name = box.string(box.remaining()).strip();
+                    track.name = name.isEmpty() ? null : name;
+                } else if (box.type() == FourCc.of("kind")) {
+                    box.fullBoxHeader();
+                    var scheme = box.string();
+                    var value = box.string();
+                    track.kinds.addAll(Mp4TrackMetadata.dispositions(scheme, value));
+                }
+            } catch (MediaException.Malformed exception) {
+                return;
+            }
+        }
     }
 
     /**

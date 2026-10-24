@@ -9,7 +9,11 @@ import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.StandardTag;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Interlacing;
@@ -49,6 +53,11 @@ import java.util.Objects;
  * with the frame aspect ratio (in 16-bit terms, the closest such ratio when the exact one does
  * not fit) and one field per frame, or two when the track is interlaced.
  *
+ * <p>The tags of {@link #setTags(MediaTags)} become the {@code LIST INFO} chunk after the header
+ * list, the {@code ISFT} software entry naming Smalt unless the tags hold an
+ * {@link com.github.auties00.smalt.metadata.StandardTag#ENCODER encoder}, and the name of each
+ * track's {@link MediaTags#tracks() track tags} becomes the {@code strn} chunk of its stream.
+ *
  * <p>Packets of the tracks are interleaved by decoding time: the muxer holds each packet until
  * every track has one waiting, or until it holds two seconds or 512 packets, then writes the
  * earliest. The file is split into RIFF forms of at most
@@ -59,6 +68,11 @@ import java.util.Objects;
  * <p>Instances are not thread-safe.
  */
 public final class AviMuxer implements Muxer {
+    /**
+     * The software the {@code ISFT} entry names when the tags hold no encoder.
+     */
+    private static final String SOFTWARE = "Smalt";
+
     /**
      * The number of super index entries reserved per stream.
      */
@@ -128,6 +142,11 @@ public final class AviMuxer implements Muxer {
      * Whether the headers were written.
      */
     private boolean started;
+
+    /**
+     * The tags of {@link #setTags(MediaTags)}.
+     */
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether {@link #finish()} ran.
@@ -230,6 +249,32 @@ public final class AviMuxer implements Muxer {
             throw new IllegalArgumentException("audio track without a sample rate");
         }
         streams.add(new Stream(streams.size(), track));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsTags() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The entries {@code INFO} has an identifier for become the {@code LIST INFO} chunk, the first value of each;
+     * the name of a track becomes its {@code strn} chunk. Pictures, chapters, other entries and track dispositions
+     * are not stored.
+     */
+    @Override
+    public void setTags(MediaTags tags) {
+        Objects.requireNonNull(tags, "tags");
+        if (started || finished) {
+            throw new IllegalStateException("tags must be set before the first packet");
+        }
+        this.tags = tags;
     }
 
     /**
@@ -383,6 +428,17 @@ public final class AviMuxer implements Muxer {
             if ((format.length & 1) != 0) {
                 header.u8(0);
             }
+            var name = tags.track(stream.track.id()).flatMap(TrackTags::name).orElse("");
+            if (!name.isEmpty()) {
+                var text = name.getBytes(StandardCharsets.UTF_8);
+                header.fourCc("strn");
+                header.u32le(text.length + 1L);
+                header.bytes(text);
+                header.u8(0);
+                if (((text.length + 1) & 1) != 0) {
+                    header.u8(0);
+                }
+            }
             header.fourCc("indx");
             header.u32le(24 + 16 * SUPER_ENTRIES);
             stream.indxOffset = header.size();
@@ -403,13 +459,9 @@ public final class AviMuxer implements Muxer {
         var dmlh = header.size();
         header.zeros(DMLH_SIZE);
         header.patch32le(hdrlSize, header.size() - hdrlSize - 4);
-        header.fourCc("LIST");
-        header.u32le(4 + 8 + 6);
-        header.fourCc("INFO");
-        header.fourCc("ISFT");
-        header.u32le(6);
-        header.bytes("Smalt".getBytes(StandardCharsets.US_ASCII));
-        header.u8(0);
+        var info = tags.get(StandardTag.ENCODER).isPresent() ? tags
+                : tags.toBuilder().add(StandardTag.ENCODER, SOFTWARE).build();
+        header.bytes(MuxerTags.riffInfo(info));
         header.fourCc("LIST");
         header.u32le(0);
         var moviFourCc = header.size();

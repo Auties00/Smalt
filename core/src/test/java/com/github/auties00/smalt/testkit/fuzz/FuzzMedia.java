@@ -23,6 +23,7 @@ import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagReadOptions;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.probe.ProbeOptions;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -438,13 +439,28 @@ public final class FuzzMedia {
         if (read.isEmpty()) {
             return;
         }
-        var edited = read.get().toBuilder().set(StandardTag.TITLE, "fuzz").build();
-        var written = run.value("write tags", () -> TagEditor.write(data, edited,
-                TagWriteOptions.builder().limits(Fuzz.LIMITS).build()));
+        var builder = read.get().toBuilder().set(StandardTag.TITLE, "fuzz").set(StandardTag.TITLE_SORT, "fuzz")
+                .set(StandardTag.RATING, "4");
+        var renamed = read.get().tracks().isEmpty() ? null : read.get().tracks().getFirst().withName("fuzz track");
+        if (renamed != null) {
+            builder.track(renamed);
+        }
+        var edited = builder.build();
+        var options = TagWriteOptions.builder().limits(Fuzz.LIMITS).build();
+        var written = run.optional("write tags", () -> TagEditor.write(data, edited, options));
+        // a format that stores only track tags (MPEG-TS) rejects the title, so its tracks are edited alone
+        var global = written.isPresent();
+        if (!global && renamed != null) {
+            written = run.optional("write track tags", () -> TagEditor.write(data,
+                    read.get().toBuilder().track(renamed).build(), options));
+        }
         written.ifPresent(bytes -> run.step("reread tags", () -> {
             var reread = TagEditor.read(MediaSource.of(bytes), TagReadOptions.builder().limits(Fuzz.LIMITS).build());
-            if (!"fuzz".equals(reread.get(StandardTag.TITLE).orElse(null))) {
+            if (global && !"fuzz".equals(reread.get(StandardTag.TITLE).orElse(null))) {
                 run.reject("the written title is not read back: " + reread.get(StandardTag.TITLE));
+            }
+            if (renamed != null && !reread.track(renamed.trackId()).flatMap(TrackTags::name).equals(renamed.name())) {
+                run.reject("the written track name is not read back: " + reread.track(renamed.trackId()));
             }
             run.output();
         }));

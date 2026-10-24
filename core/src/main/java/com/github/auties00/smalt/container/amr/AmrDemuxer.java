@@ -4,13 +4,21 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.ContainerFormat;
+import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.internal.Annotations;
+import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
+import com.github.auties00.smalt.container.mpeg.internal.TrailingTags;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.container.internal.SeekIndex;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.io.SegmentBacked;
+import com.github.auties00.smalt.internal.io.SlicedSource;
 import com.github.auties00.smalt.internal.io.SourceReader;
+import com.github.auties00.smalt.internal.tags.Id3v2Tag;
+import com.github.auties00.smalt.internal.tags.TagIo;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -19,6 +27,8 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 
 import java.util.ArrayDeque;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -54,6 +64,16 @@ import java.util.Objects;
  * <tr><td>7 to 15</td><td>{@link com.github.auties00.smalt.audio.Speaker#UNKNOWN unknown}</td></tr>
  * </tbody>
  * </table>
+ *
+ * <p>The file may start with ID3v2 tags and end with ID3v1, APE, Lyrics3 or appended ID3v2 tags,
+ * which are excluded from the audio. The text frames of the ID3v2 tags become {@link #metadata()}
+ * and their pictures and chapters {@link #attachedPictures()} and {@link #chapters()}; an ID3v2.4
+ * tag appended after the audio or located by a {@code SEEK} frame replaces what the tags before it
+ * gave, or only what it holds when flagged as an update (ID3v2.4 section 5). The APE tag and then
+ * the ID3v1 tag add the fields still missing, APE cover art counting only when no ID3v2 tag holds
+ * a picture. When the end of the input cannot be read ahead of the frames (an unknown size, or a
+ * source that is not cheap to reach there), the trailing tags are not read and the frames end at
+ * the first frame boundary that starts one of them.
  *
  * <p>The duration is computed exactly by walking the frame headers once at construction. When
  * the source is not in memory, the walk also keeps the packets of the frames it passes, up to
@@ -93,9 +113,39 @@ public final class AmrDemuxer implements Demuxer {
     private static final int MAX_EXPECTED_KEPT = 1 << 14;
 
     /**
-     * The source read.
+     * The bytes that recognize the start of a trailing tag: {@code LYRICSBEGIN}, the longest signature.
+     */
+    private static final int TAG_PROBE = 11;
+
+    /**
+     * The source read: the input, or the range of it between the leading and the trailing tags.
      */
     private final MediaSource source;
+
+    /**
+     * The tags of the ID3v2, APE and ID3v1 tags.
+     */
+    private final Map<String, String> metadata;
+
+    /**
+     * The pictures of the tags.
+     */
+    private final List<AttachedPicture> pictures;
+
+    /**
+     * The chapters of the ID3v2 tags.
+     */
+    private final List<Chapter> chapters;
+
+    /**
+     * Whether the trailing tags were located, so that the source ends with the frames.
+     */
+    private final boolean tailScanned;
+
+    /**
+     * The bytes read at a frame boundary to recognize a trailing tag.
+     */
+    private final byte[] probe = new byte[TAG_PROBE];
 
     /**
      * Whether the file is AMR-WB.
@@ -190,10 +240,29 @@ public final class AmrDemuxer implements Demuxer {
         this(source, options.limits());
     }
 
-    private AmrDemuxer(MediaSource source, MediaLimits limits) {
-        this.source = Objects.requireNonNull(source, "source");
+    private AmrDemuxer(MediaSource input, MediaLimits limits) {
+        Objects.requireNonNull(input, "source");
         Objects.requireNonNull(limits, "limits");
         try {
+            var inputSize = input.size();
+            var tags = new LinkedHashMap<String, String>();
+            var annotations = new Annotations();
+            var id3 = Id3v2.read(input, 0, inputSize < 0 ? Long.MAX_VALUE : inputSize, tags, annotations);
+            var leading = id3.end();
+            var audioEnd = inputSize;
+            this.tailScanned = inputSize >= 0 && ForwardOnlySource.isCheapToReach(input, inputSize);
+            if (tailScanned) {
+                var tail = new TrailingTags.Tail(input, leading);
+                tail.load(inputSize);
+                var trailing = TrailingTags.regions(tail, leading, inputSize);
+                audioEnd = trailing.isEmpty() ? inputSize : trailing.getFirst().offset();
+                var located = TrailingTags.seekRegions(tail, id3.seekTarget(), leading, audioEnd);
+                TrailingTags.readMetadata(tail, located, trailing, tags, annotations, Id3v2.Merge.REPLACE);
+            }
+            this.source = leading == 0 && audioEnd == inputSize ? input
+                    : new SlicedSource(input, leading, audioEnd < 0 ? -1 : audioEnd - leading);
+            this.metadata = Collections.unmodifiableMap(tags);
+            this.pictures = annotations.pictures();
             var magic = new byte[19];
             var read = 0;
             while (read < magic.length) {
@@ -248,6 +317,7 @@ public final class AmrDemuxer implements Demuxer {
                     .layout(AmrConfigs.storageLayout(channels))
                     .build();
             this.tracks = List.of(track);
+            this.chapters = annotations.chapters(frames < 0 ? -1 : track.timeBase().toMicros(track.duration()));
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -378,6 +448,9 @@ public final class AmrDemuxer implements Demuxer {
      */
     private int blockLength(SourceReader reader) {
         var start = reader.position();
+        if (!tailScanned && atTrailingTag(reader)) {
+            return -1;
+        }
         var end = start;
         for (var channel = 0; channel < channels; channel++) {
             if (channel > 0) {
@@ -392,6 +465,30 @@ public final class AmrDemuxer implements Demuxer {
         reader.seek(start);
         var length = end - start;
         return reader.remaining(length) < length ? -1 : (int) length;
+    }
+
+    /**
+     * Returns whether a trailing tag starts where a reader stands: an ID3v1 or enhanced ID3v1 tag, an APE tag, a
+     * Lyrics3 block or an appended ID3v2 tag, none of which starts with a frame of a speech or comfort noise type
+     * followed by these bytes in a valid file.
+     *
+     * @param reader the reader, positioned at a frame boundary, where it is left
+     * @return {@code true} when the bytes there are a tag signature
+     */
+    private boolean atTrailingTag(SourceReader reader) {
+        var start = reader.position();
+        var available = (int) reader.remaining(TAG_PROBE);
+        if (available < 3) {
+            return false;
+        }
+        reader.readFully(probe, 0, available);
+        reader.seek(start);
+        if (TagIo.matches(probe, 0, "TAG")) {
+            return true;
+        }
+        return available >= 8 && TagIo.matches(probe, 0, "APETAGEX")
+                || available >= 10 && Id3v2Tag.size(probe, 0) >= 0
+                || available >= TAG_PROBE && TagIo.matches(probe, 0, "LYRICSBEGIN");
     }
 
     /**
@@ -416,7 +513,17 @@ public final class AmrDemuxer implements Demuxer {
 
     @Override
     public Map<String, String> metadata() {
-        return Map.of();
+        return metadata;
+    }
+
+    @Override
+    public List<Chapter> chapters() {
+        return chapters;
+    }
+
+    @Override
+    public List<AttachedPicture> attachedPictures() {
+        return pictures;
     }
 
     @Override

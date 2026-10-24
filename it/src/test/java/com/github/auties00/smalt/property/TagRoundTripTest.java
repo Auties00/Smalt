@@ -129,6 +129,8 @@ class TagRoundTripTest {
                 case COMPILATION -> "1";
                 case CREATION_TIME -> "2021-07-04T10:00:00.000000Z";
                 case LANGUAGE -> "ita";
+                case BPM -> "128";
+                case RATING -> "4";
                 case LYRICS -> "la la ".repeat(2000) + "fine";
                 default -> tag.key() + " välüë ✓ 漢字";
             };

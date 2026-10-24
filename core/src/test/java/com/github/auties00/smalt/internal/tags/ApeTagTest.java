@@ -226,9 +226,14 @@ class ApeTagTest {
             var tags = builder.build();
             var encoded = ApeTag.encode(tags, List.of());
             var keys = ApeTag.parse(encoded).items().stream().map(ApeTag.Item::key).toList();
-            assertEquals(List.of("Title", "Artist", "Album", "Album Artist", "Composer", "Genre", "Year", "Track", "Disc",
-                    "Comment", "Lyrics", "Copyright", "Encoder", "Encoded By", "Publisher", "Language", "Grouping",
-                    "CREATION_TIME", "Compilation"), keys);
+            assertEquals(List.of("Title", "Artist", "Album", "Album Artist", "Composer", "Conductor", "Lyricist", "Genre",
+                    "Year", "Track", "Disc", "Comment", "DESCRIPTION", "Lyrics", "Copyright", "Encoder", "Encoded By",
+                    "Publisher", "Language", "Grouping", "CREATION_TIME", "Compilation", "BPM", "ISRC", "TITLESORT",
+                    "ARTISTSORT", "ALBUMSORT", "ALBUMARTISTSORT", "COMPOSERSORT", "REPLAYGAIN_TRACK_GAIN",
+                    "REPLAYGAIN_TRACK_PEAK", "REPLAYGAIN_ALBUM_GAIN", "REPLAYGAIN_ALBUM_PEAK", "MUSICBRAINZ_TRACKID",
+                    "MUSICBRAINZ_RELEASETRACKID", "MUSICBRAINZ_ALBUMID", "MUSICBRAINZ_ARTISTID",
+                    "MUSICBRAINZ_ALBUMARTISTID", "MUSICBRAINZ_RELEASEGROUPID", "MUSICBRAINZ_WORKID", "MUSICBRAINZ_DISCID",
+                    "RATING"), keys);
             assertEquals(tags.entries(), ApeTag.parse(encoded).decode().entries());
         }
 

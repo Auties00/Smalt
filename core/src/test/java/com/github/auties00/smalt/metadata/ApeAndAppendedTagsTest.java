@@ -304,7 +304,7 @@ class ApeAndAppendedTagsTest {
                 assertEquals("APE Title è", info.tags().get("title"), info.container().toString());
                 assertEquals("APE Album", info.tags().get("album"));
                 assertEquals("V1 comment", info.tags().get("comment"));
-                assertEquals("-4.20 dB", info.tags().get("REPLAYGAIN_TRACK_GAIN"));
+                assertEquals("-4.20 dB", info.tags().get("replaygain_track_gain"));
                 assertEquals(1, info.attachedPictures().size());
                 assertSamePackets(bare, file);
             }

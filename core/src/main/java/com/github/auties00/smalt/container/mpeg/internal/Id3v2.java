@@ -42,11 +42,11 @@ public final class Id3v2 {
     private static final int MAX_CONSECUTIVE_TAGS = 64;
 
     /**
-     * Accepts the frames reported as metadata (text frames and comments) and the {@code SEEK}
-     * frame.
+     * Accepts the frames reported as metadata (text frames, comments, unique file identifiers and
+     * popularimeters) and the {@code SEEK} frame.
      */
     private static final Predicate<String> TEXT_FRAMES = id -> id.charAt(0) == 'T' || id.startsWith("COM")
-            || id.equals("SEEK");
+            || id.startsWith("UFI") || id.startsWith("POP") || id.equals("SEEK");
 
     /**
      * Accepts the frames reported as metadata, pictures or chapters.

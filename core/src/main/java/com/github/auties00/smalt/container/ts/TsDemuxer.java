@@ -9,10 +9,12 @@ import com.github.auties00.smalt.container.internal.SeekFilter;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.io.MeasuredSource;
 import com.github.auties00.smalt.internal.io.ReadAheadCache;
+import com.github.auties00.smalt.internal.tags.TsDescriptors;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.util.ArrayDeque;
@@ -1524,6 +1526,44 @@ public final class TsDemuxer implements Demuxer {
     @Override
     public Map<String, String> metadata() {
         return Map.of();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The tags of a track are the first string of the ATSC component name descriptor of its program map entry,
+     * under {@code "title"}.
+     */
+    @Override
+    public Map<String, String> trackMetadata(int trackId) {
+        var parser = parserOf(trackId);
+        return parser == null || parser.entry.name() == null ? Map.of() : Map.of("title", parser.entry.name());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The dispositions of a track are those the {@code audio_type} of the ISO 639 language descriptor of its
+     * program map entry names: 1 {@link TrackDisposition#CLEAN_EFFECTS}, 2
+     * {@link TrackDisposition#HEARING_IMPAIRED} and 3 {@link TrackDisposition#VISUAL_IMPAIRED}.
+     */
+    @Override
+    public Set<TrackDisposition> trackDisposition(int trackId) {
+        var parser = parserOf(trackId);
+        if (parser == null) {
+            return Set.of();
+        }
+        return TsDescriptors.dispositions(parser.entry.audioType());
+    }
+
+    /**
+     * Returns the parser of an exposed track.
+     *
+     * @param trackId the identifier of the track
+     * @return the parser, or {@code null} for an unknown track
+     */
+    private ElementaryParser parserOf(int trackId) {
+        return parsers.get(trackId);
     }
 
     @Override

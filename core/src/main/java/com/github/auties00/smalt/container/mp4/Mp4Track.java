@@ -11,14 +11,18 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Accumulates what the demuxer learns about one {@code trak}: its header fields, edit list, sample
@@ -94,6 +98,26 @@ final class Mp4Track {
      * The identifier the public track and its packets carry.
      */
     int id;
+
+    /**
+     * Whether the {@code tkhd} flags the track as enabled.
+     */
+    boolean enabled = true;
+
+    /**
+     * The {@code name} of the track's {@code udta}, or {@code null}.
+     */
+    String name;
+
+    /**
+     * The dispositions of the {@code kind} boxes of the track's {@code udta}.
+     */
+    final Set<TrackDisposition> kinds = EnumSet.noneOf(TrackDisposition.class);
+
+    /**
+     * The tags of the {@code meta} box and the text atoms of the track's {@code udta}.
+     */
+    final Map<String, String> userTags = new LinkedHashMap<>();
 
     /**
      * The handler type, for example {@code vide} or {@code soun}.

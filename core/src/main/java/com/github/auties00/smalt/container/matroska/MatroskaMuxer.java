@@ -21,6 +21,7 @@ import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
@@ -29,6 +30,7 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
@@ -173,45 +175,6 @@ import java.util.Set;
  */
 public final class MatroskaMuxer implements Muxer {
     /**
-     * Enumerates the {@code TrackEntry} flags a track can carry.
-     *
-     * <p>Constants may be added in minor releases, so a {@code switch} over this type needs a
-     * {@code default} branch.
-     */
-    public enum TrackFlag {
-        /**
-         * {@code FlagDefault}: players select the track when the user expressed no preference.
-         */
-        DEFAULT,
-
-        /**
-         * {@code FlagForced}: players select the track whatever the user preference, for example
-         * subtitles of foreign dialogue.
-         */
-        FORCED,
-
-        /**
-         * {@code FlagHearingImpaired}: the track suits hearing-impaired users.
-         */
-        HEARING_IMPAIRED,
-
-        /**
-         * {@code FlagVisualImpaired}: the track suits visually impaired users.
-         */
-        VISUAL_IMPAIRED,
-
-        /**
-         * {@code FlagOriginal}: the track is in the content's original language.
-         */
-        ORIGINAL,
-
-        /**
-         * {@code FlagCommentary}: the track holds commentary.
-         */
-        COMMENTARY
-    }
-
-    /**
      * The shortest cluster ended before a video key frame, in microseconds.
      */
     private static final long MIN_KEYFRAME_CLUSTER_MICROS = 250_000;
@@ -283,31 +246,6 @@ public final class MatroskaMuxer implements Muxer {
      * The {@code CueRelativePosition} element identifier.
      */
     private static final int CUE_RELATIVE_POSITION = 0xF0;
-
-    /**
-     * The {@code FlagForced} element identifier.
-     */
-    private static final int FLAG_FORCED = 0x55AA;
-
-    /**
-     * The {@code FlagHearingImpaired} element identifier.
-     */
-    private static final int FLAG_HEARING_IMPAIRED = 0x55AB;
-
-    /**
-     * The {@code FlagVisualImpaired} element identifier.
-     */
-    private static final int FLAG_VISUAL_IMPAIRED = 0x55AC;
-
-    /**
-     * The {@code FlagOriginal} element identifier.
-     */
-    private static final int FLAG_ORIGINAL = 0x55AE;
-
-    /**
-     * The {@code FlagCommentary} element identifier.
-     */
-    private static final int FLAG_COMMENTARY = 0x55AF;
 
     /**
      * The {@code TrackType} of subtitle tracks.
@@ -501,6 +439,11 @@ public final class MatroskaMuxer implements Muxer {
     private String title;
 
     /**
+     * The tags of {@link #setTags(MediaTags)}.
+     */
+    private MediaTags tags = MediaTags.empty();
+
+    /**
      * The positions of the {@code Chapters}, {@code Attachments} and {@code Tags} elements relative
      * to the segment data, {@code -1} for each absent one.
      */
@@ -609,7 +552,7 @@ public final class MatroskaMuxer implements Muxer {
     }
 
     /**
-     * Declares a track, flagged {@link TrackFlag#DEFAULT} when it is the first of its kind.
+     * Declares a track, flagged {@link TrackDisposition#DEFAULT} when it is the first of its kind.
      *
      * @param track the track description
      * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, the
@@ -625,21 +568,26 @@ public final class MatroskaMuxer implements Muxer {
         for (var existing : tracks) {
             first &= existing.track.kind() != track.kind();
         }
-        addTrack(track, first ? EnumSet.of(TrackFlag.DEFAULT) : EnumSet.noneOf(TrackFlag.class));
+        addTrack(track, first ? EnumSet.of(TrackDisposition.DEFAULT) : EnumSet.noneOf(TrackDisposition.class));
     }
 
     /**
-     * Declares a track with explicit flags.
+     * Declares a track with explicit dispositions.
+     *
+     * <p>The dispositions become the flag elements of the {@code TrackEntry}: {@code FlagDefault},
+     * {@code FlagForced}, {@code FlagHearingImpaired}, {@code FlagVisualImpaired}, {@code FlagTextDescriptions}
+     * ({@link TrackDisposition#DESCRIPTIONS}), {@code FlagOriginal} and {@code FlagCommentary}; the other
+     * dispositions are not stored. The track tags of {@link #setTags(MediaTags)} replace them.
      *
      * @param track the track description
-     * @param flags the flags of its {@code TrackEntry}; a flag not in the set is written as cleared
+     * @param flags the dispositions of its {@code TrackEntry}; a flag not in the set is written as cleared
      * @throws IllegalArgumentException if the id is already used, the document type cannot carry the codec, the
      * track lacks what its codec needs (a configuration, a frame size, a sample rate, a layout or, for a data track,
      * a Matroska codec identifier as its handler), or a DNxHD configuration holds anything but Avid sample
      * description extensions after its sample entry type
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
-    public void addTrack(Track track, Set<TrackFlag> flags) {
+    public void addTrack(Track track, Set<TrackDisposition> flags) {
         Objects.requireNonNull(track, "track");
         Objects.requireNonNull(flags, "flags");
         if (finished || accepting) {
@@ -654,7 +602,9 @@ public final class MatroskaMuxer implements Muxer {
         if (!supports(options.docType(), codec)) {
             throw new IllegalArgumentException(options.docType().name().toLowerCase() + " cannot carry " + codec.displayName());
         }
-        var state = new TrackState(track, tracks.size() + 1, EnumSet.copyOf(flags.isEmpty() ? EnumSet.noneOf(TrackFlag.class) : flags));
+        var copy = EnumSet.noneOf(TrackDisposition.class);
+        copy.addAll(flags);
+        var state = new TrackState(track, tracks.size() + 1, copy);
         state.configure();
         hasVideo |= state.video;
         tracks.add(state);
@@ -676,7 +626,10 @@ public final class MatroskaMuxer implements Muxer {
      * <p>The title becomes the segment title of {@code Info}, replacing the configured one; the
      * other tags become a {@code Tags} element, the chapters a {@code Chapters} element and the
      * pictures {@code Attachments} (the first front cover named {@code cover.*}), all written
-     * after {@code Tracks} and indexed by the {@code SeekHead}.
+     * after {@code Tracks} and indexed by the {@code SeekHead}. The tags of a declared track
+     * become its {@code Name} (the title), its flag elements (the dispositions, replacing those
+     * of {@link #addTrack(Track, Set)}) and a {@code Tag} targeting its {@code TrackUID} (the other
+     * entries).
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -685,7 +638,26 @@ public final class MatroskaMuxer implements Muxer {
             throw new IllegalStateException("tags must be set before the first packet");
         }
         this.title = tags.get(StandardTag.TITLE).orElse(null);
-        var encoded = MuxerTags.matroska(tags.toBuilder().remove(StandardTag.TITLE).build());
+        this.tags = tags;
+    }
+
+    /**
+     * Encodes the {@code Chapters}, {@code Attachments} and {@code Tags} elements of the tags,
+     * the {@code Tags} element holding the tags of the declared tracks too.
+     */
+    private void encodeMetadata() {
+        var trackTags = new ArrayList<byte[]>();
+        for (var state : tracks) {
+            var track = tags.track(state.track.id());
+            if (track.isEmpty()) {
+                continue;
+            }
+            var entries = track.get().tags().toBuilder().remove(StandardTag.TITLE).build().entries();
+            if (!entries.isEmpty()) {
+                trackTags.add(MuxerTags.matroskaTrackTag(uid(state.number), entries));
+            }
+        }
+        var encoded = MuxerTags.matroska(tags.toBuilder().remove(StandardTag.TITLE).build(), trackTags);
         this.metadata = new byte[][]{encoded[1], encoded[2], encoded[0]};
     }
 
@@ -1047,6 +1019,7 @@ public final class MatroskaMuxer implements Muxer {
         segmentSizeOffset = base + header.size();
         header.writeSize(indexed ? 0 : EbmlOutput.UNKNOWN_SIZE & 0x00FFFFFFFFFFFFFFL, 8);
         segmentStart = base + header.size();
+        encodeMetadata();
         var info = buildInfo();
         var trackList = buildTracks();
         var seekHead = new EbmlOutput(128);
@@ -1453,9 +1426,9 @@ public final class MatroskaMuxer implements Muxer {
         final int number;
 
         /**
-         * The flags of the track entry.
+         * The dispositions of the track entry.
          */
-        final Set<TrackFlag> flags;
+        final Set<TrackDisposition> flags;
 
         /**
          * Whether the track is video.
@@ -1585,7 +1558,7 @@ public final class MatroskaMuxer implements Muxer {
          * @param number the track number
          * @param flags the entry flags
          */
-        TrackState(Track track, int number, Set<TrackFlag> flags) {
+        TrackState(Track track, int number, Set<TrackDisposition> flags) {
             this.track = track;
             this.latestConfig = track.codecConfig().orElse(null);
             this.number = number;
@@ -2000,21 +1973,30 @@ public final class MatroskaMuxer implements Muxer {
             out.unsigned(EbmlIds.TRACK_UID, uid(number));
             out.unsigned(EbmlIds.TRACK_TYPE, trackType);
             out.unsigned(EbmlIds.FLAG_LACING, 0);
-            out.unsigned(EbmlIds.FLAG_DEFAULT, flags.contains(TrackFlag.DEFAULT) ? 1 : 0);
-            if (flags.contains(TrackFlag.FORCED)) {
-                out.unsigned(FLAG_FORCED, 1);
+            var described = tags.track(track.id());
+            var disposition = described.isPresent() ? described.get().disposition() : flags;
+            out.unsigned(EbmlIds.FLAG_DEFAULT, disposition.contains(TrackDisposition.DEFAULT) ? 1 : 0);
+            if (disposition.contains(TrackDisposition.FORCED)) {
+                out.unsigned(EbmlIds.FLAG_FORCED, 1);
             }
-            if (flags.contains(TrackFlag.HEARING_IMPAIRED)) {
-                out.unsigned(FLAG_HEARING_IMPAIRED, 1);
+            if (disposition.contains(TrackDisposition.HEARING_IMPAIRED)) {
+                out.unsigned(EbmlIds.FLAG_HEARING_IMPAIRED, 1);
             }
-            if (flags.contains(TrackFlag.VISUAL_IMPAIRED)) {
-                out.unsigned(FLAG_VISUAL_IMPAIRED, 1);
+            if (disposition.contains(TrackDisposition.VISUAL_IMPAIRED)) {
+                out.unsigned(EbmlIds.FLAG_VISUAL_IMPAIRED, 1);
             }
-            if (flags.contains(TrackFlag.ORIGINAL)) {
-                out.unsigned(FLAG_ORIGINAL, 1);
+            if (disposition.contains(TrackDisposition.DESCRIPTIONS)) {
+                out.unsigned(EbmlIds.FLAG_TEXT_DESCRIPTIONS, 1);
             }
-            if (flags.contains(TrackFlag.COMMENTARY)) {
-                out.unsigned(FLAG_COMMENTARY, 1);
+            if (disposition.contains(TrackDisposition.ORIGINAL)) {
+                out.unsigned(EbmlIds.FLAG_ORIGINAL, 1);
+            }
+            if (disposition.contains(TrackDisposition.COMMENTARY)) {
+                out.unsigned(EbmlIds.FLAG_COMMENTARY, 1);
+            }
+            var name = described.flatMap(TrackTags::name).orElse(null);
+            if (name != null && !name.isEmpty()) {
+                out.string(EbmlIds.NAME, name);
             }
             out.string(EbmlIds.LANGUAGE, track.language().filter(MatroskaMuxer::isLanguage).orElse("und"));
             out.string(EbmlIds.CODEC_ID, codecId);

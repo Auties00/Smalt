@@ -367,9 +367,9 @@ class TagHelpersTest {
             assertEquals("Appended title", metadata.get("TIT2"));
             assertEquals("Appended album", metadata.get("TALB"));
             assertEquals("APE title", metadata.get("title"));
-            assertEquals("-2 dB", metadata.get("REPLAYGAIN_TRACK_GAIN"));
+            assertEquals("-2 dB", metadata.get("replaygain_track_gain"));
             assertEquals("V1 comment", metadata.get("COMM"));
-            assertEquals(List.of("TIT2", "TALB", "title", "artist", "REPLAYGAIN_TRACK_GAIN", "COMM"),
+            assertEquals(List.of("TIT2", "TALB", "title", "artist", "replaygain_track_gain", "COMM"),
                     List.copyOf(metadata.keySet()), "the leading TPE1 is discarded");
         }
 
@@ -383,7 +383,7 @@ class TagHelpersTest {
             assertEquals("Vorbis", metadata.get("TIT2"));
             assertEquals("Leading artist", metadata.get("TPE1"));
             assertEquals("Appended album", metadata.get("TALB"));
-            assertEquals(List.of("TPE1", "TIT2", "TALB", "title", "artist", "REPLAYGAIN_TRACK_GAIN", "COMM"),
+            assertEquals(List.of("TPE1", "TIT2", "TALB", "title", "artist", "replaygain_track_gain", "COMM"),
                     List.copyOf(metadata.keySet()));
         }
 

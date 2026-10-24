@@ -58,7 +58,7 @@ import java.util.function.Predicate;
  * creates the muxer that writes a container.
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
- * skipping an ID3v2 tag first because MP3, AAC, AC-3 and FLAC files often start with one. Formats with a
+ * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
  * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR) are recognized exactly,
  * MPEG transport streams by the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
@@ -125,6 +125,9 @@ public final class Containers {
             }
             if (Ac3Demuxer.matches(header)) {
                 return Optional.of(ContainerFormat.AC3);
+            }
+            if (matches(header, 0, "#!AMR")) {
+                return Optional.of(ContainerFormat.AMR);
             }
         }
         var frames = detectFrameStream(header);

@@ -13,6 +13,7 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 import org.junit.jupiter.api.DisplayName;
@@ -206,8 +207,8 @@ class MatroskaMuxerTest {
                     .build();
             var sink = MediaSink.memory();
             try (var muxer = new MatroskaMuxer(sink, MatroskaMuxerOptions.webm().toBuilder().title("title").build())) {
-                muxer.addTrack(colored, EnumSet.of(MatroskaMuxer.TrackFlag.DEFAULT));
-                muxer.addTrack(audio, EnumSet.of(MatroskaMuxer.TrackFlag.FORCED, MatroskaMuxer.TrackFlag.COMMENTARY));
+                muxer.addTrack(colored, EnumSet.of(TrackDisposition.DEFAULT));
+                muxer.addTrack(audio, EnumSet.of(TrackDisposition.FORCED, TrackDisposition.COMMENTARY));
                 source.order().forEach(muxer::writePacket);
                 muxer.finish();
             }

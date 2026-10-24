@@ -24,8 +24,8 @@ class MetadataReaderTest {
     @CsvSource({
             "©xyz, location", "©des, description", "©cpy, copyright", "©swr, encoder",
             "©mak, make", "©mod, model", "desc, description", "ldes, synopsis", "gnre, genre",
-            "tvsh, show", "tven, episode_id", "tvnn, network", "sonm, sort_name", "soar, sort_artist",
-            "soaa, sort_album_artist", "soal, sort_album", "soco, sort_composer", "tmpo, tmpo", "abcd, abcd",
+            "tvsh, show", "tven, episode_id", "tvnn, network", "sonm, title_sort", "soar, artist_sort",
+            "soaa, album_artist_sort", "soal, album_sort", "soco, composer_sort", "tmpo, bpm", "abcd, abcd",
             "©zzz, ©zzz"
     })
     @DisplayName("name the other items by the fixed table, or by their four characters")

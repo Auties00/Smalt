@@ -213,6 +213,36 @@ public final class EbmlIds {
     public static final int FLAG_DEFAULT = 0x88;
 
     /**
+     * The {@code FlagForced} element.
+     */
+    public static final int FLAG_FORCED = 0x55AA;
+
+    /**
+     * The {@code FlagHearingImpaired} element.
+     */
+    public static final int FLAG_HEARING_IMPAIRED = 0x55AB;
+
+    /**
+     * The {@code FlagVisualImpaired} element.
+     */
+    public static final int FLAG_VISUAL_IMPAIRED = 0x55AC;
+
+    /**
+     * The {@code FlagTextDescriptions} element.
+     */
+    public static final int FLAG_TEXT_DESCRIPTIONS = 0x55AD;
+
+    /**
+     * The {@code FlagOriginal} element.
+     */
+    public static final int FLAG_ORIGINAL = 0x55AE;
+
+    /**
+     * The {@code FlagCommentary} element.
+     */
+    public static final int FLAG_COMMENTARY = 0x55AF;
+
+    /**
      * The {@code FlagLacing} element.
      */
     public static final int FLAG_LACING = 0x9C;
@@ -662,6 +692,11 @@ public final class EbmlIds {
      * The {@code TargetTypeValue} element.
      */
     public static final int TARGET_TYPE_VALUE = 0x68CA;
+
+    /**
+     * The {@code TargetType} element.
+     */
+    public static final int TARGET_TYPE = 0x63CA;
 
     /**
      * The {@code TagTrackUID} element.

@@ -17,7 +17,7 @@ import java.util.Objects;
  *
  * <p>The supported containers and the tag formats they carry:
  * <ul>
- *   <li>MP3, ADTS AAC and raw AC-3: ID3v2.2 (read), ID3v2.3 and ID3v2.4 at the start, an APEv1
+ *   <li>MP3, ADTS AAC, raw AC-3 and E-AC-3, and AMR: ID3v2.2 (read), ID3v2.3 and ID3v2.4 at the start, an APEv1
  *       (read) or APEv2 tag and an ID3v1 tag at the end; pictures in {@code APIC} frames and APE
  *       {@code "Cover Art (...)"} items, chapters in {@code CHAP}/{@code CTOC} frames. ID3v2.4
  *       tags found through a {@code SEEK} frame or appended after the audio with a footer are read
@@ -39,9 +39,19 @@ import java.util.Objects;
  *       ones;</li>
  *   <li>Matroska and WebM: global {@code Tags}, {@code Chapters} and picture
  *       {@code Attachments};</li>
- *   <li>WAV: the {@code LIST/INFO} chunk and an {@code id3 } chunk; AIFF: the text chunks and an
- *       {@code ID3 } chunk.</li>
+ *   <li>WAV (RIFF, big-endian RIFX, RF64 and BW64): the {@code LIST/INFO} chunk and an {@code id3 }
+ *       chunk, a RIFF file the edit takes past 4 GiB becoming an RF64 file; AIFF: the text chunks and
+ *       an {@code ID3 } chunk;</li>
+ *   <li>AVI: the {@code LIST INFO} chunk, which stores no pictures or chapters;</li>
+ *   <li>MPEG-TS: track tags only (the program map table of the program {@code TsDemuxer} exposes),
+ *       so a write holding tags, pictures or chapters for the whole file is rejected; every copy of
+ *       the table is rewritten in its own transport packets, and an edit that outgrows them is
+ *       rejected.</li>
  * </ul>
+ *
+ * <p>In MP4, Matroska, AVI and MPEG-TS files the {@linkplain MediaTags#tracks() track tags} of every
+ * track are read too, and a write replaces the name, tags and dispositions of each track the written
+ * tags hold, keeping those of the other tracks; {@link TrackTags} lists how each container stores them.
  *
  * <p>{@link #write(Path, MediaTags, TagWriteOptions)} replaces every tag, picture and chapter of
  * the file with the given ones, so the usual cycle is read, modify, write. When the new metadata
@@ -52,7 +62,7 @@ import java.util.Objects;
  * {@link TagWriteOptions#preserveUnknown()} is off.
  *
  * <p>When a file holds tags of several formats, a read takes each key from the first format that
- * has it (in an MP3, ADTS or AC-3 file the ID3v2 tags, then the APE tag, then the ID3v1 tag; in a
+ * has it (in an MP3, ADTS, AC-3 or AMR file the ID3v2 tags, then the APE tag, then the ID3v1 tag; in a
  * FLAC file the Vorbis comments, then the APE and the ID3v1 tag) and the pictures from the first
  * that holds any. A write stores the new tags in every format the file keeps, as
  * {@link TagWriteOptions#apeMode()} and {@link TagWriteOptions#id3v1Mode()} decide; the APE and
@@ -79,9 +89,10 @@ public final class TagEditor {
      *
      * @param format the container format
      * @return {@code true} for {@link ContainerFormat#MPEG_AUDIO}, {@link ContainerFormat#ADTS},
-     * {@link ContainerFormat#AC3}, {@link ContainerFormat#FLAC}, {@link ContainerFormat#OGG},
-     * {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA}, {@link ContainerFormat#WAV} and
-     * {@link ContainerFormat#AIFF}
+     * {@link ContainerFormat#AC3}, {@link ContainerFormat#AMR}, {@link ContainerFormat#FLAC},
+     * {@link ContainerFormat#OGG}, {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA},
+     * {@link ContainerFormat#WAV}, {@link ContainerFormat#AIFF}, {@link ContainerFormat#AVI} and
+     * {@link ContainerFormat#MPEG_TS}
      */
     public static boolean isSupported(ContainerFormat format) {
         Objects.requireNonNull(format, "format");

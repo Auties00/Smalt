@@ -139,7 +139,7 @@ public final class TsValidator {
                 section(pid, start, payload, end, where);
             } else if (streams.containsKey(pid)) {
                 pes(pid, start, payload, end, where);
-            } else if (undeclared.add(pid)) {
+            } else if (!isSystemPid(pid) && undeclared.add(pid)) {
                 findings.add(where, "PID " + pid + " carries data but no PAT or PMT declares it");
             }
         }
@@ -354,5 +354,17 @@ public final class TsValidator {
             }
         }
         return crc;
+    }
+
+    /**
+     * Returns whether a PID carries tables no PAT or PMT declares: the conditional access and description tables
+     * (ISO/IEC 13818-1 table 2-3) and the DVB and ATSC service information of PIDs 0x10 to 0x1F (ETSI EN 300 468
+     * clause 5.1.3), such as the SDT ffmpeg writes.
+     *
+     * @param pid the PID
+     * @return {@code true} for such a PID
+     */
+    private static boolean isSystemPid(int pid) {
+        return pid == 0x01 || pid == 0x02 || pid >= 0x10 && pid <= 0x1F || pid == 0x1FFB;
     }
 }

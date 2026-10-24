@@ -344,17 +344,21 @@ public final class RawMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @return {@code true} once an MP3, MP2 or FLAC track is declared
+     * @return {@code true} once an MP3, MP2, AC-3, E-AC-3, AMR or FLAC track is declared
      */
     @Override
     public boolean supportsTags() {
-        return track != null && (track.codec() == Codec.MP3 || track.codec() == Codec.MP2 || track.codec() == Codec.FLAC);
+        return track != null && switch (track.codec()) {
+            case MP3, MP2, AC3, EAC3, AMR_NB, AMR_WB, FLAC -> true;
+            default -> false;
+        };
     }
 
     /**
      * {@inheritDoc}
      *
-     * <p>An MP3 or MP2 stream gets an ID3v2.4 tag before its first frame; a FLAC stream gets a
+     * <p>An MP3, MP2, AC-3, E-AC-3 or AMR stream gets an ID3v2.4 tag before its first frame (before the AMR
+     * magic); a FLAC stream gets a
      * {@code VORBIS_COMMENT} block (with the chapters) and one {@code PICTURE} block per picture,
      * replacing those of the track configuration. The track must be declared first.
      *
@@ -367,7 +371,7 @@ public final class RawMuxer implements Muxer {
             throw new IllegalStateException("tags must be set before the first packet");
         }
         if (!supportsTags()) {
-            throw new MediaException.Unsupported("raw", "only MP3, MP2 and FLAC raw streams store tags");
+            throw new MediaException.Unsupported("raw", "only MP3, MP2, AC-3, E-AC-3, AMR and FLAC raw streams store tags");
         }
         this.tags = tags;
     }
@@ -664,19 +668,22 @@ public final class RawMuxer implements Muxer {
     }
 
     /**
-     * Writes what precedes the first packet: the FLAC marker and metadata, or the AMR magic and,
-     * for a multichannel track, the channel description.
+     * Writes what precedes the first packet: the FLAC marker and metadata, the ID3v2 tag of an MPEG audio,
+     * AC-3 or AMR stream, and the AMR magic and, for a multichannel track, the channel description.
      */
     private void writeHeader() {
         started = true;
         switch (track.codec()) {
             case FLAC -> output.write(ByteBuffer.wrap(writtenFlacHeader(flacConfig)));
-            case MP3, MP2 -> {
-                if (tags != null && !tags.isEmpty()) {
+            case MP3, MP2, AC3, EAC3 -> {
+                if (tags != null && !MuxerTags.isGlobalEmpty(tags)) {
                     output.write(ByteBuffer.wrap(MuxerTags.id3v2(tags)));
                 }
             }
             case AMR_NB, AMR_WB -> {
+                if (tags != null && !MuxerTags.isGlobalEmpty(tags)) {
+                    output.write(ByteBuffer.wrap(MuxerTags.id3v2(tags)));
+                }
                 var wideband = track.codec() == Codec.AMR_WB;
                 if (amrChannels > 1) {
                     var magic = (wideband ? "#!AMR-WB_MC1.0\n" : "#!AMR_MC1.0\n")

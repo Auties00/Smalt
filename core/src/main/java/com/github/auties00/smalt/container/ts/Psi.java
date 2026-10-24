@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.ts;
 
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
+import com.github.auties00.smalt.internal.tags.TsDescriptors;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -126,11 +127,14 @@ final class Psi {
      * @param id3Metadata whether a metadata descriptor (tag {@code 0x26}) announces ID3
      * @param dvbSubtitles whether a DVB subtitling descriptor (tag {@code 0x59}) is present
      * @param teletext whether a DVB teletext descriptor (tag {@code 0x56}) is present
+     * @param audioType the {@code audio_type} of the first language of the ISO 639 language descriptor, or
+     * {@code -1}
+     * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
      */
     record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
                        List<Integer> programRegistrations, String language, boolean ac3Descriptor,
                        boolean eac3Descriptor, int opusChannels, boolean id3Metadata, boolean dvbSubtitles,
-                       boolean teletext) {
+                       boolean teletext, int audioType, String name) {
         /**
          * Returns whether a registration descriptor of the stream carries an identifier.
          *
@@ -159,7 +163,7 @@ final class Psi {
          */
         StreamEntry withTrackId(int id) {
             return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
-                    eac3Descriptor, opusChannels, id3Metadata, dvbSubtitles, teletext);
+                    eac3Descriptor, opusChannels, id3Metadata, dvbSubtitles, teletext, audioType, name);
         }
 
         /**
@@ -271,7 +275,7 @@ final class Psi {
             streams.add(new StreamEntry(pid, pid, type, List.copyOf(descriptors.registrations),
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
                     descriptors.eac3, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
-                    descriptors.teletext));
+                    descriptors.teletext, descriptors.audioType, descriptors.name));
         }
         return new PmtSection(number, version, pcrPid, streams);
     }
@@ -322,6 +326,16 @@ final class Psi {
         boolean teletext;
 
         /**
+         * The {@code audio_type} of the language descriptor, or {@code -1}.
+         */
+        int audioType = -1;
+
+        /**
+         * The component name, or {@code null}.
+         */
+        String name;
+
+        /**
          * Reads a descriptor loop.
          *
          * @param data the section
@@ -349,7 +363,11 @@ final class Psi {
                         if (size >= 3 && isLetters(data, body)) {
                             language = new String(data, body, 3, StandardCharsets.US_ASCII).toLowerCase(java.util.Locale.ROOT);
                         }
+                        if (size >= 4) {
+                            audioType = data[body + 3] & 0xFF;
+                        }
                     }
+                    case TsDescriptors.COMPONENT_NAME -> name = TsDescriptors.multipleString(data, body, size);
                     case 0x26 -> id3 |= metadataIsId3(data, body, size);
                     case 0x56 -> teletext = true;
                     case 0x59 -> subtitles = true;

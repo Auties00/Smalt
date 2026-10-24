@@ -47,9 +47,12 @@ public interface Muxer extends AutoCloseable {
      * <p>The tags are written in the container's own form: an iTunes {@code ilst} and a Nero
      * {@code chpl} box for MP4 (with a QuickTime chapter track from {@code Mp4Muxer}),
      * {@code Tags}, {@code Chapters} and picture {@code Attachments} for
-     * Matroska, Vorbis comments for Ogg and FLAC, ID3v2 for MP3 and ADTS, the {@code LIST/INFO}
-     * and {@code id3 } chunks for WAV, the text and {@code ID3 } chunks for AIFF. A later call
-     * replaces the tags of an earlier one.
+     * Matroska, Vorbis comments for Ogg and FLAC, ID3v2 for MP3, ADTS, raw AC-3 and AMR, the {@code LIST/INFO}
+     * and {@code id3 } chunks for WAV, the text and {@code ID3 } chunks for AIFF, the {@code LIST INFO} chunk for
+     * AVI. The {@linkplain MediaTags#tracks() track tags} of the declared tracks become their names, tags and
+     * dispositions in MP4, Matroska, AVI and MPEG-TS, as
+     * {@link com.github.auties00.smalt.metadata.TrackTags TrackTags} lists; track tags naming no declared track are
+     * ignored. A later call replaces the tags of an earlier one.
      *
      * @implSpec The default implementation throws {@link MediaException.Unsupported}. Implementations must accept the
      * call until the first packet is written.

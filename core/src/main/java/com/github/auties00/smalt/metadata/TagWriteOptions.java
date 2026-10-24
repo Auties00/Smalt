@@ -143,10 +143,12 @@ public final class TagWriteOptions {
     /**
      * {@return whether items that {@link MediaTags} cannot represent are kept; {@code true} by default}
      *
-     * <p>These items are binary ID3v2 frames ({@code PRIV}, {@code GEOB}, {@code POPM}, ...), binary and
-     * external-locator APE items, FLAC
-     * {@code APPLICATION} and {@code CUESHEET} blocks, non-text MP4 atoms, track-level Matroska tags
-     * and non-picture attachments.
+     * <p>These items are binary ID3v2 frames ({@code PRIV}, {@code GEOB}, the {@code POPM} frames after the
+     * first, ...), binary and external-locator APE items, FLAC
+     * {@code APPLICATION} and {@code CUESHEET} blocks, non-text MP4 atoms (in the movie's and the tracks'
+     * {@code ilst}), Matroska tags that target several tracks, an edition, a chapter or an attachment, and Matroska
+     * attachments that are not pictures. The Matroska tags of one track are {@link MediaTags#tracks() track tags},
+     * kept whatever this option.
      */
     public boolean preserveUnknown() {
         return preserveUnknown;
