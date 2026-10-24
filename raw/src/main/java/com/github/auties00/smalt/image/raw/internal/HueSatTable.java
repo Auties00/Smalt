@@ -122,8 +122,9 @@ final class HueSatTable {
      * zeros. Cells whose interpolation would read past the last saturation or value division are
      * never read and hold zeros.
      *
-     * @implNote This implementation builds the table on first use and keeps it: the vector kernel
-     * reads the corners of a pixel with one load, and the scalar kernel never needs it.
+     * @implNote This implementation builds the table when a kernel prepares this table
+     * ({@link HueSatKernel#prepare}), or on first use, and keeps it: the vector kernel reads the
+     * corners of a pixel with one load, and the scalar kernel never needs it.
      *
      * @return the corner table
      */

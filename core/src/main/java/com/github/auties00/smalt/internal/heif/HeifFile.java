@@ -5,16 +5,21 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.zip.DataFormatException;
+import java.util.zip.Inflater;
 
 /**
  * Parses the structure of a HEIF file (ISO/IEC 23008-12, the container of AVIF and HEIC): the
@@ -25,7 +30,9 @@ import java.util.Set;
  * reads the {@code meta} box into memory and resolves its {@code hdlr} (which must be
  * {@code pict}), {@code pitm}, {@code iinf}, {@code iloc} (versions 0 to 2, every construction
  * method), {@code iprp} ({@code ipco} and every {@code ipma}), {@code iref} (versions 0 and 1)
- * and {@code idat} children into {@link HeifItem}s. It stops as soon as the boxes the brands
+ * and {@code idat} children into {@link HeifItem}s, its {@code grpl} child into
+ * {@link EntityGroup}s and the {@code dref} of its {@code dinf} child into the data references of
+ * the items stored in other files. It stops as soon as the boxes the brands
  * require are seen: the {@code meta} box for the {@code avif}, {@code mif1} and HEIC brands and
  * the {@code moov} box for the sequence brands ({@code avis}, {@code msf1}, {@code heis}). Item
  * data is read on demand with {@link #readItem(MediaSource, HeifItem, MediaLimits)}.
@@ -47,6 +54,11 @@ import java.util.Set;
  * without a terminator end at their box.
  */
 public final class HeifFile {
+    /**
+     * The content type of {@code mime} items that hold an XMP packet.
+     */
+    public static final String XMP_TYPE = "application/rdf+xml";
+
     /**
      * The most top-level boxes walked before the parse gives up.
      */
@@ -72,12 +84,12 @@ public final class HeifFile {
      * The brands whose files keep their images in a file-level {@code meta} box.
      */
     private static final Set<String> ITEM_BRANDS = Set.of("avif", "avio", "mif1", "mif2", "heic", "heix",
-            "heim", "heis", "hevc", "hevx", "miaf");
+            "heim", "heis", "hevc", "hevx", "miaf", "avci", "jpeg", "j2ki");
 
     /**
      * The brands whose files hold an image sequence in a {@code moov} box.
      */
-    private static final Set<String> SEQUENCE_BRANDS = Set.of("avis", "msf1", "hevs", "hevm");
+    private static final Set<String> SEQUENCE_BRANDS = Set.of("avis", "msf1", "hevs", "hevm", "avcs", "jpgs", "j2is");
 
     /**
      * The major brand.
@@ -110,6 +122,11 @@ public final class HeifFile {
     private final boolean hasMeta;
 
     /**
+     * The entity groups of the {@code grpl} box, in file order.
+     */
+    private final List<EntityGroup> groups;
+
+    /**
      * The file offset of the {@code moov} box payload, or {@code -1} when absent.
      */
     private final long movieOffset;
@@ -120,6 +137,17 @@ public final class HeifFile {
     private final long movieSize;
 
     /**
+     * The {@code dinf} box of the {@code meta} box, never moved, or {@code null} when it has none; its
+     * {@code dref} box is parsed when an item stored elsewhere is read, so that a damaged one fails only those.
+     */
+    private final BoxCursor dataInformation;
+
+    /**
+     * The resolver of the files those entries name.
+     */
+    private final DataReferenceResolver resolver;
+
+    /**
      * Constructs the parsed file.
      *
      * @param majorBrand the major brand
@@ -127,20 +155,27 @@ public final class HeifFile {
      * @param primaryItemId the primary item identifier, or {@code 0}
      * @param items the items by identifier
      * @param idat the {@code idat} payload
+     * @param groups the entity groups
      * @param hasMeta whether a {@code meta} box was found
      * @param movieOffset the offset of the {@code moov} payload, or {@code -1}
      * @param movieSize the size of the {@code moov} payload
+     * @param dataInformation the {@code dinf} box of the {@code meta} box, or {@code null}
+     * @param resolver the resolver of the files those entries name
      */
     private HeifFile(String majorBrand, List<String> brands, int primaryItemId, Map<Integer, HeifItem> items,
-                     byte[] idat, boolean hasMeta, long movieOffset, long movieSize) {
+                     byte[] idat, List<EntityGroup> groups, boolean hasMeta, long movieOffset, long movieSize,
+                     BoxCursor dataInformation, DataReferenceResolver resolver) {
         this.majorBrand = majorBrand;
         this.brands = brands;
         this.primaryItemId = primaryItemId;
         this.items = items;
         this.idat = idat;
+        this.groups = groups;
         this.hasMeta = hasMeta;
         this.movieOffset = movieOffset;
         this.movieSize = movieSize;
+        this.dataInformation = dataInformation;
+        this.resolver = resolver;
     }
 
     /**
@@ -165,17 +200,42 @@ public final class HeifFile {
      * two deviations that HEIF writers produce and that do not make a file ambiguous: transformative
      * properties ({@code clap}, {@code irot}, {@code imir}) and AV1 selectors that are not marked
      * essential (and an essential {@code a1lx}), and a {@code dimg} reference that names the same
-     * input twice, which an image overlay may legitimately do.
+     * input twice, which an image overlay may legitimately do. A lenient parse also never rejects a
+     * file for its {@code grpl} box, which no image needs to be shown: it reads the first such box
+     * only, accepts repeated group identifiers and entities, and keeps the groups before the first
+     * truncated one.
      *
      * @param source the file
      * @param limits the bounds of the {@code meta} box
-     * @param strict whether to enforce the rules on essential properties and repeated inputs
+     * @param strict whether to enforce the rules on essential properties, repeated inputs and the
+     * entity groups
      * @return the parsed file
      * @throws MediaException.Malformed if the file is not a valid HEIF file
      * @throws MediaException.LimitExceeded if the {@code meta} box exceeds the limits
      * @throws MediaException.Io if reading the source fails
      */
     public static HeifFile parse(MediaSource source, MediaLimits limits, boolean strict) {
+        return parse(source, limits, strict, DataReferenceResolver.none());
+    }
+
+    /**
+     * Parses the structure of a HEIF file whose items may be stored in other files, which the data reference box
+     * of its {@code meta} box names.
+     *
+     * <p>The parse is the one of {@link #parse(MediaSource, MediaLimits, boolean)}; {@link #readItem} asks the
+     * resolver for the file of an item stored elsewhere and closes it once the item is read.
+     *
+     * @param source the file
+     * @param limits the bounds of the {@code meta} box
+     * @param strict whether to enforce the rules on essential properties, repeated inputs and the
+     * entity groups
+     * @param resolver the resolver of the files the data references name
+     * @return the parsed file
+     * @throws MediaException.Malformed if the file is not a valid HEIF file
+     * @throws MediaException.LimitExceeded if the {@code meta} box exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static HeifFile parse(MediaSource source, MediaLimits limits, boolean strict, DataReferenceResolver resolver) {
         var header = new byte[16];
         var size = source.size();
         long position = 0;
@@ -268,9 +328,10 @@ public final class HeifFile {
             throw new MediaException.Malformed("heif: empty input");
         }
         if (meta == null) {
-            return new HeifFile(majorBrand, brands, 0, Map.of(), new byte[0], false, movieOffset, movieSize);
+            return new HeifFile(majorBrand, brands, 0, Map.of(), new byte[0], List.of(), false, movieOffset,
+                    movieSize, null, resolver);
         }
-        return parseMeta(majorBrand, brands, meta, movieOffset, movieSize, strict);
+        return parseMeta(majorBrand, brands, meta, movieOffset, movieSize, strict, resolver);
     }
 
     /**
@@ -302,10 +363,11 @@ public final class HeifFile {
      * @param movieOffset the offset of the {@code moov} payload, or {@code -1}
      * @param movieSize the size of the {@code moov} payload
      * @param strict whether to enforce the rules on essential properties and repeated inputs
+     * @param resolver the resolver of the files the data references name
      * @return the parsed file
      */
     private static HeifFile parseMeta(String majorBrand, List<String> brands, byte[] meta, long movieOffset,
-                                      long movieSize, boolean strict) {
+                                      long movieSize, boolean strict, DataReferenceResolver resolver) {
         var box = BoxCursor.strict(meta, FourCc.of("meta"));
         if ((box.fullBoxHeader() >>> 24) != 0) {
             throw new MediaException.Malformed("heif: unsupported meta box version");
@@ -329,6 +391,8 @@ public final class HeifFile {
         BoxCursor iprp = null;
         BoxCursor iref = null;
         BoxCursor idat = null;
+        BoxCursor grpl = null;
+        BoxCursor dinf = null;
         while (box.hasBox()) {
             var child = box.nextBox();
             var type = FourCc.toString(child.type());
@@ -340,6 +404,8 @@ public final class HeifFile {
                 case "iprp" -> iprp = unique(iprp, child);
                 case "iref" -> iref = unique(iref, child);
                 case "idat" -> idat = unique(idat, child);
+                case "grpl" -> grpl = strict ? unique(grpl, child) : grpl == null ? child : grpl;
+                case "dinf" -> dinf = dinf == null ? child : dinf;
                 default -> {
                 }
             }
@@ -363,7 +429,84 @@ public final class HeifFile {
             primary = version == 0 ? pitm.u16() : (int) pitm.u32();
         }
         return new HeifFile(majorBrand, brands, primary, Collections.unmodifiableMap(items),
-                idat == null ? new byte[0] : idat.rest(), true, movieOffset, movieSize);
+                idat == null ? new byte[0] : idat.rest(), grpl == null ? List.of() : parseGroups(grpl, strict), true,
+                movieOffset, movieSize, dinf, resolver);
+    }
+
+    /**
+     * Parses the groups list box (ISO/IEC 14496-12 clause 8.18.3): one {@code EntityToGroupBox} per
+     * child, whose group-specific fields after the entity identifiers are skipped.
+     *
+     * <p>A lenient parse keeps the groups before the first truncated one and accepts repeated group
+     * identifiers and entities.
+     *
+     * @param grpl the cursor over the {@code grpl} payload
+     * @param strict whether a defect rejects the file
+     * @return the groups in file order
+     * @throws MediaException.Malformed in a strict parse, if a group is truncated, declares more
+     * entities than its box holds, names an entity twice or reuses the identifier of another group
+     */
+    private static List<EntityGroup> parseGroups(BoxCursor grpl, boolean strict) {
+        var groups = new ArrayList<EntityGroup>();
+        try {
+            parseGroups(grpl, strict, groups);
+        } catch (MediaException.Malformed exception) {
+            if (strict) {
+                throw exception;
+            }
+        }
+        return List.copyOf(groups);
+    }
+
+    /**
+     * Parses the groups of a groups list box into a list, which holds the groups parsed before a
+     * failure.
+     *
+     * @param grpl the cursor over the {@code grpl} payload
+     * @param strict whether repeated group identifiers and entities are rejected
+     * @param groups receives the groups in file order
+     * @throws MediaException.Malformed if a group is truncated or declares more entities than its
+     * box holds, or, in a strict parse, names an entity twice or reuses the identifier of another
+     * group
+     */
+    private static void parseGroups(BoxCursor grpl, boolean strict, List<EntityGroup> groups) {
+        var groupIds = new HashSet<Long>();
+        while (grpl.hasBox()) {
+            var group = grpl.nextBox();
+            var type = FourCc.toString(group.type());
+            group.fullBoxHeader();
+            var groupId = group.u32();
+            var count = group.u32();
+            if (count > group.remaining() / 4) {
+                throw new MediaException.Malformed("heif: entity group '" + type + "' declares " + count
+                        + " entities in " + group.remaining() + " bytes");
+            }
+            if (!groupIds.add(groupId) && strict) {
+                throw new MediaException.Malformed("heif: two entity groups have the identifier " + groupId);
+            }
+            var entities = new int[(int) count];
+            var distinct = new HashSet<Long>();
+            for (var i = 0; i < entities.length; i++) {
+                var entity = group.u32();
+                if (!distinct.add(entity) && strict) {
+                    throw new MediaException.Malformed("heif: entity group " + groupId + " names entity " + entity
+                            + " twice");
+                }
+                entities[i] = entity > Integer.MAX_VALUE ? -1 : (int) entity;
+            }
+            groups.add(new EntityGroup(type, groupId, entities));
+        }
+    }
+
+    /**
+     * Describes one entity group of the {@code grpl} box.
+     *
+     * @param type the grouping type, for example {@code "altr"} for alternatives
+     * @param id the group identifier
+     * @param entities the item or track identifiers of the group in box order, {@code -1} for an
+     * identifier beyond the largest {@code int}
+     */
+    public record EntityGroup(String type, long id, int[] entities) {
     }
 
     /**
@@ -427,10 +570,11 @@ public final class HeifFile {
             var type = FourCc.toString(infe.fourCc());
             infe.string();
             var contentType = type.equals("mime") ? infe.string() : "";
+            var contentEncoding = type.equals("mime") ? infe.string() : "";
             if (items.containsKey(id)) {
                 throw new MediaException.Malformed("heif: duplicate item " + id);
             }
-            items.put(id, new HeifItem(id, type, contentType));
+            items.put(id, new HeifItem(id, type, contentType, contentEncoding));
         }
     }
 
@@ -688,6 +832,45 @@ public final class HeifFile {
     }
 
     /**
+     * Returns the entity groups of the {@code grpl} box.
+     *
+     * @return the groups in file order, unmodifiable
+     */
+    public List<EntityGroup> entityGroups() {
+        return groups;
+    }
+
+    /**
+     * Returns the items the file prefers to an item: the items listed before it in the alternatives
+     * group ({@code altr}) that holds it, most preferred first (ISO/IEC 14496-12 clause 8.18.3.3).
+     *
+     * <p>Only the first {@code altr} group that lists the item counts, since an entity belongs to
+     * one such group at most.
+     *
+     * @param id the item identifier
+     * @return the preferred items, empty when the item is in no alternatives group or is listed
+     * first
+     */
+    public List<HeifItem> preferredAlternatives(int id) {
+        for (var group : groups) {
+            if (!group.type().equals("altr")) {
+                continue;
+            }
+            var preferred = new ArrayList<HeifItem>();
+            for (var entity : group.entities()) {
+                if (entity == id) {
+                    return List.copyOf(preferred);
+                }
+                var item = items.get(entity);
+                if (item != null) {
+                    preferred.add(item);
+                }
+            }
+        }
+        return List.of();
+    }
+
+    /**
      * Returns whether the file has a {@code moov} box.
      *
      * @return {@code true} for files that hold an image sequence
@@ -797,8 +980,8 @@ public final class HeifFile {
         if (!item.located) {
             throw new MediaException.Malformed("heif: item " + item.id() + " has no location");
         }
-        if (item.dataReferenceIndex != 0) {
-            throw new MediaException.Unsupported("heif", "item " + item.id() + " is stored in another file");
+        if (item.constructionMethod == 0 && item.dataReferenceIndex != 0) {
+            return readReferencedItem(source, item, limits);
         }
         var total = item.size();
         LimitChecks.checkAllocation(limits, total);
@@ -834,6 +1017,61 @@ public final class HeifFile {
             position += length;
         }
         return data;
+    }
+
+    /**
+     * Reads an item of construction method {@code 0} whose data reference index is not {@code 0}: from the file
+     * when the entry is self-contained, from the file the resolver supplies otherwise.
+     *
+     * @param source the file
+     * @param item the item to read
+     * @param limits the bound of the item size
+     * @return the data
+     * @throws MediaException.Malformed if the index names no entry of the {@code dref} box
+     * @throws MediaException.Unsupported if the item is stored in a file the resolver does not supply
+     */
+    private byte[] readReferencedItem(MediaSource source, HeifItem item, MediaLimits limits) {
+        var index = item.dataReferenceIndex;
+        var dataReferences = dataReferences();
+        if (index > dataReferences.size()) {
+            throw new MediaException.Malformed("heif: item " + item.id() + " names data reference " + index
+                    + " of a dref box of " + dataReferences.size() + " entries");
+        }
+        try (var files = new DataReferences(resolver)) {
+            var from = files.open(dataReferences.get(index - 1), "heif", "item " + item.id());
+            var data = from == null ? source : from;
+            var total = item.size();
+            LimitChecks.checkAllocation(limits, total);
+            checkExtents(data, item);
+            var bytes = new byte[(int) total];
+            var position = 0;
+            for (var e = 0; e < item.extentOffsets.length; e++) {
+                var length = (int) item.extentLengths[e];
+                data.readFully(item.extentOffsets[e], bytes, position, length);
+                position += length;
+            }
+            return bytes;
+        }
+    }
+
+    /**
+     * Parses the entries of the {@code dref} box of the {@code dinf} box of the {@code meta} box.
+     *
+     * @return the entries, empty when the {@code meta} box has no {@code dinf} or its {@code dinf} no {@code dref}
+     * @throws MediaException.Malformed if the {@code dref} box is damaged
+     */
+    private List<DataReferences.Entry> dataReferences() {
+        if (dataInformation == null) {
+            return List.of();
+        }
+        var dinf = dataInformation.duplicate();
+        while (dinf.hasBox()) {
+            var child = dinf.nextBox();
+            if (FourCc.toString(child.type()).equals("dref")) {
+                return DataReferences.parse(child);
+            }
+        }
+        return List.of();
     }
 
     /**
@@ -885,6 +1123,146 @@ public final class HeifFile {
     }
 
     /**
+     * Reads the XMP packet that describes an image item, or the first input of a derived item
+     * when the item itself has none.
+     *
+     * <p>The packet is the data of the first located {@code mime} item of content type
+     * {@value #XMP_TYPE} that describes the item ({@code cdsc} reference), with its content
+     * encoding undone: none, {@code deflate} (zlib, or raw deflate without a zlib header) or
+     * {@code gzip}. Metadata is not needed to show the image, so a packet in another encoding, or
+     * one that is corrupt or larger than the limits allow, is left out.
+     *
+     * @param source the file
+     * @param item the image item
+     * @param limits the bounds of the item read and of the inflated packet
+     * @return the packet bytes, or {@code null} when there is none
+     * @throws MediaException.Io if reading the source fails
+     */
+    public byte[] xmpOf(MediaSource source, HeifItem item, MediaLimits limits) {
+        var current = item;
+        for (var depth = 0; current != null && depth <= MAX_ITEM_DEPTH; depth++) {
+            for (var description : descriptionsOf(current.id())) {
+                if (!description.type().equals("mime") || !description.isLocated()
+                        || !description.contentType().toLowerCase(Locale.ROOT).startsWith(XMP_TYPE)) {
+                    continue;
+                }
+                try {
+                    return decodeContent(readItem(source, description, limits), description.contentEncoding(), limits);
+                } catch (MediaException.Malformed | MediaException.Unsupported | MediaException.LimitExceeded exception) {
+                    return null;
+                }
+            }
+            var inputs = current.references("dimg");
+            current = inputs.length == 0 ? null : item(inputs[0]);
+        }
+        return null;
+    }
+
+    /**
+     * Undoes the content encoding of the data of a {@code mime} item.
+     *
+     * @param data the stored data
+     * @param encoding the {@code content_encoding}, the empty string for none
+     * @param limits the bound of the decoded size
+     * @return the decoded data
+     * @throws MediaException.Unsupported if the encoding is not none, {@code deflate} or {@code gzip}
+     * @throws MediaException.Malformed if the compressed data is corrupt or truncated
+     * @throws MediaException.LimitExceeded if the decoded data exceeds the limits
+     */
+    static byte[] decodeContent(byte[] data, String encoding, MediaLimits limits) {
+        return switch (encoding.trim().toLowerCase(Locale.ROOT)) {
+            case "", "identity" -> data;
+            case "deflate" -> {
+                // HTTP deflate is zlib (RFC 1950); some writers store raw deflate (RFC 1951)
+                var zlib = data.length >= 2 && (data[0] & 0x0F) == 8 && (((data[0] & 0xFF) << 8) | (data[1] & 0xFF)) % 31 == 0;
+                yield inflate(data, 0, data.length, !zlib, limits);
+            }
+            case "gzip", "x-gzip" -> inflate(data, gzipHeaderLength(data), data.length, true, limits);
+            default -> throw new MediaException.Unsupported("heif", "content encoding '" + encoding + "'");
+        };
+    }
+
+    /**
+     * Returns the length of the header of a gzip member (RFC 1952 section 2.3).
+     *
+     * @param data the gzip data
+     * @return the offset of the deflate stream
+     * @throws MediaException.Malformed if the header is invalid or truncated
+     */
+    private static int gzipHeaderLength(byte[] data) {
+        if (data.length < 10 || (data[0] & 0xFF) != 0x1F || (data[1] & 0xFF) != 0x8B || data[2] != 8) {
+            throw new MediaException.Malformed("heif: invalid gzip header");
+        }
+        var flags = data[3] & 0xFF;
+        var offset = 10;
+        if ((flags & 4) != 0) {
+            if (offset + 2 > data.length) {
+                throw new MediaException.Malformed("heif: truncated gzip header");
+            }
+            offset += 2 + ((data[offset] & 0xFF) | (data[offset + 1] & 0xFF) << 8);
+        }
+        for (var bit = 8; bit <= 16; bit <<= 1) {
+            if ((flags & bit) != 0) {
+                while (offset < data.length && data[offset] != 0) {
+                    offset++;
+                }
+                offset++;
+            }
+        }
+        if ((flags & 2) != 0) {
+            offset += 2;
+        }
+        if (offset > data.length) {
+            throw new MediaException.Malformed("heif: truncated gzip header");
+        }
+        return offset;
+    }
+
+    /**
+     * Inflates a deflate stream, bounded by the allocation limit.
+     *
+     * @param data the compressed data
+     * @param offset the first compressed byte
+     * @param end the end of the compressed bytes
+     * @param raw whether the stream is raw deflate rather than zlib
+     * @param limits the bound of the inflated size
+     * @return the inflated bytes
+     */
+    private static byte[] inflate(byte[] data, int offset, int end, boolean raw, MediaLimits limits) {
+        var inflater = new Inflater(raw);
+        try {
+            inflater.setInput(data, offset, end - offset);
+            var bound = Math.min(limits.maxBytes(), Integer.MAX_VALUE - 16L);
+            var output = new byte[(int) Math.min(bound, Math.max(64, Math.min((end - offset) * 4L, 1 << 20)))];
+            var size = 0;
+            while (!inflater.finished()) {
+                if (size == output.length) {
+                    var grown = Math.min((long) output.length * 2, bound);
+                    if (grown <= output.length) {
+                        // a full output is accepted only when the stream ends without another byte
+                        if (inflater.inflate(new byte[1]) == 0 && inflater.finished()) {
+                            break;
+                        }
+                        throw new MediaException.LimitExceeded("heif: the inflated item exceeds " + limits.maxBytes()
+                                + " bytes");
+                    }
+                    output = Arrays.copyOf(output, (int) grown);
+                }
+                var produced = inflater.inflate(output, size, output.length - size);
+                size += produced;
+                if (produced == 0 && (inflater.needsInput() || inflater.needsDictionary())) {
+                    throw new MediaException.Malformed("heif: the compressed item is truncated");
+                }
+            }
+            return Arrays.copyOf(output, size);
+        } catch (DataFormatException exception) {
+            throw new MediaException.Malformed("heif: the compressed item is corrupt", exception);
+        } finally {
+            inflater.end();
+        }
+    }
+
+    /**
      * Extracts the TIFF structure of an {@code Exif} item.
      *
      * <p>The item starts with the 32-bit offset of the TIFF header from the end of that field
@@ -902,14 +1280,14 @@ public final class HeifFile {
         }
         var declared = ByteArrays.u32be(payload, 0);
         if (declared <= payload.length - 8L && isTiffHeader(payload, 4 + (int) declared)) {
-            return java.util.Arrays.copyOfRange(payload, 4 + (int) declared, payload.length);
+            return Arrays.copyOfRange(payload, 4 + (int) declared, payload.length);
         }
         if (isTiffHeader(payload, 0)) {
             return payload.clone();
         }
         for (var offset = 4; offset + 4 <= payload.length; offset++) {
             if (isTiffHeader(payload, offset)) {
-                return java.util.Arrays.copyOfRange(payload, offset, payload.length);
+                return Arrays.copyOfRange(payload, offset, payload.length);
             }
         }
         return null;
