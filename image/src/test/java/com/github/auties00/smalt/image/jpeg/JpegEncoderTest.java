@@ -261,13 +261,33 @@ class JpegEncoderTest {
             assertTrue(Quality.psnr(expected, viaRgb) > 35);
         }
 
+        @ParameterizedTest
+        @EnumSource(value = MatrixCoefficients.class, names = {"BT2020_CL", "SMPTE2085", "CHROMA_DERIVED_NCL",
+                "CHROMA_DERIVED_CL", "ICTCP", "IPT_C2", "YCGCO_RE", "YCGCO_RO"})
+        @DisplayName("codes a picture in a per-pixel matrix as its RGBA conversion, at its full depth")
+        void perPixelMatrix(MatrixCoefficients matrix) {
+            var color = new ColorInfo(matrix, ColorRange.LIMITED, com.github.auties00.smalt.image.ColorPrimaries.BT2020,
+                    com.github.auties00.smalt.image.TransferCharacteristics.PQ);
+            var rgb = smooth(40, 24, 8);
+            var options = JpegEncoderOptions.ofQuality(90);
+            var narrow = com.github.auties00.smalt.image.ops.ImageOps.toYuv(rgb, ChromaFormat.YUV420, color);
+            assertArrayEquals(JpegEncoder.encode(com.github.auties00.smalt.image.ops.ImageOps.toRgba(narrow), options),
+                    JpegEncoder.encode(narrow, options), matrix.toString());
+            var wide = com.github.auties00.smalt.image.ops.ImageOps.toYuv16(rgb, ChromaFormat.YUV422, color, 12);
+            assertArrayEquals(JpegEncoder.encode(com.github.auties00.smalt.image.ops.ImageOps.toRgba(wide), options),
+                    JpegEncoder.encode(wide, options), matrix.toString());
+            var decoded = JpegTestSupport.toRgb(decode(JpegEncoder.encode(wide, JpegEncoderOptions.builder()
+                    .quality(98).chromaFormat(ChromaFormat.YUV444).build())), true);
+            var expected = new byte[40 * 24 * 3];
+            for (var i = 0; i < 40 * 24; i++) {
+                System.arraycopy(rgb.pixels(), 4 * i, expected, 3 * i, 3);
+            }
+            assertTrue(Quality.psnr(expected, decoded) > 30, matrix + ": " + Quality.psnr(expected, decoded));
+        }
+
         @Test
-        @DisplayName("rejects matrices without a conversion to BT.601")
-        void unsupportedMatrix() {
-            var picture = YuvPicture.allocate(16, 16, ChromaFormat.YUV420, false,
-                    ColorInfo.BT709_LIMITED.withMatrix(MatrixCoefficients.ICTCP));
-            assertThrows(IllegalArgumentException.class, () -> JpegEncoder.encode(picture,
-                    JpegEncoderOptions.ofQuality(90)));
+        @DisplayName("codes an identity picture through RGB")
+        void identityMatrix() {
             var identity = YuvPicture.allocate(16, 16, ChromaFormat.YUV444, false,
                     ColorInfo.JPEG.withMatrix(MatrixCoefficients.IDENTITY).withRange(ColorRange.FULL));
             assertDoesNotThrow(() -> JpegEncoder.encode(identity, JpegEncoderOptions.ofQuality(90)));

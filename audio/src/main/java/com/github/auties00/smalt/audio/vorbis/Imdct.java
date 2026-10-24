@@ -110,8 +110,8 @@ final class Imdct {
         this.rotationSin = new float[quarter];
         for (var p = 0; p < quarter; p++) {
             var angle = Math.PI * (p + 0.125) / half;
-            rotationCos[p] = (float) Math.cos(angle);
-            rotationSin[p] = (float) Math.sin(angle);
+            rotationCos[p] = (float) StrictMath.cos(angle);
+            rotationSin[p] = (float) StrictMath.sin(angle);
         }
         var bits = Integer.numberOfTrailingZeros(quarter);
         this.bitReverse = new int[quarter];
@@ -124,8 +124,8 @@ final class Imdct {
             radix2Twiddles = new float[2 * h];
             for (var k = 0; k < h; k++) {
                 var angle = -2 * Math.PI * k / quarter;
-                radix2Twiddles[k] = (float) Math.cos(angle);
-                radix2Twiddles[h + k] = (float) Math.sin(angle);
+                radix2Twiddles[k] = (float) StrictMath.cos(angle);
+                radix2Twiddles[h + k] = (float) StrictMath.sin(angle);
             }
         } else {
             radix2Twiddles = new float[0];
@@ -143,8 +143,8 @@ final class Imdct {
         }
         this.slope = new float[half];
         for (var k = 0; k < half; k++) {
-            var inner = Math.sin((k + 0.5) / half * Math.PI / 2);
-            slope[k] = (float) Math.sin(Math.PI / 2 * inner * inner);
+            var inner = StrictMath.sin((k + 0.5) / half * Math.PI / 2);
+            slope[k] = (float) StrictMath.sin(Math.PI / 2 * inner * inner);
         }
         this.slopeDown = new float[half];
         for (var k = 0; k < half; k++) {
@@ -166,8 +166,8 @@ final class Imdct {
         for (var k = 0; k < s; k++) {
             for (var m = 1; m <= 3; m++) {
                 var angle = -2 * Math.PI * m * k / length;
-                values[(2 * m - 2) * s + k] = (float) Math.cos(angle);
-                values[(2 * m - 1) * s + k] = (float) Math.sin(angle);
+                values[(2 * m - 2) * s + k] = (float) StrictMath.cos(angle);
+                values[(2 * m - 1) * s + k] = (float) StrictMath.sin(angle);
             }
         }
         return values;

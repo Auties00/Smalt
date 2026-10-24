@@ -6,9 +6,15 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoEncoder;
 import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.h264.encoder.internal.CaptionSei;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderConfig;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderCore;
+import com.github.auties00.smalt.video.h264.encoder.internal.EncoderEngine;
+import com.github.auties00.smalt.video.h264.encoder.internal.WideCore;
 
+import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -16,8 +22,11 @@ import java.util.function.Consumer;
 /**
  * Encodes pictures into an H.264 / MPEG-4 AVC elementary stream.
  *
- * <p>The stream is 8-bit 4:2:0, frame coded, in the profile, level and rate control mode of its
- * {@link H264EncoderOptions}. Without a {@linkplain H264EncoderOptions#lookahead() look-ahead} it
+ * <p>The stream has the {@linkplain H264EncoderOptions#chromaFormat() chroma format},
+ * {@linkplain H264EncoderOptions#bitDepth() bit depth}, {@linkplain H264EncoderOptions#fieldOrder() field
+ * structure}, profile, level and rate control mode of its {@link H264EncoderOptions}, and is
+ * {@linkplain H264EncoderOptions#lossless() lossless} when they ask for it. Without a
+ * {@linkplain H264EncoderOptions#lookahead() look-ahead} it
  * codes I and P pictures only: every packet's presentation and decoding timestamps are equal and
  * each input frame produces its packet before {@link #encode(VideoFrame, Consumer)} returns, so
  * {@link #flush(Consumer)} never has anything left to emit. With a look-ahead the encoder holds
@@ -42,19 +51,31 @@ import java.util.function.Consumer;
  * access units flagged as key frames.
  *
  * <p>Frames may be given in any {@link com.github.auties00.smalt.image.Picture}
- * representation of exactly the encoder's size. 4:2:0 Y'CbCr samples are coded as they are;
- * other Y'CbCr layouts have their chroma averaged down to 4:2:0; RGBA is converted with the
- * configured color matrix and range, ignoring alpha. Timestamps are in {@link #timeBase()} units
+ * representation of exactly the encoder's size. Y'CbCr samples of the stream's chroma format and
+ * depth are coded as they are; other Y'CbCr layouts are resampled to the stream's chroma format
+ * (an 8-bit 4:2:0 stream averages chroma down to 4:2:0) and other depths are scaled to the stream's
+ * (see {@link H264EncoderOptions#bitDepth()}); RGBA is converted with the configured color matrix
+ * and range, ignoring alpha. An interlaced stream takes frames whose rows interleave the two
+ * fields. Timestamps are in {@link #timeBase()} units
  * and must increase; a frame whose timestamp is {@link Packet#NO_TIMESTAMP} is placed one nominal
  * frame after the previous one. Gaps between timestamps are accounted for by rate control. In
  * {@link H264EncoderOptions#realtime()} mode a timestamp that does not increase is accepted: the
  * packet is stamped one time base unit after the previous one and rate control treats the frame
  * as lasting one nominal frame.
  *
+ * <p>A frame carrying closed captions ({@link com.github.auties00.smalt.video.FrameSideData#closedCaptions()})
+ * gets them back in its access unit, as ATSC A/72 caption data in {@code user_data_registered_itu_t_t35} SEI
+ * messages placed before its first slice, at most 31 constructs per message.
+ *
  * <p>The target bitrate can follow a congestion controller while frames are being encoded (see
  * {@link #setTargetBitrate(long)}), and {@link #stats()} reports the counters a sender needs.
  *
- * <p>Every picture is a single slice. With {@link H264EncoderOptions#threads()} above 1, up to
+ * <p>Pictures are divided into {@linkplain H264EncoderOptions#slices() slices} as the options say, and
+ * the {@linkplain H264EncoderOptions#temporalLayers() temporal layers} and
+ * {@linkplain H264EncoderOptions#intraRefresh() intra refresh} options shape the prediction
+ * structure. Streams that are not 8-bit, 4:2:0, progressive and lossy are coded with I and P
+ * pictures, one motion vector per macroblock and no look-ahead, on the calling thread. For the others,
+ * with {@link H264EncoderOptions#threads()} above 1, up to
  * that many helper threads of the module's shared worker pool analyze the macroblock rows of a
  * picture in a wavefront, each row two macroblocks behind the one above, while the calling thread
  * entropy codes the decided macroblocks in order and analyzes any row no helper has taken; the
@@ -78,7 +99,12 @@ public final class H264Encoder implements VideoEncoder {
 
     private final EncoderConfig config;
 
-    private final EncoderCore core;
+    private final EncoderEngine engine;
+
+    /**
+     * The caption data of the frames not yet coded, by presentation timestamp.
+     */
+    private final Map<Long, byte[]> captions = new HashMap<>();
 
     /**
      * Constructs an encoder for a picture size with {@link H264EncoderOptions#defaults()}.
@@ -98,9 +124,11 @@ public final class H264Encoder implements VideoEncoder {
      * Constructs an encoder for a picture size.
      *
      * <p>Any positive size is accepted. The coded picture is rounded up to whole 16x16 macroblocks
-     * and frame cropping restores the display size; because 4:2:0 cropping works in units of two
-     * samples, an odd width or height is displayed one sample larger than the input, the extra
-     * column or row repeating the last one.
+     * (interlaced pictures to whole macroblock pairs) and frame cropping restores the display size.
+     * Cropping works in units of two samples horizontally for 4:2:0 and 4:2:2, and vertically in
+     * units of two rows for 4:2:0 and one row otherwise, doubled for interlaced pictures; a side that
+     * is not a multiple of its unit is displayed rounded up to the next multiple, the extra columns or
+     * rows repeating the last one.
      *
      * @param width the picture width in pixels, from 1 to 16384
      * @param height the picture height in pixels, from 1 to 16384
@@ -112,7 +140,7 @@ public final class H264Encoder implements VideoEncoder {
     public H264Encoder(int width, int height, H264EncoderOptions options) {
         this.options = Objects.requireNonNull(options, "options");
         this.config = EncoderConfig.of(width, height, options);
-        this.core = new EncoderCore(config);
+        this.engine = EncoderEngine.of(config);
     }
 
     /**
@@ -123,12 +151,24 @@ public final class H264Encoder implements VideoEncoder {
     }
 
     /**
-     * Returns the encoding engine; a test hook for this package.
+     * Returns the encoding engine of 8-bit 4:2:0 progressive lossy streams; a test hook for this
+     * package.
      *
      * @return the engine
+     * @throws ClassCastException if the stream is coded by the extended engine
      */
     EncoderCore core() {
-        return core;
+        return (EncoderCore) engine;
+    }
+
+    /**
+     * Returns the encoding engine of the other streams; a test hook for this package.
+     *
+     * @return the engine
+     * @throws ClassCastException if the stream is coded by the 8-bit engine
+     */
+    WideCore wide() {
+        return (WideCore) engine;
     }
 
     @Override
@@ -163,7 +203,7 @@ public final class H264Encoder implements VideoEncoder {
         if (options.packetFormat() == H264PacketFormat.ANNEX_B) {
             return Optional.empty();
         }
-        return Optional.of(core.configurationRecord());
+        return Optional.of(engine.configurationRecord());
     }
 
     /**
@@ -173,7 +213,7 @@ public final class H264Encoder implements VideoEncoder {
      * {@link H264EncoderOptions#realtime()} mode) the encoder emits exactly one packet per frame,
      * before this method returns. With a look-ahead it emits nothing for the first
      * {@code lookahead} frames and then one packet per frame, and {@link #flush(Consumer)} emits the
-     * rest. A high-bit-depth picture is first reduced to 8 bits with
+     * rest. For an 8-bit stream, a high-bit-depth picture is first reduced to 8 bits with
      * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(com.github.auties00.smalt.image.Picture)
      * ImageOps.toEightBit}.
      *
@@ -187,10 +227,39 @@ public final class H264Encoder implements VideoEncoder {
     public void encode(VideoFrame frame, Consumer<Packet> output) {
         Objects.requireNonNull(frame, "frame");
         Objects.requireNonNull(output, "output");
-        var packet = core.encode(frame.picture(), frame.pts(), Math.max(0, frame.duration()));
+        frame.sideData().closedCaptions().ifPresent(data -> captions.merge(frame.pts(), data, H264Encoder::join));
+        var packet = engine.encode(frame.picture(), frame.pts(), Math.max(0, frame.duration()));
         if (packet != null) {
-            output.accept(packet);
+            output.accept(withCaptions(packet));
         }
+    }
+
+    /**
+     * Adds the caption data of a packet's frame to the packet.
+     *
+     * @param packet a packet the engine produced
+     * @return the packet, with a caption SEI NAL unit when its frame carried captions
+     */
+    private Packet withCaptions(Packet packet) {
+        if (captions.isEmpty()) {
+            return packet;
+        }
+        var data = captions.remove(packet.pts());
+        return data == null ? packet : packet.withData(CaptionSei.insert(packet.data(),
+                options.packetFormat() == H264PacketFormat.ANNEX_B, data));
+    }
+
+    /**
+     * Joins the caption data of frames that share a timestamp.
+     *
+     * @param first the earlier frame's constructs
+     * @param second the later frame's constructs
+     * @return a new array
+     */
+    private static byte[] join(byte[] first, byte[] second) {
+        var joined = Arrays.copyOf(first, first.length + second.length);
+        System.arraycopy(second, 0, joined, first.length, second.length);
+        return joined;
     }
 
     /**
@@ -204,9 +273,10 @@ public final class H264Encoder implements VideoEncoder {
     @Override
     public void flush(Consumer<Packet> output) {
         Objects.requireNonNull(output, "output");
-        for (var packet = core.flush(); packet != null; packet = core.flush()) {
-            output.accept(packet);
+        for (var packet = engine.flush(); packet != null; packet = engine.flush()) {
+            output.accept(withCaptions(packet));
         }
+        captions.clear();
     }
 
     /**
@@ -221,7 +291,7 @@ public final class H264Encoder implements VideoEncoder {
      */
     @Override
     public void requestKeyframe() {
-        core.requestKeyframe();
+        engine.requestKeyframe();
     }
 
     /**
@@ -252,7 +322,7 @@ public final class H264Encoder implements VideoEncoder {
         if (options.rateControl() == H264RateControl.CONSTANT_QUALITY) {
             throw new IllegalStateException("a constant quality encoder has no target bitrate");
         }
-        core.setTargetBitrate((int) bitsPerSecond);
+        engine.setTargetBitrate((int) bitsPerSecond);
     }
 
     /**
@@ -265,8 +335,8 @@ public final class H264Encoder implements VideoEncoder {
      * @return a snapshot of the counters
      */
     public H264EncoderStats stats() {
-        return new H264EncoderStats(core.frameCount(), core.keyframeCount(), core.keyframeRequestCount(),
-                core.byteCount(), core.lastQp(), core.targetBitrate());
+        return new H264EncoderStats(engine.frameCount(), engine.keyframeCount(), engine.keyframeRequestCount(),
+                engine.byteCount(), engine.lastQp(), engine.targetBitrate(), engine.lastTemporalLayer());
     }
 
     /**
@@ -277,6 +347,6 @@ public final class H264Encoder implements VideoEncoder {
      */
     @Override
     public void close() {
-        core.close();
+        engine.close();
     }
 }

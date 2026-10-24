@@ -4,20 +4,30 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
+import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
+import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.nal.NalUnits;
+import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.internal.tags.TsDescriptors;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
+import com.github.auties00.smalt.track.VideoTrack;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
@@ -40,6 +50,16 @@ import java.util.PriorityQueue;
  *       13818-1 clause 2.14 requires), and every key frame that carries no parameter set gets
  *       those of the track's {@code avcC} or {@code hvcC} record, so decoding can start at any
  *       key frame;</li>
+ *   <li>AV1 ({@code 0x06}, id {@code 0xBD}, the {@code "AV01"} registration and, when the track
+ *       has an {@code av1C} record, the AV1 video descriptor built from it, as the AOM "Carriage of
+ *       AV1 in MPEG-2 TS" specifies): each temporal unit becomes an access unit that opens with a
+ *       temporal delimiter, whose OBUs (with their size fields) each get a start code and emulation
+ *       prevention bytes; a key frame without a sequence header gets the one of the track's
+ *       {@code av1C} record. The descriptor's {@code hdr_wcg_idc} follows the track's color
+ *       description;</li>
+ *   <li>MPEG-4 Part 2 ({@code 0x10}, ids from {@code 0xE0}): frames as they are, a key frame that
+ *       does not start with the visual object sequence, visual object or video object layer
+ *       headers getting those of the track's configuration;</li>
  *   <li>AAC ({@code 0x0F}, ids from {@code 0xC0}): every packet gets an ADTS header built from the
  *       {@code AudioSpecificConfig} (HE-AAC is signaled implicitly, by its core);</li>
  *   <li>MP3 and MP2 ({@code 0x03}, or {@code 0x04} below 32 kHz, ids from {@code 0xC0}): frames as
@@ -52,11 +72,41 @@ import java.util.PriorityQueue;
  *       trim, and a packet whose duration is shorter than its coded duration carries the
  *       difference as its end trim. Up to eight channels with the Vorbis channel order are
  *       supported;</li>
+ *   <li>16-bit and 24-bit PCM, id {@code 0xBD}: SMPTE ST 302 AES3 data ({@code 0x06} with the
+ *       {@code "BSSD"} registration) in a plain transport stream at 48 kHz with two, four, six or
+ *       eight channels, and Blu-ray linear PCM ({@code 0x80}, with the {@code "HDMV"} registration
+ *       for the program) otherwise and in M2TS, at 48, 96 or 192 kHz with one to eight channels.
+ *       A 24-bit track that declares 20 {@linkplain AudioTrack#bitsPerSample() bits per sample}
+ *       is written as 20-bit words. Channels are taken in the order of the track's layout; a
+ *       Blu-ray channel assignment is chosen by the channel count (and, for three and four
+ *       channels, by whether the layout has a back center or a front center). A PCM packet is cut
+ *       into PES packets of at most 5 ms (Blu-ray) or 40 ms (ST 302);</li>
+ *   <li>bitmap subtitles and teletext, id {@code 0xBD}: PGS ({@code 0x90}, with the {@code "HDMV"} registration for
+ *       the program, as Blu-ray defines the type), one PES packet per packet; DVB
+ *       subtitles ({@code 0x06} with the subtitling descriptor of the track's configuration, or one for page 1),
+ *       each packet's segments framed by the {@code data_identifier}, {@code subtitle_stream_id} and end marker of
+ *       the PES data field; DVB teletext ({@code 0x06} with the teletext descriptor of the track's configuration,
+ *       or one for subtitle page 888), each packet a PES data field, written with the fixed 45-byte PES header and
+ *       the stuffing data units that fill the last transport packet, as ETSI EN 300 472 requires;</li>
  *   <li>data tracks, id {@code 0xBD}: a track whose handler is {@code "id3"} becomes ID3 timed
  *       metadata ({@code 0x15} with the metadata pointer and metadata descriptors of the HLS
- *       timed metadata convention), any other a private PES stream ({@code 0x06}).</li>
+ *       timed metadata convention), one whose handler is {@code "scte35"} SCTE 35 splice
+ *       information ({@code 0x86}, its packets whole {@code splice_info_section}s written as
+ *       sections, with the {@code "CUEI"} registration for the program and a cue identifier
+ *       descriptor for the stream; a section's splice times plus its {@code pts_adjustment} are
+ *       times of the track timeline, so the {@code pts_adjustment} is moved by the offset added to
+ *       every timestamp and the {@code CRC_32} recomputed), any other a private PES stream ({@code 0x06}). SCTE 35 and
+ *       Blu-ray linear PCM cannot share a program, where {@code 0x86} is DTS-HD audio.</li>
  * </ul>
- * Every track gets the language descriptor of its language. Audio frames are gathered into PES
+ * A packet that changes the codec configuration of an H.264, HEVC, AV1 or MPEG-4 Part 2 track
+ * replaces the headers key frames get from then on, and one that changes the {@code AudioSpecificConfig} of an AAC
+ * track the ADTS header of the following packets; a change on any other track is rejected.
+ * Every track gets the language descriptor of its language. The track tags of
+ * {@link #setTags(MediaTags)} give an audio track the {@code audio_type} of that descriptor
+ * ({@link TrackDisposition#CLEAN_EFFECTS} 1, {@link TrackDisposition#HEARING_IMPAIRED} 2,
+ * {@link TrackDisposition#VISUAL_IMPAIRED} 3, the first of them in that order, with the language
+ * {@code und} when the track has none) and, for its name, an ATSC A/65 component name descriptor.
+ * Audio frames are gathered into PES
  * packets of up to 2930 payload bytes and 400 ms (100 ms for the stream that carries the clock
  * reference); video and data packets each make a PES packet of their own.
  *
@@ -92,9 +142,19 @@ public final class TsMuxer implements Muxer {
     private static final int PACKET = 188;
 
     /**
+     * The largest {@code section_length} of a PSI section (ISO/IEC 13818-1 clause 2.4.4).
+     */
+    private static final int MAX_SECTION_LENGTH = 1021;
+
+    /**
      * The payload capacity of a transport packet without an adaptation field.
      */
     private static final int PAYLOAD = 184;
+
+    /**
+     * The {@code PES_header_data_length} of a teletext PES packet, which makes its header 45 bytes long.
+     */
+    private static final int TELETEXT_HEADER_LENGTH = 0x24;
 
     /**
      * The 90 kHz time base of PES timestamps.
@@ -290,6 +350,11 @@ public final class TsMuxer implements Muxer {
     private boolean started;
 
     /**
+     * The tags of {@link #setTags(MediaTags)}, whose track tags go in the program map table.
+     */
+    private MediaTags tags = MediaTags.empty();
+
+    /**
      * Whether {@link #finish()} or {@link #close()} ran.
      */
     private boolean finished;
@@ -331,21 +396,51 @@ public final class TsMuxer implements Muxer {
      * Returns whether transport streams written by this muxer can carry a codec.
      *
      * @param codec the codec of a track to add
-     * @return {@code true} for H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3, Opus and data
+     * @return {@code true} for H.264, HEVC, AV1, MPEG-4 Part 2, AAC, MP3, MP2, AC-3, E-AC-3, Opus, 16-bit and
+     * 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case H264, HEVC, AAC, MP3, MP2, AC3, EAC3, OPUS, DATA -> true;
+            case H264, HEVC, AV1, MPEG4_PART2, AAC, MP3, MP2, AC3, EAC3, OPUS, PCM_S16LE, PCM_S16BE, PCM_S24LE,
+                 PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
             default -> false;
         };
     }
 
     /**
+     * Returns whether transport streams written by this muxer can carry a track's codec and audio format.
+     *
+     * <p>A PCM track is carried when it has a layout of one to eight channels at 48, 96 or 192 kHz; any other
+     * track when {@link #supports(Codec)} accepts its codec. A track this method accepts may still be refused by
+     * {@link #addTrack} for a configuration that is missing or does not parse.
+     *
+     * @param track the track to add
+     * @return {@code true} when the track's codec and, for PCM, its rate and channel count can be carried
+     */
+    public static boolean supports(Track track) {
+        var codec = Objects.requireNonNull(track, "track").codec();
+        if (!supports(codec)) {
+            return false;
+        }
+        if (!codec.isPcm()) {
+            return true;
+        }
+        if (!(track instanceof AudioTrack audio)) {
+            return false;
+        }
+        var channels = audio.layout().map(layout -> layout.channels()).orElse(0);
+        var rate = audio.sampleRate();
+        return channels >= 1 && channels <= 8 && (rate == 48_000 || rate == 96_000 || rate == 192_000);
+    }
+
+    /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the id is already used, the codec is not supported, or
-     * the configuration an H.264, HEVC, AAC or Opus track needs is missing or cannot be expressed
-     * in a transport stream
+     * @throws IllegalArgumentException if the id is already used, the codec is not supported, the
+     * configuration an H.264, HEVC, MPEG-4 Part 2, AAC or Opus track needs is missing or cannot be
+     * expressed in a transport stream, the configuration of an AV1 track is not an {@code av1C} record, a PCM
+     * track has a rate, channel count or layout no PCM carriage of a transport stream supports, or Blu-ray
+     * linear PCM or PGS subtitles and SCTE 35 would share the program
      * @throws IllegalStateException if a packet was already written or the muxer is finished
      */
     @Override
@@ -367,11 +462,45 @@ public final class TsMuxer implements Muxer {
         }
         var stream = new Stream(track, options.firstPid() + streams.size());
         configure(stream);
+        var hdmv = blurayType(stream) || streams.stream().anyMatch(TsMuxer::blurayType);
+        var cue = stream.splice || streams.stream().anyMatch(other -> other.splice);
+        if (hdmv && cue) {
+            throw new IllegalArgumentException("Blu-ray linear PCM and PGS subtitles make stream type 0x86 DTS-HD audio,"
+                    + " not SCTE 35");
+        }
         streams.add(stream);
         if (pcrStream == null || (track.kind() == TrackKind.VIDEO && pcrStream.track.kind() != TrackKind.VIDEO)) {
             pcrStream = stream;
             reference = stream;
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsTags() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A transport stream stores the track tags only: the name of a track becomes an ATSC component name
+     * descriptor and the {@link TrackDisposition#CLEAN_EFFECTS}, {@link TrackDisposition#HEARING_IMPAIRED} or
+     * {@link TrackDisposition#VISUAL_IMPAIRED} disposition of an audio track the {@code audio_type} of its language
+     * descriptor. The
+     * other tags, pictures and chapters are not stored.
+     */
+    @Override
+    public void setTags(MediaTags tags) {
+        Objects.requireNonNull(tags, "tags");
+        if (started || finished) {
+            throw new IllegalStateException("tags must be set before the first packet");
+        }
+        this.tags = tags;
     }
 
     /**
@@ -394,6 +523,41 @@ public final class TsMuxer implements Muxer {
         }
         var descriptors = new ByteWriter(32);
         switch (track.codec()) {
+            case AV1 -> {
+                if (config != null && (config.length < 4 || (config[0] & 0x80) == 0)) {
+                    throw new IllegalArgumentException("the configuration of an AV1 track must be an av1C record");
+                }
+                stream.streamType = 0x06;
+                stream.streamId = 0xBD;
+                registration(descriptors, "AV01");
+                if (config != null) {
+                    configureAv1(stream, config);
+                    descriptors.u8(0x80);
+                    descriptors.u8(4);
+                    descriptors.u8(config[0] & 0xFF);
+                    descriptors.u8(config[1] & 0xFF);
+                    descriptors.u8(config[2] & 0xFF);
+                    descriptors.u8(hdrWcg(track, config) << 6 | (config[3] & 0x1F));
+                }
+            }
+            case MPEG4_PART2 -> {
+                if (config == null || config.length == 0) {
+                    throw new IllegalArgumentException("an MPEG-4 Part 2 track needs its decoder configuration");
+                }
+                stream.parameterSets = config;
+                stream.streamType = 0x10;
+                stream.streamId = 0xE0 + Math.min(video, 15);
+            }
+            case PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE -> {
+                configurePcm(stream);
+                stream.streamId = 0xBD;
+                if (stream.lpcm) {
+                    stream.streamType = 0x80;
+                } else {
+                    stream.streamType = 0x06;
+                    registration(descriptors, "BSSD");
+                }
+            }
             case H264, HEVC -> {
                 var hevc = track.codec() == Codec.HEVC;
                 var parsed = hevc ? NalConfigs.parseHevc(config) : NalConfigs.parseAvc(config);
@@ -432,10 +596,39 @@ public final class TsMuxer implements Muxer {
                 descriptors.u8(0x80);
                 descriptors.u8(stream.opusCode);
             }
+            case PGS -> {
+                stream.streamType = 0x90;
+                stream.streamId = 0xBD;
+            }
+            case DVB_SUBTITLE -> {
+                stream.streamType = 0x06;
+                stream.streamId = 0xBD;
+                stream.dvbSubtitle = true;
+                var body = BitmapTrackConfigs.dvbDescriptor(config, track.language().orElse(null));
+                descriptors.u8(0x59);
+                descriptors.u8(body.length);
+                descriptors.bytes(body);
+            }
+            case DVB_TELETEXT -> {
+                stream.streamType = 0x06;
+                stream.streamId = 0xBD;
+                stream.teletext = true;
+                var body = config != null && config.length >= 5 && config.length <= 250
+                        ? Arrays.copyOf(config, config.length - config.length % 5) : defaultTeletext(track);
+                descriptors.u8(0x56);
+                descriptors.u8(body.length);
+                descriptors.bytes(body);
+            }
             case DATA -> {
                 stream.streamId = 0xBD;
                 var handler = track instanceof DataTrack data ? data.handler().orElse("") : "";
-                if (handler.toLowerCase(Locale.ROOT).equals(PesParser.ID3_HANDLER)) {
+                if (handler.toLowerCase(Locale.ROOT).equals(Scte35Parser.HANDLER)) {
+                    stream.streamType = 0x86;
+                    stream.splice = true;
+                    descriptors.u8(0x8A);
+                    descriptors.u8(1);
+                    descriptors.u8(0x01);
+                } else if (handler.toLowerCase(Locale.ROOT).equals(PesParser.ID3_HANDLER)) {
                     stream.streamType = 0x15;
                     stream.id3 = true;
                     descriptors.u8(0x26);
@@ -453,14 +646,36 @@ public final class TsMuxer implements Muxer {
             default -> throw new IllegalArgumentException("transport streams written here cannot carry "
                     + track.codec().displayName());
         }
-        var language = track.language().orElse(null);
-        if (language != null && language.length() == 3 && language.chars().allMatch(c -> c < 0x80)) {
-            descriptors.u8(0x0A);
-            descriptors.u8(4);
-            descriptors.bytes(language.getBytes(StandardCharsets.US_ASCII));
-            descriptors.u8(0);
-        }
         stream.descriptors = descriptors.toByteArray();
+    }
+
+    /**
+     * Returns the descriptor loop of the program map entry of a stream: the descriptors of its codec, the ISO 639
+     * language descriptor of its language and the {@code audio_type} its dispositions give, and the ATSC component
+     * name descriptor of its name.
+     *
+     * @param stream the stream whose program map entry is written
+     * @return the descriptors
+     */
+    private byte[] entryDescriptors(Stream stream) {
+        var track = stream.track;
+        var described = tags.track(track.id()).orElse(null);
+        var out = new ByteWriter(stream.descriptors.length + 64);
+        out.bytes(stream.descriptors);
+        var language = track.language().filter(TsDescriptors::isLanguageCode).orElse(null);
+        var audioType = described == null || track.kind() != TrackKind.AUDIO ? 0
+                : TsDescriptors.audioType(described.disposition());
+        if (language != null || audioType != 0) {
+            out.u8(TsDescriptors.LANGUAGE);
+            out.u8(4);
+            out.bytes((language != null ? language : TsDescriptors.UNDETERMINED).getBytes(StandardCharsets.US_ASCII));
+            out.u8(audioType);
+        }
+        var name = described == null ? "" : described.name().orElse("");
+        if (!name.isEmpty()) {
+            out.bytes(TsDescriptors.componentName(language != null ? language : TsDescriptors.UNDETERMINED, name));
+        }
+        return out.toByteArray();
     }
 
     /**
@@ -488,6 +703,98 @@ public final class TsMuxer implements Muxer {
             throw new IllegalArgumentException("an AAC track needs its AudioSpecificConfig");
         }
         stream.adts = AdtsHeader.fromAudioSpecificConfig(config);
+    }
+
+    /**
+     * Keeps the sequence header OBU of an AV1 track's {@code av1C} record, which key frames without one get.
+     *
+     * @param stream the AV1 stream
+     * @param config the record
+     */
+    private static void configureAv1(Stream stream, byte[] config) {
+        stream.parameterSets = Arrays.copyOfRange(config, 4, config.length);
+    }
+
+    /**
+     * Returns the {@code hdr_wcg_idc} of the AV1 video descriptor (AOM "Carriage of AV1 in MPEG-2 TS" section
+     * 2.2.2) of a track: 2 for a PQ or HLG transfer, 1 for BT.2020 primaries with another transfer, 0 for
+     * BT.709 primaries, and 3 (no indication) when the color description is unknown.
+     *
+     * @param track the AV1 track
+     * @param config its {@code av1C} record
+     * @return the value
+     */
+    private static int hdrWcg(Track track, byte[] config) {
+        ColorInfo color = track instanceof VideoTrack video ? video.color().orElse(null) : null;
+        if (color == null) {
+            var info = VideoConfigs.describe(Codec.AV1, config);
+            color = info != null ? info.color() : null;
+        }
+        if (color == null) {
+            return 3;
+        }
+        var transfer = color.transfer();
+        if (transfer == TransferCharacteristics.PQ || transfer == TransferCharacteristics.HLG) {
+            return 2;
+        }
+        return switch (color.primaries()) {
+            case BT2020 -> 1;
+            case BT709 -> 0;
+            default -> 3;
+        };
+    }
+
+    /**
+     * Chooses the PCM carriage of a track: SMPTE ST 302 in a plain transport stream when the track is at
+     * 48 kHz with an even number of channels up to eight, Blu-ray linear PCM otherwise and in M2TS, and the
+     * channel assignment and word size of each.
+     *
+     * @param stream the PCM stream
+     * @throws IllegalArgumentException if the track's rate, channel count or layout has no carriage
+     */
+    private void configurePcm(Stream stream) {
+        if (!(stream.track instanceof AudioTrack audio)) {
+            throw new IllegalArgumentException("a PCM track must be an audio track");
+        }
+        var rate = audio.sampleRate();
+        var layout = audio.layout().orElse(null);
+        var channels = layout != null ? layout.channels() : 0;
+        if (channels <= 0) {
+            throw new IllegalArgumentException("a PCM track needs its channel layout");
+        }
+        var wide = audio.codec() == Codec.PCM_S24LE || audio.codec() == Codec.PCM_S24BE;
+        stream.pcmWidth = wide ? 3 : 2;
+        stream.pcmBits = !wide ? 16 : audio.bitsPerSample() == 20 ? 20 : 24;
+        stream.pcmLittleEndian = audio.codec() == Codec.PCM_S16LE || audio.codec() == Codec.PCM_S24LE;
+        stream.pcmChannels = channels;
+        var m2ts = options.packetFormat() == TsMuxerOptions.PacketFormat.M2TS;
+        if (!m2ts && rate == 48_000 && channels % 2 == 0 && channels <= 8) {
+            stream.pcmFrames = rate / 25;
+            return;
+        }
+        var frequency = switch (rate) {
+            case 48_000 -> 1;
+            case 96_000 -> 4;
+            case 192_000 -> 5;
+            default -> throw new IllegalArgumentException("Blu-ray linear PCM cannot carry " + rate + " Hz");
+        };
+        if (channels > 8) {
+            throw new IllegalArgumentException("transport stream PCM carries at most eight channels");
+        }
+        var assignment = switch (channels) {
+            case 1 -> 1;
+            case 2 -> 3;
+            case 3 -> layout.indexOf(Speaker.BACK_CENTER) >= 0 ? 5 : 4;
+            case 4 -> layout.indexOf(Speaker.FRONT_CENTER) >= 0 ? 6 : 7;
+            case 5 -> 8;
+            case 6 -> 9;
+            case 7 -> 10;
+            default -> 11;
+        };
+        stream.lpcm = true;
+        stream.lpcmHeader = (assignment << 12) | (frequency << 8) | ((stream.pcmBits == 16 ? 1 : stream.pcmBits == 20 ? 2 : 3) << 6);
+        stream.lpcmOrder = PcmParser.lpcmOrder(assignment);
+        stream.pcmFrames = rate / 200;
     }
 
     /**
@@ -552,8 +859,11 @@ public final class TsMuxer implements Muxer {
      * {@inheritDoc}
      *
      * @throws IllegalArgumentException if the packet's track was not declared, it has no timestamp,
-     * or an H.264 or HEVC packet is not made of length-prefixed NAL units
+     * an H.264 or HEVC packet is not made of length-prefixed NAL units, or a new codec
+     * configuration cannot be parsed
      * @throws IllegalStateException if no track was declared or the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a track
+     * that is not H.264, HEVC, AV1, MPEG-4 Part 2 or AAC
      */
     @Override
     public void writePacket(Packet packet) {
@@ -571,6 +881,32 @@ public final class TsMuxer implements Muxer {
         var time = packet.dts() != Packet.NO_TIMESTAMP ? packet.dts() : packet.pts();
         if (time == Packet.NO_TIMESTAMP) {
             throw new IllegalArgumentException("a transport stream packet needs a timestamp");
+        }
+        var newConfig = ConfigChanges.changed(packet, stream.acceptedConfig);
+        if (newConfig != null) {
+            switch (stream.track.codec()) {
+                case H264, HEVC -> {
+                    if ((stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig)) == null) {
+                        throw new IllegalArgumentException("the new " + stream.track.codec().displayName()
+                                + " configuration of track " + packet.trackId() + " cannot be parsed");
+                    }
+                }
+                case AV1 -> {
+                    if (newConfig.length < 4 || (newConfig[0] & 0x80) == 0) {
+                        throw new IllegalArgumentException("the new AV1 configuration of track " + packet.trackId()
+                                + " is not an av1C record");
+                    }
+                }
+                case MPEG4_PART2 -> {
+                    if (newConfig.length == 0) {
+                        throw new IllegalArgumentException("the new MPEG-4 Part 2 configuration of track "
+                                + packet.trackId() + " is empty");
+                    }
+                }
+                case AAC -> configureAac(new Stream(stream.track, stream.pid), newConfig);
+                default -> throw ConfigChanges.unsupported("MPEG-TS", packet.trackId());
+            }
+            stream.acceptedConfig = newConfig;
         }
         started = true;
         if (stream.track.kind() == TrackKind.VIDEO && packet.dts() == Packet.NO_TIMESTAMP) {
@@ -764,9 +1100,23 @@ public final class TsMuxer implements Muxer {
             tablesDue = false;
         }
         switch (stream.track.kind()) {
-            case VIDEO -> writePes(stream, annexB(stream, packet), ptsOut, dtsOut, packet.keyframe());
-            case DATA -> writePes(stream, packet.data(), ptsOut, ptsOut, true);
-            case AUDIO -> gather(stream, packet, ptsOut);
+            case VIDEO -> writePes(stream, videoPayload(stream, packet), ptsOut, dtsOut, packet.keyframe());
+            case DATA -> {
+                if (stream.splice) {
+                    writeSplice(stream, packet);
+                } else if (stream.dvbSubtitle) {
+                    writePes(stream, dvbSubtitlePayload(packet.data()), ptsOut, ptsOut, true);
+                } else {
+                    writePes(stream, packet.data(), ptsOut, ptsOut, true);
+                }
+            }
+            case AUDIO -> {
+                if (stream.pcmFrames > 0) {
+                    writePcm(stream, packet, ptsOut);
+                } else {
+                    gather(stream, packet, ptsOut);
+                }
+            }
         }
     }
 
@@ -816,6 +1166,11 @@ public final class TsMuxer implements Muxer {
      * @return the bytes the PES packet carries for it
      */
     private byte[] audioFrame(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null && stream.track.codec() == Codec.AAC) {
+            configureAac(stream, newConfig);
+            stream.appliedConfig = newConfig;
+        }
         var data = packet.data();
         return switch (stream.track.codec()) {
             case AAC -> {
@@ -875,6 +1230,311 @@ public final class TsMuxer implements Muxer {
     }
 
     /**
+     * Converts a video packet into the PES payload of its stream type.
+     *
+     * @param stream the video stream
+     * @param packet a packet of the stream's track
+     * @return the payload
+     */
+    private static byte[] videoPayload(Stream stream, Packet packet) {
+        return switch (stream.track.codec()) {
+            case AV1 -> av1AccessUnit(stream, packet);
+            case MPEG4_PART2 -> mpeg4Frame(stream, packet);
+            default -> annexB(stream, packet);
+        };
+    }
+
+    /**
+     * Converts an AV1 temporal unit into the start-code format of the AOM "Carriage of AV1 in MPEG-2 TS"
+     * section 3.2: every OBU, with its size field, gets the start code {@code 00 00 01} and an emulation
+     * prevention byte {@code 03} after every {@code 00 00} that a byte of value 0 to 3 follows. The unit opens
+     * with a temporal delimiter, and a key frame without a sequence header gets the one of the track's
+     * configuration; the temporal delimiters of the packet are dropped.
+     *
+     * @param stream the AV1 stream, which holds the sequence header
+     * @param packet the temporal unit, OBUs with size fields but possibly the last
+     * @return the PES payload
+     * @throws IllegalArgumentException if an OBU overruns the packet
+     */
+    private static byte[] av1AccessUnit(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null) {
+            configureAv1(stream, newConfig);
+            stream.appliedConfig = newConfig;
+        }
+        var data = packet.data();
+        var out = new ByteWriter(data.length + data.length / 64 + stream.parameterSets.length + 32);
+        out.u24be(1);
+        out.u8(0x12);
+        out.u8(0);
+        var hasSequenceHeader = false;
+        for (var offset = 0; offset < data.length; ) {
+            var obuEnd = av1ObuEnd(data, offset);
+            if (((data[offset] >> 3) & 0x0F) == 1) {
+                hasSequenceHeader = true;
+            }
+            offset = obuEnd;
+        }
+        if (packet.keyframe() && !hasSequenceHeader && stream.parameterSets.length > 0) {
+            for (var offset = 0; offset < stream.parameterSets.length; ) {
+                var obuEnd = av1ObuEnd(stream.parameterSets, offset);
+                startCodeObu(out, stream.parameterSets, offset, obuEnd);
+                offset = obuEnd;
+            }
+        }
+        for (var offset = 0; offset < data.length; ) {
+            var obuEnd = av1ObuEnd(data, offset);
+            if (((data[offset] >> 3) & 0x0F) != 2) {
+                startCodeObu(out, data, offset, obuEnd);
+            }
+            offset = obuEnd;
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns the end of the OBU starting at an index.
+     *
+     * <p>An OBU without a size field extends to the end of the data, as the last OBU of an ISOBMFF or Matroska
+     * sample may.
+     *
+     * @param data the OBUs, each with its size field but the last
+     * @param offset the index of the OBU header
+     * @return the index after the OBU
+     * @throws IllegalArgumentException if the OBU overruns the data
+     */
+    private static int av1ObuEnd(byte[] data, int offset) {
+        var header = data[offset] & 0xFF;
+        if ((header & 0x02) == 0) {
+            if (offset + ((header & 0x04) != 0 ? 2 : 1) > data.length) {
+                throw new IllegalArgumentException("an AV1 OBU header overruns the packet");
+            }
+            return data.length;
+        }
+        var position = offset + ((header & 0x04) != 0 ? 2 : 1);
+        var size = 0L;
+        for (var shift = 0; ; shift += 7) {
+            if (position >= data.length || shift > 49) {
+                throw new IllegalArgumentException("an AV1 OBU size overruns the packet");
+            }
+            var b = data[position++] & 0xFF;
+            size |= (long) (b & 0x7F) << shift;
+            if ((b & 0x80) == 0) {
+                break;
+            }
+        }
+        if (size > data.length - position) {
+            throw new IllegalArgumentException("an AV1 OBU overruns the packet");
+        }
+        return position + (int) size;
+    }
+
+    /**
+     * Writes one OBU behind a start code, with emulation prevention.
+     *
+     * @param out the payload being written
+     * @param data the bytes
+     * @param from the index of the OBU header
+     * @param to the index after the OBU
+     */
+    private static void startCodeObu(ByteWriter out, byte[] data, int from, int to) {
+        out.u24be(1);
+        var zeros = 0;
+        for (var index = from; index < to; index++) {
+            var value = data[index] & 0xFF;
+            if (zeros >= 2 && value <= 3) {
+                out.u8(3);
+                zeros = 0;
+            }
+            out.u8(value);
+            zeros = value == 0 ? zeros + 1 : 0;
+        }
+    }
+
+    /**
+     * Prepends the decoder configuration (the visual object sequence, visual object and video object layer
+     * headers) to an MPEG-4 Part 2 key frame that does not start with it.
+     *
+     * @param stream the MPEG-4 Part 2 stream, which holds the configuration
+     * @param packet the frame
+     * @return the PES payload
+     */
+    private static byte[] mpeg4Frame(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null) {
+            stream.parameterSets = newConfig;
+            stream.appliedConfig = newConfig;
+        }
+        var data = packet.data();
+        if (!packet.keyframe() || startsWithHeaders(data)) {
+            return data;
+        }
+        var frame = Arrays.copyOf(stream.parameterSets, stream.parameterSets.length + data.length);
+        System.arraycopy(data, 0, frame, stream.parameterSets.length, data.length);
+        return frame;
+    }
+
+    /**
+     * Returns whether an MPEG-4 Part 2 frame starts with a visual object sequence, visual object or video
+     * object layer header.
+     *
+     * @param data the frame
+     * @return {@code true} when its first start code is one of those headers
+     */
+    private static boolean startsWithHeaders(byte[] data) {
+        for (var index = 0; index + 3 < data.length; index++) {
+            if (data[index] == 0 && data[index + 1] == 0 && data[index + 2] == 1) {
+                var code = data[index + 3] & 0xFF;
+                return code == 0xB0 || code == 0xB5 || (code >= 0x00 && code <= 0x2F);
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Writes a PCM packet as PES packets of at most {@code pcmFrames} sample frames, each with its header:
+     * the Blu-ray linear PCM header, with big-endian words in the stream's channel order and an odd channel
+     * count padded with a silent channel, or the SMPTE ST 302 header, with every word sent least significant bit
+     * first and followed by its validity, user, channel status and framing bits (all zero but the framing bit of
+     * the first subframe of every block of 192 frames).
+     *
+     * @param stream the PCM stream
+     * @param packet the interleaved samples
+     * @param ptsOut the PES presentation time of the packet
+     */
+    private void writePcm(Stream stream, Packet packet, long ptsOut) {
+        var data = packet.data();
+        var frameBytes = stream.pcmChannels * stream.pcmWidth;
+        var frames = data.length / frameBytes;
+        var rate = ((AudioTrack) stream.track).sampleRate();
+        for (var first = 0; first < frames; first += stream.pcmFrames) {
+            var count = Math.min(stream.pcmFrames, frames - first);
+            var pts = ptsOut + (long) first * 90_000 / rate;
+            var payload = stream.lpcm ? lpcmPayload(stream, data, first * frameBytes, count)
+                    : aes3Payload(stream, data, first * frameBytes, count);
+            writePes(stream, payload, pts, pts, true);
+        }
+    }
+
+    /**
+     * Builds the payload of a Blu-ray linear PCM PES packet.
+     *
+     * @param stream the PCM stream
+     * @param data the interleaved samples
+     * @param offset the index of the first frame
+     * @param frames the number of frames
+     * @return the payload, header included
+     */
+    private static byte[] lpcmPayload(Stream stream, byte[] data, int offset, int frames) {
+        var channels = stream.pcmChannels;
+        var stored = channels + (channels & 1);
+        var width = stream.pcmWidth;
+        var size = frames * stored * width;
+        var payload = new byte[4 + size];
+        payload[0] = (byte) (size >> 8);
+        payload[1] = (byte) size;
+        payload[2] = (byte) (stream.lpcmHeader >> 8);
+        payload[3] = (byte) stream.lpcmHeader;
+        var in = offset;
+        var out = 4;
+        for (var frame = 0; frame < frames; frame++) {
+            for (var channel = 0; channel < channels; channel++) {
+                var target = out + stream.lpcmOrder[channel] * width;
+                for (var index = 0; index < width; index++) {
+                    payload[target + index] = data[in + (stream.pcmLittleEndian ? width - 1 - index : index)];
+                }
+                in += width;
+            }
+            out += stored * width;
+        }
+        return payload;
+    }
+
+    /**
+     * Builds the payload of a SMPTE ST 302 PES packet.
+     *
+     * @param stream the PCM stream
+     * @param data the interleaved samples
+     * @param offset the index of the first frame
+     * @param frames the number of frames
+     * @return the payload, header included
+     */
+    private static byte[] aes3Payload(Stream stream, byte[] data, int offset, int frames) {
+        var bits = stream.pcmBits;
+        var channels = stream.pcmChannels;
+        var size = frames * channels * (bits + 4) / 8;
+        var payload = new byte[4 + size];
+        payload[0] = (byte) (size >> 8);
+        payload[1] = (byte) size;
+        payload[2] = (byte) ((channels / 2 - 1) << 6);
+        payload[3] = (byte) ((bits == 16 ? 0 : bits == 20 ? 1 : 2) << 4);
+        var bit = 32L;
+        var width = stream.pcmWidth;
+        var in = offset;
+        for (var frame = 0; frame < frames; frame++) {
+            var blockStart = stream.aes3Frame % 192 == 0;
+            stream.aes3Frame++;
+            for (var channel = 0; channel < channels; channel++) {
+                var value = 0;
+                for (var index = 0; index < width; index++) {
+                    var b = data[in + (stream.pcmLittleEndian ? index : width - 1 - index)] & 0xFF;
+                    value |= b << (8 * index);
+                }
+                in += width;
+                if (bits == 20) {
+                    value >>>= 4;
+                }
+                for (var index = 0; index < bits; index++, bit++) {
+                    if (((value >>> index) & 1) != 0) {
+                        payload[(int) (bit >>> 3)] |= (byte) (0x80 >>> (int) (bit & 7));
+                    }
+                }
+                bit += 3;
+                if (blockStart && channel % 2 == 0) {
+                    payload[(int) (bit >>> 3)] |= (byte) (0x80 >>> (int) (bit & 7));
+                }
+                bit++;
+            }
+        }
+        return payload;
+    }
+
+    /**
+     * Writes an SCTE 35 {@code splice_info_section} on its stream's PID, its {@code pts_adjustment} moved by the
+     * offset the muxer adds to every timestamp.
+     *
+     * @param stream the SCTE 35 stream
+     * @param cue the section, its {@code CRC_32} included
+     * @throws IllegalArgumentException if the packet is not a {@code splice_info_section} whose length and
+     * {@code CRC_32} hold
+     */
+    private void writeSplice(Stream stream, Packet cue) {
+        var section = cue.data();
+        if (section.length < 15 || (section[0] & 0xFF) != Psi.SPLICE_INFO_TABLE
+                || 3 + ((section[1] & 0x0F) << 8 | (section[2] & 0xFF)) != section.length
+                || Crc32Mpeg.update(Crc32Mpeg.MPEG_INIT, section, 0, section.length) != 0) {
+            throw new IllegalArgumentException("an SCTE 35 packet must be a whole splice_info_section with its CRC_32");
+        }
+        section = Scte35Parser.rebased(section, shift);
+        var position = 0;
+        var first = true;
+        while (position < section.length) {
+            startPacket(stream.pid, first, false, true, stream.counter);
+            stream.counter = (stream.counter + 1) & 0x0F;
+            var cursor = 4;
+            if (first) {
+                this.packet[cursor++] = 0;
+            }
+            var take = Math.min(PACKET - cursor, section.length - position);
+            System.arraycopy(section, position, this.packet, cursor, take);
+            Arrays.fill(this.packet, cursor + take, PACKET, (byte) 0xFF);
+            position += take;
+            first = false;
+            commit(-1);
+        }
+    }
+
+    /**
      * Converts an access unit of length-prefixed NAL units into an Annex B access unit that
      * starts with an access unit delimiter and carries the parameter sets when it is a key frame
      * without them.
@@ -885,6 +1545,13 @@ public final class TsMuxer implements Muxer {
      * @throws IllegalArgumentException if a NAL unit length overruns the packet
      */
     private static byte[] annexB(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null) {
+            var parsed = stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig);
+            stream.lengthSize = parsed.lengthSize();
+            stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+            stream.appliedConfig = newConfig;
+        }
         return NalUnits.toAnnexB(packet.data(), stream.lengthSize, stream.hevc,
                 packet.keyframe() ? stream.parameterSets : null, stream.hevc ? HEVC_DELIMITER : AVC_DELIMITER);
     }
@@ -919,7 +1586,11 @@ public final class TsMuxer implements Muxer {
             currentPcr = Math.max(currentPcr, target);
         }
         var withDts = dtsOut != ptsOut;
-        var headerLength = withDts ? 10 : 5;
+        var timestamps = withDts ? 10 : 5;
+        var headerLength = stream.teletext ? TELETEXT_HEADER_LENGTH : timestamps;
+        if (stream.teletext) {
+            payload = teletextPayload(payload);
+        }
         var length = 3 + headerLength + payload.length;
         if (length > 0xFFFF && stream.track.kind() != TrackKind.VIDEO) {
             throw new IllegalArgumentException("a " + stream.track.codec().displayName() + " packet of " + payload.length
@@ -930,13 +1601,16 @@ public final class TsMuxer implements Muxer {
         pes.u8(0);
         pes.u8(1);
         pes.u8(stream.streamId);
-        pes.u16be(length > 0xFFFF || stream.track.kind() == TrackKind.VIDEO ? 0 : length);
+        pes.u16be(length > 0xFFFF || (stream.streamId & 0xF0) == 0xE0 ? 0 : length);
         pes.u8(0x84);
         pes.u8(withDts ? 0xC0 : 0x80);
         pes.u8(headerLength);
         writeTimestamp(pes, withDts ? 3 : 2, ptsOut);
         if (withDts) {
             writeTimestamp(pes, 1, dtsOut);
+        }
+        for (var stuffing = timestamps; stuffing < headerLength; stuffing++) {
+            pes.u8(0xFF);
         }
         pes.bytes(payload);
         var bytes = pes.toByteArray();
@@ -959,13 +1633,79 @@ public final class TsMuxer implements Muxer {
             stream.counter = (stream.counter + 1) & 0x0F;
             var cursor = 4;
             if (adaptation > 0) {
-                cursor = writeAdaptation(cursor, adaptation, pcr, randomAccess);
+                cursor = writeAdaptation(cursor, adaptation, pcr, randomAccess,
+                        randomAccess && stream.track.codec() == Codec.AV1);
             }
             System.arraycopy(bytes, position, packet, cursor, take);
             position += take;
             first = false;
             commit(pcr);
         }
+    }
+
+    /**
+     * Returns whether a stream uses a stream type that only Blu-ray programs define, Blu-ray linear PCM ({@code 0x80})
+     * or presentation graphics ({@code 0x90}), so that the program carries the {@code "HDMV"} registration.
+     *
+     * @param stream the declared stream to check
+     * @return {@code true} for those streams
+     */
+    private static boolean blurayType(Stream stream) {
+        return stream.lpcm || stream.streamType == 0x90;
+    }
+
+    /**
+     * Wraps the segments of a DVB subtitle packet in a PES data field: the {@code data_identifier} and
+     * {@code subtitle_stream_id}, then the segments, then the end marker.
+     *
+     * @param segments the packet payload
+     * @return the PES payload
+     */
+    private static byte[] dvbSubtitlePayload(byte[] segments) {
+        var payload = new byte[segments.length + 3];
+        payload[0] = 0x20;
+        System.arraycopy(segments, 0, payload, 2, segments.length);
+        payload[payload.length - 1] = (byte) 0xFF;
+        return payload;
+    }
+
+    /**
+     * Pads a teletext PES data field with stuffing data units so that the PES packet, whose header is
+     * {@link #TELETEXT_HEADER_LENGTH} bytes long, fills whole transport packets (ETSI EN 300 472 clause 4.2).
+     *
+     * @param payload the PES data field
+     * @return the padded data field
+     */
+    private static byte[] teletextPayload(byte[] payload) {
+        var total = 9 + TELETEXT_HEADER_LENGTH + payload.length;
+        var missing = (PAYLOAD - total % PAYLOAD) % PAYLOAD;
+        if (missing == 0) {
+            return payload;
+        }
+        var padded = Arrays.copyOf(payload, payload.length + missing);
+        var position = payload.length;
+        while (missing >= 46) {
+            padded[position] = (byte) 0xFF;
+            padded[position + 1] = 0x2C;
+            Arrays.fill(padded, position + 2, position + 46, (byte) 0xFF);
+            position += 46;
+            missing -= 46;
+        }
+        Arrays.fill(padded, position, padded.length, (byte) 0xFF);
+        return padded;
+    }
+
+    /**
+     * Returns the teletext descriptor body of a track without one: an initial subtitle page 888 in the track's
+     * language.
+     *
+     * @param track the teletext track, whose language names the page
+     * @return the descriptor body
+     */
+    private static byte[] defaultTeletext(Track track) {
+        var language = track.language().filter(code -> code.length() == 3).orElse("und")
+                .getBytes(StandardCharsets.US_ASCII);
+        return new byte[]{language[0], language[1], language[2], 0x02 << 3, (byte) 0x88};
     }
 
     /**
@@ -1030,14 +1770,16 @@ public final class TsMuxer implements Muxer {
      * @param size the size of the whole field, its length byte included
      * @param pcr the clock reference to carry, or {@code -1}
      * @param randomAccess whether to set the random access indicator
+     * @param priority whether to set the elementary stream priority indicator, which the AOM "Carriage of AV1 in
+     * MPEG-2 TS" section 3.4 requires on the packet that starts an AV1 key frame
      * @return the index after the field
      */
-    private int writeAdaptation(int cursor, int size, long pcr, boolean randomAccess) {
+    private int writeAdaptation(int cursor, int size, long pcr, boolean randomAccess, boolean priority) {
         packet[cursor] = (byte) (size - 1);
         if (size == 1) {
             return cursor + 1;
         }
-        packet[cursor + 1] = (byte) ((randomAccess ? 0x40 : 0) | (pcr >= 0 ? 0x10 : 0));
+        packet[cursor + 1] = (byte) ((randomAccess ? 0x40 : 0) | (priority ? 0x20 : 0) | (pcr >= 0 ? 0x10 : 0));
         var position = cursor + 2;
         if (pcr >= 0) {
             var base = (pcr / 300) & WRAP_MASK;
@@ -1061,7 +1803,7 @@ public final class TsMuxer implements Muxer {
      */
     private void writePcrOnly(long pcr) {
         startPacket(pcrStream.pid, false, true, false, pcrStream.counter == 0 ? 15 : pcrStream.counter - 1);
-        writeAdaptation(4, PAYLOAD, pcr, false);
+        writeAdaptation(4, PAYLOAD, pcr, false, false);
         if (options.muxRate() == 0) {
             currentPcr = Math.max(currentPcr, pcr);
         }
@@ -1096,8 +1838,16 @@ public final class TsMuxer implements Muxer {
         pmt.u8(0);
         pmt.u16be(0xE000 | (pcrStream != null ? pcrStream.pid : NULL_PID));
         var id3 = streams.stream().filter(stream -> stream.id3).findFirst().orElse(null);
+        var program = new ByteWriter(32);
+        if (streams.stream().anyMatch(TsMuxer::blurayType)) {
+            registration(program, "HDMV");
+        }
+        if (streams.stream().anyMatch(stream -> stream.splice)) {
+            registration(program, "CUEI");
+        }
+        pmt.u16be(0xF000 | (program.size() + (id3 != null ? 17 : 0)));
+        pmt.bytes(program.toByteArray());
         if (id3 != null) {
-            pmt.u16be(0xF000 | 17);
             pmt.u8(0x25);
             pmt.u8(15);
             pmt.u16be(0xFFFF);
@@ -1107,14 +1857,13 @@ public final class TsMuxer implements Muxer {
             pmt.u8(0);
             pmt.u8(0x1F);
             pmt.u16be(options.programNumber());
-        } else {
-            pmt.u16be(0xF000);
         }
         for (var stream : streams) {
+            var descriptors = entryDescriptors(stream);
             pmt.u8(stream.streamType);
             pmt.u16be(0xE000 | stream.pid);
-            pmt.u16be(0xF000 | stream.descriptors.length);
-            pmt.bytes(stream.descriptors);
+            pmt.u16be(0xF000 | descriptors.length);
+            pmt.bytes(descriptors);
         }
         writeSection(options.pmtPid(), Psi.PMT_TABLE, pmt.toByteArray(), false);
     }
@@ -1126,11 +1875,17 @@ public final class TsMuxer implements Muxer {
      * @param table the {@code table_id}
      * @param body the section after its {@code section_length} field, CRC excluded
      * @param pat whether this is the program association table, whose counter it uses
+     * @throws MediaException.LimitExceeded if the section exceeds the 1021 bytes a PSI section length allows, which
+     * the descriptors of many named tracks can reach
      */
     private void writeSection(int pid, int table, byte[] body, boolean pat) {
+        var length = body.length + 4;
+        if (length > MAX_SECTION_LENGTH) {
+            throw new MediaException.LimitExceeded("a PSI section of " + length + " bytes exceeds the "
+                    + MAX_SECTION_LENGTH + " a section length allows");
+        }
         var section = new byte[3 + body.length + 4];
         section[0] = (byte) table;
-        var length = body.length + 4;
         section[1] = (byte) (0xB0 | (length >> 8));
         section[2] = (byte) length;
         System.arraycopy(body, 0, section, 3, body.length);
@@ -1257,6 +2012,17 @@ public final class TsMuxer implements Muxer {
         int streamId;
 
         /**
+         * Whether the stream is DVB subtitles, whose packets get the PES data field framing.
+         */
+        boolean dvbSubtitle;
+
+        /**
+         * Whether the stream is DVB teletext, whose PES packets have a fixed header length and fill whole
+         * transport packets.
+         */
+        boolean teletext;
+
+        /**
          * The descriptors of the program map entry.
          */
         byte[] descriptors = new byte[0];
@@ -1287,6 +2053,17 @@ public final class TsMuxer implements Muxer {
         AdtsHeader adts;
 
         /**
+         * The codec configuration of the last packet accepted by {@code writePacket}, initially
+         * the track's.
+         */
+        byte[] acceptedConfig;
+
+        /**
+         * The codec configuration the packets being converted use, initially the track's.
+         */
+        byte[] appliedConfig;
+
+        /**
          * The {@code channel_config_code} of an Opus track.
          */
         int opusCode;
@@ -1305,6 +2082,56 @@ public final class TsMuxer implements Muxer {
          * Whether the stream is ID3 timed metadata.
          */
         boolean id3;
+
+        /**
+         * Whether the stream is SCTE 35 splice information, carried in sections.
+         */
+        boolean splice;
+
+        /**
+         * Whether the PCM stream is Blu-ray linear PCM rather than SMPTE ST 302.
+         */
+        boolean lpcm;
+
+        /**
+         * The third and fourth bytes of the Blu-ray linear PCM header.
+         */
+        int lpcmHeader;
+
+        /**
+         * The Blu-ray linear PCM stream slot of each channel of the track.
+         */
+        int[] lpcmOrder;
+
+        /**
+         * The largest number of sample frames per PES packet of a PCM stream, or {@code 0} for another stream.
+         */
+        int pcmFrames;
+
+        /**
+         * The number of channels of a PCM stream.
+         */
+        int pcmChannels;
+
+        /**
+         * The bytes per sample of the track's PCM codec.
+         */
+        int pcmWidth;
+
+        /**
+         * The word size written: 16, 20 or 24 bits.
+         */
+        int pcmBits;
+
+        /**
+         * Whether the track's PCM samples are little-endian.
+         */
+        boolean pcmLittleEndian;
+
+        /**
+         * The number of SMPTE ST 302 frames written, which places the framing bit of each block of 192.
+         */
+        long aes3Frame;
 
         /**
          * The packets of a track with presentation timestamps only waiting for their decoding
@@ -1341,6 +2168,8 @@ public final class TsMuxer implements Muxer {
         Stream(Track track, int pid) {
             this.track = track;
             this.pid = pid;
+            this.acceptedConfig = track.codecConfig().orElse(null);
+            this.appliedConfig = acceptedConfig;
         }
     }
 }

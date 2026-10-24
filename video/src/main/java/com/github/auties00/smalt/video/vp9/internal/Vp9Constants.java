@@ -93,6 +93,41 @@ final class Vp9Constants {
     public static final int BLOCK_INVALID = 13;
 
     /**
+     * The color space of unknown samples ({@code CS_UNKNOWN}).
+     */
+    public static final int CS_UNKNOWN = 0;
+
+    /**
+     * The BT.601 color space ({@code CS_BT_601}).
+     */
+    public static final int CS_BT_601 = 1;
+
+    /**
+     * The BT.709 color space ({@code CS_BT_709}).
+     */
+    public static final int CS_BT_709 = 2;
+
+    /**
+     * The SMPTE 170M color space ({@code CS_SMPTE_170}).
+     */
+    public static final int CS_SMPTE_170 = 3;
+
+    /**
+     * The SMPTE 240M color space ({@code CS_SMPTE_240}).
+     */
+    public static final int CS_SMPTE_240 = 4;
+
+    /**
+     * The BT.2020 non-constant luminance color space ({@code CS_BT_2020}).
+     */
+    public static final int CS_BT_2020 = 5;
+
+    /**
+     * The RGB color space of 4:4:4 streams, planes in G, B, R order ({@code CS_SRGB}).
+     */
+    public static final int CS_SRGB = 7;
+
+    /**
      * The partition that keeps the block whole.
      */
     public static final int PARTITION_NONE = 0;

@@ -49,7 +49,7 @@ public final class Av1Picture {
     public int bpc;
 
     /**
-     * The header of the frame.
+     * The header of the frame, or {@code null} for the output frame of a tile list OBU.
      */
     public FrameHeader frameHdr;
 
@@ -122,6 +122,20 @@ public final class Av1Picture {
             data[2] = new short[uvStride * (alignedH >> ssVer)];
         }
         refs = 1;
+    }
+
+    /**
+     * Allocates a picture that belongs to no pool, for frames the caller provides, such as the
+     * anchor frames of large scale tile decoding.
+     *
+     * @param w the frame width
+     * @param h the frame height
+     * @param layout the pixel layout, a {@code SequenceHeader.LAYOUT_} constant
+     * @param bpc the bits per sample: 8, 10 or 12
+     * @return the picture, with one holder and zero samples
+     */
+    public static Av1Picture allocate(int w, int h, int layout, int bpc) {
+        return new Av1Picture(null, w, h, layout, bpc);
     }
 
     /**

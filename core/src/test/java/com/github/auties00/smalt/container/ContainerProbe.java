@@ -70,12 +70,28 @@ public final class ContainerProbe {
 
     /** Runs ffprobe on a file. */
     public static Probe probe(Path file) {
+        return probe(file, List.of());
+    }
+
+    /** Runs ffprobe on a file with input options, such as a demuxer's private options. */
+    public static Probe probe(Path file, List<String> inputOptions) {
+        return probe(file.toString(), inputOptions);
+    }
+
+    /**
+     * Runs ffprobe on a file named as ffprobe is to see it, with input options; ffmpeg resolves some relative
+     * names (the aliases of QuickTime data references) only against a path with {@code /} separators.
+     */
+    public static Probe probe(String file, List<String> inputOptions) {
         Oracle.assume(Oracle.Tool.FFPROBE);
-        var output = Oracle.run(Oracle.Tool.FFPROBE, Duration.ofMinutes(2), List.of("-v", "error",
+        var arguments = new ArrayList<>(List.of("-v", "error",
                 "-show_entries", "packet=stream_index,pts,dts,duration,size,flags,data_hash:packet_side_data=",
                 "-show_entries", "stream:stream_tags:stream_side_data=rotation",
                 "-show_entries", "format:format_tags",
-                "-show_data_hash", "CRC32", "-show_data", "-of", "compact", file.toString()));
+                "-show_data_hash", "CRC32", "-show_data", "-of", "compact"));
+        arguments.addAll(inputOptions);
+        arguments.add(file);
+        var output = Oracle.run(Oracle.Tool.FFPROBE, Duration.ofMinutes(2), arguments);
         var streams = new ArrayList<ProbeStream>();
         var packets = new ArrayList<ProbePacket>();
         var format = new LinkedHashMap<String, String>();

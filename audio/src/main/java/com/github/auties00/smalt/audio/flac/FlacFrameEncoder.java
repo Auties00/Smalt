@@ -79,7 +79,7 @@ final class FlacFrameEncoder {
     /**
      * {@code ln(2)}.
      */
-    private static final double LN2 = Math.log(2);
+    private static final double LN2 = StrictMath.log(2);
 
     /**
      * The magnitude a residual sample must stay below.
@@ -777,7 +777,7 @@ final class FlacFrameEncoder {
      */
     private static double expectedResidualBitsScaled(double error, double scale) {
         if (error > 0.0) {
-            var bps = 0.5 * Math.log(scale * error) / LN2;
+            var bps = 0.5 * StrictMath.log(scale * error) / LN2;
             return bps >= 0.0 ? bps : 0.0;
         }
         return error < 0.0 ? 1e32 : 0.0;
@@ -953,7 +953,7 @@ final class FlacFrameEncoder {
         if (error == Long.MAX_VALUE) {
             return 34.0;
         }
-        return error > 0 ? Math.log(LN2 * error / samples) / LN2 : 0.0;
+        return error > 0 ? StrictMath.log(LN2 * error / samples) / LN2 : 0.0;
     }
 
     /**

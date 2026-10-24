@@ -5,44 +5,55 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
-import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
+import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.io.LocalSource;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
- * Copies the audio and video of an ISO base media or Matroska file into a fast-start MP4 or M4A
- * without re-encoding.
+ * Copies the tracks of an ISO base media, Matroska, MPEG transport stream, AVI or Ogg file into a
+ * fast-start MP4, M4A or QuickTime movie without re-encoding.
  *
- * <p>{@link #remux} detects the input container by its magic, keeps one video track and one
- * audio track (the first of each kind, or the ones {@link RemuxOptions} names), and copies their
- * packets unchanged into an {@link Mp4Muxer} with fast start, so the output has its {@code moov}
- * before the media data. For an ISO base media input, whose sample index is known up front, the
- * output layout is planned from the index first, so the {@code moov} is written before the media
- * data and the media data is written once, straight to the output; other inputs go through the
- * muxer's spool, except a Matroska input larger than the spool's memory that is local (in memory
- * or in a file, see {@link LocalSource}), whose layout is planned by demuxing it once before it
- * is demuxed again to write the media data. An input that is not local, such as one fetched over
- * the network, is always read once. Presentation timing is preserved: edit lists, encoder priming
- * ({@link AudioTrack#skipSamples()}), composition offsets and the display orientation carry over.
- * Timing is repaired where the input is inconsistent: decoding timestamps that step backwards are
- * held, Matroska video (which stores presentation timestamps only) gets decoding timestamps
- * derived from them, and Matroska audio, whose stored timestamps are rounded to the segment time
- * base (a millisecond by default), is retimed to exact sample counts read from the frames.
+ * <p>{@link #remux} detects the input container by its magic, keeps the tracks {@link RemuxOptions}
+ * selects (by default the first video track and the first audio track; several audio tracks and
+ * subtitle tracks when asked), and copies their packets unchanged into an {@link Mp4Muxer}
+ * with fast start, so the output has its {@code moov} before the media data. For an ISO base media
+ * input, whose sample index is known up front, the output layout is planned from the index first,
+ * so the {@code moov} is written before the media data and the media data is written once,
+ * straight to the output; other inputs go through the muxer's spool, except an input larger than
+ * the spool's memory that is local (in memory or in a file, see {@link LocalSource}), whose layout
+ * is planned by demuxing it once before it is demuxed again to write the media data. An input that
+ * is not local, such as one fetched over the network, is always read once, and a layout that
+ * depends on the sample bytes (an AC-3, E-AC-3 or AMR configuration, a VP8, VP9, AV1 or MPEG-4
+ * Part 2 configuration derived from the first key frame, ProRes and DNxHD, Motion-JPEG in a
+ * QuickTime file, the subtitle samples of a non-MP4 input) is spooled. Presentation timing is
+ * preserved: edit lists, encoder priming ({@link AudioTrack#skipSamples()}), composition offsets
+ * and the display orientation carry over; an ISO base media track whose edit list has several
+ * segments keeps its samples and its edit list as they are, and a track with several sample
+ * descriptions keeps them too; the samples of an ISO base media subtitle track are copied as they
+ * are. Timing is repaired where the input is inconsistent: decoding timestamps that step backwards
+ * are held, video stored with presentation timestamps only (Matroska) gets decoding timestamps
+ * derived from them, and audio whose stored timestamps use a time base other than its sampling
+ * rate (Matroska, a millisecond by default; transport streams, 90 kHz; AVI) is retimed to exact
+ * sample counts read from the frames.
  *
- * <p>The output carries H.264 or HEVC video and AAC, Opus, MP3, ALAC or FLAC audio; a selected
- * track with any other codec raises {@link MediaException.Unsupported} naming the codec, so the
- * caller can transcode it instead.
+ * <p>The output carries the codecs {@link Mp4Muxer#supports} lists for the brand, PCM needing its
+ * sampling rate and channel layout; a selected track with any other codec raises
+ * {@link MediaException.Unsupported} naming the codec, so the caller can transcode it instead.
  */
 public final class Mp4Remuxer {
     private Mp4Remuxer() {
@@ -68,7 +79,7 @@ public final class Mp4Remuxer {
     }
 
     /**
-     * Remuxes an input into a fast-start MP4 or M4A.
+     * Remuxes an input into a fast-start MP4, M4A or QuickTime movie.
      *
      * <p>The output is written strictly in order, so any sink works, a streaming one included.
      *
@@ -77,7 +88,8 @@ public final class Mp4Remuxer {
      * @param options the track selection, brand and limits
      * @return what was written
      * @throws IllegalArgumentException if a selected track identifier does not name a track of the
-     * right kind
+     * right kind (a subtitle track, see {@link RemuxOptions#includesSubtitles()}, for a subtitle
+     * selection)
      * @throws MediaException.Unsupported if the input container is not recognized, it has no
      * selectable track, or a selected track's codec cannot be stored in MP4
      * @throws MediaException.Malformed if the input is corrupt
@@ -92,6 +104,11 @@ public final class Mp4Remuxer {
         var start = output.position();
         try (var demuxer = open(input, format, options)) {
             var copies = prepare(demuxer, options, format);
+            if (demuxer instanceof Mp4Demuxer indexed) {
+                for (var copy : copies) {
+                    copy.edits = indexed.useMediaSamples(copy.input.id());
+                }
+            }
             var muxerOptions = Mp4MuxerOptions.builder()
                     .brand(options.brand())
                     .fastStart(true)
@@ -100,12 +117,16 @@ public final class Mp4Remuxer {
             try (var muxer = new Mp4Muxer(output, muxerOptions)) {
                 for (var copy : copies) {
                     muxer.addTrack(copy.output);
+                    if (copy.edits != null) {
+                        muxer.setEdits(copy.output.id(), copy.edits);
+                    }
                 }
                 long packets;
                 try {
-                    if (demuxer instanceof Mp4Demuxer indexed && plannable(copies)) {
+                    if (demuxer instanceof Mp4Demuxer indexed && plannable(copies, format, options.brand())
+                            && copies.stream().noneMatch(copy -> indexed.convertsSamples(copy.input.id()))) {
                         muxer.streamAfter(plan(indexed, copies, muxerOptions));
-                    } else if (format == ContainerFormat.MATROSKA && input.size() > MdatSpool.MEMORY_LIMIT && LocalSource.isLocal(input)) {
+                    } else if (format != ContainerFormat.MP4 && input.size() > MdatSpool.MEMORY_LIMIT && LocalSource.isLocal(input)) {
                         var header = planByReading(input, format, options, muxerOptions);
                         if (header != null) {
                             muxer.streamAfter(header);
@@ -116,7 +137,7 @@ public final class Mp4Remuxer {
                 } catch (MediaException exception) {
                     throw exception;
                 } catch (IllegalArgumentException | IllegalStateException | ArithmeticException exception) {
-                    throw new MediaException.Malformed("inconsistent input timing: " + exception.getMessage(), exception);
+                    throw new MediaException.Malformed("cannot remux the input: " + exception.getMessage(), exception);
                 } catch (RuntimeException exception) {
                     throw new MediaException.Malformed("cannot remux the input: " + exception, exception);
                 }
@@ -141,7 +162,7 @@ public final class Mp4Remuxer {
     private static Demuxer open(MediaSource input, ContainerFormat format, RemuxOptions options) {
         var demuxerOptions = DemuxerOptions.builder().limits(options.limits()).build();
         return format == ContainerFormat.MP4 ? new Mp4Demuxer(input, demuxerOptions)
-                : new MatroskaDemuxer(input, demuxerOptions);
+                : Containers.openDemuxer(input, demuxerOptions);
     }
 
     /**
@@ -150,22 +171,29 @@ public final class Mp4Remuxer {
      * @param demuxer the input
      * @param options the remux options
      * @param format the detected container
-     * @return the track plans, video first
+     * @return the track plans: the video track, then the audio tracks, then the subtitle tracks
      * @throws MediaException.Unsupported if nothing can be copied or a codec cannot be stored
      */
     private static List<Copy> prepare(Demuxer demuxer, RemuxOptions options, ContainerFormat format) {
-        var video = options.brand() == Mp4MuxerOptions.Brand.M4A ? null
-                : select(demuxer.tracks(), TrackKind.VIDEO, options.selection(true));
-        var audio = select(demuxer.tracks(), TrackKind.AUDIO, options.selection(false));
-        if (video == null && audio == null) {
-            throw new MediaException.Unsupported("no audio or video", "the input has no track to remux");
-        }
+        var brand = options.brand();
+        var tracks = demuxer.tracks();
         var copies = new ArrayList<Copy>();
-        if (video != null) {
-            copies.add(prepareVideo(video, copies.size() + 1, format));
+        if (brand != Mp4MuxerOptions.Brand.M4A) {
+            var video = select(tracks, TrackKind.VIDEO, options.videoSelection(), brand);
+            if (!video.isEmpty()) {
+                copies.add(prepareVideo(video.getFirst(), copies.size() + 1, format, brand));
+            }
         }
-        if (audio != null) {
-            copies.add(prepareAudio(audio, copies.size() + 1, format));
+        for (var audio : select(tracks, TrackKind.AUDIO, options.audioSelection(), brand)) {
+            copies.add(prepareAudio(audio, copies.size() + 1, format, brand));
+        }
+        if (brand != Mp4MuxerOptions.Brand.M4A) {
+            for (var text : select(tracks, TrackKind.DATA, options.subtitleSelection(), brand)) {
+                copies.add(prepareText(text, copies.size() + 1, brand));
+            }
+        }
+        if (copies.isEmpty()) {
+            throw new MediaException.Unsupported("no audio or video", "the input has no track to remux");
         }
         return copies;
     }
@@ -194,39 +222,78 @@ public final class Mp4Remuxer {
      * Identifies the container of an input by its first bytes.
      *
      * @param input the input, read from its start; not closed
-     * @return {@link ContainerFormat#MP4} or {@link ContainerFormat#MATROSKA}
-     * @throws MediaException.Unsupported if the input is neither
+     * @return {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA},
+     * {@link ContainerFormat#MPEG_TS}, {@link ContainerFormat#AVI} or {@link ContainerFormat#OGG}
+     * @throws MediaException.Unsupported if the input is none of those
      */
     static ContainerFormat detect(MediaSource input) {
         return Containers.detect(input)
-                .filter(format -> format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA)
+                .filter(format -> format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA
+                        || format == ContainerFormat.MPEG_TS || format == ContainerFormat.AVI || format == ContainerFormat.OGG)
                 .orElseThrow(() -> new MediaException.Unsupported("unknown container",
-                        "the input is neither ISO base media nor Matroska"));
+                        "the input is not an ISO base media, Matroska, MPEG transport stream, AVI or Ogg file"));
     }
 
     /**
-     * Selects a track of a kind.
+     * Selects the tracks of a kind.
      *
      * @param tracks the input tracks
-     * @param kind the kind wanted
-     * @param selection a positive track identifier, a negative value for the first track of the
-     * kind, or {@code 0} for none
-     * @return the track, or {@code null} when none is selected or the input has none of the kind
-     * @throws IllegalArgumentException if the identifier names no track of the kind
+     * @param kind the kind wanted; {@link TrackKind#DATA} selects subtitle tracks
+     * @param selection the selection of the options
+     * @param brand the output brand: the first or every subtitle track is selected among those it can carry
+     * @return the tracks, in output order; empty when none is selected or the input has none of
+     * the kind
+     * @throws IllegalArgumentException if an identifier names no track of the kind
      */
-    private static Track select(List<Track> tracks, TrackKind kind, int selection) {
-        if (selection == 0) {
-            return null;
-        }
-        for (var track : tracks) {
-            if (track.kind() == kind && (selection < 0 || track.id() == selection)) {
-                return track;
+    private static List<Track> select(List<Track> tracks, TrackKind kind, RemuxOptions.Selection selection,
+                                      Mp4MuxerOptions.Brand brand) {
+        var result = new ArrayList<Track>();
+        switch (selection.mode()) {
+            case NONE -> {
+            }
+            case FIRST, ALL -> {
+                for (var track : tracks) {
+                    if (matches(track, kind) && (kind != TrackKind.DATA || !track.codec().isBitmapSubtitle()
+                            && !track.codec().isCaption() || Mp4Muxer.supports(brand, track.codec()))) {
+                        result.add(track);
+                        if (selection.mode() == RemuxOptions.Mode.FIRST) {
+                            break;
+                        }
+                    }
+                }
+            }
+            case IDS -> {
+                for (var id : selection.ids()) {
+                    Track found = null;
+                    for (var track : tracks) {
+                        if (track.id() == id && matches(track, kind)) {
+                            found = track;
+                        }
+                    }
+                    if (found == null) {
+                        throw new IllegalArgumentException("the input has no "
+                                + (kind == TrackKind.DATA ? "subtitle" : kind.name().toLowerCase(Locale.ROOT))
+                                + " track " + id);
+                    }
+                    result.add(found);
+                }
             }
         }
-        if (selection > 0) {
-            throw new IllegalArgumentException("the input has no " + kind.name().toLowerCase() + " track " + selection);
-        }
-        return null;
+        return result;
+    }
+
+    /**
+     * Returns whether a track is of a selected kind.
+     *
+     * @param track the input track
+     * @param kind the kind; {@link TrackKind#DATA} stands for subtitle tracks, of a text or bitmap subtitle
+     * format, TTML or a caption format
+     * @return {@code true} when the track has the kind
+     */
+    private static boolean matches(Track track, TrackKind kind) {
+        var codec = track.codec();
+        return kind == TrackKind.DATA ? codec.isSubtitle() || codec == Codec.TTML || codec.isBitmapSubtitle()
+                || codec.isCaption() : track.kind() == kind;
     }
 
     /**
@@ -254,6 +321,12 @@ public final class Mp4Remuxer {
         private long lastDts = Long.MIN_VALUE;
 
         /**
+         * The edit list copied from an ISO base media input whose samples are copied without it,
+         * or {@code null} to derive the output's from the timestamps.
+         */
+        private long[][] edits;
+
+        /**
          * Constructs a plan.
          *
          * @param input the input track
@@ -273,20 +346,20 @@ public final class Mp4Remuxer {
      * @param track the input track
      * @param id the output identifier
      * @param format the input container
+     * @param brand the output brand
      * @return the plan
      * @throws MediaException.Unsupported if the codec cannot be stored or its configuration is
      * missing
      */
-    private static Copy prepareVideo(Track track, int id, ContainerFormat format) {
+    private static Copy prepareVideo(Track track, int id, ContainerFormat format, Mp4MuxerOptions.Brand brand) {
         var video = (VideoTrack) track;
-        if (video.codec() != Codec.H264 && video.codec() != Codec.HEVC) {
-            throw new MediaException.Unsupported(video.codec().displayName(),
-                    "MP4 remuxing carries H.264 or HEVC video, not " + video.codec().displayName());
-        }
-        var config = video.codecConfig().orElse(null);
-        if (config == null || config.length < 7 || config[0] != 1) {
-            throw new MediaException.Unsupported(video.codec().displayName() + " without configuration record",
-                    "the " + video.codec().displayName() + " track has no decoder configuration record (" + format + ")");
+        checkCodec(video.codec(), brand);
+        if (video.codec() == Codec.H264 || video.codec() == Codec.HEVC) {
+            var config = video.codecConfig().orElse(null);
+            if (config == null || config.length < 7 || config[0] != 1) {
+                throw new MediaException.Unsupported(video.codec().displayName() + " without configuration record",
+                        "the " + video.codec().displayName() + " track has no decoder configuration record (" + format + ")");
+            }
         }
         var output = video.toBuilder().id(id).build();
         return new Copy(track, output, null);
@@ -295,53 +368,116 @@ public final class Mp4Remuxer {
     /**
      * Plans the copy of an audio track.
      *
+     * <p>The packets of a Matroska or AVI input, whose timestamps are rounded to their own clock
+     * whatever time base they are expressed in, and those of another input other than ISO base
+     * media whose time base is not one tick per sample, are retimed to exact sample counts.
+     *
      * @param track the input track
      * @param id the output identifier
      * @param format the input container
+     * @param brand the output brand
      * @return the plan
-     * @throws MediaException.Unsupported if the codec cannot be stored or its configuration is
-     * missing
+     * @throws MediaException.Unsupported if the codec cannot be stored or the configuration, sampling
+     * rate or channel layout it needs is missing
      */
-    private static Copy prepareAudio(Track track, int id, ContainerFormat format) {
+    private static Copy prepareAudio(Track track, int id, ContainerFormat format, Mp4MuxerOptions.Brand brand) {
         var audio = (AudioTrack) track;
         var codec = audio.codec();
+        checkCodec(codec, brand);
         switch (codec) {
             case AAC, OPUS, ALAC, FLAC -> {
-                if (audio.codecConfig().isEmpty()) {
+                if (audio.codecConfig().filter(config -> config.length > 0).isEmpty()) {
                     throw new MediaException.Unsupported(codec.displayName() + " without configuration",
                             "the " + codec.displayName() + " track has no codec configuration");
                 }
             }
-            case MP3 -> {
+            default -> {
+                if (codec.isPcm() && (audio.sampleRate() <= 0 || audio.layout().isEmpty())) {
+                    throw new MediaException.Unsupported(codec.displayName() + " without sample format",
+                            "the " + codec.displayName() + " track declares no sampling rate or channel layout");
+                }
             }
-            default -> throw new MediaException.Unsupported(codec.displayName(),
-                    "MP4 remuxing carries AAC, Opus, MP3, ALAC or FLAC audio, not " + codec.displayName());
         }
-        if (format == ContainerFormat.MATROSKA) {
-            var rate = codec == Codec.OPUS ? 48000 : audio.sampleRate();
-            if (rate > 0) {
-                var retimer = new AudioRetimer(audio, rate);
-                var duration = audio.duration() > 0 ? audio.timeBase().rescale(audio.duration(), retimer.timeBase()) : -1;
-                var output = audio.toBuilder().id(id).timeBase(retimer.timeBase()).duration(duration).build();
-                return new Copy(track, output, retimer);
-            }
+        var rate = codec == Codec.OPUS ? 48000 : audio.sampleRate();
+        var coarse = format == ContainerFormat.MATROSKA || format == ContainerFormat.AVI
+                || !audio.timeBase().equals(Rational.timeBaseOf(rate));
+        if (format != ContainerFormat.MP4 && rate > 0 && coarse) {
+            var retimer = new AudioRetimer(audio, rate);
+            var duration = audio.duration() > 0 ? audio.timeBase().rescale(audio.duration(), retimer.timeBase()) : -1;
+            var output = audio.toBuilder().id(id).timeBase(retimer.timeBase()).duration(duration).build();
+            return new Copy(track, output, retimer);
         }
         var output = audio.toBuilder().id(id).build();
         return new Copy(track, output, null);
     }
 
     /**
-     * Returns whether the output layout can be planned without the sample bytes: the muxer reads
-     * the first frame of an MP3 track only when the track declares no sampling rate or channel
-     * layout.
+     * Plans the copy of a subtitle track.
+     *
+     * @param track the input track
+     * @param id the output identifier
+     * @param brand the output brand
+     * @return the plan
+     * @throws MediaException.Unsupported if the codec cannot be stored
+     */
+    private static Copy prepareText(Track track, int id, Mp4MuxerOptions.Brand brand) {
+        checkCodec(track.codec(), brand);
+        if (!(track instanceof DataTrack data)) {
+            throw new MediaException.Unsupported(track.codec().displayName(), "the subtitle track is not a data track");
+        }
+        return new Copy(track, data.toBuilder().id(id).build(), null);
+    }
+
+    /**
+     * Checks that the output brand carries a codec.
+     *
+     * @param codec the codec of a selected track
+     * @param brand the output brand
+     * @throws MediaException.Unsupported if it does not, naming the codec
+     */
+    private static void checkCodec(Codec codec, Mp4MuxerOptions.Brand brand) {
+        if (!Mp4Muxer.supports(brand, codec)) {
+            var hint = Mp4Muxer.supports(Mp4MuxerOptions.Brand.MP4, codec)
+                    ? ", which the MP4 and QuickTime brands carry"
+                    : Mp4Muxer.supports(Mp4MuxerOptions.Brand.QUICKTIME, codec)
+                    ? ", which the QuickTime brand carries" : "";
+            throw new MediaException.Unsupported(codec.displayName(),
+                    "MP4 remuxing with the " + brand + " brand does not carry " + codec.displayName() + hint);
+        }
+    }
+
+    /**
+     * Returns whether the output layout can be planned from sample sizes and timestamps alone,
+     * without the sample bytes the muxer reads for some sample descriptions.
+     *
+     * <p>The layout cannot be planned for an MP3 or MP2 track that declares no sampling rate or
+     * channel layout, an AC-3, E-AC-3 or AMR track (whose configuration boxes come from the
+     * frames), a VP8, VP9, AV1 or MPEG-4 Part 2 track without a configuration (derived from the
+     * first key frame), a ProRes or DNxHD track (whose sample entry reads the first frame),
+     * Motion-JPEG in a QuickTime file (whose sample entry type depends on the frames), Motion JPEG 2000 in a Motion
+     * JPEG 2000 file (whose samples are rewritten) or without a JP2 Header box configuration, and the
+     * subtitle tracks of an input other than ISO base media (whose cues are cut into new samples).
      *
      * @param copies the track plans
+     * @param format the input container
+     * @param brand the output brand
      * @return {@code true} when planning is possible
      */
-    private static boolean plannable(List<Copy> copies) {
+    private static boolean plannable(List<Copy> copies, ContainerFormat format, Mp4MuxerOptions.Brand brand) {
         for (var copy : copies) {
-            if (copy.output instanceof AudioTrack audio && audio.codec() == Codec.MP3
-                    && (audio.sampleRate() <= 0 || audio.layout().isEmpty())) {
+            var output = copy.output;
+            var plannable = switch (output.codec()) {
+                case MP3, MP2 -> output instanceof AudioTrack audio && audio.sampleRate() > 0 && audio.layout().isPresent();
+                case AC3, EAC3, AMR_NB, AMR_WB, PRORES, DNXHD -> false;
+                case VP8, VP9, AV1, MPEG4_PART2 -> output.codecConfig().filter(config -> config.length > 0).isPresent();
+                case MJPEG -> brand != Mp4MuxerOptions.Brand.QUICKTIME;
+                case JPEG2000 -> brand != Mp4MuxerOptions.Brand.MJ2
+                        && Jp2Frames.isHeader(output.codecConfig().orElse(null));
+                case MOV_TEXT, WEBVTT, TTML -> format == ContainerFormat.MP4;
+                case CEA_608, CEA_708 -> false;
+                default -> true;
+            };
+            if (!plannable) {
                 return false;
             }
         }
@@ -364,11 +500,17 @@ public final class Mp4Remuxer {
         var planner = Mp4Muxer.planner(options);
         for (var copy : copies) {
             planner.addTrack(copy.output);
+            if (copy.edits != null) {
+                planner.setEdits(copy.output.id(), copy.edits);
+            }
         }
         var sample = new Mp4Demuxer.SampleInfo();
         while (demuxer.nextSample(sample)) {
             var copy = find(copies, sample.trackId);
             if (copy != null) {
+                if (sample.newConfig != null) {
+                    planner.changeCodecConfig(copy.output.id(), sample.newConfig);
+                }
                 var dts = repairDts(copy, sample.dts);
                 planner.planSample(copy.output.id(), sample.size, repairPts(copy, sample.pts, dts), dts, sample.duration,
                         sample.keyframe);
@@ -402,15 +544,18 @@ public final class Mp4Remuxer {
                                         Mp4MuxerOptions muxerOptions) {
         try (var demuxer = open(input, format, options)) {
             var copies = prepare(demuxer, options, format);
-            if (!plannable(copies)) {
+            if (!plannable(copies, format, options.brand())) {
                 return null;
             }
             var planner = Mp4Muxer.planner(muxerOptions);
             for (var copy : copies) {
                 planner.addTrack(copy.output);
             }
-            transfer(demuxer, copies, packet -> planner.planSample(packet.trackId(), packet.size(), packet.pts(),
-                    packet.dts(), packet.duration(), packet.keyframe()));
+            transfer(demuxer, copies, packet -> {
+                packet.sideData().newCodecConfig().ifPresent(config -> planner.changeCodecConfig(packet.trackId(), config));
+                planner.planSample(packet.trackId(), packet.size(), packet.pts(), packet.dts(), packet.duration(),
+                        packet.keyframe());
+            });
             return planner.finishPlan();
         }
     }
@@ -499,6 +644,9 @@ public final class Mp4Remuxer {
             if (copy == null) {
                 continue;
             }
+            if (sample.newConfig != null) {
+                muxer.changeCodecConfig(copy.output.id(), sample.newConfig);
+            }
             var dts = repairDts(copy, sample.dts);
             var pts = repairPts(copy, sample.pts, dts);
             muxer.writeSample(copy.output.id(), sample.data, sample.dataOffset, sample.size, pts, dts, sample.duration,
@@ -517,7 +665,7 @@ public final class Mp4Remuxer {
      * @param sink receives the repaired packets
      * @return the number of packets handed over
      */
-    private static long transfer(Demuxer demuxer, List<Copy> copies, java.util.function.Consumer<Packet> sink) {
+    private static long transfer(Demuxer demuxer, List<Copy> copies, Consumer<Packet> sink) {
         var count = 0L;
         Packet packet;
         while ((packet = demuxer.read()) != null) {
