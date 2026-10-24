@@ -1,0 +1,33 @@
+# audio decode dump of vectors/eac3-csi_miami_5.1_256_spx_small.eac3; regenerate with -Dsmalt.test.updateDumps=true
+format AC3
+duration 1504000
+seekable true
+track 0 EAC3 rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER, LOW_FREQUENCY, SIDE_LEFT, SIDE_RIGHT]
+0 frames=4096 crc16=281625c1
+1 frames=4096 crc16=2a67ab4c
+2 frames=4096 crc16=6d3027c8
+3 frames=4096 crc16=7e319d85
+4 frames=4096 crc16=c70a80ef
+5 frames=4096 crc16=64ae73cb
+6 frames=4096 crc16=cb27541e
+7 frames=4096 crc16=d95a700b
+8 frames=4096 crc16=ee23b453
+9 frames=4096 crc16=1bc39e2b
+10 frames=4096 crc16=5ec1d119
+11 frames=4096 crc16=831563c9
+12 frames=4096 crc16=ea6a7db6
+13 frames=4096 crc16=10bdb65b
+14 frames=4096 crc16=01b272ce
+15 frames=4096 crc16=1558e6fa
+16 frames=4096 crc16=b175e627
+17 frames=2560 crc16=7d386dc6
+seek 0: @sample 0
+seek 501333: @sample 24064
+seek 1002666: @sample 48128
+seek 1504000: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AC3
+  duration -1
+  seekable false
+  track 0 EAC3 rate=48000 layout=[FRONT_LEFT, FRONT_RIGHT, FRONT_CENTER, LOW_FREQUENCY, SIDE_LEFT, SIDE_RIGHT]

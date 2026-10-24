@@ -2186,6 +2186,11 @@ public final class QuantMatrices {
     };
 
     /**
+     * The matrix level that has no matrix (AV1 specification, section 7.12.3).
+     */
+    private static final int FLAT_LEVEL = 15;
+
+    /**
      * Holds the matrices as {@code [level 15][plane type 2][RectTxfmSize 19]}, sharing equal ones.
      */
     private static final byte[][] MATRICES = new byte[15 * 2 * 19][];
@@ -2226,12 +2231,18 @@ public final class QuantMatrices {
     /**
      * Returns a quantizer matrix.
      *
-     * @param level     the matrix level, from 0 to 14 (level 15 means no matrix and has none)
+     * <p>Level 15, which a frame header can select with {@code qm_y}, {@code qm_u} or {@code qm_v}, has no
+     * matrix: its coefficients are dequantized flat, as without matrices.
+     *
+     * @param level     the matrix level, from 0 to 15
      * @param planeType 0 for luma, 1 for chroma
      * @param txSize    the transform size ({@code RectTxfmSize})
-     * @return the unsigned 8-bit weights in the transposed coefficient layout
+     * @return the unsigned 8-bit weights in the transposed coefficient layout, or {@code null} for level 15
      */
     public static byte[] get(int level, int planeType, int txSize) {
+        if (level == FLAT_LEVEL) {
+            return null;
+        }
         return MATRICES[(level * 2 + planeType) * 19 + txSize];
     }
 }

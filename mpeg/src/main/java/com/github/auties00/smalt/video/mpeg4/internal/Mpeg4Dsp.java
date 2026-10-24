@@ -25,10 +25,10 @@ public abstract class Mpeg4Dsp {
     static final Mpeg4Dsp SCALAR = new ScalarMpeg4Dsp();
 
     /**
-     * The implementation every picture uses: the Vector API kernels
-     * when {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every picture uses: the Vector API kernels, written for 256-bit vectors,
+     * when {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final Mpeg4Dsp FIXED = Simd.ENABLED ? VectorMpeg4Dsp.create() : SCALAR;
+    private static final Mpeg4Dsp FIXED = Simd.WIDE ? VectorMpeg4Dsp.create() : SCALAR;
 
     /**
      * The minimum size of the {@code int} scratch buffer of {@link #quarterPel}: the horizontally
