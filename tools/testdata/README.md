@@ -236,6 +236,18 @@ decoder filters its output, so pictures match within a few sample values, and it
 ticks of `vop_time_increment_resolution` rather than in frame periods, so only streams whose VOP times are frame
 numbers are compared.
 
+`mf-oracle/MfAudioDecode.cs` drives the Dolby Digital Plus decoder of Media Foundation the same way and writes
+interleaved 32-bit float samples; the same `build.sh` builds it. Its optional arguments ask for a channel count (a
+stereo downmix with `2`) and set the decoder's operational mode and dynamic range scale factors through the
+decoder's attributes (`CODECAPI_AVDecDDOperationalMode`, `AVDecDDDynamicRangeScaleHigh` and `Low`); mode 3 with both
+scales 0 reproduces a stream without dialogue normalization or dynamic range control, and the decoder's default is
+RF mode. `Eac3MediaFoundationTest` (`smalt-mpeg`) compares Smalt's E-AC-3 decoder and encoder with it when
+`-Dsmalt.test.mfAudioDecode=<directory>/MfAudioDecode.exe` names the driver, and skips otherwise: the transient
+pre-noise processing of the Audition streams of ffmpeg ticket 10958 and of forged frames, the pre-noise data and the
+enhanced coupling Smalt's encoder writes, the Lo/Ro downmix levels, the line mode dynamic range words and the core
+of a 9.1 program. The decoder's output starts 32 samples before Smalt's decode, and it has no decoder for the
+reduced sampling rates of 16 to 24 kHz.
+
 ## HDR ICC profiles
 
 The high-dynamic-range color tests of `smalt-core` (`HdrColorTest`) read two profiles kept with the tests

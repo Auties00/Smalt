@@ -50,6 +50,14 @@ class MpegDecoderBehaviorTest {
     }
 
     @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"surround-7.1.4", "stereo-coupled"})
+    @DisplayName("E-AC-3 tools of Smalt's encoder (dependent substreams, pre-noise data, enhanced coupling, metadata): identical samples under every source behavior")
+    void eac3Tools(String name) throws IOException {
+        ReaderAsserts.audio("ac3/smalt-" + name + ".ec3", com.github.auties00.smalt.audio.ac3.Eac3ToolStreams.stream(name))
+                .run();
+    }
+
+    @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mpegff-male_amr122.3gp", "mpeg4audio-al00_08.mp4", "eac3-csi_miami_5.1_256_spx_small.eac3"})
     @DisplayName("audio smoke vectors: identical samples under every source behavior and clean faults")
     void audioVector(String name) throws IOException {

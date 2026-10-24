@@ -693,6 +693,31 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the E-AC-3 seeds of Smalt's encoder tools: dependent substreams, pre-noise data, enhanced coupling, metadata")
+    void eac3Tools() {
+        for (var name : com.github.auties00.smalt.audio.ac3.Eac3ToolStreams.NAMES) {
+            var parts = new ArrayList<FuzzPackets.Part>();
+            var stream = com.github.auties00.smalt.audio.ac3.Eac3ToolStreams.stream(name);
+            var position = 0;
+            var start = 0;
+            // access units: an independent frame of substream 0 with the dependent frames after it
+            while (position + 6 <= stream.length && parts.size() < 6) {
+                var words = (((stream[position + 2] & 0x07) << 8) | (stream[position + 3] & 0xFF)) + 1;
+                var next = position + 2 * words;
+                var independent = next + 6 > stream.length || ((stream[next + 2] & 0xFF) >> 6) != 1;
+                if (independent) {
+                    parts.add(new FuzzPackets.Part(Arrays.copyOfRange(stream, start, next), true));
+                    start = next;
+                }
+                position = next;
+            }
+            var channels = name.startsWith("surround") ? 12 : 2;
+            write(MpegFuzzTest.class, "eac3", "valid-" + name + ".bin",
+                    FuzzPackets.audio(0, 48000, channels, 0, null, parts));
+        }
+    }
+
+    @Test
     @DisplayName("writes the seeds of the HEIC gain map target: an iPhone-style portrait with an Apple gain map")
     void gainMaps() {
         var portrait = com.github.auties00.smalt.image.heic.HeicGainMapTest.portrait(32, 24,
