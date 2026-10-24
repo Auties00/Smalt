@@ -309,6 +309,16 @@ density files of the TurboJPEG API (which cjpeg cannot write) for the synthetic 
 `tools/testdata/jpegenc/turbojpeg-record.py`, recorded with `python -I turbojpeg-record.py <libturbojpeg>
 turbojpeg-md5.csv` against libjpeg-turbo 3.1.3 (the MSYS2 UCRT64 build on Windows x64).
 
+## Synthetic TrueType font
+
+The subtitle rendering tests of `smalt-core` and `smalt-it` (`TrueTypeFontTest`, `SubtitleRendererTest`,
+`VideoOverlayTest`, `SubtitleFontOracleTest`, the burn-in tests) and the seed of `FontFuzzTest` use
+`core/src/test/resources/com/github/auties00/smalt/subtitle/smalt-test.ttf`, a font made from scratch with glyphs of
+known outlines and areas (the em square, a triangle, a circle of off-curve points only, a ring, composites placed by
+offsets, scales and matched points), format 4 and 12 `cmap` subtables and a `name` table. `python
+tools/testdata/fonts/make-test-font.py <output.ttf>` regenerates it deterministically; `TrueTypeFontTest` pins its
+SHA-256, and `smalt-it` and the fuzz seed hold copies.
+
 ## Lossless Motion-JPEG vectors
 
 `MjpegLosslessTest` of `smalt-image` reads AVI and Matroska files of two frames coded by ffmpeg's lossless JPEG

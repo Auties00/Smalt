@@ -18,10 +18,11 @@ import com.github.auties00.smalt.video.VideoEncoders;
  * Provides {@link Mj2Decoder} to {@link VideoDecoders} for Motion JPEG 2000 tracks and {@link Mj2Encoder} to
  * {@link VideoEncoders}.
  *
- * @implNote This implementation encodes the {@link Mj2EncoderOptions#defaults()} layout (8-bit 4:2:0 Y'CbCr, every
- * frame a JP2 file) with the irreversible wavelet at the requested frame rate, each frame capped at its share of the
- * requested bitrate; real-time tuning, the key frame settings and the thread count do not apply to an intra-only
- * codec coded on the shared pool.
+ * @implNote This implementation encodes the {@link Mj2EncoderOptions#defaults()} layout (4:2:0 Y'CbCr, every frame a
+ * JP2 file) at the requested bit depth with the irreversible wavelet at the requested frame rate, each frame capped at
+ * its share of the requested bitrate; real-time tuning, the key frame settings and the thread count do not apply to an
+ * intra-only codec coded on the shared pool, and the color description does not apply to a stream that declares its
+ * Y'CbCr samples sYCC.
  */
 public final class Mj2CodecProvider implements VideoCodecProvider {
     /**
@@ -49,6 +50,7 @@ public final class Mj2CodecProvider implements VideoCodecProvider {
     public VideoEncoder createEncoder(Codec codec, VideoEncoderOptions options) {
         return new Mj2Encoder(options.width(), options.height(), Mj2EncoderOptions.defaults().toBuilder()
                 .coding(Jp2EncoderOptions.defaults().toBuilder().reversible(false).build())
+                .bitDepth(options.bitDepth())
                 .frameRate(options.frameRate())
                 .bitrate(options.bitrate())
                 .build());

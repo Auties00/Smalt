@@ -29,6 +29,7 @@ decoder	libvpx	VP8 reference decoding (libvpx)
 decoder	libvpx-vp9	VP9 reference decoding (libvpx)
 decoder	libopus	Opus reference decoding (libopus)
 filter	zscale	zimg color conversion oracle
+filter	telecine	2:3 pulldown source of the inverse telecine test
 muxer	avif	AVIF fixtures
 demuxer	dash	DASH manifests read back by ffmpeg (libxml2)
 pixfmt	libx264:yuv420p10le	10-bit H.264 fixtures

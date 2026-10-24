@@ -13,6 +13,7 @@ import com.github.auties00.smalt.video.vp9.Vp9Decoder;
 import com.github.auties00.smalt.video.vp9.Vp9Encoder;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderSpeed;
+import com.github.auties00.smalt.video.vp9.Vp9Subsampling;
 
 /**
  * Provides {@link Vp9Decoder} to {@link VideoDecoders} for VP9 tracks and {@link Vp9Encoder} to
@@ -29,7 +30,9 @@ import com.github.auties00.smalt.video.vp9.Vp9EncoderSpeed;
  *       {@link VideoEncoder#flush} drains;</li>
  *   <li>a key frame interval or the absence of periodic key frames in place of the preset's;</li>
  *   <li>a thread count above one: {@link Vp9EncoderOptions#threads()}, which caps it at 64;
- *       {@code 0} and {@code 1} keep the single thread of the presets.</li>
+ *       {@code 0} and {@code 1} keep the single thread of the presets;</li>
+ *   <li>a color description: {@link Vp9EncoderOptions.Builder#color}, and a bit depth: 4:2:0 at 8, 10
+ *       or 12 bits, the depth rounded up ({@link Vp9EncoderOptions.Builder#pictureFormat}).</li>
  * </ul>
  */
 public final class Vp9CodecProvider implements VideoCodecProvider {
@@ -68,6 +71,8 @@ public final class Vp9CodecProvider implements VideoCodecProvider {
         if (options.threads() > 1) {
             builder.threads(options.threads());
         }
+        options.color().ifPresent(builder::color);
+        builder.pictureFormat(Vp9Subsampling.YUV420, options.bitDepth() <= 8 ? 8 : options.bitDepth() <= 10 ? 10 : 12);
         return new Vp9Encoder(options.width(), options.height(), builder.build());
     }
 }

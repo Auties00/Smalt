@@ -470,6 +470,30 @@ class Mj2CodecTest {
         }
 
         @Test
+        @DisplayName("codes the bit depth the codec-independent encoder options ask for")
+        void registryDepth() {
+            for (var depth : new int[]{10, 12, 16}) {
+                var options = VideoEncoderOptions.of(64, 48, new Rational(25, 1), 4_000_000).toBuilder().bitDepth(depth)
+                        .build();
+                try (var encoder = VideoEncoders.create(Codec.JPEG2000, options)) {
+                    var packets = new ArrayList<Packet>();
+                    encoder.encode(new VideoFrame(Mj2Testing.yuv(64, 48, ChromaFormat.YUV420, 0), 0, 3600, true),
+                            packets::add);
+                    var track = VideoTrack.builder().id(1).codec(Codec.JPEG2000).timeBase(encoder.timeBase()).width(64)
+                            .height(48).codecConfig(encoder.codecConfig().orElseThrow()).build();
+                    try (var decoder = VideoDecoders.create(track,
+                            com.github.auties00.smalt.video.VideoDecoderOptions.builder().highBitDepth(true).build())) {
+                        var frames = new ArrayList<VideoFrame>();
+                        decoder.decode(packets.getFirst(), frames::add);
+                        var decoded = assertInstanceOf(com.github.auties00.smalt.image.Yuv16Picture.class,
+                                frames.getFirst().picture());
+                        assertEquals(depth, decoded.bitDepth());
+                    }
+                }
+            }
+        }
+
+        @Test
         @DisplayName("validates the options and the picture size")
         void validation() {
             assertThrows(IllegalArgumentException.class, () -> Mj2EncoderOptions.builder().bitDepth(7).build());

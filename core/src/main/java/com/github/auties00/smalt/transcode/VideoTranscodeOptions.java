@@ -2,13 +2,20 @@ package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.color.ColorTransformOptions;
+import com.github.auties00.smalt.image.ops.ImageCompositing;
 import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
+import com.github.auties00.smalt.image.ops.WatermarkOptions;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.plane.PictureCopy;
 import com.github.auties00.smalt.internal.resize.SizePlan;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.TrackKind;
+import com.github.auties00.smalt.video.FieldOrder;
 
 import java.util.Arrays;
 import java.util.Objects;
@@ -21,6 +28,8 @@ import java.util.OptionalInt;
  *
  * <p>An encoded stream goes through these operations, in this order:
  * <ol>
+ *   <li>inverse telecine ({@link #pulldown()}) and deinterlacing ({@link #deinterlacer()},
+ *       {@link #fieldRate()}, {@link #fieldOrder()}) of interlaced frames;</li>
  *   <li>crop ({@link #crop()}), in displayed coordinates;</li>
  *   <li>orientation ({@link #orientation()}): the pixels are turned upright, or kept as coded with
  *       the rotation recorded in the output;</li>
@@ -30,11 +39,15 @@ import java.util.OptionalInt;
  *       {@link #upscale()}), then to the edge limits ({@link #maxLongEdge()},
  *       {@link #maxShortEdge()}), rounded to even dimensions when {@link #evenDimensions()} is
  *       set, resampled with {@link #filter()};</li>
+ *   <li>pixel-format and color conversion ({@link #chromaFormat()}, {@link #bitDepth()},
+ *       {@link #color()}, {@link #colorConversion()}), tone mapping and gamut conversion included;
+ *       pictures with transparency (animated images) are first flattened on
+ *       {@link #background()};</li>
  *   <li>frame-rate conversion ({@link #frameRate()}, {@link #maxFrameRate()}) by dropping and
- *       duplicating frames;</li>
- *   <li>pixel-format conversion ({@link #chromaFormat()}, {@link #color()}) of the pictures the
- *       encoder receives; pictures with transparency (animated images) are first flattened on
- *       {@link #background()}.</li>
+ *       repeating or by blending frames ({@link #frameRateConversion()});</li>
+ *   <li>overlays, at the time each output frame is shown: the burned-in subtitles
+ *       ({@link #subtitleBurnIn()}), then the watermark ({@link #watermark()});</li>
+ *   <li>telecine ({@link #pulldown()}).</li>
  * </ol>
  * The encoder is the one {@link com.github.auties00.smalt.video.VideoEncoders} finds for
  * {@link #codec()}, configured through {@link com.github.auties00.smalt.video.VideoEncoderOptions}
@@ -109,6 +122,41 @@ public final class VideoTranscodeOptions {
      */
     private final int background;
 
+    private final ColorTransformOptions colorConversion;
+
+    /**
+     * The bit depth of the encoded pictures, or {@code 0} for automatic.
+     */
+    private final int bitDepth;
+
+    /**
+     * The deinterlacing method, or {@code null} to keep interlaced frames.
+     */
+    private final Deinterlacer deinterlacer;
+
+    private final boolean fieldRate;
+
+    /**
+     * The scan assumed for frames that signal none, or {@code null} to use the track's.
+     */
+    private final FieldOrder fieldOrder;
+
+    private final FrameRateConversion frameRateConversion;
+
+    private final Pulldown pulldown;
+
+    /**
+     * The subtitles burned in, or {@code null} for none.
+     */
+    private final SubtitleBurnIn subtitleBurnIn;
+
+    /**
+     * A private copy of the watermark, or {@code null} for none.
+     */
+    private final Picture watermark;
+
+    private final WatermarkOptions watermarkOptions;
+
     private VideoTranscodeOptions(Builder builder, int trackId, int bitrate, int keyframeInterval,
                                   ResizeSettings resize) {
         this.mode = builder.mode;
@@ -127,6 +175,16 @@ public final class VideoTranscodeOptions {
         this.chromaFormat = builder.chromaFormat;
         this.color = builder.color;
         this.background = builder.background;
+        this.colorConversion = builder.colorConversion;
+        this.bitDepth = builder.bitDepthSet ? builder.bitDepth : 0;
+        this.deinterlacer = builder.deinterlacer;
+        this.fieldRate = builder.fieldRate;
+        this.fieldOrder = builder.fieldOrder;
+        this.frameRateConversion = builder.frameRateConversion;
+        this.pulldown = builder.pulldown;
+        this.subtitleBurnIn = builder.subtitleBurnIn;
+        this.watermark = builder.watermark;
+        this.watermarkOptions = builder.watermarkOptions;
     }
 
     /**
@@ -372,11 +430,127 @@ public final class VideoTranscodeOptions {
     }
 
     /**
-     * {@return the color description (matrix and range) the pictures are converted to before encoding,
-     * or empty to keep the source's; empty by default}
+     * {@return the color description the pictures are converted to before encoding, or empty to keep
+     * the source's; empty by default}
+     *
+     * <p>When the primaries or the transfer characteristics differ from the source's, the pictures
+     * are converted between the color profiles of the two descriptions, as
+     * {@link com.github.auties00.smalt.image.color.ColorTransform} converts them with
+     * {@link #colorConversion()}: PQ and HLG (high-dynamic-range) video is tone-mapped to a
+     * standard-dynamic-range target, standard-dynamic-range video is placed at the reference white of a
+     * PQ or HLG target, and colors are converted between the primaries. The standard-dynamic-range
+     * transfers (BT.709, BT.601, sRGB, the BT.2020 ones, unspecified) count as one curve, and unspecified
+     * primaries as BT.709; between colors equal in both only the matrix, the range and the chroma
+     * siting change. The source color is the one each decoded picture carries, with the mastering
+     * display and content light level of the track when the pictures carry none. The output track and
+     * the encoder declare the color of the encoded pictures.
      */
     public Optional<ColorInfo> color() {
         return Optional.ofNullable(color);
+    }
+
+    /**
+     * {@return the rendering intent, tone mapping and reference white of a conversion between color
+     * profiles ({@link #color()}); {@link ColorTransformOptions#defaults()} by default, which tone-maps
+     * with the ITU-R BT.2390 EETF and places standard-dynamic-range white at the 203 candelas per square
+     * meter of ITU-R BT.2408}
+     */
+    public ColorTransformOptions colorConversion() {
+        return colorConversion;
+    }
+
+    /**
+     * {@return the bit depth of the pictures the encoder receives, from 8 to 16, or empty for 10 bits
+     * when the output transfer is PQ or HLG and 8 bits otherwise; empty by default}
+     *
+     * <p>The encoder codes this depth when its codec can, and otherwise the nearest one it can, as
+     * {@link com.github.auties00.smalt.video.VideoEncoderOptions#bitDepth()} describes.
+     */
+    public OptionalInt bitDepth() {
+        return bitDepth == 0 ? OptionalInt.empty() : OptionalInt.of(bitDepth);
+    }
+
+    /**
+     * {@return how interlaced frames are made progressive, or empty to encode them as they are, their
+     * fields woven; empty by default}
+     *
+     * <p>A frame is interlaced when its decoder reports a field order for it
+     * ({@link com.github.auties00.smalt.video.FrameSideData#fieldOrder()}); a frame that reports none
+     * takes {@link #fieldOrder()}, else the scan its track declares
+     * ({@link com.github.auties00.smalt.track.VideoTrack#interlacing()}), else is progressive.
+     * Progressive frames pass unchanged, and the output track declares a progressive scan.
+     */
+    public Optional<Deinterlacer> deinterlacer() {
+        return Optional.ofNullable(deinterlacer);
+    }
+
+    /**
+     * {@return whether deinterlacing makes a frame of each field, doubling the frame rate, rather than
+     * one frame of the first field of each frame; {@code false} by default}
+     *
+     * <p>At the field rate, the second field of a frame is shown half its duration after the first,
+     * and a progressive frame is shown twice. The doubling applies when the first frame of the stream
+     * is interlaced; without {@link #frameRate()}, it doubles the declared rate of the output.
+     */
+    public boolean fieldRate() {
+        return fieldRate;
+    }
+
+    /**
+     * {@return the scan assumed for frames whose decoder reports none, or empty to use the scan the
+     * track declares; empty by default}
+     */
+    public Optional<FieldOrder> fieldOrder() {
+        return Optional.ofNullable(fieldOrder);
+    }
+
+    /**
+     * {@return how frames are mapped to the ticks of a constant output rate;
+     * {@link FrameRateConversion#DROP_REPEAT} by default}
+     */
+    public FrameRateConversion frameRateConversion() {
+        return frameRateConversion;
+    }
+
+    /**
+     * {@return the pulldown applied to the output or removed from the source; {@link Pulldown#NONE}
+     * by default}
+     */
+    public Pulldown pulldown() {
+        return pulldown;
+    }
+
+    /**
+     * {@return the subtitles drawn into the pictures, or empty for none; empty by default}
+     */
+    public Optional<SubtitleBurnIn> subtitleBurnIn() {
+        return Optional.ofNullable(subtitleBurnIn);
+    }
+
+    /**
+     * {@return a copy of the mark placed on every picture, or empty for none; empty by default}
+     *
+     * <p>The mark is placed as {@link ImageCompositing#watermark} places it with
+     * {@link #watermarkOptions()}, on the pictures the encoder receives; its values are taken as sRGB
+     * and converted to the output color first.
+     */
+    public Optional<Picture> watermark() {
+        return watermark == null ? Optional.empty() : Optional.of(PictureCopy.copy(watermark, null));
+    }
+
+    /**
+     * {@return the placement, size and blending of {@link #watermark()};
+     * {@link WatermarkOptions#defaults()} by default}
+     */
+    public WatermarkOptions watermarkOptions() {
+        return watermarkOptions;
+    }
+
+    /**
+     * {@return the watermark without copying it, or {@code null} for none}
+     */
+    Picture watermarkPicture() {
+        return watermark;
     }
 
     /**
@@ -400,6 +574,9 @@ public final class VideoTranscodeOptions {
      * @return {@code true} when the stream has to be decoded
      */
     boolean changesPicture(int displayWidth, int displayHeight, Rational sourceRate) {
+        if (bitDepth != 0 || pulldown != Pulldown.NONE || subtitleBurnIn != null || watermark != null) {
+            return true;
+        }
         if (resize.crop() != null || chromaFormat != null || color != null || effectiveFrameRate(sourceRate) != null) {
             return true;
         }
@@ -412,7 +589,19 @@ public final class VideoTranscodeOptions {
      * limit, a crop, a frame rate or a pixel format}
      */
     boolean hasPictureOps() {
-        return resize.resizes() || frameRate != null || maxFrameRate != null || chromaFormat != null || color != null;
+        return resize.resizes() || frameRate != null || maxFrameRate != null || chromaFormat != null || color != null
+                || bitDepth != 0 || pulldown != Pulldown.NONE || subtitleBurnIn != null || watermark != null
+                || deinterlacer != null;
+    }
+
+    /**
+     * Returns whether deinterlacing may change the frames of a track of a declared scan.
+     *
+     * @param scan the scan the track declares, or {@code null} when it declares none
+     * @return {@code true} when a deinterlacer is set and the frames are not known to be progressive
+     */
+    boolean deinterlaces(Interlacing scan) {
+        return deinterlacer != null && (scan != Interlacing.PROGRESSIVE || fieldOrder != null && fieldOrder.isInterlaced());
     }
 
     /**
@@ -450,7 +639,9 @@ public final class VideoTranscodeOptions {
      */
     private Object[] state() {
         return new Object[]{mode, trackId, codec, bitrate, threads, keyframeInterval, periodicKeyframes, resize,
-                evenDimensions, orientation, sampleAspect, frameRate, maxFrameRate, chromaFormat, color, background};
+                evenDimensions, orientation, sampleAspect, frameRate, maxFrameRate, chromaFormat, color, background,
+                colorConversion, bitDepth, deinterlacer, fieldRate, fieldOrder, frameRateConversion, pulldown,
+                subtitleBurnIn, watermark, watermarkOptions};
     }
 
     @Override
@@ -471,7 +662,11 @@ public final class VideoTranscodeOptions {
                 + ", filter=" + resize.filter() + ", crop=" + crop() + ", orientation=" + orientation
                 + ", sampleAspect=" + sampleAspect
                 + ", frameRate=" + frameRate() + ", maxFrameRate=" + maxFrameRate() + ", chromaFormat=" + chromaFormat()
-                + ", color=" + color() + ", background=0x" + Integer.toHexString(background) + "]";
+                + ", color=" + color() + ", background=0x" + Integer.toHexString(background) + ", colorConversion="
+                + colorConversion + ", bitDepth=" + bitDepth() + ", deinterlacer=" + deinterlacer() + ", fieldRate="
+                + fieldRate + ", fieldOrder=" + fieldOrder() + ", frameRateConversion=" + frameRateConversion
+                + ", pulldown=" + pulldown + ", subtitleBurnIn=" + subtitleBurnIn() + ", watermark="
+                + (watermark != null) + ", watermarkOptions=" + watermarkOptions + "]";
     }
 
     /**
@@ -534,6 +729,22 @@ public final class VideoTranscodeOptions {
         private ChromaFormat chromaFormat;
         private ColorInfo color;
         private int background = 0xFFFFFF;
+        private ColorTransformOptions colorConversion = ColorTransformOptions.defaults();
+        private int bitDepth;
+
+        /**
+         * Whether {@link #bitDepth} is set; {@code false} for the automatic depth.
+         */
+        private boolean bitDepthSet;
+
+        private Deinterlacer deinterlacer;
+        private boolean fieldRate;
+        private FieldOrder fieldOrder;
+        private FrameRateConversion frameRateConversion = FrameRateConversion.DROP_REPEAT;
+        private Pulldown pulldown = Pulldown.NONE;
+        private SubtitleBurnIn subtitleBurnIn;
+        private Picture watermark;
+        private WatermarkOptions watermarkOptions = WatermarkOptions.defaults();
 
         private Builder() {
         }
@@ -568,6 +779,17 @@ public final class VideoTranscodeOptions {
             this.chromaFormat = options.chromaFormat;
             this.color = options.color;
             this.background = options.background;
+            this.colorConversion = options.colorConversion;
+            this.bitDepth = options.bitDepth;
+            this.bitDepthSet = options.bitDepth != 0;
+            this.deinterlacer = options.deinterlacer;
+            this.fieldRate = options.fieldRate;
+            this.fieldOrder = options.fieldOrder;
+            this.frameRateConversion = options.frameRateConversion;
+            this.pulldown = options.pulldown;
+            this.subtitleBurnIn = options.subtitleBurnIn;
+            this.watermark = options.watermark;
+            this.watermarkOptions = options.watermarkOptions;
         }
 
         /**
@@ -945,18 +1167,179 @@ public final class VideoTranscodeOptions {
         }
 
         /**
+         * Sets the options of a conversion between color profiles; see
+         * {@link VideoTranscodeOptions#colorConversion()}.
+         *
+         * @param options the value
+         * @return this builder
+         */
+        public Builder colorConversion(ColorTransformOptions options) {
+            this.colorConversion = Objects.requireNonNull(options, "options");
+            return this;
+        }
+
+        /**
+         * Sets the bit depth of the encoded pictures; see {@link VideoTranscodeOptions#bitDepth()}.
+         *
+         * @param bitDepth the value
+         * @return this builder
+         */
+        public Builder bitDepth(int bitDepth) {
+            this.bitDepth = bitDepth;
+            this.bitDepthSet = true;
+            return this;
+        }
+
+        /**
+         * Picks the bit depth from the output transfer; see {@link VideoTranscodeOptions#bitDepth()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticBitDepth() {
+            this.bitDepthSet = false;
+            return this;
+        }
+
+        /**
+         * Sets how interlaced frames are made progressive; see {@link VideoTranscodeOptions#deinterlacer()}.
+         *
+         * @param deinterlacer the value
+         * @return this builder
+         */
+        public Builder deinterlacer(Deinterlacer deinterlacer) {
+            this.deinterlacer = Objects.requireNonNull(deinterlacer, "deinterlacer");
+            return this;
+        }
+
+        /**
+         * Keeps interlaced frames as they are; see {@link VideoTranscodeOptions#deinterlacer()}.
+         *
+         * @return this builder
+         */
+        public Builder noDeinterlacer() {
+            this.deinterlacer = null;
+            return this;
+        }
+
+        /**
+         * Sets whether deinterlacing makes a frame of each field; see {@link VideoTranscodeOptions#fieldRate()}.
+         *
+         * @param fieldRate the value
+         * @return this builder
+         */
+        public Builder fieldRate(boolean fieldRate) {
+            this.fieldRate = fieldRate;
+            return this;
+        }
+
+        /**
+         * Sets the scan assumed for frames that report none; see {@link VideoTranscodeOptions#fieldOrder()}.
+         *
+         * @param fieldOrder the value
+         * @return this builder
+         */
+        public Builder fieldOrder(FieldOrder fieldOrder) {
+            this.fieldOrder = Objects.requireNonNull(fieldOrder, "fieldOrder");
+            return this;
+        }
+
+        /**
+         * Uses the scan the track declares for frames that report none; see
+         * {@link VideoTranscodeOptions#fieldOrder()}.
+         *
+         * @return this builder
+         */
+        public Builder trackFieldOrder() {
+            this.fieldOrder = null;
+            return this;
+        }
+
+        /**
+         * Sets how frames are mapped to a constant output rate; see
+         * {@link VideoTranscodeOptions#frameRateConversion()}.
+         *
+         * @param conversion the value
+         * @return this builder
+         */
+        public Builder frameRateConversion(FrameRateConversion conversion) {
+            this.frameRateConversion = Objects.requireNonNull(conversion, "conversion");
+            return this;
+        }
+
+        /**
+         * Sets the pulldown applied or removed; see {@link VideoTranscodeOptions#pulldown()}.
+         *
+         * @param pulldown the value
+         * @return this builder
+         */
+        public Builder pulldown(Pulldown pulldown) {
+            this.pulldown = Objects.requireNonNull(pulldown, "pulldown");
+            return this;
+        }
+
+        /**
+         * Sets the subtitles drawn into the pictures; see {@link VideoTranscodeOptions#subtitleBurnIn()}.
+         *
+         * @param burnIn the value
+         * @return this builder
+         */
+        public Builder subtitleBurnIn(SubtitleBurnIn burnIn) {
+            this.subtitleBurnIn = Objects.requireNonNull(burnIn, "burnIn");
+            return this;
+        }
+
+        /**
+         * Draws no subtitles into the pictures; see {@link VideoTranscodeOptions#subtitleBurnIn()}.
+         *
+         * @return this builder
+         */
+        public Builder noSubtitleBurnIn() {
+            this.subtitleBurnIn = null;
+            return this;
+        }
+
+        /**
+         * Sets the mark placed on every picture, copying it; see {@link VideoTranscodeOptions#watermark()}
+         * and {@link VideoTranscodeOptions#watermarkOptions()}.
+         *
+         * @param mark the mark, typically with transparency
+         * @param options the placement, size and blending
+         * @return this builder
+         */
+        public Builder watermark(Picture mark, WatermarkOptions options) {
+            Objects.requireNonNull(mark, "mark");
+            this.watermarkOptions = Objects.requireNonNull(options, "options");
+            this.watermark = PictureCopy.copy(mark, null);
+            return this;
+        }
+
+        /**
+         * Places no mark on the pictures; see {@link VideoTranscodeOptions#watermark()}.
+         *
+         * @return this builder
+         */
+        public Builder noWatermark() {
+            this.watermark = null;
+            this.watermarkOptions = WatermarkOptions.defaults();
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
          * @throws IllegalArgumentException if the track identifier, the thread count or a box dimension
-         * is negative, the codec is not a video codec, or the bitrate, the key frame interval or an edge
-         * limit is not positive
+         * is negative, the codec is not a video codec, the bitrate, the key frame interval or an edge
+         * limit is not positive, or the bit depth is outside 8 to 16
          */
         public VideoTranscodeOptions build() {
             if (codec != null && codec.kind() != TrackKind.VIDEO) {
                 throw new IllegalArgumentException("codec " + codec.displayName() + " is not a video codec");
             }
             Checks.nonNegative("thread count", threads);
+            if (bitDepthSet) {
+                Checks.inRange("bit depth", bitDepth, 8, 16);
+            }
             var resize = ResizeSettings.checked(width, height, scaleMode, upscale, longEdgeLimited, maxLongEdge,
                     shortEdgeLimited, maxShortEdge, filter, crop);
             return new VideoTranscodeOptions(this,

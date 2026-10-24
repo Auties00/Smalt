@@ -636,6 +636,12 @@ encoding `SubtitleReaderOptions.charset` or `DemuxerOptions.charset` names, or o
 Shift_JIS, EUC-JP, EUC-KR, GBK, Big5, Windows-1251 and KOI8-R (Windows-1252 otherwise); every text subtitle file
 is read from sources of known or unknown size.
 
+`SubtitleRenderer` draws a cue as an RGBA picture to place over video, with a `SubtitleFont` read from a
+TrueType or OpenType file with TrueType (`glyf`) outlines and a `SubtitleStyle` (em size relative to the picture
+height, text and outline colors, outline width, margins, line spacing, keypad placement): bold, italic and
+underline are drawn, lines wrap at spaces, and the SubRip and ASS `{\anN}` override and the WebVTT `line` and
+`align` settings place the cue. The transcoder burns cues into video with it (`SubtitleBurnIn`).
+
 | Format | Read | Write | Package | Source |
 |---|---|---|---|---|
 | SubRip (`.srt`) | yes: any encoding (detected or named), any line breaks, missing counters and blank lines, unsorted cues, ASS override blocks | yes | `container.subtitle` | de facto format |
@@ -811,7 +817,12 @@ checks a FLAC source's MD5 signature on the way.
 | Trim end, duration limit | exact frame / sample | exact in MP4 (edit list) and Ogg (granule) |
 | Scale (fit, fill, exact, edge limits), crop, rotate | yes | - |
 | Anamorphic video (`SampleAspectMode`) | samples kept with the ratio recorded (scaled by an uneven resize) where the container stores one, else resampled to square samples | ratio kept |
-| Frame rate (drop / repeat), pixel format | yes | - |
+| Frame rate: drop / repeat, or blend the two neighboring frames (`FrameRateConversion`) | yes | - |
+| Pixel format: chroma format, bit depth (10 bits by default for PQ and HLG output), matrix and range | yes | - |
+| Color: primaries and transfer conversion through the color profiles (`VideoTranscodeOptions.color`, `colorConversion`): HDR10 / HLG to SDR with the BT.2390 EETF (or clipping), SDR to PQ / HLG at the BT.2408 reference white, PQ to and from HLG, gamut conversion; the HDR metadata of the track used when the pictures carry none; the output and the encoder declare the color | yes | - |
+| Deinterlacing (`Deinterlacer`: bob, linear, edge-based line average) of frames their decoder or track flags interlaced, at the frame or the field rate | yes | - |
+| 2:3 pulldown (`Pulldown.TELECINE`, 24 to 30 frames per second, top field first) and inverse telecine (`Pulldown.INVERSE_TELECINE`: field matching and decimation, 30 to 24) | yes | - |
+| Subtitle burn-in (`SubtitleBurnIn`: a text subtitle track of the input or given cues) and watermark (`VideoTranscodeOptions.watermark`) | yes | - |
 | Key frame interval, or no periodic key frames (`VideoTranscodeOptions.keyframeInterval`, `VideoEncoderOptions.keyframeInterval`) | yes (H.264, VP8, VP9, AV1; ProRes, DNxHD and Motion-JPEG are all key frames) | - |
 | Resample, remix (mix levels, Lt/Rt, a caller's matrix: `AudioTranscodeOptions.mixing`), gain, sample format (PCM codec) | yes | - |
 | Loudness normalization (two passes: measure the kept range, then apply the gain under a true-peak ceiling, or reach the target and keep the ceiling with a true-peak limiter; or one pass that follows the loudness as it encodes, `singlePassNormalization`) | yes | - |
@@ -839,6 +850,14 @@ checks a FLAC source's MD5 signature on the way.
   picture misjudged. A frame rate change that the track's time base (one field of the first rate) cannot represent
   is rounded to it, the error carried from picture to picture. H.263 PB-frames (Annex G and M) are timed as one
   picture, at the time of their P-picture.
+- Video processing in transcodes: `SubtitleFont` reads TrueType outlines only (no CFF), applies no hinting and
+  forms neither kerning pairs nor ligatures, so scripts that need shaping (Arabic, Indic) or right-to-left
+  ordering are not drawn correctly; the burn-in draws bold, italic and underline but not the colors, fonts and
+  positions of ASS styles or WebVTT regions. Inverse telecine follows the 2:3 cadence only (not 2:2:2:4 or
+  irregular cadences that edits leave), decimating one frame of every five counted from the first. Field-rate
+  deinterlacing doubles the rate when the first frame is interlaced. VP8 and Motion-JPEG code 8 bits only, so a
+  PQ or HLG transcode into them is coded at 8 bits; Motion JPEG 2000 codes the depth but its samples are declared
+  sYCC, so only the output track's color tells a PQ or HLG stream apart.
 - MP4 tags: `FragmentedMp4Muxer` stores chapters in the Nero `chpl` box only, without a QuickTime chapter track
   (`TagEditor` adds one to its output). When `TagEditor` replaces the chapter track of a fragmented file whose
   fragments carry that track's samples, the old track stays as a `text` track that no chapter reference names,
@@ -2358,6 +2377,9 @@ CR2 and CR3 write-ups, Bill Claff's notes, Henry Dietz's description of Sony's c
 [ExifTool](https://exiftool.org/)'s tag documentation and the [raw.pixls.us](https://raw.pixls.us/) archive of CC0 sample files made the clean-room derivations possible,
 and Wyman, Sloan and Shirley's analytic fit of the CIE color matching functions serves the DNG
 reader's spectral illuminants.
+Apple's and Microsoft's TrueType and OpenType specifications describe the fonts the subtitle renderer reads,
+Felzenszwalb and Huttenlocher's distance transform draws its outlines, ITU-R BT.2087 and BT.2408 guide the
+color conversion of transcodes, and Doyle and Looymans' edge-based line average deinterlaces.
 libopusfile's page search and link bisection, libvips' entropy crop and Microsoft's Desktop Duplication sample showed the way
 for smaller pieces.
 

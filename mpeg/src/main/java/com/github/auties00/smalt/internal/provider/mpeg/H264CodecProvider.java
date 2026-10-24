@@ -13,6 +13,7 @@ import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264Encoder;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
+import com.github.auties00.smalt.video.h264.encoder.H264Profile;
 
 
 /**
@@ -33,7 +34,11 @@ import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
  *                 no periodic key frames: {@link H264EncoderOptions.Builder#noPeriodicKeyframes()},
  *                 in place of the preset's;</li>
  *             <li>a thread count above one: {@link H264EncoderOptions.Builder#threads(int)} capped at
- *                 64; {@code 0} and {@code 1} keep the single thread of the presets.</li>
+ *                 64; {@code 0} and {@code 1} keep the single thread of the presets;</li>
+ *             <li>a color description: {@link H264EncoderOptions.Builder#color};</li>
+ *             <li>a bit depth above 8: {@link H264EncoderOptions.Builder#bitDepth(int)}, with the High 10
+ *                 profile up to 10 bits and the High 4:4:4 Predictive profile up to 14 bits, the
+ *                 deeper depths coded at 14 bits.</li>
  *           </ul>
  */
 public final class H264CodecProvider implements VideoCodecProvider {
@@ -41,6 +46,11 @@ public final class H264CodecProvider implements VideoCodecProvider {
      * The most threads the encoder options accept.
      */
     private static final int MAX_ENCODER_THREADS = 64;
+
+    /**
+     * The deepest samples the encoder codes, in bits.
+     */
+    private static final int MAX_BIT_DEPTH = 14;
 
     /**
      * Constructs the provider; {@link java.util.ServiceLoader} calls this constructor.
@@ -84,6 +94,11 @@ public final class H264CodecProvider implements VideoCodecProvider {
         }
         if (options.threads() > 1) {
             builder.threads(Math.min(MAX_ENCODER_THREADS, options.threads()));
+        }
+        options.color().ifPresent(builder::color);
+        if (options.bitDepth() > 8) {
+            var depth = Math.min(MAX_BIT_DEPTH, options.bitDepth());
+            builder.profile(depth <= 10 ? H264Profile.HIGH_10 : H264Profile.HIGH_444_PREDICTIVE).bitDepth(depth);
         }
         return new H264Encoder(options.width(), options.height(), builder.build());
     }

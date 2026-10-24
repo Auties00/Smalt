@@ -58,6 +58,7 @@ import com.github.auties00.smalt.image.ops.ResizeOptions;
 import com.github.auties00.smalt.image.ops.RotationCanvas;
 import com.github.auties00.smalt.image.ops.SmartCropStrategy;
 import com.github.auties00.smalt.image.ops.ToneCurve;
+import com.github.auties00.smalt.image.ops.WatermarkOptions;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -67,10 +68,14 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.transcode.AudioTranscodeOptions;
+import com.github.auties00.smalt.transcode.Deinterlacer;
+import com.github.auties00.smalt.transcode.FrameRateConversion;
 import com.github.auties00.smalt.transcode.OutputContainer;
+import com.github.auties00.smalt.transcode.Pulldown;
 import com.github.auties00.smalt.transcode.TranscodeOptions;
 import com.github.auties00.smalt.transcode.Transcoder;
 import com.github.auties00.smalt.transcode.VideoTranscodeOptions;
+import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.RawPixelFormat;
 import com.github.auties00.smalt.video.RawVideoEncoder;
 import com.github.auties00.smalt.video.RawVideoFormat;
@@ -105,6 +110,7 @@ final class TranscodeWorkloads {
     static List<WorkloadFactory> factories() {
         return List.of(
                 file("transcode", TranscodeWorkloads::transcode),
+                file("transcode-video-processing", TranscodeWorkloads::videoProcessing),
                 file("containers", TranscodeWorkloads::containers),
                 file("image-convert", () -> imageConvert(2)),
                 file("image-resize", TranscodeWorkloads::imageResize),
@@ -136,6 +142,49 @@ final class TranscodeWorkloads {
             var sink = MediaSink.memory();
             try (var in = MediaSource.of(source)) {
                 Transcoder.transcode(in, sink, options);
+            }
+            Blackhole.consume(sink.size());
+        });
+    }
+
+    /**
+     * Returns a workload that transcodes a synthetic two-second 320x180 MP4 to H.264 through the video
+     * processing steps, one setting per round in turn: field-rate deinterlacing with the edge-based line
+     * average, blending to 24 frames per second followed by telecine, inverse telecine with linear
+     * deinterlacing, conversion to PQ at 10 bits with a watermark, and bob deinterlacing with tone mapping
+     * back from PQ.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload videoProcessing() {
+        var source = SyntheticFiles.mp4(320, 180, 2);
+        var hdr = new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRange.LIMITED, ColorPrimaries.BT2020,
+                TransferCharacteristics.PQ);
+        var mark = Rgba16Picture.allocate(32, 16, true);
+        var h264 = VideoTranscodeOptions.encode(Codec.H264).toBuilder();
+        var pq = MediaSink.memory();
+        try (var in = MediaSource.of(source)) {
+            Transcoder.transcode(in, pq, TranscodeOptions.of(OutputContainer.MP4).toBuilder()
+                    .video(h264.color(hdr).build()).audio(AudioTranscodeOptions.drop()).build());
+        }
+        var hdrSource = pq.toByteArray();
+        var outputs = List.of(
+                h264.sourceColor().deinterlacer(Deinterlacer.ELA).fieldOrder(FieldOrder.TOP_FIRST).fieldRate(true).build(),
+                h264.noDeinterlacer().trackFieldOrder().fieldRate(false).frameRate(new Rational(24, 1))
+                        .frameRateConversion(FrameRateConversion.BLEND).pulldown(Pulldown.TELECINE).build(),
+                h264.sourceFrameRate().frameRateConversion(FrameRateConversion.DROP_REPEAT)
+                        .pulldown(Pulldown.INVERSE_TELECINE).deinterlacer(Deinterlacer.LINEAR).build(),
+                h264.pulldown(Pulldown.NONE).noDeinterlacer().color(hdr).watermark(mark, WatermarkOptions.defaults())
+                        .build(),
+                h264.noWatermark().color(ColorInfo.BT709_LIMITED).deinterlacer(Deinterlacer.BOB)
+                        .fieldOrder(FieldOrder.BOTTOM_FIRST).build());
+        int[] turn = {0};
+        return TrainingWorkload.of("transcode-video-processing", () -> {
+            var index = turn[0]++ % outputs.size();
+            var sink = MediaSink.memory();
+            try (var in = MediaSource.of(index == outputs.size() - 1 ? hdrSource : source)) {
+                Transcoder.transcode(in, sink, TranscodeOptions.of(OutputContainer.MP4).toBuilder()
+                        .video(outputs.get(index)).audio(AudioTranscodeOptions.drop()).build());
             }
             Blackhole.consume(sink.size());
         });

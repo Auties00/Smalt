@@ -114,6 +114,8 @@ def smoke_runs(work):
         elif kind == 'filter' and name == 'zscale':
             runs.append((feature, [SMOKE_VIDEO + ['-vf', 'format=yuv420p,zscale=matrixin=709:matrix=709:rangein=limited'
                                                   ':range=full,format=yuv444p12le', '-f', 'null', '-']]))
+        elif kind == 'filter' and name == 'telecine':
+            runs.append((feature, [SMOKE_VIDEO + ['-vf', 'telecine=first_field=top:pattern=23', '-f', 'null', '-']]))
         elif kind == 'muxer' and name == 'avif':
             runs.append((feature, [SMOKE_VIDEO + ['-frames:v', '1', '-c:v', 'libaom-av1', '-cpu-used', '8',
                                                   '-still-picture', '1', os.path.join(work, 'smoke.avif')]]))

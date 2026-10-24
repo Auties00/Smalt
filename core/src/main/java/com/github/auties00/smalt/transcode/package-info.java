@@ -33,6 +33,14 @@
  *       otherwise decodes and drops the media before it, with the same output; subtitle packets
  *       stored before the seek point are read through a second demuxer, so that the cues still
  *       shown at the start are kept.</li>
+ *   <li><b>Video processing.</b> Encoded video can be converted between color descriptions (tone
+ *       mapping included), deinterlaced ({@link com.github.auties00.smalt.transcode.Deinterlacer}),
+ *       converted to a constant rate by repeating or blending frames
+ *       ({@link com.github.auties00.smalt.transcode.FrameRateConversion}), telecined or inverse
+ *       telecined ({@link com.github.auties00.smalt.transcode.Pulldown}), and overlaid with
+ *       burned-in subtitles ({@link com.github.auties00.smalt.transcode.SubtitleBurnIn}) and a
+ *       watermark; {@link com.github.auties00.smalt.transcode.VideoTranscodeOptions} gives the
+ *       order of the steps.</li>
  * </ul>
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or

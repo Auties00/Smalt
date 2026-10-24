@@ -1,9 +1,11 @@
 package com.github.auties00.smalt.video;
 
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.track.Rational;
 
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
@@ -27,6 +29,13 @@ public final class VideoEncoderOptions {
     private final OptionalInt keyframeInterval;
     private final boolean periodicKeyframes;
 
+    /**
+     * The color description signaled, or {@code null} for the codec's default.
+     */
+    private final ColorInfo color;
+
+    private final int bitDepth;
+
     private VideoEncoderOptions(Builder builder) {
         this.width = builder.width;
         this.height = builder.height;
@@ -36,6 +45,8 @@ public final class VideoEncoderOptions {
         this.threads = builder.threads;
         this.keyframeInterval = builder.keyframeInterval;
         this.periodicKeyframes = builder.periodicKeyframes;
+        this.color = builder.color;
+        this.bitDepth = builder.bitDepth;
     }
 
     /**
@@ -163,6 +174,31 @@ public final class VideoEncoderOptions {
         return periodicKeyframes;
     }
 
+    /**
+     * {@return the color description the stream signals and RGB input is converted with, or empty for
+     * the codec's default; empty by default}
+     *
+     * <p>Y'CbCr input is coded as it is: the description labels it, so it should be the color of the
+     * pictures given to the encoder. A codec whose bitstream signals no color description only uses it
+     * to convert RGB input.
+     */
+    public Optional<ColorInfo> color() {
+        return Optional.ofNullable(color);
+    }
+
+    /**
+     * {@return the bit depth of the coded samples, from 8 to 16; 8 by default}
+     *
+     * <p>Input of another depth is scaled to the coded depth. A codec that cannot code this depth codes
+     * the nearest depth it can, the next higher one when there is one: H.264 codes 8 to 14 bits
+     * (High 10 up to 10 bits, High 4:4:4 Predictive above), VP9, AV1 and DNxHD 8, 10 or 12 bits,
+     * ProRes always 10 bits or more, Motion JPEG 2000 every depth from 8 to 16 bits, and VP8 and
+     * Motion-JPEG only 8 bits.
+     */
+    public int bitDepth() {
+        return bitDepth;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof VideoEncoderOptions that
@@ -173,19 +209,23 @@ public final class VideoEncoderOptions {
                 && realtime == that.realtime
                 && threads == that.threads
                 && keyframeInterval.equals(that.keyframeInterval)
-                && periodicKeyframes == that.periodicKeyframes;
+                && periodicKeyframes == that.periodicKeyframes
+                && Objects.equals(color, that.color)
+                && bitDepth == that.bitDepth;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(width, height, frameRate, bitrate, realtime, threads, keyframeInterval, periodicKeyframes);
+        return Objects.hash(width, height, frameRate, bitrate, realtime, threads, keyframeInterval, periodicKeyframes,
+                color, bitDepth);
     }
 
     @Override
     public String toString() {
         return "VideoEncoderOptions[width=" + width + ", height=" + height + ", frameRate=" + frameRate
                 + ", bitrate=" + bitrate + ", realtime=" + realtime + ", threads=" + threads + ", keyframeInterval="
-                + keyframeInterval + ", periodicKeyframes=" + periodicKeyframes + "]";
+                + keyframeInterval + ", periodicKeyframes=" + periodicKeyframes + ", color=" + color() + ", bitDepth="
+                + bitDepth + "]";
     }
 
     /**
@@ -205,6 +245,8 @@ public final class VideoEncoderOptions {
         private int threads;
         private OptionalInt keyframeInterval = OptionalInt.empty();
         private boolean periodicKeyframes = true;
+        private ColorInfo color;
+        private int bitDepth = 8;
         private boolean sizeSet;
         private boolean bitrateSet;
 
@@ -220,6 +262,8 @@ public final class VideoEncoderOptions {
             this.threads = options.threads;
             this.keyframeInterval = options.keyframeInterval;
             this.periodicKeyframes = options.periodicKeyframes;
+            this.color = options.color;
+            this.bitDepth = options.bitDepth;
             this.sizeSet = true;
             this.bitrateSet = true;
         }
@@ -323,11 +367,44 @@ public final class VideoEncoderOptions {
         }
 
         /**
+         * Sets the color description the stream signals; see {@link VideoEncoderOptions#color()}.
+         *
+         * @param color the value
+         * @return this builder
+         */
+        public Builder color(ColorInfo color) {
+            this.color = Objects.requireNonNull(color, "color");
+            return this;
+        }
+
+        /**
+         * Lets the codec signal its default color description; see {@link VideoEncoderOptions#color()}.
+         *
+         * @return this builder
+         */
+        public Builder automaticColor() {
+            this.color = null;
+            return this;
+        }
+
+        /**
+         * Sets the bit depth of the coded samples; see {@link VideoEncoderOptions#bitDepth()}.
+         *
+         * @param bitDepth the value
+         * @return this builder
+         */
+        public Builder bitDepth(int bitDepth) {
+            this.bitDepth = bitDepth;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
          * @throws IllegalArgumentException if the width, the height, the frame rate, the bitrate or
-         * the key frame interval is not positive, or the thread count is negative
+         * the key frame interval is not positive, the thread count is negative, or the bit depth is
+         * outside 8 to 16
          * @throws IllegalStateException if the picture size, the frame rate or the bitrate was never
          * set
          */
@@ -340,6 +417,7 @@ public final class VideoEncoderOptions {
             Checks.positive("frame rate", frameRate.toDouble());
             Checks.positive("bitrate", bitrate);
             Checks.nonNegative("thread count", threads);
+            Checks.inRange("bit depth", bitDepth, 8, 16);
             if (keyframeInterval.isPresent()) {
                 Checks.positive("key frame interval", keyframeInterval.getAsInt());
             }

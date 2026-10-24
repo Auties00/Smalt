@@ -24,6 +24,10 @@ import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.provider.Artifacts;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.subtitle.SubtitleCue;
+import com.github.auties00.smalt.subtitle.SubtitleDecoder;
+import com.github.auties00.smalt.subtitle.SubtitleMarkup;
+import com.github.auties00.smalt.subtitle.Subtitles;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -64,7 +68,9 @@ import java.util.function.Predicate;
  * which copies or converts them; when the job seeks to a trimmed start, a second demuxer reads the
  * subtitle packets stored before the seek point, so that cues still on screen at the start are kept.
  * An audio stream with a loudness normalization is measured by a first pass over a second demuxer
- * before the job starts.
+ * before the job starts, and the cues of a subtitle track burned into the video are read by a
+ * second demuxer before the job starts when the input can be read again, and otherwise taken from
+ * the packets as they arrive.
  *
  * <p>An instance runs once and is not thread-safe.
  */
@@ -111,6 +117,11 @@ final class AvTranscode {
     private final TranscodeOptions options;
 
     private final Cancellation cancellation;
+
+    /**
+     * The subtitle track whose packets the video stage receives as they arrive, or {@code null}.
+     */
+    private Track burnTrack;
 
     /**
      * The start of the kept range in microseconds.
@@ -211,9 +222,16 @@ final class AvTranscode {
         }
         var capacity = (videoPlan == null ? 0 : 1) + audioPlans.size() + subtitles.size();
         var stages = new ArrayList<Stage>();
+        VideoEncodeStage burnStage = null;
+        var burnTrackId = -1;
         try (var muxer = new OutputMuxer(() -> container.createMuxer(output), capacity)) {
             if (videoPlan != null) {
-                stages.add(createVideoStage(videoPlan, muxer.reserve(), muxer));
+                var stage = createVideoStage(videoPlan, muxer.reserve(), muxer, tracks);
+                stages.add(stage);
+                if (stage instanceof VideoEncodeStage encoding && burnTrack != null) {
+                    burnStage = encoding;
+                    burnTrackId = burnTrack.id();
+                }
             }
             for (var plan : audioPlans) {
                 stages.add(createAudioStage(plan, muxer.reserve(), muxer));
@@ -222,7 +240,7 @@ final class AvTranscode {
                 stages.add(new SubtitleStage(plan.track(), plan.codec(), plan.convert(), muxer.reserve(), muxer, start, end));
             }
             normalizeLoudness(stages);
-            if (start > 0 && options.seeking() && demuxer.isSeekable()) {
+            if (start > 0 && options.seeking() && demuxer.isSeekable() && burnStage == null) {
                 seek(demuxer, stages);
             }
             var byTrack = new HashMap<Integer, Stage>();
@@ -234,6 +252,9 @@ final class AvTranscode {
                 var packet = demuxer.read();
                 if (packet == null) {
                     break;
+                }
+                if (packet.trackId() == burnTrackId) {
+                    burnStage.acceptSubtitle(packet);
                 }
                 var stage = byTrack.get(packet.trackId());
                 if (stage != null) {
@@ -780,6 +801,9 @@ final class AvTranscode {
         if (video.changesPicture(width, height, track.frameRate().orElse(null))) {
             return "the picture operations need decoding";
         }
+        if (video.deinterlaces(track.interlacing().orElse(null))) {
+            return "deinterlacing needs decoding";
+        }
         return null;
     }
 
@@ -873,20 +897,102 @@ final class AvTranscode {
     /**
      * Creates the stage of the video stream.
      *
+     * <p>Pictures deeper than 8 bits are decoded at their depth, so that the color conversion and the
+     * output depth have every bit the stream codes.
+     *
      * @param plan the plan of the video stream
      * @param outputId the output track identifier
      * @param muxer the output
+     * @param tracks the input tracks
      * @return the stage
+     * @throws IllegalArgumentException if the subtitles burned in come from a track the input lacks or
+     * that is not a text subtitle track
      */
-    private Stage createVideoStage(VideoPlan plan, int outputId, OutputMuxer muxer) {
+    private Stage createVideoStage(VideoPlan plan, int outputId, OutputMuxer muxer, List<Track> tracks) {
         if (plan.copy()) {
             return new CopyStage(plan.track(), outputId, muxer, start, end);
         }
-        var decoderOptions = VideoDecoderOptions.builder().limits(options.limits()).build();
+        var burnIn = options.video().subtitleBurnIn().orElse(null);
+        List<SubtitleCue> cues = null;
+        var markup = SubtitleMarkup.SUBRIP;
+        burnTrack = null;
+        if (burnIn != null) {
+            if (burnIn.cues().isPresent()) {
+                cues = new ArrayList<>(burnIn.cues().get());
+                markup = burnIn.markup();
+            } else {
+                var track = burnInTrack(tracks, burnIn);
+                markup = Subtitles.markupOf(track.codec());
+                if (ForwardOnlySource.isForwardOnly(input)) {
+                    cues = new ArrayList<>();
+                    burnTrack = track;
+                } else {
+                    cues = readCues(track);
+                }
+            }
+        }
+        var decoderOptions = VideoDecoderOptions.builder().limits(options.limits()).highBitDepth(true).build();
         var decoder = VideoDecoders.create(plan.track(), decoderOptions);
         return new VideoEncodeStage(plan.track(), decoder, decoderOptions, plan.codec(), options.video(),
                 plan.applyOrientation(), plan.applyAspect(),
-                plan.frameRate(), outputId, muxer, start, end, cancellation);
+                plan.frameRate(), outputId, muxer, start, end, cancellation, cues, markup, burnTrack);
+    }
+
+    /**
+     * Returns the text subtitle track whose cues are burned in.
+     *
+     * @param tracks the input tracks
+     * @param burnIn the burn-in settings, which read a track
+     * @return the track
+     * @throws IllegalArgumentException if the track is missing or is not a text subtitle track
+     */
+    private static Track burnInTrack(List<Track> tracks, SubtitleBurnIn burnIn) {
+        if (burnIn.trackId().isPresent()) {
+            var track = trackById(tracks, burnIn.trackId().getAsInt());
+            if (!track.codec().isSubtitle()) {
+                throw new IllegalArgumentException("track " + track.id() + " is not a text subtitle track to burn in");
+            }
+            return track;
+        }
+        for (var track : tracks) {
+            if (track.codec().isSubtitle()) {
+                return track;
+            }
+        }
+        throw new IllegalArgumentException("the input has no text subtitle track to burn in");
+    }
+
+    /**
+     * Reads every cue of a subtitle track with a second demuxer of the input.
+     *
+     * @param track the subtitle track to read
+     * @return the cues, in file order, in a list the caller may modify
+     */
+    private List<SubtitleCue> readCues(Track track) {
+        var cues = new ArrayList<SubtitleCue>();
+        try (var demuxer = Containers.openDemuxer(input, DemuxerOptions.builder().limits(options.limits()).build())) {
+            Track found = null;
+            for (var candidate : demuxer.tracks()) {
+                if (candidate.id() == track.id()) {
+                    found = candidate;
+                }
+            }
+            if (found == null) {
+                return cues;
+            }
+            var decoder = new SubtitleDecoder(found);
+            while (true) {
+                cancellation.check();
+                var packet = demuxer.read();
+                if (packet == null) {
+                    break;
+                }
+                if (packet.trackId() == track.id()) {
+                    cues.add(decoder.decode(packet));
+                }
+            }
+        }
+        return cues;
     }
 
     /**
@@ -1001,8 +1107,13 @@ final class AvTranscode {
                 expected = Math.max(0, (end >= 0 ? Math.min(end, length) : length) - start);
             }
             try (var muxer = new OutputMuxer(() -> container.createMuxer(output), 1)) {
+                var burnIn = video.subtitleBurnIn().orElse(null);
+                if (burnIn != null && burnIn.cues().isEmpty()) {
+                    throw new IllegalArgumentException("an animated image has no subtitle track to burn in");
+                }
                 var stage = new VideoEncodeStage(track, null, null, codec, video, true, true, frameRate, muxer.reserve(),
-                        muxer, start, end, cancellation);
+                        muxer, start, end, cancellation, burnIn == null ? null : new ArrayList<>(burnIn.cues().get()),
+                        burnIn == null ? SubtitleMarkup.SUBRIP : burnIn.markup(), null);
                 try (stage) {
                     var stages = List.<Stage>of(stage);
                     var pts = 0L;

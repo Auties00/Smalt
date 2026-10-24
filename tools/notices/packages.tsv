@@ -117,6 +117,8 @@ internal.codec	core
 internal.color	core
 internal.compress	core
 internal.edit	core
+internal.field	core
+internal.font	core
 internal.gainmap	core
 internal.header	core
 internal.heif	core
