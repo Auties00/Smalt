@@ -3,6 +3,7 @@ package com.github.auties00.smalt.image;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 
 import java.util.Objects;
 
@@ -13,7 +14,7 @@ import java.util.Objects;
  */
 public final class ImageDecoderOptions {
     private static final ImageDecoderOptions DEFAULTS = new ImageDecoderOptions(MediaLimits.DEFAULT, 0, 0, false, false,
-            false);
+            false, DataReferenceResolver.none());
 
     private final MediaLimits limits;
     private final int minWidth;
@@ -21,20 +22,22 @@ public final class ImageDecoderOptions {
     private final boolean highBitDepth;
     private final boolean convertToSrgb;
     private final boolean keepChannels;
+    private final DataReferenceResolver dataReferences;
 
     private ImageDecoderOptions(MediaLimits limits, int minWidth, int minHeight, boolean highBitDepth,
-                                boolean convertToSrgb, boolean keepChannels) {
+                                boolean convertToSrgb, boolean keepChannels, DataReferenceResolver dataReferences) {
         this.limits = limits;
         this.minWidth = minWidth;
         this.minHeight = minHeight;
         this.highBitDepth = highBitDepth;
         this.convertToSrgb = convertToSrgb;
         this.keepChannels = keepChannels;
+        this.dataReferences = dataReferences;
     }
 
     /**
      * Returns full-size decoding to 8-bit pictures in the file's color space, under
-     * {@link MediaLimits#DEFAULT}.
+     * {@link MediaLimits#DEFAULT}, without resolving data references.
      *
      * @return the default options
      */
@@ -167,6 +170,19 @@ public final class ImageDecoderOptions {
         return keepChannels;
     }
 
+    /**
+     * {@return the resolver of the data references that name other files; {@link DataReferenceResolver#none()}
+     * by default}
+     *
+     * <p>A HEIF file (HEIC, AVIF) may store the data of an item in another file, which the data reference box of
+     * its {@code meta} box names. The HEIC and AVIF decoders ask this resolver for that file; an item whose
+     * reference it does not resolve raises {@link com.github.auties00.smalt.MediaException.Unsupported}. Other
+     * decoders do not use it.
+     */
+    public DataReferenceResolver dataReferences() {
+        return dataReferences;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof ImageDecoderOptions that
@@ -175,19 +191,20 @@ public final class ImageDecoderOptions {
                 && minHeight == that.minHeight
                 && highBitDepth == that.highBitDepth
                 && convertToSrgb == that.convertToSrgb
-                && keepChannels == that.keepChannels;
+                && keepChannels == that.keepChannels
+                && dataReferences.equals(that.dataReferences);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels);
+        return Objects.hash(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels, dataReferences);
     }
 
     @Override
     public String toString() {
         return "ImageDecoderOptions[limits=" + limits + ", minWidth=" + minWidth + ", minHeight=" + minHeight
                 + ", highBitDepth=" + highBitDepth + ", convertToSrgb=" + convertToSrgb
-                + ", keepChannels=" + keepChannels + "]";
+                + ", keepChannels=" + keepChannels + ", dataReferences=" + dataReferences + "]";
     }
 
     /**
@@ -203,6 +220,7 @@ public final class ImageDecoderOptions {
         private boolean highBitDepth;
         private boolean convertToSrgb;
         private boolean keepChannels;
+        private DataReferenceResolver dataReferences;
 
         private Builder(ImageDecoderOptions options) {
             this.limits = options.limits;
@@ -211,6 +229,7 @@ public final class ImageDecoderOptions {
             this.highBitDepth = options.highBitDepth;
             this.convertToSrgb = options.convertToSrgb;
             this.keepChannels = options.keepChannels;
+            this.dataReferences = options.dataReferences;
         }
 
         /**
@@ -285,6 +304,28 @@ public final class ImageDecoderOptions {
         }
 
         /**
+         * Sets the resolver of the data references that name other files; see
+         * {@link ImageDecoderOptions#dataReferences()}.
+         *
+         * @param dataReferences the resolver
+         * @return this builder
+         */
+        public Builder dataReferences(DataReferenceResolver dataReferences) {
+            this.dataReferences = Objects.requireNonNull(dataReferences, "dataReferences");
+            return this;
+        }
+
+        /**
+         * Resolves no data reference, the default; see {@link ImageDecoderOptions#dataReferences()}.
+         *
+         * @return this builder
+         */
+        public Builder noDataReferences() {
+            this.dataReferences = DataReferenceResolver.none();
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -293,7 +334,8 @@ public final class ImageDecoderOptions {
         public ImageDecoderOptions build() {
             Checks.nonNegative("minimum width", minWidth);
             Checks.nonNegative("minimum height", minHeight);
-            return new ImageDecoderOptions(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels);
+            return new ImageDecoderOptions(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels,
+                    dataReferences);
         }
     }
 }

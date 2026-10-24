@@ -175,6 +175,9 @@ class ContainerBombTest {
                 Arguments.of(new Input("MP4 stts of 2^31 entries", () -> mp4Count("stts", 4, false))),
                 Arguments.of(new Input("MP4 stsc of 2^31 entries", () -> mp4Count("stsc", 4, false))),
                 Arguments.of(new Input("Matroska CodecPrivate of 1 GiB", ContainerBombTest::matroskaPrivate)),
+                Arguments.of(new Input("Matroska bzlib frame of 20 MB", () -> matroskaCompressed(1, bzip2Bomb()))),
+                Arguments.of(new Input("Matroska LZO1X frame of 25 MB", () -> matroskaCompressed(2, lzoBomb()))),
+                Arguments.of(new Input("QuickTime compressed movie of 2 GiB", ContainerBombTest::quickTimeMovie)),
                 Arguments.of(new Input("MP3 behind a 256 MB ID3v2 tag", ContainerBombTest::id3)),
                 Arguments.of(new Input("FLAC PICTURE block of 16 MB", ContainerBombTest::flacPicture)),
                 Arguments.of(new Input("WAV LIST chunk of 2 GB", () -> {
@@ -366,6 +369,80 @@ class ContainerBombTest {
         out.writeBytes("OpusHead".getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
         out.writeBytes(new byte[]{1, 2, 0x38, 1, (byte) 0x80, (byte) 0xBB, 0, 0, 0, 0, 0});
         out.writeBytes(new byte[4096]);
+        return out.toByteArray();
+    }
+
+    /** Forty concatenated bzip2 streams of 500000 zero bytes each (libbzip2 at block size 9). */
+    static byte[] bzip2Bomb() {
+        var stream = java.util.HexFormat.of().parseHex("425a68393141592653598de0391c0003d44004c00004000008200030cc09aa69"
+                + "aa486d4a4878bb9229c284846f01c8e0");
+        var out = new ByteArrayOutputStream();
+        for (var copy = 0; copy < 40; copy++) {
+            out.writeBytes(stream);
+        }
+        return out.toByteArray();
+    }
+
+    /** An LZO1X stream of one zero byte and an M3 copy of it extended by 100000 zero length bytes. */
+    static byte[] lzoBomb() {
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(new byte[]{18, 0, 0x20});
+        out.writeBytes(new byte[100_000]);
+        out.writeBytes(new byte[]{1, 0, 0, 0x11, 0, 0});
+        return out.toByteArray();
+    }
+
+    /** A Matroska file of one PCM track whose only frame is compressed with a ContentCompAlgo. */
+    static byte[] matroskaCompressed(int algorithm, byte[] frame) {
+        var header = ebml(0x1A45DFA3L, concat(ebml(0x4286, new byte[]{1}), ebml(0x42F7, new byte[]{1}),
+                ebml(0x42F2, new byte[]{4}), ebml(0x42F3, new byte[]{8}),
+                ebml(0x4282, "matroska".getBytes(java.nio.charset.StandardCharsets.US_ASCII)), ebml(0x4287, new byte[]{4}),
+                ebml(0x4285, new byte[]{2})));
+        var info = ebml(0x1549A966L, ebml(0x2AD7B1, new byte[]{0x0F, 0x42, 0x40}));
+        var audio = ebml(0xE1, concat(ebml(0xB5, java.nio.ByteBuffer.allocate(8).putDouble(SAMPLE_RATE).array()),
+                ebml(0x9F, new byte[]{1}), ebml(0x6264, new byte[]{16})));
+        var encodings = ebml(0x6D80, ebml(0x6240, ebml(0x5034, ebml(0x4254, new byte[]{(byte) algorithm}))));
+        var track = ebml(0xAE, concat(ebml(0xD7, new byte[]{1}), ebml(0x73C5, new byte[]{1}), ebml(0x83, new byte[]{2}),
+                ebml(0x86, "A_PCM/INT/LIT".getBytes(java.nio.charset.StandardCharsets.US_ASCII)), audio, encodings));
+        var cluster = ebml(0x1F43B675L, concat(ebml(0xE7, new byte[]{0}),
+                ebml(0xA3, concat(new byte[]{(byte) 0x81, 0, 0, (byte) 0x80}, frame))));
+        return concat(header, ebml(0x18538067L, concat(info, ebml(0x1654AE6BL, track), cluster)));
+    }
+
+    /** A QuickTime file whose movie is a cmov atom declaring an uncompressed movie of 2 GiB. */
+    static byte[] quickTimeMovie() {
+        var data = pcm(ContainerFormat.MP4, Codec.PCM_S16LE);
+        var moov = indexOf(data, "moov", 0) - 4;
+        var cmvd = concat(new byte[]{0x7F, (byte) 0xFF, (byte) 0xFF, (byte) 0xF0}, new byte[]{0x78, (byte) 0x9C, 3, 0});
+        var cmov = atom("moov", atom("cmov", concat(atom("dcom", "zlib".getBytes(java.nio.charset.StandardCharsets.US_ASCII)),
+                atom("cmvd", cmvd))));
+        var size = java.nio.ByteBuffer.wrap(data, moov, 4).getInt();
+        return concat(java.util.Arrays.copyOf(data, moov), cmov, java.util.Arrays.copyOfRange(data, moov + size, data.length));
+    }
+
+    private static byte[] atom(String type, byte[] payload) {
+        return java.nio.ByteBuffer.allocate(8 + payload.length).putInt(8 + payload.length)
+                .put(type.getBytes(java.nio.charset.StandardCharsets.US_ASCII)).put(payload).array();
+    }
+
+    private static byte[] ebml(long id, byte[] payload) {
+        var out = new ByteArrayOutputStream();
+        for (var shift = (64 - Long.numberOfLeadingZeros(id) + 7) / 8 - 1; shift >= 0; shift--) {
+            out.write((int) (id >>> (8 * shift)));
+        }
+        var size = 0x0100_0000_0000_0000L | payload.length;
+        for (var shift = 7; shift >= 0; shift--) {
+            out.write((int) (size >>> (8 * shift)));
+        }
+        out.writeBytes(payload);
+        return out.toByteArray();
+    }
+
+    private static byte[] concat(byte[]... parts) {
+        var out = new ByteArrayOutputStream();
+        for (var part : parts) {
+            out.writeBytes(part);
+        }
         return out.toByteArray();
     }
 

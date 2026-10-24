@@ -249,7 +249,7 @@ final class MatroskaTrackEntry {
         }
         if (track.codecPrivate != null) {
             for (var encoding : track.encodings) {
-                if (encoding.appliesToPrivate() && encoding.algorithm() == ContentEncoding.ZLIB) {
+                if (encoding.appliesToPrivate() && encoding.decompresses()) {
                     track.codecPrivate = encoding.decode(track.codecPrivate, 0, track.codecPrivate.length, limits);
                 }
             }

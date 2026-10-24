@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.io.FourCc;
+import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
@@ -167,6 +168,12 @@ final class Mp4Track {
      * {@code null}.
      */
     MediaException[] entryErrors;
+
+    /**
+     * The source holding the samples of each sample description, by zero-based index, {@code null} for one
+     * whose samples are in the file itself; {@code null} when every description's samples are.
+     */
+    MediaSource[] dataSources;
 
     /**
      * The zero-based index of the sample description of the track's first sample in decoding

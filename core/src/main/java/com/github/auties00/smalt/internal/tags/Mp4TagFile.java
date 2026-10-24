@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -65,7 +66,9 @@ import java.util.zip.GZIPInputStream;
  * {@code moov}. The offsets of such a file count in the file with its compressed boxes
  * uncompressed, so the explicit offsets of the movie fragments after a rewritten compressed movie
  * move by what the rewrite and the compression together changed; a rewrite that would move the data
- * of compressed movie fragments ({@code !mof}) stating explicit base data offsets is rejected.
+ * of compressed movie fragments ({@code !mof}) stating explicit base data offsets is rejected. A QuickTime
+ * compressed movie ({@code moov} holding a {@code cmov} atom) is read from its decompressed movie as well, and a
+ * rewrite stores that movie uncompressed; its offsets count in the file as it is.
  */
 final class Mp4TagFile implements TagFile {
     /**
@@ -259,13 +262,31 @@ final class Mp4TagFile implements TagFile {
         this.topLevelTypes = List.copyOf(types);
         this.moovIndex = moovAt >= 0 ? moovAt : compressedAt;
         var moovBox = boxes.get(moovIndex);
-        this.moov = moovAt >= 0 ? TagIo.read(source, moovBox[0], moovBox[1], limits) : decompressMovie(moovBox);
+        this.moov = moovAt >= 0 ? quickTimeMovie(TagIo.read(source, moovBox[0], moovBox[1], limits))
+                : decompressMovie(moovBox);
         this.movieSaved = moovAt >= 0 ? 0 : moov.length - moovBox[1];
         this.chapterTracks = findChapterTracks();
         var opaque = new ArrayList<byte[]>();
         this.integerForms = new HashMap<>();
         this.tags = decode(opaque);
         this.opaqueItems = List.copyOf(opaque);
+    }
+
+    /**
+     * Returns the movie a {@code moov} box holds: the box itself, or the movie its QuickTime compressed movie atom
+     * ({@code cmov}) holds, whose offsets count in the file as it is, so that a rewrite stores it uncompressed.
+     *
+     * @param movie the {@code moov} box, header included
+     * @return the {@code moov} box to read and rewrite
+     * @throws MediaException.Malformed if the compressed movie is damaged
+     * @throws MediaException.Unsupported if the movie is compressed with another algorithm than zlib
+     * @throws MediaException.LimitExceeded if the uncompressed movie is larger than the byte limit
+     */
+    private byte[] quickTimeMovie(byte[] movie) {
+        var header = ByteArrays.u32be(movie, 0) == 1 ? 16 : 8;
+        var cmov = QuickTimeCompressedMovie.find(BoxCursor.of(Arrays.copyOfRange(movie, header, movie.length),
+                QuickTimeCompressedMovie.CMOV));
+        return cmov == null ? movie : QuickTimeCompressedMovie.inflate(cmov, limits);
     }
 
     /**

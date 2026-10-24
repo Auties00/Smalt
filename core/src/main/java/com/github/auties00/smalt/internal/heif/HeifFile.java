@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.nio.charset.StandardCharsets;
@@ -29,8 +30,9 @@ import java.util.zip.Inflater;
  * reads the {@code meta} box into memory and resolves its {@code hdlr} (which must be
  * {@code pict}), {@code pitm}, {@code iinf}, {@code iloc} (versions 0 to 2, every construction
  * method), {@code iprp} ({@code ipco} and every {@code ipma}), {@code iref} (versions 0 and 1)
- * and {@code idat} children into {@link HeifItem}s, and its {@code grpl} child into
- * {@link EntityGroup}s. It stops as soon as the boxes the brands
+ * and {@code idat} children into {@link HeifItem}s, its {@code grpl} child into
+ * {@link EntityGroup}s and the {@code dref} of its {@code dinf} child into the data references of
+ * the items stored in other files. It stops as soon as the boxes the brands
  * require are seen: the {@code meta} box for the {@code avif}, {@code mif1} and HEIC brands and
  * the {@code moov} box for the sequence brands ({@code avis}, {@code msf1}, {@code heis}). Item
  * data is read on demand with {@link #readItem(MediaSource, HeifItem, MediaLimits)}.
@@ -135,6 +137,17 @@ public final class HeifFile {
     private final long movieSize;
 
     /**
+     * The {@code dinf} box of the {@code meta} box, never moved, or {@code null} when it has none; its
+     * {@code dref} box is parsed when an item stored elsewhere is read, so that a damaged one fails only those.
+     */
+    private final BoxCursor dataInformation;
+
+    /**
+     * The resolver of the files those entries name.
+     */
+    private final DataReferenceResolver resolver;
+
+    /**
      * Constructs the parsed file.
      *
      * @param majorBrand the major brand
@@ -146,9 +159,12 @@ public final class HeifFile {
      * @param hasMeta whether a {@code meta} box was found
      * @param movieOffset the offset of the {@code moov} payload, or {@code -1}
      * @param movieSize the size of the {@code moov} payload
+     * @param dataInformation the {@code dinf} box of the {@code meta} box, or {@code null}
+     * @param resolver the resolver of the files those entries name
      */
     private HeifFile(String majorBrand, List<String> brands, int primaryItemId, Map<Integer, HeifItem> items,
-                     byte[] idat, List<EntityGroup> groups, boolean hasMeta, long movieOffset, long movieSize) {
+                     byte[] idat, List<EntityGroup> groups, boolean hasMeta, long movieOffset, long movieSize,
+                     BoxCursor dataInformation, DataReferenceResolver resolver) {
         this.majorBrand = majorBrand;
         this.brands = brands;
         this.primaryItemId = primaryItemId;
@@ -158,6 +174,8 @@ public final class HeifFile {
         this.hasMeta = hasMeta;
         this.movieOffset = movieOffset;
         this.movieSize = movieSize;
+        this.dataInformation = dataInformation;
+        this.resolver = resolver;
     }
 
     /**
@@ -197,6 +215,27 @@ public final class HeifFile {
      * @throws MediaException.Io if reading the source fails
      */
     public static HeifFile parse(MediaSource source, MediaLimits limits, boolean strict) {
+        return parse(source, limits, strict, DataReferenceResolver.none());
+    }
+
+    /**
+     * Parses the structure of a HEIF file whose items may be stored in other files, which the data reference box
+     * of its {@code meta} box names.
+     *
+     * <p>The parse is the one of {@link #parse(MediaSource, MediaLimits, boolean)}; {@link #readItem} asks the
+     * resolver for the file of an item stored elsewhere and closes it once the item is read.
+     *
+     * @param source the file
+     * @param limits the bounds of the {@code meta} box
+     * @param strict whether to enforce the rules on essential properties, repeated inputs and the
+     * entity groups
+     * @param resolver the resolver of the files the data references name
+     * @return the parsed file
+     * @throws MediaException.Malformed if the file is not a valid HEIF file
+     * @throws MediaException.LimitExceeded if the {@code meta} box exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static HeifFile parse(MediaSource source, MediaLimits limits, boolean strict, DataReferenceResolver resolver) {
         var header = new byte[16];
         var size = source.size();
         long position = 0;
@@ -290,9 +329,9 @@ public final class HeifFile {
         }
         if (meta == null) {
             return new HeifFile(majorBrand, brands, 0, Map.of(), new byte[0], List.of(), false, movieOffset,
-                    movieSize);
+                    movieSize, null, resolver);
         }
-        return parseMeta(majorBrand, brands, meta, movieOffset, movieSize, strict);
+        return parseMeta(majorBrand, brands, meta, movieOffset, movieSize, strict, resolver);
     }
 
     /**
@@ -324,10 +363,11 @@ public final class HeifFile {
      * @param movieOffset the offset of the {@code moov} payload, or {@code -1}
      * @param movieSize the size of the {@code moov} payload
      * @param strict whether to enforce the rules on essential properties and repeated inputs
+     * @param resolver the resolver of the files the data references name
      * @return the parsed file
      */
     private static HeifFile parseMeta(String majorBrand, List<String> brands, byte[] meta, long movieOffset,
-                                      long movieSize, boolean strict) {
+                                      long movieSize, boolean strict, DataReferenceResolver resolver) {
         var box = BoxCursor.strict(meta, FourCc.of("meta"));
         if ((box.fullBoxHeader() >>> 24) != 0) {
             throw new MediaException.Malformed("heif: unsupported meta box version");
@@ -352,6 +392,7 @@ public final class HeifFile {
         BoxCursor iref = null;
         BoxCursor idat = null;
         BoxCursor grpl = null;
+        BoxCursor dinf = null;
         while (box.hasBox()) {
             var child = box.nextBox();
             var type = FourCc.toString(child.type());
@@ -364,6 +405,7 @@ public final class HeifFile {
                 case "iref" -> iref = unique(iref, child);
                 case "idat" -> idat = unique(idat, child);
                 case "grpl" -> grpl = strict ? unique(grpl, child) : grpl == null ? child : grpl;
+                case "dinf" -> dinf = dinf == null ? child : dinf;
                 default -> {
                 }
             }
@@ -388,7 +430,7 @@ public final class HeifFile {
         }
         return new HeifFile(majorBrand, brands, primary, Collections.unmodifiableMap(items),
                 idat == null ? new byte[0] : idat.rest(), grpl == null ? List.of() : parseGroups(grpl, strict), true,
-                movieOffset, movieSize);
+                movieOffset, movieSize, dinf, resolver);
     }
 
     /**
@@ -938,8 +980,8 @@ public final class HeifFile {
         if (!item.located) {
             throw new MediaException.Malformed("heif: item " + item.id() + " has no location");
         }
-        if (item.dataReferenceIndex != 0) {
-            throw new MediaException.Unsupported("heif", "item " + item.id() + " is stored in another file");
+        if (item.constructionMethod == 0 && item.dataReferenceIndex != 0) {
+            return readReferencedItem(source, item, limits);
         }
         var total = item.size();
         LimitChecks.checkAllocation(limits, total);
@@ -975,6 +1017,61 @@ public final class HeifFile {
             position += length;
         }
         return data;
+    }
+
+    /**
+     * Reads an item of construction method {@code 0} whose data reference index is not {@code 0}: from the file
+     * when the entry is self-contained, from the file the resolver supplies otherwise.
+     *
+     * @param source the file
+     * @param item the item to read
+     * @param limits the bound of the item size
+     * @return the data
+     * @throws MediaException.Malformed if the index names no entry of the {@code dref} box
+     * @throws MediaException.Unsupported if the item is stored in a file the resolver does not supply
+     */
+    private byte[] readReferencedItem(MediaSource source, HeifItem item, MediaLimits limits) {
+        var index = item.dataReferenceIndex;
+        var dataReferences = dataReferences();
+        if (index > dataReferences.size()) {
+            throw new MediaException.Malformed("heif: item " + item.id() + " names data reference " + index
+                    + " of a dref box of " + dataReferences.size() + " entries");
+        }
+        try (var files = new DataReferences(resolver)) {
+            var from = files.open(dataReferences.get(index - 1), "heif", "item " + item.id());
+            var data = from == null ? source : from;
+            var total = item.size();
+            LimitChecks.checkAllocation(limits, total);
+            checkExtents(data, item);
+            var bytes = new byte[(int) total];
+            var position = 0;
+            for (var e = 0; e < item.extentOffsets.length; e++) {
+                var length = (int) item.extentLengths[e];
+                data.readFully(item.extentOffsets[e], bytes, position, length);
+                position += length;
+            }
+            return bytes;
+        }
+    }
+
+    /**
+     * Parses the entries of the {@code dref} box of the {@code dinf} box of the {@code meta} box.
+     *
+     * @return the entries, empty when the {@code meta} box has no {@code dinf} or its {@code dinf} no {@code dref}
+     * @throws MediaException.Malformed if the {@code dref} box is damaged
+     */
+    private List<DataReferences.Entry> dataReferences() {
+        if (dataInformation == null) {
+            return List.of();
+        }
+        var dinf = dataInformation.duplicate();
+        while (dinf.hasBox()) {
+            var child = dinf.nextBox();
+            if (FourCc.toString(child.type()).equals("dref")) {
+                return DataReferences.parse(child);
+            }
+        }
+        return List.of();
     }
 
     /**

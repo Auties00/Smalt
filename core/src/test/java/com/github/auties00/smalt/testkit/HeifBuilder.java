@@ -34,6 +34,7 @@ public final class HeifBuilder {
         List<Property> properties = new ArrayList<>();
         List<Extent> extents;
         boolean hidden;
+        int dataReference;
     }
 
     private String majorBrand = "avif";
@@ -93,6 +94,15 @@ public final class HeifBuilder {
         var item = items.get(id - 1);
         item.method = method;
         item.extents = List.of(extents);
+        return this;
+    }
+
+    /**
+     * Sets the data reference index of an item ({@code 0}, the default, for this file), an index into the
+     * {@code dref} box of a {@code dinf} added with {@link #metaBox}; the item's extents then count in that file.
+     */
+    public HeifBuilder dataReference(int id, int index) {
+        items.get(id - 1).dataReference = index;
         return this;
     }
 
@@ -269,7 +279,7 @@ public final class HeifBuilder {
             if (ilocVersion != 0) {
                 u16(out, item.method);
             }
-            u16(out, 0);
+            u16(out, item.dataReference);
             var extents = item.extents != null ? item.extents
                     : List.of(new Extent((item.method == 0 ? mdatStart : 0) + offsets[item.id - 1], item.data.length, 1));
             u16(out, extents.size());
@@ -282,6 +292,27 @@ public final class HeifBuilder {
             }
         }
         return fullBox("iloc", ilocVersion, 0, out.toByteArray());
+    }
+
+    /** Builds a {@code dinf} box holding a {@code dref} box of the given entries. */
+    public static byte[] dinf(byte[]... entries) {
+        var out = new ByteArrayOutputStream();
+        u32(out, entries.length);
+        for (var entry : entries) {
+            out.writeBytes(entry);
+        }
+        return box("dinf", fullBox("dref", 0, 0, out.toByteArray()));
+    }
+
+    /** Builds a {@code url } data reference entry naming another file. */
+    public static byte[] urlEntry(String location) {
+        var bytes = location.getBytes(StandardCharsets.UTF_8);
+        return fullBox("url ", 0, 0, java.util.Arrays.copyOf(bytes, bytes.length + 1));
+    }
+
+    /** Builds a self-contained {@code url } data reference entry. */
+    public static byte[] selfEntry() {
+        return fullBox("url ", 0, 1, new byte[0]);
     }
 
     /** Builds a {@code hdlr} box. */

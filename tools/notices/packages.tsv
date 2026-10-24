@@ -115,6 +115,7 @@ internal.bits	core
 internal.check	core
 internal.codec	core
 internal.color	core
+internal.compress	core
 internal.edit	core
 internal.gainmap	core
 internal.header	core

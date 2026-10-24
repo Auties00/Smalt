@@ -25,6 +25,7 @@ import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifStill;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.util.ArrayList;
@@ -73,7 +74,21 @@ public final class AvifFiles {
      * {@code avis} brand
      */
     private static HeifFile parse(MediaSource source, MediaLimits limits) {
-        var file = HeifFile.parse(source, limits);
+        return parse(source, limits, DataReferenceResolver.none());
+    }
+
+    /**
+     * Parses an AVIF file whose items may be stored in the files its data references name.
+     *
+     * @param source the file
+     * @param limits the bounds
+     * @param resolver the resolver of the files the data references name
+     * @return the parsed file
+     * @throws MediaException.Unsupported if the file has neither the {@code avif} nor the
+     * {@code avis} brand
+     */
+    private static HeifFile parse(MediaSource source, MediaLimits limits, DataReferenceResolver resolver) {
+        var file = HeifFile.parse(source, limits, true, resolver);
         if (!file.hasBrand("avif") && !file.hasBrand("avis")) {
             throw new MediaException.Unsupported("avif", "the file has neither the avif nor the avis brand");
         }
@@ -216,7 +231,7 @@ public final class AvifFiles {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
         var highBitDepth = options.highBitDepth();
-        var file = parse(source, limits);
+        var file = parse(source, limits, options.dataReferences());
         if (showsSequence(file)) {
             try (var reader = new SequenceReader(source, file, limits, highBitDepth)) {
                 var picture = reader.readFirstPicture(highBitDepth);
@@ -409,7 +424,7 @@ public final class AvifFiles {
      */
     public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
-        var file = parse(source, limits);
+        var file = parse(source, limits, options.dataReferences());
         if (showsSequence(file) || file.primaryItem() == null) {
             return Optional.empty();
         }
@@ -444,7 +459,7 @@ public final class AvifFiles {
      */
     public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
         var limits = options.limits();
-        var file = parse(source, limits);
+        var file = parse(source, limits, options.dataReferences());
         var listed = listed(source, file, limits);
         if (index < 0 || index >= listed.size()) {
             return null;

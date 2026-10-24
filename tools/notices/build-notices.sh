@@ -105,6 +105,8 @@ Contents
   48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
   49. PFFFT
   50. RNNoise
+  51. bzip2
+  52. lzokay
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1780,6 +1782,53 @@ Copyright:
 EOF
 license_start "RNNoise license (COPYING)"
 cat "$LIC/rnnoise-COPYING"
+
+section "51. bzip2"
+cat <<'EOF'
+Project:      bzip2 and libbzip2, a block-sorting file compressor (1.0.8)
+Home:         https://sourceware.org/bzip2/
+Source:       https://sourceware.org/pub/bzip2/bzip2-1.0.8.tar.gz (decompress.c,
+              huffman.c, bzlib.c, randtable.c, crctable.c)
+License text: LICENSE of the source distribution
+License:      bzip2 license (BSD-style)
+
+Derived Smalt packages:
+  internal.compress (Bzip2Decoder)
+
+Derivation: the decompression of decompress.c (the stream and block headers,
+the symbol map, the selectors and their move-to-front coding, the coding
+tables, the Huffman decoding tables of huffman.c, the run-length and
+move-to-front decoding of the symbols, the inverse Burrows-Wheeler transform
+of the fast path) and the run-length decoding and derandomization of
+bzlib.c, translated to Java; the table of randtable.c copied, and the CRC
+table of crctable.c computed from its polynomial.
+
+Copyright:
+  Copyright (C) 1996-2019 Julian R Seward
+EOF
+license_start "bzip2 license (LICENSE)"
+cat "$LIC/bzip2-LICENSE"
+
+section "52. lzokay"
+cat <<'EOF'
+Project:      lzokay, a minimal LZO1X compressor and decompressor (commit
+              db2df1fcbebc2ed06c10f727f72567d40f06a2be)
+Source:       https://github.com/jackoalan/lzokay (lzokay.cpp)
+License text: https://github.com/jackoalan/lzokay/blob/master/LICENSE
+License:      MIT
+
+Derived Smalt packages:
+  internal.compress (Lzo1xDecoder)
+
+Derivation: the LZO1X decompressor of lzokay.cpp (the first literal run, the
+M1, M2, M3 and M4 instructions and their state, the zero-byte length
+extension and the end instruction) translated to Java.
+
+Copyright:
+  Copyright (c) 2018 Jack Andersen
+EOF
+license_start "lzokay license (LICENSE)"
+cat "$LIC/lzokay-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

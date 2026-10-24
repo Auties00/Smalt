@@ -255,6 +255,118 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes the seeds of QuickTime compressed movies, compressed Matroska frames and the decompressors")
+    void compression() throws IOException {
+        var mov = Files.readAllBytes(Path.of("src", "test", "resources", "samples", "mp4", "prores.mov"));
+        write(DemuxerFuzzTest.class, "mp4", "valid-cmov.mov", quickTimeCompressed(mov));
+        var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "internal", "compress");
+        for (var algorithm : new int[]{1, 2}) {
+            var format = algorithm == 1 ? "bzip2" : "lzo";
+            var extension = algorithm == 1 ? ".bz2" : ".lzo";
+            var frames = List.of(Files.readAllBytes(vectors.resolve(format).resolve("frame-12" + extension)),
+                    Files.readAllBytes(vectors.resolve(format).resolve("frame-14" + extension)));
+            write(DemuxerFuzzTest.class, "matroska", "valid-" + (algorithm == 1 ? "bzlib" : "lzo") + ".mkv",
+                    compressedMatroska(algorithm, frames));
+        }
+        for (var name : List.of("randomized.bz2", "four-same-9.bz2", "all-bytes-1.bz2", "text-9.bz2", "concatenated.bz2")) {
+            copy(CompressionFuzzTest.class, "bzip2", "valid-" + name, vectors.resolve("bzip2").resolve(name));
+        }
+        for (var name : List.of("m1-short.lzo", "m1-far.lzo", "text.lzo", "all-bytes.lzo", "empty.lzo")) {
+            copy(CompressionFuzzTest.class, "lzo1x", "valid-" + name, vectors.resolve("lzo").resolve(name));
+        }
+    }
+
+    /** Replaces the movie box of a file by a QuickTime compressed movie: cmov holding dcom zlib and cmvd. */
+    private static byte[] quickTimeCompressed(byte[] file) {
+        var out = new java.io.ByteArrayOutputStream();
+        var position = 0;
+        while (position + 8 <= file.length) {
+            var size = java.nio.ByteBuffer.wrap(file, position, 4).getInt();
+            var type = new String(file, position + 4, 4, StandardCharsets.ISO_8859_1);
+            if (type.equals("moov")) {
+                var deflater = new java.util.zip.Deflater();
+                deflater.setInput(file, position, size);
+                deflater.finish();
+                var compressed = new java.io.ByteArrayOutputStream();
+                var buffer = new byte[8192];
+                while (!deflater.finished()) {
+                    compressed.write(buffer, 0, deflater.deflate(buffer));
+                }
+                deflater.end();
+                var cmvd = java.nio.ByteBuffer.allocate(4 + compressed.size()).putInt(size).put(compressed.toByteArray())
+                        .array();
+                out.writeBytes(atom("moov", atom("cmov", concat(atom("dcom", "zlib".getBytes(StandardCharsets.ISO_8859_1)),
+                        atom("cmvd", cmvd)))));
+            } else {
+                out.write(file, position, size);
+            }
+            position += size;
+        }
+        return out.toByteArray();
+    }
+
+    private static byte[] atom(String type, byte[] payload) {
+        return java.nio.ByteBuffer.allocate(8 + payload.length).putInt(8 + payload.length)
+                .put(type.getBytes(StandardCharsets.ISO_8859_1)).put(payload).array();
+    }
+
+    private static byte[] concat(byte[]... parts) {
+        var out = new java.io.ByteArrayOutputStream();
+        for (var part : parts) {
+            out.writeBytes(part);
+        }
+        return out.toByteArray();
+    }
+
+    /** Writes a Matroska file of one 16-bit mono PCM track whose frames are compressed with a ContentCompAlgo. */
+    private static byte[] compressedMatroska(int algorithm, List<byte[]> frames) {
+        var header = element(0x1A45DFA3, concat(uint(0x4286, 1), uint(0x42F7, 1), uint(0x42F2, 4), uint(0x42F3, 8),
+                element(0x4282, "matroska".getBytes(StandardCharsets.US_ASCII)), uint(0x4287, 4), uint(0x4285, 2)));
+        var info = element(0x1549A966, uint(0x2AD7B1, 1_000_000));
+        var encoding = element(0x6D80, element(0x6240, concat(uint(0x5032, 1), element(0x5034, uint(0x4254, algorithm)))));
+        var audio = element(0xE1, concat(element(0xB5, java.nio.ByteBuffer.allocate(8).putDouble(8000).array()),
+                uint(0x9F, 1), uint(0x6264, 16)));
+        var track = element(0xAE, concat(uint(0xD7, 1), uint(0x73C5, 1), uint(0x83, 2),
+                element(0x86, "A_PCM/INT/LIT".getBytes(StandardCharsets.US_ASCII)), audio, encoding));
+        var blocks = new java.io.ByteArrayOutputStream();
+        blocks.writeBytes(uint(0xE7, 0));
+        for (var index = 0; index < frames.size(); index++) {
+            blocks.writeBytes(element(0xA3, concat(new byte[]{(byte) 0x81, (byte) (index >> 0), 0, (byte) 0x80},
+                    frames.get(index))));
+        }
+        var segment = concat(info, element(0x1654AE6B, track), element(0x1F43B675, blocks.toByteArray()));
+        return concat(header, element(0x18538067, segment));
+    }
+
+    private static byte[] element(long id, byte[] payload) {
+        var out = new java.io.ByteArrayOutputStream();
+        var idLength = (64 - Long.numberOfLeadingZeros(id) + 7) / 8;
+        for (var i = idLength - 1; i >= 0; i--) {
+            out.write((int) (id >>> (8 * i)));
+        }
+        long size = payload.length;
+        var length = 1;
+        while (size >= (1L << (7 * length)) - 1) {
+            length++;
+        }
+        var marked = size | (1L << (7 * length));
+        for (var i = length - 1; i >= 0; i--) {
+            out.write((int) (marked >>> (8 * i)));
+        }
+        out.writeBytes(payload);
+        return out.toByteArray();
+    }
+
+    private static byte[] uint(long id, long value) {
+        var length = Math.max(1, (64 - Long.numberOfLeadingZeros(value) + 7) / 8);
+        var bytes = new byte[length];
+        for (var i = 0; i < length; i++) {
+            bytes[i] = (byte) (value >>> (8 * (length - 1 - i)));
+        }
+        return element(id, bytes);
+    }
+
+    @Test
     @DisplayName("copies demuxer seeds to the remux target")
     void remux() {
         // the remuxer reads ISO base media, Matroska, MPEG-TS, AVI and Ogg files

@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.mp4.Mp4Demuxer;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.track.Codec;
@@ -28,6 +29,7 @@ import java.util.function.ToLongFunction;
 import java.util.stream.Stream;
 import java.util.zip.ZipInputStream;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -253,6 +255,14 @@ class FileFormatConformanceTest {
     record Compressed() implements Expectation {
     }
 
+    /**
+     * The samples are in a file of the suite that a data reference names: without a resolver the file is
+     * unsupported, and with one over a directory holding both files its samples must match the GPAC dump and, put
+     * end to end, be the referenced file (ffprobe does not follow {@code url } references).
+     */
+    record External(String sibling) implements Expectation {
+    }
+
     /** ffprobe cannot read the file: only the GPAC dump is compared. */
     record GpacOnly() implements Expectation {
     }
@@ -269,7 +279,9 @@ class FileFormatConformanceTest {
     static final Map<String, Expectation> EXPECTATIONS = Map.ofEntries(
             Map.entry("published/isobmff/02_dref_edts_img.mp4", new Unsupported("mp4 external data reference")),
             Map.entry("published/isobmff/04_bifs_video.mp4", new Unsupported("mp4 external data reference")),
-            Map.entry("published/isobmff/a6_tone_multifile.mp4", new Unsupported("mp4 external data reference")),
+            // the samples are in myData.dat, which the suite publishes next to the file; the other two reference
+            // files the suite does not publish
+            Map.entry("published/isobmff/a6_tone_multifile.mp4", new External("myData.dat")),
             Map.entry("published/isobmff/a3-tone-protected.mp4", new Unsupported("mp4 encryption")),
             Map.entry("published/isobmff/f2.mp4", new Unsupported("mp4 encryption")),
             Map.entry("published/isobmff/05_bifs_video_protected_v2.mp4", new Unsupported("mp4 encryption")),
@@ -392,6 +404,7 @@ class FileFormatConformanceTest {
                         () -> ContainerProbe.demux(file, Mp4Demuxer::new));
                 assertEquals(format, failure.format());
             }
+            case External(var sibling) -> external(path, file, sibling);
             case Rejected(var message) -> {
                 var failure = assertThrows(MediaException.Malformed.class,
                         () -> ContainerProbe.demux(file, Mp4Demuxer::new));
@@ -431,6 +444,28 @@ class FileFormatConformanceTest {
         DemuxAssertions.assertPacketsMatch(ours, probe, offset, true, 0, keyframes);
         DemuxAssertions.assertMonotonicDts(ours);
         assertMatchesDump(ours, dump(path));
+    }
+
+    private void external(String path, Path file, String sibling) {
+        var failure = assertThrows(MediaException.Unsupported.class, () -> ContainerProbe.demux(file, Mp4Demuxer::new));
+        assertEquals("mp4 external data reference", failure.format());
+        try {
+            var directory = Files.createDirectories(work.resolve("external"));
+            var movie = Files.copy(file, directory.resolve(path.substring(path.lastIndexOf('/') + 1)),
+                    StandardCopyOption.REPLACE_EXISTING);
+            var referenced = Files.copy(Conformance.fetchListed("mpegff-" + sibling), directory.resolve(sibling),
+                    StandardCopyOption.REPLACE_EXISTING);
+            var options = DemuxerOptions.builder().dataReferences(DataReferenceResolver.directory(directory)).build();
+            var ours = ContainerProbe.demux(movie, source -> new Mp4Demuxer(source, options));
+            assertMatchesDump(ours, dump(path));
+            var joined = new java.io.ByteArrayOutputStream();
+            for (var packet : ours.order()) {
+                joined.writeBytes(packet.data());
+            }
+            assertArrayEquals(Files.readAllBytes(referenced), joined.toByteArray(), "the samples are the referenced file");
+        } catch (IOException exception) {
+            throw new UncheckedIOException(exception);
+        }
     }
 
     /** Demuxes until the first sample past the end of the file, which must fail as malformed. */

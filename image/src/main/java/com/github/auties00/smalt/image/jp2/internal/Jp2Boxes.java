@@ -766,7 +766,7 @@ public final class Jp2Boxes {
             if (fragment.reference() != 0) {
                 var url = fragment.reference() <= references.size() ? references.get(fragment.reference() - 1)
                         : "data reference " + fragment.reference();
-                // TODO: read fragments in other files once a source can resolve the URL of a data reference
+                // TODO: read fragments in other files through the DataReferenceResolver of ImageDecoderOptions
                 throw new MediaException.Unsupported("JPEG 2000", "codestream fragments in another file (" + url + ")");
             }
             if (fragment.offset() < 0 || fragment.offset() > length - fragment.length()) {

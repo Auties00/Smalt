@@ -740,6 +740,12 @@ final class BoxTypes {
     static final int DREF = 0x64726566;
 
     /**
+     * The QuickTime compressed movie atom ({@code cmov}), the only child of a {@code moov} whose content is
+     * compressed.
+     */
+    static final int CMOV = 0x636D6F76;
+
+    /**
      * The data entry URL box ({@code url }).
      */
     static final int URL = 0x75726C20;

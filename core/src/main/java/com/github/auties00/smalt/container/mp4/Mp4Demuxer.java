@@ -12,6 +12,7 @@ import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
+import com.github.auties00.smalt.internal.heif.DataReferences;
 import com.github.auties00.smalt.internal.io.ArrayBacked;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
@@ -151,7 +152,16 @@ import java.util.Set;
  * compressed movie box ({@code !mov}) as the {@code moov} and compressed movie fragments
  * ({@code !mof}) as {@code moof} boxes, each decompressed size checked against the byte limit too.
  * Their offsets count in the file as it would be with every compressed box uncompressed, compressed
- * segment indexes ({@code !six}, {@code !ssx}) included, and are mapped into the file as it is.
+ * segment indexes ({@code !six}, {@code !ssx}) included, and are mapped into the file as it is. A QuickTime
+ * compressed movie (a {@code moov} holding a {@code cmov} atom, zlib-compressed) is decompressed within the byte
+ * limit too, its offsets counting in the file as it is.
+ *
+ * <p>The samples of a track whose data reference ({@code dref}) names another file, as a reference movie's do,
+ * are read from the source that the {@link DemuxerOptions#dataReferences() resolver} of the options supplies for
+ * that reference, at their offsets in it; the demuxer asks for each reference once and closes the sources it
+ * obtained in {@link #close()}. Without such a source the samples raise {@link MediaException.Unsupported}.
+ * Samples of one file are read in the order of their offsets in it, and samples of different files in decoding
+ * order.
  *
  * <p>Cover pictures ({@code covr} items) become {@link #attachedPictures()}; chapters come from a
  * Nero {@code chpl} box or, without one, from the first QuickTime chapter text track a track
@@ -241,6 +251,17 @@ public final class Mp4Demuxer implements Demuxer {
      * The limits applied to every size read from the source.
      */
     private final MediaLimits limits;
+
+    /**
+     * The files the data references of the tracks name, which {@link #close()} closes.
+     */
+    private final DataReferences external;
+
+    /**
+     * Whether a track keeps samples both in the file and in a file a data reference names, so that a source read
+     * once cannot be told which of its bytes are no longer needed.
+     */
+    private final boolean mixedSources;
 
     /**
      * The source size sampled at construction, or {@code -1} when unknown.
@@ -428,12 +449,13 @@ public final class Mp4Demuxer implements Demuxer {
      * @throws MediaException.Io if reading the source fails
      */
     public Mp4Demuxer(MediaSource source, DemuxerOptions options) {
-        this(source, options.limits());
+        this(source, options.limits(), new DataReferences(options.dataReferences()));
     }
 
-    private Mp4Demuxer(MediaSource source, MediaLimits limits) {
+    private Mp4Demuxer(MediaSource source, MediaLimits limits, DataReferences external) {
         this.source = Objects.requireNonNull(source, "source");
         this.limits = Objects.requireNonNull(limits, "limits");
+        this.external = external;
         this.backing = ArrayBacked.of(source);
         var segmentBacked = SegmentBacked.of(source);
         this.segment = segmentBacked != null ? segmentBacked.segment() : null;
@@ -455,7 +477,7 @@ public final class Mp4Demuxer implements Demuxer {
             } else if (scan.moovOffset < 0) {
                 throw new MediaException.Malformed("no moov box");
             }
-            var parser = new MovieParser(limits);
+            var parser = new MovieParser(limits, external);
             parser.parse(BoxCursor.of(moov != null ? moov : readBox(scan.moovOffset, scan.moovHeader, scan.moovSize, "moov"),
                     BoxTypes.MOOV));
             var movieSamples = new int[parser.tracks.size()];
@@ -571,11 +593,99 @@ public final class Mp4Demuxer implements Demuxer {
                 this.chapters = completeNeroChapters(annotations.chapters(durationMicros));
             }
             this.pictures = annotations.pictures();
+            this.mixedSources = Arrays.stream(active).anyMatch(Mp4Demuxer::hasMixedSources);
             rewind();
-        } catch (MediaException exception) {
-            throw exception;
         } catch (RuntimeException exception) {
+            try {
+                external.close();
+            } catch (RuntimeException closing) {
+                exception.addSuppressed(closing);
+            }
+            if (exception instanceof MediaException failure) {
+                throw failure;
+            }
             throw new MediaException.Malformed("corrupt ISO base media file: " + exception, exception);
+        }
+    }
+
+    /**
+     * Closes the files the data references of the movie name; the source of the movie itself is not closed.
+     */
+    @Override
+    public void close() {
+        external.close();
+    }
+
+    /**
+     * Returns the source holding a sample, when it is not the file: a file a data reference names.
+     *
+     * @param track the track of the sample
+     * @param index the index of the sample in {@code track.samples}
+     * @return the source, or {@code null} for a sample in the file
+     */
+    private static MediaSource sourceOf(Mp4Track track, int index) {
+        var sources = track.dataSources;
+        if (sources == null) {
+            return null;
+        }
+        var description = track.samples.description(index);
+        return description < sources.length ? sources[description] : null;
+    }
+
+    /**
+     * Returns whether a track has samples both in the file and in another one.
+     *
+     * @param track the track to check
+     * @return whether its sources are mixed
+     */
+    private static boolean hasMixedSources(Mp4Track track) {
+        if (track.dataSources == null) {
+            return false;
+        }
+        var inFile = false;
+        var outside = false;
+        for (var index = 0; index < track.samples.count; index++) {
+            if (sourceOf(track, index) == null) {
+                inFile = true;
+            } else {
+                outside = true;
+            }
+        }
+        return inFile && outside;
+    }
+
+    /**
+     * Reads a sample from a file a data reference names.
+     *
+     * @param from the file
+     * @param offset the offset of the sample in it
+     * @param size the size of the sample
+     * @return the sample
+     * @throws MediaException.Malformed if the sample lies outside the file
+     * @throws MediaException.LimitExceeded if the sample exceeds the allocation limit
+     */
+    private byte[] readExternal(MediaSource from, long offset, int size) {
+        checkExternal(from, offset, size);
+        var data = new byte[size];
+        from.readFully(offset, data, 0, size);
+        return data;
+    }
+
+    /**
+     * Checks that a sample of a file a data reference names lies inside it and fits the allocation limit.
+     *
+     * @param from the file
+     * @param offset the offset of the sample in it
+     * @param size the size of the sample
+     * @throws MediaException.Malformed if the sample lies outside the file
+     * @throws MediaException.LimitExceeded if the sample exceeds the allocation limit
+     */
+    private void checkExternal(MediaSource from, long offset, int size) {
+        LimitChecks.checkAllocation(limits, size);
+        var length = from.size();
+        if (length >= 0 && (offset > length || size > length - offset)) {
+            throw new MediaException.Malformed("sample of " + size + " bytes at offset " + offset
+                    + " runs past the end of the " + length + " byte referenced file");
         }
     }
 
@@ -604,7 +714,8 @@ public final class Mp4Demuxer implements Demuxer {
                             continue;
                         }
                         var bytes = new byte[size];
-                        if (SourceBytes.readAvailable(source, samples.offsets[index], bytes, 0, bytes.length) < size) {
+                        var from = Objects.requireNonNullElse(sourceOf(candidate, index), source);
+                        if (SourceBytes.readAvailable(from, samples.offsets[index], bytes, 0, bytes.length) < size) {
                             continue;
                         }
                         var length = Math.min(size - 2, ((bytes[0] & 0xFF) << 8) | (bytes[1] & 0xFF));
@@ -810,7 +921,8 @@ public final class Mp4Demuxer implements Demuxer {
             return;
         }
         var header = new byte[4];
-        if (SourceBytes.readAvailable(source, track.samples.offsets[0], header, 0, header.length) < 4) {
+        var from = Objects.requireNonNullElse(sourceOf(track, 0), source);
+        if (SourceBytes.readAvailable(from, track.samples.offsets[0], header, 0, header.length) < 4) {
             return;
         }
         var parsed = AudioConfigs.parseMpegHeader(header, 0, 4);
@@ -834,7 +946,8 @@ public final class Mp4Demuxer implements Demuxer {
             return null;
         }
         var sample = new byte[size];
-        return SourceBytes.readAvailable(source, track.samples.offsets[0], sample, 0, sample.length) < size ? null : sample;
+        var from = Objects.requireNonNullElse(sourceOf(track, 0), source);
+        return SourceBytes.readAvailable(from, track.samples.offsets[0], sample, 0, sample.length) < size ? null : sample;
     }
 
     /**
@@ -1039,7 +1152,9 @@ public final class Mp4Demuxer implements Demuxer {
         var index = advance();
         var track = active[trackIndex];
         var samples = track.samples;
-        var data = readSample(samples.offsets[index], samples.sizes[index]);
+        var elsewhere = sourceOf(track, index);
+        var data = elsewhere != null ? readExternal(elsewhere, samples.offsets[index], samples.sizes[index])
+                : readSample(samples.offsets[index], samples.sizes[index]);
         var held = referencedSamples.get(track);
         if (held != null) {
             held.put(index, data);
@@ -1335,6 +1450,10 @@ public final class Mp4Demuxer implements Demuxer {
         if (cached != null) {
             return cached;
         }
+        var elsewhere = sourceOf(track, index);
+        if (elsewhere != null) {
+            return readExternal(elsewhere, samples.offsets[index], samples.sizes[index]);
+        }
         if (forwardOnly) {
             return null;
         }
@@ -1556,7 +1675,12 @@ public final class Mp4Demuxer implements Demuxer {
             var track = active[trackIndex];
             var index = advance();
             var samples = track.samples;
-            locateSample(samples.offsets[index], samples.sizes[index], info);
+            var elsewhere = sourceOf(track, index);
+            if (elsewhere != null) {
+                locateExternal(elsewhere, samples.offsets[index], samples.sizes[index], info);
+            } else {
+                locateSample(samples.offsets[index], samples.sizes[index], info);
+            }
             releaseConsumed();
             info.newConfig = configChange(trackIndex, index);
             var decode = samples.dts[index] + track.shift;
@@ -1572,6 +1696,26 @@ public final class Mp4Demuxer implements Demuxer {
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt ISO base media file: " + exception, exception);
         }
+    }
+
+    /**
+     * Reads one sample of a file a data reference names into {@link #scratch}.
+     *
+     * @param from the file
+     * @param offset the offset of the sample in it
+     * @param size the size in bytes
+     * @param info the holder that receives the array and the index of the bytes
+     * @throws MediaException.Malformed if the sample lies outside the file
+     * @throws MediaException.LimitExceeded if the sample exceeds the allocation limit
+     */
+    private void locateExternal(MediaSource from, long offset, int size, SampleInfo info) {
+        checkExternal(from, offset, size);
+        if (scratch == null || scratch.length < size) {
+            scratch = new byte[size];
+        }
+        from.readFully(offset, scratch, 0, size);
+        info.data = scratch;
+        info.dataOffset = 0;
     }
 
     /**
@@ -1649,8 +1793,18 @@ public final class Mp4Demuxer implements Demuxer {
      * the heap, and the read-ahead window never reads backwards.
      */
     private void releaseConsumed() {
-        if (forwardOnly) {
-            var next = heapSize > 0 ? active[heap[0]].samples.offsets[cursors[heap[0]]] : Long.MAX_VALUE;
+        if (forwardOnly && !mixedSources) {
+            var next = Long.MAX_VALUE;
+            if (external.isEmpty()) {
+                next = heapSize > 0 ? active[heap[0]].samples.offsets[cursors[heap[0]]] : Long.MAX_VALUE;
+            } else {
+                for (var index = 0; index < active.length; index++) {
+                    var track = active[index];
+                    if (cursors[index] < track.samples.count && sourceOf(track, cursors[index]) == null) {
+                        next = Math.min(next, track.samples.offsets[cursors[index]]);
+                    }
+                }
+            }
             ForwardOnlySource.release(source, fragmentScan >= 0 ? Math.min(next, fragmentScan) : next);
         }
     }
@@ -1741,7 +1895,9 @@ public final class Mp4Demuxer implements Demuxer {
             for (var index = 0; index < active.length; index++) {
                 var samples = active[index].samples;
                 for (var sample = counts[index]; sample < samples.count; sample++) {
-                    dataEnd = Math.max(dataEnd, samples.offsets[sample] + Math.max(0, samples.sizes[sample]));
+                    if (sourceOf(active[index], sample) == null) {
+                        dataEnd = Math.max(dataEnd, samples.offsets[sample] + Math.max(0, samples.sizes[sample]));
+                    }
                 }
                 var wasEmpty = cursors[index] >= counts[index];
                 if (wasEmpty && cursors[index] < samples.count) {
@@ -1846,7 +2002,9 @@ public final class Mp4Demuxer implements Demuxer {
         for (var track : tracks) {
             var samples = track.samples;
             for (var index = 0; index < samples.count; index++) {
-                end = Math.max(end, samples.offsets[index] + Math.max(0, samples.sizes[index]));
+                if (sourceOf(track, index) == null) {
+                    end = Math.max(end, samples.offsets[index] + Math.max(0, samples.sizes[index]));
+                }
             }
         }
         return end;
@@ -1894,11 +2052,24 @@ public final class Mp4Demuxer implements Demuxer {
      * @param a an active track index
      * @param b an active track index
      * @return {@code true} when the next sample of {@code a} lies earlier in the file, or at the
-     * same offset with a lower track index
+     * same offset with a lower track index; when the two samples are in different files (one of them named by a
+     * data reference), whose offsets do not compare, when it decodes earlier, or at the same time with a lower
+     * track index
      */
     private boolean before(int a, int b) {
-        var offsetA = active[a].samples.offsets[cursors[a]];
-        var offsetB = active[b].samples.offsets[cursors[b]];
+        var trackA = active[a];
+        var trackB = active[b];
+        var indexA = cursors[a];
+        var indexB = cursors[b];
+        if (!external.isEmpty() && sourceOf(trackA, indexA) != sourceOf(trackB, indexB)) {
+            var decodeA = trackA.samples.dts[indexA] + trackA.shift - trackA.compositionShift;
+            var decodeB = trackB.samples.dts[indexB] + trackB.shift - trackB.compositionShift;
+            var timeA = decodeA / (double) trackA.timescale;
+            var timeB = decodeB / (double) trackB.timescale;
+            return timeA < timeB || (timeA == timeB && a < b);
+        }
+        var offsetA = trackA.samples.offsets[indexA];
+        var offsetB = trackB.samples.offsets[indexB];
         return offsetA < offsetB || (offsetA == offsetB && a < b);
     }
 

@@ -278,7 +278,7 @@ public final class HeicFiles {
      */
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
-        var file = HeifFile.parse(source, limits, false);
+        var file = HeifFile.parse(source, limits, false, options.dataReferences());
         DecodedImage image;
         if (showsSequence(file)) {
             try (var reader = new SequenceReader(source, file, limits, options.highBitDepth())) {
@@ -313,7 +313,7 @@ public final class HeicFiles {
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits
      */
     public static Optional<DecodedImage> decodeStereoView(MediaSource source, int view, ImageDecoderOptions options) {
-        var file = HeifFile.parse(source, options.limits(), false);
+        var file = HeifFile.parse(source, options.limits(), false, options.dataReferences());
         var primary = file.primaryItem();
         if (primary == null) {
             return Optional.empty();
@@ -529,7 +529,7 @@ public final class HeicFiles {
      */
     public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
-        var file = HeifFile.parse(source, limits, false);
+        var file = HeifFile.parse(source, limits, false, options.dataReferences());
         if (showsSequence(file) || file.primaryItem() == null) {
             return Optional.empty();
         }
@@ -591,7 +591,7 @@ public final class HeicFiles {
      */
     public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
         var limits = options.limits();
-        var file = HeifFile.parse(source, limits, false);
+        var file = HeifFile.parse(source, limits, false, options.dataReferences());
         var listed = listed(source, file, limits);
         if (index < 0 || index >= listed.size()) {
             return null;

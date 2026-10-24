@@ -102,7 +102,7 @@ import java.util.Objects;
  * and {@link #read()} returns the frames read on the way first. The track keeps its time base,
  * and its {@code CodecDelay} skip is rescaled to the decoded rate.
  * Frames of tracks with {@code ContentEncodings} are decoded: header stripping prepends the
- * stripped bytes and zlib inflates, bounded by the allocation limit; encrypted tracks raise
+ * stripped bytes, and zlib, bzlib and LZO1X decompress, bounded by the allocation limit; encrypted tracks raise
  * {@link MediaException.Unsupported}.
  *
  * <p>Damage inside a cluster (an invalid element header, or an element that overruns its cluster)

@@ -17,9 +17,11 @@ import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
+import com.github.auties00.smalt.internal.heif.DataReferences;
 import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.nal.NalRecords;
+import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
@@ -34,7 +36,7 @@ import java.util.List;
  * Describes one sample description of a track: the codec, its configuration, and the picture or
  * sound parameters the sample entry declares.
  *
- * <p>{@link #parseAll(BoxCursor, int, MediaLimits, boolean[], List)} reads the {@code stsd} box.
+ * <p>{@link #parseAll(BoxCursor, int, MediaLimits, List, DataReferences, List, List)} reads the {@code stsd} box.
  * Visual entries follow ISO/IEC 14496-12 clause 12.1.3, audio entries clause 12.2.3 together with
  * the QuickTime sound description versions 1 and 2, and codec-specific child boxes follow their bindings (ISO/IEC
  * 14496-14 {@code esds}, 14496-15 {@code avcC}/{@code hvcC}, the Opus, FLAC, VP and AV1 ISO base
@@ -135,16 +137,20 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * @param stsd the payload of the {@code stsd} box
      * @param handler the track's handler type
      * @param limits the limits bounding picture sizes and channel counts
-     * @param selfContained whether each data reference of the track is self-contained, or
-     * {@code null} when the track has no {@code dref}
+     * @param references the data references of the track, or {@code null} when the track has no {@code dref}
+     * @param external the opener of the files the data references name
      * @param errors receives the failure of each description, {@code null} for one that parsed
+     * @param sources receives the source holding the samples of each description, {@code null} for the file
+     * itself or for a description that failed
      * @return the descriptions, in the order of their one-based sample description index
      * @throws MediaException.Malformed if the box holds no entry or the first is truncated
-     * @throws MediaException.Unsupported if the first entry is encrypted or stored in another file
+     * @throws MediaException.Unsupported if the first entry is encrypted or stored in another file that no
+     * resolver supplies
      * @throws MediaException.LimitExceeded if the first entry's channel count exceeds the limits
      */
-    static SampleEntry[] parseAll(BoxCursor stsd, int handler, MediaLimits limits, boolean[] selfContained,
-                                  List<MediaException> errors) {
+    static SampleEntry[] parseAll(BoxCursor stsd, int handler, MediaLimits limits,
+                                  List<DataReferences.Entry> references, DataReferences external,
+                                  List<MediaException> errors, List<MediaSource> sources) {
         stsd.fullBoxHeader();
         var count = stsd.u32();
         if (count == 0 || !stsd.hasBox()) {
@@ -170,42 +176,52 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 break;
             }
             try {
-                checkDataReference(entry, selfContained);
-                entries.add(switch (kind) {
+                var source = dataSource(entry, references, external);
+                var description = switch (kind) {
                     case VIDEO -> parseVisual(entry.type(), entry);
                     case AUDIO -> parseAudio(entry.type(), entry, limits);
                     case DATA -> parseData(entry.type(), entry);
-                });
+                };
+                entries.add(description);
                 errors.add(null);
+                sources.add(source);
             } catch (MediaException exception) {
                 if (entries.isEmpty()) {
                     throw exception;
                 }
                 entries.add(null);
                 errors.add(exception);
+                sources.add(null);
             }
         }
         return entries.toArray(new SampleEntry[0]);
     }
 
     /**
-     * Rejects a sample entry whose data reference points to another file.
+     * Returns the source holding the samples of a sample entry, through the data reference the entry names.
+     *
+     * <p>An index of {@code 0} or past the last entry of the {@code dref} box, as some writers leave it, names
+     * the file itself.
      *
      * @param entry a cursor over the entry payload, not moved
-     * @param selfContained whether each data reference is self-contained, or {@code null}
-     * @throws MediaException.Unsupported if the samples are stored in another file
+     * @param references the data references of the track, or {@code null}
+     * @param external the opener of the referenced files
+     * @return the source, or {@code null} when the samples are in the file itself
+     * @throws MediaException.Unsupported if the samples are stored in another file that no resolver supplies
      */
-    private static void checkDataReference(BoxCursor entry, boolean[] selfContained) {
-        if (selfContained == null || entry.remaining() < 8) {
-            return;
+    private static MediaSource dataSource(BoxCursor entry, List<DataReferences.Entry> references,
+                                          DataReferences external) {
+        if (references == null || entry.remaining() < 8) {
+            return null;
         }
         var cursor = entry.duplicate();
         cursor.skip(6);
         var index = cursor.u16();
-        if (index >= 1 && index <= selfContained.length && !selfContained[index - 1]) {
-            throw new MediaException.Unsupported("mp4 external data reference",
-                    "the samples of a '" + FourCc.printable(entry.type()) + "' description are stored in another file");
+        if (index < 1 || index > references.size()) {
+            return null;
         }
+        return external.open(references.get(index - 1), "mp4 external data reference",
+                "the samples of a '" + FourCc.printable(entry.type()) + "' description");
     }
 
     /**
