@@ -77,6 +77,9 @@ module com.github.auties00.smalt {
     // Color management: ICC profiles and color transforms
     exports com.github.auties00.smalt.image.color;
 
+    // HDR gain maps
+    exports com.github.auties00.smalt.image.gainmap;
+
     // Containers
     exports com.github.auties00.smalt.container.ac3;
     exports com.github.auties00.smalt.container.adts;
@@ -104,7 +107,10 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.transcode;
 
     // Internals shared with the other Smalt modules
-    exports com.github.auties00.smalt.internal.anim to com.github.auties00.smalt.image;
+    exports com.github.auties00.smalt.internal.anim to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.mpeg,
+            com.github.auties00.smalt.video;
     exports com.github.auties00.smalt.internal.bits to
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.audio;
@@ -132,7 +138,12 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.audio,
             com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.edit to com.github.auties00.smalt.image;
+    exports com.github.auties00.smalt.internal.gainmap to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.video,
+            com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.heif to
+            com.github.auties00.smalt.aot,
             com.github.auties00.smalt.image,
             com.github.auties00.smalt.video,
             com.github.auties00.smalt.mpeg;
@@ -171,6 +182,7 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.raw;
     exports com.github.auties00.smalt.internal.task to
             com.github.auties00.smalt.image,
+            com.github.auties00.smalt.audio,
             com.github.auties00.smalt.video,
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.raw;
@@ -179,6 +191,8 @@ module com.github.auties00.smalt {
     uses com.github.auties00.smalt.spi.ImageCodecProvider;
     uses com.github.auties00.smalt.spi.AudioCodecProvider;
     uses com.github.auties00.smalt.spi.VideoCodecProvider;
+    // The HEIF item codecs of other artifacts, for the HEIF decoders of the artifacts that do not depend on them
+    uses com.github.auties00.smalt.internal.heif.HeifComponentCodec;
 
     // The codecs of this module
     provides com.github.auties00.smalt.spi.AudioCodecProvider with
