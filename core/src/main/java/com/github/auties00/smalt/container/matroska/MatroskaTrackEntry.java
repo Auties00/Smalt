@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.internal.Languages;
+import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.Chromaticity;
@@ -135,6 +136,11 @@ final class MatroskaTrackEntry {
      * The {@code PixelWidth}.
      */
     long pixelWidth;
+
+    /**
+     * The {@code ColourSpace} FourCC of an uncompressed video track, or {@code null}.
+     */
+    byte[] colourSpace;
 
     /**
      * The {@code PixelHeight}.
@@ -309,6 +315,7 @@ final class MatroskaTrackEntry {
                 case EbmlIds.DISPLAY_UNIT -> displayUnit = body.unsigned();
                 case EbmlIds.FLAG_INTERLACED -> flagInterlaced = body.unsigned();
                 case EbmlIds.FIELD_ORDER -> fieldOrder = body.unsigned();
+                case EbmlIds.COLOUR_SPACE -> colourSpace = body.bytes();
                 case EbmlIds.COLOR -> color = parseColor(body);
                 case EbmlIds.PROJECTION -> {
                     while (body.hasMore()) {
@@ -596,8 +603,14 @@ final class MatroskaTrackEntry {
                 case "V_THEORA" -> Codec.THEORA;
                 case "V_MS/VFW/FOURCC" -> videoFromBitmapInfo();
                 case "V_QUICKTIME" -> videoFromImageDescription();
+                case "V_UNCOMPRESSED" -> colourSpace != null && RawVideoTags.fourCc(colourSpace, 0) != null
+                        ? Codec.RAW_VIDEO : Codec.UNKNOWN_VIDEO;
                 default -> Codec.UNKNOWN_VIDEO;
             };
+            if (codecId.equals("V_MS/VFW/FOURCC") && codec == Codec.UNKNOWN_VIDEO
+                    && RawVideoTags.bitmap(codecPrivate) != null) {
+                codec = Codec.RAW_VIDEO;
+            }
             if (codec == Codec.VP8 || codec == Codec.VP9) {
                 config = null;
             } else if (codecId.equals("V_QUICKTIME")) {
@@ -609,6 +622,11 @@ final class MatroskaTrackEntry {
             }
             if (codec == Codec.JPEG2000 && !Jp2Frames.isHeader(config)) {
                 config = null;
+            }
+            if (codec == Codec.RAW_VIDEO) {
+                var raw = codecId.equals("V_UNCOMPRESSED") ? RawVideoTags.fourCc(colourSpace, 0)
+                        : RawVideoTags.bitmap(codecPrivate);
+                config = raw.toCodecConfig();
             }
             var width = (int) Math.min(pixelWidth, Integer.MAX_VALUE);
             var height = (int) Math.min(pixelHeight, Integer.MAX_VALUE);

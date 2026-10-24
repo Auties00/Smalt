@@ -15,6 +15,7 @@ import com.github.auties00.smalt.container.mp4.Mp4Remuxer;
 import com.github.auties00.smalt.container.mp4.RemuxOptions;
 import com.github.auties00.smalt.container.mp4.RemuxResult;
 import com.github.auties00.smalt.container.ts.TsMuxer;
+import com.github.auties00.smalt.container.y4m.Y4mMuxer;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Orientation;
@@ -755,6 +756,9 @@ final class AvTranscode {
         }
         if (container.needsConfig(codec) && track.codecConfig().isEmpty()) {
             return "the track has no codec configuration";
+        }
+        if (container.format() == ContainerFormat.Y4M && !Y4mMuxer.supports(track)) {
+            return "YUV4MPEG2 cannot carry the track's raw video format";
         }
         if (video.codec().isPresent() && video.codec().get() != codec) {
             return "the options ask for " + video.codec().get().displayName();

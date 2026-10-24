@@ -101,6 +101,14 @@ public enum Codec {
     GIF(TrackKind.VIDEO, "gif"),
 
     /**
+     * Uncompressed video, one frame per packet, laid out as the
+     * {@link com.github.auties00.smalt.video.RawVideoFormat} of the track's codec configuration describes
+     * (MP4 {@code raw }, {@code 2vuy}, {@code v210} and the other uncompressed sample entries, Matroska
+     * {@code V_UNCOMPRESSED}, AVI {@code DIB} and FourCC frames, YUV4MPEG2).
+     */
+    RAW_VIDEO(TrackKind.VIDEO, "rawvideo"),
+
+    /**
      * A video codec the demuxer could not identify.
      */
     UNKNOWN_VIDEO(TrackKind.VIDEO, "unknown video"),

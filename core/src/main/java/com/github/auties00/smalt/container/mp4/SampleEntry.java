@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
@@ -309,7 +310,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         payload.skip(24);
         var width = payload.u16();
         var height = payload.u16();
-        payload.skip(50);
+        payload.skip(46);
+        var depth = payload.u16();
+        var colorTableId = payload.s16();
+        var indexed = depth == 1 || depth == 2 || depth == 4 || depth == 8;
+        var colorTable = colorTableId == 0 && indexed ? parseColorTable(payload) : null;
         if (format == BoxTypes.ENCV) {
             throw new MediaException.Unsupported("mp4 encryption", "the video track is encrypted (encv)");
         }
@@ -419,9 +424,49 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 config = Arrays.copyOf(fourCc(format), 4 + extensions.length);
                 System.arraycopy(extensions, 0, config, 4, extensions.length);
             }
-            default -> codec = Codec.UNKNOWN_VIDEO;
+            default -> {
+                var raw = RawVideoTags.sampleEntry(FourCc.printable(format), depth, colorTable);
+                if (raw != null) {
+                    codec = Codec.RAW_VIDEO;
+                    config = raw.toCodecConfig();
+                    if (color == null && format == BoxTypes.J420) {
+                        color = ColorInfo.BT601_LIMITED.withRange(ColorRange.FULL);
+                    }
+                } else {
+                    // TODO: ISO/IEC 23001-17 uncompressed video ('uncv' with its 'uncC' and 'cmpd' boxes)
+                    codec = Codec.UNKNOWN_VIDEO;
+                }
+            }
         }
         return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, 0, 0, null, 0, 0);
+    }
+
+    /**
+     * Parses the QuickTime color table that follows a visual sample entry of 1, 2, 4 or 8-bit indices whose color
+     * table identifier is zero: a seed, flags, the number of entries minus one, then each entry's index and 16-bit
+     * red, green and blue.
+     *
+     * @param payload the entry payload, positioned at the table; left after it
+     * @return the palette as {@code 0xAARRGGBB}, opaque, indexed by position, or {@code null} for a truncated table
+     */
+    private static int[] parseColorTable(BoxCursor payload) {
+        if (payload.remaining() < 8) {
+            return null;
+        }
+        payload.skip(6);
+        var count = payload.u16() + 1;
+        if (count > 256 || payload.remaining() < 8L * count) {
+            return null;
+        }
+        var palette = new int[count];
+        for (var i = 0; i < count; i++) {
+            payload.skip(2);
+            var red = payload.u16() >>> 8;
+            var green = payload.u16() >>> 8;
+            var blue = payload.u16() >>> 8;
+            palette[i] = 0xFF000000 | red << 16 | green << 8 | blue;
+        }
+        return palette;
     }
 
     /**

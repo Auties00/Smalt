@@ -6,6 +6,7 @@ import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
@@ -506,6 +507,16 @@ public final class AviDemuxer implements Demuxer {
             }
             if (headerSize >= 40 && format.length > headerSize) {
                 config = Arrays.copyOfRange(format, headerSize, format.length);
+            }
+            if (codec == Codec.UNKNOWN_VIDEO) {
+                var raw = RawVideoTags.bitmap(format);
+                if (raw == null && handler != 0) {
+                    raw = RawVideoTags.fourCc(fourCcString(handler));
+                }
+                if (raw != null) {
+                    codec = Codec.RAW_VIDEO;
+                    config = raw.toCodecConfig();
+                }
             }
         } else if (handler != 0) {
             codec = RiffCodecs.video(fourCcString(handler));

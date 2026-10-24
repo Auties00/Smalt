@@ -122,6 +122,13 @@ public enum OutputContainer {
     AV1(ContainerFormat.AV1, "obu", "video/av1", List.of(Codec.AV1), List.of()),
 
     /**
+     * A YUV4MPEG2 file of uncompressed frames, holding one video stream: a transcode decodes the input and writes
+     * 8-bit 4:2:0 frames, and copies a {@link Codec#RAW_VIDEO} stream only when its frames are in a format
+     * YUV4MPEG2 carries.
+     */
+    Y4M(ContainerFormat.Y4M, "y4m", "video/x-yuv4mpeg", List.of(Codec.RAW_VIDEO), List.of()),
+
+    /**
      * An MPEG audio elementary stream (MP3 or MP2).
      */
     MP3(ContainerFormat.MPEG_AUDIO, "mp3", "audio/mpeg", List.of(), List.of(Codec.MP3)),
@@ -363,10 +370,11 @@ public enum OutputContainer {
      * Returns whether the file stores a sample aspect ratio for video, so that a transcode can keep
      * non-square samples as stored instead of resampling them to square ones.
      *
-     * @return {@code true} for the MP4 family, Matroska, WebM and AVI
+     * @return {@code true} for the MP4 family, Matroska, WebM, AVI and YUV4MPEG2
      */
     public boolean storesSampleAspectRatio() {
-        return format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA || format == ContainerFormat.AVI;
+        return format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA || format == ContainerFormat.AVI
+                || format == ContainerFormat.Y4M;
     }
 
     /**
@@ -414,6 +422,7 @@ public enum OutputContainer {
             case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;
+            case Y4M -> codec == Codec.RAW_VIDEO;
             default -> false;
         };
     }
@@ -428,11 +437,11 @@ public enum OutputContainer {
      * {@code aifc} to {@link #AIFF}, {@code aac} and {@code adts} to {@link #ADTS}, and
      * {@code ivf}, {@code mp3}, {@code flac}, {@code amr}, {@code ac3} and {@code avi} to their constants,
      * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
-     * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code ts}
-     * to {@link #MPEG_TS}, {@code srt} to {@link #SRT}, {@code vtt} to {@link #WEBVTT}, {@code ass} and
-     * {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml}, {@code dfxp} and {@code xml} to
-     * {@link #TTML}, {@code smi} and {@code sami} to {@link #SAMI}, {@code lrc} to {@link #LRC} and
-     * {@code sub} to {@link #MICRODVD}; no extension
+     * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code y4m} to
+     * {@link #Y4M}, {@code ts} to {@link #MPEG_TS}, {@code srt} to {@link #SRT}, {@code vtt} to
+     * {@link #WEBVTT}, {@code ass} and {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml},
+     * {@code dfxp} and {@code xml} to {@link #TTML}, {@code smi} and {@code sami} to {@link #SAMI},
+     * {@code lrc} to {@link #LRC} and {@code sub} to {@link #MICRODVD}; no extension
      * maps to {@link #OGG_FLAC}, whose {@code oga} maps to {@link #OGG}. Matching ignores case.
      *
      * @param fileName a file name such as {@code "clip.webm"}, or a bare extension
@@ -454,6 +463,7 @@ public enum OutputContainer {
             case "aif", "aiff", "aifc" -> AIFF;
             case "aac", "adts" -> ADTS;
             case "ivf" -> IVF;
+            case "y4m" -> Y4M;
             case "mp3" -> MP3;
             case "flac" -> FLAC;
             case "amr" -> AMR;

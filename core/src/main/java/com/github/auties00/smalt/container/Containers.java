@@ -23,6 +23,10 @@ import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.container.ogg.OggDemuxer;
 import com.github.auties00.smalt.container.ogg.OggMuxer;
+import com.github.auties00.smalt.container.raw.AnnexBDemuxer;
+import com.github.auties00.smalt.container.raw.ElementaryStreamOptions;
+import com.github.auties00.smalt.container.raw.Mpeg4VideoDemuxer;
+import com.github.auties00.smalt.container.raw.ObuDemuxer;
 import com.github.auties00.smalt.container.raw.RawMuxer;
 import com.github.auties00.smalt.container.subtitle.AssDemuxer;
 import com.github.auties00.smalt.container.subtitle.AssMuxer;
@@ -33,6 +37,7 @@ import com.github.auties00.smalt.container.subtitle.MicroDvdDemuxer;
 import com.github.auties00.smalt.container.subtitle.MicroDvdMuxer;
 import com.github.auties00.smalt.container.subtitle.SamiDemuxer;
 import com.github.auties00.smalt.container.subtitle.SamiMuxer;
+import com.github.auties00.smalt.container.raw.RawMuxerOptions;
 import com.github.auties00.smalt.container.subtitle.SubRipDemuxer;
 import com.github.auties00.smalt.container.subtitle.SubRipMuxer;
 import com.github.auties00.smalt.container.subtitle.TtmlDemuxer;
@@ -43,6 +48,8 @@ import com.github.auties00.smalt.container.ts.TsDemuxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
 import com.github.auties00.smalt.container.wav.WavMuxer;
+import com.github.auties00.smalt.container.y4m.Y4mDemuxer;
+import com.github.auties00.smalt.container.y4m.Y4mMuxer;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.limits.Guards;
@@ -75,20 +82,25 @@ import java.util.function.Predicate;
  *
  * <p>Recognition never trusts a file name or a declared mimetype: it inspects the leading bytes,
  * skipping an ID3v2 tag first because MP3, AAC, AC-3, AMR and FLAC files often start with one. Formats with a
- * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR) are recognized exactly,
- * MPEG transport streams by the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
+ * magic number (MP4 family, Matroska, Ogg, RIFF WAVE, RIFF AVI, AIFF, FLAC, AMR, YUV4MPEG2) are recognized
+ * exactly, MPEG transport streams by the sync bytes of their first packets, and raw AC-3 and E-AC-3 streams
  * by two consecutive sync frames;
  * raw MPEG audio and ADTS streams, which have only a frame sync word, are recognized by requiring
- * two consecutive consistent frame headers. Text subtitle files are recognized last, in this order: a
- * WebVTT file by its {@code WEBVTT} signature, a TTML document by its {@code tt} root element, a SAMI file
- * by its {@code SAMI} tag, an SSA or ASS script by its {@code [Script Info]} section, a SubRip file by a
- * timing line among its first lines, a MicroDVD file by a {@code {start}{end}} first line, and an LRC
- * file by a time or ID tag on its first line.
+ * two consecutive consistent frame headers. Elementary video streams are recognized by their structure up to a
+ * sequence header: H.264 and HEVC Annex B streams by {@link AnnexBDemuxer#detect(byte[])}, AV1 OBU streams by
+ * {@link ObuDemuxer#detect(byte[])}, MPEG-4 Part 2 and H.263 streams by {@link Mpeg4VideoDemuxer#detect(byte[])}.
+ * Text subtitle files are recognized last, in this order: a WebVTT file by its {@code WEBVTT} signature, a TTML
+ * document by its {@code tt} root element, a SAMI file by its {@code SAMI} tag, an SSA or ASS script by its
+ * {@code [Script Info]} section, a SubRip file by a timing line among its first lines, a MicroDVD file by a
+ * {@code {start}{end}} first line, and an LRC file by a time or ID tag on its first line. Raw PCM
+ * ({@link ContainerFormat#PCM}) has nothing to recognize it by; it is read with a
+ * {@link com.github.auties00.smalt.container.raw.PcmDemuxer} given its sample format.
  *
  * <p>{@link #openMuxer(ContainerFormat, MediaSink)} creates muxers with each format's default options: a
  * fast-start {@link Mp4Muxer}, a Matroska (not WebM) {@link MatroskaMuxer}, an {@link OggMuxer}, and the
- * {@link WavMuxer}, {@link AiffMuxer}, {@link AdtsMuxer}, {@link IvfMuxer}, {@link TsMuxer} and {@link AviMuxer};
- * MPEG audio, FLAC, AMR, AC-3, H.264, HEVC and AV1 files are the elementary streams a {@link RawMuxer} writes.
+ * {@link WavMuxer}, {@link AiffMuxer}, {@link AdtsMuxer}, {@link IvfMuxer}, {@link TsMuxer}, {@link AviMuxer} and
+ * {@link Y4mMuxer}; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC, AV1 (low-overhead and Annex B), MPEG-4 Part 2,
+ * H.263 and PCM files are the elementary streams a {@link RawMuxer} writes.
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
  * constructs the muxer directly.
@@ -103,6 +115,11 @@ public final class Containers {
      * The largest ID3v2 tag skipped during recognition, in bytes.
      */
     private static final int MAX_ID3_SKIP = 64 * 1024 * 1024;
+
+    /**
+     * The number of leading bytes inspected to recognize an elementary video stream that starts with a start code.
+     */
+    private static final int VIDEO_PROBE_LENGTH = 64 * 1024;
 
     /**
      * The four-character box types that may start an ISO base media file.
@@ -150,7 +167,16 @@ public final class Containers {
             }
         }
         var frames = detectFrameStream(header);
-        return Optional.ofNullable(frames != null ? frames : detectText(leading));
+        if (frames != null) {
+            return Optional.of(frames);
+        }
+        if (offset == 0) {
+            var video = detectElementaryVideo(source, leading);
+            if (video != null) {
+                return Optional.of(video);
+            }
+        }
+        return Optional.ofNullable(detectText(leading));
     }
 
     /**
@@ -219,9 +245,11 @@ public final class Containers {
             case LRC -> new LrcDemuxer(source, options);
             case MICRODVD -> new MicroDvdDemuxer(source, options);
             case AVI -> new AviDemuxer(source, options);
-            // TODO: read H.264 and HEVC Annex B and AV1 OBU elementary streams, which detect() does not recognize yet
-            case H264, HEVC, AV1 -> throw new MediaException.Unsupported(format.name().toLowerCase(Locale.ROOT)
-                    + " elementary stream", "elementary video streams cannot be read");
+            case H264, HEVC -> new AnnexBDemuxer(source, ElementaryStreamOptions.of(options));
+            case AV1, AV1_ANNEX_B -> new ObuDemuxer(source, ElementaryStreamOptions.of(options));
+            case MPEG4_VIDEO, H263 -> new Mpeg4VideoDemuxer(source, options);
+            case Y4M -> new Y4mDemuxer(source, options);
+            case PCM -> throw new MediaException.Unsupported("pcm", "raw PCM needs its sample format: use PcmDemuxer");
         };
     }
 
@@ -245,7 +273,8 @@ public final class Containers {
             case ADTS -> AdtsMuxer.supports(codec);
             case IVF -> IvfMuxer.supports(codec);
             case MPEG_TS -> TsMuxer.supports(codec);
-            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1 -> RawMuxer.supports(format, codec);
+            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, PCM ->
+                    RawMuxer.supports(format, codec);
             case SUBRIP -> SubRipMuxer.supports(codec);
             case WEBVTT -> WebVttMuxer.supports(codec);
             case ASS -> AssMuxer.supports(codec);
@@ -254,6 +283,7 @@ public final class Containers {
             case LRC -> LrcMuxer.supports(codec);
             case MICRODVD -> MicroDvdMuxer.supports(codec);
             case AVI -> AviMuxer.supports(codec);
+            case Y4M -> Y4mMuxer.supports(codec);
         };
     }
 
@@ -276,8 +306,9 @@ public final class Containers {
     /**
      * Creates the muxer that writes a container format with the default options of that format.
      *
-     * <p>The muxers are the ones the class description lists; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC
-     * and AV1 files are elementary streams whose muxer accepts only the codecs of the format.
+     * <p>The muxers are the ones the class description lists; MPEG audio, FLAC, AMR, AC-3, H.264, HEVC,
+     * AV1, MPEG-4 Part 2, H.263 and PCM files are elementary streams whose muxer accepts only the codecs of the
+     * format.
      *
      * @param format the container format
      * @param output the sink, written from its position and not closed by the muxer
@@ -295,7 +326,10 @@ public final class Containers {
             case AIFF -> new AiffMuxer(output);
             case ADTS -> new AdtsMuxer(output);
             case IVF -> new IvfMuxer(output);
-            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1 -> new FormatMuxer(format, new RawMuxer(output));
+            case MPEG_AUDIO, FLAC, AMR, AC3, H264, HEVC, AV1, MPEG4_VIDEO, H263, PCM ->
+                    new FormatMuxer(format, new RawMuxer(output));
+            case AV1_ANNEX_B -> new FormatMuxer(format, new RawMuxer(output,
+                    RawMuxerOptions.builder().av1AnnexB(true).build()));
             case MPEG_TS -> new TsMuxer(output);
             case SUBRIP -> new SubRipMuxer(output);
             case WEBVTT -> new WebVttMuxer(output);
@@ -305,6 +339,7 @@ public final class Containers {
             case LRC -> new LrcMuxer(output);
             case MICRODVD -> new MicroDvdMuxer(output);
             case AVI -> new AviMuxer(output);
+            case Y4M -> new Y4mMuxer(output);
         };
     }
 
@@ -453,6 +488,9 @@ public final class Containers {
         if (matches(header, 0, "#!AMR")) {
             return ContainerFormat.AMR;
         }
+        if (Y4mDemuxer.matches(header)) {
+            return ContainerFormat.Y4M;
+        }
         if (matches(header, 0, "RIFF") || matches(header, 0, "RIFX") || matches(header, 0, "RF64") || matches(header, 0, "BW64")) {
             if (matches(header, 8, "WAVE")) {
                 return ContainerFormat.WAV;
@@ -529,6 +567,33 @@ public final class Containers {
             return ContainerFormat.LRC;
         }
         return null;
+    }
+
+    /**
+     * Recognizes an elementary video stream: an H.264 or HEVC Annex B stream, an AV1 OBU stream, or an MPEG-4 Part 2
+     * or H.263 stream.
+     *
+     * <p>A stream that starts with a start code is examined over up to {@value #VIDEO_PROBE_LENGTH} bytes, so that
+     * the sequence header after large SEI messages is reached.
+     *
+     * @param source the input
+     * @param header the leading bytes of the input
+     * @return the recognized format, or {@code null}
+     */
+    private static ContainerFormat detectElementaryVideo(MediaSource source, byte[] header) {
+        var probe = header;
+        if (header.length >= HEADER_LENGTH && header[0] == 0 && header[1] == 0) {
+            probe = read(source, 0, VIDEO_PROBE_LENGTH);
+        }
+        var nal = AnnexBDemuxer.detect(probe);
+        if (nal.isPresent()) {
+            return nal.get();
+        }
+        var obu = ObuDemuxer.detect(probe);
+        if (obu.isPresent()) {
+            return obu.get();
+        }
+        return Mpeg4VideoDemuxer.detect(probe).orElse(null);
     }
 
     /**

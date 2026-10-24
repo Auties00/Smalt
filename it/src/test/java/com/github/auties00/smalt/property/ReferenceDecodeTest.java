@@ -119,7 +119,9 @@ class ReferenceDecodeTest {
             entry(Codec.FLAC, of(OutputContainer.FLAC, "flac", NORMATIVE)),
             entry(Codec.ALAC, of(OutputContainer.M4A, "alac", NORMATIVE)),
             entry(Codec.AMR_NB, of(OutputContainer.AMR, "libopencore_amrnb", NORMATIVE)),
-            entry(Codec.AMR_WB, of(OutputContainer.AMR, "libopencore_amrwb", NORMATIVE)));
+            entry(Codec.AMR_WB, of(OutputContainer.AMR, "libopencore_amrwb", NORMATIVE)),
+            // uncompressed frames, which every reader copies
+            entry(Codec.RAW_VIDEO, of(OutputContainer.Y4M, "rawvideo", NORMATIVE)));
 
     /** The codecs whose comparison covers the first channel only (see their references). */
     private static final EnumSet<Codec> FIRST_CHANNEL = EnumSet.of(Codec.AC3, Codec.EAC3);

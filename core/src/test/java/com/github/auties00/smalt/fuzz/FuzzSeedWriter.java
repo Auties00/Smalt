@@ -10,10 +10,13 @@ import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 import com.github.auties00.smalt.metadata.TrackTags;
+import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.TrackDisposition;
+import com.github.auties00.smalt.video.RawPixelFormat;
+import com.github.auties00.smalt.video.RawVideoFormat;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -527,6 +530,44 @@ class FuzzSeedWriter {
     private static final String TTML_SEED = "<tt xmlns=\"http://www.w3.org/ns/ttml\" xmlns:tts=\"http://www.w3.org/ns/ttml#styling\">"
             + "<body><div><p begin=\"0s\" end=\"1s\">Hello <span tts:fontStyle=\"italic\">there</span></p>"
             + "<p begin=\"1s\" end=\"2s\">two<br/>lines</p></div></body></tt>";
+
+    @Test
+    @DisplayName("writes the seeds of the elementary stream targets")
+    void elementary() throws IOException {
+        copy(DemuxerFuzzTest.class, "h264", "valid-h264.h264", ffmpeg("h264", video(32, 32, 6), "-c:v", "libx264",
+                "-preset", "ultrafast", "-bf", "2", "-g", "4"));
+        copy(DemuxerFuzzTest.class, "hevc", "valid-hevc.h265", ffmpeg("hevc", video(32, 32, 6), "-c:v", "libx265",
+                "-preset", "ultrafast", "-x265-params", "log-level=0:keyint=4:bframes=2"));
+        var obu = ffmpeg("obu", video(32, 32, 4), "-c:v", "libaom-av1", "-cpu-used", "8", "-b:v", "50k");
+        copy(DemuxerFuzzTest.class, "av1", "valid-av1.obu", obu);
+        var annexB = Files.createTempFile("seed", ".obu");
+        Oracle.run("python", java.time.Duration.ofMinutes(1), null, List.of("-I",
+                Path.of("..", "tools", "testdata", "behavior", "make-obu-annexb.py").toString(), obu.toString(),
+                annexB.toString()));
+        copy(DemuxerFuzzTest.class, "av1AnnexB", "valid-av1-annexb.obu", annexB);
+        copy(DemuxerFuzzTest.class, "mpeg4Video", "valid-mpeg4.m4v", ffmpeg("m4v", video(32, 32, 6), "-c:v",
+                "mpeg4", "-bf", "1", "-q:v", "20", "-f", "m4v"));
+        copy(DemuxerFuzzTest.class, "h263", "valid-h263.263", ffmpeg("h263", video(128, 96, 3), "-c:v", "h263",
+                "-q:v", "20"));
+        copy(DemuxerFuzzTest.class, "y4m", "valid-yuv420.y4m", ffmpeg("y4m", video(16, 16, 3), "-pix_fmt",
+                "yuv420p"));
+        var pcm = new byte[3 + 64];
+        pcm[1] = 1;
+        for (var i = 3; i < pcm.length; i++) {
+            pcm[i] = (byte) (i * 37);
+        }
+        write(ElementaryFuzzTest.class, "pcmDemuxer", "valid-s16le-stereo.bin", pcm);
+        var frame = new byte[8 * 4 * 3 / 2];
+        for (var i = 0; i < frame.length; i++) {
+            frame[i] = (byte) (i * 5);
+        }
+        var config = RawVideoFormat.of(RawPixelFormat.YUV420P).toCodecConfig();
+        write(ElementaryFuzzTest.class, "rawVideo", "valid-yuv420p.bin", FuzzPackets.video(0, 8, 4, config,
+                List.of(new FuzzPackets.Part(frame, true), new FuzzPackets.Part(frame, true))));
+        var rgb = RawVideoFormat.of(RawPixelFormat.BGR24).withRowAlignment(4).withBottomUp(true).toCodecConfig();
+        write(ElementaryFuzzTest.class, "rawVideo", "valid-bgr24-dib.bin", FuzzPackets.video(0, 3, 2, rgb,
+                List.of(new FuzzPackets.Part(new byte[24], true))));
+    }
 
     private static byte[] cues(int codec, String config, String... texts) {
         // mov_text samples are binary, carried here as ISO 8859-1 strings

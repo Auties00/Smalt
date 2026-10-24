@@ -409,6 +409,11 @@ final class BoxTypes {
     static final int MJPB = 0x6D6A7062;
 
     /**
+     * The QuickTime sample entry of planar 4:2:0 YUV frames in full range ({@code j420}).
+     */
+    static final int J420 = 0x6A343230;
+
+    /**
      * The Motion JPEG 2000 sample entry ({@code mjp2}, ISO/IEC 15444-3), also the brand of a Motion JPEG 2000 file.
      */
     static final int MJP2 = 0x6D6A7032;

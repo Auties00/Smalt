@@ -40,6 +40,7 @@
  * @uses com.github.auties00.smalt.spi.VideoCodecProvider the video codecs of {@code VideoDecoders} and
  * {@code VideoEncoders}
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider the PCM decoders and encoders
+ * @provides com.github.auties00.smalt.spi.VideoCodecProvider the uncompressed video decoder and encoder
  */
 module com.github.auties00.smalt {
     // Vector API: optional, selected at runtime by internal.simd.Simd
@@ -97,6 +98,7 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.subtitle;
     exports com.github.auties00.smalt.container.ts;
     exports com.github.auties00.smalt.container.wav;
+    exports com.github.auties00.smalt.container.y4m;
 
     // Audio codecs and processing
     exports com.github.auties00.smalt.audio.loudness;
@@ -197,4 +199,6 @@ module com.github.auties00.smalt {
     // The codecs of this module
     provides com.github.auties00.smalt.spi.AudioCodecProvider with
             com.github.auties00.smalt.internal.provider.PcmCodecProvider;
+    provides com.github.auties00.smalt.spi.VideoCodecProvider with
+            com.github.auties00.smalt.internal.provider.RawVideoCodecProvider;
 }

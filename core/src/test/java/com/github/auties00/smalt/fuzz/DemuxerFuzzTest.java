@@ -83,4 +83,39 @@ class DemuxerFuzzTest {
     void webVtt(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.WEBVTT, data);
     }
+
+    @FuzzTest
+    void h264(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.H264, data);
+    }
+
+    @FuzzTest
+    void hevc(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.HEVC, data);
+    }
+
+    @FuzzTest
+    void av1(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.AV1, data);
+    }
+
+    @FuzzTest
+    void av1AnnexB(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.AV1_ANNEX_B, data);
+    }
+
+    @FuzzTest
+    void mpeg4Video(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.MPEG4_VIDEO, data);
+    }
+
+    @FuzzTest
+    void h263(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.H263, data);
+    }
+
+    @FuzzTest
+    void y4m(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.Y4M, data);
+    }
 }

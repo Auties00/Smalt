@@ -47,7 +47,12 @@ import java.util.Objects;
  *       key frame that does not carry its own, so decoding can start at any key frame;</li>
  *   <li>AV1: a low-overhead OBU stream (AV1 specification section 5): a temporal delimiter
  *       starts every temporal unit that lacks one, and the configuration's sequence header is
- *       inserted before every key frame that does not carry its own.</li>
+ *       inserted before every key frame that does not carry its own; with
+ *       {@link RawMuxerOptions#av1AnnexB()}, the same temporal units in the length-delimited format of
+ *       Annex B;</li>
+ *   <li>MPEG-4 Part 2: the pictures, back to back (an {@code .m4v} file), the configuration headers
+ *       of the track repeated before every key frame that does not start with its own;</li>
+ *   <li>H.263: the pictures, back to back (a {@code .263} file).</li>
  * </ul>
  * AAC needs ADTS framing ({@link com.github.auties00.smalt.container.adts.AdtsMuxer}) and VP8
  * and VP9 an IVF file ({@link com.github.auties00.smalt.container.ivf.IvfMuxer}); every other
@@ -241,11 +246,12 @@ public final class RawMuxer implements Muxer {
      * Returns whether a codec has a raw elementary-stream form this muxer writes.
      *
      * @param codec the codec of the track
-     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC and AV1
+     * @return {@code true} for PCM, MP3, MP2, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, H.264, HEVC, AV1, MPEG-4 Part 2
+     * and H.263
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, AV1 -> true;
+            case MP3, MP2, FLAC, AMR_NB, AMR_WB, AC3, EAC3, H264, HEVC, AV1, MPEG4_PART2, H263 -> true;
             default -> codec.isPcm();
         };
     }
@@ -255,8 +261,10 @@ public final class RawMuxer implements Muxer {
      *
      * <p>{@link ContainerFormat#MPEG_AUDIO} carries MP3 and MP2, {@link ContainerFormat#FLAC} FLAC,
      * {@link ContainerFormat#AMR} AMR-NB and AMR-WB, {@link ContainerFormat#AC3} AC-3 and E-AC-3,
-     * and {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC} and {@link ContainerFormat#AV1}
-     * their codec; every other format is not an elementary stream this muxer writes.
+     * {@link ContainerFormat#H264}, {@link ContainerFormat#HEVC}, {@link ContainerFormat#AV1},
+     * {@link ContainerFormat#AV1_ANNEX_B}, {@link ContainerFormat#MPEG4_VIDEO} and {@link ContainerFormat#H263}
+     * their codec, and {@link ContainerFormat#PCM} every PCM codec; every other format is not an elementary stream
+     * this muxer writes.
      *
      * @param format the file format
      * @param codec the codec of the track
@@ -272,7 +280,10 @@ public final class RawMuxer implements Muxer {
             case AC3 -> codec == Codec.AC3 || codec == Codec.EAC3;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;
-            case AV1 -> codec == Codec.AV1;
+            case AV1, AV1_ANNEX_B -> codec == Codec.AV1;
+            case MPEG4_VIDEO -> codec == Codec.MPEG4_PART2;
+            case H263 -> codec == Codec.H263;
+            case PCM -> codec.isPcm();
             default -> false;
         };
     }
@@ -426,6 +437,12 @@ public final class RawMuxer implements Muxer {
         switch (track.codec()) {
             case H264, HEVC -> writeAnnexB(packet);
             case AV1 -> writeTemporalUnit(packet);
+            case MPEG4_PART2 -> {
+                if (packet.keyframe() && config != null && !startsWithConfiguration(packet.data())) {
+                    output.write(ByteBuffer.wrap(config));
+                }
+                output.write(ByteBuffer.wrap(packet.data()));
+            }
             case FLAC -> {
                 output.write(ByteBuffer.wrap(packet.data()));
                 flacMinFrame = Math.min(flacMinFrame, packet.size());
@@ -824,7 +841,113 @@ public final class RawMuxer implements Muxer {
             unit.bytes(parameterSets);
         }
         unit.bytes(data);
+        if (options.av1AnnexB()) {
+            var annexB = toAnnexB(unit.toByteArray());
+            output.write(ByteBuffer.wrap(annexB));
+            return;
+        }
         unit.writeTo(output);
+    }
+
+    /**
+     * Rewrites a low-overhead temporal unit in the length-delimited format of Annex B.
+     *
+     * <p>Each frame unit holds one frame header or frame OBU with the tile groups after it and the OBUs before it
+     * since the previous frame's; sequence header and metadata OBUs after a frame start the next frame unit, and the
+     * OBUs after the last frame join its unit.
+     *
+     * @param unit the OBUs of the temporal unit, each with a size field
+     * @return the temporal unit with its size, frame units and OBU lengths
+     * @throws IllegalArgumentException if an OBU lacks its size field or runs past the unit
+     */
+    private static byte[] toAnnexB(byte[] unit) {
+        var frames = new ArrayList<ByteWriter>();
+        var pending = new ByteWriter(unit.length + 16);
+        var framed = false;
+        var position = 0;
+        while (position < unit.length) {
+            var header = unit[position] & 0xFF;
+            var headerBytes = (header & 0x04) != 0 ? 2 : 1;
+            if ((header & 0x02) == 0 || position + headerBytes > unit.length) {
+                throw new IllegalArgumentException("an AV1 OBU without its size field");
+            }
+            var size = 0L;
+            var at = position + headerBytes;
+            for (var shift = 0; ; shift += 7) {
+                if (at >= unit.length || shift > 56) {
+                    throw new IllegalArgumentException("truncated AV1 OBU size");
+                }
+                var b = unit[at++] & 0xFF;
+                size |= (long) (b & 0x7F) << shift;
+                if ((b & 0x80) == 0) {
+                    break;
+                }
+            }
+            if (size > unit.length - at) {
+                throw new IllegalArgumentException("an AV1 OBU runs past its temporal unit");
+            }
+            var type = (header >> 3) & 0x0F;
+            var frame = type == ElementaryProbe.OBU_FRAME_HEADER || type == ElementaryProbe.OBU_FRAME;
+            if (framed && (frame || type == ElementaryProbe.OBU_SEQUENCE_HEADER
+                    || type == ElementaryProbe.OBU_METADATA)) {
+                frames.add(pending);
+                pending = new ByteWriter(unit.length - position + 16);
+                framed = false;
+            }
+            framed |= frame;
+            writeLeb128(pending, headerBytes + size);
+            pending.u8(header & ~0x02);
+            if (headerBytes == 2) {
+                pending.u8(unit[position + 1] & 0xFF);
+            }
+            pending.bytes(unit, at, (int) size);
+            position = at + (int) size;
+        }
+        if (pending.size() > 0) {
+            if (!framed && !frames.isEmpty()) {
+                frames.getLast().bytes(pending.toByteArray());
+            } else {
+                frames.add(pending);
+            }
+        }
+        var temporal = new ByteWriter(unit.length + 32);
+        for (var frame : frames) {
+            writeLeb128(temporal, frame.size());
+            temporal.bytes(frame.toByteArray());
+        }
+        var out = new ByteWriter(temporal.size() + 8);
+        writeLeb128(out, temporal.size());
+        out.bytes(temporal.toByteArray());
+        return out.toByteArray();
+    }
+
+    /**
+     * Writes an unsigned LEB128 value.
+     *
+     * @param out the destination
+     * @param value the value, non-negative
+     */
+    private static void writeLeb128(ByteWriter out, long value) {
+        do {
+            var b = (int) (value & 0x7F);
+            value >>>= 7;
+            out.u8(value != 0 ? b | 0x80 : b);
+        } while (value != 0);
+    }
+
+    /**
+     * Returns whether an MPEG-4 Part 2 picture starts with configuration headers: a visual object sequence, visual
+     * object, video object or video object layer start code.
+     *
+     * @param data the packet
+     * @return {@code true} when the packet carries its own configuration
+     */
+    private static boolean startsWithConfiguration(byte[] data) {
+        if (data.length < 4 || data[0] != 0 || data[1] != 0 || data[2] != 1) {
+            return false;
+        }
+        var code = data[3] & 0xFF;
+        return code == 0xB0 || code == 0xB5 || code <= 0x2F;
     }
 
     /**

@@ -16,6 +16,7 @@ import com.github.auties00.smalt.audio.pcm.PcmEncoderOptions;
 import com.github.auties00.smalt.audio.process.ChannelMixer;
 import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
 import com.github.auties00.smalt.audio.process.Resampler;
+import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
@@ -64,11 +65,17 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.transcode.AudioTranscodeOptions;
 import com.github.auties00.smalt.transcode.OutputContainer;
 import com.github.auties00.smalt.transcode.TranscodeOptions;
 import com.github.auties00.smalt.transcode.Transcoder;
 import com.github.auties00.smalt.transcode.VideoTranscodeOptions;
+import com.github.auties00.smalt.video.RawPixelFormat;
+import com.github.auties00.smalt.video.RawVideoEncoder;
+import com.github.auties00.smalt.video.RawVideoFormat;
+import com.github.auties00.smalt.video.VideoDecoders;
+import com.github.auties00.smalt.video.VideoFrame;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -137,8 +144,9 @@ final class TranscodeWorkloads {
     /**
      * Returns a workload that remuxes a synthetic MP4 with H.264 video and AAC audio to
      * fragmented MP4, Matroska and MPEG-TS, remuxes the Matroska file back to MP4 with
-     * {@link Mp4Remuxer}, writes stereo PCM as WAV, as a QuickTime movie, as an ISO MP4 and as a
-     * fragmented MP4, and probes and demuxes every file, the source included.
+     * {@link Mp4Remuxer}, writes the H.264 track as an Annex B elementary stream, stereo PCM as WAV, as a
+     * QuickTime movie, as an ISO MP4 and as a fragmented MP4, and uncompressed frames as YUV4MPEG2, and probes
+     * and demuxes every file, the source included, decoding the uncompressed frames.
      *
      * @return the workload
      */
@@ -181,6 +189,15 @@ final class TranscodeWorkloads {
             var remuxed = MediaSink.memory();
             Mp4Remuxer.remux(MediaSource.of(files.get(2)), remuxed, RemuxOptions.video());
             files.add(remuxed.toByteArray());
+            var video = tracks.stream().filter(track -> track.codec() == Codec.H264).findFirst().orElseThrow();
+            var annexB = MediaSink.memory();
+            try (var muxer = Containers.openMuxer(ContainerFormat.H264, annexB)) {
+                muxer.addTrack(video);
+                packets.stream().filter(packet -> packet.trackId() == video.id()).forEach(muxer::writePacket);
+                muxer.finish();
+            }
+            files.add(annexB.toByteArray());
+            files.add(y4m());
             List<Function<MediaSink, Muxer>> pcmMuxers = List.of(
                     sink -> new Mp4Muxer(sink, Mp4MuxerOptions.quickTime()),
                     sink -> new Mp4Muxer(sink, Mp4MuxerOptions.mp4()),
@@ -197,12 +214,43 @@ final class TranscodeWorkloads {
             for (var file : files) {
                 Blackhole.consume(Media.probe(MediaSource.of(file)).hashCode());
                 try (var demuxer = Containers.openDemuxer(MediaSource.of(file))) {
+                    var raw = demuxer.tracks().getFirst().codec() == Codec.RAW_VIDEO
+                            ? VideoDecoders.create((VideoTrack) demuxer.tracks().getFirst()) : null;
                     for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
                         Blackhole.consume(packet.size());
+                        if (raw != null) {
+                            raw.decode(packet, frame -> Blackhole.consume(frame.picture().width()));
+                        }
+                    }
+                    if (raw != null) {
+                        raw.close();
                     }
                 }
             }
         });
+    }
+
+    /**
+     * Returns a YUV4MPEG2 file of two 640x360 4:2:0 frames encoded from a synthetic picture.
+     *
+     * @return the file
+     */
+    private static byte[] y4m() {
+        var picture = SyntheticVideo.natural(640, 360, 1).getFirst();
+        var encoder = new RawVideoEncoder(RawVideoFormat.of(RawPixelFormat.YUV420P), 640, 360, new Rational(25, 1),
+                null);
+        var track = VideoTrack.builder().id(1).codec(Codec.RAW_VIDEO).timeBase(new Rational(1, 25)).width(640)
+                .height(360).frameRate(new Rational(25, 1)).codecConfig(encoder.codecConfig().orElseThrow()).build();
+        var sink = MediaSink.memory();
+        try (var muxer = Containers.openMuxer(ContainerFormat.Y4M, sink)) {
+            muxer.addTrack(track);
+            for (var index = 0; index < 2; index++) {
+                encoder.encode(new VideoFrame(picture, index, 1, true),
+                        packet -> muxer.writePacket(packet.withTrackId(1)));
+            }
+            muxer.finish();
+        }
+        return sink.toByteArray();
     }
 
     /**

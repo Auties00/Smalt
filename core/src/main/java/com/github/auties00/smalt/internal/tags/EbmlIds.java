@@ -333,6 +333,11 @@ public final class EbmlIds {
     public static final int FIELD_ORDER = 0x9D;
 
     /**
+     * The FourCC of the pixel layout of uncompressed video ({@code ColourSpace}).
+     */
+    public static final int COLOUR_SPACE = 0x2EB524;
+
+    /**
      * The {@code PixelCropBottom} element.
      */
     public static final int PIXEL_CROP_BOTTOM = 0x54AA;

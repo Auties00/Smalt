@@ -41,7 +41,10 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
  */
 @DisplayName("Mux then demux")
 class MuxDemuxIdentityTest {
-    /** The elementary video streams Smalt writes but cannot read back. */
+    /**
+     * The elementary video streams, which hold no timestamps and carry the parameter sets in band, so their packets
+     * come back retimed and with the parameter sets added (core's ElementaryDemuxersTest checks their round trip).
+     */
     private static final Set<OutputContainer> WRITE_ONLY = EnumSet.of(OutputContainer.H264, OutputContainer.HEVC,
             OutputContainer.AV1);
 

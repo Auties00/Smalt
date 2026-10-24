@@ -11,6 +11,12 @@ core/src/test/resources/samples/amr/wb-3ch.awb	18319	d4ba98ff4315a67df08b4ff23e2
 core/src/test/resources/samples/amr/wb.awb	6109	ccfea779b46271014282f1f88f9342071ec30b4088977745a6a347b797219f9e	make-samples.sh
 core/src/test/resources/samples/avi/mjpeg-pcm.avi	146694	299c10a8f4e72831adcf250d0ee65d248e02c3ca0c8d6d1987f1ca81ac07dbac	make-samples.sh
 core/src/test/resources/samples/avi/mpeg4-mp3.avi	67810	40c50cc0c09dead43a126999f6b0fc1f5684f0ccf38b6e27c91af0cc7f09e406	make-samples.sh
+core/src/test/resources/samples/elementary/av1-annexb.obu	15637	b5e670c82b8d929fbf930383ba83b5cb1eaed75974afde393a72266e7551ebfc	make-samples.sh
+core/src/test/resources/samples/elementary/av1.obu	15577	c2b46137baf88f641c5a1e81ce48578c2a8df0a0e652ad43440d04c5801809b7	make-samples.sh
+core/src/test/resources/samples/elementary/h263.263	31736	1bbd3e459ac6c382583220c98331ac2bce55d933c828c4d1228b0e104abedeba	make-samples.sh
+core/src/test/resources/samples/elementary/h264.h264	31309	5db9e92e8162fa8e37ecab7f699726af7ec8f9864339d4c863ffb87e5bda09c8	make-samples.sh
+core/src/test/resources/samples/elementary/hevc.h265	18756	f173383521ea3912fbc79d4237392bd49d7e9037f3dc4ecbe5b58bbf352182e6	make-samples.sh
+core/src/test/resources/samples/elementary/mpeg4.m4v	48722	fab0246b11352d4b08a0d7b6bba3af4197175065f1e8a13cee68ae0d47f1e0b9	make-samples.sh
 core/src/test/resources/samples/flac/flac.flac	41162	ce6a98f6c7c00d9c83f7937ff762b2397322ded955d980e2c26e02253c82db78	make-samples.sh
 core/src/test/resources/samples/ivf/av1.ivf	15789	183cdc6db1fb06753f9e9b1c1e08d33c22a6d3e450c056fb8f2ed2cf8daa761c	make-samples.sh
 core/src/test/resources/samples/ivf/vp8.ivf	26473	ce9c8209c150f896f751f82167ae8131668b8c5037ff7424776f5284a5e8e32a	make-samples.sh
@@ -37,6 +43,11 @@ core/src/test/resources/samples/ogg/chained.ogg	10178	143e9c49ce5401aa9da89334a3
 core/src/test/resources/samples/ogg/flac.oga	34014	35fbcd1131ae0a7cec861958eb461ad41ada8cfe68916840d89af93f1b1959f9	make-samples.sh
 core/src/test/resources/samples/ogg/opus.opus	10841	ac8202a28ae12f6b7f4e381d83ee823cc7dace2f6d6e69ab50584fb053bc39d3	make-samples.sh
 core/src/test/resources/samples/ogg/vorbis.ogg	18054	fb11a857110af7946c0609e0074b65588e749df24fb3d6fc7c16af4bf67f7f70	make-samples.sh
+core/src/test/resources/samples/rawvideo/2vuy.mov	37645	de78ffa5a82b5b130b1f2ec1bdce42d79e61b66fc387b8a0a568e43d22468cd7	make-samples.sh
+core/src/test/resources/samples/rawvideo/i420.mkv	28433	dea6cf4951729e7924af2718a26e49f7934fa20dc8ca5ed8a2636352d922c210	make-samples.sh
+core/src/test/resources/samples/rawvideo/pal8.avi	10602	becd63b3f3ef2ee95d9b6c9ece69e16040b1d223a80fae1bc438de478aac67a4	make-samples.sh
+core/src/test/resources/samples/rawvideo/rgb24.mov	11009	8beccc5d55a6def430beaf55a3beaef9f69bb92aa6a466b498cd2a38465a287f	make-samples.sh
+core/src/test/resources/samples/rawvideo/v210.mov	74509	ada81c027ae49c06d1be789aee9aa9764c52f2260232ee0a0dee37ce88906df1	make-samples.sh
 core/src/test/resources/samples/subtitle/cues.ass	894	28c0d1e3d67dc413e092dba6d84d36e0649ebebf9f18564c9ddd114c17a2a2b8	make-subtitle-samples.py
 core/src/test/resources/samples/subtitle/cues.lrc	146	625e00b2024d074306ad6a98ac307d355a381f189da20e41d7f9775d6a73f18f	make-subtitle-samples.py
 core/src/test/resources/samples/subtitle/cues.smi	530	a4ec1ad7a566e9941f401a0f97eed4a655d3ba2198eae6c30813408a08da921d	make-subtitle-samples.py
@@ -63,6 +74,8 @@ core/src/test/resources/samples/wav/loas.wav	8320	f81fa31becccf0d26ceb5f012129c3
 core/src/test/resources/samples/wav/mp3.wav	8464	d8187f739d3453df41eb2fa6c7e4999621eb0ee11ab0e2b3c3bd591f53a3d5ba	make-wav-samples.py
 core/src/test/resources/samples/wav/opus.wav	5640	41f0fe0d9788d3f3293ca7e97d0738a21350a2859d03b99968bdaaffa4686a76	make-wav-samples.py
 core/src/test/resources/samples/wav/s16.wav	52998	def1667eea52a9535f3b427e3d8da558d7d3904520dcf4001e388bd8f0466cfa	make-samples.sh
+core/src/test/resources/samples/y4m/yuv420.y4m	27740	a2dda6c6ce26d65a99ff346e9c19d55696559cb155a776e814d9958105ad52a0	make-samples.sh
+core/src/test/resources/samples/y4m/yuv422p10.y4m	73818	6752570da7a3f7b7d32c838bf2a3854cd493d5ce9179fc0decac28957326ec3a	make-samples.sh
 image/src/test/resources/samples/bmp/bgra.bmp	6198	cbc3329273eee03e3210a4e8442b4e71ec52ccb5e0aef7e8734b8eb4918ac0b3	make-image-samples.sh
 image/src/test/resources/samples/bmp/pal8.bmp	2614	8494c66e2d03e1cbf4aab22c5c90240133c2cea87022952862098d0689b6124d	make-image-samples.sh
 image/src/test/resources/samples/bmp/rgb24.bmp	4662	d444648257e0d4e33b3f30bafa152aebd00cea489b3ab209f15df2071796704a	make-image-samples.sh

@@ -3,8 +3,8 @@ package com.github.auties00.smalt.container;
 /**
  * Enumerates the container formats this module can recognize or write.
  *
- * <p>Every constant is recognized by {@link Containers#detect(com.github.auties00.smalt.io.MediaSource)} except the
- * elementary video streams {@link #H264}, {@link #HEVC} and {@link #AV1}, which are only written.
+ * <p>Every constant is recognized by {@link Containers#detect(com.github.auties00.smalt.io.MediaSource)} except
+ * {@link #PCM}, raw samples that carry no header to recognize them by.
  *
  * <p>Constants may be added in minor releases as new formats are recognized, so a {@code switch}
  * over this type needs a {@code default} branch.
@@ -114,21 +114,49 @@ public enum ContainerFormat {
     MICRODVD,
 
     /**
-     * An H.264 elementary stream in the Annex B byte stream format ({@code .h264}): start-code prefixed NAL
-     * units, with the parameter sets in front of every key frame. Written only.
+     * An H.264 elementary stream in the Annex B byte stream format ({@code .h264}, {@code .264}): start-code
+     * prefixed NAL units.
      */
     H264,
 
     /**
-     * An HEVC elementary stream in the Annex B byte stream format ({@code .h265}): start-code prefixed NAL
-     * units, with the parameter sets in front of every key frame. Written only.
+     * An HEVC elementary stream in the Annex B byte stream format ({@code .h265}, {@code .265}): start-code
+     * prefixed NAL units.
      */
     HEVC,
 
     /**
      * An AV1 elementary stream in the low-overhead bitstream format of the AV1 specification, section 5
-     * ({@code .obu}): temporal units of OBUs with size fields, each starting with a temporal delimiter, with
-     * the sequence header in front of every key frame. Written only.
+     * ({@code .obu}): temporal units of OBUs with size fields, each starting with a temporal delimiter.
      */
-    AV1
+    AV1,
+
+    /**
+     * An AV1 elementary stream in the length-delimited bitstream format of the AV1 specification, Annex B
+     * ({@code .obu}): temporal units and frame units prefixed with their sizes.
+     */
+    AV1_ANNEX_B,
+
+    /**
+     * An MPEG-4 Part 2 video elementary stream ({@code .m4v}, {@code .cmp}): start-code prefixed visual object
+     * sequence, video object layer and video object plane headers.
+     */
+    MPEG4_VIDEO,
+
+    /**
+     * An H.263 video elementary stream ({@code .263}): pictures after picture start codes.
+     */
+    H263,
+
+    /**
+     * A YUV4MPEG2 file ({@code .y4m}): uncompressed video frames after a text header, magic
+     * {@code YUV4MPEG2}.
+     */
+    Y4M,
+
+    /**
+     * Raw PCM samples without a header ({@code .pcm}, {@code .raw}), whose sample format, rate and channel count
+     * the reader must know. Never recognized.
+     */
+    PCM
 }

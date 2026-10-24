@@ -14,6 +14,6 @@ class FuzzRegressionTest {
     Stream<DynamicNode> replay() {
         return FuzzRegressions.replay(DemuxerFuzzTest.class, ProbeFuzzTest.class, TagFuzzTest.class,
                 SubtitleFuzzTest.class, ColorFuzzTest.class, PcmFuzzTest.class, RemuxFuzzTest.class,
-                GainMapFuzzTest.class, CompressionFuzzTest.class);
+                GainMapFuzzTest.class, CompressionFuzzTest.class, ElementaryFuzzTest.class);
     }
 }

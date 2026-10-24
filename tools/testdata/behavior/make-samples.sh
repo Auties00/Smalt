@@ -8,7 +8,7 @@
 set -euo pipefail
 
 out="${1:-core/src/test/resources/samples}"
-mkdir -p "$out"/{mp4,matroska,ogg,ts,avi,wav,aiff,mp3,adts,amr,ac3,ivf,flac,subtitle}
+mkdir -p "$out"/{mp4,matroska,ogg,ts,avi,wav,aiff,mp3,adts,amr,ac3,ivf,flac,subtitle,elementary,y4m,rawvideo}
 
 ff() {
     ffmpeg -hide_banner -loglevel error -y -bitexact "$@"
@@ -111,6 +111,21 @@ ff -f lavfi -i "testsrc2=size=160x120:rate=15:duration=1" -c:v libaom-av1 -cpu-u
     -g 5 -threads 1 -row-mt 0 "$out/ivf/av1.ivf"
 
 ff -f lavfi -i "$short" -c:a flac -ac 2 -compression_level 5 "$out/flac/flac.flac"
+
+# elementary video streams and uncompressed video
+ff -f lavfi -i "$video" "${x264[@]}" -f h264 "$out/elementary/h264.h264"
+ff -f lavfi -i "testsrc2=size=160x120:rate=15:duration=1" -c:v libx265 -preset ultrafast -crf 34 -g 5 -bf 2     -pix_fmt yuv420p -x265-params pools=1:frame-threads=1:log-level=error -f hevc "$out/elementary/hevc.h265"
+ff -f lavfi -i "testsrc2=size=160x120:rate=15:duration=1" -c:v libaom-av1 -cpu-used 8 -usage realtime -b:v 100k     -g 5 -threads 1 -row-mt 0 -f obu "$out/elementary/av1.obu"
+python -I "$(dirname "$0")/make-obu-annexb.py" "$out/elementary/av1.obu" "$out/elementary/av1-annexb.obu"
+ff -f lavfi -i "$video" -c:v mpeg4 -q:v 8 -g 10 -bf 2 -f m4v "$out/elementary/mpeg4.m4v"
+ff -f lavfi -i "testsrc2=size=176x144:rate=15:duration=1" -c:v h263 -q:v 8 -g 5 -f h263 "$out/elementary/h263.263"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -pix_fmt yuv420p "$out/y4m/yuv420.y4m"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -pix_fmt yuv422p10le -strict -1 "$out/y4m/yuv422p10.y4m"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -vf scale=33:17 -c:v rawvideo -pix_fmt rgb24     "$out/rawvideo/rgb24.mov"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -c:v rawvideo -pix_fmt uyvy422 "$out/rawvideo/2vuy.mov"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -c:v v210 "$out/rawvideo/v210.mov"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -vf scale=33:17 -c:v rawvideo -pix_fmt pal8     "$out/rawvideo/pal8.avi"
+ff -f lavfi -i "testsrc2=size=64x48:rate=15:duration=0.4" -c:v rawvideo -pix_fmt yuv420p "$out/rawvideo/i420.mkv"
 
 printf '1\n00:00:00,000 --> 00:00:00,400\nHello\n\n2\n00:00:00,500 --> 00:00:00,900\n<i>World</i>\n\n3\n00:00:01,250 --> 00:00:02,000\nTwo\nlines\n' \
     > "$out/subtitle/cues.srt"

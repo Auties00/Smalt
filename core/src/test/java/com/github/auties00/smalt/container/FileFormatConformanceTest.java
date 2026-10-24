@@ -2,6 +2,9 @@ package com.github.auties00.smalt.container;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.mp4.Mp4Demuxer;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Conformance;
@@ -9,6 +12,7 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoDecoders;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -22,6 +26,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -32,6 +37,7 @@ import java.util.zip.ZipInputStream;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -364,7 +370,7 @@ class FileFormatConformanceTest {
             // GPAC dump confirms ours)
             Map.entry("under_consideration/event_message/IF1_V2_captures/video-720x480-500000.ismv",
                     new Quirk(ConformanceTest::mp4Offset, false)),
-            // raw 4:2:0 QCIF frames
+            // raw planar 4:2:0 QCIF frames in a QuickTime j420 sample entry
             Map.entry("published/isobmff/a10-foreman_QCIF-raw.mp4", new RawVideo(176 * 144 * 3 / 2))
     );
 
@@ -434,11 +440,33 @@ class FileFormatConformanceTest {
             case RawVideo(var frameSize) -> {
                 var ours = ContainerProbe.demux(file, Mp4Demuxer::new);
                 var track = ours.tracks().getFirst();
-                assertEquals(Codec.UNKNOWN_VIDEO, track.codec());
+                assertEquals(Codec.RAW_VIDEO, track.codec());
                 var packets = ours.packetsOf(track);
                 assertTrue(packets.size() > 10);
                 assertTrue(packets.stream().allMatch(packet -> packet.size() == frameSize), "every frame is one picture");
                 assertMatchesDump(ours, dump(path));
+                var video = (VideoTrack) track;
+                assertEquals(ColorRange.FULL, video.color().orElseThrow().range(), "j420 is full range");
+                try (var decoder = VideoDecoders.create(video)) {
+                    var frames = new int[1];
+                    for (var packet : packets) {
+                        decoder.decode(packet, frame -> {
+                            var picture = assertInstanceOf(YuvPicture.class, frame.picture());
+                            assertEquals(176, picture.width());
+                            assertEquals(144, picture.height());
+                            assertEquals(ChromaFormat.YUV420, picture.chromaFormat());
+                            // planar Y, Cb, Cr: the first luma row and the first chroma row are the packet's bytes
+                            var data = packet.data();
+                            assertArrayEquals(Arrays.copyOfRange(data, 0, 176), Arrays.copyOfRange(picture.y(), 0, 176));
+                            assertArrayEquals(Arrays.copyOfRange(data, 176 * 144, 176 * 144 + 88),
+                                    Arrays.copyOfRange(picture.u(), 0, 88));
+                            assertArrayEquals(Arrays.copyOfRange(data, 176 * 144 * 5 / 4, 176 * 144 * 5 / 4 + 88),
+                                    Arrays.copyOfRange(picture.v(), 0, 88));
+                            frames[0]++;
+                        });
+                    }
+                    assertEquals(packets.size(), frames[0]);
+                }
             }
             case GpacOnly() -> assertMatchesDump(ContainerProbe.demux(file, Mp4Demuxer::new), dump(path));
             case Compressed() -> {
