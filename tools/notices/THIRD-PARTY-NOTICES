@@ -3338,8 +3338,9 @@ Derived Smalt packages:
   fixed-point operators, LPC, LSP and LSF processing, quantizer tables, the
   decoder of sp_dec.cpp and dec_amr.cpp with its comfort noise, concealment
   and post-processing, the encoder of sp_enc.cpp and cod_amr.cpp with its
-  pitch, codebook and gain searches, VAD option 1 and DTX, and the bit
-  ordering of the RFC 4867 storage format)
+  pitch, codebook and gain searches, VAD options 1 and 2 (vad1.cpp,
+  vad2.cpp, r_fft.cpp, lflg_upd.cpp) and DTX, and the bit ordering of the
+  RFC 4867 storage format)
   audio.amr.internal.wb (the AMR-WB decoder of pvamrwbdecoder.cpp and the
   files it calls, with its comfort noise, concealment, high-band synthesis
   and bit ordering)
@@ -3358,7 +3359,14 @@ routines was then aligned with the 3GPP TS 26.173 fixed-point reference (the
 normative specification of AMR-WB, release 18) wherever opencore departs from
 it, so that the decoder passes the TS 26.174 test sequences, and the muting of
 the AMR-NB comfort noise was aligned with the TS 26.073 reference, which does
-not clamp the muted energy; no 3GPP source text was copied. The source files
+not clamp the muted energy. The saturating arithmetic of the AMR-NB encoder and
+decoder (the pre-processing filter, the synthesis and analysis filters and the
+decoder's synthesis overflow rescaling, the autocorrelation, the codebook and
+pitch correlations, the gain computations, the 32-bit normalization of negative
+values and the comfort noise parameter update) was likewise aligned with the
+TS 26.073 reference where opencore wraps instead of saturating, so that the
+codec passes the A-law and mu-law TS 26.074 sequences and codes full-scale
+input like the reference; no 3GPP source text was copied. The source files
 carry this notice about their 3GPP origin:
 
   Portions of this file are derived from the following 3GPP standard:

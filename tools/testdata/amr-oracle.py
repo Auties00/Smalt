@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Builds the 3GPP reference AMR decoders that smalt-mpeg's AmrDtxReceptionTest compares with.
+"""Builds the 3GPP reference AMR coders that smalt-mpeg's AmrDtxReceptionTest and AmrReferenceCodingTest compare with.
 
 The bit-exact ANSI-C simulations of AMR-NB (TS 26.073) and AMR-WB (TS 26.173) are downloaded from the 3GPP
-archive (pinned by SHA-256) and their decoders compiled with gcc, unchanged, as black-box oracles:
+archive (pinned by SHA-256) and compiled with gcc, unchanged, as black-box oracles:
 
-  smalt-amrnb-ref   the TS 26.073 decoder built with MMS_IO, so it reads the RFC 4867 storage format
-                    ("decoder in.amr out.raw")
-  smalt-amrwb-ref   the TS 26.173 decoder ("decoder -mime in.amr out.raw")
+  smalt-amrnb-ref           the TS 26.073 decoder built with MMS_IO, so it reads the RFC 4867 storage format
+                            ("decoder in.amr out.raw")
+  smalt-amrnb-ref-enc       the TS 26.073 encoder with VAD option 1, built with MMS_IO, so it writes the storage
+                            format ("coder [-dtx] [-modefile=file] MR122 in.raw out.amr")
+  smalt-amrnb-ref-enc-vad2  the same encoder with VAD option 2
+  smalt-amrwb-ref           the TS 26.173 decoder ("decoder -mime in.amr out.raw")
 
-Both honor the quality bit of the frame header (a frame with the bit clear is a bad frame), which ffmpeg's
+Both decoders honor the quality bit of the frame header (a frame with the bit clear is a bad frame), which ffmpeg's
 libopencore decoders ignore, and decode the comfort noise and concealment of the storage format as the
 specifications define them. The executables go to <work directory>/bin; put that directory on PATH to run the
-comparison.
+comparisons.
 
     python -I tools/testdata/amr-oracle.py <work directory>
 """
@@ -97,9 +100,13 @@ def main():
     os.makedirs(binary, exist_ok=True)
     compile_decoder(extract(work, 'nb'), NB_SOURCES, ['WMOPS=0', 'VAD1', 'MMS_IO'],
                     os.path.join(binary, 'smalt-amrnb-ref'))
+    nb = extract(work, 'nb')
+    encoder = ['coder.c'] + [name for name in NB_SOURCES if name != 'decoder.c']
+    compile_decoder(nb, encoder, ['WMOPS=0', 'VAD1', 'MMS_IO'], os.path.join(binary, 'smalt-amrnb-ref-enc'))
+    compile_decoder(nb, encoder, ['WMOPS=0', 'VAD2', 'MMS_IO'], os.path.join(binary, 'smalt-amrnb-ref-enc-vad2'))
     compile_decoder(extract(work, 'wb'), ['decoder.c' if name == 'decoder' else name for name in WB_SOURCES],
                     ['WMOPS=0'], os.path.join(binary, 'smalt-amrwb-ref'))
-    print('built the reference decoders in ' + binary)
+    print('built the reference coders in ' + binary)
 
 
 if __name__ == '__main__':

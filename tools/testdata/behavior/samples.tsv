@@ -4,7 +4,9 @@ core/src/test/resources/samples/ac3/ac3.ac3	32322	b3927abe93db8a170f4c0e698f772f
 core/src/test/resources/samples/ac3/eac3.eac3	24240	400d4df66702dc55e5386a0525678c77a1a81992456931e6bb5c0dfe749ec986	make-samples.sh
 core/src/test/resources/samples/adts/aac.aac	16672	402c234b16a46779b820e19712b09b77070920f6299152664757ec5de94fdd29	make-samples.sh
 core/src/test/resources/samples/aiff/s24.aiff	79434	ebf14564d8e9bfc6ecd8519f3e880fd48595927c54df40f1132a7d6420a3384c	make-samples.sh
+core/src/test/resources/samples/amr/nb-stereo.amr	6046	d40d1fb20f5dfde8e971710e28170d3ba60472f0cb95962e07d8574f817aef60	make-amr-mc-samples.py
 core/src/test/resources/samples/amr/nb.amr	3238	5230e69f4b53d1e3508f7833241f30688da4703c9452aa576c2f636ade80fd3d	make-samples.sh
+core/src/test/resources/samples/amr/wb-3ch.awb	18319	d4ba98ff4315a67df08b4ff23e2555941bcb9d358df89aa75c826c237aa75ad6	make-amr-mc-samples.py
 core/src/test/resources/samples/amr/wb.awb	6109	ccfea779b46271014282f1f88f9342071ec30b4088977745a6a347b797219f9e	make-samples.sh
 core/src/test/resources/samples/avi/mjpeg-pcm.avi	146694	299c10a8f4e72831adcf250d0ee65d248e02c3ca0c8d6d1987f1ca81ac07dbac	make-samples.sh
 core/src/test/resources/samples/avi/mpeg4-mp3.avi	67810	40c50cc0c09dead43a126999f6b0fc1f5684f0ccf38b6e27c91af0cc7f09e406	make-samples.sh

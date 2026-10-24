@@ -91,6 +91,10 @@ class FuzzSeedWriter {
                 "-ar", "8000", "-b:a", "12.2k"));
         seed("amrWb", "valid-wb.bin", Codec.AMR_WB, ffmpeg("amr", tone(16000, 0.2), "-c:a", "libvo_amrwbenc",
                 "-ar", "16000"));
+        // the frame-blocks of the multichannel behavior samples (tools/testdata/behavior/make-amr-mc-samples.py)
+        var amr = Path.of("..", "core", "src", "test", "resources", "samples", "amr");
+        seed("amrNb", "valid-nb-stereo.bin", Codec.AMR_NB, amr.resolve("nb-stereo.amr"));
+        seed("amrWb", "valid-wb-3ch.bin", Codec.AMR_WB, amr.resolve("wb-3ch.awb"));
         seed("ac3", "valid-stereo.bin", Codec.AC3, ffmpeg("ac3", tone(48000, 0.1), "-ac", "2", "-c:a", "ac3",
                 "-b:a", "96k"));
         seed("ac3", "valid-surround.bin", Codec.AC3, ffmpeg("ac3", tone(48000, 0.06), "-ac", "6", "-c:a", "ac3",

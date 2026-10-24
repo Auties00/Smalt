@@ -209,16 +209,20 @@ independent readers besides `BmpDecoder`, and skips the comparisons whose reader
   out because it misreads BMP Suite's `g/pal4rle.bmp` too).
 - ffmpeg.
 
-## AMR reference decoders
+## AMR reference coders
 
 `AmrDtxReceptionTest` (`smalt-mpeg`) decodes comfort noise streams with damaged, lost and bad-flagged frames, which
 ffmpeg's libopencore decoders cannot check (they ignore the quality bit, and opencore's AMR-WB decoder predates the
-current concealment and DTX rules of TS 26.173). `python -I tools/testdata/amr-oracle.py <directory>` downloads the
-bit-exact ANSI-C simulations of TS 26.073 and TS 26.173 from the 3GPP archive (pinned by SHA-256) and compiles their
-decoders, unchanged, with gcc into `<directory>/bin` as `smalt-amrnb-ref` (built with `MMS_IO`, so it reads the
-storage format) and `smalt-amrwb-ref` (run with `-mime`). With that directory on `PATH` the test compares every
-sample with them; without, it checks the SHA-256 of each decode against `dtx-reception.tsv`, which the reference
-decoders produced (`-Dsmalt.amr.record=<file>` rewrites it while they are on `PATH`).
+current concealment and DTX rules of TS 26.173). `AmrReferenceCodingTest` codes full-scale and unusual signals in
+every AMR-NB mode, with either voice activity detector and with mode changes on every frame, which saturates the
+fixed-point arithmetic the TS 26.074 sequences rarely reach. `python -I tools/testdata/amr-oracle.py <directory>`
+downloads the bit-exact ANSI-C simulations of TS 26.073 and TS 26.173 from the 3GPP archive (pinned by SHA-256) and
+compiles them, unchanged, with gcc into `<directory>/bin`: the decoders as `smalt-amrnb-ref` (built with `MMS_IO`, so
+it reads the storage format) and `smalt-amrwb-ref` (run with `-mime`), and the AMR-NB encoder, with `MMS_IO`, as
+`smalt-amrnb-ref-enc` (VAD option 1) and `smalt-amrnb-ref-enc-vad2` (VAD option 2). With that directory on `PATH` the
+tests compare every byte and sample with them; without, they check SHA-256 digests the reference coders produced,
+pinned in `dtx-reception.tsv` and `reference-coding.tsv` (`-Dsmalt.amr.record=<file>` rewrites them while the
+coders are on `PATH`).
 
 ## Media Foundation oracle
 
@@ -783,7 +787,9 @@ made from ffmpeg's synthetic lavfi sources: `behavior/make-samples.sh` writes th
 Ogg including a chained file, MPEG-TS and M2TS, AVI, WAVE, AIFF, MP3, MP2 with an ID3v1 tag, ADTS, AMR, AC-3,
 E-AC-3, IVF, FLAC, SubRip and WebVTT), and calls `behavior/make-wav-samples.py`, which wraps encoded streams into
 WAVE files with coded payloads (MPEG audio, AC-3, DTS, AAC in LOAS framing and as raw data blocks, FLAC frames, AMR
-frames, self-delimited Opus, and IEC 61937 bursts of AC-3 and AAC); `behavior/make-image-samples.sh` writes the
+frames, self-delimited Opus, and IEC 61937 bursts of AC-3 and AAC); `behavior/make-amr-mc-samples.py` interleaves
+the frames of the AMR samples into multichannel AMR-NB and AMR-WB storage files, which no common encoder writes
+(RFC 4867 section 5.2); `behavior/make-image-samples.sh` writes the
 image samples of `image/src/test/resources/samples` (GIF, BMP, ICO, TIFF with LZW, Deflate, PackBits, CCITT and JPEG
 compression, tiles and pages, animated WebP, APNG, 16-bit PNG, JP2 and JPEG). The scripts need ffmpeg 7.1 with
 libx264, libx265, libvpx, libaom, libopus, libvorbis, libmp3lame, opencore-amr and vo-amrwbenc, and libtiff's

@@ -1,8 +1,10 @@
 package com.github.auties00.smalt.container.mp4;
 
+import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
@@ -34,10 +36,14 @@ final class MovieHeaderWriter {
      * Checks that a track carries the configuration its codec needs and that the configuration
      * parses.
      *
+     * <p>An AMR track must have one channel, since the {@code samr} and {@code sawb} sample
+     * entries of 3GPP TS 26.244 carry a single channel and a multichannel track holds frame-blocks.
+     *
      * @param track the track to check
      * @throws IllegalArgumentException if an H.264, HEVC, AAC, Opus, ALAC or FLAC track has no
-     * configuration, a TTML configuration is malformed, or a DNxHD configuration carries bytes
-     * after its sample entry type that are not Avid sample description extensions
+     * configuration, a TTML configuration is malformed, a DNxHD configuration carries bytes
+     * after its sample entry type that are not Avid sample description extensions, or an AMR track
+     * has more than one channel
      * @throws com.github.auties00.smalt.MediaException.Malformed if an AAC, Opus or FLAC
      * configuration is invalid
      */
@@ -51,6 +57,12 @@ final class MovieHeaderWriter {
                 }
             }
             default -> {
+            }
+        }
+        if ((codec == Codec.AMR_NB || codec == Codec.AMR_WB) && track instanceof AudioTrack audio) {
+            var channels = audio.layout().map(ChannelLayout::channels).orElse(1);
+            if (channels > 1) {
+                throw new IllegalArgumentException("an AMR sample entry carries one channel, not " + channels);
             }
         }
         if (codec == Codec.TTML) {

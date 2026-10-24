@@ -128,7 +128,7 @@ public final class AmrEncoder implements AudioEncoder {
         this.options = Objects.requireNonNull(options, "options");
         this.mode = options.mode();
         var wide = mode.isWideband();
-        this.coder = AmrFrameEncoder.create(wide, options.dtx());
+        this.coder = AmrFrameEncoder.create(wide, options.dtx(), options.vad() == AmrVad.OPTION_2);
         this.frameSamples = wide ? 320 : 160;
         this.pending = new short[frameSamples];
         this.frame = new byte[MAX_FRAME_BYTES];

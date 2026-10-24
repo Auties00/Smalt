@@ -513,7 +513,7 @@ final class DtxDecoder {
             for (var j = L_SUBFR - 1; j >= 0; j--) {
                 ex[j] = mult(level, ex[j], overflow);
             }
-            Filters.synFilt(acoeffVariab, 0, ex, 0, synth, i * L_SUBFR, L_SUBFR, memSyn, 0, true);
+            Filters.synFilt(acoeffVariab, 0, ex, 0, synth, i * L_SUBFR, L_SUBFR, memSyn, 0, true, overflow);
         }
         averState.hangVar = 20;
         averState.hangCount = 0;

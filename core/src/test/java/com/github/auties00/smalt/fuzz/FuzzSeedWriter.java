@@ -140,6 +140,12 @@ class FuzzSeedWriter {
                 "-c:a", "libopencore_amrnb", "-ar", "8000"));
         copy(DemuxerFuzzTest.class, "amr", "valid-wb.amr", ffmpeg("amr", tone(16000, 0.2),
                 "-c:a", "libvo_amrwbenc", "-ar", "16000"));
+        // multichannel files: the first frame-blocks of the behavior samples of make-amr-mc-samples.py
+        var amrSamples = Path.of("src", "test", "resources", "samples", "amr");
+        write(DemuxerFuzzTest.class, "amr", "valid-nb-stereo.amr",
+                Arrays.copyOf(Files.readAllBytes(amrSamples.resolve("nb-stereo.amr")), 16 + 10 * 2 * 32));
+        write(DemuxerFuzzTest.class, "amr", "valid-wb-3ch.amr",
+                Arrays.copyOf(Files.readAllBytes(amrSamples.resolve("wb-3ch.awb")), 19 + 6 * 3 * 61));
 
         copy(DemuxerFuzzTest.class, "aiff", "valid-s16.aiff", ffmpeg("aiff", tone(8000, 0.05),
                 "-c:a", "pcm_s16be"));

@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.AudioDecoders;
 import com.github.auties00.smalt.audio.AudioEncoders;
 import com.github.auties00.smalt.audio.AudioStreamDecoder;
@@ -832,6 +833,9 @@ final class AvTranscode {
             reason = container + " cannot carry " + codec.displayName();
         } else if (container.needsConfig(codec) && track.codecConfig().isEmpty()) {
             reason = "the track has no codec configuration";
+        } else if ((codec == Codec.AMR_NB || codec == Codec.AMR_WB) && container != OutputContainer.AMR
+                && track.layout().map(ChannelLayout::channels).orElse(1) > 1) {
+            reason = container + " carries single-channel " + codec.displayName() + " only";
         } else if (audio.codec().isPresent() && audio.codec().get() != codec) {
             reason = "the options ask for " + audio.codec().get().displayName();
         } else if (audio.changesSamples(track.sampleRate(), track.layout().orElse(null))) {

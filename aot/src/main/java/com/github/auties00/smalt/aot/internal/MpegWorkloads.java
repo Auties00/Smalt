@@ -18,6 +18,7 @@ import com.github.auties00.smalt.audio.amr.AmrDecoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoder;
 import com.github.auties00.smalt.audio.amr.AmrEncoderOptions;
 import com.github.auties00.smalt.audio.amr.AmrMode;
+import com.github.auties00.smalt.audio.amr.AmrVad;
 import com.github.auties00.smalt.container.wav.WavDemuxer;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -111,6 +112,7 @@ final class MpegWorkloads {
                 file("aac-wav", () -> aacWave(4)),
                 file("amr-nb-encode", () -> amrEncode("amr-nb-encode", Codec.AMR_NB, 4)),
                 file("amr-nb-decode", () -> amrDecode("amr-nb-decode", Codec.AMR_NB, 1)),
+                file("amr-nb-dtx-encode", () -> amrDtxEncode(4)),
                 file("amr-wb-encode", () -> amrEncode("amr-wb-encode", Codec.AMR_WB, 4)),
                 file("amr-wb-decode", () -> amrDecode("amr-wb-decode", Codec.AMR_WB, 1)));
     }
@@ -878,6 +880,30 @@ final class MpegWorkloads {
         Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
         return TrainingWorkload.of(name, () -> {
             encoder.setMode(modes.get(modes.size() - 1 - round[0]++ % modes.size()));
+            SyntheticAudio.feed(speech, block, buffer -> encoder.encode(buffer, output));
+        });
+    }
+
+    /**
+     * Returns a workload that encodes speech as AMR-NB with discontinuous transmission, alternating
+     * the two voice activity detectors between rounds and switching the mode every second round.
+     *
+     * @param seconds the speech encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload amrDtxEncode(double seconds) {
+        var speech = new float[][]{SyntheticAudio.speech(8000, seconds)};
+        var block = new AudioBuffer(ChannelLayout.MONO, 8000, 160);
+        var encoders = new AmrEncoder[2];
+        for (var vad : AmrVad.values()) {
+            encoders[vad.ordinal()] = new AmrEncoder(AmrEncoderOptions.builder().dtx(true).vad(vad).build());
+        }
+        var modes = Arrays.stream(AmrMode.values()).filter(mode -> mode.codec() == Codec.AMR_NB).toList();
+        int[] round = {0};
+        Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of("amr-nb-dtx-encode", () -> {
+            var encoder = encoders[round[0] % encoders.length];
+            encoder.setMode(modes.get(round[0]++ / encoders.length % modes.size()));
             SyntheticAudio.feed(speech, block, buffer -> encoder.encode(buffer, output));
         });
     }
