@@ -1,0 +1,13 @@
+# image dump of heif-items/planes/planes-intra-8.bit.heic; regenerate with -Dsmalt.test.updateDumps=true
+format HEIC
+info ImageInfo[format=HEIC, width=128, height=96, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 128x96 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=0745e80d u=d050c003 v=4d482278
+  format=HEIC orientation=NORMAL source=128x96
+  icc=none exif=none xmp=none
+  profile=none
+scaled 32x24
+picture 128x96 yuv8 YUV444 color=BT601/FULL/BT709/SRGB y=0745e80d u=d050c003 v=4d482278
+  format=HEIC orientation=NORMAL source=128x96
+  icc=none exif=none xmp=none
+  profile=none

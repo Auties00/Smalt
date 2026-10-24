@@ -4,12 +4,15 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
+import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
 import com.github.auties00.smalt.video.h264.internal.H264Nal;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -21,9 +24,12 @@ import java.util.function.IntConsumer;
  * decisions, macroblock decisions and entropy coding, the deblocking filter, reference
  * management and packet assembly.
  *
- * <p>Every picture is a reference picture coded as a single slice; P pictures predict from up
- * to {@link EncoderSettings#refs()} previous pictures in a sliding window. The encoder has no
- * delay: each input frame produces its packet immediately.
+ * <p>Pictures are coded as the slices the configuration fixes, divided further at a slice size
+ * limit. P pictures predict from up to {@link EncoderSettings#refs()} previous reference pictures
+ * in a sliding window, or with temporal layers from the latest picture of a lower layer, the
+ * highest layer's pictures being no references; B pictures and look-ahead delay the packets as
+ * {@link #encode} describes. Intra refresh codes a band of intra macroblock columns in every P
+ * picture and keeps the vectors of the columns left of it inside the refreshed area.
  *
  * <p>With several workers, the macroblock rows of a picture are decided in a wavefront on helper
  * threads of the module's shared pool: each participant claims the next undecided row and stays
@@ -64,7 +70,7 @@ import java.util.function.IntConsumer;
  * wavefronts; on one thread it is slightly slower than finishing the picture while its samples
  * are still cached.
  */
-public final class EncoderCore {
+public final class EncoderCore implements EncoderEngine {
     /**
      * The ratio of inter to intra cost above which a picture starts a new scene.
      */
@@ -460,7 +466,7 @@ public final class EncoderCore {
     /**
      * The reciprocal of the natural logarithm of 2.
      */
-    private static final double INVERSE_LOG2 = 1 / Math.log(2);
+    private static final double INVERSE_LOG2 = 1 / StrictMath.log(2);
 
     /**
      * The scratch per-macroblock adaptive quantization offsets.
@@ -558,6 +564,87 @@ public final class EncoderCore {
     private boolean closed;
 
     /**
+     * The SEI payload of the mastering display and content light level messages of every IDR access
+     * unit, or {@code null} when the color description carries neither.
+     */
+    private final byte[] staticSei;
+
+    /**
+     * The SEI payload of the recovery point message of the first picture of an intra refresh cycle,
+     * or {@code null} without intra refresh.
+     */
+    private final byte[] recoverySei;
+
+    /**
+     * The number of macroblock columns each picture of an intra refresh cycle refreshes, or 0
+     * without intra refresh.
+     */
+    private final int refreshBand;
+
+    /**
+     * The first column of the refresh band of the next P picture.
+     */
+    private int refreshColumn;
+
+    /**
+     * The number of temporal layers.
+     */
+    private final int temporalLayers;
+
+    /**
+     * The latest reference picture of each temporal layer since the last IDR picture, or
+     * {@code null}.
+     */
+    private final Frame[] layerLatest = new Frame[4];
+
+    /**
+     * The temporal layer of the picture being coded.
+     */
+    private int temporalLayer;
+
+    /**
+     * The temporal layer of the last coded picture, readable from any thread.
+     */
+    private volatile int lastTemporalLayer;
+
+    /**
+     * Whether the P picture being coded is not a reference picture.
+     */
+    private boolean unreferencedP;
+
+    /**
+     * The number of pictures coded since the last IDR picture, that one excluded.
+     */
+    private long codedSinceIdr;
+
+    /**
+     * The address of the first macroblock of the slice being written.
+     */
+    private int sliceStart;
+
+    /**
+     * The payload of a prefix NAL unit (ITU-T H.264 7.3.2.12): the three bytes of
+     * {@code nal_unit_header_svc_extension} and, for a reference picture, the
+     * {@code prefix_nal_unit_svc} flags with the trailing bits.
+     */
+    private final byte[] prefixPayload = new byte[4];
+
+    /**
+     * The size of the access unit before its first slice NAL unit.
+     */
+    private int sliceBase;
+
+    /**
+     * The CABAC bins of the slices of the picture closed so far.
+     */
+    private long pictureBins;
+
+    /**
+     * The slice data bytes of the slices of the picture closed so far.
+     */
+    private long pictureBytes;
+
+    /**
      * Constructs a core.
      *
      * @param config the configuration
@@ -625,6 +712,15 @@ public final class EncoderCore {
         this.pps = NalWriter.unit(3, H264Nal.PPS, ParameterSets.pps(settings));
         this.configurationRecord = ParameterSets.avcDecoderConfigurationRecord(settings, sps, pps);
         this.aqStrength = config.realtime() ? 0 : 1.0;
+        this.staticSei = ParameterSets.staticSei(config.color());
+        this.temporalLayers = settings.temporalLayers();
+        if (settings.intraRefresh() > 0) {
+            this.refreshBand = Math.ceilDiv(settings.mbWidth(), settings.intraRefresh());
+            this.recoverySei = ParameterSets.recoveryPointSei(Math.ceilDiv(settings.mbWidth(), refreshBand) - 1);
+        } else {
+            this.refreshBand = 0;
+            this.recoverySei = null;
+        }
         this.aqOffsets = new double[settings.mbCount()];
         var rate = config.frameRate();
         var timeBase = config.timeBase();
@@ -695,6 +791,15 @@ public final class EncoderCore {
      */
     public long frameCount() {
         return frameCount;
+    }
+
+    /**
+     * Returns the temporal layer of the last coded picture; callable from any thread.
+     *
+     * @return the layer, 0 before the first picture
+     */
+    public int lastTemporalLayer() {
+        return lastTemporalLayer;
     }
 
     /**
@@ -925,14 +1030,15 @@ public final class EncoderCore {
         converter.convert(picture, config.width(), config.height(), entry.source);
         stageNanos[0] += System.nanoTime() - stageStart;
         var forced = submitted == 0 || entry.keyframeRequested
-                || (config.keyframeInterval() > 0 && submitFramesSinceIdr >= config.keyframeInterval());
+                || (config.keyframeInterval() > 0 && refreshBand == 0
+                && submitFramesSinceIdr >= config.keyframeInterval());
         stageStart = System.nanoTime();
         analysisSource = entry.source;
         prepare(lookahead > 0 || !forced);
         entry.store(analyzer);
         stageNanos[1] += System.nanoTime() - stageStart;
         var idr = forced;
-        if (!idr) {
+        if (!idr && refreshBand == 0) {
             if (submitFramesSinceIdr >= minimumSceneDistance()
                     && entry.interSum > SCENE_CUT_THRESHOLD * entry.intraSum
                     && (recentInterSum < 0 || entry.interSum > SCENE_CUT_JUMP * recentInterSum)) {
@@ -1041,6 +1147,8 @@ public final class EncoderCore {
         }
         head.poc = 2 * (head.displayIndex - gopBase);
         pictureType = type;
+        temporalLayer = 0;
+        unreferencedP = false;
         int qp;
         long complexity;
         Frame reconstruction;
@@ -1077,6 +1185,11 @@ public final class EncoderCore {
             complexity = idr ? head.intraSum : head.groupInter;
             rateControl.setAnchorSpacing(head.bCount + 1);
             qp = rateControl.frameQp(idr, complexity, grouped ? head.groupSeconds : seconds);
+            temporalLayer = idr ? 0 : layerOf(codedSinceIdr + 1);
+            unreferencedP = temporalLayers > 1 && temporalLayer == temporalLayers - 1;
+            if (temporalLayer > 0) {
+                qp = Math.clamp(qp + 2 * temporalLayer, config.minQuantizer(), config.maxQuantizer());
+            }
             reconstruction = pool.removeLast();
             computeTree();
             bits = encodePicture(reconstruction, idr, qp);
@@ -1120,7 +1233,20 @@ public final class EncoderCore {
         lastComplexity = complexity;
         stageNanos[2] += System.nanoTime() - stageStart;
         if (type == LookaheadFrame.INTRA || type == LookaheadFrame.PREDICTED) {
-            finishReference(reconstruction, idr);
+            codedSinceIdr = idr ? 0 : codedSinceIdr + 1;
+            lastTemporalLayer = temporalLayer;
+            if (refreshBand > 0) {
+                refreshColumn = idr || picture.refreshEnd >= settings.mbWidth() ? 0 : picture.refreshEnd;
+            }
+            if (unreferencedP) {
+                if (reconstructUnreferenced) {
+                    runPreparation(reconstruction, false);
+                    lastReconstruction = reconstruction;
+                }
+                pool.add(reconstruction);
+            } else {
+                finishReference(reconstruction, idr);
+            }
         }
         var data = nal.take();
         var packetDuration = duration > 0 ? duration : nominalDuration;
@@ -1136,7 +1262,24 @@ public final class EncoderCore {
         lastDisplayIndex = head.displayIndex;
         spare.add(head);
         head = null;
-        return new Packet(0, data, pts, dts, packetDuration, idr);
+        var flags = idr ? EnumSet.of(PacketFlag.KEY)
+                : unreferencedP ? EnumSet.of(PacketFlag.DISCARDABLE) : EnumSet.noneOf(PacketFlag.class);
+        return new Packet(0, data, pts, dts, packetDuration, flags, PacketSideData.NONE);
+    }
+
+    /**
+     * Returns the temporal layer of a picture from its position after the last IDR picture.
+     *
+     * @param index the number of pictures from the last IDR picture to this one, 0 for the IDR
+     * picture itself
+     * @return the layer, from 0 to {@link #temporalLayers} minus 1
+     */
+    private int layerOf(long index) {
+        if (temporalLayers == 1) {
+            return 0;
+        }
+        var position = (int) (index & ((1L << (temporalLayers - 1)) - 1));
+        return position == 0 ? 0 : temporalLayers - 1 - Integer.numberOfTrailingZeros(position);
     }
 
     /**
@@ -1212,7 +1355,7 @@ public final class EncoderCore {
         if (requested <= 0) {
             return;
         }
-        var factor = settings.profileIdc() == 100 ? 1250L : 1000L;
+        var factor = (long) Levels.bitrateFactor(config.profile());
         var bitrate = (int) Math.min(requested, settings.level().maxBr() * factor);
         rateControl.setBitrate(bitrate);
         if (config.rateControl() != H264RateControl.CONSTANT_QUALITY) {
@@ -1344,6 +1487,11 @@ public final class EncoderCore {
     /**
      * Encodes the current source as one picture into the access unit assembler.
      *
+     * <p>The access unit holds, in order: for an IDR picture of an Annex B stream the parameter
+     * sets, for an IDR picture the SEI messages of the color description, for the first picture of
+     * an intra refresh cycle the recovery point SEI message, and the slices, each preceded by a
+     * prefix NAL unit with its temporal layer when the stream has several.
+     *
      * @param reconstruction the frame receiving the reconstruction
      * @param idr whether the picture is an IDR picture
      * @param qp the frame quantizer
@@ -1355,12 +1503,24 @@ public final class EncoderCore {
             nal.appendEscapedUnit(sps);
             nal.appendEscapedUnit(pps);
         }
+        if (idr && staticSei != null) {
+            nal.appendUnit(0, H264Nal.SEI, staticSei, staticSei.length);
+        }
         var context = picture;
+        context.refreshStart = 0;
+        context.refreshEnd = 0;
+        var bPicture = pictureType == LookaheadFrame.BIDIRECTIONAL || pictureType == LookaheadFrame.B_REFERENCED;
+        if (refreshBand > 0 && !idr && !bPicture) {
+            context.refreshStart = refreshColumn;
+            context.refreshEnd = Math.min(settings.mbWidth(), refreshColumn + refreshBand);
+            if (refreshColumn == 0) {
+                nal.appendUnit(0, H264Nal.SEI, recoverySei, recoverySei.length);
+            }
+        }
         context.source = head.source;
         context.reconstruction = reconstruction;
         context.idr = idr;
-        var bPicture = pictureType == LookaheadFrame.BIDIRECTIONAL || pictureType == LookaheadFrame.B_REFERENCED;
-        var unreferenced = pictureType == LookaheadFrame.BIDIRECTIONAL;
+        var unreferenced = pictureType == LookaheadFrame.BIDIRECTIONAL || (!bPicture && !idr && unreferencedP);
         context.info.bPicture = bPicture;
         context.pSlice = !idr && !bPicture;
         context.bSlice = bPicture;
@@ -1400,6 +1560,9 @@ public final class EncoderCore {
             if (!idr && settings.pyramid()) {
                 planReferenceCommands(context);
             }
+            if (!idr && temporalLayers > 1) {
+                planLayerReference(context);
+            }
             context.seed = null;
             if (!idr && context.refCount > 0 && settings.bframes() > 0) {
                 var seed = seedVectors;
@@ -1410,20 +1573,62 @@ public final class EncoderCore {
         }
         assignQuantizers(qp);
         Arrays.fill(context.forcePcm, false);
+        sliceBase = nal.size();
         do {
+            nal.truncate(sliceBase);
             codeSlice();
         } while (writer.overflowed());
-        var nalRefIdc = context.nalRefIdc;
-        var type = idr ? H264Nal.IDR_SLICE : H264Nal.SLICE;
-        var payload = writer.finish();
-        var length = writer.payloadLength();
-        var zeroWords = cabacZeroWords(writer.binCount(), length);
-        if (zeroWords > 0) {
-            payload = Arrays.copyOf(payload, length + 2 * zeroWords);
-            length += 2 * zeroWords;
-        }
-        nal.appendUnit(nalRefIdc, type, payload, length);
         return nal.size() * 8L;
+    }
+
+    /**
+     * Makes the reference of a P picture of a temporal layer the latest picture of a lower layer, or
+     * for layer 0 the latest picture of layer 0, reordering the list when it is not the most recent
+     * reference.
+     *
+     * @param context the context of the P picture
+     */
+    private void planLayerReference(PictureContext context) {
+        Frame target = null;
+        if (temporalLayer == 0) {
+            target = layerLatest[0];
+        } else {
+            for (var layer = 0; layer < temporalLayer; layer++) {
+                var candidate = layerLatest[layer];
+                if (candidate != null && (target == null || isNewer(candidate, target))) {
+                    target = candidate;
+                }
+            }
+        }
+        if (target == null || target == references[0]) {
+            return;
+        }
+        context.refs[0] = target;
+        context.refCount = 1;
+        var current = context.frameNum;
+        context.reorderIdc[0] = 0;
+        context.reorderDifferences[0] = current - picNum(target, current) - 1;
+        context.reorderCount = 1;
+    }
+
+    /**
+     * Returns whether a reference picture was coded after another, by its position in
+     * {@link #references}.
+     *
+     * @param a a reference picture
+     * @param b another reference picture
+     * @return whether {@code a} is more recent than {@code b}
+     */
+    private boolean isNewer(Frame a, Frame b) {
+        for (var i = 0; i < referenceCount; i++) {
+            if (references[i] == a) {
+                return true;
+            }
+            if (references[i] == b) {
+                return false;
+            }
+        }
+        return false;
     }
 
     /**
@@ -1520,40 +1725,140 @@ public final class EncoderCore {
     }
 
     /**
-     * Decides and entropy codes every macroblock of the current picture into the writer, whose
-     * slice is left open for {@link SliceWriter#finish()}.
+     * Decides and entropy codes every macroblock of the current picture into the access unit, as
+     * the slices the configuration fixes and, with a slice size limit, the further slices the
+     * limit needs.
      *
-     * <p>Without helper participants the calling thread decides and codes each macroblock in
-     * turn; otherwise the picture is coded by {@link #codeSliceParallel(int)}.
+     * <p>Without helper participants or with a slice size limit the calling thread decides and
+     * codes each macroblock in turn; otherwise the picture is coded by
+     * {@link #codeSliceParallel(int)}. With a size limit, a macroblock that makes the slice's NAL
+     * unit too large is undone, the slice is closed before it, and the macroblock is decided again
+     * as the first of a new slice.
      */
     private void codeSlice() {
         var context = picture;
-        writer.start(context);
-        var helpers = helpers(workers);
+        writer.startPicture();
+        pictureBins = 0;
+        pictureBytes = 0;
+        sliceStart = 0;
+        writer.start(context, 0);
+        var limit = settings.maxSliceBytes();
+        var helpers = limit > 0 ? 0 : helpers(workers);
         for (var i = 0; i <= helpers; i++) {
             analyzers[i].startPicture(context);
         }
         if (helpers > 0) {
             codeSliceParallel(helpers);
-            return;
-        }
-        var analyzer = analyzers[0];
-        var mbWidth = settings.mbWidth();
-        var mbHeight = settings.mbHeight();
-        var syncColumn = Math.min(1, mbWidth - 1);
-        var last = settings.mbCount() - 1;
-        for (var mbY = 0; mbY < mbHeight; mbY++) {
-            analyzer.startRow(mbY == 0 ? null : rowSync[mbY - 1]);
-            for (var mbX = 0; mbX < mbWidth; mbX++) {
-                var address = mbY * mbWidth + mbX;
-                var mb = analyzer.analyze(mbX, mbY, context.forcePcm[address]);
-                if (mbX == syncColumn) {
-                    analyzer.saveRowStates(rowSync[mbY]);
+        } else {
+            var analyzer = analyzers[0];
+            var mbWidth = settings.mbWidth();
+            var mbHeight = settings.mbHeight();
+            var syncColumn = Math.min(1, mbWidth - 1);
+            for (var mbY = 0; mbY < mbHeight; mbY++) {
+                analyzer.startRow(rowStartsSlice(mbY) ? null : rowSync[mbY - 1]);
+                for (var mbX = 0; mbX < mbWidth; mbX++) {
+                    var address = mbY * mbWidth + mbX;
+                    if (address != sliceStart && settings.sliceStart(address) == address) {
+                        startSlice(address);
+                    }
+                    var mb = analyzer.analyze(mbX, mbY, context.forcePcm[address], sliceStart);
+                    if (mbX == syncColumn) {
+                        analyzer.saveRowStates(rowSync[mbY]);
+                    }
+                    if (address == sliceStart) {
+                        writer.writeData(mb, address);
+                        continue;
+                    }
+                    if (limit > 0) {
+                        writer.save();
+                    }
+                    writer.endMacroblock(false);
+                    writer.writeData(mb, address);
+                    if (limit > 0 && writer.sizeBound() > limit) {
+                        writer.restore();
+                        startSlice(address);
+                        analyzer.startSlice();
+                        writer.writeData(analyzer.analyze(mbX, mbY, context.forcePcm[address], sliceStart), address);
+                    }
                 }
-                writer.write(mb, address, address == last);
+                ParallelBands.checkpoint();
             }
-            ParallelBands.checkpoint();
         }
+        writer.endMacroblock(true);
+        closeSlice(true);
+    }
+
+    /**
+     * Returns whether a macroblock row starts one of the slices the configuration fixes.
+     *
+     * @param mbY the macroblock row
+     * @return whether the row's first macroblock starts a slice
+     */
+    private boolean rowStartsSlice(int mbY) {
+        var address = mbY * settings.mbWidth();
+        return settings.sliceStart(address) == address;
+    }
+
+    /**
+     * Closes the slice being written after its last macroblock and starts a new one.
+     *
+     * @param address the address of the new slice's first macroblock
+     */
+    private void startSlice(int address) {
+        writer.endMacroblock(true);
+        closeSlice(false);
+        sliceStart = address;
+        writer.start(picture, address);
+    }
+
+    /**
+     * Writes one decided macroblock in raster order, closing the slice before it when it starts one
+     * of the slices the configuration fixes.
+     *
+     * @param mb the decided macroblock
+     * @param address its address
+     */
+    private void emit(Macroblock mb, int address) {
+        if (address != sliceStart) {
+            if (settings.sliceStart(address) == address) {
+                startSlice(address);
+            } else {
+                writer.endMacroblock(false);
+            }
+        }
+        writer.writeData(mb, address);
+    }
+
+    /**
+     * Finishes the slice being written and appends it to the access unit, preceded by its prefix
+     * NAL unit when the stream has temporal layers.
+     *
+     * <p>The last slice of a picture carries the {@code cabac_zero_word}s the picture needs.
+     *
+     * @param last whether the slice is the picture's last
+     */
+    private void closeSlice(boolean last) {
+        var payload = writer.finish();
+        var length = writer.payloadLength();
+        pictureBins += writer.binCount();
+        pictureBytes += length;
+        if (last) {
+            var zeroWords = cabacZeroWords(pictureBins, pictureBytes);
+            if (zeroWords > 0) {
+                payload = Arrays.copyOf(payload, length + 2 * zeroWords);
+                length += 2 * zeroWords;
+            }
+        }
+        var nalRefIdc = picture.nalRefIdc;
+        if (temporalLayers > 1) {
+            var prefix = prefixPayload;
+            prefix[0] = (byte) (0x80 | (picture.idr ? 0x40 : 0));
+            prefix[1] = (byte) 0x80;
+            prefix[2] = (byte) ((temporalLayer << 5) | 0x07);
+            prefix[3] = (byte) 0x20;
+            nal.appendUnit(nalRefIdc, H264Nal.PREFIX, prefix, nalRefIdc != 0 ? 4 : 3);
+        }
+        nal.appendUnit(nalRefIdc, picture.idr ? H264Nal.IDR_SLICE : H264Nal.SLICE, payload, length);
     }
 
     /**
@@ -1615,25 +1920,24 @@ public final class EncoderCore {
         var context = picture;
         var mbWidth = settings.mbWidth();
         var syncColumn = Math.min(1, mbWidth - 1);
-        var last = settings.mbCount() - 1;
         var above = 0;
         if (mbY > 0) {
             above = decided.awaitProgress(mbY - 1, syncColumn + 1);
         }
-        analyzer.startRow(mbY == 0 ? null : rowSync[mbY - 1]);
+        analyzer.startRow(rowStartsSlice(mbY) ? null : rowSync[mbY - 1]);
         for (var mbX = 0; mbX < mbWidth; mbX++) {
             var needed = Math.min(mbX + 2, mbWidth);
             if (mbY > 0 && above < needed) {
                 above = decided.awaitProgress(mbY - 1, needed);
             }
             var address = mbY * mbWidth + mbX;
-            var mb = analyzer.analyze(mbX, mbY, context.forcePcm[address]);
+            var mb = analyzer.analyze(mbX, mbY, context.forcePcm[address], settings.sliceStart(address));
             if (mbX == syncColumn) {
                 analyzer.saveRowStates(rowSync[mbY]);
             }
             if (records == null) {
                 decided.publish(mbY, mbX + 1);
-                writer.write(mb, address, address == last);
+                emit(mb, address);
             } else {
                 records[mbX].copyDecisionFrom(mb);
                 decided.publish(mbY, mbX + 1);
@@ -1657,7 +1961,6 @@ public final class EncoderCore {
     private void writeRows(int helpers) {
         var mbWidth = settings.mbWidth();
         var mbHeight = settings.mbHeight();
-        var last = settings.mbCount() - 1;
         var running = 0;
         for (var mbY = 0; mbY < mbHeight; mbY++) {
             if (nextRow.get() == mbY && nextRow.compareAndSet(mbY, mbY + 1)) {
@@ -1675,8 +1978,7 @@ public final class EncoderCore {
                     if (ready <= mbX) {
                         ready = decided.awaitProgress(mbY, mbX + 1);
                     }
-                    var address = mbY * mbWidth + mbX;
-                    writer.write(records[mbX], address, address == last);
+                    emit(records[mbX], mbY * mbWidth + mbX);
                 }
             }
             written.publish(0, mbY + 1);
@@ -1914,7 +2216,7 @@ public final class EncoderCore {
         var offsets = aqOffsets;
         double logSum = 0;
         for (var i = 0; i < count; i++) {
-            offsets[i] = Math.log(activity[i]) * INVERSE_LOG2;
+            offsets[i] = StrictMath.log(activity[i]) * INVERSE_LOG2;
             logSum += offsets[i];
         }
         var mean = logSum / count;
@@ -1961,6 +2263,7 @@ public final class EncoderCore {
                 references[i] = null;
             }
             referenceCount = 0;
+            Arrays.fill(layerLatest, null);
             framesSinceIdr = 0;
             idrPicId = (idrPicId + 1) & 0xFFFF;
             frameNum = 1;
@@ -1976,6 +2279,9 @@ public final class EncoderCore {
         references[0] = reconstruction;
         referenceCount++;
         lastReconstruction = reconstruction;
+        if (temporalLayers > 1) {
+            layerLatest[temporalLayer] = reconstruction;
+        }
     }
 
     /**

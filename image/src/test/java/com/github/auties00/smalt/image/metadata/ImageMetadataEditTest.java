@@ -1,6 +1,5 @@
 package com.github.auties00.smalt.image.metadata;
 
-import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
@@ -22,7 +21,6 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
@@ -65,15 +63,15 @@ class ImageMetadataEditTest {
     @DisplayName("colorProfile and removeOtherMetadata")
     class Setters {
         @Test
-        @DisplayName("colorProfile(profile) replaces the ICC profile and build() rejects a profile without ICC form")
+        @DisplayName("colorProfile(profile) replaces the ICC profile, a high-dynamic-range one included")
         void colorProfile() {
             var profile = ColorProfile.displayP3();
             var edit = ImageMetadataEdit.builder().colorProfile(profile).build();
             assertEquals(new ImageMetadataEdit.Change.Replace<>(profile), edit.colorProfile());
             var hdr = ColorProfile.of(new ColorInfo(MatrixCoefficients.BT2020_NCL, ColorRange.LIMITED,
                     ColorPrimaries.BT2020, TransferCharacteristics.PQ));
-            var builder = ImageMetadataEdit.builder().colorProfile(hdr);
-            assertThrows(MediaException.Unsupported.class, builder::build);
+            assertEquals(new ImageMetadataEdit.Change.Replace<>(hdr),
+                    ImageMetadataEdit.builder().colorProfile(hdr).build().colorProfile());
             assertEquals(ImageMetadataEdit.keepAll().toBuilder().colorProfile(profile).build(), edit);
         }
 
