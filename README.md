@@ -1205,7 +1205,7 @@ checks a FLAC source's MD5 signature on the way.
   audio re-encode join the samples on either side of it instead of filling it with silence. Packets flagged
   `PacketFlag.DISCARD` (the decode-only pre-roll of a multi-segment edit list) are written as presented samples
   by every muxer but Matroska (which marks them invisible), and the audio packets an edit cuts lose their discard
-  start in every muxer and their discard end in every muxer but Matroska for Opus (`DiscardPadding`), so a copy
+  start in every muxer and their discard end in every muxer but Matroska for Opus and AAC (`DiscardPadding`), so a copy
   of such a track into another container outside `Mp4Remuxer` shows the pre-roll and plays the cut audio whole; the transcoder re-encodes it correctly. After an edit that goes back in
   the media, an AAC object type that predicts from the start of the stream (Main, LTP, LD, ELD with low delay
   SBR) converges during its pre-roll instead of matching a decode of the whole stream. A fragmented MP4, Ogg, WAV, AIFF or subtitle file cannot store a codec configuration change,
@@ -1689,6 +1689,26 @@ The reader finds the container and codec by itself, and resamples and remixes on
 and offers `seek(micros)` where the container allows it (`isSeekable()`); a capture session pulls the same
 way.
 
+### Write audio to a file
+
+```java
+var options = AudioWriterOptions.of(44_100, ChannelLayout.STEREO); // the format of the blocks written
+try (var sink = MediaSink.of(Path.of("song.opus"));
+     var writer = AudioWriter.open(sink, OutputContainer.OGG, options)) {
+    for (var block = reader.read(); block != null; block = reader.read()) {
+        writer.write(block); // blocks of any length; integer and double blocks too
+    }
+    writer.finish();
+}
+```
+
+`AudioWriter`, the counterpart of `AudioReader`, opens the encoder and the muxer and keeps the timing: the
+codec is the profile's default (Opus for `OutputContainer.OGG`) unless `AudioWriterOptions.codec` names one,
+input the codec cannot code is resampled to 48 kHz or mixed to stereo (or to the `outputSampleRate` and
+`outputLayout` asked for), and the file marks the encoder's priming and the last frame's padding, so reading it
+back returns exactly the samples coded (all but ADTS, AC-3 and AMR elementary streams, and MP3 written to a sink
+that cannot seek). Integer blocks reach FLAC, ALAC and PCM encoders unchanged.
+
 ### Encode FLAC
 
 ```java
@@ -1726,6 +1746,26 @@ try (var source = MediaSource.of(Path.of("clip.mp4"));
     }
 }
 ```
+
+### Write video to a file
+
+```java
+try (var sink = MediaSink.of(Path.of("clip.mp4"));
+     var writer = VideoWriter.open(sink, OutputContainer.MP4,
+             VideoWriterOptions.of(1280, 720, new Rational(30, 1)))) { // H.264, the profile's default
+    for (var picture : pictures) {
+        writer.write(picture); // back to back at 30 fps; write(picture, micros) for a timed frame
+    }
+    writer.finish();
+}
+```
+
+`VideoWriter`, the counterpart of `VideoReader`, takes pictures of any representation, creates the encoder
+(at the first picture when no size is given) and stamps the frames: `write(picture)` continues at the nominal
+rate, `write(picture, micros)` and `write(picture, micros, durationMicros)` place a frame at a time. Times are
+rounded to the track's time base, the encoder's own unless `VideoWriterOptions.timeBase` sets a finer one
+(`Rational.MICROSECONDS`) for variable-rate video. `requestKeyframe()` forces a key frame, and `open(Muxer,
+options)` writes through a muxer with options of its own.
 
 ### Encode ProRes for editing
 

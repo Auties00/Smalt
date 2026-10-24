@@ -399,6 +399,52 @@ class MatroskaMuxerTest {
         }
     }
 
+    static Stream<Arguments> aacTrims() {
+        // core rate, SBR output rate (0 for none), track time base, coded frame at the output rate, last packet duration
+        return Stream.of(
+                Arguments.of(44_100, 0, Rational.timeBaseOf(44_100), 1024, 300),
+                Arguments.of(22_050, 44_100, Rational.timeBaseOf(44_100), 2048, 700),
+                // a millisecond time base rounds every packet to 23 ms, which is not a shortened frame
+                Arguments.of(44_100, 0, Rational.MILLISECONDS, 1024, 0));
+    }
+
+    @ParameterizedTest(name = "{0} Hz, SBR {1}, time base {2}")
+    @MethodSource("aacTrims")
+    @DisplayName("declares the AAC frame as DefaultDuration and trims only a shortened last packet with DiscardPadding")
+    void aacDiscardPadding(int coreRate, int outputRate, Rational timeBase, int frameSamples, int lastSamples) {
+        var rate = outputRate == 0 ? coreRate : outputRate;
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(timeBase)
+                .codecConfig(com.github.auties00.smalt.internal.codec.AudioConfigs.audioSpecificConfig(2, coreRate, 2,
+                        outputRate, false))
+                .sampleRate(rate).layout(ChannelLayout.STEREO).build();
+        var frameTicks = Rational.timeBaseOf(rate).rescale(frameSamples, timeBase);
+        var packets = 20;
+        var sink = MediaSink.memory();
+        try (var muxer = new MatroskaMuxer(sink)) {
+            muxer.addTrack(track);
+            for (var index = 0; index < packets; index++) {
+                var pts = Rational.timeBaseOf(rate).rescale((long) index * frameSamples, timeBase);
+                var last = index == packets - 1 && lastSamples > 0;
+                var duration = last ? Rational.timeBaseOf(rate).rescale(lastSamples, timeBase) : frameTicks;
+                muxer.writePacket(new Packet(1, new byte[]{(byte) index, 0x21, 0x10}, pts, pts, duration, true));
+            }
+            muxer.finish();
+        }
+        var output = sink.toByteArray();
+        MatroskaStructure.check(output);
+        var discardPadding = new byte[]{0x75, (byte) 0xA2};
+        assertEquals(lastSamples > 0, indexOf(output, 0, discardPadding) >= 0, "a DiscardPadding element");
+        var result = MuxSupport.demux(output);
+        var demuxed = result.packetsOf(result.tracks().getFirst());
+        assertEquals(packets, demuxed.size());
+        var demuxedBase = result.tracks().getFirst().timeBase();
+        for (var index = 0; index < packets; index++) {
+            var samples = demuxedBase.rescale(demuxed.get(index).duration(), Rational.timeBaseOf(rate));
+            var expected = index == packets - 1 && lastSamples > 0 ? lastSamples : frameSamples;
+            assertEquals(expected, samples, "duration of packet " + index + " in samples");
+        }
+    }
+
     /** Returns the offset of the first occurrence of a byte pattern at or after an offset, or -1. */
     private static int indexOf(byte[] data, int from, byte[] pattern) {
         outer:

@@ -138,10 +138,11 @@ import java.util.Set;
  * 64 MiB of queued packets the oldest is written whatever the other tracks hold.
  * Blocks store presentation timestamps in segment ticks; an Opus block is stamped with its
  * presentation timestamp plus the pre-skip, as the {@code CodecDelay} semantics require, and an
- * Opus packet whose {@link Packet#duration()} is shorter than its coded duration gets a
- * {@code BlockGroup} with the difference as {@code DiscardPadding}. When the first packets
- * reaching the output have negative timestamps, every timestamp is shifted so the earliest is
- * zero. A video packet with an HDR10+ message also gets a {@code BlockGroup}, with a
+ * Opus or AAC packet whose {@link Packet#duration()} is shorter than its coded duration gets a
+ * {@code BlockGroup} with the difference as {@code DiscardPadding}; an AAC track declares its
+ * frame duration as {@code DefaultDuration}, which a reader needs to apply the padding. When the
+ * first packets reaching the output have negative timestamps, every timestamp is shifted so the
+ * earliest is zero. A video packet with an HDR10+ message also gets a {@code BlockGroup}, with a
  * {@code ReferenceBlock} pointing at the track's previous block when it is not a key frame. Every
  * other packet becomes a {@code SimpleBlock}, flagged as a key frame when it is one (audio packets
  * always are), without lacing. A packet flagged {@link PacketFlag#DISCARD} gets the invisible flag,
@@ -1530,6 +1531,17 @@ public final class MatroskaMuxer implements Muxer {
         long preSkip;
 
         /**
+         * The number of samples every packet of an AAC track decodes to, at {@link #aacOutputRate},
+         * or {@code 0} for another codec.
+         */
+        long aacFrameSamples;
+
+        /**
+         * The output sampling rate of an AAC track, or {@code 0} for another codec.
+         */
+        int aacOutputRate;
+
+        /**
          * The codec delay in nanoseconds.
          */
         long codecDelayNanos;
@@ -1905,6 +1917,8 @@ public final class MatroskaMuxer implements Muxer {
             if (channels == 0) {
                 channels = parsed.channels();
             }
+            aacOutputRate = parsed.outputRate();
+            aacFrameSamples = (long) parsed.frameLength() * parsed.outputRate() / parsed.sampleRate();
         }
 
         /**
@@ -2047,6 +2061,11 @@ public final class MatroskaMuxer implements Muxer {
                 videoTrack.color().ifPresent(color -> writeColor(out, color));
                 out.end();
             } else if (!sparse) {
+                if (aacFrameSamples > 0) {
+                    // the frame duration lets a reader apply the DiscardPadding of a shortened last frame
+                    out.unsigned(EbmlIds.DEFAULT_DURATION, Rational.timeBaseOf(aacOutputRate).rescale(aacFrameSamples,
+                            NANOSECONDS));
+                }
                 out.begin(EbmlIds.AUDIO);
                 out.floating(EbmlIds.SAMPLING_FREQUENCY, sampleRate);
                 out.unsigned(EbmlIds.CHANNELS, channels);
@@ -2222,24 +2241,40 @@ public final class MatroskaMuxer implements Muxer {
         }
 
         /**
-         * Returns the {@code DiscardPadding} of an Opus packet whose duration is shorter than
-         * its coded duration.
+         * Returns the {@code DiscardPadding} of an Opus or AAC packet whose duration is shorter
+         * than its coded duration.
          *
-         * @param packet an Opus packet of this track
+         * <p>A duration equal to the coded duration rounded to the track's time base, as a time
+         * base coarser than one sample gives every packet, is not shortened.
+         *
+         * @param packet a packet of this track
          * @return the padding in nanoseconds, or {@code 0}
          */
         long discardPadding(Packet packet) {
-            if (track.codec() != Codec.OPUS || packet.duration() <= 0) {
+            if (packet.duration() <= 0) {
                 return 0;
             }
-            var coded = opusSamples(packet.data());
+            long coded;
+            Rational base;
+            if (track.codec() == Codec.OPUS) {
+                coded = opusSamples(packet.data());
+                base = OPUS_RATE;
+            } else if (aacFrameSamples > 0) {
+                coded = aacFrameSamples;
+                base = Rational.timeBaseOf(aacOutputRate);
+            } else {
+                return 0;
+            }
             long kept;
             try {
-                kept = track.timeBase().rescale(packet.duration(), OPUS_RATE);
+                if (packet.duration() >= base.rescale(coded, track.timeBase())) {
+                    return 0;
+                }
+                kept = track.timeBase().rescale(packet.duration(), base);
             } catch (ArithmeticException exception) {
                 return 0;
             }
-            return coded > kept ? OPUS_RATE.rescale(coded - kept, NANOSECONDS) : 0;
+            return coded > kept ? base.rescale(coded - kept, NANOSECONDS) : 0;
         }
     }
 
