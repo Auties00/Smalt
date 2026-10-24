@@ -16,7 +16,8 @@ import java.util.zip.CRC32;
 /**
  * Runs the DNG and camera raw decoders through the I/O behavior harness ({@link ImageDecoderAsserts}), with
  * the sensor data of {@link RawDecoder#decodeRaw} as an extra decode, over DNG files made by
- * {@link TinyDng} in every sample layout, a smoke-tier DNG and one full-tier file of each camera raw format,
+ * {@link TinyDng} in every sample layout and by {@link DngSpecSamples} in the layouts and profile features of DNG
+ * 1.2 to 1.7, a smoke-tier DNG and one full-tier file of each camera raw format,
  * comparing each with its golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("raw decoder I/O behaviors")
@@ -92,6 +93,15 @@ class RawDecoderBehaviorTest {
     @DisplayName("tiny DNG layouts: identical pictures and sensor data under every source behavior and clean faults")
     void tiny(String layout) {
         harness("tinydng/" + layout, layout(layout).write()).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"wide-24bit", "planar", "sub-tiles-interleaved", "staggered", "enhanced",
+            "linear-raw-preview", "gain-table-map", "rgb-tables", "extra-profile", "four-color"})
+    @DisplayName("DNG 1.2 to 1.7 layouts and profile features: identical pictures and sensor data under every source "
+            + "behavior and clean faults")
+    void spec(String name) {
+        harness("dngspec/" + name, DngSpecSamples.of(name)).run();
     }
 
     @ParameterizedTest(name = "{0}")

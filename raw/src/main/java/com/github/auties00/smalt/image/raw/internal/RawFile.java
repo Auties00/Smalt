@@ -2,12 +2,14 @@ package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawFormat;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Holds what a parser learned about a raw file: the camera and the shot, the embedded previews,
@@ -31,8 +33,26 @@ public final class RawFile {
      * {@code 0xFF}, the first byte of the start-of-image marker
      * @param top the first row showing the image
      * @param rows the rows showing the image, {@code height} when the preview is not letterboxed
+     * @param image the directory of a preview stored as TIFF image data (a DNG 1.7 JPEG XL preview)
+     * rather than as one JPEG stream, or {@code null}
      */
-    record Preview(long offset, long length, int width, int height, boolean damagedStart, int top, int rows) {
+    record Preview(long offset, long length, int width, int height, boolean damagedStart, int top, int rows,
+                   Ifd image) {
+        /**
+         * Constructs the description of a JPEG stream preview.
+         *
+         * @param offset the absolute offset of the JPEG stream
+         * @param length the length of the stream
+         * @param width the width, or {@code 0} when unknown
+         * @param height the height, or {@code 0} when unknown
+         * @param damagedStart whether the stream's first byte is to be read as {@code 0xFF}
+         * @param top the first row showing the image
+         * @param rows the rows showing the image
+         */
+        Preview(long offset, long length, int width, int height, boolean damagedStart, int top, int rows) {
+            this(offset, length, width, height, damagedStart, top, rows, null);
+        }
+
         /**
          * Constructs the description of a preview stored intact and not letterboxed.
          *
@@ -76,7 +96,7 @@ public final class RawFile {
             if (shown > height - 2) {
                 return this;
             }
-            return new Preview(offset, length, width, height, damagedStart, (height - shown) / 2, shown);
+            return new Preview(offset, length, width, height, damagedStart, (height - shown) / 2, shown, image);
         }
     }
 
@@ -166,9 +186,37 @@ public final class RawFile {
     String unsupported;
 
     /**
-     * The color description.
+     * The color description, with the primary camera profile.
      */
     final ColorCalibration color = new ColorCalibration();
+
+    /**
+     * The profile-level color descriptions of the extra camera profiles of a DNG file
+     * ({@code ExtraCameraProfiles}), in file order; combined with {@link #color} when selected.
+     */
+    final List<ColorCalibration> extraProfiles = new ArrayList<>();
+
+    /**
+     * The name of the camera profile the shot was taken with ({@code AsShotProfileName}), or
+     * {@code null}.
+     */
+    String asShotProfile;
+
+    /**
+     * The enhanced image of a DNG file (DNG 1.5, {@code NewSubFileType} 16), or {@code null}.
+     */
+    Sensor enhanced;
+
+    /**
+     * The reduced-resolution linear raw images of a DNG file (previews of photometric
+     * interpretation {@code LinearRaw}), in file order.
+     */
+    final List<Sensor> proxies = new ArrayList<>();
+
+    /**
+     * The semantic masks of a DNG file.
+     */
+    final List<SemanticMask> masks = new ArrayList<>();
 
     /**
      * Constructs an empty description.
@@ -181,6 +229,57 @@ public final class RawFile {
         this.source = source;
         this.limits = limits;
         this.format = format;
+    }
+
+    /**
+     * Returns the names of the camera profiles, the primary one first, an unnamed profile as an
+     * empty string.
+     *
+     * @return the names
+     */
+    List<String> profileNames() {
+        var names = new ArrayList<String>();
+        names.add(color.profileName != null ? color.profileName : "");
+        for (var profile : extraProfiles) {
+            names.add(profile.profileName != null ? profile.profileName : "");
+        }
+        return names;
+    }
+
+    /**
+     * Returns the color description the options render with: the camera profile they name, or by
+     * default the as-shot profile when the file names one it holds, else the primary profile.
+     *
+     * @param options the decoding options
+     * @return the description
+     * @throws MediaException.Unsupported if the options name a camera profile the file does not hold
+     */
+    ColorCalibration color(RawDecoderOptions options) {
+        var wanted = options.cameraProfile();
+        var name = wanted.orElse(asShotProfile);
+        if (name == null || name.equals(Objects.requireNonNullElse(color.profileName, ""))) {
+            return color;
+        }
+        for (var profile : extraProfiles) {
+            if (name.equals(Objects.requireNonNullElse(profile.profileName, ""))) {
+                return color.withProfile(profile);
+            }
+        }
+        if (wanted.isPresent()) {
+            throw new MediaException.Unsupported(format.extension(), "the file holds no camera profile named " + name);
+        }
+        return color;
+    }
+
+    /**
+     * Returns the image the options render: the enhanced image when they ask for it and the file
+     * holds one that decodes, the sensor image otherwise.
+     *
+     * @param options the decoding options
+     * @return the sensor description, or {@code null} when the file holds no sensor image
+     */
+    Sensor sensor(RawDecoderOptions options) {
+        return options.enhancedImage() && enhanced != null ? enhanced : sensor;
     }
 
     /**

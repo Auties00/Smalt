@@ -1,5 +1,9 @@
 package com.github.auties00.smalt.image.raw;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
 /**
  * A white balance a raw image is rendered with: the one recorded with the shot, a correlated color
  * temperature, or explicit camera channel multipliers.
@@ -49,7 +53,27 @@ public sealed interface RawWhiteBalance permits RawWhiteBalance.AsShot, RawWhite
      * @see Multipliers
      */
     static Multipliers multipliers(double red, double green, double blue) {
-        return new Multipliers(red, green, blue);
+        return new Multipliers(List.of(red, green, blue));
+    }
+
+    /**
+     * Returns the white balance that multiplies the camera channels by given factors, one per color
+     * plane: red, green and blue, or the four colors of a four-color sensor in the order of the file's
+     * color planes (as {@link RawImage#cameraNeutral()} orders them).
+     *
+     * @param factors the three or four multipliers, positive
+     * @return the white balance
+     * @throws IllegalArgumentException if there are not three or four factors, or one is not positive
+     * and finite
+     * @see Multipliers
+     */
+    static Multipliers multipliers(double... factors) {
+        Objects.requireNonNull(factors, "factors");
+        var list = new ArrayList<Double>(factors.length);
+        for (var factor : factors) {
+            list.add(factor);
+        }
+        return new Multipliers(list);
     }
 
     /**
@@ -82,28 +106,54 @@ public sealed interface RawWhiteBalance permits RawWhiteBalance.AsShot, RawWhite
     }
 
     /**
-     * The white balance that multiplies the red, green and blue camera channels by given factors; only
-     * their ratios matter.
+     * The white balance that multiplies the camera channels by given factors, one per color plane;
+     * only their ratios matter.
      *
-     * <p>A file of a four-color sensor cannot be balanced this way: decoding it with multipliers throws
-     * {@link com.github.auties00.smalt.MediaException.Unsupported}.
+     * <p>Three factors balance a sensor of red, green and blue, four a four-color sensor (in the order
+     * of the file's color planes). Decoding a file with a number of factors other than its sensor's
+     * colors throws {@link com.github.auties00.smalt.MediaException.Unsupported}.
      *
-     * @param red the red multiplier, positive
-     * @param green the green multiplier, positive
-     * @param blue the blue multiplier, positive
+     * @param factors the three or four multipliers, each positive; copied, unmodifiable
      */
-    record Multipliers(double red, double green, double blue) implements RawWhiteBalance {
+    record Multipliers(List<Double> factors) implements RawWhiteBalance {
         /**
-         * Validates the multipliers.
+         * Validates and copies the multipliers.
          *
-         * @throws IllegalArgumentException if a multiplier is not positive and finite
+         * @throws NullPointerException if a factor is {@code null}
+         * @throws IllegalArgumentException if there are not three or four factors, or one is not
+         * positive and finite
          */
         public Multipliers {
-            for (var value : new double[]{red, green, blue}) {
+            factors = List.copyOf(factors);
+            if (factors.size() != 3 && factors.size() != 4) {
+                throw new IllegalArgumentException("white balance multipliers are three or four, not " + factors.size());
+            }
+            for (var value : factors) {
                 if (!(value > 0) || !Double.isFinite(value)) {
                     throw new IllegalArgumentException("invalid white balance multiplier " + value);
                 }
             }
+        }
+
+        /**
+         * {@return the first multiplier: red, or the first color plane of a four-color sensor}
+         */
+        public double red() {
+            return factors.get(0);
+        }
+
+        /**
+         * {@return the second multiplier: green, or the second color plane of a four-color sensor}
+         */
+        public double green() {
+            return factors.get(1);
+        }
+
+        /**
+         * {@return the third multiplier: blue, or the third color plane of a four-color sensor}
+         */
+        public double blue() {
+            return factors.get(2);
         }
     }
 }

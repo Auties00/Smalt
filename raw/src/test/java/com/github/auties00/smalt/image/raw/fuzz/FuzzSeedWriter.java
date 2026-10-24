@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.fuzz;
 
+import com.github.auties00.smalt.image.raw.DngSpecSamples;
 import com.github.auties00.smalt.image.raw.TinyDng;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,7 +21,7 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
 
 /**
  * Writes the committed seeds of the raw fuzz targets (tools/fuzz/README.md): DNG files built with
- * {@link TinyDng}, CC0 samples from raw.pixls.us (listed in {@code tools/testdata/vectors.tsv}) reduced by
+ * {@link TinyDng} and {@link DngSpecSamples}, CC0 samples from raw.pixls.us (listed in {@code tools/testdata/vectors.tsv}) reduced by
  * {@link RawSeedReducer} to their first {@value #ROWS} sensor rows and tiny previews, and the first {@value #HEAD}
  * bytes of a compressed RAF sample, whose sensor data is not decoded. The CRW, MRW and X3F seeds are written by the
  * synthetic-file builders of their parser tests. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
@@ -37,6 +38,9 @@ class FuzzSeedWriter {
     @Test
     @DisplayName("writes the DNG seeds")
     void dng() {
+        for (var name : DngSpecSamples.NAMES) {
+            write(RawFuzzTest.class, "dng", "valid-spec-" + name + ".dng", DngSpecSamples.of(name));
+        }
         var plain = TinyDng.ramp(24, 16);
         plain.white = 65535;
         write(RawFuzzTest.class, "dng", "valid-uncompressed.dng", plain.write());

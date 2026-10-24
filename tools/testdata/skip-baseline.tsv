@@ -114,6 +114,7 @@ linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorT
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	12
+linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DngSpecOracleTest	data:vector	3
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	data:vector	2
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	opt-in:fuzz-seeds	1
@@ -247,6 +248,7 @@ linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorTes
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	12
+linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.DngSpecOracleTest	data:vector	3
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	data:vector	2
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	opt-in:fuzz-seeds	1
@@ -393,6 +395,7 @@ linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorTes
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	12
+linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DngSpecOracleTest	data:vector	3
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	data:vector	2
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	opt-in:fuzz-seeds	1
@@ -518,6 +521,7 @@ macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorT
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	12
+macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DngSpecOracleTest	data:vector	3
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	data:vector	2
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	opt-in:fuzz-seeds	1
@@ -646,6 +650,7 @@ windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.ColorT
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	data:vector	3
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwParserTest	opt-in:fuzz-seeds	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.CrwTablesTest	data:vector	12
+windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.DngSpecOracleTest	data:vector	3
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.JpegXlTilesTest	data:vector	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	data:vector	2
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.MrwParserTest	opt-in:fuzz-seeds	1

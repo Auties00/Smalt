@@ -8,13 +8,14 @@ import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawDemosaic;
+import com.github.auties00.smalt.image.raw.RawHighlights;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 /**
  * Renders the sensor image of a raw file into a picture: reads the samples, applies the opcode
- * lists, linearizes, demosaics, white balances and maps the colors, tile by tile across the
- * shared thread pool.
+ * lists, linearizes, demosaics (onto the rectangular grid for a staggered layout), white balances
+ * and maps the colors, tile by tile across the shared thread pool.
  *
  * <p>Tiles are independent (demosaicing reads past a tile's edges where it needs to, see
  * {@link MenonDemosaic#MARGIN}), so the output never depends on how the tiles are scheduled.
@@ -29,6 +30,11 @@ public final class Renderer {
      * The height of a tile.
      */
     private static final int TILE_HEIGHT = 128;
+
+    /**
+     * Why a four-color sensor without color matrices for its four colors cannot be rendered.
+     */
+    static final String NO_FOUR_COLOR_MATRICES = "the four-color sensor has no color matrices for its four colors";
 
     /**
      * The color kernel.
@@ -52,13 +58,27 @@ public final class Renderer {
      * @throws MediaException.Unsupported if the file's sensor data cannot be decoded
      */
     static LinearImage linearize(RawFile file, boolean opcodes) {
-        var sensor = file.sensor;
+        return linearize(file, file.sensor, opcodes);
+    }
+
+    /**
+     * Reads the samples of one of a raw file's images and linearizes them, applying opcode lists 1
+     * and 2 when asked.
+     *
+     * @param file the raw file
+     * @param sensor the image: the sensor image, the enhanced image or a linear raw preview, or
+     * {@code null} when the file holds none
+     * @param opcodes whether the opcode lists are applied
+     * @return the linear image of the active area
+     * @throws MediaException.Unsupported if the file's sensor data cannot be decoded
+     */
+    static LinearImage linearize(RawFile file, Sensor sensor, boolean opcodes) {
         if (sensor == null) {
             throw new MediaException.Unsupported(file.format.extension(), file.unsupported != null ? file.unsupported
                     : "the " + file.format.extension() + " sensor data cannot be decoded");
         }
         var limits = file.limits;
-        var plane = new SensorPlane(sensor.width, sensor.height, sensor.samplesPerPixel, sensor.floating, limits);
+        var plane = SensorPlane.of(sensor, limits);
         sensor.reader.read(plane, limits);
         if (opcodes && sensor.opcodes1 != null) {
             Opcodes.applyToSensor(sensor, plane, sensor.opcodes1);
@@ -96,6 +116,23 @@ public final class Renderer {
      * @return the left, top, width and height
      */
     static int[] window(Sensor sensor, int width, int height, boolean crop, boolean opcodes) {
+        return window(sensor, width, height, crop, opcodes, false);
+    }
+
+    /**
+     * Returns the window of an active area of a given size the output covers: the default crop
+     * (narrowed to the default user crop when asked), or the whole active area, within the
+     * rectangle the opcode lists trim the image to when they apply.
+     *
+     * @param sensor the sensor description
+     * @param width the active area's width
+     * @param height the active area's height
+     * @param crop whether the default crop applies
+     * @param opcodes whether the opcode lists apply
+     * @param user whether the default user crop applies, with the default crop
+     * @return the left, top, width and height
+     */
+    static int[] window(Sensor sensor, int width, int height, boolean crop, boolean opcodes, boolean user) {
         int[] window;
         if (!crop || sensor.defaultCrop == null) {
             window = new int[]{0, 0, width, height};
@@ -106,6 +143,16 @@ public final class Renderer {
             var w = (int) Math.clamp(Math.round(c[2]), 1, Math.max(1, width - x));
             var h = (int) Math.clamp(Math.round(c[3]), 1, Math.max(1, height - y));
             window = new int[]{x, y, w, h};
+        }
+        if (crop && user && sensor.userCrop != null) {
+            var u = sensor.userCrop;
+            var top = window[1] + (int) Math.round(u[0] * window[3]);
+            var left = window[0] + (int) Math.round(u[1] * window[2]);
+            var bottom = window[1] + (int) Math.round(u[2] * window[3]);
+            var right = window[0] + (int) Math.round(u[3] * window[2]);
+            if (bottom > top && right > left) {
+                window = new int[]{left, top, right - left, bottom - top};
+            }
         }
         int[] bounds = null;
         if (opcodes) {
@@ -155,18 +202,52 @@ public final class Renderer {
      * @throws MediaException.Unsupported if the file's sensor data cannot be decoded or rendered
      */
     public static Picture render(RawFile file, RawDecoderOptions options, boolean halfSize) {
-        var image = linearize(file, options.opcodes());
-        var sensor = file.sensor;
-        var window = window(sensor, image.width, image.height, options.defaultCrop(), options.opcodes());
-        PreviewBalance.apply(file, image, window(sensor, image, true));
-        var monochrome = image.samplesPerPixel == 1 && image.cfa == null;
-        if (image.samplesPerPixel != 1 && image.samplesPerPixel != 3) {
-            throw new MediaException.Unsupported(file.format.extension(), image.samplesPerPixel
+        return render(file, file.sensor(options), options, halfSize);
+    }
+
+    /**
+     * Renders one of a raw file's images.
+     *
+     * @param file the raw file
+     * @param sensor the image: the sensor image, the enhanced image or a linear raw preview
+     * @param options the rendering options
+     * @param halfSize whether to render one pixel per 2x2 block of photosites
+     * @return the picture, already scaled to square pixels
+     * @throws MediaException.Unsupported if the image cannot be decoded or rendered
+     */
+    static Picture render(RawFile file, Sensor sensor, RawDecoderOptions options, boolean halfSize) {
+        var linear = linearize(file, sensor, options.opcodes());
+        var window = window(sensor, linear.width, linear.height, options.defaultCrop(), options.opcodes(),
+                options.userCrop());
+        if (sensor == file.sensor) {
+            PreviewBalance.apply(file, linear, window(sensor, linear, true));
+        }
+        var monochrome = linear.samplesPerPixel == 1 && linear.cfa == null;
+        if (linear.samplesPerPixel != 1 && linear.samplesPerPixel != 3) {
+            throw new MediaException.Unsupported(file.format.extension(), linear.samplesPerPixel
                     + "-channel linear raw images are not supported");
         }
-        var color = CameraColor.of(file.color, options.whiteBalance(), options.colorMatrix().orElse(null));
-        var four = image.cfa != null && !image.cfa.isRgb() ? fourColor(file, image, color) : null;
-        var pipeline = new ColorPipeline(four != null ? color.projected() : color, file.color, options, monochrome);
+        var calibration = file.color(options);
+        var fourColors = linear.cfa != null && !linear.cfa.isRgb();
+        if (fourColors) {
+            var problem = fourColorPlanesProblem(sensor);
+            if (problem != null || linear.colors != 4) {
+                throw new MediaException.Unsupported(file.format.extension(), problem != null ? problem
+                        : "color filter arrays of other colors than red, green and blue need four color planes");
+            }
+        }
+        var color = CameraColor.of(calibration, options.whiteBalance(), options.colorMatrix().orElse(null),
+                fourColors ? 4 : 3);
+        var four = fourColors ? fourColor(color) : null;
+        var blend = options.highlights() == RawHighlights.BLEND;
+        var image = linear.cfa != null && sensor.layout.isStaggered()
+                ? Staggered.demosaic(linear, sensor.layout, sensor.scaleH, sensor.scaleV, options.demosaic(), four, blend,
+                file.limits) : linear;
+        var pipeline = new ColorPipeline(four != null ? color.projected() : color, calibration, options, monochrome,
+                four != null, file.masks);
+        if (pipeline.autoBlack) {
+            pipeline.black(BlackPoint.measure(image, window, four, blend, pipeline));
+        }
         var bayer = image.cfa != null && image.cfa.isBayer();
         var half = halfSize && bayer && window[2] >= 2 && window[3] >= 2;
         var outWidth = half ? window[2] / 2 : window[2];
@@ -178,17 +259,23 @@ public final class Renderer {
                 : (Picture) RgbaPicture.allocate(outWidth, outHeight, false);
         float[][] rgb = null;
         if (options.opcodes() && sensor.opcodes3 != null && !half) {
-            rgb = demosaicAll(image, new int[]{0, 0, image.width, image.height}, options.demosaic(), four);
+            rgb = demosaicAll(image, new int[]{0, 0, image.width, image.height}, options.demosaic(), four, blend);
             Opcodes.applyToRgb(rgb, image.width, image.height, sensor.opcodes3,
                     Opcodes.bounds(sensor, image.width, image.height, 2));
         }
         var full = rgb;
+        var step = half ? 2 : 1;
+        var frame = sensor.frame;
+        var du = frame[2] * step / image.width;
+        var dv = frame[3] * step / image.height;
+        var u0 = frame[0] + frame[2] * (window[0] + step * 0.5) / image.width;
+        var v0 = frame[1] + frame[3] * (window[1] + step * 0.5) / image.height;
         var tilesDown = (outHeight + TILE_HEIGHT - 1) / TILE_HEIGHT;
         var bands = ParallelBands.bands(tilesDown, (long) outWidth * outHeight * 16);
         ParallelBands.run(bands, band -> {
             var first = ParallelBands.start(band, bands, tilesDown);
             var last = ParallelBands.start(band + 1, bands, tilesDown);
-            var tile = new Tile(image, options.demosaic(), pipeline, four);
+            var tile = new Tile(image, options.demosaic(), pipeline, four, blend);
             for (var tileRow = first; tileRow < last; tileRow++) {
                 var y = tileRow * TILE_HEIGHT;
                 var rows = Math.min(TILE_HEIGHT, outHeight - y);
@@ -201,7 +288,7 @@ public final class Renderer {
                     } else {
                         tile.demosaic(window[0] + x, window[1] + y, columns, rows);
                     }
-                    tile.output(target, x, y, columns, rows);
+                    tile.output(target, x, y, columns, rows, u0 + x * du, du, v0 + y * dv, dv);
                 }
                 ParallelBands.checkpoint();
             }
@@ -216,23 +303,13 @@ public final class Renderer {
     }
 
     /**
-     * Prepares the rendering of a four-color image: checks that the sensor's four colors and the
-     * color description agree and returns the matrix that maps the image's camera values, white
-     * balanced and clipped, to the three channels the rest of the rendering works in.
+     * Returns the matrix that maps the camera values of a four-color image, white balanced and
+     * with their highlights treated, to the three channels the rest of the rendering works in.
      *
-     * @param file the raw file
-     * @param image the linear image, its color filter array not of red, green and blue
-     * @param color the camera color mapping
+     * @param color the camera color mapping, of four colors
      * @return the {@code 3 x 4} projection followed by the four white balance multipliers
-     * @throws MediaException.Unsupported if the file cannot be rendered, as
-     * {@link #fourColorProblem(RawFile)} tells
      */
-    private static float[] fourColor(RawFile file, LinearImage image, CameraColor color) {
-        var problem = fourColorProblem(file);
-        if (problem != null || image.colors != 4 || color.channels() != 4) {
-            throw new MediaException.Unsupported(file.format.extension(), problem != null ? problem
-                    : "the four-color sensor has no color matrices for its four colors");
-        }
+    private static float[] fourColor(CameraColor color) {
         var projection = color.projection();
         var result = new float[16];
         for (var index = 0; index < 12; index++) {
@@ -254,7 +331,29 @@ public final class Renderer {
      * is of red, green and blue
      */
     static String fourColorProblem(RawFile file) {
+        var problem = fourColorPlanesProblem(file.sensor);
+        if (problem != null) {
+            return problem;
+        }
         var sensor = file.sensor;
+        if (sensor == null || sensor.cfa == null || sensor.samplesPerPixel != 1 || sensor.cfa.isRgb()) {
+            return null;
+        }
+        if (file.color.channels() != 4) {
+            return NO_FOUR_COLOR_MATRICES;
+        }
+        return null;
+    }
+
+    /**
+     * Returns why a sensor whose color filter array is not of red, green and blue cannot be
+     * decoded at all: its colors must be four, each of its own color plane.
+     *
+     * @param sensor the sensor description, or {@code null}
+     * @return the reason, or {@code null} when its colors are four planes or its color filter array is
+     * of red, green and blue
+     */
+    static String fourColorPlanesProblem(Sensor sensor) {
         if (sensor == null || sensor.cfa == null || sensor.samplesPerPixel != 1 || sensor.cfa.isRgb()) {
             return null;
         }
@@ -271,9 +370,6 @@ public final class Renderer {
                 return "color filter arrays of other colors than red, green and blue need four color planes";
             }
         }
-        if (file.color.channels() != 4) {
-            return "the four-color sensor has no color matrices for its four colors";
-        }
         return null;
     }
 
@@ -287,7 +383,8 @@ public final class Renderer {
      * {@code null}
      * @return the red, green and blue planes
      */
-    private static float[][] demosaicAll(LinearImage image, int[] window, RawDemosaic algorithm, float[] four) {
+    private static float[][] demosaicAll(LinearImage image, int[] window, RawDemosaic algorithm, float[] four,
+                                         boolean blend) {
         var width = window[2];
         var height = window[3];
         var planes = new float[3][width * height];
@@ -296,7 +393,7 @@ public final class Renderer {
         ParallelBands.run(bands, band -> {
             var first = ParallelBands.start(band, bands, tilesDown);
             var last = ParallelBands.start(band + 1, bands, tilesDown);
-            var tile = new Tile(image, algorithm, null, four);
+            var tile = new Tile(image, algorithm, null, four, blend);
             for (var tileRow = first; tileRow < last; tileRow++) {
                 var y = tileRow * TILE_HEIGHT;
                 var rows = Math.min(TILE_HEIGHT, height - y);
@@ -355,6 +452,11 @@ public final class Renderer {
         private final float[] four;
 
         /**
+         * Whether a four-color image's highlights are blended rather than clipped.
+         */
+        private final boolean blend;
+
+        /**
          * The Menon demosaicer, created on first use.
          */
         private MenonDemosaic menon;
@@ -365,18 +467,26 @@ public final class Renderer {
         private PatternDemosaic pattern;
 
         /**
+         * The scratch arrays of the pipeline's profile steps, or {@code null} when only demosaicing.
+         */
+        private final ColorPipeline.Scratch scratch;
+
+        /**
          * Constructs the buffers of one thread.
          *
          * @param image the linear image the tile reads
          * @param algorithm the demosaicing algorithm
          * @param pipeline the color pipeline, or {@code null}
          * @param four the projection of a four-color image, or {@code null}
+         * @param blend whether a four-color image's highlights are blended rather than clipped
          */
-        Tile(LinearImage image, RawDemosaic algorithm, ColorPipeline pipeline, float[] four) {
+        Tile(LinearImage image, RawDemosaic algorithm, ColorPipeline pipeline, float[] four, boolean blend) {
             this.image = image;
             this.algorithm = algorithm;
             this.pipeline = pipeline;
             this.four = four;
+            this.blend = blend;
+            this.scratch = pipeline != null ? pipeline.scratch() : null;
         }
 
         /**
@@ -422,7 +532,7 @@ public final class Renderer {
                 pattern = new PatternDemosaic(image);
             }
             if (four != null) {
-                pattern.projected(image, x0, y0, width, height, red, green, blue, four);
+                pattern.projected(image, x0, y0, width, height, red, green, blue, four, blend);
             } else if (algorithm == RawDemosaic.MENON && !image.cfa.isBayer()) {
                 pattern.colorDifference(image, x0, y0, width, height, red, green, blue);
             } else if (image.cfa.isBayer()) {
@@ -534,14 +644,19 @@ public final class Renderer {
          * @param y0 the first output row
          * @param width the width of the window in output pixels
          * @param height the height of the window in output pixels
+         * @param u the horizontal position of the window's first pixel center, relative to the main
+         * image's active area
+         * @param du the horizontal distance between pixels, relative to the active area
+         * @param v the vertical position of the window's first row center, relative to the active area
+         * @param dv the vertical distance between rows, relative to the active area
          */
-        void output(Picture picture, int x0, int y0, int width, int height) {
+        void output(Picture picture, int x0, int y0, int width, int height, double u, double du, double v, double dv) {
             var count = width * height;
             pipeline.balance(red, green, blue, count);
             var high = picture instanceof Rgba16Picture;
             var scale = high ? Transfer.SCALE_16 : Transfer.SCALE_8;
             if (pipeline.profiled) {
-                pipeline.profile(red, green, blue, count);
+                pipeline.profile(red, green, blue, width, height, u, du, v, dv, scratch);
                 KERNEL.scale(red, green, blue, count, scale);
             } else {
                 KERNEL.transform(red, green, blue, count, pipeline.matrix, scale);

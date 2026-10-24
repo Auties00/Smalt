@@ -4,20 +4,23 @@ package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.raw.CfaColor;
+import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Objects;
 
 /**
  * Parses a DNG file (Adobe DNG specification 1.7.1): the main raw image among the directories, its
- * layout, levels and opcode lists, and the camera profile of the first directory.
+ * layout, levels and opcode lists, the enhanced image, the reduced-resolution linear raw previews,
+ * the semantic masks, and the camera profiles.
  *
  * <p>The main image is the first directory, in the order {@link TiffTree} visits them, whose
  * {@code NewSubFileType} is 0 and whose photometric interpretation is a color filter array
- * (32803) or linear raw (34892). Profile tags are read from the first directory; the raw-image
- * tags from the main image's directory.
+ * (32803) or linear raw (34892). The primary camera profile and the shot's color tags are read
+ * from the first directory, the extra camera profiles from the directories
+ * {@code ExtraCameraProfiles} points to; the raw-image tags from the main image's directory.
  */
 final class DngParser {
     /**
@@ -29,6 +32,26 @@ final class DngParser {
      * The photometric interpretation of linear raw data.
      */
     static final int PHOTOMETRIC_LINEAR_RAW = 34892;
+
+    /**
+     * The photometric interpretation of a semantic mask (DNG 1.6).
+     */
+    static final int PHOTOMETRIC_MASK = 52527;
+
+    /**
+     * The subfile type of an enhanced image (DNG 1.5).
+     */
+    static final int NEW_SUBFILE_ENHANCED = 16;
+
+    /**
+     * The subfile type of a semantic mask (DNG 1.6).
+     */
+    static final int NEW_SUBFILE_SEMANTIC_MASK = 65540;
+
+    /**
+     * The most extra camera profiles read.
+     */
+    private static final int MAX_PROFILES = 64;
 
     /**
      * Prevents instantiation.
@@ -57,15 +80,28 @@ final class DngParser {
             file.model = unique;
         }
         Ifd raw = null;
+        Ifd enhanced = null;
+        var proxies = new ArrayList<Ifd>();
         for (var ifd : tree.directories) {
             var photometric = ifd.intValue(TiffSamples.PHOTOMETRIC, 0);
-            if (ifd.longValue(TiffTree.NEW_SUBFILE_TYPE, 0) == 0
-                    && (photometric == PHOTOMETRIC_CFA || photometric == PHOTOMETRIC_LINEAR_RAW)) {
+            var type = ifd.longValue(TiffTree.NEW_SUBFILE_TYPE, 0);
+            if (type == 0 && raw == null && (photometric == PHOTOMETRIC_CFA || photometric == PHOTOMETRIC_LINEAR_RAW)) {
                 raw = ifd;
-                break;
+            } else if (type == NEW_SUBFILE_ENHANCED && enhanced == null && photometric == PHOTOMETRIC_LINEAR_RAW) {
+                enhanced = ifd;
+            } else if (type == 1 && photometric == PHOTOMETRIC_LINEAR_RAW) {
+                proxies.add(ifd);
+            } else if (type == NEW_SUBFILE_SEMANTIC_MASK && photometric == PHOTOMETRIC_MASK) {
+                var mask = SemanticMask.of(ifd);
+                if (mask != null) {
+                    file.masks.add(mask);
+                }
             }
         }
         profile(first, file.color);
+        shot(first, raw, file.color);
+        extraProfiles(first, file);
+        file.asShotProfile = utf8(first, 50934);
         if (raw == null) {
             file.unsupported = "the DNG file holds no raw image";
             return;
@@ -82,10 +118,11 @@ final class DngParser {
                 throw new MediaException.Malformed("CFA image with " + sensor.samplesPerPixel + " samples per pixel");
             }
             var layout = raw.intValue(50711, 1);
-            if (layout != 1) {
-                file.unsupported = "DNG CFA layout " + layout + " (staggered photosites) is not supported";
+            if (layout < 1 || layout > 9) {
+                file.unsupported = "DNG CFA layout " + layout + " is not defined";
                 return;
             }
+            sensor.layout = CfaLayout.of(layout);
             sensor.cfa = pattern(raw);
             var planes = raw.longs(50710);
             if (planes != null && planes.length >= 3) {
@@ -99,7 +136,160 @@ final class DngParser {
             }
         }
         levels(raw, sensor);
+        var userCrop = raw.doubles(51125);
+        sensor.userCrop = userCrop(userCrop != null ? userCrop : first.doubles(51125));
         file.sensor = sensor;
+        if (enhanced != null) {
+            enhanced(enhanced, sensor, file);
+        }
+        for (var proxy : proxies) {
+            proxy(proxy, sensor, file);
+        }
+    }
+
+    /**
+     * Describes the enhanced image of a DNG file: demosaiced linear reference values covering the
+     * raw image's active area, possibly at another resolution. Without its own crop and scale it
+     * takes the raw image's, scaled to its size, and, at the raw image's size, the raw image's opcode
+     * list 3 when it has none. An enhanced image whose data cannot be described is left out.
+     *
+     * @param ifd the enhanced image's directory
+     * @param raw the raw image
+     * @param file the description to fill
+     */
+    private static void enhanced(Ifd ifd, Sensor raw, RawFile file) {
+        var sensor = new Sensor();
+        try {
+            sensor.reader = TiffSamples.describe(ifd, sensor);
+        } catch (MediaException.Unsupported | MediaException.Malformed | MediaException.LimitExceeded _) {
+            return;
+        }
+        levels(ifd, sensor);
+        var area = raw.active();
+        var own = sensor.active();
+        var factorX = (double) (own[3] - own[1]) / (area[3] - area[1]);
+        var factorY = (double) (own[2] - own[0]) / (area[2] - area[0]);
+        if (sensor.defaultCrop == null && raw.defaultCrop != null) {
+            var crop = raw.defaultCrop;
+            sensor.defaultCrop = new double[]{crop[0] * factorX, crop[1] * factorY, crop[2] * factorX, crop[3] * factorY};
+        }
+        if (!ifd.has(50718)) {
+            sensor.scaleH = raw.scaleH;
+            sensor.scaleV = raw.scaleV;
+        }
+        if (sensor.opcodes3 == null && Math.abs(factorX - 1) < 1e-9 && Math.abs(factorY - 1) < 1e-9) {
+            sensor.opcodes3 = raw.opcodes3;
+        }
+        var crop = ifd.doubles(51125);
+        sensor.userCrop = crop != null ? userCrop(crop) : raw.userCrop;
+        file.enhanced = sensor;
+    }
+
+    /**
+     * Describes a reduced-resolution linear raw preview: an image of the raw image's default crop,
+     * whose values divided by its {@code RawToPreviewGain} are linear reference values. A preview
+     * whose data cannot be decoded is left out.
+     *
+     * @param ifd the preview's directory
+     * @param raw the raw image
+     * @param file the description to fill
+     */
+    private static void proxy(Ifd ifd, Sensor raw, RawFile file) {
+        var sensor = new Sensor();
+        try {
+            sensor.reader = TiffSamples.describe(ifd, sensor);
+        } catch (MediaException.Unsupported | MediaException.Malformed | MediaException.LimitExceeded _) {
+            return;
+        }
+        if (sensor.samplesPerPixel != 3 && sensor.samplesPerPixel != 1) {
+            return;
+        }
+        levels(ifd, sensor);
+        sensor.defaultCrop = null;
+        sensor.scaleH = 1;
+        sensor.scaleV = 1;
+        var gain = ifd.doubleValue(51112, 1);
+        sensor.gain = gain > 0 && Double.isFinite(gain) ? gain : 1;
+        var area = raw.active();
+        var width = area[3] - area[1];
+        var height = area[2] - area[0];
+        var crop = raw.defaultCrop != null ? raw.defaultCrop : new double[]{0, 0, width, height};
+        sensor.frame = new double[]{crop[0] / width, crop[1] / height, crop[2] / width, crop[3] / height};
+        sensor.userCrop = raw.userCrop;
+        file.proxies.add(sensor);
+    }
+
+    /**
+     * Validates a {@code DefaultUserCrop}.
+     *
+     * @param crop the top, left, bottom and right relative to the default crop, or {@code null}
+     * @return the crop, or {@code null} when absent, invalid or the whole default crop
+     */
+    static double[] userCrop(double[] crop) {
+        if (crop == null || crop.length < 4) {
+            return null;
+        }
+        for (var index = 0; index < 4; index++) {
+            if (!Double.isFinite(crop[index])) {
+                return null;
+            }
+        }
+        if (!(crop[0] >= 0 && crop[0] < crop[2] && crop[2] <= 1 && crop[1] >= 0 && crop[1] < crop[3] && crop[3] <= 1)) {
+            return null;
+        }
+        if (crop[0] == 0 && crop[1] == 0 && crop[2] == 1 && crop[3] == 1) {
+            return null;
+        }
+        return new double[]{crop[0], crop[1], crop[2], crop[3]};
+    }
+
+    /**
+     * Reads the extra camera profiles of the first directory ({@code ExtraCameraProfiles}); a
+     * profile that cannot be read is left out.
+     *
+     * @param first the first directory
+     * @param file the description to fill
+     */
+    private static void extraProfiles(Ifd first, RawFile file) {
+        var offsets = first.longs(50933);
+        if (offsets == null) {
+            return;
+        }
+        var reader = first.reader();
+        for (var index = 0; index < Math.min(offsets.length, MAX_PROFILES); index++) {
+            try {
+                var base = reader.base() + offsets[index];
+                var profileReader = TiffReader.open(reader.source(), base, reader.limits());
+                if (profileReader.u16(base + 2) != 0x4352) {
+                    continue;
+                }
+                var ifd = profileReader.directory(profileReader.firstDirectory());
+                var profile = new ColorCalibration();
+                profile(ifd, profile);
+                file.extraProfiles.add(profile);
+            } catch (MediaException.Malformed exception) {
+                // a profile that cannot be read is left out
+            }
+        }
+    }
+
+    /**
+     * Reads a UTF-8 string tag.
+     *
+     * @param ifd the directory
+     * @param tag the tag number
+     * @return the string up to its first NUL, or {@code null} when the tag is absent
+     */
+    private static String utf8(Ifd ifd, int tag) {
+        var data = ifd.bytes(tag);
+        if (data == null) {
+            return null;
+        }
+        var end = 0;
+        while (end < data.length && data[end] != 0) {
+            end++;
+        }
+        return new String(data, 0, end, StandardCharsets.UTF_8);
     }
 
     /**
@@ -132,9 +322,9 @@ final class DngParser {
 
     /**
      * Reads the active area, crop, scale, black and white levels, linearization table and opcode
-     * lists of the main image.
+     * lists of an image.
      *
-     * @param raw the main image's directory
+     * @param raw the image's directory
      * @param sensor the sensor description to fill
      */
     private static void levels(Ifd raw, Sensor sensor) {
@@ -216,24 +406,52 @@ final class DngParser {
     }
 
     /**
-     * Reads the camera profile of the first directory.
+     * Reads the shot's color tags of the first directory, which hold for every camera profile:
+     * analog balance, white balance, baseline exposure, camera calibration and its signature, and
+     * the gain table map of the raw directory ({@code ProfileGainTableMap}, which the specification
+     * also allows in the first directory) when the profile has no {@code ProfileGainTableMap2}.
      *
      * @param first the first directory
+     * @param raw the raw image's directory, or {@code null}
+     * @param color the color description to fill, its profile already read by {@link #profile}
+     */
+    static void shot(Ifd first, Ifd raw, ColorCalibration color) {
+        int[] calibrationTags = {50723, 50724, 52530};
+        color.cameraSignature = first.string(50931);
+        for (var index = 0; index < 3; index++) {
+            color.calibrationTags[index] = matrix(first.doubles(calibrationTags[index]));
+        }
+        color.keepCalibration();
+        color.analogBalance = first.doubles(50727);
+        color.asShotNeutral = first.doubles(50728);
+        color.asShotWhiteXy = first.doubles(50729);
+        color.baselineExposure = first.doubleValue(50730, 0) + color.exposureOffset;
+        // some cameras write the profile hint in the raw directory
+        if (raw != null && !first.has(51110) && raw.has(51110)) {
+            color.blackRender = raw.intValue(51110, 0) == 1 ? 1 : 0;
+        }
+        if (color.gainTableMap == null) {
+            var map = raw != null ? raw.bytes(52525) : null;
+            color.gainTableMap = GainTableMap.parse(map != null ? map : first.bytes(52525), false);
+        }
+    }
+
+    /**
+     * Reads a camera profile: from the first directory (the primary profile) or from a camera
+     * profile directory.
+     *
+     * @param first the directory holding the profile
      * @param color the color description to fill
      */
     static void profile(Ifd first, ColorCalibration color) {
         int[] matrixTags = {50721, 50722, 52531};
-        int[] calibrationTags = {50723, 50724, 52530};
         int[] forwardTags = {50964, 50965, 52532};
         int[] illuminantTags = {50778, 50779, 52529};
         int[] hueSatTags = {50938, 50939, 52537};
-        var cameraSignature = first.string(50931);
-        var profileSignature = first.string(50932);
-        var calibrationMatches = Objects.equals(cameraSignature == null ? "" : cameraSignature,
-                profileSignature == null ? "" : profileSignature);
+        color.profileSignature = first.string(50932);
+        color.profileName = utf8(first, 50936);
         for (var index = 0; index < 3; index++) {
             color.colorMatrix[index] = matrix(first.doubles(matrixTags[index]));
-            color.cameraCalibration[index] = calibrationMatches ? matrix(first.doubles(calibrationTags[index])) : null;
             color.forwardMatrix[index] = matrix(first.doubles(forwardTags[index]));
             color.illuminant[index] = first.intValue(illuminantTags[index], 0);
             if (color.illuminant[index] == 255) {
@@ -244,10 +462,12 @@ final class DngParser {
                 || color.illuminant[2] == 0)) {
             color.colorMatrix[2] = null;
         }
-        color.analogBalance = first.doubles(50727);
-        color.asShotNeutral = first.doubles(50728);
-        color.asShotWhiteXy = first.doubles(50729);
-        color.baselineExposure = first.doubleValue(50730, 0) + first.doubleValue(51109, 0);
+        color.exposureOffset = first.doubleValue(51109, 0);
+        color.blackRender = first.intValue(51110, 0) == 1 ? 1 : 0;
+        color.gainTableMap = GainTableMap.parse(first.bytes(52544), true);
+        color.rgbTables = RgbTables.parse(first.bytes(52543));
+        // TODO: read ProfileDynamicRange (52551) and render high-dynamic-range profiles over their extended
+        // range; their tables and curves apply as those of a standard-range profile
         var hueSatDims = first.longs(50937);
         if (hueSatDims != null && hueSatDims.length >= 3 && valid(hueSatDims)) {
             var cells = hueSatDims[0] * hueSatDims[1] * Math.max(1, hueSatDims[2]) * 3;

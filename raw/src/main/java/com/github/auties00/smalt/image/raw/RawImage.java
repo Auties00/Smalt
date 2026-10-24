@@ -38,6 +38,8 @@ public final class RawImage {
 
     private final double[] balancedToXyz;
 
+    private final CfaLayout layout;
+
     /**
      * Constructs an image; {@link RawDecoder} creates instances.
      *
@@ -47,10 +49,11 @@ public final class RawImage {
      * @param samples the 16-bit samples, row by row with the channels of a pixel interleaved; not copied
      * @param cfa the color filter array, or {@code null}
      * @param neutral the camera neutral
-     * @param balancedToXyz the white-balanced camera to XYZ matrix
+     * @param balancedToXyz the white-balanced camera to XYZ matrix, or an empty array
+     * @param layout the spatial layout of the color filter array
      */
     RawImage(int width, int height, int channels, short[] samples, CfaPattern cfa, double[] neutral,
-             double[] balancedToXyz) {
+             double[] balancedToXyz, CfaLayout layout) {
         this.width = width;
         this.height = height;
         this.channels = channels;
@@ -58,6 +61,7 @@ public final class RawImage {
         this.cfa = cfa;
         this.neutral = neutral.clone();
         this.balancedToXyz = balancedToXyz.clone();
+        this.layout = Objects.requireNonNull(layout, "layout");
     }
 
     /**
@@ -101,6 +105,16 @@ public final class RawImage {
     }
 
     /**
+     * {@return the spatial layout of the color filter array's photosites, aligned as
+     * {@link #cfaPattern()} is: {@link CfaLayout#RECTANGULAR} for most sensors and for linear raw and
+     * monochrome images, a staggered layout for sensors whose photosites are offset by half a row or
+     * column}
+     */
+    public CfaLayout cfaLayout() {
+        return layout;
+    }
+
+    /**
      * {@return a copy of the camera's response to a neutral under the shot's light (the white balance
      * the file records, scaled so its largest component is 1), one component per color plane: red,
      * green and blue, or the four colors of a four-color sensor in the order of the file's color
@@ -113,7 +127,8 @@ public final class RawImage {
     /**
      * {@return a copy of the matrix that maps white-balanced camera values (each channel divided by
      * {@link #cameraNeutral()}) to CIE XYZ relative to a D50 white, row by row: three rows of one
-     * column per color plane, nine values or twelve for a four-color sensor}
+     * column per color plane, nine values or twelve for a four-color sensor; empty for a four-color
+     * sensor whose file carries no color matrices when the options supply none}
      */
     public double[] balancedToXyz() {
         return balancedToXyz.clone();

@@ -36,6 +36,21 @@ class RawFuzzTest {
             .highBitDepth(true)
             .opcodes(false)
             .defaultCrop(false)
+            .enhancedImage(true)
+            .userCrop(true)
+            .autoBlack(true)
+            .build();
+
+    /**
+     * The rendering of the standard tone curve with the options that need it or the default crop: the automatic
+     * black subtraction, the user crop and the enhanced image.
+     */
+    private static final RawDecoderOptions PROFILED = RawDecoderOptions.builder()
+            .limits(Fuzz.LIMITS)
+            .highlights(RawHighlights.BLEND)
+            .enhancedImage(true)
+            .userCrop(true)
+            .autoBlack(true)
             .build();
 
     @FuzzTest
@@ -125,6 +140,7 @@ class RawFuzzTest {
         }
         if (run.sampled(data, 1, 3)) {
             run.step("render options", () -> RawDecoder.decode(MediaSource.of(data), RENDERED));
+            run.step("render profile options", () -> RawDecoder.decode(MediaSource.of(data), PROFILED));
         }
         if (run.sampled(data, 2, 3)) {
             run.step("thumbnail", () -> RawDecoder.decode(MediaSource.of(data), plain.toBuilder()
