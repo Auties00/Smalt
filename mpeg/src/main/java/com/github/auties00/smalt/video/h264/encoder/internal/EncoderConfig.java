@@ -1,8 +1,12 @@
 package com.github.auties00.smalt.video.h264.encoder.internal;
 
+import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.FieldOrder;
+import com.github.auties00.smalt.video.h264.encoder.H264FieldCoding;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderSpeed;
 import com.github.auties00.smalt.video.h264.encoder.H264Level;
@@ -43,12 +47,28 @@ import java.time.Duration;
  * @param realtime whether the encoder is tuned for interactive transmission
  * @param lookahead the number of pictures analyzed ahead of the one being coded
  * @param bFrames the number of consecutive B pictures between anchors
+ * @param chromaFormat the chroma format of the stream
+ * @param bitDepth the sample bit depth, from 8 to 14
+ * @param lossless whether the stream is coded losslessly
+ * @param fieldOrder the field order of the input, {@link FieldOrder#PROGRESSIVE} for frames
+ * @param fieldCoding how interlaced frames are coded
+ * @param slices the number of slices per picture, from 1 to 256
+ * @param maxSliceBytes the largest slice NAL unit in bytes, or 0 for no limit
+ * @param intraRefresh the intra refresh period in frames, or 0 for none
+ * @param temporalLayers the number of temporal layers, from 1 to 4
+ * @param sampleAspectRatio the sample aspect ratio
+ * @param fixedFrameRate whether the stream declares a fixed frame rate
+ * @param limits the allocation limits
+ * @param cavlc whether a profile above Constrained Baseline codes with CAVLC
  */
 public record EncoderConfig(int width, int height, Rational frameRate, Rational timeBase, H264Profile profile,
                             int level, H264RateControl rateControl, int bitrate, int maxBitrate, int bufferSize,
                             int quality, int keyframeInterval, H264EncoderSpeed speed, ColorInfo color, int threads,
                             H264PacketFormat packetFormat, int minQuantizer, int maxQuantizer, boolean realtime,
-                            int lookahead, int bFrames) {
+                            int lookahead, int bFrames, ChromaFormat chromaFormat, int bitDepth, boolean lossless,
+                            FieldOrder fieldOrder, H264FieldCoding fieldCoding, int slices, int maxSliceBytes,
+                            int intraRefresh, int temporalLayers, Rational sampleAspectRatio,
+                            boolean fixedFrameRate, MediaLimits limits, boolean cavlc) {
     /**
      * The largest accepted picture side in pixels.
      */
@@ -90,7 +110,18 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
                 options.level().map(H264Level::levelIdc).orElse(0), rateControl, bitrate, maxBitrate, bufferSize,
                 options.quality(), options.keyframeInterval().orElse(0), options.speed(), options.color(),
                 options.threads(), options.packetFormat(), options.minQuantizer(), options.maxQuantizer(),
-                options.realtime(), options.lookahead(), options.bFrames());
+                options.realtime(), options.lookahead(), options.bFrames(), options.chromaFormat(),
+                options.bitDepth(), options.lossless(), options.fieldOrder(), options.fieldCoding(), options.slices(),
+                options.maxSliceBytes().orElse(0), options.intraRefresh().orElse(0), options.temporalLayers(),
+                options.sampleAspectRatio(), options.fixedFrameRate(), options.limits(), options.cavlc());
+    }
+
+    /**
+     * {@return whether the stream needs the extended engine: samples deeper than 8 bits, a chroma format
+     * other than 4:2:0, lossless coding or interlaced coding}
+     */
+    public boolean extended() {
+        return bitDepth > 8 || chromaFormat != ChromaFormat.YUV420 || lossless || fieldOrder.isInterlaced();
     }
 
     /**

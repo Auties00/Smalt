@@ -2,12 +2,15 @@ package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
 import com.github.auties00.smalt.internal.io.FourCc;
+import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -23,8 +26,8 @@ import java.util.Optional;
 
 /**
  * Writes fragmented ISO base media files (ISO/IEC 14496-12 clause 8.8), including CMAF track
- * files, from the packets of the codecs {@link Mp4Muxer} supports: H.264, HEVC, VP9, AV1, AAC,
- * Opus, MP3, ALAC and FLAC.
+ * files, from the packets of the codecs {@link #supports} lists: those {@link Mp4Muxer} writes in
+ * an MP4 file, text subtitles included, and ProRes and DNxHD.
  *
  * <p>The output starts with an initialization segment, {@code ftyp} and a {@code moov} whose
  * sample tables are empty and whose {@code mvex} declares every track, and continues with one
@@ -35,6 +38,12 @@ import java.util.Optional;
  * samples contiguously in declaration order. Fragments are cut as
  * {@link FragmentedMp4MuxerOptions} describes. The initialization segment is written with the
  * first fragment, so that configurations derived from the first key frame (VP9, AV1) are known.
+ * Sample descriptions are those of {@link Mp4Muxer}: a declared color description becomes a
+ * {@code colr} box, with the {@code mdcv} and {@code clli} boxes of its high-dynamic-range
+ * metadata. The packets of a text subtitle track become gapless samples as {@link Mp4Muxer}
+ * writes them (cues cut at their boundaries, TTML documents one per sample); a sample is written
+ * once the boundaries that end it are known, so a text track's samples can reach a later fragment
+ * than the media they overlap, with their own {@code tfdt}.
  *
  * <p>Timing. Each track's media timescale is the denominator of its time base, and its decoding
  * times are the packets' decoding times moved so that the first is zero, or the first decoding
@@ -72,7 +81,12 @@ import java.util.Optional;
  * output still goes strictly in order to any {@link MediaSink}; {@link #indexLayout()} then gives
  * the byte ranges a DASH {@code SegmentBase} (its {@code Initialization range} and
  * {@code indexRange}) or an HLS byte-range playlist needs. This layout needs a {@link MediaSink}
- * output and at most 65535 fragments.
+ * output. Up to 65535 fragments are referenced from one {@code sidx}; a longer file gets a
+ * hierarchical index (ISO/IEC 14496-12 clause 8.16.3): {@code sidx} boxes that each reference a
+ * group of consecutive fragments sit before those fragments, and the first {@code sidx} references
+ * them, with as many levels as it takes for every reference to fit its 31-bit size and 32-bit
+ * duration and every {@code sidx} its 65535 references; {@link #indexLayout()} then describes the
+ * first {@code sidx}, from which a reader follows the others.
  *
  * <p>Instances are not thread-safe.
  *
@@ -99,12 +113,13 @@ public final class FragmentedMp4Muxer implements Muxer {
      * {@code SegmentBase} addressing needs it.
      *
      * <p>Offsets count from the first byte the muxer wrote: the initialization segment
-     * ({@code ftyp} and {@code moov}) spans {@code [0, initializationSize)}, the {@code sidx}
-     * {@code [indexOffset, indexOffset + indexSize)}, and the subsegments follow it in order.
+     * ({@code ftyp} and {@code moov}) spans {@code [0, initializationSize)}, the first
+     * {@code sidx} {@code [indexOffset, indexOffset + indexSize)}, and the subsegments follow it in
+     * order, with the {@code sidx} boxes of a hierarchical index between them.
      *
      * @param initializationSize the size of {@code ftyp} and {@code moov} in bytes
-     * @param indexOffset the offset of the {@code sidx}, equal to the initialization size
-     * @param indexSize the size of the {@code sidx} in bytes
+     * @param indexOffset the offset of the first {@code sidx}, equal to the initialization size
+     * @param indexSize the size of the first {@code sidx} in bytes
      * @param subsegments the fragments the {@code sidx} references, in order
      */
     public record IndexLayout(long initializationSize, long indexOffset, long indexSize, List<Subsegment> subsegments) {
@@ -125,6 +140,11 @@ public final class FragmentedMp4Muxer implements Muxer {
      * The largest number of references of one {@code sidx}.
      */
     private static final int MAX_INDEX_REFERENCES = 0xFFFF;
+
+    /**
+     * The largest {@code referenced_size} of a {@code sidx} reference, a 31-bit field.
+     */
+    private static final long MAX_REFERENCED_SIZE = 0x7FFFFFFFL;
 
     /**
      * The fragment size at which a fragment is cut whatever its duration or the next key frame.
@@ -183,6 +203,11 @@ public final class FragmentedMp4Muxer implements Muxer {
     private final List<FragmentTrack> tracks = new ArrayList<>();
 
     /**
+     * The sample writers of the text subtitle tracks, which turn cue packets into samples.
+     */
+    private final List<TextSamples> textTracks = new ArrayList<>();
+
+    /**
      * The track that decides fragment boundaries and indexes: the first video track, or the
      * first track.
      */
@@ -222,6 +247,11 @@ public final class FragmentedMp4Muxer implements Muxer {
      * The {@code udta} box the tags were encoded to, empty without tags.
      */
     private byte[] userData = new byte[0];
+
+    /**
+     * The tags of {@link #setTags(MediaTags)}, whose track tags go in the {@code trak} boxes.
+     */
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether a packet was accepted.
@@ -310,21 +340,33 @@ public final class FragmentedMp4Muxer implements Muxer {
      * Returns whether fragmented MP4 files can carry a codec.
      *
      * @param codec the codec to look up
-     * @return {@code true} for H.264, HEVC, VP9, AV1, AAC, Opus, MP3, ALAC, FLAC, AMR-NB, AMR-WB,
-     * AC-3 and E-AC-3
+     * @return {@code true} for the codecs {@link Mp4Muxer#supports} lists for the
+     * {@link Mp4MuxerOptions.Brand#MP4} brand (H.264, HEVC, VP8, VP9, AV1, MPEG-4 Part 2, H.263,
+     * Motion-JPEG, Motion JPEG 2000, AAC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB, AMR-WB, AC-3, E-AC-3, the 16-, 24-
+     * and 32-bit integer and 32- and 64-bit float PCM formats, {@link Codec#MOV_TEXT},
+     * {@link Codec#WEBVTT} and {@link Codec#TTML}), and for ProRes and DNxHD
      */
     public static boolean supports(Codec codec) {
-        return switch (Objects.requireNonNull(codec, "codec")) {
-            case H264, HEVC, VP9, AV1, AAC, OPUS, MP3, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
-            default -> false;
-        };
+        Objects.requireNonNull(codec, "codec");
+        return codec == Codec.PRORES || codec == Codec.DNXHD || Mp4Muxer.supports(Mp4MuxerOptions.Brand.MP4, codec);
     }
 
     /**
      * {@inheritDoc}
      *
+     * <p>The sample descriptions are those {@link Mp4Muxer#addTrack} writes with the
+     * {@link Mp4MuxerOptions.Brand#MP4} brand (ProRes and DNxHD as in a QuickTime file), and the
+     * packets of a text subtitle track become gapless samples the same way: cues are cut into
+     * samples, TTML documents are stored one per sample with empty documents in the gaps. A
+     * sample belongs to the fragment it starts in. A PCM track stores
+     * each packet as one sample of its frames; the frames follow each other without gaps from the
+     * first packet's timestamp.
+     *
      * @throws IllegalArgumentException if the id is already used, the codec is not supported, the
-     * configuration it needs is missing, or a CMAF file would get a second track
+     * configuration it needs is missing, a TTML configuration is malformed or a DNxHD configuration
+     * holds anything but Avid sample description extensions after its sample entry type, a PCM
+     * track has no sampling rate or channel layout, an AMR track has more than one channel, or a CMAF file
+     * would get a second track
      */
     @Override
     public void addTrack(Track track) {
@@ -347,6 +389,9 @@ public final class FragmentedMp4Muxer implements Muxer {
         MovieHeaderWriter.validateConfig(track);
         tracks.add(new FragmentTrack(new MuxTrack(track, tracks.size() + 1),
                 options.brand() == FragmentedMp4MuxerOptions.Brand.CMAF));
+        if (TextSamples.handles(codec)) {
+            textTracks.add(new TextSamples(track.id(), codec, this::acceptTextSample));
+        }
     }
 
     /**
@@ -364,7 +409,12 @@ public final class FragmentedMp4Muxer implements Muxer {
      *
      * <p>The tags become a {@code udta} box at the end of the initialization segment's
      * {@code moov}: an iTunes {@code ilst} with cover art in {@code covr}, and a Nero {@code chpl}
-     * box for the chapters.
+     * box for the chapters. The iTunes integer atoms ({@code tmpo}, {@code rtng}, {@code stik} and
+     * the others {@link Mp4Muxer#setTags(MediaTags)} lists) take decimal values. The track tags go in
+     * the {@code trak} boxes and the enabled flags of their {@code tkhd}, as {@code Mp4Muxer} writes them.
+     *
+     * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
+     * the atom holds
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -372,7 +422,13 @@ public final class FragmentedMp4Muxer implements Muxer {
         if (started || initialized || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
+        // TODO: also write the chapters as a QuickTime chapter track, its samples in the first fragment.
         this.userData = MuxerTags.mp4UserData(tags);
+        for (var track : tags.tracks()) {
+            // the track boxes are written with the initialization segment, but their values are checked now
+            Mp4TrackMetadata.userData(track);
+        }
+        this.tags = tags;
     }
 
     /**
@@ -384,7 +440,12 @@ public final class FragmentedMp4Muxer implements Muxer {
      * presentation-timed throughout.
      *
      * @throws IllegalArgumentException if the track was not declared, its decoding timestamps
-     * decrease, or a timestamp overflows the media timescale
+     * decrease, a timestamp overflows the media timescale, the packet of a PCM track does not
+     * hold a whole number of frames, or the packet of a TTML track starts before zero or before
+     * the previous one ends
+     * @throws MediaException.Unsupported if the packet changes the codec configuration, which the
+     * initialization segment fixes, or a fragment it completes is too large for its per-fragment
+     * segment index reference
      */
     @Override
     public void writePacket(Packet packet) {
@@ -392,6 +453,39 @@ public final class FragmentedMp4Muxer implements Muxer {
         if (finished) {
             throw new IllegalStateException("the muxer is finished");
         }
+        for (var text : textTracks) {
+            if (text.trackId() == packet.trackId()) {
+                for (var candidate : tracks) {
+                    if (candidate.media.track.id() == packet.trackId()) {
+                        ConfigChanges.reject(packet, candidate.media.config, "fragmented MP4");
+                    }
+                }
+                text.offer(packet);
+                return;
+            }
+        }
+        accept(packet);
+    }
+
+    /**
+     * Adds one sample of a text subtitle track, as {@link TextSamples} produces it.
+     *
+     * @param trackId the track identifier
+     * @param data the sample, a new array
+     * @param time the sample time
+     * @param duration the sample duration
+     */
+    private void acceptTextSample(int trackId, byte[] data, long time, long duration) {
+        accept(new Packet(trackId, data, time, time, duration, true));
+    }
+
+    /**
+     * Adds a packet, or a text sample, to the fragment being assembled, cutting the fragment
+     * first when the packet starts a new one.
+     *
+     * @param packet the packet of a declared track
+     */
+    private void accept(Packet packet) {
         FragmentTrack track = null;
         for (var candidate : tracks) {
             if (candidate.media.track.id() == packet.trackId()) {
@@ -400,6 +494,10 @@ public final class FragmentedMp4Muxer implements Muxer {
         }
         if (track == null) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
+        }
+        ConfigChanges.reject(packet, track.media.config, "fragmented MP4");
+        if (track.media.codec() == Codec.PRORES && !Mp4Muxer.hasProResPrefix(packet.data())) {
+            packet = packet.withData(Mp4Muxer.withProResPrefix(packet.data()));
         }
         if (!started) {
             started = true;
@@ -432,10 +530,10 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @param sample the sample about to be added
      * @param micros its decoding time in microseconds
      * @return {@code true} when the fragment reached its duration (at a reference key frame, when
-     * fragments are aligned) or its size limit
+     * fragments are aligned), or the sample would take it past its size limit
      */
     private boolean shouldCut(FragmentTrack track, Sample sample, long micros) {
-        if (pendingBytes >= MAX_FRAGMENT_BYTES) {
+        if (pendingBytes + sample.data.length > MAX_FRAGMENT_BYTES) {
             return true;
         }
         var longEnough = micros - fragmentStartMicros >= options.fragmentMicros();
@@ -453,12 +551,18 @@ public final class FragmentedMp4Muxer implements Muxer {
      *
      * @throws IllegalStateException if the muxer is already finished, or a VP9 or AV1 track has no
      * configuration and no key frame it can be derived from
-     * @throws MediaException.Unsupported if a fragment is too large for a single segment index
+     * @throws MediaException.Unsupported if a fragment is too large for a segment index reference
+     * (more than {@code 2^31 - 1} bytes, or more than {@code 2^32 - 1} ticks of the reference
+     * track), or a single segment index of more than 65535 fragments cannot group them under
+     * references that each fit those limits
      */
     @Override
     public void finish() {
         if (finished) {
             throw new IllegalStateException("the muxer is already finished");
+        }
+        for (var text : textTracks) {
+            text.finish();
         }
         finished = true;
         if (pendingSamples > 0) {
@@ -571,8 +675,15 @@ public final class FragmentedMp4Muxer implements Muxer {
         writer.begin(BoxTypes.MOOV);
         MovieHeaderWriter.writeMovieHeader(writer, movieTimescale, 0, tracks.size() + 1);
         var patchable = output != null && output.isSeekable();
+        var kinds = new ArrayList<TrackKind>();
+        var described = new ArrayList<TrackTags>();
         for (var track : tracks) {
-            writeTrack(writer, track, patchable);
+            kinds.add(track.media.kind());
+            described.add(tags.track(track.media.track.id()).orElse(null));
+        }
+        var enabled = Mp4TrackMetadata.enabled(kinds, described);
+        for (var index = 0; index < tracks.size(); index++) {
+            writeTrack(writer, tracks.get(index), patchable, enabled[index], described.get(index));
         }
         writer.begin(BoxTypes.MVEX);
         if (patchable) {
@@ -617,11 +728,14 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @param writer the destination of the box
      * @param track the track the box describes
      * @param patchable whether the edit list duration is patched by {@link #finish()}
+     * @param enabled whether the track is enabled
+     * @param described the tags of the track, or {@code null}
      */
-    private void writeTrack(BoxWriter writer, FragmentTrack track, boolean patchable) {
+    private void writeTrack(BoxWriter writer, FragmentTrack track, boolean patchable, boolean enabled,
+                            TrackTags described) {
         var media = track.media;
         writer.begin(BoxTypes.TRAK);
-        MovieHeaderWriter.writeTrackHeader(writer, media, 0);
+        MovieHeaderWriter.writeTrackHeader(writer, media, 0, enabled);
         var mediaTime = track.mediaTime();
         if (mediaTime > 0) {
             writer.begin(BoxTypes.EDTS);
@@ -637,6 +751,9 @@ public final class FragmentedMp4Muxer implements Muxer {
             writer.end();
         }
         MovieHeaderWriter.writeMedia(writer, media, 0, table -> writeEmptySampleTable(table, media));
+        if (described != null) {
+            writer.bytes(Mp4TrackMetadata.userData(described));
+        }
         writer.end();
     }
 
@@ -757,8 +874,12 @@ public final class FragmentedMp4Muxer implements Muxer {
             prefix.u64(0);
             prefix.u16(0);
             prefix.u16(1);
-            prefix.u32(Math.min(moof.size() + mdatHeader + dataSize, 0x7FFFFFFFL));
-            prefix.u32(Math.min(duration, 0xFFFFFFFFL));
+            var referenced = moof.size() + mdatHeader + dataSize;
+            if (referenced > MAX_REFERENCED_SIZE || duration > 0xFFFFFFFFL) {
+                throw new MediaException.Unsupported("sidx", "fragment " + sequence + " is too large for a segment index");
+            }
+            prefix.u32(referenced);
+            prefix.u32(duration);
             prefix.u32(indexRun.samples[0].key ? 0x90000000L : 0);
             prefix.end();
         }
@@ -829,17 +950,11 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @param startMicros the earliest presentation time of the fragment, in microseconds
      * @param durationMicros the duration of the fragment on the reference track, in microseconds
      * @param independent whether the fragment starts with a key frame of every video track
-     * @throws MediaException.Unsupported if the file already holds the most fragments one
-     * {@code sidx} can reference
      */
     private void spoolFragment(List<Run> runs, Run indexRun, BoxWriter moof, BoxWriter mdat, long startMicros,
                                long durationMicros, boolean independent) {
         if (spool == null) {
             spool = new MdatSpool(options.temporaryDirectory().orElse(null));
-        }
-        if (spooledCount == MAX_INDEX_REFERENCES) {
-            throw new MediaException.Unsupported("sidx", "a single segment index references at most "
-                    + MAX_INDEX_REFERENCES + " fragments");
         }
         var offset = spool.size();
         for (var trafIndex = 0; trafIndex < runs.size(); trafIndex++) {
@@ -877,49 +992,267 @@ public final class FragmentedMp4Muxer implements Muxer {
     /**
      * Writes the single segment index after the initialization segment, then the spooled
      * fragments, and records the layout.
+     *
+     * <p>Up to {@value #MAX_INDEX_REFERENCES} fragments are referenced by one {@code sidx}. Beyond
+     * that, the index is hierarchical (ISO/IEC 14496-12 clause 8.16.3): consecutive fragments are
+     * grouped under {@code sidx} boxes placed right before them, each group small enough for its
+     * size to fit the 31-bit {@code referenced_size} and its duration the 32-bit
+     * {@code subsegment_duration} of a reference, and the top {@code sidx} references the groups
+     * with {@code reference_type} 1, adding levels until it needs at most
+     * {@value #MAX_INDEX_REFERENCES} references. A reference to a group declares that it starts
+     * with a stream access point only when every fragment of the group does.
+     *
+     * @throws MediaException.Unsupported if one fragment is larger than {@code 2^31 - 1} bytes or
+     * lasts more than {@code 2^32 - 1} ticks of the reference track's timescale, or the fragments
+     * are so long that groups of them cannot reduce the references to
+     * {@value #MAX_INDEX_REFERENCES}
      */
     private void writeSingleIndex() {
         var initializationSize = output.position() - base;
-        var writer = new BoxWriter(32 + 12 * spooledCount);
-        writer.beginFull(BoxTypes.SIDX, 1, 0);
-        writer.u32(reference == null ? 1 : reference.media.number);
-        writer.u32(reference == null ? MOVIE_TIMESCALE : reference.media.timescale);
-        writer.u64(spooledCount == 0 ? 0 : spooled[2]);
-        writer.u64(0);
-        writer.u16(0);
-        writer.u16(spooledCount);
+        var leaves = new IndexLevel(spooledCount, false);
         for (var index = 0; index < spooledCount; index++) {
             var at = 7 * index;
-            if (spooled[at + 1] > 0x7FFFFFFFL || spooled[at + 3] > 0xFFFFFFFFL) {
+            if (spooled[at + 1] > MAX_REFERENCED_SIZE || spooled[at + 3] > 0xFFFFFFFFL) {
                 throw new MediaException.Unsupported("sidx", "fragment " + (index + 1) + " is too large for a segment index");
             }
-            writer.u32(spooled[at + 1]);
-            writer.u32(spooled[at + 3]);
-            writer.u32((spooled[at + 6] & 2) != 0 ? 0x90000000L : 0);
+            leaves.sizes[index] = spooled[at + 1];
+            leaves.durations[index] = spooled[at + 3];
+            leaves.earliest[index] = spooled[at + 2];
+            leaves.sap[index] = (spooled[at + 6] & 2) != 0;
         }
-        writer.end();
-        output.write(ByteBuffer.wrap(writer.buffer(), 0, writer.size()));
-        var dataOffset = initializationSize + writer.size();
+        var levels = IndexLevel.tree(leaves);
+        var top = levels.size() - 1;
+        var root = indexBox(levels.get(top), 0, levels.get(top).count, top > 0, spooledCount == 0 ? 0 : spooled[2]);
+        output.write(ByteBuffer.wrap(root.buffer(), 0, root.size()));
+        var leafOffsets = new long[spooledCount];
+        var written = new long[]{initializationSize + root.size()};
+        for (var node = 0; node < levels.get(top).count; node++) {
+            writeIndexNode(levels, top, node, leafOffsets, written);
+        }
         var subsegments = new ArrayList<Subsegment>(spooledCount);
+        var spoolOffsets = new long[spooledCount];
         for (var index = 0; index < spooledCount; index++) {
             var at = 7 * index;
-            subsegments.add(new Subsegment(dataOffset + spooled[at], spooled[at + 1], spooled[at + 4], spooled[at + 5],
+            spoolOffsets[index] = spooled[at];
+            subsegments.add(new Subsegment(leafOffsets[index], spooled[at + 1], spooled[at + 4], spooled[at + 5],
                     (spooled[at + 6] & 1) != 0));
         }
         for (var track : tracks) {
             for (var index = 0; index < track.randomAccessCount; index++) {
-                track.randomAccess[3 * index + 1] += dataOffset;
+                var leaf = Arrays.binarySearch(spoolOffsets, track.randomAccess[3 * index + 1]);
+                track.randomAccess[3 * index + 1] = leafOffsets[leaf];
             }
         }
         if (spool != null) {
-            try {
-                spool.transferTo(output);
-            } finally {
-                spool.close();
-                spool = null;
-            }
+            spool.close();
+            spool = null;
         }
-        layout = new IndexLayout(initializationSize, initializationSize, writer.size(), subsegments);
+        layout = new IndexLayout(initializationSize, initializationSize, root.size(), subsegments);
+    }
+
+    /**
+     * Writes one node of a segment index tree: a fragment copied from the spool, or the
+     * {@code sidx} of a group followed by the nodes it references.
+     *
+     * @param levels the levels of the tree, fragments first
+     * @param level the level of the node
+     * @param node the index of the node in its level
+     * @param leafOffsets receives the offset of each fragment from the first byte the muxer wrote
+     * @param written the offset of the next byte from the first byte the muxer wrote, in its only
+     * element
+     */
+    private void writeIndexNode(List<IndexLevel> levels, int level, int node, long[] leafOffsets, long[] written) {
+        if (level == 0) {
+            leafOffsets[node] = written[0];
+            spool.transferTo(output, spooled[7 * node], spooled[7 * node + 1]);
+            written[0] += spooled[7 * node + 1];
+            return;
+        }
+        var group = levels.get(level);
+        var first = group.firstChild[node];
+        var box = indexBox(levels.get(level - 1), first, group.childCount[node], level > 1, group.earliest[node]);
+        output.write(ByteBuffer.wrap(box.buffer(), 0, box.size()));
+        written[0] += box.size();
+        for (var child = first; child < first + group.childCount[node]; child++) {
+            writeIndexNode(levels, level - 1, child, leafOffsets, written);
+        }
+    }
+
+    /**
+     * Serializes a version 1 {@code sidx} whose references are consecutive nodes of one level.
+     *
+     * @param level the level of the referenced nodes
+     * @param first the index of the first referenced node
+     * @param count the number of references, at most {@value #MAX_INDEX_REFERENCES}
+     * @param indexes whether the references are to {@code sidx} boxes ({@code reference_type} 1)
+     * @param earliest the earliest presentation time of the referenced material, in the reference
+     * track's timescale
+     * @return the box
+     */
+    private BoxWriter indexBox(IndexLevel level, int first, int count, boolean indexes, long earliest) {
+        var writer = new BoxWriter(IndexLevel.boxSize(count));
+        writer.beginFull(BoxTypes.SIDX, 1, 0);
+        writer.u32(reference == null ? 1 : reference.media.number);
+        writer.u32(reference == null ? MOVIE_TIMESCALE : reference.media.timescale);
+        writer.u64(earliest);
+        writer.u64(0);
+        writer.u16(0);
+        writer.u16(count);
+        for (var node = first; node < first + count; node++) {
+            writer.u32((indexes ? 0x80000000L : 0) | level.sizes[node]);
+            writer.u32(level.durations[node]);
+            writer.u32(level.sap[node] ? 0x90000000L : 0);
+        }
+        writer.end();
+        return writer;
+    }
+
+    /**
+     * Holds one level of a segment index tree: the fragments, or the groups of nodes of the level
+     * below that one {@code sidx} each references.
+     */
+    static final class IndexLevel {
+        /**
+         * The number of nodes.
+         */
+        final int count;
+
+        /**
+         * The size of each node in bytes, its {@code sidx} included for a group.
+         */
+        final long[] sizes;
+
+        /**
+         * The duration of each node in the reference track's timescale.
+         */
+        final long[] durations;
+
+        /**
+         * The earliest presentation time of each node in the reference track's timescale.
+         */
+        final long[] earliest;
+
+        /**
+         * Whether each node starts with a stream access point.
+         */
+        final boolean[] sap;
+
+        /**
+         * The index of the first node of the level below in each group, or {@code null} for the
+         * fragments.
+         */
+        final int[] firstChild;
+
+        /**
+         * The number of nodes of the level below in each group, or {@code null} for the fragments.
+         */
+        final int[] childCount;
+
+        /**
+         * Constructs a level.
+         *
+         * @param count the number of nodes
+         * @param groups whether the nodes are groups rather than fragments
+         */
+        IndexLevel(int count, boolean groups) {
+            this.count = count;
+            this.sizes = new long[count];
+            this.durations = new long[count];
+            this.earliest = new long[count];
+            this.sap = new boolean[count];
+            this.firstChild = groups ? new int[count] : null;
+            this.childCount = groups ? new int[count] : null;
+        }
+
+        /**
+         * Returns the size of a version 1 {@code sidx} box.
+         *
+         * @param references the number of references
+         * @return the size in bytes
+         */
+        static int boxSize(int references) {
+            return 40 + 12 * references;
+        }
+
+        /**
+         * Builds the levels of a segment index tree over the fragments: the fragments, then
+         * levels of {@linkplain #group() groups} until the top level has at most
+         * {@value #MAX_INDEX_REFERENCES} nodes.
+         *
+         * @param leaves the level of the fragments
+         * @return the levels, fragments first
+         * @throws MediaException.Unsupported if a node is too large to fit in a group alone, or a
+         * level cannot be grouped into fewer nodes
+         */
+        static List<IndexLevel> tree(IndexLevel leaves) {
+            var levels = new ArrayList<IndexLevel>();
+            levels.add(leaves);
+            while (levels.getLast().count > MAX_INDEX_REFERENCES) {
+                var groups = levels.getLast().group();
+                if (groups.count == levels.getLast().count) {
+                    throw new MediaException.Unsupported("sidx", "the " + leaves.count
+                            + " fragments are too long to be grouped under segment index references");
+                }
+                levels.add(groups);
+            }
+            return levels;
+        }
+
+        /**
+         * Groups the nodes of this level, in order and greedily, into the fewest groups that one
+         * reference each can describe: at most {@value #MAX_INDEX_REFERENCES} nodes, a total size,
+         * the group's {@code sidx} included, of at most {@code 2^31 - 1} bytes, and a total
+         * duration of at most {@code 2^32 - 1} ticks. A group starts with a stream access point
+         * when each of its nodes does, the meaning of {@code starts_with_SAP} in a reference to a
+         * {@code sidx} (ISO/IEC 14496-12 clause 8.16.3.3).
+         *
+         * @return the level of the groups
+         * @throws MediaException.Unsupported if a node is too large to fit in a group alone
+         */
+        IndexLevel group() {
+            var firsts = new int[count];
+            var counts = new int[count];
+            var groups = 0;
+            var node = 0;
+            while (node < count) {
+                var size = 0L;
+                var duration = 0L;
+                var members = 0;
+                while (node + members < count && members < MAX_INDEX_REFERENCES
+                        && boxSize(members + 1) + size + sizes[node + members] <= MAX_REFERENCED_SIZE
+                        && duration + durations[node + members] <= 0xFFFFFFFFL) {
+                    size += sizes[node + members];
+                    duration += durations[node + members];
+                    members++;
+                }
+                if (members == 0) {
+                    throw new MediaException.Unsupported("sidx", "a segment index group cannot hold node " + node);
+                }
+                firsts[groups] = node;
+                counts[groups] = members;
+                groups++;
+                node += members;
+            }
+            var result = new IndexLevel(groups, true);
+            for (var group = 0; group < groups; group++) {
+                var first = firsts[group];
+                result.firstChild[group] = first;
+                result.childCount[group] = counts[group];
+                result.earliest[group] = earliest[first];
+                var size = (long) boxSize(counts[group]);
+                var duration = 0L;
+                var startsWithSap = true;
+                for (var member = first; member < first + counts[group]; member++) {
+                    size += sizes[member];
+                    duration += durations[member];
+                    startsWithSap &= sap[member];
+                }
+                result.sap[group] = startsWithSap;
+                result.sizes[group] = size;
+                result.durations[group] = duration;
+            }
+            return result;
+        }
     }
 
     /**
@@ -1270,14 +1603,35 @@ public final class FragmentedMp4Muxer implements Muxer {
          * @throws IllegalArgumentException if the decoding timestamps decrease or overflow
          */
         Sample toSample(Packet packet) {
+            var pcm = media.pcmFrameBytes > 0;
             if (!seen) {
-                ptsOnly = packet.dts() == Packet.NO_TIMESTAMP && packet.pts() != Packet.NO_TIMESTAMP;
+                ptsOnly = !pcm && packet.dts() == Packet.NO_TIMESTAMP && packet.pts() != Packet.NO_TIMESTAMP;
             }
-            var declared = packet.duration() > 0 ? media.toMedia(packet.duration()) : 0;
+            long declared;
+            if (pcm) {
+                if (packet.size() == 0 || packet.size() % media.pcmFrameBytes != 0) {
+                    throw new IllegalArgumentException("a packet of PCM track " + media.track.id() + " holds "
+                            + packet.size() + " bytes, not a whole number of " + media.pcmFrameBytes + "-byte frames");
+                }
+                declared = packet.size() / media.pcmFrameBytes;
+            } else {
+                declared = packet.duration() > 0 ? media.toMedia(packet.duration()) : 0;
+            }
             var step = lastDeclared > 0 ? lastDeclared : Math.max(lastDuration, 0);
             long dts;
             long pts;
-            if (ptsOnly) {
+            if (pcm) {
+                if (seen) {
+                    dts = lastDts + lastDeclared;
+                } else {
+                    var first = packet.dts() != Packet.NO_TIMESTAMP ? packet.dts() : packet.pts();
+                    dts = first == Packet.NO_TIMESTAMP ? 0 : media.toMedia(first);
+                }
+                pts = dts;
+                if (!pending.isEmpty()) {
+                    pending.getLast().duration = dts - pending.getLast().dts;
+                }
+            } else if (ptsOnly) {
                 pts = packet.pts() != Packet.NO_TIMESTAMP ? media.toMedia(packet.pts()) : lastPts + step;
                 dts = pts;
             } else {

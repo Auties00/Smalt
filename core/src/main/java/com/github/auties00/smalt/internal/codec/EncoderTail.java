@@ -105,7 +105,8 @@ public final class EncoderTail implements Consumer<Packet> {
 
     /**
      * Returns a track builder describing an encoder's output: its codec, a time base of one
-     * sample, its configuration, rate and layout, and its delay as the samples to skip.
+     * sample, its configuration, rate and layout, and its delay as the samples to skip, except for
+     * an Opus stream, whose {@code OpusHead} pre-skip carries the delay in band.
      *
      * @param encoder the encoder whose output the track carries
      * @param trackId the track identifier
@@ -119,7 +120,8 @@ public final class EncoderTail implements Consumer<Packet> {
                 .codecConfig(encoder.codecConfig().orElse(null))
                 .sampleRate(encoder.sampleRate())
                 .layout(encoder.layout())
-                .skipSamples(encoder.delay());
+                .skipSamples(encoder.codec() == Codec.OPUS && encoder.codecConfig().isPresent()
+                        ? 0 : encoder.delay());
     }
 
     /**
