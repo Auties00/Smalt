@@ -21,7 +21,12 @@ import java.util.OptionalInt;
  * {@link com.github.auties00.smalt.audio.AudioEncoders} finds for {@link #codec()}, configured through
  * {@link com.github.auties00.smalt.audio.AudioEncoderOptions} with {@link #bitrate()}. The output
  * sample format is the codec's: the samples are processed as 32-bit floats and a PCM codec
- * ({@link Codec#PCM_S16LE}, {@link Codec#PCM_F32LE} and the others) picks the stored format.
+ * ({@link Codec#PCM_S16LE}, {@link Codec#PCM_F32LE} and the others) picks the stored format. A stream
+ * whose samples the options leave unchanged (same rate and layout, no gain, no loudness
+ * normalization), decoded from a codec of integer samples (FLAC, ALAC, integer PCM) and encoded to
+ * one (FLAC, PCM), skips the floats: its integers reach the encoder bit for bit, so a FLAC or ALAC
+ * source of any sample size up to 32 bits re-encodes to FLAC losslessly. Such a stream encoded to
+ * PCM from another source travels as 64-bit floats, so 64-bit float PCM re-encodes exactly.
  */
 public final class AudioTranscodeOptions {
     /**
@@ -70,6 +75,8 @@ public final class AudioTranscodeOptions {
      */
     private final LoudnessNormalization loudnessNormalization;
 
+    private final boolean verifyIntegrity;
+
     private AudioTranscodeOptions(Builder builder, int trackId, int bitrate, int sampleRate, int maxChannels) {
         this.mode = builder.mode;
         this.trackId = trackId;
@@ -81,6 +88,7 @@ public final class AudioTranscodeOptions {
         this.maxChannels = maxChannels;
         this.gainDb = builder.gainDb;
         this.loudnessNormalization = builder.loudnessNormalization;
+        this.verifyIntegrity = builder.verifyIntegrity;
     }
 
     /**
@@ -237,6 +245,21 @@ public final class AudioTranscodeOptions {
     }
 
     /**
+     * {@return whether an encoded stream's decoder checks the whole-stream checksum the source
+     * carries; {@code false} by default}
+     *
+     * <p>The check is that of
+     * {@link com.github.auties00.smalt.audio.AudioDecoderOptions#verifyIntegrity()}, the MD5 signature
+     * of a FLAC source: a stream decoded from its first sample to its end that fails it fails the
+     * transcode with {@link com.github.auties00.smalt.MediaException.Malformed}. A stream cut at its
+     * end, or started by seeking past its first frame, is not checked; copied streams are not
+     * decoded, so not checked.
+     */
+    public boolean verifyIntegrity() {
+        return verifyIntegrity;
+    }
+
+    /**
      * Returns the output layout for a source layout under these options.
      *
      * @param source the source layout
@@ -276,7 +299,7 @@ public final class AudioTranscodeOptions {
      */
     private Object[] state() {
         return new Object[]{mode, trackId, allTracks, codec, bitrate, sampleRate, layout, maxChannels, gainDb,
-                loudnessNormalization};
+                loudnessNormalization, verifyIntegrity};
     }
 
     @Override
@@ -294,7 +317,7 @@ public final class AudioTranscodeOptions {
         return "AudioTranscodeOptions[mode=" + mode + ", trackId=" + trackId() + ", allTracks=" + allTracks + ", codec="
                 + codec() + ", bitrate=" + bitrate() + ", sampleRate=" + sampleRate() + ", layout=" + layout()
                 + ", maxChannels=" + maxChannels() + ", gainDb=" + gainDb + ", loudnessNormalization="
-                + loudnessNormalization() + "]";
+                + loudnessNormalization() + ", verifyIntegrity=" + verifyIntegrity + "]";
     }
 
     /**
@@ -340,6 +363,7 @@ public final class AudioTranscodeOptions {
 
         private double gainDb;
         private LoudnessNormalization loudnessNormalization;
+        private boolean verifyIntegrity;
 
         private Builder() {
         }
@@ -359,6 +383,7 @@ public final class AudioTranscodeOptions {
             this.channelsLimited = options.maxChannels != 0;
             this.gainDb = options.gainDb;
             this.loudnessNormalization = options.loudnessNormalization;
+            this.verifyIntegrity = options.verifyIntegrity;
         }
 
         /**
@@ -544,6 +569,18 @@ public final class AudioTranscodeOptions {
          */
         public Builder noLoudnessNormalization() {
             this.loudnessNormalization = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the source's whole-stream checksum is checked; see
+         * {@link AudioTranscodeOptions#verifyIntegrity()}.
+         *
+         * @param verify the value
+         * @return this builder
+         */
+        public Builder verifyIntegrity(boolean verify) {
+            this.verifyIntegrity = verify;
             return this;
         }
 
