@@ -8,6 +8,7 @@ import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoEncoderOptions;
 import com.github.auties00.smalt.video.VideoEncoders;
@@ -77,6 +78,8 @@ class TranscodeTargetsTest {
             }
             encoder.flush(packets::add);
         }
+        // a hidden VP8 alternate reference travels in a packet of its own, flagged discardable
+        packets.removeIf(packet -> packet.flags().contains(PacketFlag.DISCARD));
         assertEquals(frames, packets.size(), codec + " packets");
         var result = new TreeSet<Integer>();
         for (var packet : packets) {

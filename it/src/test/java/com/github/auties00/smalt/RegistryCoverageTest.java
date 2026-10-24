@@ -38,8 +38,10 @@ import com.github.auties00.smalt.video.h264.encoder.H264Encoder;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
 import com.github.auties00.smalt.video.vp8.Vp8Encoder;
 import com.github.auties00.smalt.video.vp8.Vp8EncoderOptions;
+import com.github.auties00.smalt.video.vp8.Vp8EncoderSpeed;
 import com.github.auties00.smalt.video.vp9.Vp9Encoder;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
+import com.github.auties00.smalt.video.vp9.Vp9EncoderSpeed;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -243,7 +245,8 @@ class RegistryCoverageTest {
             }
             try (var vp8 = VideoEncoders.create(Codec.VP8, VideoEncoderOptions.of(320, 240, rate, 500_000).toBuilder()
                     .threads(3).build())) {
-                assertEquals(Vp8EncoderOptions.builder().frameRate(rate).bitrate(500_000).threads(3).build(),
+                assertEquals(Vp8EncoderOptions.ofBitrate(500_000).toBuilder().speed(Vp8EncoderSpeed.SPEED_4)
+                                .frameRate(rate).threads(3).build(),
                         assertInstanceOf(Vp8Encoder.class, vp8).options());
             }
             try (var vp9 = VideoEncoders.create(Codec.VP9, VideoEncoderOptions.forRealtime(320, 240, rate, 500_000))) {
@@ -251,7 +254,8 @@ class RegistryCoverageTest {
                         assertInstanceOf(Vp9Encoder.class, vp9).options());
             }
             try (var vp9 = VideoEncoders.create(Codec.VP9, VideoEncoderOptions.of(320, 240, rate, 500_000))) {
-                assertEquals(Vp9EncoderOptions.builder().frameRate(rate).bitrate(500_000).build(),
+                assertEquals(Vp9EncoderOptions.ofBitrate(500_000).toBuilder().speed(Vp9EncoderSpeed.SPEED_4)
+                                .frameRate(rate).build(),
                         assertInstanceOf(Vp9Encoder.class, vp9).options());
             }
             try (var av1 = VideoEncoders.create(Codec.AV1, VideoEncoderOptions.forRealtime(320, 240, rate, 500_000)
@@ -288,19 +292,23 @@ class RegistryCoverageTest {
                         .keyframeInterval(50).build(), assertInstanceOf(H264Encoder.class, h264).options());
             }
             try (var vp8 = VideoEncoders.create(Codec.VP8, interval)) {
-                assertEquals(Vp8EncoderOptions.builder().frameRate(rate).bitrate(500_000).keyframeInterval(12).build(),
+                assertEquals(Vp8EncoderOptions.ofBitrate(500_000).toBuilder().speed(Vp8EncoderSpeed.SPEED_4)
+                                .frameRate(rate).keyframeInterval(12).build(),
                         assertInstanceOf(Vp8Encoder.class, vp8).options());
             }
             try (var vp8 = VideoEncoders.create(Codec.VP8, none)) {
-                assertEquals(Vp8EncoderOptions.builder().frameRate(rate).bitrate(500_000).noPeriodicKeyframes().build(),
+                assertEquals(Vp8EncoderOptions.ofBitrate(500_000).toBuilder().speed(Vp8EncoderSpeed.SPEED_4)
+                                .frameRate(rate).noPeriodicKeyframes().build(),
                         assertInstanceOf(Vp8Encoder.class, vp8).options());
             }
             try (var vp9 = VideoEncoders.create(Codec.VP9, interval)) {
-                assertEquals(Vp9EncoderOptions.builder().frameRate(rate).bitrate(500_000).keyframeInterval(12).build(),
+                assertEquals(Vp9EncoderOptions.ofBitrate(500_000).toBuilder().speed(Vp9EncoderSpeed.SPEED_4)
+                                .frameRate(rate).keyframeInterval(12).build(),
                         assertInstanceOf(Vp9Encoder.class, vp9).options());
             }
             try (var vp9 = VideoEncoders.create(Codec.VP9, none)) {
-                assertEquals(Vp9EncoderOptions.builder().frameRate(rate).bitrate(500_000).noPeriodicKeyframes().build(),
+                assertEquals(Vp9EncoderOptions.ofBitrate(500_000).toBuilder().speed(Vp9EncoderSpeed.SPEED_4)
+                                .frameRate(rate).noPeriodicKeyframes().build(),
                         assertInstanceOf(Vp9Encoder.class, vp9).options());
             }
             try (var av1 = VideoEncoders.create(Codec.AV1, interval)) {
@@ -343,6 +351,78 @@ class RegistryCoverageTest {
             var decoded = new ArrayList<VideoFrame>();
             try (var decoder = new Av1Decoder(com.github.auties00.smalt.track.VideoTrack.builder().id(1).codec(Codec.AV1)
                     .timeBase(new Rational(1, 90_000)).width(48).height(32).build())) {
+                for (var packet : packets) {
+                    decoder.decode(packet, decoded::add);
+                }
+                decoder.flush(decoded::add);
+            }
+            assertEquals(frames, decoded.size(), "every frame decodes");
+        }
+
+        @Test
+        @DisplayName("codes non-real-time VP8 with the good-quality usage: hidden frames in packets of their own")
+        void vp8GoodQuality() {
+            var frames = 40;
+            var packets = new ArrayList<Packet>();
+            var duringEncode = 0;
+            try (var encoder = VideoEncoders.create(Codec.VP8, VideoEncoderOptions.of(48, 32, new Rational(30, 1), 200_000))) {
+                for (var i = 0; i < frames; i++) {
+                    var picture = picture();
+                    var pixels = picture.pixels();
+                    for (var p = 0; p < pixels.length; p += 4) {
+                        pixels[p] = (byte) (pixels[p] + i * 3);
+                    }
+                    encoder.encode(new VideoFrame(picture, i * 3000L, 3000, false), packets::add);
+                }
+                duringEncode = packets.size();
+                encoder.flush(packets::add);
+            }
+            assertTrue(duringEncode < frames, "the lookahead holds frames back: " + duringEncode);
+            var shown = packets.stream().filter(p -> !p.flags().contains(com.github.auties00.smalt.track.PacketFlag.DISCARD))
+                    .toList();
+            assertEquals(frames, shown.size(), "one packet per shown frame");
+            assertTrue(shown.getFirst().keyframe());
+            for (var i = 0; i < frames; i++) {
+                assertEquals(i * 3000L, shown.get(i).pts(), "display order");
+            }
+            var decoded = new ArrayList<VideoFrame>();
+            try (var decoder = new com.github.auties00.smalt.video.vp8.Vp8Decoder(com.github.auties00.smalt.track.VideoTrack
+                    .builder().id(1).codec(Codec.VP8).timeBase(new Rational(1, 90_000)).width(48).height(32).build())) {
+                for (var packet : packets) {
+                    decoder.decode(packet, decoded::add);
+                }
+                decoder.flush(decoded::add);
+            }
+            assertEquals(frames, decoded.size(), "every shown frame decodes");
+        }
+
+        @Test
+        @DisplayName("codes non-real-time VP9 with the good-quality usage: frames held back, drained by flush")
+        void vp9GoodQuality() {
+            var frames = 40;
+            var packets = new ArrayList<Packet>();
+            var duringEncode = 0;
+            try (var encoder = VideoEncoders.create(Codec.VP9, VideoEncoderOptions.of(48, 32, new Rational(30, 1), 200_000))) {
+                for (var i = 0; i < frames; i++) {
+                    var picture = picture();
+                    var pixels = picture.pixels();
+                    for (var p = 0; p < pixels.length; p += 4) {
+                        pixels[p] = (byte) (pixels[p] + i * 3);
+                    }
+                    encoder.encode(new VideoFrame(picture, i * 3000L, 3000, false), packets::add);
+                }
+                duringEncode = packets.size();
+                encoder.flush(packets::add);
+            }
+            assertTrue(duringEncode < frames, "the lookahead holds frames back: " + duringEncode);
+            assertEquals(frames, packets.size(), "one packet per frame");
+            assertTrue(packets.getFirst().keyframe());
+            for (var i = 0; i < frames; i++) {
+                assertEquals(i * 3000L, packets.get(i).pts(), "display order");
+            }
+            var decoded = new ArrayList<VideoFrame>();
+            try (var decoder = new com.github.auties00.smalt.video.vp9.Vp9Decoder(com.github.auties00.smalt.track.VideoTrack
+                    .builder().id(1).codec(Codec.VP9).timeBase(new Rational(1, 90_000)).width(48).height(32).build())) {
                 for (var packet : packets) {
                     decoder.decode(packet, decoded::add);
                 }

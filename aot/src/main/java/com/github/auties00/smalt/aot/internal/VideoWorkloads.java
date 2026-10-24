@@ -36,6 +36,7 @@ import com.github.auties00.smalt.video.vp9.Vp9Decoder;
 import com.github.auties00.smalt.video.vp9.Vp9Encoder;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderSpeed;
+import com.github.auties00.smalt.video.vp9.Vp9Subsampling;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -108,6 +109,7 @@ final class VideoWorkloads {
                         new Vp9Decoder(VideoStreams.track(Codec.VP9, null),
                                 VideoDecoderOptions.builder().threads(2).build()))),
                 file("av1-encode-quality-t2", VideoWorkloads::av1EncodeQuality),
+                file("vp9-encode-quality-t2", VideoWorkloads::vp9EncodeQuality),
                 file("av1-encode-intra", VideoWorkloads::av1EncodeIntra),
                 file("av1-decode-t2", VideoWorkloads::av1Decode),
                 file("avif-encode", VideoWorkloads::avifEncode),
@@ -222,6 +224,29 @@ final class VideoWorkloads {
         var encoder = new Vp9Encoder(WIDTH, HEIGHT, Vp9EncoderOptions.forRealtime().toBuilder()
                 .timeBase(TIME_BASE).bitrate(BITRATE).tileColumnsLog2(tileColumnsLog2).build());
         return VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT, VideoStreams.DECODED_FRAMES));
+    }
+
+    /**
+     * Returns a workload that encodes twelve frames with the good-quality VP9 encoder (lookahead,
+     * hidden alternate references, temporal filtering, the rate-distortion partition and mode
+     * search, compound prediction) at a constant quality and the {@code SPEED_2} speed on two
+     * threads, as 8-bit 4:2:0 and as 10-bit 4:4:4, new encoders every round, flushed at the end.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload vp9EncodeQuality() {
+        var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 12);
+        var options = Vp9EncoderOptions.ofQuality(32).toBuilder().speed(Vp9EncoderSpeed.SPEED_2).threads(2)
+                .timeBase(TIME_BASE).build();
+        var high = options.toBuilder().pictureFormat(Vp9Subsampling.YUV444, 10).build();
+        return TrainingWorkload.of("vp9-encode-quality-t2", () -> {
+            for (var settings : List.of(options, high)) {
+                for (var packet : VideoStreams.encodeAll(new Vp9Encoder(SMALL_WIDTH, SMALL_HEIGHT, settings),
+                        pictures)) {
+                    Blackhole.consume(packet.size());
+                }
+            }
+        });
     }
 
     /**

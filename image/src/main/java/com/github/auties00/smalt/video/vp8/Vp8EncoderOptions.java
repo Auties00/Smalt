@@ -6,17 +6,24 @@ import com.github.auties00.smalt.track.Rational;
 
 import java.time.Duration;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link Vp8Encoder}. Instances are immutable and thread-safe; create them
  * with {@link #builder()} or a preset such as {@link #defaults()}.
  *
- * <p>The picture size is not an option: it is given to the {@link Vp8Encoder} constructor.
+ * <p>The {@linkplain #usage() usage} decides which settings apply; {@link Builder#build()} rejects
+ * the combinations the usage cannot code. The picture size is not an option: it is given to the
+ * {@link Vp8Encoder} constructor.
  *
- * @apiNote The settings follow libvpx's real-time VP8 configuration: {@link #bitrate()} is
+ * @apiNote The settings follow libvpx's VP8 configuration: {@link #usage()} is {@code --rt},
+ * {@code --good} or {@code --best}, {@link #rateControl()} is {@code rc_end_usage}, {@link #bitrate()} is
  * {@code rc_target_bitrate} in bits rather than kilobits per second, the quantizer window is
- * {@code rc_min_quantizer} and {@code rc_max_quantizer} on the same scale, {@link #keyframeInterval()}
+ * {@code rc_min_quantizer} and {@code rc_max_quantizer} on the same scale, {@link #cqLevel()} is
+ * {@code cq-level}, {@link #lookahead()} is {@code lag-in-frames}, {@link #alternateReferences()}
+ * is {@code auto-alt-ref}, the temporal filter is {@code arnr-strength} and {@code arnr-maxframes},
+ * {@link #firstPassStats()} is the {@code fpf} of the second pass, {@link #keyframeInterval()}
  * is {@code kf_max_dist}, {@link #speed()} is the magnitude of {@code cpu-used},
  * {@link #errorResilient()} is {@code g_error_resilient}, the buffer model is {@code rc_buf_sz},
  * {@code rc_buf_initial_sz} and {@code rc_buf_optimal_sz}, {@link #tokenPartitions()} is
@@ -29,6 +36,11 @@ public final class Vp8EncoderOptions {
      * The largest number of threads; larger requests are lowered to it.
      */
     private static final int MAX_THREADS = 64;
+
+    /**
+     * The largest lookahead, in frames ({@code MAX_LAG_BUFFERS}).
+     */
+    private static final int MAX_LOOKAHEAD = 25;
 
     /**
      * The settings of {@link #defaults()}.
@@ -49,6 +61,10 @@ public final class Vp8EncoderOptions {
             .maxKeyframeBitratePercent(900)
             .build();
 
+    private final Vp8EncoderUsage usage;
+
+    private final Vp8RateControl rateControl;
+
     private final Rational frameRate;
 
     private final Rational timeBase;
@@ -58,6 +74,18 @@ public final class Vp8EncoderOptions {
     private final int minQuantizer;
 
     private final int maxQuantizer;
+
+    private final int cqLevel;
+
+    private final int lookahead;
+
+    private final boolean alternateReferences;
+
+    private final int temporalFilterStrength;
+
+    private final int temporalFilterFrames;
+
+    private final Optional<Vp8FirstPassStats> firstPassStats;
 
     private final OptionalInt keyframeInterval;
 
@@ -90,11 +118,19 @@ public final class Vp8EncoderOptions {
     private final MediaLimits limits;
 
     private Vp8EncoderOptions(Builder builder) {
+        this.usage = builder.usage;
+        this.rateControl = builder.rateControl;
         this.frameRate = builder.frameRate;
         this.timeBase = builder.timeBase;
         this.bitrate = builder.bitrate;
         this.minQuantizer = builder.minQuantizer;
         this.maxQuantizer = builder.maxQuantizer;
+        this.cqLevel = builder.cqLevel;
+        this.lookahead = builder.lookahead;
+        this.alternateReferences = builder.alternateReferences;
+        this.temporalFilterStrength = builder.temporalFilterStrength;
+        this.temporalFilterFrames = builder.temporalFilterFrames;
+        this.firstPassStats = builder.firstPassStats;
         this.keyframeInterval = builder.keyframeInterval;
         this.speed = builder.speed;
         this.errorResilient = builder.errorResilient;
@@ -113,10 +149,13 @@ public final class Vp8EncoderOptions {
     }
 
     /**
-     * Returns the general-purpose settings, for streams that are stored or sent without a
-     * real-time deadline: a key frame every 128 frames, one temporal layer, no error resilience
+     * Returns the general-purpose real-time settings: the {@link Vp8EncoderUsage#REALTIME} usage at
+     * a constant 1 Mbit/s, a key frame every 128 frames, one temporal layer, no error resilience
      * and no frame dropping.
      *
+     * @apiNote For files and on-demand video, start from {@link #ofBitrate(long)},
+     * {@link #ofQuality(int)} or {@link #forArchive()} instead; for calls, from
+     * {@link #forRealtime()}.
      * @return the options
      */
     public static Vp8EncoderOptions defaults() {
@@ -162,6 +201,58 @@ public final class Vp8EncoderOptions {
     }
 
     /**
+     * Returns the settings of good-quality coding at a variable bitrate, for files and on-demand
+     * video: a 25-frame lookahead, golden frame groups predicted from temporally filtered hidden
+     * alternate references, key frames at scene cuts, every 128 frames and on request, at the
+     * {@link Vp8EncoderSpeed#SPEED_2} speed.
+     *
+     * @apiNote The encoder holds pictures back until its lookahead is full, so the last packets
+     * arrive only at {@link Vp8Encoder#flush}. The bitrate is met over the stream, not per frame;
+     * for a bounded buffer, use {@link #forRealtime()}. A first pass ({@link Vp8FirstPass}) lets
+     * the bitrate follow the content of the whole clip.
+     * @param bitrate the target bitrate in bits per second, from 1 to {@link Integer#MAX_VALUE}
+     * @return the options
+     * @throws IllegalArgumentException if {@code bitrate} is not in [1, {@link Integer#MAX_VALUE}]
+     */
+    public static Vp8EncoderOptions ofBitrate(long bitrate) {
+        return goodQuality().rateControl(Vp8RateControl.VARIABLE_BITRATE).bitrate(bitrate).build();
+    }
+
+    /**
+     * Returns the settings of good-quality coding at a constant quality: the frame structure of
+     * {@link #ofBitrate(long)} with the quantizers following a quality level instead of a bitrate.
+     *
+     * @apiNote Lower levels are finer; 10 to 20 suit high quality, 25 to 35 web video.
+     * @param cqLevel the quality level, from 4 (the finest the default quantizer window allows) to
+     * 63; see {@link #cqLevel()}
+     * @return the options
+     * @throws IllegalArgumentException if {@code cqLevel} is not in [4, 63]
+     */
+    public static Vp8EncoderOptions ofQuality(int cqLevel) {
+        return goodQuality().rateControl(Vp8RateControl.CONSTANT_QUALITY).cqLevel(cqLevel).build();
+    }
+
+    /**
+     * Returns the settings of good-quality coding for archiving: constant quality level 10 at the
+     * {@link Vp8EncoderSpeed#SPEED_1} speed, with the other settings of {@link #ofQuality(int)}.
+     *
+     * @return the options
+     */
+    public static Vp8EncoderOptions forArchive() {
+        return goodQuality().rateControl(Vp8RateControl.CONSTANT_QUALITY).cqLevel(10)
+                .speed(Vp8EncoderSpeed.SPEED_1).build();
+    }
+
+    /**
+     * Returns a builder of the good-quality usage at the {@link Vp8EncoderSpeed#SPEED_2} speed.
+     *
+     * @return the builder
+     */
+    private static Builder goodQuality() {
+        return new Builder().usage(Vp8EncoderUsage.GOOD_QUALITY).speed(Vp8EncoderSpeed.SPEED_2);
+    }
+
+    /**
      * Returns a builder initialized with {@link #defaults()}.
      *
      * @return the builder
@@ -177,6 +268,43 @@ public final class Vp8EncoderOptions {
      */
     public Builder toBuilder() {
         return new Builder(this);
+    }
+
+    /**
+     * {@return the coding mode, which decides the settings that apply;
+     * {@link Vp8EncoderUsage#REALTIME} by default}
+     *
+     * <ul>
+     *   <li>{@link Vp8EncoderUsage#REALTIME}: the {@link Vp8RateControl#CONSTANT_BITRATE} rate
+     *       control with the buffer model, frame dropping, error resilience, temporal layers, the
+     *       rate tolerances and the key frame target limit, at the speeds from
+     *       {@link Vp8EncoderSpeed#SPEED_4}; the
+     *       lookahead, the alternate references and the first-pass statistics do not apply.</li>
+     *   <li>{@link Vp8EncoderUsage#GOOD_QUALITY}: the variable bitrate, constrained quality and
+     *       constant quality rate controls, the lookahead, the alternate references with their
+     *       temporal filter and the first-pass statistics, at the speeds up to
+     *       {@link Vp8EncoderSpeed#SPEED_4}; the buffer model, frame dropping, error resilience,
+     *       temporal layers, rate tolerances and key frame target limit do not apply. A hidden
+     *       alternate reference frame is a packet of its own, flagged
+     *       {@link com.github.auties00.smalt.track.PacketFlag#DISCARD}.</li>
+     *   <li>{@link Vp8EncoderUsage#BEST_QUALITY}: the settings of the good-quality usage, with the
+     *       fullest search whatever the speed; the speed, from {@link Vp8EncoderSpeed#SPEED_0} to
+     *       {@link Vp8EncoderSpeed#SPEED_4}, changes nothing in the stream, as libvpx ignores
+     *       {@code cpu-used} at its best quality.</li>
+     * </ul>
+     */
+    public Vp8EncoderUsage usage() {
+        return usage;
+    }
+
+    /**
+     * {@return the rate control; {@link Vp8RateControl#CONSTANT_BITRATE} by default}
+     *
+     * <p>Real-time coding requires {@link Vp8RateControl#CONSTANT_BITRATE}; good-quality and
+     * best-quality coding require one of the others.
+     */
+    public Vp8RateControl rateControl() {
+        return rateControl;
     }
 
     /**
@@ -227,8 +355,76 @@ public final class Vp8EncoderOptions {
     }
 
     /**
+     * {@return the quality level of the {@link Vp8RateControl#CONSTANT_QUALITY} and
+     * {@link Vp8RateControl#CONSTRAINED_QUALITY} rate controls, from 0 to 63 on the scale of
+     * {@link #minQuantizer()} and within the quantizer window when they use it; 32 by default}
+     *
+     * <p>Lower levels are finer. Under constant quality, the frames of a group use the level and,
+     * for the frames other frames predict from, finer quantizers; under constrained quality, no
+     * frame uses a quantizer finer than the level allows.
+     */
+    public int cqLevel() {
+        return cqLevel;
+    }
+
+    /**
+     * {@return the number of pictures good-quality coding buffers before it codes a frame, from 0
+     * to 25; 25 by default}
+     *
+     * <p>The lookahead bounds the golden frame groups and the alternate references: a group with
+     * an alternate reference is shorter than the lookahead, so a lookahead below 5 codes none.
+     */
+    public int lookahead() {
+        return lookahead;
+    }
+
+    /**
+     * {@return whether good-quality coding codes hidden alternate references; {@code true} by
+     * default}
+     *
+     * <p>An alternate reference is a temporally filtered copy of the picture that ends a golden
+     * frame group, coded before the group in a packet of its own, flagged
+     * {@link com.github.auties00.smalt.track.PacketFlag#DISCARD} because it is decoded but never
+     * shown; the frames of the group predict from it, and the picture itself is coded again when
+     * its turn comes.
+     */
+    public boolean alternateReferences() {
+        return alternateReferences;
+    }
+
+    /**
+     * {@return the strength of the temporal filter of the alternate references, from 0 (no
+     * filtering) to 6; 5 by default}
+     */
+    public int temporalFilterStrength() {
+        return temporalFilterStrength;
+    }
+
+    /**
+     * {@return the most pictures the temporal filter of an alternate reference averages, the
+     * filtered picture included, from 0 to 15; 7 by default}
+     *
+     * <p>0 and 1 code the alternate reference from its picture alone.
+     */
+    public int temporalFilterFrames() {
+        return temporalFilterFrames;
+    }
+
+    /**
+     * {@return the first-pass statistics of the clip, which make this encode the second pass of a
+     * two-pass encode, or empty for one pass; empty by default}
+     *
+     * <p>With statistics, the key frames and the bitrate of each golden frame group follow the
+     * whole clip rather than the lookahead; the encoder then accepts at most as many pictures as
+     * the statistics hold.
+     */
+    public Optional<Vp8FirstPassStats> firstPassStats() {
+        return firstPassStats;
+    }
+
+    /**
      * {@return the most frames between two key frames, at least 1, or empty for key frames only at
-     * the start and on request; 128 by default}
+     * the start, on request and, in good-quality coding, at scene cuts; 128 by default}
      */
     public OptionalInt keyframeInterval() {
         return keyframeInterval;
@@ -237,6 +433,10 @@ public final class Vp8EncoderOptions {
     /**
      * {@return the trade between compression and encoding time; {@link Vp8EncoderSpeed#SPEED_6} by
      * default}
+     *
+     * <p>Real-time coding requires a {@linkplain Vp8EncoderSpeed#realtime() real-time speed},
+     * good-quality and best-quality coding a
+     * {@linkplain Vp8EncoderSpeed#goodQuality() good-quality speed}.
      */
     public Vp8EncoderSpeed speed() {
         return speed;
@@ -251,7 +451,8 @@ public final class Vp8EncoderOptions {
      * receiver that lost frames decodes the next frame correctly as long as it holds the frames it
      * references. Without it, the golden frame is refreshed periodically in static scenes and the
      * previous golden frame becomes the alternate reference. More than one
-     * {@linkplain #temporalLayers() temporal layer} implies error resilience.
+     * {@linkplain #temporalLayers() temporal layer} implies error resilience. Only real-time coding
+     * is error resilient.
      */
     public boolean errorResilient() {
         return errorResilient;
@@ -378,9 +579,13 @@ public final class Vp8EncoderOptions {
 
     @Override
     public boolean equals(Object other) {
-        return other instanceof Vp8EncoderOptions that && frameRate.equals(that.frameRate)
-                && timeBase.equals(that.timeBase) && bitrate == that.bitrate && minQuantizer == that.minQuantizer
-                && maxQuantizer == that.maxQuantizer && keyframeInterval.equals(that.keyframeInterval)
+        return other instanceof Vp8EncoderOptions that && usage == that.usage && rateControl == that.rateControl
+                && frameRate.equals(that.frameRate) && timeBase.equals(that.timeBase) && bitrate == that.bitrate
+                && minQuantizer == that.minQuantizer && maxQuantizer == that.maxQuantizer && cqLevel == that.cqLevel
+                && lookahead == that.lookahead && alternateReferences == that.alternateReferences
+                && temporalFilterStrength == that.temporalFilterStrength
+                && temporalFilterFrames == that.temporalFilterFrames && firstPassStats.equals(that.firstPassStats)
+                && keyframeInterval.equals(that.keyframeInterval)
                 && speed == that.speed && errorResilient == that.errorResilient
                 && temporalLayers == that.temporalLayers && dropFrames == that.dropFrames
                 && bufferSize.equals(that.bufferSize) && initialBufferLevel.equals(that.initialBufferLevel)
@@ -392,7 +597,9 @@ public final class Vp8EncoderOptions {
 
     @Override
     public int hashCode() {
-        return Objects.hash(frameRate, timeBase, bitrate, minQuantizer, maxQuantizer, keyframeInterval, speed,
+        return Objects.hash(usage, rateControl, frameRate, timeBase, bitrate, minQuantizer, maxQuantizer, cqLevel,
+                lookahead, alternateReferences, temporalFilterStrength, temporalFilterFrames, firstPassStats,
+                keyframeInterval, speed,
                 errorResilient, temporalLayers, dropFrames, bufferSize, initialBufferLevel, optimalBufferLevel,
                 tokenPartitions, threads, encodeBreakout, undershootPercent, overshootPercent,
                 maxKeyframeBitratePercent, limits);
@@ -400,8 +607,11 @@ public final class Vp8EncoderOptions {
 
     @Override
     public String toString() {
-        return "Vp8EncoderOptions[frameRate=" + frameRate + ", timeBase=" + timeBase + ", bitrate=" + bitrate
-                + ", quantizers=" + minQuantizer + ".." + maxQuantizer + ", keyframeInterval=" + keyframeInterval
+        return "Vp8EncoderOptions[usage=" + usage + ", rateControl=" + rateControl + ", frameRate=" + frameRate
+                + ", timeBase=" + timeBase + ", bitrate=" + bitrate + ", quantizers=" + minQuantizer + ".."
+                + maxQuantizer + ", cqLevel=" + cqLevel + ", lookahead=" + lookahead + ", alternateReferences="
+                + alternateReferences + ", temporalFilter=" + temporalFilterStrength + "/" + temporalFilterFrames
+                + ", firstPassStats=" + firstPassStats + ", keyframeInterval=" + keyframeInterval
                 + ", speed=" + speed + ", errorResilient=" + errorResilient + ", temporalLayers=" + temporalLayers
                 + ", dropFrames=" + dropFrames + ", buffer=" + initialBufferLevel.toMillis() + "/"
                 + optimalBufferLevel.toMillis() + "/" + bufferSize.toMillis() + "ms, tokenPartitions="
@@ -417,6 +627,10 @@ public final class Vp8EncoderOptions {
      * of settings. Instances are not thread-safe.
      */
     public static final class Builder {
+        private Vp8EncoderUsage usage = Vp8EncoderUsage.REALTIME;
+
+        private Vp8RateControl rateControl = Vp8RateControl.CONSTANT_BITRATE;
+
         private Rational frameRate = new Rational(30, 1);
 
         private Rational timeBase = new Rational(1, 90_000);
@@ -426,6 +640,18 @@ public final class Vp8EncoderOptions {
         private int minQuantizer = 4;
 
         private int maxQuantizer = 63;
+
+        private int cqLevel = 32;
+
+        private int lookahead = MAX_LOOKAHEAD;
+
+        private boolean alternateReferences = true;
+
+        private int temporalFilterStrength = 5;
+
+        private int temporalFilterFrames = 7;
+
+        private Optional<Vp8FirstPassStats> firstPassStats = Optional.empty();
 
         private OptionalInt keyframeInterval = OptionalInt.of(128);
 
@@ -461,11 +687,19 @@ public final class Vp8EncoderOptions {
         }
 
         private Builder(Vp8EncoderOptions from) {
+            usage = from.usage;
+            rateControl = from.rateControl;
             frameRate = from.frameRate;
             timeBase = from.timeBase;
             bitrate = from.bitrate;
             minQuantizer = from.minQuantizer;
             maxQuantizer = from.maxQuantizer;
+            cqLevel = from.cqLevel;
+            lookahead = from.lookahead;
+            alternateReferences = from.alternateReferences;
+            temporalFilterStrength = from.temporalFilterStrength;
+            temporalFilterFrames = from.temporalFilterFrames;
+            firstPassStats = from.firstPassStats;
             keyframeInterval = from.keyframeInterval;
             speed = from.speed;
             errorResilient = from.errorResilient;
@@ -481,6 +715,28 @@ public final class Vp8EncoderOptions {
             overshootPercent = from.overshootPercent;
             maxKeyframeBitratePercent = from.maxKeyframeBitratePercent;
             limits = from.limits;
+        }
+
+        /**
+         * Sets the coding mode; see {@link Vp8EncoderOptions#usage()}.
+         *
+         * @param usage the value
+         * @return this builder
+         */
+        public Builder usage(Vp8EncoderUsage usage) {
+            this.usage = Objects.requireNonNull(usage, "usage");
+            return this;
+        }
+
+        /**
+         * Sets the rate control; see {@link Vp8EncoderOptions#rateControl()}.
+         *
+         * @param rateControl the value
+         * @return this builder
+         */
+        public Builder rateControl(Vp8RateControl rateControl) {
+            this.rateControl = Objects.requireNonNull(rateControl, "rateControl");
+            return this;
         }
 
         /**
@@ -531,6 +787,77 @@ public final class Vp8EncoderOptions {
         }
 
         /**
+         * Sets the quality level; see {@link Vp8EncoderOptions#cqLevel()}.
+         *
+         * @param cqLevel the value
+         * @return this builder
+         */
+        public Builder cqLevel(int cqLevel) {
+            this.cqLevel = cqLevel;
+            return this;
+        }
+
+        /**
+         * Sets the lookahead; see {@link Vp8EncoderOptions#lookahead()}.
+         *
+         * @param frames the value
+         * @return this builder
+         */
+        public Builder lookahead(int frames) {
+            this.lookahead = frames;
+            return this;
+        }
+
+        /**
+         * Sets whether alternate references are coded; see
+         * {@link Vp8EncoderOptions#alternateReferences()}.
+         *
+         * @param alternateReferences the value
+         * @return this builder
+         */
+        public Builder alternateReferences(boolean alternateReferences) {
+            this.alternateReferences = alternateReferences;
+            return this;
+        }
+
+        /**
+         * Sets the temporal filter of the alternate references; see
+         * {@link Vp8EncoderOptions#temporalFilterStrength()} and
+         * {@link Vp8EncoderOptions#temporalFilterFrames()}.
+         *
+         * @param strength the filter strength
+         * @param frames the most pictures averaged
+         * @return this builder
+         */
+        public Builder temporalFilter(int strength, int frames) {
+            this.temporalFilterStrength = strength;
+            this.temporalFilterFrames = frames;
+            return this;
+        }
+
+        /**
+         * Makes the encode the second pass of a two-pass encode; see
+         * {@link Vp8EncoderOptions#firstPassStats()}.
+         *
+         * @param stats the first-pass statistics of the clip
+         * @return this builder
+         */
+        public Builder firstPassStats(Vp8FirstPassStats stats) {
+            this.firstPassStats = Optional.of(stats);
+            return this;
+        }
+
+        /**
+         * Makes the encode a one-pass encode; see {@link Vp8EncoderOptions#firstPassStats()}.
+         *
+         * @return this builder
+         */
+        public Builder noFirstPassStats() {
+            this.firstPassStats = Optional.empty();
+            return this;
+        }
+
+        /**
          * Sets the periodic key frame distance; see {@link Vp8EncoderOptions#keyframeInterval()}.
          *
          * @param frames the value
@@ -542,8 +869,8 @@ public final class Vp8EncoderOptions {
         }
 
         /**
-         * Codes key frames only at the start and on request; see
-         * {@link Vp8EncoderOptions#keyframeInterval()}.
+         * Codes key frames only at the start, on request and, in good-quality coding, at scene
+         * cuts; see {@link Vp8EncoderOptions#keyframeInterval()}.
          *
          * @return this builder
          */
@@ -719,13 +1046,21 @@ public final class Vp8EncoderOptions {
          * @return the options
          * @throws IllegalArgumentException if the frame rate is not in [0.1, 1000], a time base term
          * is not positive, the bitrate is not in [1, {@link Integer#MAX_VALUE}], the smallest
-         * quantizer is not in [0, 63], the largest is not in [smallest, 63], the key frame interval
+         * quantizer is not in [0, 63], the largest is not in [smallest, 63], the quality level is
+         * not in [0, 63] or, with a quality rate control, not in [smallest, largest], the lookahead
+         * is not in [0, 25], the temporal filter strength is not in [0, 6] or its frames not in
+         * [0, 15], the key frame interval
          * is not positive, the temporal layers are not in [1, 3], the buffer size is not in [1,
          * {@link Integer#MAX_VALUE}] milliseconds, the initial level is not in [0, size], the optimal
          * level is not in [1, size] milliseconds, the token partitions are not 1, 2, 4 or 8, the
          * thread count is negative, the encode breakout is not in [0, {@code 2^24}], the undershoot
-         * is not in [0, 100], the overshoot is not in [0, 1000], or the key frame target limit is
-         * below 100
+         * is not in [0, 100], the overshoot is not in [0, 1000], the key frame target limit is
+         * below 100, real-time coding has another rate control than
+         * {@link Vp8RateControl#CONSTANT_BITRATE}, a speed below {@link Vp8EncoderSpeed#SPEED_4}
+         * or first-pass statistics, or good-quality or best-quality coding has the constant
+         * bitrate, a speed above
+         * {@link Vp8EncoderSpeed#SPEED_4}, error resilience, frame dropping or more than one
+         * temporal layer
          */
         public Vp8EncoderOptions build() {
             Checks.inRange("frame rate", frameRate.toDouble(), 0.1, 1000);
@@ -734,6 +1069,15 @@ public final class Vp8EncoderOptions {
             Checks.inRange("bitrate", bitrate, 1, Integer.MAX_VALUE);
             Checks.inRange("smallest quantizer", minQuantizer, 0, 63);
             Checks.inRange("largest quantizer", maxQuantizer, minQuantizer, 63);
+            Checks.inRange("quality level", cqLevel, 0, 63);
+            if ((rateControl == Vp8RateControl.CONSTANT_QUALITY || rateControl == Vp8RateControl.CONSTRAINED_QUALITY)
+                    && (cqLevel < minQuantizer || cqLevel > maxQuantizer)) {
+                throw new IllegalArgumentException("quality level " + cqLevel + " is outside the quantizer window "
+                        + minQuantizer + ".." + maxQuantizer);
+            }
+            Checks.inRange("lookahead", lookahead, 0, MAX_LOOKAHEAD);
+            Checks.inRange("temporal filter strength", temporalFilterStrength, 0, 6);
+            Checks.inRange("temporal filter frames", temporalFilterFrames, 0, 15);
             if (keyframeInterval.isPresent()) {
                 Checks.positive("key frame interval", keyframeInterval.getAsInt());
             }
@@ -752,6 +1096,31 @@ public final class Vp8EncoderOptions {
             if (maxKeyframeBitratePercent.isPresent()) {
                 Checks.inRange("key frame bitrate percent", maxKeyframeBitratePercent.getAsInt(), 100,
                         Integer.MAX_VALUE);
+            }
+            if (usage == Vp8EncoderUsage.REALTIME) {
+                if (rateControl != Vp8RateControl.CONSTANT_BITRATE) {
+                    throw new IllegalArgumentException("real-time coding codes at a constant bitrate, got "
+                            + rateControl);
+                }
+                if (!speed.realtime()) {
+                    throw new IllegalArgumentException("real-time coding needs a speed from 4 to 16, got " + speed);
+                }
+                if (firstPassStats.isPresent()) {
+                    throw new IllegalArgumentException("real-time coding has no second pass");
+                }
+            } else {
+                var name = usage == Vp8EncoderUsage.BEST_QUALITY ? "best-quality" : "good-quality";
+                if (rateControl == Vp8RateControl.CONSTANT_BITRATE) {
+                    throw new IllegalArgumentException(name + " coding needs a variable bitrate, a constrained "
+                            + "quality or a constant quality");
+                }
+                if (!speed.goodQuality()) {
+                    throw new IllegalArgumentException(name + " coding needs a speed from 0 to 4, got " + speed);
+                }
+                if (errorResilient || dropFrames || temporalLayers != 1) {
+                    throw new IllegalArgumentException("error resilience, frame dropping and temporal layers apply to "
+                            + "real-time coding only");
+                }
             }
             return new Vp8EncoderOptions(this);
         }

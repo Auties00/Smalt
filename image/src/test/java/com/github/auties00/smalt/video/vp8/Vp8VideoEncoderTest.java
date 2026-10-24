@@ -650,7 +650,7 @@ class Vp8VideoEncoderTest {
             assertThrows(IllegalArgumentException.class, () -> Vp8Setup.of(10, 10, r, t, 1000, 4, 64, 0, 6, false, 1, false, 1000, 500, 600, 1, 1));
             assertThrows(IllegalArgumentException.class,
                     () -> Vp8EncoderOptions.builder().keyframeInterval(0).build());
-            assertThrows(IllegalArgumentException.class, () -> Vp8EncoderSpeed.of(3));
+            assertThrows(IllegalArgumentException.class, () -> Vp8EncoderSpeed.of(-1));
             assertThrows(IllegalArgumentException.class, () -> Vp8EncoderSpeed.of(17));
             assertThrows(IllegalArgumentException.class, () -> Vp8Setup.of(10, 10, r, t, 1000, 4, 63, 0, 6, false, 4, false, 1000, 500, 600, 1, 1));
             assertThrows(IllegalArgumentException.class, () -> Vp8Setup.of(10, 10, r, t, 1000, 4, 63, 0, 6, false, 1, false, 0, 0, 1, 1, 1));

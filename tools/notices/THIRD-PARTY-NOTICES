@@ -339,7 +339,14 @@ port of libvpx 1.17.0's one-pass real-time CBR path (vp8/encoder: onyx_if.c,
 encodeframe.c, rdopt.c, pickinter.c, mcomp.c, encodemb.c, tokenize.c,
 bitstream.c, ratectrl.c, picklpf.c, encodemv.c, modecosts.c, segmentation.c,
 vp8_skin_detection.c, and vp8/common/findnearmv.c) with the vpx_dsp C
-kernels it uses and its speed, threshold and cost tables. The VP9 decoder is
+kernels it uses and its speed, threshold and cost tables. Its good-quality
+usage ports libvpx 1.15.1's good-quality path (vp8/encoder: the first pass
+and the two-pass rate control of firstpass.c, the recode loop and the
+alternate reference coding of onyx_if.c, temporal_filter.c, the
+rate-distortion mode decision and split motion search of rdopt.c, the
+token costs of rdopt.c and tokenize.c, the full filter level search of
+picklpf.c, encodeintra.c and the minimum quantizer and split threshold
+tables of onyx_if.c). The VP9 decoder is
 a port of libvpx's VP9 decoder (vp9/decoder, vp9/common, vp9/vp9_dx_iface.c
 and the vpx_dsp C kernels it uses: inverse transforms, sub-pixel
 convolution, loop filters, intra prediction and their high bit depth
@@ -354,7 +361,14 @@ vp9_rd.c, vp9_picklpf.c, vp9_quantize.c, vp9_dct.c, vp9_encodemv.c and
 vp9_cost.c) with the vpx_dsp C kernels it uses (boolean encoder, forward
 transforms, sums of absolute differences, variances, Hadamard transforms,
 integral projections and skin detection) and its speed, threshold, rate
-model and cost tables.
+model and cost tables. Its good-quality usage, and its 4:2:2, 4:4:0, 4:4:4,
+10-bit and 12-bit coding, port libvpx 1.15.1's good-quality path
+(vp9/encoder: the rate-distortion partition and mode search of
+vp9_encodeframe.c, vp9_rdopt.c and vp9_rd.c, the first and second pass of
+vp9_firstpass.c, the two-pass rate control of vp9_ratectrl.c, the
+recode loop of vp9_encoder.c, vp9_temporal_filter.c and the filter level
+search of vp9_picklpf.c) and its high bit depth quantizer and token
+tables.
 
 Copyright:
   Copyright (c) 2010, The WebM Project authors. All rights reserved.

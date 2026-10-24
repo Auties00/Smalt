@@ -159,6 +159,7 @@ final class ImageWorkloads {
                 file("vp8-encode-file-t2", () -> VideoStreams.encode("vp8-encode-file-t2",
                         new Vp8Encoder(WIDTH, HEIGHT, Vp8EncoderOptions.builder().timeBase(TIME_BASE)
                                 .bitrate(VP8_BITRATE).threads(2).build()))),
+                file("vp8-encode-quality-t2", ImageWorkloads::vp8EncodeQuality),
                 file("vp8-decode-t2", () -> VideoStreams.decode("vp8-decode-t2", vp8Stream(),
                         new Vp8Decoder(VideoStreams.track(Codec.VP8, null),
                                 VideoDecoderOptions.builder().threads(2).build()))),
@@ -215,6 +216,28 @@ final class ImageWorkloads {
                 .threads(threads)
                 .build());
         return VideoStreams.encode("vp8-encode-rt-s" + speed + "-t" + threads, encoder);
+    }
+
+    /**
+     * Returns a workload that encodes twelve frames with the good-quality VP8 encoder at a constant
+     * quality on two threads, at the rate-distortion {@code SPEED_2} speed and at the fast
+     * {@code SPEED_4} speed (lookahead, temporally filtered alternate references, split motion),
+     * a new encoder every round, flushed at the end.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload vp8EncodeQuality() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, 12);
+        var rd = Vp8EncoderOptions.ofQuality(30).toBuilder().speed(Vp8EncoderSpeed.SPEED_2).threads(2)
+                .timeBase(TIME_BASE).build();
+        var fast = rd.toBuilder().speed(Vp8EncoderSpeed.SPEED_4).build();
+        return TrainingWorkload.of("vp8-encode-quality-t2", () -> {
+            for (var settings : List.of(rd, fast)) {
+                for (var packet : VideoStreams.encodeAll(new Vp8Encoder(WIDTH, HEIGHT, settings), pictures)) {
+                    Blackhole.consume(packet.size());
+                }
+            }
+        });
     }
 
     /**
