@@ -8,6 +8,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.jxl.internal.color.ColorConverter;
 import com.github.auties00.smalt.image.jxl.internal.frame.DecodedFrame;
 import com.github.auties00.smalt.image.jxl.internal.header.BitDepth;
+import com.github.auties00.smalt.image.jxl.internal.header.ColorEncoding;
 import com.github.auties00.smalt.image.jxl.internal.header.FrameHeader;
 import com.github.auties00.smalt.image.jxl.internal.header.ImageHeader;
 import com.github.auties00.smalt.image.jxl.internal.modular.ModularChannel;
@@ -41,8 +42,10 @@ public final class FrameRenderer {
      * @param references the four reference slots, entries {@code null} when empty
      * @param visibleFrames the number of displayed frames so far, this one included when displayed
      * @param invisibleFrames the number of frames since the last displayed one
+     * @param spotsLinear whether the color transform of this frame blends the spot colors in linear light, as
+     * {@link SpotColors#linear} decides for a displayed frame whose spot colors are rendered
      */
-    public record Context(FrameImage[] references, long visibleFrames, long invisibleFrames) {
+    public record Context(FrameImage[] references, long visibleFrames, long invisibleFrames, boolean spotsLinear) {
     }
 
     /**
@@ -165,7 +168,7 @@ public final class FrameRenderer {
                     context.invisibleFrames(), lfGlobal.noise(), corrX, corrB);
         }
         if (!frame.saveBeforeCt || frame.isLast) {
-            result = transformColor(result, image, frame);
+            result = transformColor(result, image, frame, context.spotsLinear());
         }
         return result;
     }
@@ -180,6 +183,23 @@ public final class FrameRenderer {
      * output is gray
      */
     public static FrameImage transformColor(FrameImage result, ImageHeader image, FrameHeader frame) {
+        return transformColor(result, image, frame, false);
+    }
+
+    /**
+     * Converts the color channels of a rendered frame to the output color space, optionally blending the spot
+     * colors in linear light on the way.
+     *
+     * @param result the frame planes, converted in place when the channel count is kept
+     * @param image the image header
+     * @param frame the frame header
+     * @param spotsLinear whether to blend the spot color channels into an XYB frame's linear RGB planes (its linear
+     * luminance for a gray image) before its transfer function, as {@link SpotColors#mix} blends them
+     * @return the converted image: {@code result}, or a new image with one color channel when the
+     * output is gray
+     */
+    public static FrameImage transformColor(FrameImage result, ImageHeader image, FrameHeader frame,
+                                            boolean spotsLinear) {
         if (result.colorTransformed) {
             return result;
         }
@@ -192,7 +212,9 @@ public final class FrameRenderer {
             }
         } else if (image.xybEncoded() && result.colorChannels == 3) {
             var target = ColorConverter.xybTarget(image);
-            var channels = ColorConverter.xybToTarget(result.planes, length, image, target);
+            var gray = target.colorSpace() == ColorEncoding.GRAY;
+            Runnable spots = spotsLinear ? () -> SpotColors.mix(result.planes, gray ? 1 : 3, 3, length, image) : null;
+            var channels = ColorConverter.xybToTarget(result.planes, length, image, target, spots);
             if (channels == 1) {
                 out = reduceToGray(result, 0);
             }

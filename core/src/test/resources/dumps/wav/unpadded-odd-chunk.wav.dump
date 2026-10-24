@@ -1,0 +1,16 @@
+# demux dump of wav/unpadded-odd-chunk.wav; regenerate with -Dsmalt.test.updateDumps=true
+format WAV
+duration 256000
+seekable true
+track 0 AUDIO PCM_S16LE timebase=1/8000 duration=2048 config=none
+  audio rate=8000 bits=16 skip=0 layout=[FRONT_CENTER]
+packets 4
+0 t0 pts=0 dts=0 dur=512 flags=KEY size=1024 crc=28d29e67
+1 t0 pts=512 dts=512 dur=512 flags=KEY size=1024 crc=28d29e67
+2 t0 pts=1024 dts=1024 dur=512 flags=KEY size=1024 crc=28d29e67
+3 t0 pts=1536 dts=1536 dur=512 flags=KEY size=1024 crc=28d29e67
+seek 0: t0@0
+seek 85333: t0@pts=682
+seek 170666: t0@pts=1365
+seek 256000: end
+seek -1000000: t0@0

@@ -1,0 +1,12 @@
+# audio decode dump of mp4/h263-amr.3gp; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 1000000
+seekable true
+track 2 AMR_NB rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=69165c31
+1 frames=3904 crc16=09f5a70e
+seek 0: @sample 0
+seek 333333: @sample 2667
+seek 666666: @sample 5333
+seek 1000000: end
+seek -1000000: @sample 0
