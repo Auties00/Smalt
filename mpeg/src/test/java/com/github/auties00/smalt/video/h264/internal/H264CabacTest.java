@@ -43,7 +43,8 @@ class H264CabacTest {
      * The arithmetic decoding engine exactly as the standard describes it.
      */
     private static final class Reference {
-        final byte[] states = new byte[1024];
+        // the 1024 contexts of ITU-T H.264 9.3.1.1 and the 7 of the scalable extension (F.9.3.1)
+        final byte[] states = new byte[1031];
         private final byte[] data;
         private final int end;
         private long position;

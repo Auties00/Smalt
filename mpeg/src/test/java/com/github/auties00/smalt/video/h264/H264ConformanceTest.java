@@ -294,6 +294,14 @@ class H264ConformanceTest {
         }
     }
 
+    static byte[] reference(Vector vector) throws IOException {
+        var archive = Conformance.fetch("h264-" + vector.directory() + "-" + vector.archive(),
+                BASE + vector.directory() + "/" + vector.archive(), vector.sha256());
+        try (var zip = new ZipFile(archive.toFile())) {
+            return zip.getInputStream(zip.getEntry(vector.reference())).readAllBytes();
+        }
+    }
+
     static void check(Vector vector, int threads) throws IOException {
         var archive = Conformance.fetch("h264-" + vector.directory() + "-" + vector.archive(),
                 BASE + vector.directory() + "/" + vector.archive(), vector.sha256());

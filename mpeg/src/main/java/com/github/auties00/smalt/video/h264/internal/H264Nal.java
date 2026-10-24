@@ -59,6 +59,38 @@ public final class H264Nal {
      */
     public static final int END_OF_STREAM = 11;
 
+    /**
+     * A sequence parameter set extension, which describes the auxiliary coded pictures.
+     */
+    public static final int SPS_EXTENSION = 13;
+
+    /**
+     * A prefix NAL unit, which carries the scalable or multiview header extension of the base
+     * layer or base view slice that follows it.
+     */
+    public static final int PREFIX = 14;
+
+    /**
+     * A subset sequence parameter set, the sequence parameter set of the scalable and multiview
+     * extensions.
+     */
+    public static final int SUBSET_SPS = 15;
+
+    /**
+     * A coded slice of an auxiliary coded picture without partitioning.
+     */
+    public static final int AUXILIARY_SLICE = 19;
+
+    /**
+     * A coded slice extension: a slice of a scalable enhancement layer or of a non-base view.
+     */
+    public static final int SLICE_EXTENSION = 20;
+
+    /**
+     * A coded slice extension of a depth view component (3D-AVC).
+     */
+    public static final int DEPTH_SLICE_EXTENSION = 21;
+
     private H264Nal() {
         throw new AssertionError();
     }

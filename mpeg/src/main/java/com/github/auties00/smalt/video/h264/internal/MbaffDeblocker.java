@@ -545,7 +545,7 @@ final class MbaffDeblocker {
      * @param offsetA the {@code FilterOffsetA}
      * @param offsetB the {@code FilterOffsetB}
      */
-    private static void filterLuma(byte[] plane, int q0, int step, int bs, int qpP, int qpQ, int offsetA,
+    static void filterLuma(byte[] plane, int q0, int step, int bs, int qpP, int qpQ, int offsetA,
                                    int offsetB) {
         var qpAv = (qpP + qpQ + 1) >> 1;
         var indexA = Math.clamp(qpAv + offsetA, 0, 51);
@@ -609,7 +609,7 @@ final class MbaffDeblocker {
      * @param offsetA the {@code FilterOffsetA}
      * @param offsetB the {@code FilterOffsetB}
      */
-    private static void filterChroma(byte[] plane, int q0, int step, int bs, int qpP, int qpQ, int offsetA,
+    static void filterChroma(byte[] plane, int q0, int step, int bs, int qpP, int qpQ, int offsetA,
                                      int offsetB) {
         var qpAv = (qpP + qpQ + 1) >> 1;
         var indexA = Math.clamp(qpAv + offsetA, 0, 51);

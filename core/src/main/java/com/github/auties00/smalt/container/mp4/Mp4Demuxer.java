@@ -19,6 +19,7 @@ import com.github.auties00.smalt.internal.io.FourCc;
 import com.github.auties00.smalt.internal.io.SegmentBacked;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.tags.Mp4ChapterTrack;
 import com.github.auties00.smalt.io.MediaSource;
@@ -38,6 +39,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -112,6 +114,20 @@ import java.util.Set;
  * is that of its edits. The image sequence and auxiliary video tracks of HEIF and AVIF files
  * ({@code pict} and {@code auxv} handlers) are the exception: their timestamps follow the first
  * media edit as in the simple form, and each of their samples is returned once.
+ *
+ * <p>Scalable (SVC) and multiview (MVC) H.264 video is stored as ISO/IEC 14496-15 clauses 7 and 8 describe.
+ * The {@code svc1}, {@code svc2}, {@code mvc1} to {@code mvc4}, {@code avc2} and {@code avc4} sample entries
+ * are H.264 tracks too, and the parameter sets of an entry's {@code svcC} and {@code mvcC} boxes join those of
+ * its {@code avcC} box in the track's configuration (an {@code AVCDecoderConfigurationRecord} whose sequence
+ * parameter sets include the subset sequence parameter sets). A layer stored in a track of its own, one whose
+ * {@code tref}/{@code scal} box names the tracks it extends, gets the parameter sets of those tracks too, and
+ * each of its packets is the whole access unit up to its layer: with the {@code svc1}, {@code mvc1} and
+ * {@code mvc3} entries the time-aligned samples of the referenced tracks followed by its own sample (implicit
+ * reconstruction), otherwise its sample with every extractor (NAL unit type 31) replaced by the bytes it names
+ * in a referenced track's sample and every aggregator (type 30) by the NAL units it holds. Data an extractor
+ * names that cannot be read, such as a sample a stream has already passed beyond the last 128 samples kept
+ * per referenced track, is left out, so the decoder sees the access unit damaged. The referenced tracks keep
+ * their own samples.
  *
  * <p>Every sample description of a track is read. The public track describes the one of its first
  * sample; a sample of another description (chosen by {@code stsc}, or by the {@code tfhd} or
@@ -260,6 +276,24 @@ public final class Mp4Demuxer implements Demuxer {
      * Every track, in file order.
      */
     private final Mp4Track[] allTracks;
+
+    /**
+     * The raw bytes of the samples read last from each track that a scalable or multiview track references,
+     * by track and sample index, so that a forward-only source can rebuild the access units of the
+     * referencing track; empty for files without such tracks.
+     */
+    private final Map<Mp4Track, LinkedHashMap<Integer, byte[]>> referencedSamples = new HashMap<>();
+
+    /**
+     * The tracks whose samples the access unit being rebuilt by implicit reconstruction already holds, so
+     * that each track contributes its sample once however many references name it.
+     */
+    private final List<Mp4Track> reconstructed = new ArrayList<>();
+
+    /**
+     * The most samples {@link #referencedSamples} keeps per track.
+     */
+    private static final int REFERENCED_SAMPLES = 128;
 
     /**
      * The chapters: the Nero {@code chpl} box, or else the first QuickTime chapter track.
@@ -481,6 +515,7 @@ public final class Mp4Demuxer implements Demuxer {
                 }
             }
             var webVtt = new HashSet<Integer>();
+            mergeLayerConfigs(parser.tracks);
             for (var track : parser.tracks) {
                 track.selectBaseEntry();
                 if (track.entry != null && (track.entry.codec().isSubtitle() || track.entry.codec() == Codec.TTML)
@@ -518,6 +553,16 @@ public final class Mp4Demuxer implements Demuxer {
             this.descriptions = new int[active.length];
             this.movieTimescale = parser.movieTimescale;
             this.allTracks = parser.tracks.toArray(new Mp4Track[0]);
+            for (var track : allTracks) {
+                if (isLayered(track)) {
+                    for (var id : track.scalableTracks) {
+                        var referenced = trackOf(id);
+                        if (referenced != null && referenced != track) {
+                            referencedSamples.computeIfAbsent(referenced, ignored -> new LinkedHashMap<>());
+                        }
+                    }
+                }
+            }
             var annotations = parser.movieMetadata.annotations;
             if (!parser.movieMetadata.neroChapters) {
                 readChapterTrack(annotations);
@@ -995,6 +1040,18 @@ public final class Mp4Demuxer implements Demuxer {
         var track = active[trackIndex];
         var samples = track.samples;
         var data = readSample(samples.offsets[index], samples.sizes[index]);
+        var held = referencedSamples.get(track);
+        if (held != null) {
+            held.put(index, data);
+            if (held.size() > REFERENCED_SAMPLES) {
+                held.pollFirstEntry();
+            }
+        }
+        if (isLayered(track)) {
+            reconstructed.clear();
+            reconstructed.add(track);
+            data = reconstruct(track, samples.dts[index], data, 0);
+        }
         releaseConsumed();
         var decode = samples.dts[index] + track.shift;
         var pts = decode + samples.ctsOffsets[index];
@@ -1012,6 +1069,312 @@ public final class Mp4Demuxer implements Demuxer {
             sideData.discard(track.trimAmounts[trim * 2], track.trimAmounts[trim * 2 + 1]);
         }
         return new Packet(track.id, data, pts, dts, duration, flags, sideData.build());
+    }
+
+    /**
+     * Returns whether a track is an H.264 track that extends the samples of the tracks a {@code tref/scal}
+     * box names: a scalable or multiview layer stored in a track of its own (ISO/IEC 14496-15 clauses 7
+     * and 8).
+     *
+     * @param track the track to classify
+     * @return {@code true} when its samples are reconstructed into whole access units
+     */
+    private static boolean isLayered(Mp4Track track) {
+        return track.scalableTracks != null && track.scalableTracks.length > 0 && track.entry != null
+                && track.entry.codec() == Codec.H264;
+    }
+
+    /**
+     * Returns the track with a file track identifier.
+     *
+     * @param fileId the {@code track_ID}
+     * @return the track, or {@code null} when the file has none
+     */
+    private Mp4Track trackOf(int fileId) {
+        for (var track : allTracks) {
+            if (track.fileId == fileId) {
+                return track;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Gives every sample description of the layered H.264 tracks the parameter sets of the tracks they
+     * extend, directly or through other layered tracks, so that the configuration of a layered track
+     * decodes its reconstructed access units on its own.
+     *
+     * @param tracks every track of the movie
+     */
+    private static void mergeLayerConfigs(List<Mp4Track> tracks) {
+        for (var track : tracks) {
+            if (track.scalableTracks == null || track.entries == null) {
+                continue;
+            }
+            var configs = new ArrayList<byte[]>();
+            collectLayerConfigs(track, tracks, configs, new HashSet<>());
+            if (configs.isEmpty()) {
+                continue;
+            }
+            for (var index = 0; index < track.entries.length; index++) {
+                var entry = track.entries[index];
+                if (entry == null || entry.codec() != Codec.H264) {
+                    continue;
+                }
+                var extensions = new ArrayList<>(configs.subList(1, configs.size()));
+                extensions.add(entry.config());
+                track.entries[index] = entry.withConfig(NalRecords.mergeAvc(configs.getFirst(), extensions));
+            }
+        }
+    }
+
+    /**
+     * Adds the H.264 configurations of the tracks a track references through {@code tref/scal} to a list,
+     * the tracks they reference first, each track once.
+     *
+     * @param track the referencing track
+     * @param tracks every track of the movie
+     * @param configs receives the configurations
+     * @param visited the file identifiers of the tracks already added or being added
+     */
+    private static void collectLayerConfigs(Mp4Track track, List<Mp4Track> tracks, List<byte[]> configs,
+                                            Set<Integer> visited) {
+        visited.add(track.fileId);
+        for (var id : track.scalableTracks) {
+            if (visited.contains(id)) {
+                continue;
+            }
+            for (var referenced : tracks) {
+                if (referenced.fileId != id || referenced.entries == null || referenced.entries.length == 0) {
+                    continue;
+                }
+                if (referenced.scalableTracks != null) {
+                    collectLayerConfigs(referenced, tracks, configs, visited);
+                }
+                visited.add(id);
+                var entry = referenced.entries[0];
+                if (entry != null && entry.codec() == Codec.H264 && entry.config() != null) {
+                    configs.add(entry.config());
+                }
+            }
+        }
+    }
+
+    /**
+     * Rebuilds the access unit of a sample of a layered H.264 track (ISO/IEC 14496-15): for implicit
+     * reconstruction, the time-aligned samples of the referenced tracks followed by the sample; otherwise
+     * the sample with each extractor replaced by the bytes it names in a referenced track's sample and each
+     * aggregator replaced by the NAL units it holds.
+     *
+     * <p>Data that cannot be found, such as the sample of a referenced track that a forward-only source has
+     * already passed, is left out, so that the decoder sees the access unit damaged. Implicit reconstruction
+     * takes the sample of each track in {@link #reconstructed} once.
+     *
+     * @param track the layered track
+     * @param dts the decoding time of the sample, in the track's timescale
+     * @param data the sample
+     * @param depth the nesting of referenced layered tracks, which ends at 8
+     * @return the access unit
+     */
+    private byte[] reconstruct(Mp4Track track, long dts, byte[] data, int depth) {
+        var config = track.entry.config();
+        var lengthSize = config != null && config.length > 4 ? (config[4] & 3) + 1 : 4;
+        var out = new java.io.ByteArrayOutputStream(data.length + 64);
+        if (track.entry.implicitReconstruction()) {
+            for (var id : track.scalableTracks) {
+                var referenced = trackOf(id);
+                if (referenced == null || reconstructed.contains(referenced)) {
+                    continue;
+                }
+                reconstructed.add(referenced);
+                var time = Mp4Track.rescale(dts, track.timescale, referenced.timescale);
+                var sample = alignedSample(referenced, time, 0);
+                if (sample != null) {
+                    out.writeBytes(isLayered(referenced) && depth < 8
+                            ? reconstruct(referenced, time, sample, depth + 1) : sample);
+                }
+            }
+            out.writeBytes(data);
+            return out.toByteArray();
+        }
+        if (!containsLayerUnits(data, lengthSize)) {
+            return data;
+        }
+        resolveUnits(track, dts, data, 0, data.length, lengthSize, out, depth);
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns whether a sample holds an extractor or an aggregator (NAL unit types 31 and 30).
+     *
+     * @param data the sample
+     * @param lengthSize the size of the NAL unit length prefixes
+     * @return {@code true} when a NAL unit of either type is present
+     */
+    private static boolean containsLayerUnits(byte[] data, int lengthSize) {
+        var position = 0;
+        while (position + lengthSize < data.length) {
+            var length = readLength(data, position, lengthSize);
+            position += lengthSize;
+            if (length <= 0 || length > data.length - position) {
+                return false;
+            }
+            var type = data[position] & 0x1F;
+            if (type == 30 || type == 31) {
+                return true;
+            }
+            position += length;
+        }
+        return false;
+    }
+
+    /**
+     * Copies the length-prefixed NAL units of a range of a sample, resolving extractors and unwrapping
+     * aggregators.
+     *
+     * @param track the layered track
+     * @param dts the decoding time of the sample
+     * @param data the sample
+     * @param from the start of the range
+     * @param to the end of the range
+     * @param lengthSize the size of the NAL unit length prefixes
+     * @param out receives the access unit
+     * @param depth the nesting of aggregators, which ends at 8
+     */
+    private void resolveUnits(Mp4Track track, long dts, byte[] data, int from, int to, int lengthSize,
+                              java.io.ByteArrayOutputStream out, int depth) {
+        var position = from;
+        while (position + lengthSize <= to) {
+            var length = readLength(data, position, lengthSize);
+            var start = position + lengthSize;
+            if (length < 0 || length > to - start) {
+                return;
+            }
+            var type = length > 0 ? data[start] & 0x1F : 0;
+            if (type == 30 && length > 4 && depth < 8) {
+                resolveUnits(track, dts, data, start + 4, start + length, lengthSize, out, depth + 1);
+            } else if (type == 31 && length >= 6 + 2 * lengthSize) {
+                extract(track, dts, data, start, lengthSize, out);
+            } else {
+                out.write(data, position, lengthSize + length);
+            }
+            position = start + length;
+        }
+    }
+
+    /**
+     * Copies the bytes an extractor names: {@code data_length} bytes from {@code data_offset} of the sample
+     * of the referenced track at the extractor's sample offset from the time-aligned one, or, when
+     * {@code data_length} is 0, the whole NAL unit whose length field starts at {@code data_offset}; a
+     * range that runs past the end of the sample stops there.
+     *
+     * @param track the layered track
+     * @param dts the decoding time of the sample holding the extractor
+     * @param data the sample
+     * @param start the index of the extractor's NAL unit header
+     * @param lengthSize the size of the NAL unit length prefixes, which sizes the offset fields
+     * @param out receives the bytes
+     */
+    private void extract(Mp4Track track, long dts, byte[] data, int start, int lengthSize,
+                         java.io.ByteArrayOutputStream out) {
+        var reference = data[start + 4] & 0xFF;
+        var sampleOffset = data[start + 5];
+        var offset = readLength(data, start + 6, lengthSize);
+        var length = readLength(data, start + 6 + lengthSize, lengthSize);
+        if (reference < 1 || reference > track.scalableTracks.length) {
+            return;
+        }
+        var referenced = trackOf(track.scalableTracks[reference - 1]);
+        if (referenced == null || referenced == track) {
+            return;
+        }
+        var sample = alignedSample(referenced, Mp4Track.rescale(dts, track.timescale, referenced.timescale),
+                sampleOffset);
+        if (sample == null || offset < 0 || offset >= sample.length) {
+            return;
+        }
+        long end;
+        if (length == 0) {
+            var unit = readLength(sample, offset, lengthSize);
+            end = unit < 0 ? sample.length : (long) offset + lengthSize + unit;
+        } else {
+            end = (long) offset + length;
+        }
+        out.write(sample, offset, (int) (Math.min(sample.length, end) - offset));
+    }
+
+    /**
+     * Returns a sample of a referenced track: the one whose decoding time is the latest at or before a time,
+     * moved by an offset in samples.
+     *
+     * @param track the referenced track
+     * @param time the decoding time, in the track's timescale
+     * @param sampleOffset the offset in samples
+     * @return the sample, or {@code null} when there is no such sample or it can no longer be read
+     */
+    private byte[] alignedSample(Mp4Track track, long time, int sampleOffset) {
+        var samples = track.samples;
+        var low = 0;
+        var high = samples.count - 1;
+        var found = -1;
+        while (low <= high) {
+            var middle = (low + high) >>> 1;
+            if (samples.dts[middle] <= time) {
+                found = middle;
+                low = middle + 1;
+            } else {
+                high = middle - 1;
+            }
+        }
+        var index = found + sampleOffset;
+        if (found < 0 || index < 0 || index >= samples.count) {
+            return null;
+        }
+        var held = referencedSamples.get(track);
+        var cached = held != null ? held.get(index) : null;
+        if (cached != null) {
+            return cached;
+        }
+        if (forwardOnly) {
+            return null;
+        }
+        return readDirectSample(samples.offsets[index], samples.sizes[index]);
+    }
+
+    /**
+     * Reads the bytes of a sample anywhere in a seekable source without disturbing the read-ahead window.
+     *
+     * @param offset the absolute offset of the sample
+     * @param size the sample size in bytes
+     * @return the sample
+     */
+    private byte[] readDirectSample(long offset, int size) {
+        if (backing != null || segment != null || inWindow(offset, size)) {
+            return readSample(offset, size);
+        }
+        LimitChecks.checkAllocation(limits, size);
+        var data = new byte[size];
+        source.readFully(offset, data, 0, size);
+        return data;
+    }
+
+    /**
+     * Reads a big-endian NAL unit length or extractor field.
+     *
+     * @param data the bytes
+     * @param position the index of the first byte
+     * @param size the field size, 1 to 4 bytes
+     * @return the value, or -1 when the field runs past the end
+     */
+    private static int readLength(byte[] data, int position, int size) {
+        if (position + size > data.length) {
+            return -1;
+        }
+        var value = 0L;
+        for (var index = 0; index < size; index++) {
+            value = (value << 8) | (data[position + index] & 0xFF);
+        }
+        return value > Integer.MAX_VALUE ? -1 : (int) value;
     }
 
     /**

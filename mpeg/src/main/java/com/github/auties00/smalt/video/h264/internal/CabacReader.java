@@ -43,9 +43,10 @@ public final class CabacReader {
     }
 
     /**
-     * The context states, indexed by {@code ctxIdx}.
+     * The context states, indexed by {@code ctxIdx}: 1024 contexts of clause 9 and the seven of
+     * the scalable extension (ITU-T H.264 F.9.3).
      */
-    public final byte[] states = new byte[1024];
+    public final byte[] states = new byte[1031];
 
     /**
      * The buffer holding the slice data, followed by zero padding.
@@ -376,7 +377,33 @@ public final class CabacReader {
      * range
      */
     public int residualBlock(int category, int maxCoeff, boolean field, int[] indices, int[] levels) {
-        var count = significanceMap((field ? SIGNIFICANCE_FIELD : SIGNIFICANCE)[category], maxCoeff - 1, indices);
+        var count = significanceMap((field ? SIGNIFICANCE_FIELD : SIGNIFICANCE)[category], 0, maxCoeff - 1, indices);
+        decodeLevels(LEVEL_CONTEXTS[category], count, levels);
+        return count;
+    }
+
+    /**
+     * Decodes the significance map and the levels of one residual block whose
+     * {@code coded_block_flag} is 1 and whose coefficient list positions range from
+     * {@code startIdx} to {@code endIdx} (ITU-T H.264 7.3.5.3.3), as the slices of the scalable
+     * extension code them.
+     *
+     * <p>The coefficients are returned as by {@link #residualBlock(int, int, boolean, int[], int[])},
+     * their positions counted from position 0 of the block list.
+     *
+     * @param category the {@code ctxBlockCat}, 0 to 5
+     * @param startIdx the first coded position
+     * @param endIdx the last coded position
+     * @param field whether the block belongs to a field macroblock, whose significance map uses
+     * the field-coded contexts
+     * @param indices receives the coefficient positions
+     * @param levels receives the signed levels
+     * @return the number of non-zero coefficients, at least 1
+     * @throws com.github.auties00.smalt.MediaException.Malformed if a level is out of
+     * range
+     */
+    public int residualBlock(int category, int startIdx, int endIdx, boolean field, int[] indices, int[] levels) {
+        var count = significanceMap((field ? SIGNIFICANCE_FIELD : SIGNIFICANCE)[category], startIdx, endIdx, indices);
         decodeLevels(LEVEL_CONTEXTS[category], count, levels);
         return count;
     }
@@ -385,18 +412,19 @@ public final class CabacReader {
      * Decodes a significance map (ITU-T H.264 7.3.5.3.3).
      *
      * @param contexts the significance map contexts of the block category
-     * @param end {@code maxNumCoeff - 1}, the position that is significant when no earlier
-     * one was the last
+     * @param start the first position of the map
+     * @param end the last position of the map, which is significant when no earlier one was the
+     * last
      * @param indices receives the positions of the significant coefficients
      * @return the number of significant coefficients, at least 1
      */
-    private int significanceMap(int[] contexts, int end, int[] indices) {
+    private int significanceMap(int[] contexts, int start, int end, int[] indices) {
         var st = states;
         var nwin = inverted;
         var b = bits;
         long rng = range;
         var count = 0;
-        for (var i = 0; i < end; i++) {
+        for (var i = start; i < end; i++) {
             var pair = contexts[i];
             var sigCtx = pair & 0xFFFF;
             var state = st[sigCtx] & 0xFF;

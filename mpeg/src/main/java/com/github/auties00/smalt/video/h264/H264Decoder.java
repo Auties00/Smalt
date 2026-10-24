@@ -2,6 +2,7 @@ package com.github.auties00.smalt.video.h264;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
@@ -19,9 +20,14 @@ import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.h264.internal.AuxiliaryAlpha;
 import com.github.auties00.smalt.video.h264.internal.H264DecoderEngine;
 import com.github.auties00.smalt.video.h264.internal.H264Sps;
+import com.github.auties00.smalt.video.h264.internal.H264SpsExtension;
+import com.github.auties00.smalt.video.h264.internal.MfcProcessing;
 
+import java.util.ArrayDeque;
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -42,6 +48,26 @@ import java.util.function.Consumer;
  * macroblock-adaptive frame/field (MBAFF) frames. 4:4:4 streams may code their three color planes
  * together or separately ({@code separate_colour_plane_flag}). Output is bit-exact with the
  * normative decoding process.
+ *
+ * <p>Streams with more than one layer decode as follows. The alpha auxiliary coded pictures of a
+ * stream whose sequence parameter set extension declares alpha become the alpha plane of their
+ * frames (see {@link H264DecoderOptions#alpha()}). A multiview stream (the Multiview High and Stereo
+ * High profiles of Annex G: inter-view prediction, prefix NAL units, subset sequence parameter sets
+ * and the inter-view reference list modifications) outputs its base view by default and any set of
+ * its views on request (see {@link H264DecoderOptions#allViews()} and
+ * {@link H264DecoderOptions#outputViews()}); a frame-compatible stereo stream (MFC High) also
+ * reconstructs its views at full resolution (see {@link H264DecoderOptions#enhancedResolution()}),
+ * and a multiview stream with depth (Multiview Depth High and MFC Depth High of Annex H) also
+ * outputs its depth views (see {@link H264DecoderOptions#depth()}). A scalable stream (the Scalable
+ * Baseline, Scalable High and Scalable High Intra profiles of Annex F: coarse-grain and medium-grain
+ * quality layers, dyadic and extended spatial layers with cropping and chroma phase shifts,
+ * inter-layer intra, motion and residual prediction, key pictures with reference base pictures,
+ * progressive and interlaced layers with field pictures and macroblock-adaptive frames, CAVLC and
+ * CABAC) outputs its base layer by default and any of its layers on request (see
+ * {@link H264DecoderOptions#targetLayer()}); its 4:2:0 8-bit layers are decoded bit-exactly, on the
+ * calling thread. Both kinds of stream can drop their higher temporal layers (see
+ * {@link H264DecoderOptions#maxTemporalId()}). Multiview and scalable tracks of MP4 files decode
+ * through their {@code mvcC} and {@code svcC} configurations and aggregator NAL units.
  *
  * <p>Interlaced content is output as frames: the two fields of a frame, coded as one frame
  * picture or as two field pictures, are woven into one frame, which carries the timestamp of the
@@ -95,9 +121,12 @@ import java.util.function.Consumer;
  *
  * <p>Streams this decoder does not handle raise {@link MediaException.Unsupported} naming the
  * feature: {@code "h264 cabac data partitioning"} for slice data partitions of a CABAC picture
- * parameter set, which no profile allows, and {@code "h264 mvc"} for inter-view reference list
- * modifications. NAL units of the scalable and multiview extensions and auxiliary pictures are
- * skipped, so the base layer and primary pictures decode. When a slice data partition B or C is
+ * parameter set, which no profile allows; {@code "h264 3d-avc"} for the texture and depth views
+ * beyond the base view of 3D-AVC streams (Enhanced Multiview Depth High, Annex I);
+ * {@code "h264 mvcd"} for the non-base view components of a multiview stream that refer to a
+ * sequence parameter set the decoder cannot use for them; and {@code "h264 svc format"} for
+ * scalable layers with samples other than 4:2:0 at 8 bits. Each of the last three is raised once,
+ * and the base view or base layer keeps decoding. When a slice data partition B or C is
  * lost, the macroblocks whose residual or I_PCM samples it held are reconstructed without them
  * (I_PCM macroblocks as mid-gray) and the picture is damaged; a partition B or C whose partition
  * A is missing damages the picture as a lost slice does. The slice data of a slice coded as
@@ -162,6 +191,11 @@ public final class H264Decoder implements VideoDecoder {
         void accept(VideoFrame frame, boolean damaged);
     }
 
+    /**
+     * The NAL unit type of the aggregators of scalable and multiview tracks of MP4 files (ISO/IEC 14496-15).
+     */
+    private static final int AGGREGATOR = 30;
+
     private final H264DecoderOptions options;
 
     private final H264DecoderEngine engine;
@@ -206,6 +240,51 @@ public final class H264Decoder implements VideoDecoder {
     private Yuv16Picture widePicture;
 
     /**
+     * The reusable output picture of depth frames.
+     */
+    private YuvPicture depthPicture;
+
+    /**
+     * The reusable output picture of depth frames deeper than 8 bits with
+     * {@link H264DecoderOptions#highBitDepth()}.
+     */
+    private Yuv16Picture wideDepthPicture;
+
+    /**
+     * The base view frame of a frame-compatible stereo stream waiting for the enhancement view frame of
+     * its access unit, with {@link H264DecoderOptions#enhancedResolution()}, or {@code null}.
+     */
+    private HeldBase heldBase;
+
+    /**
+     * The picture {@link #heldBase} holds, reused.
+     */
+    private YuvPicture heldBasePicture;
+
+    /**
+     * The reusable pictures of the left and right views reconstructed at enhanced resolution.
+     */
+    private YuvPicture leftPicture;
+
+    private YuvPicture rightPicture;
+
+    /**
+     * The buffers of the enhanced resolution reconstruction.
+     */
+    private final MfcProcessing.Workspace mfcWorkspace = new MfcProcessing.Workspace();
+
+    /**
+     * A base view frame of a frame-compatible stereo stream held until the enhancement view frame of its
+     * access unit arrives.
+     *
+     * @param key the pairing key of the access unit
+     * @param frame the frame, whose picture is {@link #heldBasePicture}
+     * @param damaged whether the frame may differ from the encoder's reconstruction
+     */
+    private record HeldBase(long key, VideoFrame frame, boolean damaged) {
+    }
+
+    /**
      * The timestamp of the last frame output, or {@link Packet#NO_TIMESTAMP}.
      */
     private long lastPts = Packet.NO_TIMESTAMP;
@@ -241,6 +320,77 @@ public final class H264Decoder implements VideoDecoder {
      */
     private final short[][] grainWidePlanes = new short[3][];
 
+    /**
+     * The most frames of a stream with alpha kept waiting for their alpha, and the most alpha
+     * planes kept waiting for their frame. A frame still waiting when this many frames follow it
+     * lost its auxiliary picture (one whose slices were damaged, for instance) and is output
+     * opaque and damaged.
+     */
+    private static final int MAX_PENDING_ALPHAS = 16;
+
+    /**
+     * The frames output by the engine that wait for the alpha of their access unit, in output
+     * order, with the frames output after them.
+     */
+    private final ArrayDeque<PendingFrame> pendingFrames = new ArrayDeque<>();
+
+    /**
+     * Copies of the auxiliary frames output before their primary frame.
+     */
+    private final ArrayDeque<PendingAlpha> pendingAlphas = new ArrayDeque<>();
+
+    /**
+     * The pictures of delivered frames of {@link #pendingFrames}, for reuse.
+     */
+    private final ArrayDeque<Picture> sparePictures = new ArrayDeque<>();
+
+    /**
+     * A frame waiting in {@link #pendingFrames}.
+     */
+    private static final class PendingFrame {
+        /**
+         * The pairing key of the frame.
+         */
+        final long key;
+
+        /**
+         * The frame, whose picture belongs to this entry.
+         */
+        final VideoFrame frame;
+
+        /**
+         * The extension describing the frame's alpha, or {@code null} for a frame without alpha.
+         */
+        final H264SpsExtension extension;
+
+        /**
+         * Whether the frame may differ from the encoder's reconstruction.
+         */
+        boolean damaged;
+
+        /**
+         * Whether the frame is complete: its alpha was attached, or it has none.
+         */
+        boolean resolved;
+
+        PendingFrame(long key, VideoFrame frame, H264SpsExtension extension, boolean damaged) {
+            this.key = key;
+            this.frame = frame;
+            this.extension = extension;
+            this.damaged = damaged;
+        }
+    }
+
+    /**
+     * An auxiliary frame output before its primary frame.
+     *
+     * @param key the pairing key
+     * @param frame a copy of the auxiliary frame
+     * @param damaged whether the auxiliary frame may differ from the encoder's reconstruction
+     */
+    private record PendingAlpha(long key, H264DecoderEngine.OutputFrame frame, boolean damaged) {
+    }
+
     private boolean closed;
 
     /**
@@ -270,7 +420,18 @@ public final class H264Decoder implements VideoDecoder {
             throw new IllegalArgumentException(track.codec() + " is not an H.264 track");
         }
         this.engine = new H264DecoderEngine(options.limits(), this::emit, Math.max(1, options.threads()));
+        if (options.alpha()) {
+            engine.decodeAuxiliary(this::emitAlpha, this::noAlpha);
+        }
         engine.setLowDelay(options.realtime());
+        var viewIds = options.outputViews().stream().mapToInt(Integer::intValue).toArray();
+        engine.setEnhancedResolution(options.enhancedResolution());
+        engine.setViews(options.allViews(), viewIds);
+        if (options.depth()) {
+            engine.decodeDepth(this::emitDepth, options.allViews(), viewIds);
+        }
+        engine.setMaxTemporalId(options.maxTemporalId().orElse(7));
+        engine.setTargetLayer(options.targetLayer().orElse(127));
         this.timeBase = track.timeBase();
         this.trackFrameDuration = track.frameRate()
                 .map(rate -> Math.max(0, rate.invert().rescale(1, timeBase)))
@@ -486,7 +647,11 @@ public final class H264Decoder implements VideoDecoder {
             ensureOpen();
             this.checkedOutput = output;
             try {
-                engine.flush();
+                try {
+                    engine.flush();
+                } finally {
+                    drainAllPending();
+                }
             } catch (RuntimeException exception) {
                 if (exception == consumerFailure || (exception instanceof MediaException
                         && !(exception instanceof MediaException.Malformed))) {
@@ -518,7 +683,11 @@ public final class H264Decoder implements VideoDecoder {
             var handoff = ConsumerFailure.<VideoFrame>wrap(output);
             this.output = handoff;
             try {
-                engine.flush();
+                try {
+                    engine.flush();
+                } finally {
+                    drainAllPending();
+                }
             } catch (RuntimeException exception) {
                 throw handoff.translate("H.264 stream", exception);
             } finally {
@@ -532,6 +701,9 @@ public final class H264Decoder implements VideoDecoder {
         if (!closed) {
             closed = true;
             engine.close();
+            pendingFrames.clear();
+            pendingAlphas.clear();
+            heldBase = null;
         }
     }
 
@@ -559,7 +731,7 @@ public final class H264Decoder implements VideoDecoder {
             NalUnits.forEachAnnexB(data, engine::decodeNal);
             return;
         }
-        var end = NalUnits.forEachLengthPrefixed(data, lengthSize, engine::decodeNal);
+        var end = NalUnits.forEachLengthPrefixed(data, lengthSize, this::feedUnit);
         if (end < data.length) {
             if (end + lengthSize > data.length) {
                 throw new MediaException.Malformed("truncated NAL unit length prefix");
@@ -570,11 +742,60 @@ public final class H264Decoder implements VideoDecoder {
     }
 
     /**
+     * Feeds one NAL unit of a length-prefixed packet to the engine, or the units an aggregator holds
+     * (NAL unit type 30, ISO/IEC 14496-15): a four-byte NAL unit header followed by length-prefixed NAL
+     * units. An aggregator inside an aggregator, which ISO/IEC 14496-15 does not allow, is skipped.
+     *
+     * @param data the packet payload
+     * @param offset the index of the unit's header byte
+     * @param length the unit length in bytes
+     */
+    private void feedUnit(byte[] data, int offset, int length) {
+        if (length > 4 && (data[offset] & 0x1F) == AGGREGATOR) {
+            var position = offset + 4;
+            var end = offset + length;
+            while (position + lengthSize <= end) {
+                var size = NalUnits.readLength(data, position, lengthSize);
+                position += lengthSize;
+                if (size > end - position) {
+                    throw new MediaException.Malformed("NAL unit length " + size + " exceeds its aggregator");
+                }
+                if (size > 0 && (data[position] & 0x1F) != AGGREGATOR) {
+                    engine.decodeNal(data, position, (int) size);
+                }
+                position += (int) size;
+            }
+            return;
+        }
+        engine.decodeNal(data, offset, length);
+    }
+
+    /**
      * Converts a decoded frame into a {@link VideoFrame} and hands it to the consumer.
      *
      * @param frame the engine's frame
      */
     private void emit(H264DecoderEngine.OutputFrame frame) {
+        emit(frame, false);
+    }
+
+    /**
+     * Converts a decoded depth frame into a {@link VideoFrame} and hands it to the consumer.
+     *
+     * @param frame the depth engine's frame
+     */
+    private void emitDepth(H264DecoderEngine.OutputFrame frame) {
+        emit(frame, true);
+    }
+
+    /**
+     * Converts a decoded frame into a {@link VideoFrame} and hands it to the consumer, or holds it until
+     * what completes it arrives.
+     *
+     * @param frame the engine's frame
+     * @param depthView whether the frame is a depth view component
+     */
+    private void emit(H264DecoderEngine.OutputFrame frame, boolean depthView) {
         if (frame.filmGrain() != null && options.filmGrain()) {
             frame = withFilmGrain(frame);
         }
@@ -592,14 +813,20 @@ public final class H264Decoder implements VideoDecoder {
         var luma = frame.lumaOrigin() + sps.cropTop * frame.lumaStride() + sps.cropLeft;
         var chromaTop = sps.cropTop >> format.shiftY();
         var chroma = frame.chromaOrigin() + chromaTop * frame.chromaStride() + (sps.cropLeft >> format.shiftX());
+        var held = frame.auxiliary() != null || !pendingFrames.isEmpty();
         Picture result;
         if (frame.wide() && options.highBitDepth()) {
             var depth = monochrome ? frame.bitDepthLuma() : Math.max(frame.bitDepthLuma(), frame.bitDepthChroma());
-            var target = widePicture;
+            var target = held ? heldWidePicture(width, height, format, depth, color)
+                    : depthView ? wideDepthPicture : widePicture;
             if (target == null || target.width() != width || target.height() != height
                     || target.chromaFormat() != format || target.bitDepth() != depth || !target.color().equals(color)) {
                 target = Yuv16Picture.allocate(width, height, format, depth, false, color);
-                widePicture = target;
+                if (depthView) {
+                    wideDepthPicture = target;
+                } else {
+                    widePicture = target;
+                }
             }
             copyShifted(frame.luma16(), luma, frame.lumaStride(), target.y(), target.yStride(), width, height,
                     depth - frame.bitDepthLuma());
@@ -612,11 +839,15 @@ public final class H264Decoder implements VideoDecoder {
             }
             result = target;
         } else {
-            var target = picture;
+            var target = held ? heldPicture(width, height, format, color) : depthView ? depthPicture : picture;
             if (target == null || target.width() != width || target.height() != height
                     || target.chromaFormat() != format || !target.color().equals(color)) {
                 target = YuvPicture.allocate(width, height, format, false, color);
-                picture = target;
+                if (depthView) {
+                    depthPicture = target;
+                } else {
+                    picture = target;
+                }
             }
             if (frame.wide()) {
                 var narrow = Narrow.select();
@@ -639,6 +870,16 @@ public final class H264Decoder implements VideoDecoder {
                 }
             }
             result = target;
+        }
+        if (depthView && frame.depthLut() != null && result instanceof YuvPicture depthMap) {
+            var lut = frame.depthLut();
+            var samples = depthMap.y();
+            for (var y = 0; y < height; y++) {
+                var row = y * depthMap.yStride();
+                for (var x = 0; x < width; x++) {
+                    samples[row + x] = (byte) lut[samples[row + x] & 0xFF];
+                }
+            }
         }
         var nominal = frame.duration() > 0 ? frame.duration() : frameDuration(sps);
         var pts = frame.pts();
@@ -663,15 +904,288 @@ public final class H264Decoder implements VideoDecoder {
         }
         var decoded = new VideoFrame(result, pts, duration > 0 ? duration : Track.UNKNOWN_DURATION, frame.keyframe(),
                 frame.sideData());
+        if (!held && frame.frameCompatible() != null && options.enhancedResolution()
+                && result instanceof YuvPicture yuv && format == ChromaFormat.YUV420) {
+            emitFrameCompatible(frame, decoded, yuv);
+            return;
+        }
+        if (!held) {
+            deliver(decoded, frame.damaged());
+            return;
+        }
+        var pending = new PendingFrame(frame.pairKey(), decoded, frame.auxiliary(), frame.damaged());
+        pendingFrames.addLast(pending);
+        if (frame.auxiliary() == null) {
+            pending.resolved = true;
+        } else {
+            for (var iterator = pendingAlphas.iterator(); iterator.hasNext(); ) {
+                var alpha = iterator.next();
+                if (alpha.key() == pending.key) {
+                    iterator.remove();
+                    applyAlpha(pending, alpha.frame(), alpha.damaged());
+                    break;
+                }
+            }
+        }
+        if (pendingFrames.size() > MAX_PENDING_ALPHAS) {
+            var oldest = pendingFrames.peekFirst();
+            if (!oldest.resolved) {
+                makeOpaque(oldest.frame.picture());
+                oldest.damaged = true;
+                oldest.resolved = true;
+            }
+        }
+        drainPending();
+    }
+
+    /**
+     * Handles a frame of a frame-compatible stereo stream output at enhanced resolution: holds a copy of
+     * the base view frame until the enhancement view frame of its access unit arrives, then hands the
+     * left and right views reconstructed from the two to the consumer. A base view frame that no
+     * enhancement view frame follows is handed out as decoded.
+     *
+     * @param frame the engine's frame
+     * @param decoded the converted frame
+     * @param picture the converted frame's picture, reused by the next frame
+     */
+    private void emitFrameCompatible(H264DecoderEngine.OutputFrame frame, VideoFrame decoded, YuvPicture picture) {
+        if (frame.voIdx() == 0) {
+            releaseHeldBase();
+            var copy = heldBasePicture;
+            if (copy == null || copy.width() != picture.width() || copy.height() != picture.height()
+                    || !copy.color().equals(picture.color())) {
+                copy = YuvPicture.allocate(picture.width(), picture.height(), ChromaFormat.YUV420, false,
+                        picture.color());
+                heldBasePicture = copy;
+            }
+            Planes.copy(picture.y(), 0, picture.yStride(), copy.y(), 0, copy.yStride(), picture.width(),
+                    picture.height());
+            Planes.copy(picture.u(), 0, picture.uvStride(), copy.u(), 0, copy.uvStride(), picture.chromaWidth(),
+                    picture.chromaHeight());
+            Planes.copy(picture.v(), 0, picture.uvStride(), copy.v(), 0, copy.uvStride(), picture.chromaWidth(),
+                    picture.chromaHeight());
+            heldBase = new HeldBase(frame.pairKey(), new VideoFrame(copy, decoded.pts(), decoded.duration(),
+                    decoded.keyframe(), decoded.sideData()), frame.damaged());
+            return;
+        }
+        var base = heldBase;
+        if (base == null || base.key() != frame.pairKey() || frame.voIdx() != 1
+                || picture.width() != base.frame().picture().width()
+                || picture.height() != base.frame().picture().height()) {
+            releaseHeldBase();
+            deliver(decoded, frame.damaged());
+            return;
+        }
+        heldBase = null;
+        var basePicture = (YuvPicture) base.frame().picture();
+        var left = leftPicture;
+        if (left == null || left.width() != picture.width() || left.height() != picture.height()
+                || !left.color().equals(basePicture.color())) {
+            left = YuvPicture.allocate(picture.width(), picture.height(), ChromaFormat.YUV420, false,
+                    basePicture.color());
+            leftPicture = left;
+            rightPicture = YuvPicture.allocate(picture.width(), picture.height(), ChromaFormat.YUV420, false,
+                    basePicture.color());
+        }
+        var right = rightPicture;
+        MfcProcessing.reconstruct(basePicture, picture, left, right, frame.frameCompatible(), mfcWorkspace);
+        var damaged = base.damaged() || frame.damaged();
+        var baseFrame = base.frame();
+        deliver(new VideoFrame(left, baseFrame.pts(), baseFrame.duration(), baseFrame.keyframe(),
+                baseFrame.sideData().toBuilder().noFramePacking().build()), damaged);
+        deliver(new VideoFrame(right, baseFrame.pts(), baseFrame.duration(), baseFrame.keyframe(),
+                decoded.sideData().toBuilder().noFramePacking().build()), damaged);
+    }
+
+    /**
+     * Hands the held base view frame of a frame-compatible stereo stream to the consumer as decoded, when
+     * one is held.
+     */
+    private void releaseHeldBase() {
+        var base = heldBase;
+        if (base != null) {
+            heldBase = null;
+            deliver(base.frame(), base.damaged());
+        }
+    }
+
+    /**
+     * Hands a frame to the consumer of the call in progress.
+     *
+     * @param frame the decoded frame
+     * @param damaged whether the frame may differ from the encoder's reconstruction
+     */
+    private void deliver(VideoFrame frame, boolean damaged) {
         if (checkedOutput != null) {
             try {
-                checkedOutput.accept(decoded, frame.damaged());
+                checkedOutput.accept(frame, damaged);
             } catch (RuntimeException failure) {
                 consumerFailure = failure;
                 throw failure;
             }
         } else {
-            output.accept(decoded);
+            output.accept(frame);
+        }
+    }
+
+    /**
+     * Hands the leading frames of {@link #pendingFrames} that no longer wait for their alpha to
+     * the consumer, returning their pictures to the spare pictures.
+     */
+    private void drainPending() {
+        while (!pendingFrames.isEmpty() && pendingFrames.peekFirst().resolved) {
+            var pending = pendingFrames.pollFirst();
+            sparePictures.addLast(pending.frame.picture());
+            deliver(pending.frame, pending.damaged);
+        }
+    }
+
+    /**
+     * Hands every frame of {@link #pendingFrames} to the consumer, opaque when its alpha never
+     * arrived, and forgets the alpha planes still waiting for their frame.
+     */
+    private void drainAllPending() {
+        for (var pending : pendingFrames) {
+            if (!pending.resolved) {
+                makeOpaque(pending.frame.picture());
+                pending.resolved = true;
+            }
+        }
+        pendingAlphas.clear();
+        drainPending();
+        releaseHeldBase();
+    }
+
+    /**
+     * Receives a frame of the auxiliary engine: attaches its samples as the alpha of the primary
+     * frame of the same access unit, or keeps a copy until that frame is output.
+     *
+     * @param frame the auxiliary engine's frame
+     */
+    private void emitAlpha(H264DecoderEngine.OutputFrame frame) {
+        for (var pending : pendingFrames) {
+            if (pending.key == frame.pairKey() && !pending.resolved) {
+                applyAlpha(pending, frame, frame.damaged());
+                drainPending();
+                return;
+            }
+        }
+        if (pendingAlphas.size() >= MAX_PENDING_ALPHAS) {
+            pendingAlphas.pollFirst();
+        }
+        pendingAlphas.addLast(new PendingAlpha(frame.pairKey(), copyOf(frame), frame.damaged()));
+    }
+
+    /**
+     * Learns that the access unit of a primary frame carried no auxiliary picture, so that the frame
+     * is output opaque.
+     *
+     * @param key the pairing key of the primary frame
+     */
+    private void noAlpha(long key) {
+        for (var pending : pendingFrames) {
+            if (pending.key == key && !pending.resolved) {
+                makeOpaque(pending.frame.picture());
+                pending.resolved = true;
+                drainPending();
+                return;
+            }
+        }
+    }
+
+    /**
+     * Writes the alpha of an auxiliary frame into the picture of a waiting primary frame.
+     *
+     * @param pending the primary frame
+     * @param alpha the auxiliary frame, whose samples are read before this method returns
+     * @param damaged whether the auxiliary frame may differ from the encoder's reconstruction
+     */
+    private void applyAlpha(PendingFrame pending, H264DecoderEngine.OutputFrame alpha, boolean damaged) {
+        AuxiliaryAlpha.apply(pending.extension, alpha, pending.frame.picture());
+        pending.damaged |= damaged;
+        pending.resolved = true;
+    }
+
+    /**
+     * Returns a copy of the samples of an auxiliary frame, whose planes the engine reuses once the
+     * frame is handed out.
+     *
+     * @param frame the auxiliary frame
+     * @return a frame holding copies of the luma plane
+     */
+    private static H264DecoderEngine.OutputFrame copyOf(H264DecoderEngine.OutputFrame frame) {
+        return new H264DecoderEngine.OutputFrame(frame.luma() != null ? frame.luma().clone() : null, null, null,
+                frame.luma16() != null ? frame.luma16().clone() : null, null, null, frame.bitDepthLuma(),
+                frame.bitDepthChroma(), frame.lumaStride(), frame.chromaStride(), frame.lumaOrigin(),
+                frame.chromaOrigin(), frame.sps(), frame.color(), frame.pts(), frame.duration(), frame.keyframe(),
+                frame.poc(), frame.damaged(), null, 0, frame.sideData(), frame.picStruct(), frame.pairKey(), null,
+                frame.voIdx(), null, null);
+    }
+
+    /**
+     * Fills the alpha plane of a held picture with the opaque value.
+     *
+     * @param picture the picture, which has an alpha plane when its frame waited for alpha
+     */
+    private static void makeOpaque(Picture picture) {
+        if (picture instanceof YuvPicture yuv && yuv.hasAlpha()) {
+            Arrays.fill(yuv.alpha(), (byte) 255);
+        } else if (picture instanceof Yuv16Picture wide && wide.hasAlpha()) {
+            Arrays.fill(wide.alpha(), (short) ((1 << wide.bitDepth()) - 1));
+        }
+    }
+
+    /**
+     * Returns a spare 8-bit picture with an alpha plane for a frame that waits in
+     * {@link #pendingFrames}, reusing one of the same format when there is one.
+     *
+     * @param width the picture width in samples
+     * @param height the picture height in samples
+     * @param format the chroma format
+     * @param color the color description
+     * @return the picture
+     */
+    private YuvPicture heldPicture(int width, int height, ChromaFormat format, ColorInfo color) {
+        for (var iterator = sparePictures.iterator(); iterator.hasNext(); ) {
+            if (iterator.next() instanceof YuvPicture spare && spare.width() == width && spare.height() == height
+                    && spare.chromaFormat() == format && spare.color().equals(color)) {
+                iterator.remove();
+                return spare;
+            }
+        }
+        trimSpares();
+        return YuvPicture.allocate(width, height, format, true, color);
+    }
+
+    /**
+     * Returns a spare 16-bit picture with an alpha plane for a frame that waits in
+     * {@link #pendingFrames}; see {@link #heldPicture}.
+     *
+     * @param width the picture width in samples
+     * @param height the picture height in samples
+     * @param format the chroma format
+     * @param depth the bit depth
+     * @param color the color description
+     * @return the picture
+     */
+    private Yuv16Picture heldWidePicture(int width, int height, ChromaFormat format, int depth, ColorInfo color) {
+        for (var iterator = sparePictures.iterator(); iterator.hasNext(); ) {
+            if (iterator.next() instanceof Yuv16Picture spare && spare.width() == width && spare.height() == height
+                    && spare.chromaFormat() == format && spare.bitDepth() == depth && spare.color().equals(color)) {
+                iterator.remove();
+                return spare;
+            }
+        }
+        trimSpares();
+        return Yuv16Picture.allocate(width, height, format, depth, true, color);
+    }
+
+    /**
+     * Drops the oldest spare pictures beyond the few a stream with alpha keeps in use.
+     */
+    private void trimSpares() {
+        while (sparePictures.size() >= MAX_PENDING_ALPHAS) {
+            sparePictures.pollFirst();
         }
     }
 
@@ -732,7 +1246,8 @@ public final class H264Decoder implements VideoDecoder {
                 planes16 != null ? planes16[0] : null, planes16 != null && chroma ? planes16[1] : null,
                 planes16 != null && chroma ? planes16[2] : null, frame.bitDepthLuma(), frame.bitDepthChroma(), width,
                 chromaWidth, 0, 0, sps, frame.color(), frame.pts(), frame.duration(), frame.keyframe(), frame.poc(),
-                frame.damaged(), params, offset, frame.sideData(), frame.picStruct());
+                frame.damaged(), params, offset, frame.sideData(), frame.picStruct(), frame.pairKey(),
+                frame.auxiliary(), frame.voIdx(), frame.frameCompatible(), frame.depthLut());
     }
 
     /**

@@ -11,9 +11,9 @@ import java.util.Optional;
  * to orient it for display, and which layer of a multi-layer stream it shows.
  *
  * <p>Decoders fill the entries from the messages the stream carries (for H.264 and HEVC, the
- * picture timing, frame packing arrangement and display orientation SEI messages, and for HEVC
- * the layers its video parameter set describes) and leave the others absent; a frame the stream
- * says nothing about carries {@link #NONE}.
+ * picture timing, frame packing arrangement and display orientation SEI messages, the layers an
+ * HEVC video parameter set describes and the views of an H.264 multiview stream) and leave the
+ * others absent; a frame the stream says nothing about carries {@link #NONE}.
  *
  * <p>Instances are immutable and thread-safe.
  */
@@ -145,8 +145,8 @@ public final class FrameSideData {
     /**
      * Returns the layer of a multi-layer stream that the frame shows.
      *
-     * <p>An HEVC decoder sets it on every frame when it outputs more than the base layer of a
-     * stream with several layers, and leaves it absent otherwise.
+     * <p>The HEVC and H.264 decoders set it on every frame when they output more than the base
+     * layer or base view of a stream with several layers or views, and leave it absent otherwise.
      *
      * @return the layer, or empty when the frame comes from a single layer stream or only its base
      * layer is output
@@ -198,6 +198,9 @@ public final class FrameSideData {
 
         private Orientation orientation;
 
+        /**
+         * The layer the frame was decoded from, or {@code null}.
+         */
         private VideoLayer layer;
 
         /**

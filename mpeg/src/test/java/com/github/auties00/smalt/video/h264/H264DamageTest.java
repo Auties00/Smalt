@@ -29,6 +29,7 @@ import java.util.Random;
 import java.util.stream.Stream;
 import java.util.zip.ZipFile;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -561,6 +562,76 @@ class H264DamageTest {
                 }
             }
             assertEquals(lossy, decoderOnly, "reportLoss marks the same loss");
+        }
+
+        /**
+         * A 32x32 Main profile CAVLC stream with {@code pic_order_cnt_type} 0 that allows {@code frame_num}
+         * gaps, in decoding order: an I_PCM IDR picture (POC 0), a P picture of I_PCM macroblocks (POC 8),
+         * a non-reference B picture of B_Skip macroblocks between them (POC 4), whose spatial direct
+         * prediction averages its first entries of both lists, and a P picture of P_Skip macroblocks
+         * (POC 12).
+         */
+        static List<byte[]> bGapStream() {
+            var sps = new H264BitWriter().bits(77, 8).bits(0, 8).bits(10, 8).ue(0).ue(0).ue(0).ue(0).ue(2).bit(1)
+                    .ue(1).ue(1).bit(1).bit(1).bit(0).bit(0).trailing();
+            var pps = new H264BitWriter().ue(0).ue(0).bit(0).bit(0).ue(0).ue(0).ue(0).bit(0).bits(0, 2).se(0).se(0).se(0)
+                    .bit(0).bit(0).bit(0).trailing();
+            var idr = new H264BitWriter().ue(0).ue(7).ue(0).bits(0, 4).ue(0).bits(0, 4).bit(0).bit(0).se(0);
+            var p = new H264BitWriter().ue(0).ue(5).ue(0).bits(1, 4).bits(8, 4).bit(0).bit(0).bit(0).se(0);
+            for (var mb = 0; mb < 4; mb++) {
+                idr.ue(25);
+                p.ue(0).ue(30);
+                for (var writer : List.of(idr, p)) {
+                    while (!writer.aligned()) {
+                        writer.bit(0);
+                    }
+                }
+                for (var k = 0; k < 384; k++) {
+                    idr.bits(16 + ((k * 7 + mb * 31) % 220), 8);
+                    p.bits(236 - ((k * 13 + mb * 17) % 200), 8);
+                }
+            }
+            var b = new H264BitWriter().ue(0).ue(6).ue(0).bits(2, 4).bits(4, 4).bit(1).bit(0).bit(0).bit(0).se(0)
+                    .ue(4);
+            var last = new H264BitWriter().ue(0).ue(5).ue(0).bits(2, 4).bits(12, 4).bit(0).bit(0).bit(0).se(0).ue(4);
+            return List.of(
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(3, 7, sps), H264BitWriter.nal(3, 8, pps),
+                            H264BitWriter.nal(3, 5, idr.trailing()))),
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(2, 1, p.trailing()))),
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(0, 1, b.trailing()))),
+                    H264TestStreams.annexB(List.of(H264BitWriter.nal(2, 1, last.trailing()))));
+        }
+
+        /** Decodes the stream without access unit {@code lost} and returns the damage flag of each frame, by index. */
+        static Boolean[] damageWithout(List<byte[]> units, int lost, boolean incompleteAfter, boolean report) {
+            var damage = new Boolean[units.size()];
+            try (var decoder = new H264Decoder(TRACK, H264DecoderOptions.defaults())) {
+                H264Decoder.FrameConsumer sink = (frame, damaged) -> damage[(int) (frame.pts() / TICKS)] = damaged;
+                for (var i = 0; i < units.size(); i++) {
+                    if (i == lost) {
+                        if (report) {
+                            decoder.reportLoss();
+                        }
+                        continue;
+                    }
+                    decode(decoder, packet(units.get(i), i), incompleteAfter && i == lost + 1, sink);
+                }
+                decoder.flush(sink);
+            }
+            return damage;
+        }
+
+        @Test
+        @DisplayName("after a loss, a B picture whose lists leave out the stand-in for the lost picture is damaged")
+        void lostPictureLeftOutOfBLists() {
+            var units = bGapStream();
+            assertArrayEquals(new Boolean[]{false, false, false, false}, damageWithout(units, -1, false, false));
+            assertArrayEquals(new Boolean[]{false, null, true, true}, damageWithout(units, 1, true, false),
+                    "the loss is declared with the packet after it");
+            assertArrayEquals(new Boolean[]{false, null, true, true}, damageWithout(units, 1, false, true),
+                    "the loss is reported on its own");
+            // a stream that allows frame_num gaps may skip pictures on purpose: only a reported loss tells
+            assertArrayEquals(new Boolean[]{false, null, false, true}, damageWithout(units, 1, false, false));
         }
 
         @Test

@@ -125,6 +125,12 @@ final class Mp4Track {
     int[] chapterTracks;
 
     /**
+     * The file identifiers of the tracks a {@code tref/scal} box references, whose time-aligned samples
+     * the samples of this scalable or multiview H.264 track extend, or {@code null}.
+     */
+    int[] scalableTracks;
+
+    /**
      * The integer part of the track header's display width.
      */
     int headerWidth;

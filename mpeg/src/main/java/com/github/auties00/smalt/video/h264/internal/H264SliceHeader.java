@@ -61,6 +61,38 @@ public final class H264SliceHeader {
     public boolean idr;
 
     /**
+     * Whether the slice is a coded slice MVC extension ({@code nal_unit_type} 20), whose list
+     * modifications may name inter-view references.
+     */
+    public boolean mvc;
+
+    /**
+     * The view order index {@code VOIdx} of the view the slice belongs to, 0 for the base view.
+     */
+    public int voIdx;
+
+    /**
+     * The {@code view_id} of the view the slice belongs to.
+     */
+    public int viewId;
+
+    /**
+     * The {@code temporal_id} of the slice, 0 when its NAL unit has no header extension.
+     */
+    public int temporalId;
+
+    /**
+     * The {@code anchor_pic_flag} of the slice's access unit.
+     */
+    public boolean anchor;
+
+    /**
+     * The {@code inter_view_flag} of the slice: whether its view component may be an inter-view
+     * reference of the other view components of its access unit.
+     */
+    public boolean interView = true;
+
+    /**
      * The {@code first_mb_in_slice}.
      */
     public int firstMbInSlice;
@@ -358,12 +390,28 @@ public final class H264SliceHeader {
      * @throws MediaException.Malformed if a field is out of range or the header is truncated
      */
     public void parseRest(H264BitReader reader, H264Pps pps, int nalUnitType, int nalRefIdc) {
+        parseRest(reader, pps, nalUnitType, nalRefIdc, nalUnitType == H264Nal.IDR_SLICE);
+    }
+
+    /**
+     * Parses the rest of the slice header after {@link #parseStart(H264BitReader)}, for a slice
+     * whose IDR status the NAL unit header extension gives.
+     *
+     * @param reader the reader positioned after {@code pic_parameter_set_id}
+     * @param pps the picture parameter set named by {@link #ppsId}
+     * @param nalUnitType the {@code nal_unit_type}
+     * @param nalRefIdc the {@code nal_ref_idc}
+     * @param idr whether the slice belongs to an IDR picture ({@code IdrPicFlag})
+     * @throws MediaException.Malformed if a field is out of range or the header is truncated
+     */
+    public void parseRest(H264BitReader reader, H264Pps pps, int nalUnitType, int nalRefIdc, boolean idr) {
         var sps = pps.sps;
         this.pps = pps;
         this.sps = sps;
         this.nalUnitType = nalUnitType;
         this.nalRefIdc = nalRefIdc;
-        this.idr = nalUnitType == H264Nal.IDR_SLICE;
+        this.idr = idr;
+        this.mvc = nalUnitType == H264Nal.SLICE_EXTENSION;
         colorPlaneId = 0;
         if (sps.separateColorPlane) {
             colorPlaneId = reader.readBits(2);
@@ -519,7 +567,7 @@ public final class H264SliceHeader {
      * @param reader the reader positioned at the list modification
      * @param list the list index, 0 or 1
      */
-    private void parseModification(H264BitReader reader, int list) {
+    void parseModification(H264BitReader reader, int list) {
         refPicListModification[list] = reader.readFlag();
         if (!refPicListModification[list]) {
             return;
@@ -533,8 +581,9 @@ public final class H264SliceHeader {
             if (idc > 5 || count >= MAX_MODIFICATIONS || reader.overrun()) {
                 throw new MediaException.Malformed("invalid reference picture list modification");
             }
-            if (idc > 2) {
-                throw new MediaException.Unsupported("h264 mvc", "inter-view reference list modification");
+            if (idc > 2 && !mvc) {
+                throw new MediaException.Malformed("inter-view reference list modification outside a multiview "
+                        + "slice");
             }
             modificationIdc[list][count] = idc;
             modificationValue[list][count] = reader.readUe();
@@ -549,7 +598,7 @@ public final class H264SliceHeader {
      * @param reader the reader positioned at the prediction weight table
      * @param chromaArrayType the {@code ChromaArrayType}
      */
-    private void parseWeightTable(H264BitReader reader, int chromaArrayType) {
+    void parseWeightTable(H264BitReader reader, int chromaArrayType) {
         lumaLog2WeightDenom = reader.readUe();
         if (lumaLog2WeightDenom > 7) {
             throw new MediaException.Malformed("luma_log2_weight_denom out of range");
@@ -604,7 +653,7 @@ public final class H264SliceHeader {
      *
      * @param reader the reader positioned at the reference picture marking
      */
-    private void parseMarking(H264BitReader reader) {
+    void parseMarking(H264BitReader reader) {
         var count = 0;
         while (true) {
             var op = reader.readUe();
@@ -643,6 +692,13 @@ public final class H264SliceHeader {
         nalUnitType = other.nalUnitType;
         nalRefIdc = other.nalRefIdc;
         idr = other.idr;
+        mvc = other.mvc;
+        voIdx = other.voIdx;
+        viewId = other.viewId;
+        temporalId = other.temporalId;
+        anchor = other.anchor;
+        interView = other.interView;
+
         firstMbInSlice = other.firstMbInSlice;
         sliceType = other.sliceType;
         ppsId = other.ppsId;

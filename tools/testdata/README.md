@@ -578,6 +578,67 @@ decoder cross-checking the views). It also builds `lhv1` items around the first 
 `HevcAppleAlphaTest` runs on macOS only: avconvert's `PresetHEVCHighestQualityWithAlpha` codes an ffmpeg-made ProRes
 4444 clip with alpha, and the test keeps the result in `target/media-fixtures/apple-hevc-alpha.mov`.
 
+## H.264 auxiliary alpha vectors
+
+`H264AuxiliaryAlphaTest` of `smalt-mpeg` decodes streams whose access units carry alpha auxiliary coded pictures
+(`nal_unit_type` 19, `mpeg/src/test/resources/com/github/auties00/smalt/video/h264/auxiliary/`), next to the
+`alphaconformanceG` conformance stream. The JM reference encoder cannot code auxiliary pictures, so `python -I
+tools/testdata/h264-aux/make-vectors.py <JM bin directory> <JM cfg directory> <output directory>` assembles each
+stream from two JM 19.1 encodes made with the same parameters (its docstring explains how), checks that the JM
+decoder reproduces each encoder's reconstruction, and writes the rows of `streams.tsv` and `frames.tsv`: per
+frame the MD5 of the primary picture as the JM decoder outputs it and the MD5 of its alpha plane. The inputs are
+synthetic and the JM encoder is deterministic, so the streams' SHA-256 checksums are reproduced.
+
+## H.264 multiview and scalable conformance oracles
+
+The multiview (MVC) and scalable (SVC) conformance streams of ITU-T H.264.1 (`h264-MVC-*` in `vectors.tsv`, and the
+archive sets `h264-SVC-*` of `archives.tsv`) are checked by `H264MvcConformanceTest` and `H264SvcConformanceTest` of
+`smalt-mpeg`. The MVC streams ship without decoded views, so the expected MD5 of each view is the output of JM 19.1
+(`ldecod -p DecodeAllLayers=1`) for the two-view streams and of JMVC 8.5 (`H264AVCDecoderLibTestStatic <stream>
+<out> <views>`) for the others; the two agree on every view they both decode. Each SVC zip holds the sub-bitstream
+of every layer the stream defines and its reference decoding, whose MD5 the test pins; the archive set of each zip
+downloads only its sub-bitstreams, and the pinned MD5s were taken by streaming each reference decoding out of the
+zip with HTTP range requests. Where the reference decoding predates the deblocking rule of the Scalable Baseline
+profile for macroblocks with transform coefficients from the reference layer (ITU-T H.264 F.8.7.4.3, the
+`profile_idc` 83 condition), which changes a few samples by a few levels, the pinned MD5 is that of the JSVM 9.19.15
+decoder, which applies the rule, and the test marks it. The `.txt` description of a few layers lists the wrong frame
+size, frame count or temporal level, so the operating points come from the sub-bitstreams themselves (their highest
+DQId and `temporal_id`); the full stream of SVCBMST-1 is a copy of its second layer, so the test decodes the
+sub-bitstream of the highest layer to select the others; and three layers of SVCHMTS-1 keep their quality layers in
+some temporal levels only, which no target layer and temporal level select, so only their own sub-bitstreams are
+decoded. Every reference decoder is ITU-T and ISO/IEC reference software, built from source (JM from jvet/JM, JMVC
+8.5 and JSVM 9.19.15 from the ITU-T JVT site, with `g++ -DMSYS_WIN32` and the library defines of their projects) and
+run as a black box.
+
+## H.264 scalable vectors
+
+`H264SvcStreamsTest` of `smalt-mpeg` decodes six small scalable streams coded by the JSVM 9.19.15 reference
+encoder (`mpeg/src/test/resources/com/github/auties00/smalt/video/h264/svc/`): coarse-grain quality scalability
+over three temporal layers of hierarchical P pictures, medium-grain quality scalability with hierarchical B
+pictures, CABAC and key pictures that store reference base pictures, three spatial layers (dyadic CAVLC, then
+1.5 times larger with CABAC), and three interlaced streams of macroblock-adaptive frames: quality scalability over
+an interlaced base, dyadic spatial scalability between two interlaced layers, and an interlaced layer over a
+progressive base. Field pictures are left out: with field pictures in a scalable layer the JSVM encoder writes
+access units whose layer representations its own decoder rejects. `python -I tools/testdata/h264-svc/make-vectors.py <JSVM bin directory> <JSVM data
+directory> <output directory>` codes them from a synthetic scene drawn at each layer's size, extracts the
+sub-bitstream of every layer with JSVM's BitStreamExtractor (built without optimization, which the MinGW build
+needs to run) and records in `streams.tsv` the SHA-256 of each stream and, per layer, its DQId, highest
+`temporal_id`, frame count and the MD5 of the JSVM decoder's output. The JSVM encoder is deterministic, so the
+streams' checksums are reproduced. The streams are also the seeds of the scalable fuzz target.
+
+`H264SvcWrapperTest` runs the field and macroblock-adaptive codings of the AVC conformance streams
+(`h264-AVCv1-*` and `h264-FRExt-*` of `vectors.tsv`) through the scalable decoding process: the test wraps each
+stream into a scalable stream whose base layer is the AVC stream, with a prefix NAL unit before every base layer
+slice, a subset sequence parameter set per sequence parameter set and a skipped quality refinement slice
+(`quality_id` 1) over every slice, and decodes its highest layer. With transform coefficient level prediction
+(`seq_tcoeff_level_prediction_flag` 1) the refinement reconstructs the base layer's own decoding, so the output
+must match the stream's reference decoding, except in streams whose macroblocks change the quantization parameter:
+there the refinement rescales the base layer's levels from each macroblock's quantization parameter to that of
+its slice, and the expected MD5 is the JSVM decoder's decoding of the wrapped stream. Without level prediction
+the refinement predicts its intra macroblocks as Intra_Base macroblocks, and the expected MD5 of the
+macroblock-adaptive streams is the JSVM decoder's decoding of the wrapped stream (the JSVM decoder stops with a
+failed assertion on the wrapped streams of field pictures, which are therefore checked with level prediction only).
+
 ## Aperio slide oracle files
 
 The same test decodes a pyramid level of two Aperio slides of the OpenSlide test data

@@ -32,7 +32,8 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
  * Writes the committed seeds of the mpeg fuzz targets (tools/fuzz/README.md): short streams encoded by ffmpeg and
  * converted to the packet format through Smalt's demuxers, raw elementary streams and H.264 parameter sets made by
  * ffmpeg (and from a separate-color-plane test stream), HEIF stills built with the test kit's
- * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, and AAC LTP, ER AAC LTP and SSR streams written bit by bit. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
+ * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, AAC LTP, ER AAC LTP and SSR streams written bit by bit, and
+ * the scalable and alpha H.264 test streams, one NAL unit per packet. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
@@ -506,6 +507,32 @@ class FuzzSeedWriter {
         System.arraycopy(recovery, cut, stream, starts.get(parameterSets), recovery.length - cut);
         write(MpegFuzzTest.class, "hevc", "valid-recovery-cut-annexb.bin",
                 FuzzPackets.video(0, 128, 96, null, accessUnits(stream, 6)));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the layered H.264 target from the scalable and alpha test streams")
+    void h264Layers() {
+        var vectors = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "video", "h264");
+        for (var name : List.of("svc-cgs-temporal", "svc-mgs-keys", "svc-spatial")) {
+            write(MpegFuzzTest.class, "h264Layers", "valid-" + name + ".bin", FuzzPackets.video(0, 0, 0, null,
+                    nalUnitParts(Fixtures.read(vectors.resolve("svc").resolve(name + ".264")))));
+        }
+        write(MpegFuzzTest.class, "h264Layers", "valid-aux9-cabac-slices.bin", FuzzPackets.video(0, 0, 0, null,
+                nalUnitParts(Fixtures.read(vectors.resolve("auxiliary").resolve("aux9-cabac-slices.264")))));
+    }
+
+    /**
+     * Returns one part per NAL unit of an Annex B stream, its start code included; only the first is flagged as a
+     * keyframe.
+     */
+    private static List<FuzzPackets.Part> nalUnitParts(byte[] stream) {
+        var starts = nalStarts(stream);
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var index = 0; index < starts.size(); index++) {
+            var end = index + 1 < starts.size() ? starts.get(index + 1) : stream.length;
+            parts.add(new FuzzPackets.Part(Arrays.copyOfRange(stream, starts.get(index), end), index == 0));
+        }
+        return parts;
     }
 
     @Test

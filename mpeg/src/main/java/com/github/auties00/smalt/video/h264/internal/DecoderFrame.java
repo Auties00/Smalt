@@ -402,6 +402,18 @@ final class DecoderFrame {
     boolean nonExisting;
 
     /**
+     * Whether the {@link #nonExisting} frame may stand in for a lost picture: its sequence allows no gaps in
+     * {@code frame_num}, or a loss was reported between the previous picture and the gap.
+     */
+    boolean lostStandIn;
+
+    /**
+     * The table mapping the luma samples of a depth view component to uniformly quantized disparity, or
+     * {@code null}.
+     */
+    int[] depthLut;
+
+    /**
      * Whether the frame is an IDR picture.
      */
     boolean idr;
@@ -515,6 +527,40 @@ final class DecoderFrame {
      * The sequence parameter set the frame was decoded with, which carries its cropping.
      */
     H264Sps sps;
+
+    /**
+     * The key pairing a primary frame with the auxiliary frame of its access unit: the decoding
+     * index of the primary frame.
+     */
+    long pairKey;
+
+    /**
+     * The extension describing the alpha an auxiliary engine decodes for this frame, or
+     * {@code null}.
+     */
+    H264SpsExtension auxiliary;
+
+    /**
+     * The view order index of the view the frame belongs to, 0 for the base view.
+     */
+    int voIdx;
+
+    /**
+     * The {@code view_id} of the view the frame belongs to.
+     */
+    int viewId;
+
+    /**
+     * The {@code DQId} of the scalable layer the frame was decoded at, or -1 for a frame the
+     * scalable decoder did not decode.
+     */
+    int scalableLayer = -1;
+
+    /**
+     * Whether the frame stays in the buffer until its access unit ends, because the view
+     * components of other views of the access unit may predict from it.
+     */
+    boolean interViewHold;
 
 
     /**
@@ -1187,6 +1233,20 @@ final class DecoderFrame {
         Arrays.fill(refId[0], -1);
         Arrays.fill(refId[1], -1);
         Arrays.fill(mbType, MB_INTRA);
+    }
+
+    /**
+     * Copies the motion data of another frame of the same size into this one.
+     *
+     * @param source the frame whose motion vectors, reference indices and macroblock types are copied
+     */
+    void copyMotionFrom(DecoderFrame source) {
+        for (var list = 0; list < 2; list++) {
+            System.arraycopy(source.mv[list], 0, mv[list], 0, mv[list].length);
+            System.arraycopy(source.ref[list], 0, ref[list], 0, ref[list].length);
+            System.arraycopy(source.refId[list], 0, refId[list], 0, refId[list].length);
+        }
+        System.arraycopy(source.mbType, 0, mbType, 0, mbType.length);
     }
 
     /**

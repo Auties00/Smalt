@@ -67,13 +67,13 @@ class FrameSideDataTest {
     }
 
     @Test
-    @DisplayName("a layer names an identifier from 0 to 63, a non-negative view and a type")
+    @DisplayName("a layer names an identifier from 0 to 1023, a non-negative view and a type")
     void videoLayer() {
-        var layer = new VideoLayer(63, 0, VideoLayer.Type.DEPTH);
-        assertEquals(63, layer.id());
+        var layer = new VideoLayer(1023, 0, VideoLayer.Type.DEPTH);
+        assertEquals(1023, layer.id());
         assertEquals(0, layer.viewId());
         assertEquals(VideoLayer.Type.DEPTH, layer.type());
-        assertThrows(IllegalArgumentException.class, () -> new VideoLayer(64, 0, VideoLayer.Type.PRIMARY));
+        assertThrows(IllegalArgumentException.class, () -> new VideoLayer(1024, 0, VideoLayer.Type.PRIMARY));
         assertThrows(IllegalArgumentException.class, () -> new VideoLayer(-1, 0, VideoLayer.Type.PRIMARY));
         assertThrows(IllegalArgumentException.class, () -> new VideoLayer(0, -1, VideoLayer.Type.PRIMARY));
         assertThrows(NullPointerException.class, () -> new VideoLayer(0, 0, null));

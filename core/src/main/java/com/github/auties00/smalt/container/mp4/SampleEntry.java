@@ -242,6 +242,29 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
     }
 
     /**
+     * Returns a copy of this description with another codec configuration.
+     *
+     * @param replacement the configuration, or {@code null} for none
+     * @return the modified description
+     */
+    SampleEntry withConfig(byte[] replacement) {
+        return new SampleEntry(format, codec, replacement, width, height, color, sampleAspect, interlacing, channels,
+                sampleRate, layout, bitsPerSample, frameBytes);
+    }
+
+    /**
+     * Returns whether the samples of an H.264 track with this description are reconstructed implicitly
+     * from the tracks it references (ISO/IEC 14496-15): an {@code svc1}, {@code mvc1} or {@code mvc3}
+     * entry, whose access units are the time-aligned samples of the referenced tracks followed by its own.
+     *
+     * @return {@code true} for implicit reconstruction, {@code false} when extractors name the data
+     * taken from other tracks
+     */
+    boolean implicitReconstruction() {
+        return format == BoxTypes.SVC1 || format == BoxTypes.MVC1 || format == BoxTypes.MVC3;
+    }
+
+    /**
      * Returns the kind of track this entry describes.
      *
      * @return the kind implied by the codec
@@ -269,6 +292,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             throw new MediaException.Unsupported("mp4 encryption", "the video track is encrypted (encv)");
         }
         byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null;
+        var layerConfigs = new ArrayList<byte[]>();
         EsDescriptor esds = null;
         ColorInfo color = null;
         MasteringDisplay mastering = null;
@@ -280,6 +304,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             var body = box;
             switch (box.type()) {
                 case BoxTypes.AVCC -> avcC = body.rest();
+                case BoxTypes.SVCC, BoxTypes.MVCC -> layerConfigs.add(body.rest());
                 case BoxTypes.HVCC -> hvcC = body.rest();
                 case BoxTypes.LHVC -> lhvC = body.rest();
                 case BoxTypes.VPCC -> {
@@ -323,9 +348,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         Codec codec;
         byte[] config = null;
         switch (format) {
-            case BoxTypes.AVC1, BoxTypes.AVC3 -> {
+            case BoxTypes.AVC1, BoxTypes.AVC2, BoxTypes.AVC3, BoxTypes.AVC4, BoxTypes.SVC1, BoxTypes.SVC2,
+                 BoxTypes.MVC1, BoxTypes.MVC2, BoxTypes.MVC3, BoxTypes.MVC4 -> {
                 codec = Codec.H264;
-                config = avcC;
+                config = layerConfigs.isEmpty() ? avcC : NalRecords.mergeAvc(avcC, layerConfigs);
             }
             case BoxTypes.HVC1, BoxTypes.HEV1, BoxTypes.DVH1, BoxTypes.DVHE -> {
                 codec = Codec.HEVC;

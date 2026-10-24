@@ -129,8 +129,10 @@ final class SliceTask {
      * @param topPoc the top field order count of the current frame
      * @param bottomPoc the bottom field order count of the current frame
      * @param counts the number of active entries of each list
+     * @param voIdx the view order index of the current picture; entries of other views are
+     * inter-view references, which count as not marked for reference (ITU-T H.264 G.8.4)
      */
-    void captureReferences(int currentPoc, int topPoc, int bottomPoc, int[] counts) {
+    void captureReferences(int currentPoc, int topPoc, int bottomPoc, int[] counts, int voIdx) {
         this.currentPoc = currentPoc;
         currentFieldPoc[0] = topPoc;
         currentFieldPoc[1] = bottomPoc;
@@ -138,13 +140,14 @@ final class SliceTask {
             for (var i = 0; i < counts[list]; i++) {
                 var entry = lists[list][i];
                 var structure = structures[list][i];
+                var interView = entry.voIdx != voIdx;
                 refPoc[list][i] = entry.structurePoc(structure);
-                refMarking[list][i] = entry.structureMarking(structure);
+                refMarking[list][i] = interView ? 0 : entry.structureMarking(structure);
                 refStale[list][i] = entry.staleReference;
                 refFieldPoc[list][2 * i] = entry.topPoc;
                 refFieldPoc[list][2 * i + 1] = entry.bottomPoc;
-                refFieldMarking[list][2 * i] = entry.refTop;
-                refFieldMarking[list][2 * i + 1] = entry.refBottom;
+                refFieldMarking[list][2 * i] = interView ? 0 : entry.refTop;
+                refFieldMarking[list][2 * i + 1] = interView ? 0 : entry.refBottom;
             }
         }
     }

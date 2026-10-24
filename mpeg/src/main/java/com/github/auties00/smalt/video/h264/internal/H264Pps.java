@@ -278,7 +278,7 @@ public final class H264Pps {
             if (reader.readFlag()) {
                 var scaling4x4 = new int[6][16];
                 var scaling8x8 = new int[6][64];
-                var count = 6 + (pps.transform8x8Mode ? (sps.chromaFormatIdc != 3 ? 2 : 6) : 0);
+                var count = 6 + (pps.transform8x8Mode ? (sps.codedChromaFormatIdc != 3 ? 2 : 6) : 0);
                 if (sps.scalingMatrixPresent) {
                     H264ScalingLists.parse(reader, count, sps.scaling4x4, sps.scaling8x8, scaling4x4, scaling8x8);
                 } else {

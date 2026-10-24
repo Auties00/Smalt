@@ -233,7 +233,8 @@ final class MovieParser {
 
     /**
      * Keeps the track identifiers a {@code tref} box lists under {@code chap}, the QuickTime
-     * chapter tracks of a track.
+     * chapter tracks of a track, and under {@code scal}, the tracks whose samples the samples of a
+     * scalable or multiview H.264 track extend (ISO/IEC 14496-15).
      *
      * @param tref the box payload
      * @param track receives the identifiers
@@ -241,7 +242,8 @@ final class MovieParser {
     private static void parseChapterReferences(BoxCursor tref, Mp4Track track) {
         while (tref.hasBox()) {
             var reference = tref.nextBox();
-            if (reference.type() != FourCc.of("chap")) {
+            var chapters = reference.type() == FourCc.of("chap");
+            if (!chapters && reference.type() != FourCc.of("scal")) {
                 continue;
             }
             var body = reference;
@@ -249,7 +251,12 @@ final class MovieParser {
             while (body.remaining() >= 4 && ids.size() < 16) {
                 ids.add((int) body.u32());
             }
-            track.chapterTracks = ids.stream().mapToInt(Integer::intValue).toArray();
+            var array = ids.stream().mapToInt(Integer::intValue).toArray();
+            if (chapters) {
+                track.chapterTracks = array;
+            } else {
+                track.scalableTracks = array;
+            }
         }
     }
 

@@ -90,6 +90,7 @@ final class MpegWorkloads {
                 file("h264-decode-t1", () -> h264Decode(1, false)),
                 file("h264-decode-t2", () -> h264Decode(2, false)),
                 file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
+                file("h264-svc-decode", MpegWorkloads::h264ScalableDecode),
                 file("aac-encode", () -> aacEncode(6)),
                 file("aac-decode", () -> aacDecode("aac-decode", false, false, 6)),
                 file("heaac-decode", () -> aacDecode("heaac-decode", true, false, 6)),
@@ -149,6 +150,47 @@ final class MpegWorkloads {
         var decoder = new H264Decoder(VideoStreams.track(Codec.H264, codecConfig.orElse(null)),
                 options.toBuilder().threads(threads).build());
         return VideoStreams.decode((realtime ? "h264-decode-rt-t" : "h264-decode-t") + threads, packets, decoder);
+    }
+
+    /**
+     * The scalable H.264 streams decoded by {@link #h264ScalableDecode()}: coarse-grain quality layers over
+     * temporal layers of hierarchical P pictures, medium-grain quality layers with hierarchical B pictures, CABAC
+     * and key pictures, dyadic and non-dyadic spatial layers, and spatial layers of macroblock-adaptive frames
+     * over interlaced and progressive base layers, each of synthetic scenes coded by the JSVM reference encoder
+     * ({@code tools/testdata/h264-svc/make-vectors.py}).
+     */
+    private static final List<String> SCALABLE_STREAMS = List.of("svc-cgs-temporal", "svc-mgs-keys", "svc-spatial",
+            "svc-mbaff-spatial", "svc-progressive-mbaff");
+
+    /**
+     * Returns a workload that decodes scalable H.264 streams at their highest layer and at their base and
+     * intermediate layers, which select the inter-layer intra, motion and residual prediction of the scalable
+     * decoder and its resampling.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264ScalableDecode() {
+        var rounds = new ArrayList<Runnable>();
+        for (var name : SCALABLE_STREAMS) {
+            byte[] stream;
+            try (var input = MpegWorkloads.class.getResourceAsStream("svc/" + name + ".264")) {
+                stream = input.readAllBytes();
+            } catch (java.io.IOException | NullPointerException exception) {
+                throw new IllegalStateException("missing training stream " + name, exception);
+            }
+            var packets = List.of(new Packet(1, stream, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true));
+            for (var layer : new int[]{-1, 16, 1}) {
+                var options = H264DecoderOptions.builder();
+                if (layer < 0) {
+                    options.highestLayer();
+                } else {
+                    options.targetLayer(layer >> 4, layer & 15);
+                }
+                rounds.add(VideoStreams.decodeRound(packets, new H264Decoder(VideoStreams.track(Codec.H264, null),
+                        options.build())));
+            }
+        }
+        return TrainingWorkload.of("h264-svc-decode", () -> rounds.forEach(Runnable::run));
     }
 
     /**
