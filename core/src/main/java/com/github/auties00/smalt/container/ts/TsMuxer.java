@@ -492,7 +492,11 @@ public final class TsMuxer implements Muxer {
      * descriptor and the {@link TrackDisposition#CLEAN_EFFECTS}, {@link TrackDisposition#HEARING_IMPAIRED} or
      * {@link TrackDisposition#VISUAL_IMPAIRED} disposition of an audio track the {@code audio_type} of its language
      * descriptor. The
-     * other tags, pictures and chapters are not stored.
+     * other tags, pictures and chapters are not stored. The program map table of the tracks declared before is built
+     * here, so names it cannot hold are rejected before any packet is written.
+     *
+     * @throws MediaException.LimitExceeded if the program map table of the declared tracks outgrows the 1021 bytes
+     * a PSI section holds
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -500,7 +504,14 @@ public final class TsMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
+        var previous = this.tags;
         this.tags = tags;
+        try {
+            checkSection(programMapBody().length);
+        } catch (MediaException.LimitExceeded exception) {
+            this.tags = previous;
+            throw exception;
+        }
     }
 
     /**
@@ -1831,6 +1842,15 @@ public final class TsMuxer implements Muxer {
         pat.u16be(options.programNumber());
         pat.u16be(0xE000 | options.pmtPid());
         writeSection(PAT_PID, Psi.PAT_TABLE, pat.toByteArray(), true);
+        writeSection(options.pmtPid(), Psi.PMT_TABLE, programMapBody(), false);
+    }
+
+    /**
+     * Builds the program map table of the declared tracks.
+     *
+     * @return the section after its {@code section_length} field, CRC excluded
+     */
+    private byte[] programMapBody() {
         var pmt = new ByteWriter(64);
         pmt.u16be(options.programNumber());
         pmt.u8(0xC1);
@@ -1865,7 +1885,24 @@ public final class TsMuxer implements Muxer {
             pmt.u16be(0xF000 | descriptors.length);
             pmt.bytes(descriptors);
         }
-        writeSection(options.pmtPid(), Psi.PMT_TABLE, pmt.toByteArray(), false);
+        return pmt.toByteArray();
+    }
+
+    /**
+     * Returns the {@code section_length} of a long-form PSI section.
+     *
+     * @param bodyLength the length of the section after its {@code section_length} field, CRC excluded
+     * @return the section length, the CRC included
+     * @throws MediaException.LimitExceeded if the section exceeds the 1021 bytes a PSI section length allows, which
+     * the descriptors of many named tracks can reach
+     */
+    private static int checkSection(int bodyLength) {
+        var length = bodyLength + 4;
+        if (length > MAX_SECTION_LENGTH) {
+            throw new MediaException.LimitExceeded("a PSI section of " + length + " bytes exceeds the "
+                    + MAX_SECTION_LENGTH + " a section length allows");
+        }
+        return length;
     }
 
     /**
@@ -1879,11 +1916,7 @@ public final class TsMuxer implements Muxer {
      * the descriptors of many named tracks can reach
      */
     private void writeSection(int pid, int table, byte[] body, boolean pat) {
-        var length = body.length + 4;
-        if (length > MAX_SECTION_LENGTH) {
-            throw new MediaException.LimitExceeded("a PSI section of " + length + " bytes exceeds the "
-                    + MAX_SECTION_LENGTH + " a section length allows");
-        }
+        var length = checkSection(body.length);
         var section = new byte[3 + body.length + 4];
         section[0] = (byte) table;
         section[1] = (byte) (0xB0 | (length >> 8));

@@ -102,8 +102,9 @@ public final class MuxerTags {
      *
      * <p>The {@code STREAMINFO}, {@code SEEKTABLE}, {@code APPLICATION} and {@code CUESHEET}
      * blocks are kept in order; the {@code VORBIS_COMMENT} block (keeping its vendor string) and
-     * the {@code PICTURE} blocks are rebuilt from the tags, and {@code PADDING} is dropped. The
-     * last block gets the last-block flag.
+     * the {@code PICTURE} blocks are rebuilt from the tags and follow them, and the {@code PADDING}
+     * blocks come last, so that a header whose seek table grows into its padding keeps its length
+     * once tagged. The last block gets the last-block flag.
      *
      * @param header the {@code fLaC} marker and well-formed metadata blocks
      * @param tags the tags, pictures and chapters to store
@@ -112,6 +113,7 @@ public final class MuxerTags {
      */
     public static byte[] flacMetadata(byte[] header, MediaTags tags) {
         var blocks = new ArrayList<byte[]>();
+        var padding = new ArrayList<byte[]>();
         var vendor = VorbisComment.DEFAULT_VENDOR;
         var offset = 4;
         while (offset + 4 <= header.length) {
@@ -119,13 +121,11 @@ public final class MuxerTags {
             var length = ByteArrays.u24be(header, offset + 1);
             var end = Math.min(header.length, offset + 4 + length);
             switch (type) {
-                case 1, 6 -> {
+                case 1 -> padding.add(withType(1, java.util.Arrays.copyOfRange(header, offset + 4, end)));
+                case 6 -> {
                 }
                 case 4 -> vendor = VorbisComment.parse(header, offset + 4, end - offset - 4).vendor();
-                default -> blocks.add(java.util.Arrays.copyOfRange(header, offset + 4, end));
-            }
-            if (type != 1 && type != 4 && type != 6) {
-                blocks.set(blocks.size() - 1, withType(type, blocks.getLast()));
+                default -> blocks.add(withType(type, java.util.Arrays.copyOfRange(header, offset + 4, end)));
             }
             offset = end;
         }
@@ -133,6 +133,7 @@ public final class MuxerTags {
         for (var picture : flacPictures(tags)) {
             blocks.add(withType(6, picture));
         }
+        blocks.addAll(padding);
         var out = new ByteWriter(header.length + 1024);
         out.bytes(header, 0, 4);
         for (var index = 0; index < blocks.size(); index++) {

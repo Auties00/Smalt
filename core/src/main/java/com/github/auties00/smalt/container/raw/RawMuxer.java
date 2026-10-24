@@ -205,6 +205,11 @@ public final class RawMuxer implements Muxer {
     private MediaTags tags;
 
     /**
+     * The ID3v2 tag written before an MPEG audio, AC-3 or AMR stream, or {@code null} for none.
+     */
+    private byte[] id3;
+
+    /**
      * Whether the stream header was written.
      */
     private boolean started;
@@ -371,9 +376,12 @@ public final class RawMuxer implements Muxer {
      * <p>An MP3, MP2, AC-3, E-AC-3 or AMR stream gets an ID3v2.4 tag before its first frame (before the AMR
      * magic); a FLAC stream gets a
      * {@code VORBIS_COMMENT} block (with the chapters) and one {@code PICTURE} block per picture,
-     * replacing those of the track configuration. The track must be declared first.
+     * replacing those of the track configuration and placed before its padding. The track must be declared first.
+     * The tags are encoded here, so a tag the stream cannot hold is rejected before any packet is written.
      *
      * @throws MediaException.Unsupported if no track is declared or its raw form stores no tags
+     * @throws MediaException.LimitExceeded if a FLAC metadata block outgrows the 16 MiB its length holds, or the
+     * ID3v2 tag or one of its frames outgrows the 256 MiB its size holds
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -383,6 +391,12 @@ public final class RawMuxer implements Muxer {
         }
         if (!supportsTags()) {
             throw new MediaException.Unsupported("raw", "only MP3, MP2, AC-3, E-AC-3, AMR and FLAC raw streams store tags");
+        }
+        if (track.codec() == Codec.FLAC) {
+            MuxerTags.flacMetadata(flacHeader(flacConfig), tags);
+            this.id3 = null;
+        } else {
+            this.id3 = MuxerTags.isGlobalEmpty(tags) ? null : MuxerTags.id3v2(tags);
         }
         this.tags = tags;
     }
@@ -693,13 +707,13 @@ public final class RawMuxer implements Muxer {
         switch (track.codec()) {
             case FLAC -> output.write(ByteBuffer.wrap(writtenFlacHeader(flacConfig)));
             case MP3, MP2, AC3, EAC3 -> {
-                if (tags != null && !MuxerTags.isGlobalEmpty(tags)) {
-                    output.write(ByteBuffer.wrap(MuxerTags.id3v2(tags)));
+                if (id3 != null) {
+                    output.write(ByteBuffer.wrap(id3));
                 }
             }
             case AMR_NB, AMR_WB -> {
-                if (tags != null && !MuxerTags.isGlobalEmpty(tags)) {
-                    output.write(ByteBuffer.wrap(MuxerTags.id3v2(tags)));
+                if (id3 != null) {
+                    output.write(ByteBuffer.wrap(id3));
                 }
                 var wideband = track.codec() == Codec.AMR_WB;
                 if (amrChannels > 1) {
@@ -720,7 +734,7 @@ public final class RawMuxer implements Muxer {
 
     /**
      * Returns the native FLAC header written for a configuration: the header itself, or, when tags
-     * were set, the header with its tag and picture blocks in place of its padding.
+     * were set, the header with its tag and picture blocks rebuilt before its padding.
      *
      * @param config the {@code STREAMINFO} configuration and any following metadata blocks
      * @return the header bytes the output starts with

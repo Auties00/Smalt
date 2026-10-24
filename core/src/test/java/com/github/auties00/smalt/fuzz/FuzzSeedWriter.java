@@ -415,6 +415,25 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("writes tagged seeds, with chapters and a cover, of the remux tags target")
+    void remuxTags() throws IOException {
+        var metadata = Files.createDirectories(Path.of("target", "media-fixtures")).resolve("remux-tags-seed.txt");
+        Files.writeString(metadata, ";FFMETADATA1\ntitle=Seed Title\nartist=Seed Artist\nalbum=Seed Album\n\n"
+                + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=100\ntitle=One\n\n"
+                + "[CHAPTER]\nTIMEBASE=1/1000\nSTART=100\nEND=200\ntitle=Two\n");
+        var cover = ffmpeg("png", List.of("-f", "lavfi", "-i", "testsrc2=size=16x16:rate=1"), "-frames:v", "1");
+        var sources = FuzzSeeds.directory(RemuxFuzzTest.class, "mp4");
+        copy(RemuxFuzzTest.class, "tags", "valid-tagged.m4a", ffmpeg("m4a", List.of("-i",
+                sources.resolve("valid-alac.m4a").toString(), "-i", metadata.toString(), "-i", cover.toString()),
+                "-map", "0", "-map", "2", "-c", "copy", "-disposition:v", "attached_pic", "-map_metadata", "1",
+                "-map_chapters", "1"));
+        copy(RemuxFuzzTest.class, "tags", "valid-tagged.mkv", ffmpeg("mkv", List.of("-i",
+                sources.resolve("valid-h264-ac3.mkv").toString(), "-i", metadata.toString()), "-map", "0", "-c", "copy",
+                "-map_metadata", "1", "-map_chapters", "1", "-attach", cover.toString(), "-metadata:s:t",
+                "mimetype=image/png", "-metadata:s:t", "filename=cover.png"));
+    }
+
+    @Test
     @DisplayName("writes the seeds of the subtitle cue and markup targets")
     void cues() {
         write(SubtitleFuzzTest.class, "cues", "valid-subrip.bin", cues(0, null, "<i>Hello</i>\nworld", "two"));

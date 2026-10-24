@@ -7,8 +7,11 @@ import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.io.LocalSource;
+import com.github.auties00.smalt.internal.tags.TagCarry;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
@@ -19,7 +22,9 @@ import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Set;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.function.Consumer;
@@ -50,6 +55,9 @@ import java.util.function.Consumer;
  * derived from them, and audio whose stored timestamps use a time base other than its sampling
  * rate (Matroska, a millisecond by default; transport streams, 90 kHz; AVI) is retimed to exact
  * sample counts read from the frames.
+ *
+ * <p>The tags, cover art, chapters and track tags of the input are carried over as
+ * {@link RemuxOptions#tagMode()} selects, in the forms {@link Mp4Muxer#setTags} writes.
  *
  * <p>The output carries the codecs {@link Mp4Muxer#supports} lists for the brand, PCM needing its
  * sampling rate and channel layout; a selected track with any other codec raises
@@ -104,6 +112,7 @@ public final class Mp4Remuxer {
         var start = output.position();
         try (var demuxer = open(input, format, options)) {
             var copies = prepare(demuxer, options, format);
+            var tags = tags(input, demuxer, copies, options);
             if (demuxer instanceof Mp4Demuxer indexed) {
                 for (var copy : copies) {
                     copy.edits = indexed.useMediaSamples(copy.input.id());
@@ -121,13 +130,14 @@ public final class Mp4Remuxer {
                         muxer.setEdits(copy.output.id(), copy.edits);
                     }
                 }
+                TagCarry.apply(muxer, tags, options.tagMode(), options.tags().orElse(null));
                 long packets;
                 try {
                     if (demuxer instanceof Mp4Demuxer indexed && plannable(copies, format, options.brand())
                             && copies.stream().noneMatch(copy -> indexed.convertsSamples(copy.input.id()))) {
-                        muxer.streamAfter(plan(indexed, copies, muxerOptions));
+                        muxer.streamAfter(plan(indexed, copies, muxerOptions, tags, options));
                     } else if (format != ContainerFormat.MP4 && input.size() > MdatSpool.MEMORY_LIMIT && LocalSource.isLocal(input)) {
-                        var header = planByReading(input, format, options, muxerOptions);
+                        var header = planByReading(input, format, options, muxerOptions, tags);
                         if (header != null) {
                             muxer.streamAfter(header);
                         }
@@ -149,6 +159,27 @@ public final class Mp4Remuxer {
                 return new RemuxResult(format, tracks, packets, muxer.durationMicros(), end - start);
             }
         }
+    }
+
+    /**
+     * Resolves the tags of the output.
+     *
+     * @param input the input; not closed
+     * @param demuxer the demuxer of the input, at its start
+     * @param copies the track plans
+     * @param options the remux options
+     * @return the tags on the output's terms
+     */
+    private static MediaTags tags(MediaSource input, Demuxer demuxer, List<Copy> copies, RemuxOptions options) {
+        var mode = options.tagMode();
+        var outputIds = new HashMap<Integer, Integer>();
+        for (var copy : copies) {
+            outputIds.put(copy.input.id(), copy.output.id());
+        }
+        var inputTags = mode == TagMode.COPY || mode == TagMode.MERGE
+                ? TagCarry.read(input, demuxer, options.limits()) : null;
+        return TagCarry.resolve(mode, options.tags().orElse(null), inputTags,
+                new TagCarry.Mapping(outputIds, Set.of(), false, false, 0, -1));
     }
 
     /**
@@ -404,10 +435,11 @@ public final class Mp4Remuxer {
         if (format != ContainerFormat.MP4 && rate > 0 && coarse) {
             var retimer = new AudioRetimer(audio, rate);
             var duration = audio.duration() > 0 ? audio.timeBase().rescale(audio.duration(), retimer.timeBase()) : -1;
-            var output = audio.toBuilder().id(id).timeBase(retimer.timeBase()).duration(duration).build();
+            var output = TagCarry.withoutEmbeddedTags(audio.toBuilder().id(id).timeBase(retimer.timeBase())
+                    .duration(duration).build());
             return new Copy(track, output, retimer);
         }
-        var output = audio.toBuilder().id(id).build();
+        var output = TagCarry.withoutEmbeddedTags(audio.toBuilder().id(id).build());
         return new Copy(track, output, null);
     }
 
@@ -494,9 +526,12 @@ public final class Mp4Remuxer {
      * @param demuxer the input
      * @param copies the track plans
      * @param options the options of the output muxer
+     * @param tags the tags of the output
+     * @param remuxOptions the remux options
      * @return the header the output muxer writes before the media data
      */
-    private static byte[] plan(Mp4Demuxer demuxer, List<Copy> copies, Mp4MuxerOptions options) {
+    private static byte[] plan(Mp4Demuxer demuxer, List<Copy> copies, Mp4MuxerOptions options, MediaTags tags,
+                               RemuxOptions remuxOptions) {
         var planner = Mp4Muxer.planner(options);
         for (var copy : copies) {
             planner.addTrack(copy.output);
@@ -504,6 +539,7 @@ public final class Mp4Remuxer {
                 planner.setEdits(copy.output.id(), copy.edits);
             }
         }
+        TagCarry.apply(planner, tags, remuxOptions.tagMode(), remuxOptions.tags().orElse(null));
         var sample = new Mp4Demuxer.SampleInfo();
         while (demuxer.nextSample(sample)) {
             var copy = find(copies, sample.trackId);
@@ -537,11 +573,12 @@ public final class Mp4Remuxer {
      * @param format the detected container
      * @param options the remux options
      * @param muxerOptions the options of the output muxer
+     * @param tags the tags of the output
      * @return the header the output muxer writes before the media data, or {@code null} when a
      * sample description depends on sample bytes and the layout cannot be planned
      */
     private static byte[] planByReading(MediaSource input, ContainerFormat format, RemuxOptions options,
-                                        Mp4MuxerOptions muxerOptions) {
+                                        Mp4MuxerOptions muxerOptions, MediaTags tags) {
         try (var demuxer = open(input, format, options)) {
             var copies = prepare(demuxer, options, format);
             if (!plannable(copies, format, options.brand())) {
@@ -551,6 +588,7 @@ public final class Mp4Remuxer {
             for (var copy : copies) {
                 planner.addTrack(copy.output);
             }
+            TagCarry.apply(planner, tags, options.tagMode(), options.tags().orElse(null));
             transfer(demuxer, copies, packet -> {
                 packet.sideData().newCodecConfig().ifPresent(config -> planner.changeCodecConfig(packet.trackId(), config));
                 planner.planSample(packet.trackId(), packet.size(), packet.pts(), packet.dts(), packet.duration(),

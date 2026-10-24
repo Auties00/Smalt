@@ -857,6 +857,7 @@ checks a FLAC source's MD5 signature on the way.
 | Subtitles: SubRip, WebVTT, 3GPP timed text, ASS, TTML | converted to what the container carries (also to `.srt`, `.vtt`, `.ass`, `.ssa`, `.ttml`, `.smi`, `.lrc` and `.sub` files), cut to the kept range; a cue still shown at a trimmed start is kept however early it began | copied, retimed and cut to the kept range, likewise |
 | Bitmap subtitles (PGS, DVB, VobSub), teletext, closed captions | teletext and caption tracks, and with `SubtitleTranscodeOptions.closedCaptions` the captions inside video, converted to a text subtitle track; captions kept in re-encoded H.264 video | bitmap and teletext tracks copied where the container carries them, retimed and cut to the kept range |
 | Image convert, scale, crop, flatten, byte budget | yes (first frame of animations; animated output needs an animation encoder; an animation fits the budget by quality, then size, then dropped frames) | byte-identical pass-through when nothing changes |
+| Tags, cover art, chapters, track names, tags and dispositions (`TranscodeOptions.tagMode`, also `RemuxOptions` and `PackagingOptions`: the input's by default, `noTags()`, `tags(...)` to replace them, `mergeTags(...)` to update them) | written in the output's own form (`Muxer.setTags`, `OutputContainer.supportsTags`), chapters cut to the kept range and moved to its start, track tags following their tracks; the Matroska statistics tags of the input's streams are left out (the output declares its own durations), an encoded or trimmed stream loses its encoder tags, the file its encoder once a stream is encoded and its ReplayGain once a gain or a loudness normalization changes the level; input values the output rejects are left out, also those that fit alone but not together (two large covers in one FLAC comment block) | likewise; the comments and pictures a copied FLAC or Vorbis configuration embeds are removed in Matroska, MP4 and Ogg, whose own tags replace them |
 
 ### Capture
 
@@ -905,6 +906,9 @@ checks a FLAC source's MD5 signature on the way.
   itself, and the edited table must fit their payload (a table usually fills a fraction of its packet; 204-byte
   packets whose Reed-Solomon parity is a code rather than filler are not edited). AVI stores no pictures or chapters (`TagEditor`
   rejects them) and of the other tags only those `INFO` has an identifier for, the first value of each.
+- Tags in transcodes: the tags of an input that is not local (`MediaSource.of(InputStream, long)`, a source over
+  the network) are taken from its demuxer, which keeps one value per name, rather than read again from its tag
+  structure.
 - Tag vocabulary: the RIFF `INFO` identifier `ISRC` means the source, not the ISRC, and is read under the key
   `INFO:ISRC`. A rating that is not a number from 0 to 5 is stored in ID3v2 as a `TXXX` frame, not in `POPM`.
 - Tag editing: the APE and ID3v1 tags `TagEditor` writes mirror what their formats hold (APE keys of printable ASCII,
@@ -1894,7 +1898,9 @@ The output is written with its index first (fast start), so it plays while it do
 strictly in order, so `MediaSink.of(OutputStream)` works too, for example to stream the result over HTTP.
 `RemuxOptions` also takes several audio tracks (`allAudioTracks()`, `audioTracks(ids)`), the 3GPP timed text,
 WebVTT and TTML subtitle tracks (`allSubtitleTracks()`, `subtitleTracks(ids)`) and the QuickTime brand, for ProRes,
-DNxHD and PCM; the input can also be an MPEG transport stream, an AVI or an Ogg file.
+DNxHD and PCM; the input can also be an MPEG transport stream, an AVI or an Ogg file. The tags, cover art, chapters
+and track names of the input are carried over unless `noTags()` drops them (`tags(...)` and `mergeTags(...)`
+replace or update them).
 
 ### Read a .ts
 
@@ -1931,7 +1937,8 @@ try (var high = MediaSource.of(Path.of("clip-1080p.mp4"));
 `dash()` DASH alone, `byteRanges(true)` one file per stream addressed by byte ranges, and `dashOnDemand()` the
 DASH on-demand profile (one file per stream indexed by a single `sidx`, addressed by `SegmentBase`). Segments are cut
 at key frames, so encode the renditions with aligned closed GOPs (for example with `Transcoder`) to let players
-switch between them.
+switch between them. Each CMAF initialization segment carries the rendition's tags, cover art and chapters, and
+the transport stream segments its track names, unless `PackagingOptions.Builder.noTags()` drops them.
 
 ### Walk the packets of any container
 

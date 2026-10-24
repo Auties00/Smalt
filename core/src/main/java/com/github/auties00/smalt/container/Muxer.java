@@ -52,14 +52,18 @@ public interface Muxer extends AutoCloseable {
      * AVI. The {@linkplain MediaTags#tracks() track tags} of the declared tracks become their names, tags and
      * dispositions in MP4, Matroska, AVI and MPEG-TS, as
      * {@link com.github.auties00.smalt.metadata.TrackTags TrackTags} lists; track tags naming no declared track are
-     * ignored. A later call replaces the tags of an earlier one.
+     * ignored. A later call replaces the tags of an earlier one. A value the container cannot hold is rejected
+     * by this call, checked against the tracks declared before it, so that the tags can be reduced before the first
+     * packet; a call that throws leaves the tags of an earlier call in place.
      *
      * @implSpec The default implementation throws {@link MediaException.Unsupported}. Implementations must accept the
      * call until the first packet is written.
      *
      * @param tags the tags, pictures and chapters to write
      * @throws IllegalStateException if a packet was already written
-     * @throws MediaException.Unsupported if the container cannot store tags
+     * @throws MediaException.Unsupported if the container cannot store tags, or cannot store a value of the tags in
+     * its form
+     * @throws MediaException.LimitExceeded if a value outgrows what the container's form holds
      */
     default void setTags(MediaTags tags) {
         throw new MediaException.Unsupported("container", getClass().getSimpleName() + " cannot store tags");

@@ -372,7 +372,11 @@ public final class OggMuxer implements Muxer {
      * <p>The tags become fields of the {@code OpusTags} header after the configured comments,
      * which they override for the same name: pictures as {@code METADATA_BLOCK_PICTURE} and
      * chapters as {@code CHAPTERxxx} fields. A Vorbis, Speex or Theora stream's comment header and a
-     * FLAC stream's {@code VORBIS_COMMENT} block are rebuilt the same way.
+     * FLAC stream's {@code VORBIS_COMMENT} block are rebuilt the same way. The comment block of a FLAC stream
+     * declared before is built here, so tags it cannot hold are rejected before any packet is written.
+     *
+     * @throws MediaException.LimitExceeded if the {@code VORBIS_COMMENT} block of a declared FLAC stream outgrows
+     * the 16 MiB a block holds
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -380,7 +384,18 @@ public final class OggMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
+        var previous = this.tags;
         this.tags = tags;
+        try {
+            for (var stream : streams.values()) {
+                if (stream.flacParameters != null) {
+                    stream.flacHeaders();
+                }
+            }
+        } catch (MediaException.LimitExceeded exception) {
+            this.tags = previous;
+            throw exception;
+        }
     }
 
     /**

@@ -22,8 +22,10 @@ import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.provider.Artifacts;
+import com.github.auties00.smalt.internal.tags.TagCarry;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.TagMode;
 import com.github.auties00.smalt.subtitle.CaptionExtractor;
 import com.github.auties00.smalt.subtitle.CaptionService;
 import com.github.auties00.smalt.subtitle.ClosedCaptions;
@@ -73,7 +75,8 @@ import java.util.function.Predicate;
  * An audio stream with a loudness normalization is measured by a first pass over a second demuxer
  * before the job starts, and the cues of a subtitle track burned into the video are read by a
  * second demuxer before the job starts when the input can be read again, and otherwise taken from
- * the packets as they arrive.
+ * the packets as they arrive. The tags, pictures, chapters and track tags of the output are resolved
+ * from the input's ({@link TagCarry}) once the stages are planned, and reach the muxer with its tracks.
  *
  * <p>An instance runs once and is not thread-safe.
  */
@@ -232,6 +235,7 @@ final class AvTranscode {
         VideoEncodeStage burnStage = null;
         var burnTrackId = -1;
         try (var muxer = new OutputMuxer(() -> container.createMuxer(output), capacity)) {
+            setTags(muxer, demuxer, mapping(videoPlan, audioPlans, subtitles));
             if (videoPlan != null) {
                 var stage = createVideoStage(videoPlan, muxer.reserve(), muxer, tracks);
                 stages.add(stage);
@@ -294,6 +298,65 @@ final class AvTranscode {
                 stage.close();
             }
         }
+    }
+
+    /**
+     * Describes how the output of a plan relates to the input: the output tracks are numbered from one in the
+     * order the stages reserve them (the video stream, the audio streams, the subtitle streams).
+     *
+     * @param videoPlan the plan of the video stream, or {@code null}
+     * @param audioPlans the plans of the audio streams
+     * @param subtitles the plans of the subtitle streams
+     * @return the mapping
+     */
+    private TagCarry.Mapping mapping(VideoPlan videoPlan, List<AudioPlan> audioPlans, List<SubtitlePlan> subtitles) {
+        var outputIds = new HashMap<Integer, Integer>();
+        var rewritten = new HashSet<Integer>();
+        var encoded = false;
+        var levelChanged = false;
+        if (videoPlan != null) {
+            outputIds.put(videoPlan.track().id(), outputIds.size() + 1);
+            if (!videoPlan.copy()) {
+                rewritten.add(videoPlan.track().id());
+                encoded = true;
+            }
+        }
+        for (var plan : audioPlans) {
+            outputIds.put(plan.track().id(), outputIds.size() + 1);
+            if (!plan.copy()) {
+                rewritten.add(plan.track().id());
+                encoded = true;
+                levelChanged |= options.audio().gainDb() != 0 || options.audio().loudnessNormalization().isPresent();
+            }
+        }
+        for (var plan : subtitles) {
+            outputIds.put(plan.track().id(), outputIds.size() + 1);
+            if (plan.convert() || plan.codec() != plan.track().codec()) {
+                rewritten.add(plan.track().id());
+            }
+        }
+        if (start > 0 || end >= 0) {
+            rewritten.addAll(outputIds.keySet());
+        }
+        return new TagCarry.Mapping(outputIds, rewritten, encoded, levelChanged, start, end);
+    }
+
+    /**
+     * Resolves the tags of the output and hands them to the muxer.
+     *
+     * @param muxer the output, with no track reserved yet
+     * @param demuxer the demuxer of the input, at its start
+     * @param mapping how the output relates to the input
+     */
+    private void setTags(OutputMuxer muxer, Demuxer demuxer, TagCarry.Mapping mapping) {
+        if (!options.container().supportsTags()) {
+            return;
+        }
+        var mode = options.tagMode();
+        var given = options.tags().orElse(null);
+        var inputTags = mode == TagMode.COPY || mode == TagMode.MERGE
+                ? TagCarry.read(input, demuxer, options.limits()) : null;
+        muxer.tags(TagCarry.resolve(mode, given, inputTags, mapping), mode, given);
     }
 
     /**
@@ -1077,7 +1140,10 @@ final class AvTranscode {
      */
     private Stage createAudioStage(AudioPlan plan, int outputId, OutputMuxer muxer) {
         if (plan.copy()) {
-            return new CopyStage(plan.track(), outputId, muxer, start, end);
+            var format = options.container().format();
+            var track = format == ContainerFormat.MATROSKA || format == ContainerFormat.MP4
+                    || format == ContainerFormat.OGG ? TagCarry.withoutEmbeddedTags(plan.track()) : plan.track();
+            return new CopyStage(track, outputId, muxer, start, end);
         }
         return new AudioEncodeStage(plan.track(), plan.codec(), options.audio(), outputId, muxer, options.limits(), start,
                 end);
@@ -1097,6 +1163,12 @@ final class AvTranscode {
         var builder = RemuxOptions.builder()
                 .limits(options.limits())
                 .brand(brand);
+        switch (options.tagMode()) {
+            case COPY -> builder.copyTags();
+            case DROP -> builder.noTags();
+            case REPLACE -> builder.tags(options.tags().orElseThrow());
+            case MERGE -> builder.mergeTags(options.tags().orElseThrow());
+        }
         var sources = new ArrayList<Track>();
         if (video == null) {
             builder.noVideo();

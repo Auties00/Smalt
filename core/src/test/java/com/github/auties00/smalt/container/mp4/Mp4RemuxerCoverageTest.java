@@ -191,7 +191,8 @@ class Mp4RemuxerCoverageTest {
         void plannedPcm() throws IOException {
             var input = Fixtures.ffmpeg("mov", Mp4Fixtures.both(160, 120, 1.5, 48000), List.of("-c:v", "libx264", "-g", "15",
                     "-c:a", "pcm_s24le", "-ac", "2"));
-            var output = remux(input, "mov-pcm-planned", RemuxOptions.video());
+            // the muxer that spools below writes no tags
+            var output = remux(input, "mov-pcm-planned", RemuxOptions.video().toBuilder().noTags().build());
             assertEquals(List.of(Codec.H264, Codec.PCM_S24LE), output.result().tracks().stream().map(Track::codec).toList());
             assertSamePackets(input, output.file(), output.result().tracks());
             assertEquals("ipcm", ContainerProbe.probe(output.file()).streams().get(1).get("codec_tag_string"));

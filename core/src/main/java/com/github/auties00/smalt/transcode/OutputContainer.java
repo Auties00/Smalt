@@ -394,6 +394,25 @@ public enum OutputContainer {
     }
 
     /**
+     * Returns whether the file stores tags, the tags of its tracks, attached pictures or chapters, so that a
+     * transcode carries them into it ({@link TranscodeOptions#tagMode()}).
+     *
+     * <p>What each file stores is what its muxer writes
+     * ({@link Muxer#setTags(com.github.auties00.smalt.metadata.MediaTags) Muxer.setTags}): everything in the MP4
+     * family, Matroska, WebM, Ogg, FLAC, MP3, AC-3, E-AC-3, AMR, ADTS, WAV and AIFF files; the tags and the track
+     * names in an AVI file; the track names and some audio dispositions in a transport stream; and the title,
+     * artist and album in an LRC file.
+     *
+     * @return {@code false} for IVF, YUV4MPEG2, the video elementary streams and the subtitle files other than LRC
+     */
+    public boolean supportsTags() {
+        return switch (this) {
+            case IVF, H264, HEVC, AV1, Y4M, SRT, WEBVTT, ASS, SSA, TTML, SAMI, MICRODVD -> false;
+            default -> true;
+        };
+    }
+
+    /**
      * Returns whether the file can hold more than one audio track.
      *
      * @return {@code true} for the MP4 family, Matroska, WebM, Ogg and MPEG transport streams

@@ -1,8 +1,11 @@
 package com.github.auties00.smalt.container.packaging;
 
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Holds the settings of a {@link Packager}: the manifests written, the segment format, the segment
@@ -37,7 +40,7 @@ public final class PackagingOptions {
      * The options of {@link #hls()}.
      */
     private static final PackagingOptions HLS = new PackagingOptions(true, false, SegmentFormat.MPEG_TS,
-            DEFAULT_SEGMENT_MICROS, false, false, "master.m3u8", "manifest.mpd");
+            DEFAULT_SEGMENT_MICROS, false, false, "master.m3u8", "manifest.mpd", TagMode.COPY, null);
 
     /**
      * The options of {@link #hlsCmaf()}.
@@ -68,9 +71,16 @@ public final class PackagingOptions {
     private final boolean segmentIndex;
     private final String masterPlaylistName;
     private final String manifestName;
+    private final TagMode tagMode;
+
+    /**
+     * The tags of {@link TagMode#REPLACE} and {@link TagMode#MERGE}, or {@code null}.
+     */
+    private final MediaTags tags;
 
     private PackagingOptions(boolean hls, boolean dash, SegmentFormat segmentFormat, long segmentMicros,
-                             boolean byteRanges, boolean segmentIndex, String masterPlaylistName, String manifestName) {
+                             boolean byteRanges, boolean segmentIndex, String masterPlaylistName, String manifestName,
+                             TagMode tagMode, MediaTags tags) {
         this.hls = hls;
         this.dash = dash;
         this.segmentFormat = segmentFormat;
@@ -79,6 +89,8 @@ public final class PackagingOptions {
         this.segmentIndex = segmentIndex;
         this.masterPlaylistName = masterPlaylistName;
         this.manifestName = manifestName;
+        this.tagMode = tagMode;
+        this.tags = tags;
     }
 
     /**
@@ -212,19 +224,41 @@ public final class PackagingOptions {
         return manifestName;
     }
 
+    /**
+     * {@return which tags, attached pictures, chapters and track tags each rendition's segments carry;
+     * {@link TagMode#COPY}, the rendition's, by default}
+     *
+     * <p>The tags are on the terms of each rendition's input and mapped as {@link TagMode} describes. A CMAF
+     * initialization segment (or single file) stores the tags, pictures and chapters, and the track tags of its
+     * track; transport stream segments store the track names and some audio dispositions only.
+     */
+    public TagMode tagMode() {
+        return tagMode;
+    }
+
+    /**
+     * {@return the tags {@link TagMode#REPLACE} writes or {@link TagMode#MERGE} merges into each rendition's, or
+     * empty for the other modes; empty by default}
+     */
+    public Optional<MediaTags> tags() {
+        return Optional.ofNullable(tags);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof PackagingOptions that && hls == that.hls && dash == that.dash
                 && segmentFormat == that.segmentFormat && segmentMicros == that.segmentMicros
                 && byteRanges == that.byteRanges && segmentIndex == that.segmentIndex
                 && masterPlaylistName.equals(that.masterPlaylistName)
-                && manifestName.equals(that.manifestName);
+                && manifestName.equals(that.manifestName)
+                && tagMode == that.tagMode
+                && Objects.equals(tags, that.tags);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(hls, dash, segmentFormat, segmentMicros, byteRanges, segmentIndex, masterPlaylistName,
-                manifestName);
+                manifestName, tagMode, tags);
     }
 
     @Override
@@ -232,7 +266,8 @@ public final class PackagingOptions {
         return "PackagingOptions[hls=" + hls + ", dash=" + dash + ", segmentFormat=" + segmentFormat
                 + ", segmentMicros=" + segmentMicros + ", byteRanges=" + byteRanges + ", segmentIndex=" + segmentIndex
                 + ", masterPlaylistName="
-                + masterPlaylistName + ", manifestName=" + manifestName + "]";
+                + masterPlaylistName + ", manifestName=" + manifestName + ", tagMode=" + tagMode
+                + (tags == null ? "" : ", tags=" + tags) + "]";
     }
 
     /**
@@ -250,6 +285,8 @@ public final class PackagingOptions {
         private boolean segmentIndex;
         private String masterPlaylistName;
         private String manifestName;
+        private TagMode tagMode;
+        private MediaTags tags;
 
         private Builder(PackagingOptions options) {
             this.hls = options.hls;
@@ -260,6 +297,8 @@ public final class PackagingOptions {
             this.segmentIndex = options.segmentIndex;
             this.masterPlaylistName = options.masterPlaylistName;
             this.manifestName = options.manifestName;
+            this.tagMode = options.tagMode;
+            this.tags = options.tags;
         }
 
         /**
@@ -353,6 +392,56 @@ public final class PackagingOptions {
         }
 
         /**
+         * Writes each rendition's tags, pictures, chapters and track tags, setting the tag mode to
+         * {@link TagMode#COPY}; see {@link PackagingOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder copyTags() {
+            this.tagMode = TagMode.COPY;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes no tag, picture, chapter or track tag, setting the tag mode to {@link TagMode#DROP}; see
+         * {@link PackagingOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder noTags() {
+            this.tagMode = TagMode.DROP;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes the given tags instead of each rendition's, setting the tag mode to {@link TagMode#REPLACE}; see
+         * {@link PackagingOptions#tags()}.
+         *
+         * @param tags the value, on the renditions' terms
+         * @return this builder
+         */
+        public Builder tags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.REPLACE;
+            return this;
+        }
+
+        /**
+         * Writes each rendition's tags updated with the given ones, setting the tag mode to {@link TagMode#MERGE};
+         * see {@link PackagingOptions#tags()}.
+         *
+         * @param tags the value, on the renditions' terms
+         * @return this builder
+         */
+        public Builder mergeTags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.MERGE;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -373,7 +462,7 @@ public final class PackagingOptions {
             }
             return new PackagingOptions(hls, dash, segmentFormat, Checks.positive("segment duration", segmentMicros),
                     byteRanges, segmentIndex, checkName("master playlist name", masterPlaylistName),
-                    checkName("manifest name", manifestName));
+                    checkName("manifest name", manifestName), tagMode, tags);
         }
 
         /**

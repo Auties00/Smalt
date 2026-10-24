@@ -534,7 +534,12 @@ public final class Mp4Muxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        this.userData = MuxerTags.mp4UserData(tags);
+        var userData = MuxerTags.mp4UserData(tags);
+        for (var track : tags.tracks()) {
+            // the track boxes are written with the movie box, but their values are checked now
+            Mp4TrackMetadata.userData(track);
+        }
+        this.userData = userData;
         this.chapters = tags.chapters();
         this.tags = tags;
     }

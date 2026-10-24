@@ -423,7 +423,12 @@ public final class FragmentedMp4Muxer implements Muxer {
             throw new IllegalStateException("tags must be set before the first packet");
         }
         // TODO: also write the chapters as a QuickTime chapter track, its samples in the first fragment.
-        this.userData = MuxerTags.mp4UserData(tags);
+        var userData = MuxerTags.mp4UserData(tags);
+        for (var track : tags.tracks()) {
+            // the track boxes are written with the initialization segment, but their values are checked now
+            Mp4TrackMetadata.userData(track);
+        }
+        this.userData = userData;
         this.tags = tags;
     }
 

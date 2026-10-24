@@ -1,6 +1,8 @@
 package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -16,20 +18,21 @@ import java.util.OptionalInt;
  * with {@link #builder()} or a preset such as {@link #defaults()}.
  *
  * <p>The output is always a fast-start file, so it can be written to any
- * {@link com.github.auties00.smalt.io.MediaSink}, including a stream.
+ * {@link com.github.auties00.smalt.io.MediaSink}, including a stream. It carries the input's tags, cover art,
+ * chapters and track tags unless {@link #tagMode()} says otherwise.
  */
 public final class RemuxOptions {
     /**
      * The options of {@link #video()}.
      */
     private static final RemuxOptions VIDEO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.MP4,
-            Selection.FIRST, Selection.FIRST, Selection.NONE, null);
+            Selection.FIRST, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null);
 
     /**
      * The options of {@link #audio()}.
      */
     private static final RemuxOptions AUDIO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.M4A,
-            Selection.NONE, Selection.FIRST, Selection.NONE, null);
+            Selection.NONE, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null);
 
     private final MediaLimits limits;
     private final Mp4MuxerOptions.Brand brand;
@@ -37,15 +40,23 @@ public final class RemuxOptions {
     private final Selection audio;
     private final Selection subtitles;
     private final Path temporaryDirectory;
+    private final TagMode tagMode;
+
+    /**
+     * The tags of {@link TagMode#REPLACE} and {@link TagMode#MERGE}, or {@code null}.
+     */
+    private final MediaTags tags;
 
     private RemuxOptions(MediaLimits limits, Mp4MuxerOptions.Brand brand, Selection video, Selection audio,
-                         Selection subtitles, Path temporaryDirectory) {
+                         Selection subtitles, Path temporaryDirectory, TagMode tagMode, MediaTags tags) {
         this.limits = limits;
         this.brand = brand;
         this.video = video;
         this.audio = audio;
         this.subtitles = subtitles;
         this.temporaryDirectory = temporaryDirectory;
+        this.tagMode = tagMode;
+        this.tags = tags;
     }
 
     /**
@@ -198,6 +209,26 @@ public final class RemuxOptions {
     }
 
     /**
+     * {@return which tags, attached pictures, chapters and track tags the output carries; {@link TagMode#COPY}, the
+     * input's, by default}
+     *
+     * <p>The tags are on the input's terms and mapped to the output as {@link TagMode} describes: the track tags of
+     * a copied track go to its output track, and those of the other tracks are dropped. The output stores them as
+     * {@link Mp4Muxer#setTags(MediaTags)} describes.
+     */
+    public TagMode tagMode() {
+        return tagMode;
+    }
+
+    /**
+     * {@return the tags {@link TagMode#REPLACE} writes or {@link TagMode#MERGE} merges into the input's, on the
+     * input's terms, or empty for the other modes; empty by default}
+     */
+    public Optional<MediaTags> tags() {
+        return Optional.ofNullable(tags);
+    }
+
+    /**
      * {@return the video selection}
      */
     Selection videoSelection() {
@@ -226,18 +257,21 @@ public final class RemuxOptions {
                 && video.equals(that.video)
                 && audio.equals(that.audio)
                 && subtitles.equals(that.subtitles)
-                && Objects.equals(temporaryDirectory, that.temporaryDirectory);
+                && Objects.equals(temporaryDirectory, that.temporaryDirectory)
+                && tagMode == that.tagMode
+                && Objects.equals(tags, that.tags);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, brand, video, audio, subtitles, temporaryDirectory);
+        return Objects.hash(limits, brand, video, audio, subtitles, temporaryDirectory, tagMode, tags);
     }
 
     @Override
     public String toString() {
         return "RemuxOptions[limits=" + limits + ", brand=" + brand + ", videoTrack=" + video + ", audioTracks=" + audio
-                + ", subtitleTracks=" + subtitles + ", temporaryDirectory=" + temporaryDirectory + "]";
+                + ", subtitleTracks=" + subtitles + ", temporaryDirectory=" + temporaryDirectory + ", tagMode=" + tagMode
+                + (tags == null ? "" : ", tags=" + tags) + "]";
     }
 
     /**
@@ -326,6 +360,8 @@ public final class RemuxOptions {
         private Mode subtitles;
         private int[] subtitleIds;
         private Path temporaryDirectory;
+        private TagMode tagMode;
+        private MediaTags tags;
 
         private Builder(RemuxOptions options) {
             this.limits = options.limits;
@@ -337,6 +373,8 @@ public final class RemuxOptions {
             this.subtitles = options.subtitles.mode;
             this.subtitleIds = toArray(options.subtitles.ids);
             this.temporaryDirectory = options.temporaryDirectory;
+            this.tagMode = options.tagMode;
+            this.tags = options.tags;
         }
 
         /**
@@ -498,6 +536,56 @@ public final class RemuxOptions {
         }
 
         /**
+         * Writes the input's tags, pictures, chapters and track tags, setting the tag mode to {@link TagMode#COPY};
+         * see {@link RemuxOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder copyTags() {
+            this.tagMode = TagMode.COPY;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes no tag, picture, chapter or track tag, setting the tag mode to {@link TagMode#DROP}; see
+         * {@link RemuxOptions#tagMode()}.
+         *
+         * @return this builder
+         */
+        public Builder noTags() {
+            this.tagMode = TagMode.DROP;
+            this.tags = null;
+            return this;
+        }
+
+        /**
+         * Writes the given tags instead of the input's, setting the tag mode to {@link TagMode#REPLACE}; see
+         * {@link RemuxOptions#tags()}.
+         *
+         * @param tags the value, on the input's terms
+         * @return this builder
+         */
+        public Builder tags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.REPLACE;
+            return this;
+        }
+
+        /**
+         * Writes the input's tags updated with the given ones, setting the tag mode to {@link TagMode#MERGE}; see
+         * {@link RemuxOptions#tags()}.
+         *
+         * @param tags the value, on the input's terms
+         * @return this builder
+         */
+        public Builder mergeTags(MediaTags tags) {
+            this.tags = Objects.requireNonNull(tags, "tags");
+            this.tagMode = TagMode.MERGE;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -525,7 +613,8 @@ public final class RemuxOptions {
                     }
                 }
             }
-            return new RemuxOptions(limits, brand, videoSelection, audioSelection, subtitleSelection, temporaryDirectory);
+            return new RemuxOptions(limits, brand, videoSelection, audioSelection, subtitleSelection, temporaryDirectory,
+                    tagMode, tags);
         }
 
         /**
