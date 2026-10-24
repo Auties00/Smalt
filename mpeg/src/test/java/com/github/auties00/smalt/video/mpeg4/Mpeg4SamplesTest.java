@@ -99,7 +99,22 @@ class Mpeg4SamplesTest {
                 var second = stream.read();
                 assertFalse(second.keyframe());
             }
-            assertWithinNoiseFloor(file, Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new));
+            var decoded = Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new);
+            assertEquals(packetTimes(file), decoded.timestamps(), "the frames carry the packets' VOP times");
+            assertWithinNoiseFloor(file, decoded);
+        }
+
+        /** Returns the presentation times of the packets of an elementary stream, sorted. */
+        private static List<Long> packetTimes(Path file) {
+            var times = new java.util.ArrayList<Long>();
+            try (var source = MediaSource.of(file); var stream = Mpeg4ElementaryStream.open(source)) {
+                for (var packet = stream.read(); packet != null; packet = stream.read()) {
+                    assertTrue(packet.dts() <= packet.pts(), "decoded before presented");
+                    times.add(packet.pts());
+                }
+            }
+            times.sort(null);
+            return times;
         }
 
         @Test
@@ -118,7 +133,9 @@ class Mpeg4SamplesTest {
                 assertEquals(15, count);
                 assertEquals(3, keys);
             }
-            assertWithinNoiseFloor(file, Mpeg4TestStreams.decodeElementary(file, H263Decoder::new));
+            var decoded = Mpeg4TestStreams.decodeElementary(file, H263Decoder::new);
+            assertEquals(packetTimes(file), decoded.timestamps(), "the frames carry the temporal references");
+            assertWithinNoiseFloor(file, decoded);
         }
 
         @Test

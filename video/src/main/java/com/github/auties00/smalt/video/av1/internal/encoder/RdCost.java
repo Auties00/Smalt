@@ -658,7 +658,7 @@ final class RdCost {
         }
         var qstep = Math.max(qstepAc >> 3, 1);
         var sseNorm = (double) sse / numSamples;
-        var xqr = Math.log(sseNorm / ((double) qstep * qstep)) / Math.log(2);
+        var xqr = StrictMath.log(sseNorm / ((double) qstep * qstep)) / StrictMath.log(2);
         xqr = Math.clamp(xqr, -15.5 + 0.5 + 1e-6, 16.5 - 0.5 - 1e-6);
         var x = (xqr + 15.5) / 0.5;
         var xi = (int) Math.floor(x);

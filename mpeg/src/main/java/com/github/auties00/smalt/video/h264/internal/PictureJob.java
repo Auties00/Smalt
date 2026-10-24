@@ -30,6 +30,23 @@ final class PictureJob implements Runnable {
     final long sequence;
 
     /**
+     * The structure of the picture: {@link DecoderFrame#FRAME}, {@link DecoderFrame#TOP} or
+     * {@link DecoderFrame#BOTTOM}.
+     */
+    private final int structure;
+
+    /**
+     * Whether the picture is an MBAFF frame.
+     */
+    private final boolean mbaff;
+
+    /**
+     * The job of the first field of the frame when this job decodes its second field, or
+     * {@code null}; the engine reports the failures of both once the frame is output.
+     */
+    PictureJob previous;
+
+    /**
      * The number of the first slice of the picture.
      */
     private final int firstSliceNum;
@@ -73,6 +90,9 @@ final class PictureJob implements Runnable {
      * Constructs a job.
      *
      * @param frame the frame to decode into
+     * @param structure the structure of the picture: {@link DecoderFrame#FRAME},
+     * {@link DecoderFrame#TOP} or {@link DecoderFrame#BOTTOM}
+     * @param mbaff whether the picture is an MBAFF frame
      * @param sequence the sequence number of the job
      * @param firstSliceNum the number of the first slice of the picture
      * @param concealSliceNum the slice number reserved for concealed macroblocks
@@ -80,9 +100,11 @@ final class PictureJob implements Runnable {
      * @param dsp the kernels the picture is reconstructed and deblocked with
      * @param decoders the idle picture decoders
      */
-    PictureJob(DecoderFrame frame, long sequence, int firstSliceNum, int concealSliceNum, DecoderFrame concealSource,
-               H264Dsp dsp, Queue<PictureDecoder> decoders) {
+    PictureJob(DecoderFrame frame, int structure, boolean mbaff, long sequence, int firstSliceNum, int concealSliceNum,
+               DecoderFrame concealSource, H264Dsp dsp, Queue<PictureDecoder> decoders) {
         this.frame = frame;
+        this.structure = structure;
+        this.mbaff = mbaff;
         this.sequence = sequence;
         this.firstSliceNum = firstSliceNum;
         this.concealSliceNum = concealSliceNum;
@@ -135,6 +157,15 @@ final class PictureJob implements Runnable {
     }
 
     /**
+     * Returns whether decoding of the picture finished.
+     *
+     * @return {@code true} once the fields of the picture are published as done
+     */
+    boolean isDone() {
+        return frame.isDone(structure);
+    }
+
+    /**
      * Returns the first failure of the picture; valid once the frame is done.
      *
      * @return the failure, or {@code null}
@@ -150,7 +181,7 @@ final class PictureJob implements Runnable {
             decoder = new PictureDecoder();
         }
         try {
-            decoder.start(frame, firstSliceNum, concealSliceNum, concealSource, dsp);
+            decoder.start(frame, structure, mbaff, firstSliceNum, concealSliceNum, concealSource, dsp);
             for (var task : tasks) {
                 decoder.decodeSlice(task);
             }
@@ -163,7 +194,7 @@ final class PictureJob implements Runnable {
             error = new MediaException.Malformed("corrupt picture", failure);
         } finally {
             tasks.clear();
-            frame.publishDone();
+            frame.publishDone(structure);
             decoders.add(decoder);
         }
     }
