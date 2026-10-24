@@ -57,7 +57,7 @@ public final class Artifacts {
         return switch (codec) {
             case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8, MJPEG -> IMAGE;
+            case VP8, MJPEG, JPEG2000 -> IMAGE;
             case OPUS, VORBIS, FLAC, MP3, MP2, ALAC -> AUDIO;
             default -> null;
         };
@@ -71,9 +71,9 @@ public final class Artifacts {
      */
     public static String encoderOf(Codec codec) {
         return switch (codec) {
-            case H264, AAC, AMR_NB, AMR_WB, AC3 -> MPEG;
+            case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
-            case VP8 -> IMAGE;
+            case VP8, MJPEG, JPEG2000 -> IMAGE;
             case OPUS, FLAC, MP3, VORBIS -> AUDIO;
             default -> null;
         };
@@ -87,7 +87,7 @@ public final class Artifacts {
      */
     public static String imageDecoderOf(ImageFormat format) {
         return switch (format) {
-            case JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO, JP2, JXL -> IMAGE;
+            case JPEG, PNG, GIF, WEBP, BMP, TIFF, ICO, ANI, JP2, JXL -> IMAGE;
             case AVIF -> VIDEO;
             case HEIC -> MPEG;
             case DNG, RAW -> CAMERA_RAW;
@@ -103,7 +103,7 @@ public final class Artifacts {
      */
     public static String imageEncoderOf(ImageFormat format) {
         return switch (format) {
-            case JPEG, PNG, GIF, WEBP, TIFF, ICO, JP2 -> IMAGE;
+            case JPEG, PNG, GIF, WEBP, TIFF, ICO, ANI, JP2 -> IMAGE;
             case AVIF -> VIDEO;
             default -> null;
         };
@@ -117,8 +117,21 @@ public final class Artifacts {
      */
     public static String imageAnimationEncoderOf(ImageFormat format) {
         return switch (format) {
-            case PNG, GIF, WEBP -> IMAGE;
+            case PNG, GIF, WEBP, ANI -> IMAGE;
             case AVIF -> VIDEO;
+            default -> null;
+        };
+    }
+
+    /**
+     * Returns the Smalt artifact that encodes multi-page images of an image format.
+     *
+     * @param format the image format of the pages
+     * @return the artifact id, or {@code null} when no Smalt artifact encodes its pages
+     */
+    public static String imagePageEncoderOf(ImageFormat format) {
+        return switch (format) {
+            case TIFF, ICO -> IMAGE;
             default -> null;
         };
     }

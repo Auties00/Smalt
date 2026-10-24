@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.ops;
 
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -28,16 +29,15 @@ final class Canvas {
      * @param picture the picture to convert
      * @return the picture itself if it is packed, an {@link RgbaPicture} for an 8-bit planar picture, or an
      * {@link Rgba16Picture} for a {@link Yuv16Picture}
+     * @throws com.github.auties00.smalt.MediaException.Unsupported if the picture is a {@link ChannelPicture}
      */
     static Picture toPacked(Picture picture) {
         return switch (picture) {
             case RgbaPicture rgba -> rgba;
             case Rgba16Picture rgba -> rgba;
             case YuvPicture yuv -> ImageOps.toRgba(yuv);
-            case Yuv16Picture yuv -> {
-                OpChecks.checkArray(4L * yuv.width() * yuv.height());
-                yield ManagedColor.toRgba16(yuv);
-            }
+            case Yuv16Picture yuv -> DeepColor.toRgba16(yuv, ChromaUpsampling.TRIANGLE);
+            case ChannelPicture channels -> throw ChannelOps.unsupported(channels);
         };
     }
 

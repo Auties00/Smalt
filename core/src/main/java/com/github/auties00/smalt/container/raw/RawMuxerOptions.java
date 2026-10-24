@@ -53,6 +53,16 @@ public final class RawMuxerOptions {
      * {@code Info} when every frame has the same bitrate) holds the number of audio frames, the number
      * of bytes and a 100-entry seek table, so readers know the exact duration of a variable bitrate
      * stream and can seek in it. A streaming sink gets the frames alone.
+     *
+     * <p>When the track carries gapless information, the tag also holds a LAME tag with the encoder
+     * delay and padding: the delay is the track's {@link com.github.auties00.smalt.track.AudioTrack#skipSamples()
+     * skipSamples} less the 529 samples of decoder delay of the synthesis filterbank, and the padding makes the
+     * kept length equal the track's duration or, for a track declared without one (an encoder's output), the
+     * sum of the packet durations less {@code skipSamples}. A reader that drops {@code delay + 529} decoded
+     * samples and keeps {@code frames * samplesPerFrame - delay - padding} then reproduces the encoder's
+     * input exactly. The LAME tag is left out when {@code skipSamples} is below 529, when the length is
+     * unknown, or when the delay or the padding exceeds 4095 samples. Both values are exact when the track's
+     * time base counts single samples.
      */
     public boolean xingTag() {
         return xingTag;

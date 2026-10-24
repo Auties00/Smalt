@@ -1,0 +1,37 @@
+# audio decode dump of ac3/ac3.ac3; regenerate with -Dsmalt.test.updateDumps=true
+format AC3
+duration 2020136
+seekable true
+track 0 AC3 rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]
+0 frames=4096 crc16=a511c1ff
+1 frames=4096 crc16=b1d6bc1d
+2 frames=4096 crc16=499ba807
+3 frames=4096 crc16=f2eead5e
+4 frames=4096 crc16=4d8b0cf5
+5 frames=4096 crc16=ab54b65d
+6 frames=4096 crc16=62890ce6
+7 frames=4096 crc16=124cdd67
+8 frames=4096 crc16=9ab70205
+9 frames=4096 crc16=ce7d111a
+10 frames=4096 crc16=f2039e5f
+11 frames=4096 crc16=94e587cd
+12 frames=4096 crc16=48b61bc6
+13 frames=4096 crc16=caec862f
+14 frames=4096 crc16=66715a14
+15 frames=4096 crc16=9c4b9bb7
+16 frames=4096 crc16=cf6e641a
+17 frames=4096 crc16=f819e7cf
+18 frames=4096 crc16=9e28950c
+19 frames=4096 crc16=e91d5aca
+20 frames=4096 crc16=4ac0e420
+21 frames=3072 crc16=977347e5
+seek 0: @sample 0
+seek 673378: @sample 29696
+seek 1346757: @sample 59392
+seek 2020136: end
+seek -1000000: @sample 0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AC3
+  duration -1
+  seekable false
+  track 0 AC3 rate=44100 layout=[FRONT_LEFT, FRONT_RIGHT]

@@ -16,20 +16,27 @@ import java.util.List;
  * The libjxl conformance suite (github.com/libjxl/conformance at a pinned commit): each case's
  * {@code input.jxl} and, when the case has one, its reference decode, a NumPy array of float32
  * samples shaped (frames, height, width, channels) in the orientation the image is displayed in,
- * with the published per-case RMSE and peak error bounds.
+ * with the published per-case RMSE and peak error bounds. The cases whose names end in {@code _5} are those of
+ * the Main profile's level 5 list ({@code main_level5.txt}): they decode the input of the level 10 case of the same
+ * name, against their own reference and within the looser level 5 bounds.
  */
 final class JxlVectors {
     static final String COMMIT = "b1d0f990b03e57bf6d137c365cd5dc8b470b9191";
 
     record Case(String name, String inputSha256, String referenceSha256, double rmse, double peak) {
         Path input() {
-            return Conformance.fetch("jxl-conformance-" + name + ".jxl",
-                    "https://raw.githubusercontent.com/libjxl/conformance/" + COMMIT + "/testcases/" + name + "/input.jxl",
+            // a level 5 case decodes the input of its level 10 case, with the level 5 tolerances
+            var source = name.endsWith("_5") ? name.substring(0, name.length() - 2) : name;
+            return Conformance.fetch("jxl-conformance-" + source + ".jxl",
+                    "https://raw.githubusercontent.com/libjxl/conformance/" + COMMIT + "/testcases/" + source + "/input.jxl",
                     inputSha256);
         }
 
         Reference reference() {
-            var file = Conformance.fetch("jxl-conformance-" + name + ".npy",
+            // a reference shared with an earlier case is cached under that case's name
+            var owner = CASES.stream().filter(other -> referenceSha256.equals(other.referenceSha256())).findFirst()
+                    .orElse(this).name();
+            var file = Conformance.fetch("jxl-conformance-" + owner + ".npy",
                     "https://storage.googleapis.com/jxl-conformance/objects/" + referenceSha256, referenceSha256);
             return Reference.read(file);
         }
@@ -94,7 +101,20 @@ final class JxlVectors {
             new Case("progressive", "bb4722ab780dce609a7b007fe7fe235962b351691f60ffb2cde7b4808c8601e1", "5a9d25412e2393ee11632942b4b683cda3f838dd72ab2550cfffc8f34d69c852", 0.0001, 0.02),
             new Case("spot", "69d48f7ace25683db9eb908f112cef112bd1583870abab0fbf166018889893fa", "82de72e756db992792b8e3eb5eac5194ef83e9ab4dc03e846492fbedde7b58da", 3.815e-06, 3.815e-06),
             new Case("sunset_logo", "6617480923e1fdef555e165a1e7df9ca648068dd0bdbc41a22c0e4213392d834", "bf1c1d5626ced3746df867cf3e3a25f3d17512c2e837b5e3a04743660e42ad81", 0.000244141, 0.000244141),
-            new Case("upsampling", "d3d97aa5f91401ad6df137b647164e402c7a99d66f8a6f72734562bf844b69d2", "9b83952c4bba9dc93fd5c5c49e27eab29301e848bf70dceccfec96b48d3ab975", 0.0001, 0.004)
+            new Case("upsampling", "d3d97aa5f91401ad6df137b647164e402c7a99d66f8a6f72734562bf844b69d2", "9b83952c4bba9dc93fd5c5c49e27eab29301e848bf70dceccfec96b48d3ab975", 0.0001, 0.004),
+            new Case("animation_icos4d_5", "6df934e61b07779626988daa0c4a9f05f89e6142a030f915e8b8ea52c37b3fe2", "ddf2d3c90f64e55a4701c86fe603846d1d515e147e83e1f9cb6ea925d6266cf9", 0.02, 0.06),
+            new Case("animation_spline_5", "87793cac33d05eaa380011e3b0754ff6f228967431a126fd0a0ace2106940c79", "a571c5cbba58affeeb43c44c13f81e2b1962727eb9d4e017e4f25d95c7388f10", 0.02, 0.06),
+            new Case("bench_oriented_brg_5", "e223fed907c6238622b2b6ec1c80609050c9d2db4d759cf3ca6f0db304cbb82a", "eac8c30907e41e53a73a0c002bc39e998e0ceb021bd523f5bff4580b455579e6", 0.02, 0.06),
+            new Case("bike_5", "639efe13b89868688234ebb9ec36a0ed848ba01bde43681d3d37438d2e0c0370", "815c89d1fe0bf67b6a1c8139d0af86b6e3f11d55c5a0ed9396256fb05744469e", 0.02, 0.06),
+            new Case("blendmodes_5", "b22d487440dd591fbadd4e75398506070497283f38525433961b1e809c75c860", "6ef265631818f313a70cb23788d1185408ce07243db8d5940553e7ea7467b786", 0.02, 0.06),
+            new Case("cafe_5", "cb4603bd089483fc1d63a039a3b758ec510f0090b74ce245b88b1e8feb54f0eb", "4aaea4e1bda3771e62643fcdf2003ffe6048ee2870c93f67d34d6cc16cb7da4b", 0.02, 0.06),
+            new Case("grayscale_5", "78fbbba852e99946d187dcf0bcbd7fb0e7c22be2f0852523aaae6ed91e7e3c39", "59162e158e042dc44710eb4d334cea78135399613461079582d963fe79251b68", 0.02, 0.06),
+            new Case("grayscale_jpeg_5", "346cc92b55864b0efb9f85cdddd02b586473ff18b03718e5a02fa03cb3e86844", "c0b86989e287649b944f1734ce182d1c1ac0caebf12cec7d487d9793f51f5b8f", 0.02, 0.06),
+            new Case("noise_5", "20cddadc3fdbae331a912dba0d14e6326008094d7a16d006961ccdeac2bc9950", "b7bb25b911ab5f4b9a6a6da9c220c9ea738de685f9df25eb860e6bbe1302237d", 0.02, 0.06),
+            new Case("opsin_inverse_5", "5c25ba126e6fb3536a12ca191b92f1c3be86ee74683688ed56c94804db5d2e16", "a3142a144c112160b8e5a12eb17723fa5fe0cfeb00577e4fb59a5f6cea126a9b", 0.02, 0.06),
+            new Case("patches_5", "3d8d3847ba40844b1d829366065261f34cc4b4acc3d9006342c64127c1052a3e", "477af1efc77cef815c959375c6d9caad20e4b07bcdd5aab05b3019c0b6066e56", 0.02, 0.06),
+            new Case("progressive_5", "bb4722ab780dce609a7b007fe7fe235962b351691f60ffb2cde7b4808c8601e1", "5a9d25412e2393ee11632942b4b683cda3f838dd72ab2550cfffc8f34d69c852", 0.02, 0.06),
+            new Case("upsampling_5", "d3d97aa5f91401ad6df137b647164e402c7a99d66f8a6f72734562bf844b69d2", "3c5362aa07f071b76c3570490b9229ede547db04ccc3f3ed6cf03f53b08708cf", 0.02, 0.06)
     );
 
     static Case find(String name) {
