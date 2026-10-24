@@ -99,10 +99,13 @@ final class Psi {
      * @param id3Metadata whether a metadata descriptor (tag {@code 0x26}) announces ID3
      * @param dvbSubtitles whether a DVB subtitling descriptor (tag {@code 0x59}) is present
      * @param teletext whether a DVB teletext descriptor (tag {@code 0x56}) is present
+     * @param audioType the {@code audio_type} of the first language of the ISO 639 language descriptor, or
+     * {@code -1}
+     * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
      */
     record StreamEntry(int pid, int streamType, int registration, int programRegistration, String language,
                        boolean ac3Descriptor, boolean eac3Descriptor, int opusChannels, boolean id3Metadata,
-                       boolean dvbSubtitles, boolean teletext) {
+                       boolean dvbSubtitles, boolean teletext, int audioType, String name) {
     }
 
     /**
@@ -165,9 +168,49 @@ final class Psi {
             position += length;
             streams.add(new StreamEntry(pid, type, descriptors.registration, programDescriptors.registration,
                     descriptors.language, descriptors.ac3, descriptors.eac3, descriptors.opusChannels,
-                    descriptors.id3, descriptors.subtitles, descriptors.teletext));
+                    descriptors.id3, descriptors.subtitles, descriptors.teletext, descriptors.audioType,
+                    descriptors.name));
         }
         return new PmtSection(number, pcrPid, streams);
+    }
+
+    /**
+     * Decodes the first string of an ATSC multiple string structure (ATSC A/65 clause 6.10): the
+     * segments without compression, in ISO-8859-1 (mode {@code 0x00}) or UTF-16 (mode {@code 0x3F}).
+     *
+     * @param data the section
+     * @param offset the index of the structure
+     * @param length the length of the structure
+     * @return the string, or {@code null} when the structure holds none or it is malformed
+     */
+    static String multipleString(byte[] data, int offset, int length) {
+        var end = offset + length;
+        if (length < 1 || (data[offset] & 0xFF) == 0 || offset + 5 > end) {
+            return null;
+        }
+        var segments = data[offset + 4] & 0xFF;
+        var position = offset + 5;
+        var text = new StringBuilder();
+        for (var segment = 0; segment < segments; segment++) {
+            if (position + 3 > end) {
+                return null;
+            }
+            var compression = data[position] & 0xFF;
+            var mode = data[position + 1] & 0xFF;
+            var count = data[position + 2] & 0xFF;
+            position += 3;
+            if (position + count > end) {
+                return null;
+            }
+            if (compression == 0 && mode == 0x00) {
+                text.append(new String(data, position, count, StandardCharsets.ISO_8859_1));
+            } else if (compression == 0 && mode == 0x3F) {
+                text.append(new String(data, position, count & ~1, StandardCharsets.UTF_16BE));
+            }
+            position += count;
+        }
+        var result = text.toString().strip();
+        return result.isEmpty() ? null : result;
     }
 
     /**
@@ -216,6 +259,16 @@ final class Psi {
         boolean teletext;
 
         /**
+         * The {@code audio_type} of the language descriptor, or {@code -1}.
+         */
+        int audioType = -1;
+
+        /**
+         * The component name, or {@code null}.
+         */
+        String name;
+
+        /**
          * Reads a descriptor loop.
          *
          * @param data the section
@@ -243,7 +296,11 @@ final class Psi {
                         if (size >= 3 && isLetters(data, body)) {
                             language = new String(data, body, 3, StandardCharsets.US_ASCII).toLowerCase(java.util.Locale.ROOT);
                         }
+                        if (size >= 4) {
+                            audioType = data[body + 3] & 0xFF;
+                        }
                     }
+                    case 0xA3 -> name = multipleString(data, body, size);
                     case 0x26 -> id3 |= metadataIsId3(data, body, size);
                     case 0x56 -> teletext = true;
                     case 0x59 -> subtitles = true;

@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.SegmentSink;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -11,12 +12,14 @@ import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.math.BigInteger;
@@ -56,7 +59,15 @@ import java.util.PriorityQueue;
  *       metadata ({@code 0x15} with the metadata pointer and metadata descriptors of the HLS
  *       timed metadata convention), any other a private PES stream ({@code 0x06}).</li>
  * </ul>
- * Every track gets the language descriptor of its language. Audio frames are gathered into PES
+ * A packet that changes the codec configuration of an H.264 or HEVC track replaces the parameter
+ * sets key frames get from then on, and one that changes the {@code AudioSpecificConfig} of an AAC
+ * track the ADTS header of the following packets; a change on any other track is rejected.
+ * Every track gets the language descriptor of its language. The track tags of
+ * {@link #setTags(MediaTags)} give an audio track the {@code audio_type} of that descriptor
+ * ({@link TrackDisposition#CLEAN_EFFECTS} 1, {@link TrackDisposition#HEARING_IMPAIRED} 2,
+ * {@link TrackDisposition#VISUAL_IMPAIRED} 3, the first of them in that order, with the language
+ * {@code und} when the track has none) and, for its name, an ATSC A/65 component name descriptor.
+ * Audio frames are gathered into PES
  * packets of up to 2930 payload bytes and 400 ms (100 ms for the stream that carries the clock
  * reference); video and data packets each make a PES packet of their own.
  *
@@ -90,6 +101,21 @@ public final class TsMuxer implements Muxer {
      * The size of a transport packet.
      */
     private static final int PACKET = 188;
+
+    /**
+     * The ISO 639-2 code of an undetermined language, written when a track with an audio type has no language.
+     */
+    private static final String UNDETERMINED = "und";
+
+    /**
+     * The largest string a component name descriptor of one segment holds, in bytes.
+     */
+    private static final int MAX_NAME_BYTES = 247;
+
+    /**
+     * The largest {@code section_length} of a PSI section (ISO/IEC 13818-1 clause 2.4.4).
+     */
+    private static final int MAX_SECTION_LENGTH = 1021;
 
     /**
      * The payload capacity of a transport packet without an adaptation field.
@@ -290,6 +316,11 @@ public final class TsMuxer implements Muxer {
     private boolean started;
 
     /**
+     * The tags of {@link #setTags(MediaTags)}, whose track tags go in the program map table.
+     */
+    private MediaTags tags = MediaTags.empty();
+
+    /**
      * Whether {@link #finish()} or {@link #close()} ran.
      */
     private boolean finished;
@@ -375,6 +406,34 @@ public final class TsMuxer implements Muxer {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsTags() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A transport stream stores the track tags only: the name of a track becomes an ATSC component name
+     * descriptor and the {@link TrackDisposition#CLEAN_EFFECTS}, {@link TrackDisposition#HEARING_IMPAIRED} or
+     * {@link TrackDisposition#VISUAL_IMPAIRED} disposition of an audio track the {@code audio_type} of its language
+     * descriptor. The
+     * other tags, pictures and chapters are not stored.
+     */
+    @Override
+    public void setTags(MediaTags tags) {
+        Objects.requireNonNull(tags, "tags");
+        if (started || finished) {
+            throw new IllegalStateException("tags must be set before the first packet");
+        }
+        this.tags = tags;
+    }
+
+    /**
      * Fills in the stream type, stream id, descriptors and codec state of a stream.
      *
      * @param stream the stream to configure from its track
@@ -453,14 +512,78 @@ public final class TsMuxer implements Muxer {
             default -> throw new IllegalArgumentException("transport streams written here cannot carry "
                     + track.codec().displayName());
         }
-        var language = track.language().orElse(null);
-        if (language != null && language.length() == 3 && language.chars().allMatch(c -> c < 0x80)) {
-            descriptors.u8(0x0A);
-            descriptors.u8(4);
-            descriptors.bytes(language.getBytes(StandardCharsets.US_ASCII));
-            descriptors.u8(0);
-        }
         stream.descriptors = descriptors.toByteArray();
+    }
+
+    /**
+     * Returns the descriptor loop of the program map entry of a stream: the descriptors of its codec, the ISO 639
+     * language descriptor of its language and the {@code audio_type} its dispositions give, and the ATSC component
+     * name descriptor of its name.
+     *
+     * @param stream the stream whose program map entry is written
+     * @return the descriptors
+     */
+    private byte[] entryDescriptors(Stream stream) {
+        var track = stream.track;
+        var described = tags.track(track.id()).orElse(null);
+        var out = new ByteWriter(stream.descriptors.length + 64);
+        out.bytes(stream.descriptors);
+        var language = track.language().filter(TsMuxer::isLanguageCode).orElse(null);
+        var audioType = described == null || track.kind() != TrackKind.AUDIO ? 0
+                : described.has(TrackDisposition.CLEAN_EFFECTS) ? 1
+                : described.has(TrackDisposition.HEARING_IMPAIRED) ? 2
+                : described.has(TrackDisposition.VISUAL_IMPAIRED) ? 3 : 0;
+        if (language != null || audioType != 0) {
+            out.u8(0x0A);
+            out.u8(4);
+            out.bytes((language != null ? language : UNDETERMINED).getBytes(StandardCharsets.US_ASCII));
+            out.u8(audioType);
+        }
+        var name = described == null ? "" : described.name().orElse("");
+        if (!name.isEmpty()) {
+            out.bytes(componentName(language != null ? language : UNDETERMINED, name));
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns whether a language can fill an ISO 639 language descriptor.
+     *
+     * @param language the language code
+     * @return {@code true} for three ASCII characters
+     */
+    private static boolean isLanguageCode(String language) {
+        return language.length() == 3 && language.chars().allMatch(c -> c < 0x80);
+    }
+
+    /**
+     * Encodes an ATSC component name descriptor (ATSC A/65 clause 6.9.7) of one string in one segment,
+     * ISO-8859-1 (mode {@code 0x00}) when the name holds only such characters, UTF-16 (mode {@code 0x3F})
+     * otherwise, cut to the 247 bytes a segment of the descriptor holds.
+     *
+     * @param language the ISO 639-2 language of the string
+     * @param name the track name, cut to what one segment holds
+     * @return the descriptor
+     */
+    static byte[] componentName(String language, String name) {
+        var latin = StandardCharsets.ISO_8859_1.newEncoder().canEncode(name);
+        var limit = latin ? MAX_NAME_BYTES : MAX_NAME_BYTES / 2;
+        var end = Math.min(name.length(), limit);
+        if (end < name.length() && Character.isHighSurrogate(name.charAt(end - 1))) {
+            end--;
+        }
+        var bytes = name.substring(0, end).getBytes(latin ? StandardCharsets.ISO_8859_1 : StandardCharsets.UTF_16BE);
+        var out = new ByteWriter(bytes.length + 10);
+        out.u8(0xA3);
+        out.u8(8 + bytes.length);
+        out.u8(1);
+        out.bytes(language.getBytes(StandardCharsets.US_ASCII));
+        out.u8(1);
+        out.u8(0);
+        out.u8(latin ? 0x00 : 0x3F);
+        out.u8(bytes.length);
+        out.bytes(bytes);
+        return out.toByteArray();
     }
 
     /**
@@ -552,8 +675,11 @@ public final class TsMuxer implements Muxer {
      * {@inheritDoc}
      *
      * @throws IllegalArgumentException if the packet's track was not declared, it has no timestamp,
-     * or an H.264 or HEVC packet is not made of length-prefixed NAL units
+     * an H.264 or HEVC packet is not made of length-prefixed NAL units, or a new codec
+     * configuration cannot be parsed
      * @throws IllegalStateException if no track was declared or the muxer is finished
+     * @throws MediaException.Unsupported if the packet changes the codec configuration of a track
+     * that is not H.264, HEVC or AAC
      */
     @Override
     public void writePacket(Packet packet) {
@@ -571,6 +697,20 @@ public final class TsMuxer implements Muxer {
         var time = packet.dts() != Packet.NO_TIMESTAMP ? packet.dts() : packet.pts();
         if (time == Packet.NO_TIMESTAMP) {
             throw new IllegalArgumentException("a transport stream packet needs a timestamp");
+        }
+        var newConfig = ConfigChanges.changed(packet, stream.acceptedConfig);
+        if (newConfig != null) {
+            switch (stream.track.codec()) {
+                case H264, HEVC -> {
+                    if ((stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig)) == null) {
+                        throw new IllegalArgumentException("the new " + stream.track.codec().displayName()
+                                + " configuration of track " + packet.trackId() + " cannot be parsed");
+                    }
+                }
+                case AAC -> configureAac(new Stream(stream.track, stream.pid), newConfig);
+                default -> throw ConfigChanges.unsupported("MPEG-TS", packet.trackId());
+            }
+            stream.acceptedConfig = newConfig;
         }
         started = true;
         if (stream.track.kind() == TrackKind.VIDEO && packet.dts() == Packet.NO_TIMESTAMP) {
@@ -816,6 +956,11 @@ public final class TsMuxer implements Muxer {
      * @return the bytes the PES packet carries for it
      */
     private byte[] audioFrame(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null && stream.track.codec() == Codec.AAC) {
+            configureAac(stream, newConfig);
+            stream.appliedConfig = newConfig;
+        }
         var data = packet.data();
         return switch (stream.track.codec()) {
             case AAC -> {
@@ -885,6 +1030,13 @@ public final class TsMuxer implements Muxer {
      * @throws IllegalArgumentException if a NAL unit length overruns the packet
      */
     private static byte[] annexB(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null) {
+            var parsed = stream.hevc ? NalConfigs.parseHevc(newConfig) : NalConfigs.parseAvc(newConfig);
+            stream.lengthSize = parsed.lengthSize();
+            stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
+            stream.appliedConfig = newConfig;
+        }
         return NalUnits.toAnnexB(packet.data(), stream.lengthSize, stream.hevc,
                 packet.keyframe() ? stream.parameterSets : null, stream.hevc ? HEVC_DELIMITER : AVC_DELIMITER);
     }
@@ -1111,10 +1263,11 @@ public final class TsMuxer implements Muxer {
             pmt.u16be(0xF000);
         }
         for (var stream : streams) {
+            var descriptors = entryDescriptors(stream);
             pmt.u8(stream.streamType);
             pmt.u16be(0xE000 | stream.pid);
-            pmt.u16be(0xF000 | stream.descriptors.length);
-            pmt.bytes(stream.descriptors);
+            pmt.u16be(0xF000 | descriptors.length);
+            pmt.bytes(descriptors);
         }
         writeSection(options.pmtPid(), Psi.PMT_TABLE, pmt.toByteArray(), false);
     }
@@ -1126,11 +1279,17 @@ public final class TsMuxer implements Muxer {
      * @param table the {@code table_id}
      * @param body the section after its {@code section_length} field, CRC excluded
      * @param pat whether this is the program association table, whose counter it uses
+     * @throws MediaException.LimitExceeded if the section exceeds the 1021 bytes a PSI section length allows, which
+     * the descriptors of many named tracks can reach
      */
     private void writeSection(int pid, int table, byte[] body, boolean pat) {
+        var length = body.length + 4;
+        if (length > MAX_SECTION_LENGTH) {
+            throw new MediaException.LimitExceeded("a PSI section of " + length + " bytes exceeds the "
+                    + MAX_SECTION_LENGTH + " a section length allows");
+        }
         var section = new byte[3 + body.length + 4];
         section[0] = (byte) table;
-        var length = body.length + 4;
         section[1] = (byte) (0xB0 | (length >> 8));
         section[2] = (byte) length;
         System.arraycopy(body, 0, section, 3, body.length);
@@ -1287,6 +1446,17 @@ public final class TsMuxer implements Muxer {
         AdtsHeader adts;
 
         /**
+         * The codec configuration of the last packet accepted by {@code writePacket}, initially
+         * the track's.
+         */
+        byte[] acceptedConfig;
+
+        /**
+         * The codec configuration the packets being converted use, initially the track's.
+         */
+        byte[] appliedConfig;
+
+        /**
          * The {@code channel_config_code} of an Opus track.
          */
         int opusCode;
@@ -1341,6 +1511,8 @@ public final class TsMuxer implements Muxer {
         Stream(Track track, int pid) {
             this.track = track;
             this.pid = pid;
+            this.acceptedConfig = track.codecConfig().orElse(null);
+            this.appliedConfig = acceptedConfig;
         }
     }
 }

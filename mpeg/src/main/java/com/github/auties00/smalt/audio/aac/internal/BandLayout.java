@@ -104,13 +104,13 @@ public final class BandLayout {
             var high = offsets[band + 1] * lineWidth;
             bark[band] = (float) bark((low + high) / 2);
             var threshold = Math.min(hearingThreshold(bark(low)), hearingThreshold(bark(high)));
-            var perLine = fullScale * Math.pow(10, (threshold - 96 - 20) / 10);
+            var perLine = fullScale * StrictMath.pow(10, (threshold - 96 - 20) / 10);
             quiet[band] = (float) (perLine * (offsets[band + 1] - offsets[band]));
         }
         for (var band = 1; band < count; band++) {
             var distance = bark[band] - bark[band - 1];
-            spreadUp[band] = (float) Math.pow(10, -15 * distance / 10);
-            spreadDown[band - 1] = (float) Math.pow(10, -30 * distance / 10);
+            spreadUp[band] = (float) StrictMath.pow(10, -15 * distance / 10);
+            spreadDown[band - 1] = (float) StrictMath.pow(10, -30 * distance / 10);
         }
         var bitsPerWindow = (double) channelBitrate * windowLength / sampleRate;
         var pePerWindow = 1.18 * bitsPerWindow;
@@ -123,8 +123,8 @@ public final class BandLayout {
             var lines = offsets[band + 1] - offsets[band];
             var perLine = 0.024 * pePerWindow * 24 * width / (lastBark * lines);
             perLine = Math.clamp(perLine, 1.4, 8.4);
-            var snr = 1 / (Math.pow(2, perLine) - 1.5);
-            minSnr[band] = (float) Math.clamp(snr, Math.pow(10, -2.5), Math.pow(10, -0.1));
+            var snr = 1 / (StrictMath.pow(2, perLine) - 1.5);
+            minSnr[band] = (float) Math.clamp(snr, StrictMath.pow(10, -2.5), StrictMath.pow(10, -0.1));
         }
     }
 
@@ -135,7 +135,7 @@ public final class BandLayout {
      * @return the Bark value
      */
     private static double bark(double frequency) {
-        return 13 * Math.atan(0.00076 * frequency) + 3.5 * Math.atan(Math.pow(frequency / 7500, 2));
+        return 13 * StrictMath.atan(0.00076 * frequency) + 3.5 * StrictMath.atan(StrictMath.pow(frequency / 7500, 2));
     }
 
     /**

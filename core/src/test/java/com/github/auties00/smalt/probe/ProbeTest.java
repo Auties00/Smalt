@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
+import com.github.auties00.smalt.testkit.HeifBuilder;
 import com.github.auties00.smalt.testkit.Oracle;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -369,6 +370,8 @@ class ProbeTest {
                 Arguments.of("png gray16", Fixtures.testImage("png", 120, 90, List.of("-pix_fmt", "gray16be")), 16, false, 1),
                 Arguments.of("png palette", Fixtures.testImage("png", 120, 90, List.of("-pix_fmt", "pal8")), 8, false, 1),
                 Arguments.of("jpeg", Fixtures.testImage("jpg", 120, 90, List.of()), 8, false, 1),
+                Arguments.of("jpeg-ls", Fixtures.testImage("jls", 120, 90, List.of("-c:v", "jpegls", "-pix_fmt",
+                        "rgb24")), 8, false, 1),
                 Arguments.of("webp lossy", Fixtures.testImage("webp", 120, 90, List.of("-c:v", "libwebp")), 8, false, 1),
                 Arguments.of("webp lossless alpha", Fixtures.testImage("webp", 120, 90, List.of("-vf",
                         "format=rgba,colorchannelmixer=aa=0.5", "-c:v", "libwebp", "-lossless", "1")), 8, true, 1),
@@ -409,6 +412,113 @@ class ProbeTest {
             assertEquals(0, image.loopCount().orElse(-1), name + " loops forever");
             assertEquals(1_000_000, image.durationMicros().orElse(-1), 20_000, name + " duration");
         }
+    }
+
+    @Test
+    @DisplayName("reports the depth of the AVIF sample transform an alternatives group prefers, and alpha for an overlay")
+    void heifDerived() {
+        var av1c = new byte[]{(byte) 0x81, 0x00, 0x0C, 0x00};
+        var builder = new HeifBuilder();
+        var base = builder.item("av01", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                HeifBuilder.essential(HeifBuilder.av1C(av1c)), HeifBuilder.plain(HeifBuilder.pixi(8, 8, 8)));
+        var sato = builder.idatItem("sato", HeifBuilder.sato(2, 1), HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                HeifBuilder.plain(HeifBuilder.pixi(16, 16, 16)));
+        builder.reference("dimg", sato, base).primary(base)
+                .metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 1, sato, base)));
+        var transformed = Media.probe(MediaSource.of(builder.build())).image().orElseThrow();
+        assertEquals(64, transformed.width());
+        assertEquals(16, transformed.bitDepth().orElse(-1));
+        assertFalse(transformed.hasAlpha());
+        // a transform the AVIF decoder skips (a reserved token, an unknown version) leaves the primary depth
+        var skipped = HeifBuilder.sato(2, 1, 200);
+        var version = HeifBuilder.sato(2, 1);
+        version[0] |= 0x40;
+        for (var payload : List.of(skipped, version)) {
+            var unsupported = new HeifBuilder();
+            var input = unsupported.item("av01", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                    HeifBuilder.essential(HeifBuilder.av1C(av1c)), HeifBuilder.plain(HeifBuilder.pixi(8, 8, 8)));
+            var ignored = unsupported.idatItem("sato", payload, HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                    HeifBuilder.plain(HeifBuilder.pixi(16, 16, 16)));
+            unsupported.reference("dimg", ignored, input).primary(input)
+                    .metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 1, ignored, input)));
+            assertEquals(8, Media.probe(MediaSource.of(unsupported.build())).image().orElseThrow().bitDepth()
+                    .orElse(-1));
+        }
+        // sample transforms are AVIF items: the HEIC decoder shows the primary item of a HEIC file
+        var heic = new HeifBuilder().brands("heic", "mif1", "heic");
+        var hevc = heic.item("hvc1", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                HeifBuilder.plain(HeifBuilder.pixi(8, 8, 8)));
+        var transform = heic.idatItem("sato", HeifBuilder.sato(2, 1), HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                HeifBuilder.plain(HeifBuilder.pixi(16, 16, 16)));
+        heic.reference("dimg", transform, hevc).primary(hevc)
+                .metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 1, transform, hevc)));
+        assertEquals(8, Media.probe(MediaSource.of(heic.build())).image().orElseThrow().bitDepth().orElse(-1));
+        var plain = new HeifBuilder();
+        plain.primary(plain.item("av01", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                HeifBuilder.essential(HeifBuilder.av1C(av1c)), HeifBuilder.plain(HeifBuilder.pixi(8, 8, 8))));
+        assertEquals(8, Media.probe(MediaSource.of(plain.build())).image().orElseThrow().bitDepth().orElse(-1));
+        var overlaid = new HeifBuilder();
+        var input = overlaid.item("av01", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(64, 48)),
+                HeifBuilder.essential(HeifBuilder.av1C(av1c)), HeifBuilder.plain(HeifBuilder.pixi(8, 8, 8)));
+        var overlay = overlaid.idatItem("iovl", HeifBuilder.overlay(false, new int[4], 80, 60, new int[]{0, 0}),
+                HeifBuilder.plain(HeifBuilder.ispe(80, 60)));
+        overlaid.reference("dimg", overlay, input).hidden(input).primary(overlay);
+        var composed = Media.probe(MediaSource.of(overlaid.build())).image().orElseThrow();
+        assertEquals(80, composed.width());
+        assertTrue(composed.hasAlpha());
+    }
+
+    @Test
+    @DisplayName("describes HEIF files of AVC, JPEG 2000 and uncompressed items")
+    void heifItems() {
+        var unci = new HeifBuilder().brands("mif1", "mif1", "miaf");
+        unci.primary(unci.item("unci", new byte[16 * 8 * 4], HeifBuilder.plain(HeifBuilder.ispe(16, 8)),
+                HeifBuilder.essential(HeifBuilder.fullBox("uncC", 1, 0, new byte[]{'r', 'g', 'b', 'a'}))));
+        var rgba = Media.probe(MediaSource.of(unci.build())).image().orElseThrow();
+        assertEquals(16, rgba.width());
+        assertEquals(8, rgba.bitDepth().orElse(-1));
+        assertTrue(rgba.hasAlpha());
+        // an 8-bit alpha component before a 12-bit luma component: the depth is that of the luma
+        var layout = new byte[]{0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 7, 0, 0, 0, 1, 11, 0, 0, 0, 0, 0, 0,
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        var deep = new HeifBuilder().brands("mif1", "mif1", "miaf");
+        deep.primary(deep.item("unci", new byte[16 * 8 * 3], HeifBuilder.plain(HeifBuilder.ispe(16, 8)),
+                HeifBuilder.essential(HeifBuilder.fullBox("uncC", 0, 0, layout)),
+                HeifBuilder.essential(HeifBuilder.box("cmpd", new byte[]{0, 0, 0, 2, 0, 7, 0, 1}))));
+        var twelveBit = Media.probe(MediaSource.of(deep.build())).image().orElseThrow();
+        assertEquals(12, twelveBit.bitDepth().orElse(-1));
+        assertTrue(twelveBit.hasAlpha());
+        var avc = new HeifBuilder().brands("avci", "avci", "mif1");
+        avc.primary(avc.item("avc1", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(40, 30)),
+                HeifBuilder.plain(HeifBuilder.pixi(10, 10, 10))));
+        var avcData = avc.build();
+        assertEquals(ImageFormat.HEIC, ImageFormat.detect(avcData, avcData.length).orElseThrow());
+        var tenBit = Media.probe(MediaSource.of(avcData)).image().orElseThrow();
+        assertEquals(40, tenBit.width());
+        assertEquals(10, tenBit.bitDepth().orElse(-1));
+        assertFalse(tenBit.hasAlpha());
+        var cdef = HeifBuilder.box("cdef", new byte[]{0, 2, 0, 0, 0, 0, 0, 1, 0, 1, 0, 1, 0, 0});
+        var j2k = new HeifBuilder().brands("j2ki", "j2ki", "mif1");
+        j2k.primary(j2k.item("j2k1", new byte[]{1}, HeifBuilder.plain(HeifBuilder.ispe(20, 10)),
+                HeifBuilder.essential(HeifBuilder.box("j2kH", cdef))));
+        var j2kData = j2k.build();
+        assertEquals(ImageFormat.HEIC, ImageFormat.detect(j2kData, j2kData.length).orElseThrow());
+        assertTrue(Media.probe(MediaSource.of(j2kData)).image().orElseThrow().hasAlpha());
+        var jpeg = new HeifBuilder().brands("jpeg", "jpeg", "mif1").build();
+        assertEquals(ImageFormat.HEIC, ImageFormat.detect(jpeg, jpeg.length).orElseThrow());
+    }
+
+    @Test
+    @DisplayName("describes a hierarchical JPEG image by its DHP segment, not by its smaller first frame")
+    void hierarchicalJpeg() {
+        var jpeg = new byte[]{(byte) 0xFF, (byte) 0xD8,
+                (byte) 0xFF, (byte) 0xDE, 0, 11, 12, 0, 29, 0, 41, 1, 1, 0x11, 0,
+                (byte) 0xFF, (byte) 0xC1, 0, 11, 12, 0, 15, 0, 21, 1, 1, 0x11, 0,
+                (byte) 0xFF, (byte) 0xDA, 0, 8, 1, 1, 0, 0, 63, 0, (byte) 0xFF, (byte) 0xD9};
+        var image = Media.probe(MediaSource.of(jpeg)).image().orElseThrow();
+        assertEquals(41, image.width());
+        assertEquals(29, image.height());
+        assertEquals(12, image.bitDepth().orElse(-1));
     }
 
     @Nested

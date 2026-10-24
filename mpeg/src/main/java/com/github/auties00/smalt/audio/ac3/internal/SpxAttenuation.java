@@ -30,7 +30,7 @@ final class SpxAttenuation {
         var factors = new float[32][3];
         for (var code = 0; code < 32; code++) {
             for (var index = 0; index < 3; index++) {
-                factors[code][index] = (float) Math.pow(2, -(code + 1) * (index + 1) / 15.0);
+                factors[code][index] = (float) StrictMath.pow(2, -(code + 1) * (index + 1) / 15.0);
             }
         }
         return factors;

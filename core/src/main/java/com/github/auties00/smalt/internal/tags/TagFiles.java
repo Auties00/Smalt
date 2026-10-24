@@ -28,10 +28,22 @@ public final class TagFiles {
      * Returns whether tags of a container format can be read and written.
      *
      * @param format the container format
-     * @return {@code true} for MP3, ADTS, FLAC, Ogg, MP4, Matroska, WAV and AIFF
+     * @return {@code true} for MP3, ADTS, raw AC-3 and E-AC-3, AMR, FLAC, Ogg, MP4, Matroska, WAV, AIFF and AVI
      */
     public static boolean isSupported(ContainerFormat format) {
         return OPENERS.containsKey(format);
+    }
+
+    /**
+     * Returns the key a RIFF {@code INFO} identifier is read under, as
+     * {@link com.github.auties00.smalt.metadata.TagEditor TagEditor} reads it.
+     *
+     * @param id the four-character identifier
+     * @return the identifier, or {@code "INFO:"} followed by it for an {@code INFO} identifier that names a standard
+     * tag {@code INFO} has no identifier for ({@code ISRC}, the RIFF source)
+     */
+    public static String riffInfoKey(String id) {
+        return RiffTagFile.infoKey(id);
     }
 
     /**
@@ -69,12 +81,17 @@ public final class TagFiles {
         var openers = new EnumMap<ContainerFormat, BiFunction<MediaSource, MediaLimits, TagFile>>(ContainerFormat.class);
         openers.put(ContainerFormat.MPEG_AUDIO, Id3StreamTagFile::new);
         openers.put(ContainerFormat.ADTS, Id3StreamTagFile::new);
+        openers.put(ContainerFormat.AC3, Id3StreamTagFile::new);
+        openers.put(ContainerFormat.AMR, Id3StreamTagFile::new);
         openers.put(ContainerFormat.FLAC, FlacTagFile::new);
         openers.put(ContainerFormat.OGG, OggTagFile::new);
         openers.put(ContainerFormat.MP4, Mp4TagFile::new);
         openers.put(ContainerFormat.MATROSKA, MatroskaTagFile::new);
         openers.put(ContainerFormat.WAV, RiffTagFile::new);
         openers.put(ContainerFormat.AIFF, RiffTagFile::new);
+        openers.put(ContainerFormat.AVI, AviTagFile::new);
+        // TODO: edit the track names and audio types of MPEG-TS files in the program map sections they repeat, which
+        // TsMuxer writes and TsDemuxer reads.
         return Collections.unmodifiableMap(openers);
     }
 }

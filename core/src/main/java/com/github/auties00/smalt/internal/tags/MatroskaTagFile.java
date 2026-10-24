@@ -9,10 +9,15 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.TrackTags;
+import com.github.auties00.smalt.track.TrackDisposition;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.function.LongUnaryOperator;
@@ -27,6 +32,13 @@ import java.util.function.LongUnaryOperator;
  * the first cluster; the remainder becomes a {@code Void} element and nothing moves. A removed
  * element becomes a {@code Void} element and its {@code SeekHead} entry a {@code Void} child.
  *
+ * <p>The track tags are read from the {@code TrackEntry} of each track (its {@code Name} as the
+ * title and its flag elements as the dispositions, the track identifier being its
+ * {@code TrackNumber}) and from the {@code Tag} elements targeting its {@code TrackUID} alone. A
+ * write that changes the tags of a track rebuilds its {@code TrackEntry} with the new name and
+ * flags, in the {@code Tracks} element, and replaces the {@code Tag} elements targeting it alone
+ * with one holding its other entries.
+ *
  * <p>When an element does not fit, the segment is rewritten: a new {@code SeekHead}, the header
  * elements, the new metadata elements and a {@code Void} element of the configured padding, then
  * the clusters copied unchanged and the {@code Cues} re-encoded with the cluster positions moved
@@ -37,6 +49,11 @@ final class MatroskaTagFile implements TagFile {
      * The largest number of level-1 elements listed.
      */
     private static final int MAX_ELEMENTS = 1 << 20;
+
+    /**
+     * The flag elements of a {@code TrackEntry} and the dispositions they store.
+     */
+    private static final Map<Integer, TrackDisposition> FLAGS = flags();
 
     /**
      * The source.
@@ -116,6 +133,21 @@ final class MatroskaTagFile implements TagFile {
     private final List<byte[]> opaqueTags;
 
     /**
+     * The bytes of the first {@code Tracks} element, or {@code null}.
+     */
+    private final byte[] tracksElement;
+
+    /**
+     * The tags of the tracks, by track number.
+     */
+    private final Map<Long, TrackTags> trackTags;
+
+    /**
+     * The {@code TrackUID} of the tracks, by track number.
+     */
+    private final Map<Long, Long> trackUids;
+
+    /**
      * The opaque {@code AttachedFile} elements.
      */
     private final List<byte[]> opaqueFiles;
@@ -191,7 +223,146 @@ final class MatroskaTagFile implements TagFile {
             MatroskaTags.decodeAttachments(attachmentsElement, root(attachmentsElement), pictures, files);
         }
         this.opaqueFiles = List.copyOf(files);
+        this.tracksElement = readFirst(EbmlIds.TRACKS);
+        this.trackTags = new LinkedHashMap<>();
+        this.trackUids = new HashMap<>();
+        if (tracksElement != null) {
+            readTracks();
+        }
+        for (var track : trackTags.values()) {
+            builder.track(track);
+        }
         this.tags = builder.pictures(pictures).build();
+    }
+
+    /**
+     * Reads the tags of every track: the name and flags of its {@code TrackEntry} and the entries of the
+     * {@code Tag} elements targeting it alone.
+     */
+    private void readTracks() {
+        for (var entry : Ebml.children(tracksElement, root(tracksElement).data(), tracksElement.length)) {
+            if (entry.id() != EbmlIds.TRACK_ENTRY) {
+                continue;
+            }
+            var fields = Ebml.children(tracksElement, entry.data(), entry.end());
+            var number = Ebml.find(fields, EbmlIds.TRACK_NUMBER);
+            if (number == null || Ebml.unsigned(tracksElement, number) <= 0
+                    || Ebml.unsigned(tracksElement, number) > Integer.MAX_VALUE) {
+                continue;
+            }
+            var trackNumber = Ebml.unsigned(tracksElement, number);
+            var uidElement = Ebml.find(fields, EbmlIds.TRACK_UID);
+            var uid = uidElement != null ? Ebml.unsigned(tracksElement, uidElement) : 0;
+            var disposition = EnumSet.of(TrackDisposition.DEFAULT);
+            String name = null;
+            for (var field : fields) {
+                var value = FLAGS.get(field.id());
+                if (value != null) {
+                    if (Ebml.unsigned(tracksElement, field) != 0) {
+                        disposition.add(value);
+                    } else {
+                        disposition.remove(value);
+                    }
+                } else if (field.id() == EbmlIds.NAME) {
+                    name = Ebml.string(tracksElement, field);
+                }
+            }
+            var trackTagsBuilder = MediaTags.builder();
+            if (name != null && !name.isEmpty()) {
+                trackTagsBuilder.add(StandardTag.TITLE.key(), name);
+            }
+            for (var tag : targeting(uid)) {
+                for (var item : MatroskaTags.decodeSimpleTags(tag, root(tag))) {
+                    if (name == null || name.isEmpty() || !item.key().equals(StandardTag.TITLE.key())) {
+                        trackTagsBuilder.add(item.key(), item.value());
+                    }
+                }
+            }
+            if (!trackTags.containsKey(trackNumber)) {
+                trackTags.put(trackNumber, new TrackTags((int) trackNumber, trackTagsBuilder.build(), disposition));
+                trackUids.put(trackNumber, uid);
+            }
+        }
+    }
+
+    /**
+     * Returns the opaque {@code Tag} elements that target one track alone.
+     *
+     * @param uid the {@code TrackUID} of the track, 0 for none
+     * @return the complete elements
+     */
+    private List<byte[]> targeting(long uid) {
+        var result = new ArrayList<byte[]>();
+        if (uid == 0) {
+            return result;
+        }
+        for (var tag : opaqueTags) {
+            var children = Ebml.children(tag, root(tag).data(), tag.length);
+            var targets = MatroskaTags.targets(tag, Ebml.find(children, EbmlIds.TARGETS));
+            if (targets.singleTrack() && targets.trackUid() == uid) {
+                result.add(tag);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Rebuilds the {@code Tracks} element with the names and flags of the changed tracks, dropping
+     * its {@code CRC-32} child.
+     *
+     * @param changed the new tags of the changed tracks, by track number
+     * @return the element
+     */
+    private byte[] tracksWith(Map<Long, TrackTags> changed) {
+        var out = new ByteWriter(tracksElement.length + 256);
+        for (var entry : Ebml.children(tracksElement, root(tracksElement).data(), tracksElement.length)) {
+            if (entry.id() == EbmlIds.CRC32) {
+                continue;
+            }
+            var fields = entry.id() == EbmlIds.TRACK_ENTRY ? Ebml.children(tracksElement, entry.data(), entry.end())
+                    : List.<Ebml.Element>of();
+            var number = Ebml.find(fields, EbmlIds.TRACK_NUMBER);
+            var track = number != null ? changed.get(Ebml.unsigned(tracksElement, number)) : null;
+            if (track == null) {
+                out.bytes(tracksElement, entry.offset(), entry.end() - entry.offset());
+                continue;
+            }
+            var body = new ByteWriter(entry.size() + 64);
+            for (var field : fields) {
+                if (field.id() != EbmlIds.NAME && field.id() != EbmlIds.CRC32 && !FLAGS.containsKey(field.id())) {
+                    body.bytes(tracksElement, field.offset(), field.end() - field.offset());
+                }
+            }
+            for (var flag : FLAGS.entrySet()) {
+                var set = track.has(flag.getValue());
+                if (set || flag.getValue() == TrackDisposition.DEFAULT) {
+                    Ebml.unsigned(body, flag.getKey(), set ? 1 : 0);
+                }
+            }
+            var name = track.name().orElse(null);
+            if (name != null && !name.isEmpty()) {
+                Ebml.string(body, EbmlIds.NAME, name);
+            }
+            Ebml.element(out, EbmlIds.TRACK_ENTRY, body.toByteArray());
+        }
+        return Ebml.element(EbmlIds.TRACKS, out.toByteArray());
+    }
+
+    /**
+     * Builds the table of flag elements.
+     *
+     * @return the dispositions by element identifier, in writing order
+     */
+    private static Map<Integer, TrackDisposition> flags() {
+        var flags = new LinkedHashMap<Integer, TrackDisposition>();
+        flags.put(EbmlIds.FLAG_DEFAULT, TrackDisposition.DEFAULT);
+        flags.put(EbmlIds.FLAG_FORCED, TrackDisposition.FORCED);
+        flags.put(EbmlIds.FLAG_HEARING_IMPAIRED, TrackDisposition.HEARING_IMPAIRED);
+        flags.put(EbmlIds.FLAG_VISUAL_IMPAIRED, TrackDisposition.VISUAL_IMPAIRED);
+        flags.put(EbmlIds.FLAG_TEXT_DESCRIPTIONS, TrackDisposition.DESCRIPTIONS);
+        flags.put(EbmlIds.FLAG_ORIGINAL, TrackDisposition.ORIGINAL);
+        flags.put(EbmlIds.FLAG_COMMENTARY, TrackDisposition.COMMENTARY);
+        return Collections.unmodifiableMap(flags);
     }
 
     /**
@@ -296,9 +467,30 @@ final class MatroskaTagFile implements TagFile {
                 replacements.add(new Replacement(EbmlIds.INFO, infoWithTitle(title)));
             }
         }
-        if (!tagsPart.entries().equals(tagEntries) || (!keepOpaque && !opaqueTags.isEmpty())) {
-            replacements.add(new Replacement(EbmlIds.TAGS,
-                    MatroskaTags.encodeTags(tagsPart, keepOpaque ? opaqueTags : List.of())));
+        var changed = new LinkedHashMap<Long, TrackTags>();
+        for (var track : newTags.tracks()) {
+            var number = (long) track.trackId();
+            if (trackTags.containsKey(number) && !trackTags.get(number).equals(track)) {
+                changed.put(number, track);
+            }
+        }
+        if (!changed.isEmpty()) {
+            replacements.add(new Replacement(EbmlIds.TRACKS, tracksWith(changed)));
+        }
+        if (!tagsPart.entries().equals(tagEntries) || (!keepOpaque && !opaqueTags.isEmpty()) || !changed.isEmpty()) {
+            var kept = new ArrayList<byte[]>();
+            if (keepOpaque) {
+                kept.addAll(opaqueTags);
+            }
+            for (var track : changed.entrySet()) {
+                var uid = trackUids.get(track.getKey());
+                kept.removeAll(targeting(uid));
+                var entries = track.getValue().tags().toBuilder().remove(StandardTag.TITLE).build().entries();
+                if (uid != 0 && !entries.isEmpty()) {
+                    kept.add(MatroskaTags.encodeTrackTag(uid, entries));
+                }
+            }
+            replacements.add(new Replacement(EbmlIds.TAGS, MatroskaTags.encodeTags(tagsPart, kept)));
         }
         if (!newTags.chapters().equals(tags.chapters())) {
             replacements.add(new Replacement(EbmlIds.CHAPTERS, MatroskaTags.encodeChapters(newTags.chapters())));
@@ -528,7 +720,7 @@ final class MatroskaTagFile implements TagFile {
         var cursor = (long) seekHeadTotal;
         for (var element : head) {
             positions.putIfAbsent((int) element[2], cursor);
-            var bytes = (int) element[2] == EbmlIds.INFO ? replaced.get(EbmlIds.INFO) : null;
+            var bytes = headReplacement(replaced, (int) element[2]);
             if (bytes != null) {
                 cursor += bytes.length;
                 continue;
@@ -579,7 +771,7 @@ final class MatroskaTagFile implements TagFile {
             plan.bytes(seekHead(positions, seekHeadTotal));
         }
         for (var element : head) {
-            var bytes = (int) element[2] == EbmlIds.INFO ? replaced.get(EbmlIds.INFO) : null;
+            var bytes = headReplacement(replaced, (int) element[2]);
             if (bytes != null) {
                 plan.bytes(bytes);
             } else {
@@ -609,6 +801,17 @@ final class MatroskaTagFile implements TagFile {
             plan.copy(segmentEnd, source.size() - segmentEnd);
         }
         return plan.build();
+    }
+
+    /**
+     * Returns the new encoding of a header element a rewrite replaces.
+     *
+     * @param replaced the new elements by identifier
+     * @param id the identifier of the header element
+     * @return the new {@code Info} or {@code Tracks} element, or {@code null} to copy the old one
+     */
+    private static byte[] headReplacement(Map<Integer, byte[]> replaced, int id) {
+        return id == EbmlIds.INFO || id == EbmlIds.TRACKS ? replaced.get(id) : null;
     }
 
     /**

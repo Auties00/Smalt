@@ -12,6 +12,7 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.util.ArrayDeque;
@@ -68,6 +69,16 @@ import java.util.Set;
  * the first {@link TsDemuxerOptions#probeBytes()} bytes, which are read again by the first
  * {@link #read()}; a stream whose format is not known by then is not exposed, and changes of the
  * program map table after the start are ignored.
+ *
+ * <p>A stream whose configuration changes after the start (a splice, concatenated recordings)
+ * keeps its track, and the packet where the change takes effect carries the new configuration as
+ * its {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig()}: an H.264 IDR or
+ * HEVC IRAP access unit whose active sequence (and HEVC video) parameter sets differ from those of
+ * the configuration in force (a picture parameter set change alone stays in band), the first ADTS
+ * frame of a new sampling frequency, profile or channel configuration that the next frame
+ * confirms, and the first LATM payload after a new {@code AudioSpecificConfig}. Audio durations
+ * stay in samples of the track's rate. After a seek the configuration in force is the track's, so
+ * the first packet read in another one carries it again.
  *
  * <p>Timing. PES timestamps are unwrapped across the 33-bit wrap and continued across timeline
  * discontinuities (a splice or a restarted encoder, recognized by a stream's decoding times
@@ -879,6 +890,54 @@ public final class TsDemuxer implements Demuxer {
     @Override
     public Map<String, String> metadata() {
         return Map.of();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The tags of a track are the first string of the ATSC component name descriptor of its program map entry,
+     * under {@code "title"}.
+     */
+    @Override
+    public Map<String, String> trackMetadata(int trackId) {
+        var parser = parserOf(trackId);
+        return parser == null || parser.entry.name() == null ? Map.of() : Map.of("title", parser.entry.name());
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The dispositions of a track are those the {@code audio_type} of the ISO 639 language descriptor of its
+     * program map entry names: 1 {@link TrackDisposition#CLEAN_EFFECTS}, 2
+     * {@link TrackDisposition#HEARING_IMPAIRED} and 3 {@link TrackDisposition#VISUAL_IMPAIRED}.
+     */
+    @Override
+    public Set<TrackDisposition> trackDisposition(int trackId) {
+        var parser = parserOf(trackId);
+        if (parser == null) {
+            return Set.of();
+        }
+        return switch (parser.entry.audioType()) {
+            case 1 -> Set.of(TrackDisposition.CLEAN_EFFECTS);
+            case 2 -> Set.of(TrackDisposition.HEARING_IMPAIRED);
+            case 3 -> Set.of(TrackDisposition.VISUAL_IMPAIRED);
+            default -> Set.of();
+        };
+    }
+
+    /**
+     * Returns the parser of an exposed track.
+     *
+     * @param trackId the identifier of the track
+     * @return the parser, or {@code null} for an unknown track
+     */
+    private ElementaryParser parserOf(int trackId) {
+        for (var parser : parsers) {
+            if (parser.track().id() == trackId) {
+                return parser;
+            }
+        }
+        return null;
     }
 
     @Override
