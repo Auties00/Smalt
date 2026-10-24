@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.video.hevc.internal;
 
+import com.github.auties00.smalt.internal.sei.DisplaySei;
+import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 import java.util.Arrays;
@@ -121,6 +123,15 @@ public final class HevcFrame {
     public final byte[] ref1;
 
     /**
+     * The three monochrome pictures the color planes of a picture coded with separate color planes
+     * are decoded into, indexed by {@code colour_plane_id}, or {@code null}. Their sample planes are
+     * this picture's {@link #y}, {@link #cb} and {@link #cr} (or the 8-bit ones); each holds the
+     * motion field, slice tables and decoding progress of its plane, while this picture keeps the
+     * reference and output state and is done once all three are.
+     */
+    public final HevcFrame[] planes;
+
+    /**
      * The index into {@link #sliceRefPoc} of the slice of each coding tree block, by raster address.
      */
     public int[] ctbSlice;
@@ -159,6 +170,13 @@ public final class HevcFrame {
     public int poc;
 
     /**
+     * {@code PicOrderCntVal} when the picture was output: a picture order count reset that
+     * decrements {@link #poc} after the picture left for output, while it is still referenced or
+     * still being decoded, leaves this one alone.
+     */
+    public int outputPoc;
+
+    /**
      * Whether the picture is marked "used for short-term reference".
      */
     public boolean shortTerm;
@@ -189,6 +207,43 @@ public final class HevcFrame {
     public boolean irap;
 
     /**
+     * Whether the picture's access unit carried a recovery point SEI message.
+     */
+    public boolean recoveryPoint;
+
+    /**
+     * Whether every slice of the picture is an I slice.
+     */
+    public boolean intraOnly;
+
+    /**
+     * {@code pic_struct} of the picture timing SEI message of the picture's access unit, or -1
+     * when none was signaled.
+     */
+    public int picStruct = -1;
+
+    /**
+     * Whether the picture starts a coded video sequence: an IRAP picture with
+     * {@code NoRaslOutputFlag}, or the picture decoding started at.
+     */
+    public boolean newSequence;
+
+    /**
+     * The film grain characteristics message of the picture's access unit, or {@code null}.
+     */
+    public FilmGrainParameters filmGrain;
+
+    /**
+     * The frame packing arrangement message of the picture's access unit, or {@code null}.
+     */
+    public DisplaySei.FramePackingMessage framePacking;
+
+    /**
+     * The display orientation message of the picture's access unit, or {@code null}.
+     */
+    public DisplaySei.OrientationMessage orientation;
+
+    /**
      * Whether decoding the picture failed, so its samples are concealed.
      */
     public boolean damaged;
@@ -207,6 +262,55 @@ public final class HevcFrame {
      * The sequence parameter set the picture was decoded with.
      */
     public HevcSps sps;
+
+    /**
+     * The {@code nuh_layer_id} of the picture.
+     */
+    public int layerId;
+
+    /**
+     * The {@code ViewId} of the picture's layer, 0 for a single layer stream.
+     */
+    public int viewId;
+
+    /**
+     * The {@code AuxId} of the picture's layer, 0 for a primary picture.
+     */
+    public int auxId;
+
+    /**
+     * Whether the decoder outputs several layers or a layer other than the base layer, so that the
+     * frame of the picture names its layer.
+     */
+    public boolean layered;
+
+    /**
+     * {@code PicOutputFlag} of a picture of a multi-layer stream, which its access unit's end turns
+     * into the "needed for output" marking.
+     */
+    public boolean picOutputFlag;
+
+    /**
+     * The alpha auxiliary picture of the same access unit attached to this primary picture while
+     * it is output, or {@code null}.
+     */
+    public HevcFrame alpha;
+
+    /**
+     * The alpha channel information that applies to this alpha auxiliary picture, or {@code null}.
+     */
+    public HevcSei.AlphaChannel alphaChannel;
+
+    /**
+     * {@code discardable_flag}: the picture is no reference for later pictures.
+     */
+    public boolean discardable;
+
+    /**
+     * Whether the picture is a base layer picture supplied from outside the stream, which the
+     * decoder never recycles.
+     */
+    public boolean externalPoc;
 
     /**
      * The color description of the picture.
@@ -261,11 +365,41 @@ public final class HevcFrame {
      *                     planes
      */
     public HevcFrame(int width, int height, int chromaFormat, boolean eightBit) {
+        this(width, height, chromaFormat, eightBit, false);
+    }
+
+    /**
+     * Allocates a picture, possibly coded with separate color planes.
+     *
+     * @param width          the coded width in luma samples
+     * @param height         the coded height in luma samples
+     * @param chromaFormat   the chroma format, {@code chroma_format_idc}
+     * @param eightBit       whether the samples have 8 bits, selecting 8-bit planes
+     * @param separatePlanes whether the 4:4:4 picture is coded as three monochrome color planes,
+     *                       which then get {@link #planes}
+     */
+    public HevcFrame(int width, int height, int chromaFormat, boolean eightBit, boolean separatePlanes) {
+        this(width, height, chromaFormat, eightBit ? null : new short[width * height],
+                eightBit ? new byte[width * height + PADDING] : null, separatePlanes);
+    }
+
+    /**
+     * Allocates a picture around a luma plane, allocating the chroma planes and the motion field.
+     *
+     * @param width        the coded width in luma samples
+     * @param height       the coded height in luma samples
+     * @param chromaFormat the chroma format, {@code chroma_format_idc}
+     * @param luma         the 16-bit luma plane, or {@code null} for 8-bit planes
+     * @param luma8        the 8-bit luma plane with its padding, or {@code null} for 16-bit planes
+     * @param separatePlanes whether to create {@link #planes} over the three sample planes
+     */
+    private HevcFrame(int width, int height, int chromaFormat, short[] luma, byte[] luma8, boolean separatePlanes) {
+        var eightBit = luma8 != null;
         this.width = width;
         this.height = height;
         this.chromaFormat = chromaFormat;
-        this.y = eightBit ? null : new short[width * height];
-        this.y8 = eightBit ? new byte[width * height + PADDING] : null;
+        this.y = luma;
+        this.y8 = luma8;
         if (chromaFormat == 0) {
             this.chromaWidth = 0;
             this.chromaHeight = 0;
@@ -289,6 +423,22 @@ public final class HevcFrame {
         this.mv1 = new int[blocks];
         this.ref0 = new byte[blocks];
         this.ref1 = new byte[blocks];
+        this.planes = !separatePlanes ? null : new HevcFrame[]{
+                new HevcFrame(width, height, 0, y, y8, false),
+                new HevcFrame(width, height, 0, cb, cb8, false),
+                new HevcFrame(width, height, 0, cr, cr8, false)
+        };
+    }
+
+    /**
+     * Returns the picture a color plane of this picture is decoded into: the plane's monochrome
+     * picture with separate color planes, this picture otherwise.
+     *
+     * @param colorPlaneId the {@code colour_plane_id} of the plane, 0 without separate planes
+     * @return the picture
+     */
+    public HevcFrame plane(int colorPlaneId) {
+        return planes == null ? this : planes[colorPlaneId];
     }
 
     /**
@@ -299,7 +449,7 @@ public final class HevcFrame {
      */
     public boolean fits(HevcSps sps) {
         return width == sps.width && height == sps.height && chromaFormat == sps.chromaFormatIdc
-                && (y8 != null) == eightBit(sps);
+                && (y8 != null) == eightBit(sps) && (planes != null) == sps.separateColorPlane;
     }
 
     /**
@@ -335,12 +485,68 @@ public final class HevcFrame {
         latencyCount = 0;
         generated = false;
         irap = false;
+        recoveryPoint = false;
+        intraOnly = true;
+        picStruct = -1;
+        newSequence = false;
+        filmGrain = null;
+        framePacking = null;
+        orientation = null;
         damaged = false;
+        picOutputFlag = false;
+        discardable = false;
+        alpha = null;
+        alphaChannel = null;
         sliceCount = 0;
         Arrays.fill(ref0, (byte) -1);
         Arrays.fill(ref1, (byte) -1);
         if (ctbSlice == null || ctbSlice.length != sizeInCtbs) {
             ctbSlice = new int[sizeInCtbs];
+        }
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.reset(sizeInCtbs);
+            }
+        }
+    }
+
+    /**
+     * Copies the identity of this picture to the pictures of its color planes, which the decoding
+     * of each plane reads: {@link #id}, {@link #poc}, {@link #sps}, {@link #generated} and
+     * {@link #damaged}; does nothing without separate color planes.
+     */
+    public void syncPlanes() {
+        if (planes == null) {
+            return;
+        }
+        for (var plane : planes) {
+            plane.id = id;
+            plane.poc = poc;
+            plane.layerId = layerId;
+            plane.sps = sps;
+            plane.generated = generated;
+            plane.damaged = damaged;
+        }
+    }
+
+    /**
+     * Lowers the picture order count of this picture and of the references its slices recorded by
+     * a decrement, as a picture order count reset of its layer does (F.8.3.1).
+     *
+     * @param delta {@code DeltaPocVal}
+     */
+    public void decrementPoc(int delta) {
+        poc -= delta;
+        for (var slice = 0; slice < sliceCount; slice++) {
+            var pocs = sliceRefPoc[slice];
+            for (var k = 0; k < pocs.length; k++) {
+                pocs[k] -= delta;
+            }
+        }
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.decrementPoc(delta);
+            }
         }
     }
 
@@ -408,6 +614,11 @@ public final class HevcFrame {
         readyRows = 0;
         decodedRows = 0;
         done = false;
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.beginDecoding();
+            }
+        }
     }
 
     /**
@@ -452,6 +663,11 @@ public final class HevcFrame {
      * Publishes that decoding of the picture finished: every row is final.
      */
     public void publishDone() {
+        if (planes != null) {
+            for (var plane : planes) {
+                plane.publishDone();
+            }
+        }
         progressLock.lock();
         try {
             readyRows = height;

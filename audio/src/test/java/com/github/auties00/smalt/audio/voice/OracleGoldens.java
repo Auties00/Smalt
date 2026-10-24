@@ -13,9 +13,9 @@ public final class OracleGoldens {
         System.out.println("# SHA-256 of the WebRTC APM oracle output (float32 little-endian) per configuration and scenario.");
         System.out.println("# Regenerate with OracleGoldens.");
         for (var c : VoiceProcessorOracleTest.cases()) {
-            var scenario = VoiceProcessorOracleTest.scenarioOf(c.scenario());
-            var result = VoiceProcessorOracleTest.run(c.options(), scenario);
-            var key = VoiceProcessorOracleTest.key(c.options(), scenario);
+            var streams = RateScenarios.of(VoiceProcessorOracleTest.scenarioOf(c.scenario()));
+            var result = OracleHarness.run(c.options(), streams);
+            var key = OracleHarness.key(c.options(), streams);
             if (!result.javaDigest().equals(result.oracleDigest()) || result.levelMismatches() != 0) {
                 System.err.println("Java output differs from the oracle for " + key);
             }
