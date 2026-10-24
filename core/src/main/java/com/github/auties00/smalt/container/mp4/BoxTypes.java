@@ -36,6 +36,27 @@ final class BoxTypes {
     static final int MOOF = 0x6D6F6F66;
 
     /**
+     * The compressed movie box ({@code !mov}, ISO/IEC 14496-12 clause 8.20): the payload of a {@code moov} box,
+     * gzip-compressed.
+     */
+    static final int COMPRESSED_MOOV = 0x216D6F76;
+
+    /**
+     * The compressed movie fragment box ({@code !mof}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_MOOF = 0x216D6F66;
+
+    /**
+     * The compressed segment index box ({@code !six}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_SIDX = 0x21736978;
+
+    /**
+     * The compressed subsegment index box ({@code !ssx}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_SSIX = 0x21737378;
+
+    /**
      * The movie fragment random access box ({@code mfra}).
      */
     static final int MFRA = 0x6D667261;
@@ -246,9 +267,60 @@ final class BoxTypes {
     static final int AVC3 = 0x61766333;
 
     /**
+     * The H.264 sample entry whose samples may hold extractors and aggregators ({@code avc2}).
+     */
+    static final int AVC2 = 0x61766332;
+
+    /**
+     * The H.264 sample entry with in-band parameter sets whose samples may hold extractors and aggregators
+     * ({@code avc4}).
+     */
+    static final int AVC4 = 0x61766334;
+
+    /**
+     * The SVC sample entry of a track reconstructed implicitly from the tracks it references ({@code svc1}).
+     */
+    static final int SVC1 = 0x73766331;
+
+    /**
+     * The SVC sample entry whose samples may hold extractors and aggregators ({@code svc2}).
+     */
+    static final int SVC2 = 0x73766332;
+
+    /**
+     * The MVC sample entry of a track reconstructed implicitly from the tracks it references ({@code mvc1}).
+     */
+    static final int MVC1 = 0x6D766331;
+
+    /**
+     * The MVC sample entry whose samples may hold extractors and aggregators ({@code mvc2}).
+     */
+    static final int MVC2 = 0x6D766332;
+
+    /**
+     * The MVC sample entry with in-band parameter sets, reconstructed implicitly ({@code mvc3}).
+     */
+    static final int MVC3 = 0x6D766333;
+
+    /**
+     * The MVC sample entry with in-band parameter sets whose samples may hold extractors ({@code mvc4}).
+     */
+    static final int MVC4 = 0x6D766334;
+
+    /**
      * The AVC decoder configuration box ({@code avcC}).
      */
     static final int AVCC = 0x61766343;
+
+    /**
+     * The SVC decoder configuration box ({@code svcC}).
+     */
+    static final int SVCC = 0x73766343;
+
+    /**
+     * The MVC decoder configuration box ({@code mvcC}).
+     */
+    static final int MVCC = 0x6D766343;
 
     /**
      * The HEVC sample entry with out-of-band parameter sets ({@code hvc1}).
@@ -595,6 +667,16 @@ final class BoxTypes {
      * The subtitle handler type ({@code sbtl}).
      */
     static final int SBTL = 0x7362746C;
+
+    /**
+     * The ISO subtitle handler type ({@code subt}).
+     */
+    static final int SUBT = 0x73756274;
+
+    /**
+     * The subtitle media header box ({@code sthd}).
+     */
+    static final int STHD = 0x73746864;
 
     /**
      * The video media header box ({@code vmhd}).

@@ -1,0 +1,103 @@
+# The black-box oracle tools of the tests, per CI platform; tools/testdata/oracles.py installs them.
+# Columns: platform, package, version, method, source, sha256, path, provides
+#   method  archive   download source (pinned by sha256), extract, put <path> on PATH ("inner!dir" extracts the
+#                     archive inner first)
+#           deb       download source (pinned), install it with apt; <path> is the directory of its executables
+#           macpkg    download a dmg (pinned) and install the package inside it; <path> as for deb
+#           apt, brew, msys2
+#                     install the packages of <source> (space separated) with the platform's package manager;
+#                     their versions are whatever the manager holds and are recorded by "oracles.py versions";
+#                     <path> is "-" or a directory to add to PATH ("brew:<formula>/bin" names a keg)
+#           build     download source (pinned) and build <package> with the recipe of oracles.py; <path> is "-"
+#           script    run the build script <source> (a path from the repository root) with the prefix
+#                     ~/.smalt/<package>-<version>, whose bin directory goes on PATH; CI caches it apart, keyed
+#                     by the script's hash
+#   provides  the executables the row puts on PATH, comma separated; "name=file" installs file under name.
+# Versions: every runner has the same version of every tool a test runs. ffmpeg is 7.1.2 (the clips and the
+# swscale-based color tests need 7.1; 7.1.1 decodes some small H.264 pictures wrongly on arm64) with the components of
+# tools/testdata/ffmpeg-oracle/features.tsv, which "oracles.py versions" checks; tools/testdata/ffmpeg-oracle/build.py
+# builds it and each of those libraries from pinned source releases on every runner (under MSYS2 on Windows), as no
+# prebuilt 7.1.2 has all of them (Ubuntu's and BtbN's lack libvo_amrwbenc and libspeex, Homebrew's libvo_amrwbenc,
+# and gyan.dev's full builds stop at 7.1.1).
+# libwebp 1.6.0, exiftool 13.59, libjxl 0.11.2 and libjpeg-turbo 3.1.3 come from official builds where one exists;
+# libjxl is built from source on Linux arm64 (no release build) and macOS (Homebrew's version moves), libjpeg-turbo
+# on Windows (its official build there is an installer). OpenJPEG is 2.5.3, the version Smalt's JPEG 2000 codec
+# ports, built from source on Linux and macOS without -ffast-math (which OpenJPEG's own Release configuration and
+# therefore the official Linux and macOS builds use) and without fused multiply-adds: the irreversible wavelet is
+# float arithmetic, and both reorder it (the official Windows build does neither). libtiff 4.7.1 (Ubuntu's 4.5
+# writes byte-swapped float strips wrongly) and FLAC 1.5.0 are built from source everywhere, against the codec
+# libraries of the platform's package manager. The container validators of the test kit run GPAC's MP4Box, TSDuck's
+# tsp, mkvalidator and mkvmerge where they are installed (MP4Box's version is the package manager's, recorded, not
+# pinned); mkvalidator is built on Windows only, as its project builds it, since its GCC build misreads Seek
+# elements and crashes on every file; sox and opus-tools are used by no test; smalt-gifenc drives the encoder of
+# giflib 5.2.2 (MIT, tools/testdata/gif-oracle); smalt-mpeg4ref is the MPEG-4 Visual reference decoder of ISO/IEC
+# 14496-5 (version 2.3, 2000-12-13, from the Internet Archive's copy of ISO's Publicly Available Standards), built by
+# tools/testdata/mpeg4-oracle/build.py with g++ (Homebrew's on macOS, whose clang rejects the pre-standard C++);
+# ImageMagick comes from apt on Linux (convert), from Homebrew on macOS (magick) and with the Windows runner image;
+# OpenJPH 0.21.3, the HTJ2K oracle, is built from source everywhere without its SIMD kernels; GPAC publishes no
+# pinnable Windows build, so MP4Box is not provisioned on Windows.
+linux-x64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+linux-x64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-linux-x86-64.tar.gz	1c5ffab71efecefa0e3c23516c3a3a1dccb45cc310ae1095c6f14ae268e38067	libwebp-1.6.0-linux-x86-64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
+linux-x64	libjxl	0.11.2	archive	https://github.com/libjxl/libjxl/releases/download/v0.11.2/jxl-linux-x86_64-static.zip	f8f8c031881d4a76845d3b3482a4e0138bb017568dc76d33abd79d24856a4dec	release_file.tar.gz!tools	cjxl,djxl
+linux-x64	openjpeg	2.5.3	build	https://codeload.github.com/uclouvain/openjpeg/tar.gz/refs/tags/v2.5.3	368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707	-	opj_compress,opj_decompress,opj_dump
+linux-x64	libjpeg-turbo	3.1.3	deb	https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-official_3.1.3_amd64.deb	b641a6958d13ec5fdd1d0c7edd68264aaafd61e33dc4999fa8f0cdd50cc927d0	/opt/libjpeg-turbo/bin	cjpeg,djpeg,jpegtran
+linux-x64	tsduck	3.45-4798	deb	https://github.com/tsduck/tsduck/releases/download/v3.45-4798/tsduck_3.45-4798.ubuntu24_amd64.deb	0023689f76e75b64e45253771208bcf8ca95b91fbfd0900da097c729f3c39fde	/usr/bin	tsp
+linux-x64	exiftool	13.59	archive	https://sourceforge.net/projects/exiftool/files/Image-ExifTool-13.59.tar.gz/download	668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a	Image-ExifTool-13.59	exiftool
+linux-x64	ubuntu	-	apt	opus-tools gpac mkvtoolnix sox zlib1g-dev cmake libjpeg-turbo8-dev libwebp-dev liblzma-dev libzstd-dev libdeflate-dev imagemagick	-	-	opusenc,opusdec,MP4Box,mkvmerge,mkvinfo,sox
+linux-x64	opus_compare	1.5.2	build	https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz	65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1	-	opus_compare
+linux-x64	flac	1.5.0	build	https://downloads.xiph.org/releases/flac/flac-1.5.0.tar.xz	f2c1c76592a82ffff8413ba3c4a1299b6c7ab06c734dee03fd88630485c2b920	-	flac
+linux-x64	libtiff	4.7.1	build	https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz	f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69	-	tiffcp,tiffinfo,tiffdump,tiff2rgba
+linux-x64	openjph	0.21.3	build	https://codeload.github.com/aous72/OpenJPH/tar.gz/refs/tags/0.21.3	4dfa87ec8e28c8a30c038969cdd3084d2e8688b364efd83599c3fa90f29457e2	-	ojph_compress,ojph_expand
+linux-x64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/libpng-1.6.50.tar.xz	4df396518620a7aa3651443e87d1b2862e4e88cad135a8b93423e01706232307	-	smalt-pngdump
+linux-x64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
+linux-x64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+linux-x64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc
+linux-arm64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+linux-arm64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-linux-aarch64.tar.gz	69f5eebe203e0f3942fe37986209a1725741be19c152950a4283b376c95ec798	libwebp-1.6.0-linux-aarch64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
+linux-arm64	libjpeg-turbo	3.1.3	deb	https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-official_3.1.3_arm64.deb	05d1edece68b54e97f834b0956901dcb6734f4ac67e203f126b4836cc833a34e	/opt/libjpeg-turbo/bin	cjpeg,djpeg,jpegtran
+linux-arm64	tsduck	3.45-4798	deb	https://github.com/tsduck/tsduck/releases/download/v3.45-4798/tsduck_3.45-4798.ubuntu24_arm64.deb	332ae85ec2fce378ae9d2ae872606a38192aeb62da6edcf784ce6466b780295f	/usr/bin	tsp
+linux-arm64	exiftool	13.59	archive	https://sourceforge.net/projects/exiftool/files/Image-ExifTool-13.59.tar.gz/download	668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a	Image-ExifTool-13.59	exiftool
+linux-arm64	ubuntu	-	apt	opus-tools gpac mkvtoolnix sox zlib1g-dev cmake libjpeg-turbo8-dev libwebp-dev liblzma-dev libzstd-dev libdeflate-dev libhwy-dev libbrotli-dev liblcms2-dev libpng-dev libgif-dev imagemagick	-	-	opusenc,opusdec,MP4Box,mkvmerge,mkvinfo,sox
+linux-arm64	opus_compare	1.5.2	build	https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz	65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1	-	opus_compare
+linux-arm64	flac	1.5.0	build	https://downloads.xiph.org/releases/flac/flac-1.5.0.tar.xz	f2c1c76592a82ffff8413ba3c4a1299b6c7ab06c734dee03fd88630485c2b920	-	flac
+linux-arm64	libtiff	4.7.1	build	https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz	f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69	-	tiffcp,tiffinfo,tiffdump,tiff2rgba
+linux-arm64	openjph	0.21.3	build	https://codeload.github.com/aous72/OpenJPH/tar.gz/refs/tags/0.21.3	4dfa87ec8e28c8a30c038969cdd3084d2e8688b364efd83599c3fa90f29457e2	-	ojph_compress,ojph_expand
+linux-arm64	openjpeg	2.5.3	build	https://codeload.github.com/uclouvain/openjpeg/tar.gz/refs/tags/v2.5.3	368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707	-	opj_compress,opj_decompress,opj_dump
+linux-arm64	libjxl	0.11.2	build	https://codeload.github.com/libjxl/libjxl/tar.gz/refs/tags/v0.11.2	ab38928f7f6248e2a98cc184956021acb927b16a0dee71b4d260dc040a4320ea	-	cjxl,djxl
+linux-arm64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/libpng-1.6.50.tar.xz	4df396518620a7aa3651443e87d1b2862e4e88cad135a8b93423e01706232307	-	smalt-pngdump
+linux-arm64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
+linux-arm64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+linux-arm64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc
+windows-x64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+windows-x64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-windows-x64.zip	48886f506b21f62e4661f0f4cbfca19800897c385128e8902542d29a950c93f1	libwebp-1.6.0-windows-x64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
+windows-x64	libjxl	0.11.2	archive	https://github.com/libjxl/libjxl/releases/download/v0.11.2/jxl-x64-windows-static.zip	97dc815bdd99ba243d8502050357342cf649251a5df069f8c3daee6828cbe0ce	bin	cjxl,djxl
+windows-x64	openjpeg	2.5.3	archive	https://github.com/uclouvain/openjpeg/releases/download/v2.5.3/openjpeg-v2.5.3-windows-x64.zip	75972014687abd706ddbdd0080523bfeb819d92b0ed33de51792d565ff7bf9b4	openjpeg-v2.5.3-windows-x64/bin	opj_compress,opj_decompress,opj_dump
+windows-x64	exiftool	13.59	archive	https://sourceforge.net/projects/exiftool/files/exiftool-13.59_64.zip/download	44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec	exiftool-13.59_64	exiftool=exiftool(-k)
+windows-x64	mkvtoolnix	102.0	archive	https://mkvtoolnix.download/windows/releases/102.0/mkvtoolnix-64-bit-102.0.zip	c02e918900f6d945d9307b426237e456378b79a200589ac6928de39064409a44	mkvtoolnix	mkvmerge,mkvinfo
+windows-x64	tsduck	3.45-4798	archive	https://github.com/tsduck/tsduck/releases/download/v3.45-4798/TSDuck-Win64-3.45-4798-Portable.zip	12976d2d3a55beaade5298399c720be26a85f57dc7d6b5399c5c660c4855afbc	TSDuck/bin	tsp
+windows-x64	msys2	-	msys2	mingw-w64-ucrt-x86_64-opus-tools mingw-w64-ucrt-x86_64-sox mingw-w64-ucrt-x86_64-gcc mingw-w64-ucrt-x86_64-pkgconf mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja mingw-w64-ucrt-x86_64-nasm mingw-w64-ucrt-x86_64-zlib mingw-w64-ucrt-x86_64-libjpeg-turbo mingw-w64-ucrt-x86_64-xz mingw-w64-ucrt-x86_64-zstd mingw-w64-ucrt-x86_64-libwebp mingw-w64-ucrt-x86_64-libdeflate	-	C:/msys64/ucrt64/bin	opusenc,opusdec,sox
+windows-x64	opus_compare	1.5.2	build	https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz	65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1	-	opus_compare
+windows-x64	flac	1.5.0	build	https://downloads.xiph.org/releases/flac/flac-1.5.0.tar.xz	f2c1c76592a82ffff8413ba3c4a1299b6c7ab06c734dee03fd88630485c2b920	-	flac
+windows-x64	libtiff	4.7.1	build	https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz	f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69	-	tiffcp,tiffinfo,tiffdump,tiff2rgba
+windows-x64	openjph	0.21.3	build	https://codeload.github.com/aous72/OpenJPH/tar.gz/refs/tags/0.21.3	4dfa87ec8e28c8a30c038969cdd3084d2e8688b364efd83599c3fa90f29457e2	-	ojph_compress,ojph_expand
+windows-x64	libjpeg-turbo	3.1.3	build	https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.tar.gz	075920b826834ac4ddf97661cc73491047855859affd671d52079c6867c1c6c0	-	cjpeg,djpeg,jpegtran
+windows-x64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/libpng-1.6.50.tar.xz	4df396518620a7aa3651443e87d1b2862e4e88cad135a8b93423e01706232307	-	smalt-pngdump
+windows-x64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
+windows-x64	mkvalidator	d697611	build	https://codeload.github.com/Matroska-Org/foundation-source/tar.gz/d69761114b79c1dfcb2226ceca84452835e745c3	2c35102ed7b95db6429d168256465d6f15af10c9020138ae1d7f651d280923a9	-	mkvalidator
+windows-x64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+windows-x64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc
+macos-arm64	ffmpeg	7.1.2	script	tools/testdata/ffmpeg-oracle/build.py	-	-	ffmpeg,ffprobe
+macos-arm64	libwebp	1.6.0	archive	https://storage.googleapis.com/downloads.webmproject.org/releases/webp/libwebp-1.6.0-mac-arm64.tar.gz	bc6bf84cc70f3f8574fba797d1e4a7dea4feebe9fa4be919f202413ea2b3b8f2	libwebp-1.6.0-mac-arm64/bin	cwebp,dwebp,webpmux,img2webp,gif2webp,webpinfo
+macos-arm64	openjpeg	2.5.3	build	https://codeload.github.com/uclouvain/openjpeg/tar.gz/refs/tags/v2.5.3	368fe0468228e767433c9ebdea82ad9d801a3ad1e4234421f352c8b06e7aa707	-	opj_compress,opj_decompress,opj_dump
+macos-arm64	libjpeg-turbo	3.1.3	macpkg	https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.dmg	7f3cf924e51349b1219ab0e702ec56634b99788a1828319588878572977ec175	/opt/libjpeg-turbo/bin	cjpeg,djpeg,jpegtran
+macos-arm64	exiftool	13.59	archive	https://sourceforge.net/projects/exiftool/files/Image-ExifTool-13.59.tar.gz/download	668ea3acececb7235fbd0f4900e72d5f12c9b07e5c778fd36cb1e9b5828fd65a	Image-ExifTool-13.59	exiftool
+macos-arm64	homebrew	-	brew	opus-tools gpac mkvtoolnix sox tsduck pkgconf highway brotli little-cms2 libpng giflib jpeg-turbo xz zstd webp libdeflate imagemagick	-	-	opusenc,opusdec,MP4Box,mkvmerge,mkvinfo,sox,tsp,magick
+macos-arm64	opus_compare	1.5.2	build	https://downloads.xiph.org/releases/opus/opus-1.5.2.tar.gz	65c1d2f78b9f2fb20082c38cbe47c951ad5839345876e46941612ee87f9a7ce1	-	opus_compare
+macos-arm64	flac	1.5.0	build	https://downloads.xiph.org/releases/flac/flac-1.5.0.tar.xz	f2c1c76592a82ffff8413ba3c4a1299b6c7ab06c734dee03fd88630485c2b920	-	flac
+macos-arm64	libtiff	4.7.1	build	https://download.osgeo.org/libtiff/tiff-4.7.1.tar.gz	f698d94f3103da8ca7438d84e0344e453fe0ba3b7486e04c5bf7a9a3fabe9b69	-	tiffcp,tiffinfo,tiffdump,tiff2rgba
+macos-arm64	openjph	0.21.3	build	https://codeload.github.com/aous72/OpenJPH/tar.gz/refs/tags/0.21.3	4dfa87ec8e28c8a30c038969cdd3084d2e8688b364efd83599c3fa90f29457e2	-	ojph_compress,ojph_expand
+macos-arm64	libjxl	0.11.2	build	https://codeload.github.com/libjxl/libjxl/tar.gz/refs/tags/v0.11.2	ab38928f7f6248e2a98cc184956021acb927b16a0dee71b4d260dc040a4320ea	-	cjxl,djxl
+macos-arm64	smalt-pngdump	1.6.50	build	https://download.sourceforge.net/libpng/libpng-1.6.50.tar.xz	4df396518620a7aa3651443e87d1b2862e4e88cad135a8b93423e01706232307	-	smalt-pngdump
+macos-arm64	smalt-lcmsdump	2.17	build	https://github.com/mm2/Little-CMS/releases/download/lcms2.17/lcms2-2.17.tar.gz	d11af569e42a1baa1650d20ad61d12e41af4fead4aa7964a01f93b08b53ab074	-	smalt-lcmsdump
+macos-arm64	smalt-mpeg4ref	2.3-001213	build	http://web.archive.org/web/20060707164348id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-5_2001_Software_Reference/video.zip	73b1aa5858786eeab526c6d04e95066a4a41e7f8b4c037070bbbfa7158fa499f	-	smalt-mpeg4ref
+macos-arm64	smalt-gifenc	5.2.2	build	https://download.sourceforge.net/giflib/giflib-5.2.2.tar.gz	be7ffbd057cadebe2aa144542fd90c6838c6a083b5e8a9048b8ee3b66b29d5fb	-	smalt-gifenc
