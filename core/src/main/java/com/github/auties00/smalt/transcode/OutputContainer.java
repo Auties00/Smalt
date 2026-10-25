@@ -6,9 +6,10 @@ import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.matroska.MatroskaDocType;
 import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
 import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
+import com.github.auties00.smalt.container.mp4.Mp4Muxer;
+import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.track.Codec;
-import com.github.auties00.smalt.track.TrackKind;
 
 import java.util.List;
 import java.util.Locale;
@@ -20,11 +21,12 @@ import java.util.Optional;
  * that decides which codecs it carries.
  *
  * <p>Several constants share a {@link ContainerFormat}: {@link #MP4}, {@link #M4A},
- * {@link #FRAGMENTED_MP4} and {@link #MOV} are all ISO base media files, and {@link #WEBM} is the
- * WebM profile of {@link #MATROSKA}. Each constant knows the codecs its muxer accepts ({@link #supports(Codec)}),
- * the codecs a transcode picks when the caller names none ({@link #videoCodecs()},
- * {@link #audioCodecs()}), and whether the file stores a display orientation and edit lists, which
- * decide how a transcode rotates video and trims copied streams.
+ * {@link #FRAGMENTED_MP4} and {@link #MOV} are all ISO base media files, {@link #WEBM} is the
+ * WebM profile of {@link #MATROSKA}, {@link #OGG_FLAC} the FLAC profile of {@link #OGG}, and
+ * {@link #AC3} and {@link #EAC3} the two Dolby elementary streams. Each constant knows the codecs
+ * its muxer accepts ({@link #supports(Codec)}), the codecs a transcode picks when the caller names
+ * none ({@link #videoCodecs()}, {@link #audioCodecs()}), and whether the file stores a display
+ * orientation and edit lists, which decide how a transcode rotates video and trims copied streams.
  *
  * <p>Constants may be added in minor releases, so a {@code switch} over this type needs a
  * {@code default} branch.
@@ -38,8 +40,9 @@ public enum OutputContainer {
 
     /**
      * A fast-start QuickTime movie with the {@code qt  } brand, the file of the professional intra
-     * codecs: it carries ProRes and DNxHD besides the codecs of {@link #MP4}, and a transcode
-     * picks ProRes 422 HQ when the caller names no video codec.
+     * codecs: it carries ProRes, DNxHD and every PCM format (A-law and mu-law included) besides the
+     * codecs of {@link #MP4}, and a transcode picks ProRes 422 HQ when the caller names no video
+     * codec.
      */
     MOV(ContainerFormat.MP4, "mov", "video/quicktime", List.of(Codec.PRORES, Codec.H264), List.of(Codec.AAC)),
 
@@ -67,9 +70,16 @@ public enum OutputContainer {
     WEBM(ContainerFormat.MATROSKA, "webm", "video/webm", List.of(Codec.VP9, Codec.VP8, Codec.AV1), List.of(Codec.OPUS, Codec.VORBIS)),
 
     /**
-     * An Ogg Opus or Ogg Vorbis file.
+     * An Ogg Opus, Ogg Vorbis or Ogg FLAC file; a transcode picks Opus when the caller names no
+     * audio codec.
      */
     OGG(ContainerFormat.OGG, "opus", "audio/ogg", List.of(), List.of(Codec.OPUS, Codec.VORBIS)),
+
+    /**
+     * An Ogg FLAC file: FLAC streams in Ogg pages, following the FLAC-to-Ogg mapping. It carries
+     * FLAC only, so a transcode copies a FLAC stream and encodes any other audio to FLAC.
+     */
+    OGG_FLAC(ContainerFormat.OGG, "oga", "audio/ogg", List.of(), List.of(Codec.FLAC)),
 
     /**
      * A RIFF WAVE file, switching to RF64 when it outgrows 4 GiB.
@@ -92,6 +102,26 @@ public enum OutputContainer {
     IVF(ContainerFormat.IVF, "ivf", "video/x-ivf", List.of(Codec.VP9, Codec.VP8, Codec.AV1), List.of()),
 
     /**
+     * An H.264 elementary stream in the Annex B byte stream format, holding one video stream and no
+     * timing: every frame follows the previous one in decoding order, and players assume a frame
+     * rate.
+     */
+    H264(ContainerFormat.H264, "h264", "video/h264", List.of(Codec.H264), List.of()),
+
+    /**
+     * An HEVC elementary stream in the Annex B byte stream format, holding one video stream and no
+     * timing, like {@link #H264}. No HEVC encoder exists, so a transcode only copies an HEVC stream
+     * into it.
+     */
+    HEVC(ContainerFormat.HEVC, "h265", "video/h265", List.of(Codec.HEVC), List.of()),
+
+    /**
+     * An AV1 elementary stream in the low-overhead bitstream format ({@code .obu}), holding one
+     * video stream and no timing, like {@link #H264}.
+     */
+    AV1(ContainerFormat.AV1, "obu", "video/av1", List.of(Codec.AV1), List.of()),
+
+    /**
      * An MPEG audio elementary stream (MP3 or MP2).
      */
     MP3(ContainerFormat.MPEG_AUDIO, "mp3", "audio/mpeg", List.of(), List.of(Codec.MP3)),
@@ -107,8 +137,21 @@ public enum OutputContainer {
     AMR(ContainerFormat.AMR, "amr", "audio/amr", List.of(), List.of(Codec.AMR_NB, Codec.AMR_WB)),
 
     /**
+     * A Dolby Digital (AC-3) elementary stream of sync frames ({@code .ac3}). It carries AC-3 only,
+     * so a transcode encodes E-AC-3 and any other audio to AC-3.
+     */
+    AC3(ContainerFormat.AC3, "ac3", "audio/ac3", List.of(), List.of(Codec.AC3)),
+
+    /**
+     * A Dolby Digital Plus (E-AC-3) elementary stream of sync frames ({@code .ec3}). It carries
+     * E-AC-3 only.
+     */
+    EAC3(ContainerFormat.AC3, "ec3", "audio/eac3", List.of(), List.of(Codec.EAC3)),
+
+    /**
      * An MPEG-2 transport stream of 188-byte packets, written as it is produced, so a streaming
-     * sink works; it carries H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3 and Opus.
+     * sink works; it carries H.264, HEVC, AV1, MPEG-4 Part 2, AAC, MP3, MP2, AC-3, E-AC-3, Opus and 16 and
+     * 24-bit PCM.
      */
     MPEG_TS(ContainerFormat.MPEG_TS, "ts", "video/mp2t", List.of(Codec.H264, Codec.HEVC),
             List.of(Codec.AAC, Codec.MP3, Codec.OPUS)),
@@ -128,7 +171,39 @@ public enum OutputContainer {
     /**
      * A WebVTT ({@code .vtt}) subtitle file, holding one subtitle stream.
      */
-    WEBVTT(ContainerFormat.WEBVTT, "vtt", "text/vtt", List.of(), List.of());
+    WEBVTT(ContainerFormat.WEBVTT, "vtt", "text/vtt", List.of(), List.of()),
+
+    /**
+     * An Advanced SubStation Alpha ({@code .ass}, v4.00+) script, holding one subtitle stream; an SSA script
+     * is converted to ASS.
+     */
+    ASS(ContainerFormat.ASS, "ass", "text/x-ssa", List.of(), List.of()),
+
+    /**
+     * A SubStation Alpha ({@code .ssa}, v4.00) script, holding one subtitle stream; an ASS script is
+     * converted to SSA.
+     */
+    SSA(ContainerFormat.ASS, "ssa", "text/x-ssa", List.of(), List.of()),
+
+    /**
+     * A TTML document ({@code .ttml}) in the IMSC 1.0.1 text profile, holding one subtitle stream.
+     */
+    TTML(ContainerFormat.TTML, "ttml", "application/ttml+xml", List.of(), List.of()),
+
+    /**
+     * A SAMI ({@code .smi}) subtitle file, holding one subtitle stream per language.
+     */
+    SAMI(ContainerFormat.SAMI, "smi", "application/x-sami", List.of(), List.of()),
+
+    /**
+     * An LRC ({@code .lrc}) lyrics file, holding one subtitle stream.
+     */
+    LRC(ContainerFormat.LRC, "lrc", "application/x-lrc", List.of(), List.of()),
+
+    /**
+     * A MicroDVD ({@code .sub}) subtitle file at 24000/1001 frames per second, holding one subtitle stream.
+     */
+    MICRODVD(ContainerFormat.MICRODVD, "sub", "text/x-microdvd", List.of(), List.of());
 
     /**
      * The container format written.
@@ -227,7 +302,8 @@ public enum OutputContainer {
      * when the file cannot carry a stream's own codec and the caller names none.
      *
      * <p>MP4 and QuickTime files carry 3GPP timed text and WebVTT, Matroska files SubRip, ASS and WebVTT, WebM
-     * files and WebVTT files WebVTT, SubRip files SubRip; the other files carry no subtitles.
+     * files and WebVTT files WebVTT, SubRip, SAMI and MicroDVD files SubRip, SSA and ASS files ASS, TTML files
+     * TTML and LRC files WebVTT; the other files carry no subtitles.
      *
      * @return the codecs, empty when the file carries no subtitles; unmodifiable
      */
@@ -235,8 +311,10 @@ public enum OutputContainer {
         return switch (this) {
             case MP4, MOV -> List.of(Codec.MOV_TEXT, Codec.WEBVTT);
             case MATROSKA -> List.of(Codec.SUBRIP, Codec.ASS, Codec.WEBVTT);
-            case WEBM, WEBVTT -> List.of(Codec.WEBVTT);
-            case SRT -> List.of(Codec.SUBRIP);
+            case WEBM, WEBVTT, LRC -> List.of(Codec.WEBVTT);
+            case SRT, SAMI, MICRODVD -> List.of(Codec.SUBRIP);
+            case ASS, SSA -> List.of(Codec.ASS);
+            case TTML -> List.of(Codec.TTML);
             default -> List.of();
         };
     }
@@ -245,8 +323,10 @@ public enum OutputContainer {
      * Returns whether the file can carry a stream of a codec.
      *
      * <p>The answer follows the muxer of the container ({@link Containers#isMuxable(ContainerFormat,
-     * Codec)}), narrowed by the profile: {@link #M4A} carries audio only and {@link #WEBM} the
-     * WebM codecs only.
+     * Codec)}) and the brand or profile it writes: {@link #M4A} carries the compressed audio of {@link #MP4},
+     * {@link #MOV} the codecs of {@link Mp4Muxer#supports} for the QuickTime brand,
+     * {@link #WEBM} the WebM codecs only, {@link #OGG_FLAC} FLAC only, {@link #AC3} AC-3 only and
+     * {@link #EAC3} E-AC-3 only.
      *
      * @param codec the codec of the stream
      * @return {@code true} when the file can carry the codec
@@ -255,13 +335,16 @@ public enum OutputContainer {
     public boolean supports(Codec codec) {
         Objects.requireNonNull(codec, "codec");
         return switch (this) {
-            case M4A -> codec.kind() == TrackKind.AUDIO && Containers.isMuxable(format, codec);
+            case M4A -> Mp4Muxer.supports(Mp4MuxerOptions.Brand.M4A, codec);
             case MP4 -> codec.isSubtitle() ? subtitleCodecs().contains(codec) : Containers.isMuxable(format, codec);
-            case MOV -> codec == Codec.PRORES || codec == Codec.DNXHD
-                    || (codec.isSubtitle() ? subtitleCodecs().contains(codec) : Containers.isMuxable(format, codec));
+            case MOV -> codec.isSubtitle() ? subtitleCodecs().contains(codec)
+                    : Mp4Muxer.supports(Mp4MuxerOptions.Brand.QUICKTIME, codec);
             case FRAGMENTED_MP4 -> FragmentedMp4Muxer.supports(codec);
             case MATROSKA -> MatroskaMuxer.supports(MatroskaDocType.MATROSKA, codec);
             case WEBM -> MatroskaMuxer.supports(MatroskaDocType.WEBM, codec);
+            case OGG_FLAC -> codec == Codec.FLAC;
+            case AC3 -> codec == Codec.AC3;
+            case EAC3 -> codec == Codec.EAC3;
             default -> Containers.isMuxable(format, codec);
         };
     }
@@ -274,6 +357,16 @@ public enum OutputContainer {
      */
     public boolean storesOrientation() {
         return format == ContainerFormat.MP4;
+    }
+
+    /**
+     * Returns whether the file stores a sample aspect ratio for video, so that a transcode can keep
+     * non-square samples as stored instead of resampling them to square ones.
+     *
+     * @return {@code true} for the MP4 family, Matroska, WebM and AVI
+     */
+    public boolean storesSampleAspectRatio() {
+        return format == ContainerFormat.MP4 || format == ContainerFormat.MATROSKA || format == ContainerFormat.AVI;
     }
 
     /**
@@ -311,14 +404,16 @@ public enum OutputContainer {
                 default -> false;
             };
             case MATROSKA -> switch (codec) {
-                case H264, HEVC, AAC, FLAC, VORBIS -> true;
+                case H264, HEVC, AAC, FLAC, VORBIS, ALAC -> true;
                 default -> false;
             };
             case MPEG_TS -> switch (codec) {
-                case H264, HEVC, AAC -> true;
+                case H264, HEVC, MPEG4_PART2, AAC, OPUS -> true;
                 default -> false;
             };
-            case OGG -> codec == Codec.VORBIS;
+            case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;
+            case H264 -> codec == Codec.H264;
+            case HEVC -> codec == Codec.HEVC;
             default -> false;
         };
     }
@@ -331,9 +426,14 @@ public enum OutputContainer {
      * {@code mka} to {@link #MATROSKA}, {@code webm} to {@link #WEBM}, {@code ogg}, {@code oga}
      * and {@code opus} to {@link #OGG}, {@code wav} to {@link #WAV}, {@code aif}, {@code aiff} and
      * {@code aifc} to {@link #AIFF}, {@code aac} and {@code adts} to {@link #ADTS}, and
-     * {@code ivf}, {@code mp3}, {@code flac}, {@code amr} and {@code avi} to their constants, {@code ts} to
-     * {@link #MPEG_TS}, {@code srt} to {@link #SRT} and {@code vtt} to {@link #WEBVTT}. Matching
-     * ignores case.
+     * {@code ivf}, {@code mp3}, {@code flac}, {@code amr}, {@code ac3} and {@code avi} to their constants,
+     * {@code ec3} and {@code eac3} to {@link #EAC3}, {@code h264} and {@code 264} to {@link #H264},
+     * {@code h265}, {@code 265} and {@code hevc} to {@link #HEVC}, {@code obu} to {@link #AV1}, {@code ts}
+     * to {@link #MPEG_TS}, {@code srt} to {@link #SRT}, {@code vtt} to {@link #WEBVTT}, {@code ass} and
+     * {@code ssa} to {@link #ASS} and {@link #SSA}, {@code ttml}, {@code dfxp} and {@code xml} to
+     * {@link #TTML}, {@code smi} and {@code sami} to {@link #SAMI}, {@code lrc} to {@link #LRC} and
+     * {@code sub} to {@link #MICRODVD}; no extension
+     * maps to {@link #OGG_FLAC}, whose {@code oga} maps to {@link #OGG}. Matching ignores case.
      *
      * @param fileName a file name such as {@code "clip.webm"}, or a bare extension
      * @return the constant, or empty when the extension is not recognized
@@ -357,10 +457,21 @@ public enum OutputContainer {
             case "mp3" -> MP3;
             case "flac" -> FLAC;
             case "amr" -> AMR;
+            case "ac3" -> AC3;
+            case "ec3", "eac3" -> EAC3;
+            case "h264", "264" -> H264;
+            case "h265", "265", "hevc" -> HEVC;
+            case "obu" -> AV1;
             case "ts" -> MPEG_TS;
             case "avi" -> AVI;
             case "srt" -> SRT;
             case "vtt" -> WEBVTT;
+            case "ass" -> ASS;
+            case "ssa" -> SSA;
+            case "ttml", "dfxp", "xml" -> TTML;
+            case "smi", "sami" -> SAMI;
+            case "lrc" -> LRC;
+            case "sub" -> MICRODVD;
             default -> null;
         });
     }

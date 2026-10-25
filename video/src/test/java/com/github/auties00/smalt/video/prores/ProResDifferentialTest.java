@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.video.prores;
 
 import com.github.auties00.smalt.testkit.Fixtures;
+import com.github.auties00.smalt.testkit.Tolerance;
 import com.github.auties00.smalt.video.intra.IntraTesting;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,7 +15,6 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Decodes ProRes streams made by ffmpeg's prores_ks encoder in every flavor, at frame sizes that
@@ -25,6 +25,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("ProRes decoder differential against ffmpeg")
 class ProResDifferentialTest {
+    /**
+     * SMPTE RDD 36 leaves the inverse DCT to the decoder within an accuracy bound, so the deep pictures may round
+     * differently from ffmpeg's: at least 60 dB.
+     */
+    static final Tolerance TOLERANCE = Tolerance.psnr(60);
+
+    /** 8-bit pictures computed directly against ffmpeg's narrowing of its deep decode. */
+    static final Tolerance EIGHT_BIT = Tolerance.psnr(45);
+
     static Path sample(int profile, int width, int height, List<String> extra) {
         var options = new ArrayList<>(List.of("-frames:v", "3", "-c:v", "prores_ks", "-profile:v", Integer.toString(profile)));
         options.addAll(extra);
@@ -75,11 +84,9 @@ class ProResDifferentialTest {
         var actual = ours.toByteArray();
         assertEquals(expected.length, actual.length, label);
         var peak = pixelFormat.contains("12") ? 4095 : 1023;
-        var psnr = IntraTesting.psnr(expected, actual, true, peak);
-        var max = IntraTesting.maxDifference(expected, actual, true);
-        var rate = IntraTesting.mismatchRate(expected, actual, true);
-        System.out.printf("%s: psnr=%.2f max=%d mismatch=%.5f%n", label, psnr, max, rate);
-        assertTrue(psnr >= 60, label + " PSNR " + psnr);
+        var difference = IntraTesting.difference(expected, actual, true, peak);
+        System.out.printf("%s: %s%n", label, difference);
+        TOLERANCE.check(label, difference);
     }
 
     @ParameterizedTest(name = "profile {0}")
@@ -98,7 +105,6 @@ class ProResDifferentialTest {
             });
         }
         var expected = IntraTesting.ffmpegDecode(file, alpha ? "yuva444p" : "yuv422p", 0);
-        var psnr = IntraTesting.psnr(expected, ours.toByteArray(), false, 255);
-        assertTrue(psnr >= 45, "8-bit PSNR " + psnr);
+        IntraTesting.assertWithin(EIGHT_BIT, "8-bit profile " + profile, expected, ours.toByteArray(), false, 255);
     }
 }

@@ -79,6 +79,21 @@ final class Dxgi {
     static final int DRIVER_TYPE_UNKNOWN = 0;
 
     /**
+     * The {@code D3D_DRIVER_TYPE_HARDWARE} driver type.
+     */
+    static final int DRIVER_TYPE_HARDWARE = 1;
+
+    /**
+     * The {@code D3D_DRIVER_TYPE_WARP} driver type, the software rasterizer.
+     */
+    static final int DRIVER_TYPE_WARP = 5;
+
+    /**
+     * The {@code D3D11_CREATE_DEVICE_BGRA_SUPPORT} creation flag.
+     */
+    static final int CREATE_DEVICE_BGRA_SUPPORT = 0x20;
+
+    /**
      * The {@code D3D11_SDK_VERSION}.
      */
     static final int SDK_VERSION = 7;
@@ -361,6 +376,34 @@ final class Dxgi {
         }
         Com.check(hr, "CreateDXGIFactory1");
         return result.get(ADDRESS, 0);
+    }
+
+    /**
+     * Creates a Direct3D 11 device on the default hardware adapter, or on the WARP software rasterizer
+     * when no hardware device can be created, with the BGRA support Windows Graphics Capture needs.
+     *
+     * @param device a pointer-sized slot receiving the {@code ID3D11Device}
+     * @param featureLevel an integer slot receiving the feature level
+     * @param context a pointer-sized slot receiving the {@code ID3D11DeviceContext}
+     * @return the {@code HRESULT} of the last attempt
+     */
+    static int createDefaultDevice(MemorySegment device, MemorySegment featureLevel, MemorySegment context) {
+        if (FUNCTIONS == null) {
+            throw Com.failure("Direct3D 11 is not available", 0x80004005);
+        }
+        var hr = 0;
+        for (var driver : new int[]{DRIVER_TYPE_HARDWARE, DRIVER_TYPE_WARP}) {
+            try {
+                hr = (int) FUNCTIONS.createDevice().invokeExact(MemorySegment.NULL, driver, MemorySegment.NULL,
+                        CREATE_DEVICE_BGRA_SUPPORT, MemorySegment.NULL, 0, SDK_VERSION, device, featureLevel, context);
+            } catch (Throwable throwable) {
+                throw Native.rethrow(throwable);
+            }
+            if (hr >= 0) {
+                return hr;
+            }
+        }
+        return hr;
     }
 
     /**

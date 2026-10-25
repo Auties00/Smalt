@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.webp.WebpAnimationEncoderOptions;
 import com.github.auties00.smalt.image.webp.WebpDecoder;
 import com.github.auties00.smalt.image.webp.WebpEncoder;
 import com.github.auties00.smalt.image.webp.WebpEncoderOptions;
+import com.github.auties00.smalt.internal.check.LosslessDepth;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -69,6 +70,9 @@ public final class WebpCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        if (options.isLossless()) {
+            picture = LosslessDepth.fit(picture, 8, "webp");
+        }
         var settings = options.isLossless()
                 ? WebpEncoderOptions.lossless()
                 : WebpEncoderOptions.lossy(options.quality().orElse(DEFAULT_QUALITY));

@@ -3,6 +3,8 @@ package com.github.auties00.smalt.container.matroska;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 
+import com.github.auties00.smalt.internal.compress.Bzip2Decoder;
+import com.github.auties00.smalt.internal.compress.Lzo1xDecoder;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import java.util.Arrays;
@@ -13,9 +15,10 @@ import java.util.zip.Inflater;
  * Describes one compression step of a track's {@code ContentEncodings}, per RFC 9559 clause
  * 5.1.4.1.31, and undoes it.
  *
- * <p>Header stripping ({@code ContentCompAlgo} 3) prepends the stripped bytes to every frame;
- * zlib ({@code ContentCompAlgo} 0) inflates every frame, bounded by the allocation limit. Other
- * algorithms and every encryption raise {@link MediaException.Unsupported}.
+ * <p>Header stripping ({@code ContentCompAlgo} 3) prepends the stripped bytes to every frame; zlib
+ * ({@code ContentCompAlgo} 0), bzlib (1, a bzip2 stream) and LZO1X (2) decompress every frame, bounded
+ * by the allocation limit. Other algorithms and every encryption raise
+ * {@link MediaException.Unsupported}.
  *
  * @param order the {@code ContentEncodingOrder}; encodings are undone from the highest order down
  * @param scope the {@code ContentEncodingScope} bit mask: 1 for frames, 2 for the codec private data
@@ -27,6 +30,16 @@ record ContentEncoding(long order, long scope, long algorithm, byte[] settings) 
      * The zlib compression algorithm.
      */
     static final int ZLIB = 0;
+
+    /**
+     * The bzlib (bzip2) compression algorithm.
+     */
+    static final int BZLIB = 1;
+
+    /**
+     * The LZO1X compression algorithm.
+     */
+    static final int LZO = 2;
 
     /**
      * The header stripping compression algorithm.
@@ -86,9 +99,9 @@ record ContentEncoding(long order, long scope, long algorithm, byte[] settings) 
         if (!compression) {
             algorithm = ZLIB;
         }
-        if (algorithm != ZLIB && algorithm != HEADER_STRIPPING) {
+        if (algorithm < ZLIB || algorithm > HEADER_STRIPPING) {
             throw new MediaException.Unsupported("matroska compression " + algorithm,
-                    "ContentCompAlgo " + algorithm + " (bzlib or lzo) is not supported");
+                    "ContentCompAlgo " + algorithm + " is not a compression algorithm Matroska defines");
         }
         return new ContentEncoding(order, scope, algorithm, settings);
     }
@@ -115,18 +128,29 @@ record ContentEncoding(long order, long scope, long algorithm, byte[] settings) 
      * @param length the number of encoded bytes
      * @param limits the limits bounding the decoded size
      * @return the decoded bytes
-     * @throws MediaException.Malformed if the zlib stream is corrupt or truncated
+     * @throws MediaException.Malformed if the compressed stream is corrupt or truncated
      * @throws MediaException.LimitExceeded if the decoded size exceeds the allocation limit
      */
     byte[] decode(byte[] data, int offset, int length, MediaLimits limits) {
-        if (algorithm == HEADER_STRIPPING) {
-            LimitChecks.checkAllocation(limits, (long) settings.length + length);
-            var result = new byte[settings.length + length];
-            System.arraycopy(settings, 0, result, 0, settings.length);
-            System.arraycopy(data, offset, result, settings.length, length);
-            return result;
-        }
-        return inflate(data, offset, length, limits);
+        return switch ((int) algorithm) {
+            case HEADER_STRIPPING -> {
+                LimitChecks.checkAllocation(limits, (long) settings.length + length);
+                var result = new byte[settings.length + length];
+                System.arraycopy(settings, 0, result, 0, settings.length);
+                System.arraycopy(data, offset, result, settings.length, length);
+                yield result;
+            }
+            case BZLIB -> Bzip2Decoder.decode(data, offset, length, limits);
+            case LZO -> Lzo1xDecoder.decode(data, offset, length, limits);
+            default -> inflate(data, offset, length, limits);
+        };
+    }
+
+    /**
+     * {@return whether this encoding decompresses, rather than prepending stripped header bytes}
+     */
+    boolean decompresses() {
+        return algorithm != HEADER_STRIPPING;
     }
 
     /**
