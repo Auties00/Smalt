@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
+import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.io.MediaSink;
@@ -15,6 +16,7 @@ import com.github.auties00.smalt.spi.ImageCodecProvider;
 import com.github.auties00.smalt.image.avif.AvifDecoder;
 import com.github.auties00.smalt.image.avif.AvifEncoder;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
+import com.github.auties00.smalt.internal.check.LosslessDepth;
 
 import java.util.Optional;
 
@@ -53,12 +55,20 @@ public final class AvifCodecProvider implements ImageCodecProvider {
     }
 
     @Override
+    public Optional<PageReader> openPages(MediaSource source, ImageDecoderOptions options) {
+        return Optional.of(AvifDecoder.openPages(source, options));
+    }
+
+    @Override
     public boolean encodes(ImageFormat format) {
         return format == ImageFormat.AVIF;
     }
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        if (options.isLossless()) {
+            picture = LosslessDepth.fit(picture, 12, "avif");
+        }
         AvifEncoder.encode(picture, settings(options), sink);
     }
 

@@ -10,6 +10,7 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.PageReader;
+import com.github.auties00.smalt.image.PageWriter;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -21,7 +22,7 @@ import java.util.ServiceLoader;
  * Decodes and encodes the images of one or more formats on behalf of {@link Images}.
  *
  * <p>{@link Images} recognizes the format of its input from the content, with
- * {@link ImageFormat#detect(byte[], int)}, and hands the input to the first provider whose
+ * {@link Images#detect(MediaSource)}, and hands the input to the first provider whose
  * {@link #decodes(ImageFormat)} accepts that format; it hands a picture to encode to the first
  * provider whose {@link #encodes(ImageFormat)} accepts the requested format. A format no provider
  * accepts raises {@link MediaException.Unsupported}. Providers are found once, the first time
@@ -44,8 +45,10 @@ import java.util.ServiceLoader;
  * ({@link #encodes(ImageFormat)} and
  * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)}), the animation encoding
  * pair ({@link #encodesAnimation(ImageFormat)} and
- * {@link #openAnimationWriter(ImageFormat, int, int, ImageEncoderOptions, MediaSink)}), or any
- * combination of them.
+ * {@link #openAnimationWriter(ImageFormat, int, int, ImageEncoderOptions, MediaSink)}), the page
+ * encoding pair ({@link #encodesPages(ImageFormat)} and
+ * {@link #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)}), or any combination of
+ * them.
  */
 public interface ImageCodecProvider {
     /**
@@ -211,5 +214,35 @@ public interface ImageCodecProvider {
     default AnimationWriter openAnimationWriter(ImageFormat format, int width, int height, ImageEncoderOptions options,
                                                 MediaSink sink) {
         throw new UnsupportedOperationException(getClass().getName() + " encodes no animation format");
+    }
+
+    /**
+     * Returns whether this provider encodes multi-page images of a format.
+     *
+     * @implSpec The default implementation returns {@code false}.
+     *
+     * @param format the image format of the pages
+     * @return {@code true} when {@link #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)} accepts
+     * {@code format}
+     */
+    default boolean encodesPages(ImageFormat format) {
+        return false;
+    }
+
+    /**
+     * Opens a writer that encodes the pages of a multi-image file of a format into a sink.
+     *
+     * @implSpec The default implementation throws {@link UnsupportedOperationException}; a
+     * provider whose {@link #encodesPages(ImageFormat)} accepts a format overrides it, mapping the
+     * options (lossless flag and quality) onto the format's own configuration as
+     * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} does.
+     *
+     * @param format the format to produce, one {@link #encodesPages(ImageFormat)} accepts
+     * @param options the lossless flag and the quality
+     * @param sink the output, written from its position; not closed
+     * @return the writer, which the caller finishes and closes
+     */
+    default PageWriter openPageWriter(ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        throw new UnsupportedOperationException(getClass().getName() + " encodes no multi-page format");
     }
 }

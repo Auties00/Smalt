@@ -36,6 +36,27 @@ final class BoxTypes {
     static final int MOOF = 0x6D6F6F66;
 
     /**
+     * The compressed movie box ({@code !mov}, ISO/IEC 14496-12 clause 8.20): the payload of a {@code moov} box,
+     * gzip-compressed.
+     */
+    static final int COMPRESSED_MOOV = 0x216D6F76;
+
+    /**
+     * The compressed movie fragment box ({@code !mof}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_MOOF = 0x216D6F66;
+
+    /**
+     * The compressed segment index box ({@code !six}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_SIDX = 0x21736978;
+
+    /**
+     * The compressed subsegment index box ({@code !ssx}, ISO/IEC 14496-12 clause 8.20).
+     */
+    static final int COMPRESSED_SSIX = 0x21737378;
+
+    /**
      * The movie fragment random access box ({@code mfra}).
      */
     static final int MFRA = 0x6D667261;
@@ -246,9 +267,60 @@ final class BoxTypes {
     static final int AVC3 = 0x61766333;
 
     /**
+     * The H.264 sample entry whose samples may hold extractors and aggregators ({@code avc2}).
+     */
+    static final int AVC2 = 0x61766332;
+
+    /**
+     * The H.264 sample entry with in-band parameter sets whose samples may hold extractors and aggregators
+     * ({@code avc4}).
+     */
+    static final int AVC4 = 0x61766334;
+
+    /**
+     * The SVC sample entry of a track reconstructed implicitly from the tracks it references ({@code svc1}).
+     */
+    static final int SVC1 = 0x73766331;
+
+    /**
+     * The SVC sample entry whose samples may hold extractors and aggregators ({@code svc2}).
+     */
+    static final int SVC2 = 0x73766332;
+
+    /**
+     * The MVC sample entry of a track reconstructed implicitly from the tracks it references ({@code mvc1}).
+     */
+    static final int MVC1 = 0x6D766331;
+
+    /**
+     * The MVC sample entry whose samples may hold extractors and aggregators ({@code mvc2}).
+     */
+    static final int MVC2 = 0x6D766332;
+
+    /**
+     * The MVC sample entry with in-band parameter sets, reconstructed implicitly ({@code mvc3}).
+     */
+    static final int MVC3 = 0x6D766333;
+
+    /**
+     * The MVC sample entry with in-band parameter sets whose samples may hold extractors ({@code mvc4}).
+     */
+    static final int MVC4 = 0x6D766334;
+
+    /**
      * The AVC decoder configuration box ({@code avcC}).
      */
     static final int AVCC = 0x61766343;
+
+    /**
+     * The SVC decoder configuration box ({@code svcC}).
+     */
+    static final int SVCC = 0x73766343;
+
+    /**
+     * The MVC decoder configuration box ({@code mvcC}).
+     */
+    static final int MVCC = 0x6D766343;
 
     /**
      * The HEVC sample entry with out-of-band parameter sets ({@code hvc1}).
@@ -274,6 +346,12 @@ final class BoxTypes {
      * The HEVC decoder configuration box ({@code hvcC}).
      */
     static final int HVCC = 0x68766343;
+
+    /**
+     * The layered HEVC decoder configuration box ({@code lhvC}, ISO/IEC 14496-15 clause 9.6.3),
+     * holding the parameter sets of the layers above the base layer.
+     */
+    static final int LHVC = 0x6C687643;
 
     /**
      * The VP8 sample entry ({@code vp08}).
@@ -329,6 +407,41 @@ final class BoxTypes {
      * The Motion JPEG format B sample entry ({@code mjpb}).
      */
     static final int MJPB = 0x6D6A7062;
+
+    /**
+     * The QuickTime sample entry of planar 4:2:0 YUV frames in full range ({@code j420}).
+     */
+    static final int J420 = 0x6A343230;
+
+    /**
+     * The Motion JPEG 2000 sample entry ({@code mjp2}, ISO/IEC 15444-3), also the brand of a Motion JPEG 2000 file.
+     */
+    static final int MJP2 = 0x6D6A7032;
+
+    /**
+     * The simple profile brand of a Motion JPEG 2000 file ({@code mj2s}).
+     */
+    static final int MJ2S = 0x6D6A3273;
+
+    /**
+     * The JPEG 2000 signature box ({@code jP  }), the first box of a Motion JPEG 2000 file.
+     */
+    static final int JP_SIGNATURE = 0x6A502020;
+
+    /**
+     * The JP2 Header box of a Motion JPEG 2000 sample entry ({@code jp2h}).
+     */
+    static final int JP2H = 0x6A703268;
+
+    /**
+     * The subsampling box of a Motion JPEG 2000 sample entry ({@code jsub}).
+     */
+    static final int JSUB = 0x6A737562;
+
+    /**
+     * The original format box of a Motion JPEG 2000 sample entry ({@code orfo}).
+     */
+    static final int ORFO = 0x6F72666F;
 
     /**
      * The ProRes 422 HQ sample entry ({@code apch}).
@@ -597,6 +710,26 @@ final class BoxTypes {
     static final int SBTL = 0x7362746C;
 
     /**
+     * The ISO subtitle handler type ({@code subt}).
+     */
+    static final int SUBT = 0x73756274;
+
+    /**
+     * The MPEG-4 subpicture handler type ({@code subp}).
+     */
+    static final int SUBP = 0x73756270;
+
+    /**
+     * The QuickTime closed caption handler type ({@code clcp}).
+     */
+    static final int CLCP = 0x636C6370;
+
+    /**
+     * The subtitle media header box ({@code sthd}).
+     */
+    static final int STHD = 0x73746864;
+
+    /**
      * The video media header box ({@code vmhd}).
      */
     static final int VMHD = 0x766D6864;
@@ -620,6 +753,12 @@ final class BoxTypes {
      * The data reference box ({@code dref}).
      */
     static final int DREF = 0x64726566;
+
+    /**
+     * The QuickTime compressed movie atom ({@code cmov}), the only child of a {@code moov} whose content is
+     * compressed.
+     */
+    static final int CMOV = 0x636D6F76;
 
     /**
      * The data entry URL box ({@code url }).

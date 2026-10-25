@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.tags.FlacPicture;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Rational;
@@ -122,6 +123,9 @@ final class FlacMapping extends OggMapping {
             } catch (MediaException.Malformed ignored) {
                 // comments are optional; a damaged comment block does not prevent decoding
             }
+        }
+        if (type == PICTURE && annotations != null) {
+            annotations.addPicture(FlacPicture.decode(packet, 4, packet.length - 4));
         }
         if (type != PADDING && type != PICTURE && type != 0x7F) {
             LimitChecks.checkAllocation(limits, packet.length);

@@ -9,6 +9,7 @@ import com.github.auties00.smalt.track.Codec;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Objects;
 
 /**
  * Holds a {@code WAVEFORMATEX} structure, or a {@code WAVEFORMATEXTENSIBLE} one, the audio format
@@ -38,13 +39,12 @@ import java.util.Arrays;
  * @param validBits the significant bits of each sample: {@code wValidBitsPerSample} when it is between 1 and
  * {@code bitsPerSample}, {@code bitsPerSample} otherwise
  * @param channelMask the speaker positions, one bit per {@link Speaker} in declaration order, or 0 when undeclared
- * @param extensible whether the structure is a {@code WAVEFORMATEXTENSIBLE}
- * @param knownSubFormat whether the sub-format GUID is a {@code KSDATAFORMAT_SUBTYPE} that wraps a format tag;
- * {@code true} for a plain {@code WAVEFORMATEX}
+ * @param subFormat the family of the sub-format GUID of a {@code WAVEFORMATEXTENSIBLE} structure, or
+ * {@link SubFormat#NONE} for a plain {@code WAVEFORMATEX}
  * @param extra the codec-specific bytes after the structure, such as an AAC {@code AudioSpecificConfig}
  */
 public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, int blockAlign, int bitsPerSample,
-                         int validBits, long channelMask, boolean extensible, boolean knownSubFormat, byte[] extra) {
+                         int validBits, long channelMask, SubFormat subFormat, byte[] extra) {
     /**
      * The format tag of integer PCM.
      */
@@ -76,6 +76,68 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
     public static final int MPEG_LAYER3 = 0x0055;
 
     /**
+     * The format tag of AC-3 carried in IEC 61937 bursts ({@code WAVE_FORMAT_DOLBY_AC3_SPDIF}).
+     */
+    public static final int DOLBY_AC3_SPDIF = 0x0092;
+
+    /**
+     * The format tag of DTS carried in IEC 61937 bursts ({@code WAVE_FORMAT_DTS}, the tag of the
+     * {@code KSDATAFORMAT_SUBTYPE_IEC61937_DTS} sub-format).
+     */
+    public static final int DTS_SPDIF = 0x0008;
+
+    /**
+     * The format tag of DTS frames stored back to back.
+     */
+    public static final int DTS = 0x2001;
+
+    /**
+     * The format tag of raw AAC ({@code WAVE_FORMAT_RAW_AAC1}).
+     */
+    public static final int RAW_AAC = 0x00FF;
+
+    /**
+     * The format tag of AAC in ADTS framing ({@code WAVE_FORMAT_MPEG_ADTS_AAC}).
+     */
+    public static final int MPEG_ADTS_AAC = 0x1600;
+
+    /**
+     * The format tag of AAC in LOAS framing ({@code WAVE_FORMAT_MPEG_LOAS}).
+     */
+    public static final int MPEG_LOAS = 0x1602;
+
+    /**
+     * The format tag of AAC described by an {@code HEAACWAVEINFO} ({@code WAVE_FORMAT_MPEG_HEAAC}), whose
+     * {@code wPayloadType} names the framing.
+     */
+    public static final int MPEG_HEAAC = 0x1610;
+
+    /**
+     * The format tag of AC-3 sync frames ({@code WAVE_FORMAT_DOLBY_AC3}).
+     */
+    public static final int DOLBY_AC3 = 0x2000;
+
+    /**
+     * The format tag of Opus.
+     */
+    public static final int OPUS = 0x704F;
+
+    /**
+     * The format tag of FLAC frames.
+     */
+    public static final int FLAC = 0xF1AC;
+
+    /**
+     * The CEA-861 audio coding type of AC-3, the tag of an {@link SubFormat#IEC61937} sub-format.
+     */
+    public static final int CEA_AC3 = 2;
+
+    /**
+     * The CEA-861 audio coding type of E-AC-3, the tag of an {@link SubFormat#IEC61937} sub-format.
+     */
+    public static final int CEA_EAC3 = 10;
+
+    /**
      * The format tag that announces a {@code WAVEFORMATEXTENSIBLE} structure.
      */
     public static final int EXTENSIBLE = 0xFFFE;
@@ -92,10 +154,84 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             0x00, 0x38, (byte) 0x9B, 0x71};
 
     /**
+     * The last 12 bytes of an Ambisonic B-format GUID ({@code 0000000x-0721-11d3-8644-c8c1ca000000}).
+     */
+    private static final byte[] AMBISONIC_SUFFIX = {0x21, 0x07, (byte) 0xD3, 0x11, (byte) 0x86, 0x44, (byte) 0xC8,
+            (byte) 0xC1, (byte) 0xCA, 0x00, 0x00, 0x00};
+
+    /**
+     * The last 12 bytes of an IEC 61937 GUID named by a CEA-861 audio coding type
+     * ({@code 000000xx-0cea-0010-8000-00aa00389b71}).
+     */
+    private static final byte[] IEC61937_SUFFIX = {(byte) 0xEA, 0x0C, 0x10, 0x00, (byte) 0x80, 0x00, 0x00, (byte) 0xAA,
+            0x00, 0x38, (byte) 0x9B, 0x71};
+
+    /**
+     * The DirectShow {@code MEDIASUBTYPE_DOLBY_AC3} GUID ({@code e06d802c-db46-11cf-b4d1-00805f6cbbea}).
+     */
+    private static final byte[] DOLBY_AC3_GUID = {0x2C, (byte) 0x80, 0x6D, (byte) 0xE0, 0x46, (byte) 0xDB, (byte) 0xCF,
+            0x11, (byte) 0xB4, (byte) 0xD1, 0x00, (byte) 0x80, 0x5F, 0x6C, (byte) 0xBB, (byte) 0xEA};
+
+    /**
+     * The {@code MEDIASUBTYPE_DOLBY_DDPLUS} GUID ({@code a7fb87af-2d02-42fb-a4d4-05cd93843bdd}).
+     */
+    private static final byte[] DOLBY_DDPLUS_GUID = {(byte) 0xAF, (byte) 0x87, (byte) 0xFB, (byte) 0xA7, 0x02, 0x2D,
+            (byte) 0xFB, 0x42, (byte) 0xA4, (byte) 0xD4, 0x05, (byte) 0xCD, (byte) 0x93, (byte) 0x84, 0x3B, (byte) 0xDD};
+
+    /**
+     * Families of the sub-format GUID of a {@code WAVEFORMATEXTENSIBLE} structure.
+     */
+    public enum SubFormat {
+        /**
+         * No sub-format: a plain {@code WAVEFORMATEX}.
+         */
+        NONE,
+
+        /**
+         * A {@code KSDATAFORMAT_SUBTYPE} GUID wrapping a format tag ({@code xxxx0000-0000-0010-8000-00aa00389b71}).
+         */
+        STANDARD,
+
+        /**
+         * An Ambisonic B-format GUID; the tag is {@link #PCM} or {@link #FLOAT}.
+         */
+        AMBISONIC,
+
+        /**
+         * An IEC 61937 GUID of the CEA-861 family; the tag is the CEA-861 audio coding type, and the samples are
+         * 16-bit stereo frames carrying IEC 61937 bursts.
+         */
+        IEC61937,
+
+        /**
+         * The DirectShow AC-3 GUID; the data is AC-3 sync frames.
+         */
+        DOLBY_AC3,
+
+        /**
+         * The E-AC-3 GUID; the data is E-AC-3 sync frames.
+         */
+        DOLBY_DIGITAL_PLUS,
+
+        /**
+         * Any other GUID.
+         */
+        UNKNOWN
+    }
+
+    /**
      * Copies the extra bytes, so that the record owns them.
      */
     public WaveFormat {
+        Objects.requireNonNull(subFormat, "subFormat");
         extra = extra.clone();
+    }
+
+    /**
+     * {@return whether the structure is a {@code WAVEFORMATEXTENSIBLE}}
+     */
+    public boolean extensible() {
+        return subFormat != SubFormat.NONE;
     }
 
     /**
@@ -103,8 +239,10 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
      *
      * <p>The fields a short structure lacks read as 0: {@code bitsPerSample} below 16 bytes, the
      * extra bytes below 18. A {@code WAVEFORMATEXTENSIBLE} tag in a structure shorter than
-     * {@value #EXTENSIBLE_SIZE} bytes is kept as the tag, with {@code extensible} clear. The extra
-     * bytes are bounded by both {@code cbSize} and {@code length}.
+     * {@value #EXTENSIBLE_SIZE} bytes is kept as the tag, with the sub-format {@link SubFormat#NONE}. The
+     * extra bytes are bounded by both {@code cbSize} and {@code length}. The tag of a
+     * {@code WAVEFORMATEXTENSIBLE} structure is the first 16 bits of its GUID, or the first 32 bits for the
+     * {@link SubFormat#AMBISONIC} and {@link SubFormat#IEC61937} families.
      *
      * @param data the bytes holding the structure from index 0
      * @param length the number of bytes of the structure available, at least 14
@@ -126,21 +264,51 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
         var extraStart = 18;
         var validBits = bits;
         var mask = 0L;
-        var extensible = tag == EXTENSIBLE && length >= EXTENSIBLE_SIZE;
-        var known = true;
-        if (extensible) {
+        var subFormat = SubFormat.NONE;
+        if (tag == EXTENSIBLE && length >= EXTENSIBLE_SIZE) {
             var declared = ByteArrays.u16(data, 18, !bigEndian);
             if (declared != 0 && declared <= bits) {
                 validBits = declared;
             }
             mask = ByteArrays.u32(data, 20, !bigEndian);
             tag = ByteArrays.u16(data, 24, !bigEndian);
-            known = Arrays.equals(data, 28, 40, SUBTYPE_SUFFIX, 2, SUBTYPE_SUFFIX.length);
+            subFormat = subFormat(data, 24);
+            if (subFormat == SubFormat.AMBISONIC || subFormat == SubFormat.IEC61937) {
+                tag = (int) ByteArrays.u32le(data, 24);
+            }
             extraLength = Math.max(0, extraLength - (EXTENSIBLE_SIZE - 18));
             extraStart = EXTENSIBLE_SIZE;
         }
-        return new WaveFormat(tag, channels, sampleRate, byteRate, blockAlign, bits, validBits, mask, extensible, known,
+        return new WaveFormat(tag, channels, sampleRate, byteRate, blockAlign, bits, validBits, mask, subFormat,
                 extraLength == 0 ? new byte[0] : Arrays.copyOfRange(data, extraStart, extraStart + extraLength));
+    }
+
+    /**
+     * Classifies a sub-format GUID, stored in the little-endian layout of the {@code GUID} structure.
+     *
+     * @param data the bytes
+     * @param offset the index of the GUID's first byte
+     * @return the family
+     */
+    private static SubFormat subFormat(byte[] data, int offset) {
+        if (Arrays.equals(data, offset + 2, offset + 16, SUBTYPE_SUFFIX, 0, SUBTYPE_SUFFIX.length)) {
+            return SubFormat.STANDARD;
+        }
+        var upperZero = data[offset + 2] == 0 && data[offset + 3] == 0;
+        if (upperZero && data[offset + 1] == 0 && (data[offset] == PCM || data[offset] == FLOAT)
+                && Arrays.equals(data, offset + 4, offset + 16, AMBISONIC_SUFFIX, 0, AMBISONIC_SUFFIX.length)) {
+            return SubFormat.AMBISONIC;
+        }
+        if (upperZero && Arrays.equals(data, offset + 4, offset + 16, IEC61937_SUFFIX, 0, IEC61937_SUFFIX.length)) {
+            return SubFormat.IEC61937;
+        }
+        if (Arrays.equals(data, offset, offset + 16, DOLBY_AC3_GUID, 0, 16)) {
+            return SubFormat.DOLBY_AC3;
+        }
+        if (Arrays.equals(data, offset, offset + 16, DOLBY_DDPLUS_GUID, 0, 16)) {
+            return SubFormat.DOLBY_DIGITAL_PLUS;
+        }
+        return SubFormat.UNKNOWN;
     }
 
     /**
@@ -153,7 +321,7 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
         }
         var speakers = new ArrayList<Speaker>(channels);
         var positions = Speaker.values();
-        for (var bit = 0; bit < positions.length - 1 && speakers.size() < channels; bit++) {
+        for (var bit = 0; bit <= Speaker.TOP_BACK_RIGHT.ordinal() && speakers.size() < channels; bit++) {
             if ((channelMask & (1L << bit)) != 0) {
                 speakers.add(positions[bit]);
             }
@@ -168,14 +336,14 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
      * Returns the channel mask of a layout.
      *
      * @param layout the speakers, in channel order
-     * @return one bit per speaker, in {@link Speaker} declaration order, or 0 when a channel has no position or the
-     * speakers are not in mask order
+     * @return one bit per speaker, in {@link Speaker} declaration order, or 0 when a channel has no position or one
+     * the mask cannot express (those after {@link Speaker#TOP_BACK_RIGHT}), or the speakers are not in mask order
      */
     public static long channelMask(ChannelLayout layout) {
         var mask = 0L;
         var previous = -1;
         for (var speaker : layout.speakers()) {
-            if (speaker == Speaker.UNKNOWN || speaker.ordinal() <= previous) {
+            if (speaker.ordinal() > Speaker.TOP_BACK_RIGHT.ordinal() || speaker.ordinal() <= previous) {
                 return 0;
             }
             previous = speaker.ordinal();
@@ -191,7 +359,7 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
      * @return the size, in bytes
      */
     public int size(boolean cbSize) {
-        if (extensible) {
+        if (extensible()) {
             return EXTENSIBLE_SIZE + extra.length;
         }
         return cbSize ? 18 + extra.length : 16;
@@ -200,14 +368,15 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
     /**
      * Writes the structure in little-endian order.
      *
-     * <p>A {@code WAVEFORMATEXTENSIBLE} structure is written with the
-     * {@code KSDATAFORMAT_SUBTYPE} GUID of {@link #tag()}; a plain one without {@code cbSize}
-     * drops its extra bytes.
+     * <p>A {@code WAVEFORMATEXTENSIBLE} structure is written with the GUID of its sub-format family
+     * and {@link #tag()} ({@link SubFormat#UNKNOWN} writes the {@code KSDATAFORMAT_SUBTYPE} GUID); a
+     * plain one without {@code cbSize} drops its extra bytes.
      *
      * @param out the destination
      * @param cbSize whether a plain {@code WAVEFORMATEX} carries its {@code cbSize} field and extra bytes
      */
     public void write(ByteWriter out, boolean cbSize) {
+        var extensible = extensible();
         out.u16le(extensible ? EXTENSIBLE : tag);
         out.u16le(channels);
         out.u32le(sampleRate);
@@ -218,13 +387,43 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             out.u16le(EXTENSIBLE_SIZE - 18 + extra.length);
             out.u16le(validBits);
             out.u32le(channelMask);
-            out.u16le(tag);
-            out.bytes(SUBTYPE_SUFFIX);
+            switch (subFormat) {
+                case AMBISONIC -> {
+                    out.u32le(tag);
+                    out.bytes(AMBISONIC_SUFFIX);
+                }
+                case IEC61937 -> {
+                    out.u32le(tag);
+                    out.bytes(IEC61937_SUFFIX);
+                }
+                case DOLBY_AC3 -> out.bytes(DOLBY_AC3_GUID);
+                case DOLBY_DIGITAL_PLUS -> out.bytes(DOLBY_DDPLUS_GUID);
+                default -> {
+                    out.u16le(tag);
+                    out.bytes(SUBTYPE_SUFFIX);
+                }
+            }
             out.bytes(extra);
         } else if (cbSize) {
             out.u16le(extra.length);
             out.bytes(extra);
         }
+    }
+
+    /**
+     * Returns the codec of this structure, as AVI and Matroska {@code A_MS/ACM} streams declare it.
+     *
+     * @return the codec of the tag for a plain structure and the {@link SubFormat#STANDARD} and
+     * {@link SubFormat#AMBISONIC} families, {@link Codec#AC3} and {@link Codec#EAC3} for the Dolby GUIDs,
+     * {@link Codec#UNKNOWN_AUDIO} for IEC 61937 bursts and unknown GUIDs
+     */
+    public Codec codec() {
+        return switch (subFormat) {
+            case NONE, STANDARD, AMBISONIC -> codec(tag, bitsPerSample);
+            case DOLBY_AC3 -> Codec.AC3;
+            case DOLBY_DIGITAL_PLUS -> Codec.EAC3;
+            case IEC61937, UNKNOWN -> Codec.UNKNOWN_AUDIO;
+        };
     }
 
     /**
@@ -242,6 +441,7 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
                 case 16 -> Codec.PCM_S16LE;
                 case 24 -> Codec.PCM_S24LE;
                 case 32 -> Codec.PCM_S32LE;
+                case 64 -> Codec.PCM_S64LE;
                 default -> Codec.UNKNOWN_AUDIO;
             };
             case FLOAT -> bits == 64 ? Codec.PCM_F64LE : bits == 32 ? Codec.PCM_F32LE : Codec.UNKNOWN_AUDIO;
@@ -249,12 +449,13 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             case MULAW -> Codec.PCM_MULAW;
             case MPEG -> Codec.MP2;
             case MPEG_LAYER3 -> Codec.MP3;
-            case 0x00FF, 0x1610, 0x706D, 0x4143, 0xA106 -> Codec.AAC;
-            case 0x2000 -> Codec.AC3;
-            case 0x704F -> Codec.OPUS;
-            case 0xF1AC -> Codec.FLAC;
+            case RAW_AAC, MPEG_ADTS_AAC, MPEG_LOAS, MPEG_HEAAC, 0x706D, 0x4143, 0xA106 -> Codec.AAC;
+            case DOLBY_AC3 -> Codec.AC3;
+            case OPUS -> Codec.OPUS;
+            case FLAC -> Codec.FLAC;
             case 0x0038, 0x0057, 0x00FE -> Codec.AMR_NB;
             case 0x0058 -> Codec.AMR_WB;
+            case DTS_SPDIF, DTS -> Codec.DTS;
             default -> Codec.UNKNOWN_AUDIO;
         };
     }
@@ -267,14 +468,14 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
      */
     public static int tagOf(Codec codec) {
         return switch (codec) {
-            case PCM_U8, PCM_S16LE, PCM_S24LE, PCM_S32LE -> PCM;
+            case PCM_U8, PCM_S16LE, PCM_S24LE, PCM_S32LE, PCM_S64LE -> PCM;
             case PCM_F32LE, PCM_F64LE -> FLOAT;
             case PCM_ALAW -> ALAW;
             case PCM_MULAW -> MULAW;
             case MP2 -> MPEG;
             case MP3 -> MPEG_LAYER3;
-            case AAC -> 0x00FF;
-            case AC3 -> 0x2000;
+            case AAC -> RAW_AAC;
+            case AC3 -> DOLBY_AC3;
             default -> -1;
         };
     }
