@@ -1486,23 +1486,28 @@ section "40. X3F tools"
 cat <<'EOF'
 Project:      X3F tools, a library for Sigma X3F raw files (commit e8b48ca)
 Source:       https://github.com/Kalpanika/x3f (src/x3f_io.c, x3f_meta.c,
-              x3f_image.c, x3f_process.c)
+              x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+              x3f_denoise.cpp, x3f_denoise_utils.cpp)
 License text: https://github.com/Kalpanika/x3f/blob/master/doc/copyright.txt
 License:      BSD 3-Clause License
 
 Derived Smalt packages:
-  image.raw.internal (X3fCamf, X3fDecoder, X3fParser)
+  image.raw.internal (X3fCamf, X3fCorrections, X3fDecoder, X3fParser,
+  X3fQuattro)
 
-Derivation: the decoding of the camera metadata block (the type 2 XOR stream
-and the type 4 coding, the CMbM, CMbT and CMbP entries), the TRUE and the
-older Huffman codings of the raw layers, the mapping of the KeepImageArea
-rectangles, the dark shield and white level entries, and the color conversion
-from the white balance gain, color correction, illuminant and gain factor
-entries follow that library's x3f_io.c, x3f_meta.c, x3f_image.c and
-x3f_process.c.
+Derivation: the decoding of the camera metadata block (the type 2 XOR stream,
+the type 4 and type 5 codings, the CMbM, CMbT and CMbP entries), the TRUE and
+Quattro codings and the older coding, Huffman coded or not, of the raw layers,
+the mapping of the KeepImageArea rectangles, the dark shield and white level
+entries, the bad pixel interpolation, the spatial gain tables, the expansion
+of the Quattro layers and the color conversion from the white balance gain,
+color correction, illuminant and gain factor entries follow that library's
+x3f_io.c, x3f_meta.c, x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+x3f_denoise.cpp and x3f_denoise_utils.cpp.
 
 Copyright:
   Copyright 2015 Roland and Erik Karlsson
+  Copyright 2015 Mark Roden and Erik Karlsson
 EOF
 license_start "X3F tools license (doc/copyright.txt)"
 cat "$LIC/x3f-tools-copyright.txt"

@@ -62,13 +62,13 @@ public final class Renderer {
     }
 
     /**
-     * Reads the samples of one of a raw file's images and linearizes them, applying opcode lists 1
-     * and 2 when asked.
+     * Reads the samples of one of a raw file's images and linearizes them, applying the sensor
+     * corrections and opcode lists 1 and 2 when asked.
      *
      * @param file the raw file
      * @param sensor the image: the sensor image, the enhanced image or a linear raw preview, or
      * {@code null} when the file holds none
-     * @param opcodes whether the opcode lists are applied
+     * @param opcodes whether the sensor corrections and the opcode lists are applied
      * @return the linear image of the active area
      * @throws MediaException.Unsupported if the file's sensor data cannot be decoded
      */
@@ -79,7 +79,7 @@ public final class Renderer {
         }
         var limits = file.limits;
         var plane = SensorPlane.of(sensor, limits);
-        sensor.reader.read(plane, limits);
+        sensor.reader.read(plane, limits, opcodes);
         if (opcodes && sensor.opcodes1 != null) {
             Opcodes.applyToSensor(sensor, plane, sensor.opcodes1);
         }

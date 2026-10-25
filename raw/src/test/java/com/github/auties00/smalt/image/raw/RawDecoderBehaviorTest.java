@@ -17,7 +17,8 @@ import java.util.zip.CRC32;
  * Runs the DNG and camera raw decoders through the I/O behavior harness ({@link ImageDecoderAsserts}), with
  * the sensor data of {@link RawDecoder#decodeRaw} as an extra decode, over DNG files made by
  * {@link TinyDng} in every sample layout and by {@link DngSpecSamples} in the layouts and profile features of DNG
- * 1.2 to 1.7, a smoke-tier DNG and one full-tier file of each camera raw format,
+ * 1.2 to 1.7, synthetic Sigma X3F files ({@link X3fWriter}), a smoke-tier DNG and one full-tier file of each
+ * camera raw format,
  * comparing each with its golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("raw decoder I/O behaviors")
@@ -102,6 +103,49 @@ class RawDecoderBehaviorTest {
             + "behavior and clean faults")
     void spec(String name) {
         harness("dngspec/" + name, DngSpecSamples.of(name)).run();
+    }
+
+    static X3fWriter x3fFile(String name) {
+        var x3f = new X3fWriter();
+        x3f.preview = false;
+        switch (name) {
+            case "quattro" -> {
+                x3f.type = 1;
+                x3f.format = 35;
+                x3f.camfType = 5;
+                x3f.layers(501, 0, 3000);
+                x3f.defaultEntries();
+                x3f.entries.add(X3fWriter.matrix("BadPixelsLumaF23", 6, new int[]{4}, 6, 9, 1, 0));
+                x3f.entries.add(X3fWriter.matrix("BadPixelsChromaF23", 6, new int[]{4}, 4, 5, 1, 0));
+                x3f.entries.add(X3fWriter.floats("SpatialGain", new int[]{2, 2, 3}, 1, 1.1, 1.2, 1.3, 1.4, 1.5, 1, 1,
+                        1, 1, 1, 1));
+            }
+            case "uncompressed" -> {
+                x3f.format = 6;
+                x3f.rowSize = 168;
+                x3f.layers(502, -60, 450);
+            }
+            case "x530" -> {
+                x3f.format = 5;
+                x3f.preTrue = true;
+                x3f.layers(503, -60, 450);
+            }
+            case "thumbnails" -> {
+                x3f.layers(504, 0, 3000);
+                x3f.thumbnail(11, 30, 18, 505);
+                x3f.thumbnail(3, 20, 12, 506);
+            }
+            default -> throw new IllegalArgumentException(name);
+        }
+        return x3f;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"quattro", "uncompressed", "x530", "thumbnails"})
+    @DisplayName("synthetic Sigma X3F files of the codings no small sample shows: identical pictures and sensor data "
+            + "under every source behavior and clean faults")
+    void x3f(String name) {
+        harness("x3f/" + name, x3fFile(name).write()).run();
     }
 
     @ParameterizedTest(name = "{0}")

@@ -243,7 +243,8 @@ public final class RawDecoderOptions {
 
     /**
      * {@return whether the opcode lists of a DNG file (lens shading gain maps, vignetting and distortion
-     * corrections, bad pixel fixes) are applied; {@code true} by default}
+     * corrections, bad pixel fixes) and the lens shading and bad pixel corrections of a Sigma X3F file
+     * are applied; {@code true} by default}
      */
     public boolean opcodes() {
         return opcodes;
@@ -507,7 +508,8 @@ public final class RawDecoderOptions {
         }
 
         /**
-         * Sets whether the DNG opcode lists are applied; see {@link RawDecoderOptions#opcodes()}.
+         * Sets whether the DNG opcode lists and the X3F corrections are applied; see
+         * {@link RawDecoderOptions#opcodes()}.
          *
          * @param opcodes the value
          * @return this builder

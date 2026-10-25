@@ -19,12 +19,26 @@ final class Sensor {
     @FunctionalInterface
     interface Reader {
         /**
-         * Reads the samples.
+         * Reads the samples as stored.
          *
          * @param plane the plane to fill, of the sensor's stored size
          * @param limits the resource bounds
          */
         void read(SensorPlane plane, MediaLimits limits);
+
+        /**
+         * Reads the samples, optionally with the corrections the file records for its sensor
+         * (bad pixels) applied.
+         *
+         * @implSpec The default implementation reads the samples as stored, whatever
+         * {@code corrections} is.
+         * @param plane the plane to fill, of the sensor's stored size
+         * @param limits the resource bounds
+         * @param corrections whether the file's sensor corrections are applied
+         */
+        default void read(SensorPlane plane, MediaLimits limits, boolean corrections) {
+            read(plane, limits);
+        }
     }
 
     /**

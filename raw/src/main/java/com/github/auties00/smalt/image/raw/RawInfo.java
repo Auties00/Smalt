@@ -369,7 +369,7 @@ public final class RawInfo {
     }
 
     /**
-     * {@return the JPEG previews the file embeds, largest first; unmodifiable}
+     * {@return the previews the file embeds, largest first; unmodifiable}
      */
     public List<RawPreview> previews() {
         return previews;

@@ -363,7 +363,7 @@ Sigma X3F files) with the camera's color description and the layout of the photo
 | Fujifilm RAF | uncompressed Bayer and X-Trans (16-bit words, 12-bit packed); crop, black levels, white balance | compressed RAF, SuperCCD layouts | ExifTool documentation, sample analysis | none known |
 | Olympus ORF | Olympus compression (12-bit prediction residuals in an adaptive Rice code, every compressed model); uncompressed 12-bit packed (including the 10-samples-per-16-bytes layout of high-resolution shots and the strip-spanning, even-rows-first layout of the compacts), 16-bit and left-aligned 10 and 12-bit words; white balance, black levels, embedded camera matrix, crop (also from the old `OLYMP` maker note); preview from the maker note | none known | ExifTool documentation (tag names); compression and layouts derived clean-room from CC0 samples against Adobe DNG Converter (see below) | none known |
 | Minolta MRW | uncompressed 12-bit samples packed two in three bytes or one in each 16-bit word (Dynax, Maxxum and Alpha 7D and 5D, Alpha Sweet Digital, DiMAGE A2, DiMAGE 5); centered crop, white balance, white levels, ISO from the shot settings when the EXIF block lacks it; the maker note preview, its damaged first byte repaired and the letterbox of the 3:2 bodies cut off when rendering from it | the green-first Bayer pattern of the DiMAGE A200, other storage methods and bit depths, the MRW structure of Sony cameras (no CC0 sample shows them) | ExifTool tag documentation (block and tag names); layouts, crop, levels and preview derived clean-room from CC0 samples against Adobe DNG Converter (see below) | none known |
-| Sigma X3F | the three full-resolution layers of a Foveon sensor, returned as linear raw data: the TRUE coding (each layer's Huffman-coded differences, predicted from the photosite two columns to the left) of the DP1 to DP3 Merrill compacts, the SD15 and the SD1 Merrill, and the older Huffman coding of the SD14 (signed 16-bit running sums per layer and row); the camera metadata block (type 2 and 4 obfuscation): active area, black levels measured on the dark shield rows, white levels, the as-shot white balance gains and color correction matrix (or, for the SD14, the illuminant and correction matrices), the ISO gain; camera, shot and orientation from the preview's EXIF block and the property list; the full-size JPEG preview and the thumbnail | the Quattro layouts (dp0 to dp3 Quattro, sd Quattro and sd Quattro H: layers of different resolutions; metadata and previews are read), the uncompressed and Polaroid x530 variants of the older coding (no CC0 sample); lens shading tables and bad pixel lists are not applied; the 8-bit RGB thumbnails (formats 3 and 11) are not exposed | Sigma's published FOVb format specification 1.2 (container, property list, previews); the metadata block, the codings, the levels and the color conversion ported from the BSD-licensed X3F tools library; checked against Adobe DNG Converter (see below) | none known |
+| Sigma X3F | the three layers of a Foveon sensor, returned as linear raw data: the TRUE coding (each layer's Huffman-coded differences, predicted from the photosite two columns to the left) of the DP1 to DP3 Merrill compacts, the SD15 and the SD1 Merrill, the Quattro variants of the dp0 to dp3 Quattro, sd Quattro and sd Quattro H (bottom and middle layers at half the top layer's resolution, brought to it by adding their bicubically upsampled differences from the binned top layer to the full-resolution top layer; the binned layout too), the older Huffman coding of the SD14 and the Polaroid x530 (signed 16-bit running sums per layer and row) and its variant stored without Huffman codes; the camera metadata block (type 2, 4 and 5 obfuscation): active area, black levels measured on the dark shield rows (a Quattro top layer at its own resolution), white levels, the as-shot white balance gains and color correction matrix (or, for the SD14, the illuminant and correction matrices) of the setting the block or the header names, the ISO gain; the bad pixel lists and autofocus photosites, interpolated over, and the lens shading (the spatial gain tables of the white balance setting, or of Merrill and Quattro cameras interpolated between the tables of the nearest apertures and focus distances), applied as a `GainMap` when `RawDecoderOptions.opcodes()` is set; camera, shot and orientation from the preview's EXIF block and the property list; the JPEG previews (formats 18 and 25) and the 8-bit RGB thumbnails (uncompressed, format 3, and Huffman-coded, format 11, reported with `ImageFormat.RAW`) | the sd Quattro H's high-resolution-mode lens shading tables (`SpatialGainHP`, which the reference library leaves unused too); Huffman-coded thumbnails stored with a row size, which the specification excludes | Sigma's published FOVb format specification 1.2 (container, property list, previews); the metadata block, the codings, the levels, the corrections, the Quattro expansion and the color conversion ported from the BSD-licensed X3F tools library; checked against that library built from source and against Adobe DNG Converter (see below) | none known |
 | Panasonic RW2, Leica RWL | Panasonic raw coding versions 4 (14 12-bit samples per 128-bit block: two values and four groups of a code and three 8-bit fields, with missing-photosite markers), 5 (nine 14-bit samples per 128-bit block), 6 (11 samples per block) and 8 (tiled Huffman-coded differences with the file's own table), with the photosites the camera zeroes or marks missing repaired; crop, CFA, black and white levels, white balance | other versions, version 8 files whose gain and offset tags are not the identity | derived clean-room from CC0 samples against Adobe DNG Converter (see below) | none known |
 
 Color: DNG files carry their camera matrices. Of the vendor formats ORF embeds a usable camera matrix, and
@@ -394,20 +394,29 @@ Codes no sample has used raise `MediaException.Unsupported` instead of being gue
 `RawOracleCoverageTest`, `CrwTablesTest`); `tools/testdata/nef-oracle.py` and `raw-oracle.py` write the
 oracle files they need on Windows, and the tests skip without them.
 
-Provenance of the Sigma X3F decoder. The container, the property list and the previews follow Sigma's
-published FOVb specification 1.2; the camera metadata block, the TRUE and older Huffman codings, the dark
-shield, white level and color conversion entries are ported from the X3F tools library of Roland and Erik
-Karlsson (BSD 3-Clause, commit `e8b48ca`). Adobe DNG Converter 18.0 converts the CC0 DP1, SD14 and SD15
-samples but refuses the Merrill and Quattro ones; for X3F it stores denoised, color-converted values, not the
-layers, so it checks the image area (its linear DNG covers exactly the `ActiveImageArea`), the linear relation
-of the layers to its values (an affine fit of 16x16 block means leaves under 0.5% of the variance) and the
-rendering. The decoded layers of the five decodable CC0 samples (DP1, SD14, SD15, SD1 Merrill, DP2 Merrill) are
-bit-identical to those of the X3F tools library built from source, and the rendering of the DP1, SD14 and
-SD15 matches that library's own sRGB conversion within one 8-bit level on average. The black level is taken
-from the dark shield rows only, where that library also averages the column ranges: on the Merrill samples the
-right column range reads about twice the level of the other shields, and the shield rows reproduce the balance
-of the camera's own preview. `X3fParserTest` pins the decoded layers' SHA-256 and `RawOracleTest` the
-comparisons with the converter.
+Provenance of the Sigma X3F decoder. The container, the property list and the previews follow Sigma's published
+FOVb specification 1.2; the camera metadata block, the TRUE, Quattro and older codings, the dark shield, white
+level, bad pixel, lens shading, Quattro expansion and color conversion entries are ported from the X3F tools
+library of Roland and Erik Karlsson (BSD 3-Clause, commit `e8b48ca`). Adobe DNG Converter 18.0 converts the CC0
+DP1, SD14 and SD15 samples but refuses the Merrill and Quattro ones; for X3F it stores denoised,
+color-converted values, not the layers, so it checks the image area (its linear DNG covers exactly the
+`ActiveImageArea`), the linear relation of the layers to its values (an affine fit of 16x16 block means leaves
+under 0.5% of the variance) and the rendering. The X3F tools library, built from source and run as a reference,
+checks the rest: the decoded layers of the six CC0 samples (DP1, SD14, SD15, SD1 Merrill, DP2 Merrill and the
+dp2 Quattro's three layers of two sizes) and the dp2 Quattro's type 5 metadata block are bit-identical to its
+own, so are the layers after its bad pixel interpolation on all six, its lens shading tables (the white balance
+setting's table, or the Merrill and Quattro tables interpolated in aperture and lens position) match to the
+precision of the 32-bit gains, and the sRGB rendering with the bad pixels and the lens shading corrected
+matches its own (its Quattro expansion run with OpenCV 4.10, which it calls for the resize) within one 8-bit
+level on average over 36x24 cells of the active area, leaving out the cells that hold nearly saturated
+photosites, which that library renders without highlight handling. The codings no CC0 sample shows (the
+uncompressed variant of the older coding, the Polaroid x530's, the Huffman-coded thumbnail) are checked on
+synthetic files, which that library decodes to the same values (the thumbnail's running sums wrap at 8 bits as
+the specification says, where that library's signed 16-bit sums read as 0 past 32767). The black level is taken
+from the dark shield rows only, where that library also averages the column ranges (its reference renderings
+use the shield rows too): on the Merrill samples the right column range reads about twice the level of the
+other shields, and the shield rows reproduce the balance of the camera's own preview. `X3fParserTest` and
+`X3fReferenceTest` pin the digests and the cell means, and `RawOracleTest` the comparisons with the converter.
 
 `Media.probe` describes DNG and raw files from their headers (and from the raw decoder when present) and
 fills the tags `make`, `model`, `lens`, `iso`, `exposure_time`, `f_number`, `focal_length` and
@@ -1364,9 +1373,9 @@ checks a FLAC source's MD5 signature on the way.
   `RawDecoderOptions.colorMatrix` (for example from an Adobe DNG Converter file of the model); RW2 version 8 gain and offset tags
   other than the identity are ignored. Cameras outside the 52 profiled models (Minolta's and the CRW bodies
   among them) use a generic color matrix, and Sony white balance, and that of the CRW files without white
-  balance levels, is estimated from the embedded preview. Sigma Quattro X3F files and the uncompressed and
-  Polaroid x530 variants of the older X3F coding are not decoded; X3F lens shading tables and bad pixel lists
-  are not applied, and Merrill files render darker and greener than the camera's own preview, which Sigma's
+  balance levels, is estimated from the embedded preview. The uncompressed and Polaroid x530 variants of the older
+  X3F coding are verified only on synthetic files (no CC0 sample shows them), Sigma's noise reduction is not
+  reproduced, and Merrill files render darker and greener than the camera's own preview, which Sigma's
   processing brightens and desaturates.
 - After `AudioReader.seek`, AMR output converges to that of a decode from the start over a few hundred
   milliseconds, and AC-3 and E-AC-3 dither differs, since the dither generator continues across frames;

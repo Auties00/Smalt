@@ -20,12 +20,28 @@ import java.util.Objects;
  */
 public final class RawFile {
     /**
-     * An embedded JPEG preview.
+     * Decodes a preview stored as 8-bit RGB pixels in the raw file's own coding.
+     */
+    @FunctionalInterface
+    interface Pixels {
+        /**
+         * Decodes the pixels.
+         *
+         * @param limits the resource bounds
+         * @return the red, green and blue values of each pixel, row by row
+         * @throws MediaException.Malformed if the coded pixels are corrupt
+         */
+        byte[] read(MediaLimits limits);
+    }
+
+    /**
+     * An embedded preview: a JPEG stream, a JPEG XL image of a DNG file, or 8-bit RGB pixels coded
+     * in the raw file's own format.
      *
      * <p>A preview whose picture is letterboxed shows the image only in {@code rows} rows from row
      * {@code top}; the rows above and below are bars.
      *
-     * @param offset the absolute offset of the JPEG stream
+     * @param offset the absolute offset of the JPEG stream, or of the coded pixels
      * @param length the length of the stream
      * @param width the width, or {@code 0} when unknown
      * @param height the height, or {@code 0} when unknown
@@ -35,9 +51,40 @@ public final class RawFile {
      * @param rows the rows showing the image, {@code height} when the preview is not letterboxed
      * @param image the directory of a preview stored as TIFF image data (a DNG 1.7 JPEG XL preview)
      * rather than as one JPEG stream, or {@code null}
+     * @param pixels the decoder of a preview stored as RGB pixels rather than as a JPEG stream, or
+     * {@code null}
      */
     record Preview(long offset, long length, int width, int height, boolean damagedStart, int top, int rows,
-                   Ifd image) {
+                   Ifd image, Pixels pixels) {
+        /**
+         * Constructs the description of a JPEG stream or JPEG XL image preview.
+         *
+         * @param offset the absolute offset of the JPEG stream
+         * @param length the length of the stream
+         * @param width the width, or {@code 0} when unknown
+         * @param height the height, or {@code 0} when unknown
+         * @param damagedStart whether the stream's first byte is to be read as {@code 0xFF}
+         * @param top the first row showing the image
+         * @param rows the rows showing the image
+         * @param image the directory of a JPEG XL preview, or {@code null}
+         */
+        Preview(long offset, long length, int width, int height, boolean damagedStart, int top, int rows, Ifd image) {
+            this(offset, length, width, height, damagedStart, top, rows, image, null);
+        }
+
+        /**
+         * Constructs the description of a preview stored as RGB pixels.
+         *
+         * @param offset the absolute offset of the coded pixels
+         * @param length the length of the coded pixels
+         * @param width the width in pixels
+         * @param height the height in pixels
+         * @param pixels the decoder of the pixels
+         */
+        Preview(long offset, long length, int width, int height, Pixels pixels) {
+            this(offset, length, width, height, false, 0, height, null, pixels);
+        }
+
         /**
          * Constructs the description of a JPEG stream preview.
          *
@@ -96,7 +143,7 @@ public final class RawFile {
             if (shown > height - 2) {
                 return this;
             }
-            return new Preview(offset, length, width, height, damagedStart, (height - shown) / 2, shown, image);
+            return new Preview(offset, length, width, height, damagedStart, (height - shown) / 2, shown, image, pixels);
         }
     }
 
@@ -171,7 +218,7 @@ public final class RawFile {
     String captureTime;
 
     /**
-     * The embedded JPEG previews.
+     * The embedded previews.
      */
     final List<Preview> previews = new ArrayList<>();
 

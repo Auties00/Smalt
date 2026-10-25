@@ -108,7 +108,7 @@ class RawSamplesTest {
             "X3F_SD15, X3F, 2640, 1760, -, 12, true, SIGMA SD15, 50",
             "X3F_SD1_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA SD1 Merrill, 100",
             "X3F_DP2_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA DP2 Merrill, 100",
-            "X3F_DP2_QUATTRO, X3F, 0, 0, -, 0, false, SIGMA dp2 Quattro, 100"
+            "X3F_DP2_QUATTRO, X3F, 5424, 3616, -, 14, true, SIGMA dp2 Quattro, 100"
     })
     void sample(RawSamples sample, RawFormat format, int width, int height, String cfa, int bits, boolean decodable,
                 String model, long iso) {

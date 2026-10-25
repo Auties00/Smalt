@@ -122,8 +122,9 @@ linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.NikonT
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleCoverageTest	data:raw-oracle-coverage	1
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleTest	data:vector	81
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.SensorCrossCheckTest	data:vector	2
-linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	11
+linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	12
 linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	opt-in:fuzz-seeds	1
+linux-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fReferenceTest	data:vector	19
 linux-arm64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 linux-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 linux-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.internal.VectorCdfDspTest	simd:narrow	18
@@ -256,8 +257,9 @@ linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.NikonTab
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleCoverageTest	data:raw-oracle-coverage	1
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleTest	data:vector	81
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.SensorCrossCheckTest	data:vector	2
-linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	11
+linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	12
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	opt-in:fuzz-seeds	1
+linux-x64-scalar-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fReferenceTest	data:vector	19
 linux-x64-scalar-smoke	raw	com.github.auties00.smalt.jit.RawKernelGuardTest	simd:disabled	1
 linux-x64-scalar-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 linux-x64-scalar-smoke	video	com.github.auties00.smalt.jit.VideoKernelGuardTest	simd:disabled	1
@@ -403,8 +405,9 @@ linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.NikonTab
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleCoverageTest	data:raw-oracle-coverage	1
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleTest	data:vector	81
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.SensorCrossCheckTest	data:vector	2
-linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	11
+linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	12
 linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	opt-in:fuzz-seeds	1
+linux-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fReferenceTest	data:vector	19
 linux-x64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 linux-x64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 linux-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2
@@ -529,8 +532,9 @@ macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.NikonT
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleCoverageTest	data:raw-oracle-coverage	1
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleTest	data:vector	81
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.SensorCrossCheckTest	data:vector	2
-macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	11
+macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	12
 macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	opt-in:fuzz-seeds	1
+macos-arm64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fReferenceTest	data:vector	19
 macos-arm64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 macos-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 macos-arm64-vector-smoke	video	com.github.auties00.smalt.video.av1.internal.VectorCdfDspTest	simd:narrow	18
@@ -658,8 +662,9 @@ windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.NikonT
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleCoverageTest	data:raw-oracle-coverage	1
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.RawOracleTest	data:vector	81
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.SensorCrossCheckTest	data:vector	2
-windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	11
+windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	data:vector	12
 windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fParserTest	opt-in:fuzz-seeds	1
+windows-x64-vector-smoke	raw	com.github.auties00.smalt.image.raw.internal.X3fReferenceTest	data:vector	19
 windows-x64-vector-smoke	video	com.github.auties00.smalt.image.avif.AvifConformanceTest	data:vector	27
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.av1.Av1RobustnessTest	data:vector	2
 windows-x64-vector-smoke	video	com.github.auties00.smalt.video.dnxhd.DnxhdAlphaTest	data:vector	2

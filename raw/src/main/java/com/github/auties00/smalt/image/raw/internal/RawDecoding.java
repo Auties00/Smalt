@@ -158,7 +158,8 @@ public final class RawDecoding {
         for (var preview : sortedPreviews(file)) {
             if (preview.width() > 0 && preview.height() > 0 && preview.length() > 0) {
                 previews.add(new RawPreview(preview.width(), preview.height(), preview.length(),
-                        preview.image() != null ? ImageFormat.JXL : ImageFormat.JPEG));
+                        preview.pixels() != null ? ImageFormat.RAW : preview.image() != null ? ImageFormat.JXL
+                                : ImageFormat.JPEG));
             }
         }
         var calibrated = file.color.colorMatrix[0] != null || file.color.cameraToSrgb != null;
@@ -205,7 +206,7 @@ public final class RawDecoding {
      */
     public static byte[] largestPreview(RawFile file) {
         for (var preview : sortedPreviews(file)) {
-            if (preview.image() == null) {
+            if (preview.image() == null && preview.pixels() == null) {
                 return previewBytes(file, preview);
             }
         }
@@ -233,8 +234,8 @@ public final class RawDecoding {
     }
 
     /**
-     * Decodes an embedded JPEG preview, its first byte repaired when it is stored damaged and its
-     * letterbox bars cut off.
+     * Decodes an embedded preview: a JPEG stream, its first byte repaired when it is stored damaged
+     * and its letterbox bars cut off, a JPEG XL image or RGB pixels.
      *
      * @param file the parsed file
      * @param preview one of its previews
@@ -245,6 +246,9 @@ public final class RawDecoding {
     static Picture previewPicture(RawFile file, RawFile.Preview preview, ImageDecoderOptions options) {
         if (preview.image() != null) {
             return imagePreview(file, preview.image(), options);
+        }
+        if (preview.pixels() != null) {
+            return pixelPreview(file, preview, options);
         }
         MediaSource source = preview.damagedStart() ? MediaSource.of(previewBytes(file, preview))
                 : new SlicedSource(file.source, preview.offset(), preview.length());
@@ -302,6 +306,45 @@ public final class RawDecoding {
             }
             picture = out;
         }
+        return reduced(picture, options);
+    }
+
+    /**
+     * Decodes a preview stored as 8-bit RGB pixels into an opaque RGBA picture.
+     *
+     * @param file the parsed file
+     * @param preview a preview of the file stored as pixels
+     * @param options the decoding settings: limits and size hint
+     * @return the picture, reduced by halving while the size hint allows
+     * @throws MediaException.Malformed if the coded pixels are corrupt
+     */
+    private static Picture pixelPreview(RawFile file, RawFile.Preview preview, ImageDecoderOptions options) {
+        var width = preview.width();
+        var height = preview.height();
+        LimitChecks.checkPicture(file.limits, width, height);
+        LimitChecks.checkAllocation(file.limits, (long) width * height * 7);
+        var rgb = preview.pixels().read(file.limits);
+        var picture = RgbaPicture.allocate(width, height, false);
+        var pixels = picture.pixels();
+        for (int source = 0, target = 0; target < pixels.length; source += 3, target += 4) {
+            pixels[target] = rgb[source];
+            pixels[target + 1] = rgb[source + 1];
+            pixels[target + 2] = rgb[source + 2];
+            pixels[target + 3] = (byte) 0xFF;
+        }
+        return reduced(picture, options);
+    }
+
+    /**
+     * Halves a picture's size while the size hint allows.
+     *
+     * @param picture the decoded preview
+     * @param options the size hint
+     * @return the picture, or a reduced copy
+     */
+    private static Picture reduced(Picture picture, ImageDecoderOptions options) {
+        var width = picture.width();
+        var height = picture.height();
         var targetWidth = width;
         var targetHeight = height;
         while ((options.minWidth() > 0 || options.minHeight() > 0) && targetWidth / 2 >= Math.max(1, options.minWidth())
