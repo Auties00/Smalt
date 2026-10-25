@@ -830,6 +830,72 @@ final class BoxTypes {
      */
     static final int SYNC = 0x73796E63;
 
+    /**
+     * The Spherical Video V2 stereoscopic 3D video box ({@code st3d}).
+     */
+    static final int ST3D = 0x73743364;
+
+    /**
+     * The Spherical Video V2 spherical video box ({@code sv3d}).
+     */
+    static final int SV3D = 0x73763364;
+
+    /**
+     * The Spherical Video V2 spherical video header box ({@code svhd}).
+     */
+    static final int SVHD = 0x73766864;
+
+    /**
+     * The Spherical Video V2 projection box ({@code proj}).
+     */
+    static final int PROJ = 0x70726F6A;
+
+    /**
+     * The Spherical Video V2 projection header box ({@code prhd}).
+     */
+    static final int PRHD = 0x70726864;
+
+    /**
+     * The Spherical Video V2 equirectangular projection box ({@code equi}).
+     */
+    static final int EQUI = 0x65717569;
+
+    /**
+     * The Spherical Video V2 cubemap projection box ({@code cbmp}).
+     */
+    static final int CBMP = 0x63626D70;
+
+    /**
+     * The Spherical Video V2 mesh projection box ({@code mshp}).
+     */
+    static final int MSHP = 0x6D736870;
+
+    /**
+     * The QuickTime timecode media handler type and sample entry type ({@code tmcd}), also the
+     * {@code tref} reference type of a track to its timecode track.
+     */
+    static final int TMCD = 0x746D6364;
+
+    /**
+     * The QuickTime base media information header atom ({@code gmhd}).
+     */
+    static final int GMHD = 0x676D6864;
+
+    /**
+     * The QuickTime base media information atom ({@code gmin}).
+     */
+    static final int GMIN = 0x676D696E;
+
+    /**
+     * The QuickTime timecode media information atom ({@code tcmi}).
+     */
+    static final int TCMI = 0x74636D69;
+
+    /**
+     * The track reference box ({@code tref}).
+     */
+    static final int TREF = 0x74726566;
+
     private BoxTypes() {
         throw new AssertionError();
     }

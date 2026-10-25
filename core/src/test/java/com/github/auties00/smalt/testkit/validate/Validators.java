@@ -68,14 +68,17 @@ public final class Validators {
             "the WebM container guidelines carry WebVTT in subtitle tracks",
             Pattern.compile("ERR304: Track #\\d+ codec V_AV1 not supported for profile 'webm'"),
             "the AV1 Matroska/WebM mapping of the Alliance for Open Media carries AV1 in WebM",
+            Pattern.compile("ERR201: Invalid '(EditionDisplay|EditionString|EditionLanguageIETF)' for profile"
+                    + " 'matroska v\\d' .*"),
+            "mkvalidator predates the EditionDisplay elements RFC 9559 adds in Matroska version 5",
             Pattern.compile("ERR201: Invalid '(MaxBlockAdditionID|BlockAdditionMapping|BlockAddIDValue|BlockAddIDType"
                     + "|BlockAddIDName|BlockAddIDExtraData)' for profile 'webm' .*"),
             "the WebM container guidelines list the block addition mapping elements as supported",
-            // FIXME: TagEditor writes picture attachments and an EditionUID into WebM, which the WebM container
-            // guidelines mark unsupported
+            // FIXME: TagEditor and MatroskaMuxer write picture attachments into WebM, which the WebM container
+            // guidelines mark unsupported; EditionUID stays accepted for the Chapters an edit keeps from other writers
             Pattern.compile("ERR201: Invalid '(EditionUID|AttachedFile|FileDescription|FileName|FileMediaType"
                     + "|FileData|FileUID)' for profile 'webm' .*"),
-            "TagEditor writes them into WebM files");
+            "TagEditor writes picture attachments into WebM files and keeps other writers' chapters");
 
     private Validators() {
         throw new AssertionError();

@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
@@ -316,8 +317,8 @@ final class SampleEntryWriter {
     }
 
     /**
-     * Writes the optional {@code colr}, {@code mdcv}, {@code clli}, {@code pasp} and {@code fiel}
-     * boxes of a visual sample entry and closes it.
+     * Writes the optional {@code colr}, {@code mdcv}, {@code clli}, {@code st3d}, {@code sv3d}, {@code pasp} and
+     * {@code fiel} boxes of a visual sample entry and closes it.
      *
      * @param writer the destination, inside the sample entry
      * @param video the track
@@ -329,12 +330,57 @@ final class SampleEntryWriter {
     }
 
     /**
-     * Writes the optional {@code colr}, {@code mdcv}, {@code clli} and {@code pasp} boxes of a visual sample entry.
+     * Writes the optional {@code colr}, {@code mdcv} and {@code clli} boxes of a visual sample entry, the Spherical
+     * Video V2 {@code st3d} and {@code sv3d} boxes of a declared stereo mode the {@code st3d} box can store and of a
+     * spherical projection, and the {@code pasp} box, in that order: Spherical Video V2 places its boxes before the
+     * pixel aspect ratio box.
      *
      * @param writer the destination, inside the sample entry
      * @param video the track
      */
     private static void writeColorAndAspect(BoxWriter writer, VideoTrack video) {
+        writeColor(writer, video);
+        video.stereoMode().ifPresent(mode -> {
+            var code = SphericalBoxes.st3dCode(mode);
+            if (code >= 0) {
+                writer.begin(BoxTypes.ST3D);
+                writer.u32(0);
+                writer.u8(code);
+                writer.end();
+            }
+        });
+        video.spherical().ifPresent(spherical -> {
+            writer.begin(BoxTypes.SV3D);
+            writer.begin(BoxTypes.SVHD);
+            writer.u32(0);
+            writer.bytes(spherical.metadataSource().getBytes(StandardCharsets.UTF_8));
+            writer.u8(0);
+            writer.end();
+            writer.begin(BoxTypes.PROJ);
+            writer.begin(BoxTypes.PRHD);
+            writer.u32(0);
+            writer.u32(SphericalBoxes.fixed(spherical.yaw()) & 0xFFFFFFFFL);
+            writer.u32(SphericalBoxes.fixed(spherical.pitch()) & 0xFFFFFFFFL);
+            writer.u32(SphericalBoxes.fixed(spherical.roll()) & 0xFFFFFFFFL);
+            writer.end();
+            var projection = spherical.projection();
+            var type = SphericalBoxes.boxType(projection).getBytes(StandardCharsets.US_ASCII);
+            writer.begin((type[0] & 0xFF) << 24 | (type[1] & 0xFF) << 16 | (type[2] & 0xFF) << 8 | type[3] & 0xFF);
+            writer.bytes(SphericalBoxes.payload(projection));
+            writer.end();
+            writer.end();
+            writer.end();
+        });
+        video.sampleAspectRatio().ifPresent(aspect -> writeAspect(writer, aspect));
+    }
+
+    /**
+     * Writes the optional {@code colr}, {@code mdcv} and {@code clli} boxes of a visual sample entry.
+     *
+     * @param writer the destination, inside the sample entry
+     * @param video the track
+     */
+    private static void writeColor(BoxWriter writer, VideoTrack video) {
         if (video.color().isPresent()) {
             var color = video.color().get();
             writer.begin(BoxTypes.COLR);
@@ -346,7 +392,6 @@ final class SampleEntryWriter {
             writer.end();
             writeHdrMetadata(writer, color);
         }
-        video.sampleAspectRatio().ifPresent(aspect -> writeAspect(writer, aspect));
     }
 
     /**

@@ -53,14 +53,15 @@ public record TrackTags(int trackId, MediaTags tags, Set<TrackDisposition> dispo
     /**
      * Validates and copies the components.
      *
-     * @throws IllegalArgumentException if {@code tags} holds pictures, chapters or track tags
+     * @throws IllegalArgumentException if {@code tags} holds pictures, attachments, chapter editions or track tags
      * @throws NullPointerException if {@code disposition} holds {@code null}
      */
     public TrackTags {
         Objects.requireNonNull(tags, "tags");
         Objects.requireNonNull(disposition, "disposition");
-        if (!tags.pictures().isEmpty() || !tags.chapters().isEmpty() || !tags.tracks().isEmpty()) {
-            throw new IllegalArgumentException("the tags of a track hold no pictures, chapters or track tags");
+        if (!tags.pictures().isEmpty() || !tags.attachments().isEmpty() || !tags.editions().isEmpty()
+                || !tags.tracks().isEmpty()) {
+            throw new IllegalArgumentException("the tags of a track hold no pictures, attachments, chapters or track tags");
         }
         var copy = EnumSet.noneOf(TrackDisposition.class);
         for (var value : disposition) {
@@ -132,7 +133,7 @@ public record TrackTags(int trackId, MediaTags tags, Set<TrackDisposition> dispo
      *
      * @param tags the tags; no pictures, chapters or track tags
      * @return the copy
-     * @throws IllegalArgumentException if {@code tags} holds pictures, chapters or track tags
+     * @throws IllegalArgumentException if {@code tags} holds pictures, attachments, chapter editions or track tags
      */
     public TrackTags withTags(MediaTags tags) {
         return new TrackTags(trackId, tags, disposition);

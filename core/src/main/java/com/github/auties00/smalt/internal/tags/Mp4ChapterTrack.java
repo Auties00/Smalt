@@ -327,7 +327,7 @@ public final class Mp4ChapterTrack {
      * @param trackId the identifier of the chapter track
      * @return the box
      */
-    static byte[] chapReference(long trackId) {
+    public static byte[] chapReference(long trackId) {
         var payload = new byte[4];
         payload[0] = (byte) (trackId >>> 24);
         payload[1] = (byte) (trackId >>> 16);

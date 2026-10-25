@@ -4,12 +4,16 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.Timecode;
 import com.github.auties00.smalt.container.internal.AacExtensions;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.internal.SeekFilter;
+import com.github.auties00.smalt.container.internal.TimecodeTags;
 import com.github.auties00.smalt.container.internal.SeekIndex;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
@@ -17,6 +21,7 @@ import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
+import com.github.auties00.smalt.internal.tags.Ebml;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.internal.tags.MatroskaTags;
 import com.github.auties00.smalt.io.MediaSource;
@@ -42,6 +47,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -73,15 +79,21 @@ import java.util.Set;
  * {@code V_MPEG1} and {@code V_MPEG2} tracks are {@link Codec#MPEG1_VIDEO} and {@link Codec#MPEG2_VIDEO}. Clusters
  * of unknown
  * size (live WebM)
- * end at the next top-level element. The default edition of {@code Chapters} becomes
- * {@link #chapters()}, and attachments whose media type is an image become
- * {@link #attachedPictures()} (a file named like {@code cover.jpg} as the front cover). Track
+ * end at the next top-level element. The editions of {@code Chapters} that are not hidden become
+ * {@link #chapterEditions()} (with their nested chapters and the title of each {@code ChapterDisplay} in each
+ * of its languages, hidden chapters left out), and the default one {@link #chapters()}. Attachments whose
+ * media type is an image become {@link #attachedPictures()} (a file named like {@code cover.jpg} as the front
+ * cover), and the other attachments {@link #attachments()}. A {@code TIMECODE} tag of the segment, or of the
+ * first video track, becomes {@link #timecode()}, counted at that track's frame rate rounded up (at 30 frames
+ * per second for a drop-frame address when the track declares no rate). Track
  * names and the tags that target one track become {@link #trackMetadata(int)}. A video track's
  * {@code DisplayWidth} and {@code DisplayHeight}, against its pixel size after the
  * {@code PixelCrop} elements and in any known {@code DisplayUnit}, give its sample aspect ratio,
- * and {@code FlagInterlaced} with {@code FieldOrder} its scan
- * ({@link VideoTrack#sampleAspectRatio()},
- * {@link VideoTrack#interlacing()}).
+ * {@code FlagInterlaced} with {@code FieldOrder} its scan, {@code StereoMode} its stereo mode, and a
+ * {@code Projection} of a spherical type, with its {@code ProjectionPrivate} and pose, its spherical
+ * projection; the roll of a rectangular {@code Projection} is its orientation
+ * ({@link VideoTrack#sampleAspectRatio()}, {@link VideoTrack#interlacing()},
+ * {@link VideoTrack#stereoMode()}, {@link VideoTrack#spherical()}).
  *
  * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the
  * first video track (of any track when there is no video) name the cluster holding the last key
@@ -169,6 +181,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * The deepest nesting of {@code SimpleTag} elements followed.
      */
     private static final int MAX_TAG_DEPTH = 8;
+
+    /**
+     * The largest number of attachments kept.
+     */
+    private static final int MAX_ATTACHMENTS = 4096;
 
     /**
      * The number of seconds between 1970-01-01 and 2001-01-01, the Matroska date epoch.
@@ -292,6 +309,11 @@ public final class MatroskaDemuxer implements Demuxer {
     private final long referenceTrack;
 
     /**
+     * The visible chapter editions.
+     */
+    private final List<ChapterEdition> editions;
+
+    /**
      * The chapters of the default edition.
      */
     private final List<Chapter> chapters;
@@ -300,6 +322,16 @@ public final class MatroskaDemuxer implements Demuxer {
      * The attached pictures.
      */
     private final List<AttachedPicture> pictures;
+
+    /**
+     * The attachments that are not pictures.
+     */
+    private final List<Attachment> attachments;
+
+    /**
+     * The timecode of the {@code TIMECODE} tag, or {@code null}.
+     */
+    private final Timecode timecode;
 
     /**
      * The tags of each track, by track identifier.
@@ -436,8 +468,12 @@ public final class MatroskaDemuxer implements Demuxer {
             }
             this.metadata = Collections.unmodifiableMap(header.tags);
             this.durationMicros = header.duration > 0 ? Math.round(header.duration * timestampScale / 1000.0) : -1;
-            this.chapters = header.annotations.chapters(durationMicros);
+            this.editions = editions(header, durationMicros);
+            var defaultEdition = ChapterEdition.defaultIndex(editions);
+            this.chapters = defaultEdition < 0 ? List.of() : sortedChapters(editions.get(defaultEdition).chapters());
             this.pictures = header.annotations.pictures();
+            this.attachments = List.copyOf(header.attachments);
+            this.timecode = timecode(header.tags, trackTags, publicTracks);
             var reference = -1L;
             for (var index = 0; index < publicTracks.size(); index++) {
                 if (publicTracks.get(index) instanceof VideoTrack) {
@@ -551,9 +587,24 @@ public final class MatroskaDemuxer implements Demuxer {
         private long cuesPosition = -1;
 
         /**
-         * The chapters and pictures collected.
+         * The pictures collected.
          */
         private final Annotations annotations = new Annotations();
+
+        /**
+         * The attachments that are not pictures.
+         */
+        private final List<Attachment> attachments = new ArrayList<>();
+
+        /**
+         * The bytes holding the {@code Chapters} element, or {@code null}.
+         */
+        private byte[] chaptersData;
+
+        /**
+         * The {@code Chapters} element within {@link #chaptersData}.
+         */
+        private Ebml.Element chaptersElement;
     }
 
     /**
@@ -1073,8 +1124,75 @@ public final class MatroskaDemuxer implements Demuxer {
     }
 
     @Override
+    public List<ChapterEdition> chapterEditions() {
+        return editions;
+    }
+
+    @Override
     public List<AttachedPicture> attachedPictures() {
         return pictures;
+    }
+
+    @Override
+    public List<Attachment> attachments() {
+        return attachments;
+    }
+
+    @Override
+    public Optional<Timecode> timecode() {
+        return Optional.ofNullable(timecode);
+    }
+
+    /**
+     * Decodes the editions of the {@code Chapters} element; damaged chapters leave none.
+     *
+     * @param header the parsed header
+     * @param durationMicros the segment duration, or {@code -1}
+     * @return the visible editions
+     */
+    private static List<ChapterEdition> editions(SegmentHeader header, long durationMicros) {
+        if (header.chaptersData == null) {
+            return List.of();
+        }
+        try {
+            return List.copyOf(MatroskaTags.decodeEditions(header.chaptersData, header.chaptersElement,
+                    durationMicros));
+        } catch (MediaException.Malformed ignored) {
+            // chapters are descriptive; damaged Chapters leave the file playable
+            return List.of();
+        }
+    }
+
+    /**
+     * Sorts chapters by start, keeping the order of those that start together.
+     *
+     * @param chapters the chapters to sort
+     * @return the sorted chapters; unmodifiable
+     */
+    private static List<Chapter> sortedChapters(List<Chapter> chapters) {
+        var sorted = new ArrayList<>(chapters);
+        sorted.sort(Comparator.comparingLong(Chapter::startMicros));
+        return List.copyOf(sorted);
+    }
+
+    /**
+     * Reads the {@code TIMECODE} tag of the segment or, without one, of the first video track, counted at the
+     * nominal rate of that track's frame rate, or at 30 frames per second for a drop-frame address of a track
+     * without frame rate.
+     *
+     * @param tags the segment tags
+     * @param trackTags the tags of each track
+     * @param tracks the tracks, whose first video track gives the rate
+     * @return the timecode, or {@code null} when there is no valid one
+     */
+    private static Timecode timecode(Map<String, String> tags, Map<Integer, Map<String, String>> trackTags,
+                                     List<Track> tracks) {
+        var video = TimecodeTags.firstVideo(tracks);
+        var text = TimecodeTags.lookup(tags, "TIMECODE");
+        if (text == null && video != null) {
+            text = TimecodeTags.lookup(trackTags.getOrDefault(video.id(), Map.of()), "TIMECODE");
+        }
+        return TimecodeTags.parse(text, video);
     }
 
     @Override
@@ -1513,28 +1631,29 @@ public final class MatroskaDemuxer implements Demuxer {
     }
 
     /**
-     * Parses the {@code Chapters} element, keeping the visible chapters of the default edition
-     * (of the first edition when none is the default).
+     * Keeps the {@code Chapters} element, decoded once the segment duration is known.
      *
-     * @param header receives the chapters
+     * @param header receives the element
      * @param body the element data
      */
     private static void parseChapters(SegmentHeader header, EbmlCursor body) {
-        for (var chapter : MatroskaTags.chapterSpans(body.array(), body.asElement(EbmlIds.CHAPTERS))) {
-            header.annotations.addChapter(chapter.startMicros(), chapter.endMicros(), chapter.title());
-        }
+        header.chaptersData = body.array();
+        header.chaptersElement = body.asElement(EbmlIds.CHAPTERS);
     }
 
     /**
-     * Parses the {@code Attachments} element, keeping the attached images as pictures.
+     * Parses the {@code Attachments} element: the attached images become pictures, the other files with a name,
+     * a media type and data attachments.
      *
-     * @param header receives the pictures
+     * @param header receives the pictures and attachments
      * @param body the element data
      */
     private static void parseAttachments(SegmentHeader header, EbmlCursor body) {
         var pictures = new ArrayList<AttachedPicture>();
-        MatroskaTags.decodeAttachments(body.array(), body.asElement(EbmlIds.ATTACHMENTS), pictures, null);
+        var files = new ArrayList<Attachment>();
+        MatroskaTags.decodeAttachments(body.array(), body.asElement(EbmlIds.ATTACHMENTS), pictures, files, null);
         pictures.forEach(header.annotations::addPicture);
+        header.attachments.addAll(files.subList(0, Math.min(files.size(), MAX_ATTACHMENTS)));
     }
 
     /**

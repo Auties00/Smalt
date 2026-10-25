@@ -86,9 +86,9 @@ public final class AiffMuxer implements Muxer {
     private long dataSize;
 
     /**
-     * The metadata chunks the tags were encoded to, written before {@code SSND}.
+     * The tags of {@link #setTags(MediaTags)}, encoded into chunks before {@code SSND} when the header is written.
      */
-    private List<byte[]> metadata = List.of();
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether the header was written.
@@ -204,8 +204,13 @@ public final class AiffMuxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The tags become {@code NAME}, {@code AUTH}, {@code (c) } and {@code ANNO} chunks for the
-     * values they can hold and, when pictures, chapters or other keys need it, an {@code ID3 }
-     * chunk with every tag, all before {@code SSND}.
+     * values they can hold and, when pictures or other keys need it, an {@code ID3 } chunk with every
+     * tag. The chapters become the markers of a {@code MARK} chunk, named by their titles, and the
+     * instrument keys an {@code INST} chunk (whose loops add markers), as
+     * {@link com.github.auties00.smalt.metadata.TagEditor} writes them. Every chunk is written before
+     * {@code SSND}.
+     *
+     * @throws IllegalArgumentException if the value of an instrument key is malformed
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -213,7 +218,8 @@ public final class AiffMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        this.metadata = MuxerTags.riffChunks(tags, true);
+        MuxerTags.riffChunks(tags, true, 0);
+        this.tags = tags;
     }
 
     /**
@@ -325,7 +331,7 @@ public final class AiffMuxer implements Muxer {
                 header.u8(0);
             }
         }
-        for (var chunk : metadata) {
+        for (var chunk : MuxerTags.riffChunks(tags, true, track.sampleRate())) {
             header.bytes(chunk);
         }
         var seekable = output.isSeekable();

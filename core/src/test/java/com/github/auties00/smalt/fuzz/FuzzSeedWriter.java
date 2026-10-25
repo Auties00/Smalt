@@ -1,6 +1,15 @@
 package com.github.auties00.smalt.fuzz;
 
+import com.github.auties00.smalt.container.Attachment;
+import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.container.Containers;
+import com.github.auties00.smalt.container.aiff.AiffMuxer;
+import com.github.auties00.smalt.container.matroska.MatroskaMuxer;
+import com.github.auties00.smalt.container.mp4.Mp4Muxer;
+import com.github.auties00.smalt.container.mp4.Mp4MuxerOptions;
+import com.github.auties00.smalt.container.raw.RawMuxer;
+import com.github.auties00.smalt.container.wav.WavMuxer;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.io.MediaSink;
@@ -17,9 +26,12 @@ import com.github.auties00.smalt.testkit.subtitle.BitmapStreams;
 import com.github.auties00.smalt.testkit.subtitle.CaptionScript;
 import com.github.auties00.smalt.testkit.subtitle.TeletextWriter;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.SphericalVideo;
+import com.github.auties00.smalt.track.StereoMode;
 import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.video.RawPixelFormat;
 import com.github.auties00.smalt.video.RawVideoFormat;
+import com.github.auties00.smalt.track.VideoTrack;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -32,6 +44,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 
 import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.args;
 import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.copy;
@@ -307,6 +320,80 @@ class FuzzSeedWriter {
         for (var name : List.of("m1-short.lzo", "m1-far.lzo", "text.lzo", "all-bytes.lzo", "empty.lzo")) {
             copy(CompressionFuzzTest.class, "lzo1x", "valid-" + name, vectors.resolve("lzo").resolve(name));
         }
+    }
+
+    @Test
+    @DisplayName("writes the seeds of chapter editions, attachments, timecodes, spherical video and descriptive chunks")
+    void descriptive() throws IOException {
+        var editions = List.of(new ChapterEdition(List.of(new Chapter(0, 50_000, Optional.of("Intro"),
+                        List.of(new Chapter.Title("Intro", "eng"), new Chapter.Title("Introduction", "fr-CA")),
+                        List.of(Chapter.of(10_000, 20_000, "inner"))), Chapter.of(50_000, 100_000, "Rest")), false, false,
+                List.of(new Chapter.Title("Cut", "en"))),
+                new ChapterEdition(List.of(Chapter.of(0, 100_000, "All")), true, true, List.of()));
+        var mkvTags = MediaTags.builder().editions(editions).add("timecode", "01:00:00:05")
+                .addAttachment(Attachment.of("font.ttf", "font/ttf", "", new byte[64])).build();
+        var spherical = new SphericalVideo(new SphericalVideo.Equirectangular(1, 2, 3, 4), 10, -5, 2.5, "seed");
+        var video = Containers.openDemuxer(MediaSource.of(ffmpeg("mkv", video(32, 32, 2), "-c:v", "mpeg4")));
+        var tracks = new java.util.ArrayList<com.github.auties00.smalt.track.Track>();
+        var packets = new java.util.ArrayList<com.github.auties00.smalt.track.Packet>();
+        try (video) {
+            for (var track : video.tracks()) {
+                tracks.add(track instanceof VideoTrack picture ? picture.toBuilder().spherical(spherical)
+                        .stereoMode(StereoMode.TOP_BOTTOM_LEFT_FIRST).build() : track);
+            }
+            for (var packet = video.read(); packet != null; packet = video.read()) {
+                packets.add(packet);
+            }
+        }
+        var mkv = muxed(MatroskaMuxer::new, tracks, packets, mkvTags);
+        write(DemuxerFuzzTest.class, "matroska", "valid-editions-spherical.mkv", mkv);
+        write(TagFuzzTest.class, "tags", "valid-editions-spherical.mkv", mkv);
+        var mov = muxed(sink -> new Mp4Muxer(sink, Mp4MuxerOptions.quickTime()), tracks, packets,
+                MediaTags.builder().add("timecode", "01:00:00:05").build());
+        write(DemuxerFuzzTest.class, "mp4", "valid-timecode-spherical.mov", mov);
+        var chapters = List.of(Chapter.of(0, 40_000, "one"), Chapter.of(40_000, 100_000, "two"));
+        var wavTags = MediaTags.builder().chapters(chapters).add("originator", "seed").add("time_reference", "8000")
+                .add("coding_history", "A=PCM").add("ixml", "<BWFXML/>").add("chna", "1 ATU_00000001 AT_00010001_01 AP_00010002")
+                .add("smpl:unity_note", "60").add("smpl:loop", "0 0 10 20 0 0").build();
+        var wav = withMuxedTags(ffmpeg("wav", tone(8000, 0.1), "-c:a", "pcm_s16le"), WavMuxer::new, wavTags);
+        write(DemuxerFuzzTest.class, "wav", "valid-bext-cue.wav", wav);
+        write(TagFuzzTest.class, "tags", "valid-bext-cue.wav", wav);
+        var aiffTags = MediaTags.builder().chapters(chapters).add("inst:base_note", "60")
+                .add("inst:sustain_loop", "1 10 20").build();
+        var aiff = withMuxedTags(ffmpeg("aiff", tone(8000, 0.1), "-c:a", "pcm_s16be"), AiffMuxer::new, aiffTags);
+        write(DemuxerFuzzTest.class, "aiff", "valid-markers.aiff", aiff);
+        write(TagFuzzTest.class, "tags", "valid-markers.aiff", aiff);
+        var flac = withMuxedTags(ffmpeg("flac", tone(8000, 0.1), "-c:a", "flac"), RawMuxer::new,
+                MediaTags.builder().chapters(chapters).build());
+        write(DemuxerFuzzTest.class, "flac", "valid-cuesheet.flac", flac);
+        write(TagFuzzTest.class, "tags", "valid-cuesheet.flac", flac);
+    }
+
+    private static byte[] muxed(java.util.function.Function<MediaSink, com.github.auties00.smalt.container.Muxer> factory,
+                                List<com.github.auties00.smalt.track.Track> tracks,
+                                List<com.github.auties00.smalt.track.Packet> packets, MediaTags tags) {
+        var sink = MediaSink.memory();
+        try (var muxer = factory.apply(sink)) {
+            tracks.forEach(muxer::addTrack);
+            muxer.setTags(tags);
+            packets.forEach(muxer::writePacket);
+            muxer.finish();
+        }
+        return sink.toByteArray();
+    }
+
+    private static byte[] withMuxedTags(Path file, java.util.function.Function<MediaSink,
+            com.github.auties00.smalt.container.Muxer> factory, MediaTags tags) {
+        var sink = MediaSink.memory();
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(file)); var muxer = factory.apply(sink)) {
+            demuxer.tracks().forEach(muxer::addTrack);
+            muxer.setTags(tags);
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                muxer.writePacket(packet);
+            }
+            muxer.finish();
+        }
+        return sink.toByteArray();
     }
 
     /** Replaces the movie box of a file by a QuickTime compressed movie: cmov holding dcom zlib and cmvd. */

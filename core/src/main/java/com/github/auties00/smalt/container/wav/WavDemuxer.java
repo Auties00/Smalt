@@ -23,7 +23,9 @@ import com.github.auties00.smalt.internal.io.SlicedSource;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.tags.RiffMetadataChunks;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -32,6 +34,7 @@ import com.github.auties00.smalt.track.Track;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -112,8 +115,14 @@ import java.util.Objects;
  * writers that omit it). A {@code data} chunk whose size is {@code 0} or {@code 0xFFFFFFFF}
  * outside RF64 is a streaming header and extends to the end of the file, as does a size larger
  * than the file. RF64/BW64 sizes come from the {@code ds64} chunk. Coded audio whose demuxer cannot tell
- * its duration takes the sample count of the {@code fact} chunk. {@code LIST INFO} entries and
- * an embedded {@code id3 } tag become {@link #metadata()}.
+ * its duration takes the sample count of the {@code fact} chunk. {@code LIST INFO} entries, an embedded
+ * {@code id3 } tag, and the Broadcast Wave {@code bext} (EBU Tech 3285), {@code iXML}, {@code axml},
+ * {@code chna} (ITU-R BS.2088) and {@code smpl} chunks become {@link #metadata()}, under the keys
+ * {@link com.github.auties00.smalt.metadata.TagEditor} reads them under (for example {@code originator},
+ * {@code time_reference}, {@code coding_history}, {@code ixml}, {@code smpl:unity_note}). The cue points of the
+ * {@code cue } chunk become {@link #chapters()}, titled by the {@code labl} entries of the {@code LIST adtl}
+ * chunk and ended by its {@code ltxt} entries or at the next cue point, unless coded audio carries chapters of
+ * its own.
  *
  * <p>PCM packets hold the largest power of two of frames that lasts at most 100 ms (4096 frames at
  * 44.1 and 48 kHz), capped at 1 MiB, with timestamps in samples.
@@ -207,6 +216,11 @@ public final class WavDemuxer implements Demuxer {
     private final Map<String, String> metadata;
 
     /**
+     * The chapters of the cue points.
+     */
+    private final List<Chapter> cueChapters;
+
+    /**
      * The offset of the first sample byte.
      */
     private final long dataStart;
@@ -296,6 +310,7 @@ public final class WavDemuxer implements Demuxer {
                 }
                 this.track = inner;
                 this.tracks = List.of(track);
+                this.cueChapters = cueChapters(header, inner.durationMicros().orElse(-1));
                 this.frameSize = 1;
                 this.packetFrames = 1;
                 this.dataStart = header.dataStart;
@@ -320,6 +335,7 @@ public final class WavDemuxer implements Demuxer {
                     .bitsPerSample(header.validBits)
                     .build();
             this.tracks = List.of(track);
+            this.cueChapters = cueChapters(header, track.durationMicros().orElse(-1));
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -415,6 +431,16 @@ public final class WavDemuxer implements Demuxer {
          * The metadata collected so far.
          */
         private final Map<String, String> metadata = new LinkedHashMap<>();
+
+        /**
+         * The payload of the first {@code cue } chunk, or {@code null}.
+         */
+        private byte[] cue;
+
+        /**
+         * The payload of the first {@code LIST} chunk of form {@code adtl}, or {@code null}.
+         */
+        private byte[] adtl;
     }
 
     /**
@@ -480,6 +506,8 @@ public final class WavDemuxer implements Demuxer {
                     chunkSize = dataSize;
                 }
                 case 0x4C495354 -> parseList(reader, header, chunkSize);
+                case 0x62657874, 0x69584D4C, 0x61786D6C, 0x63686E61, 0x736D706C, 0x63756520 ->
+                        parseDescriptive(reader, header, id, chunkSize);
                 case 0x66616374 -> {
                     if (chunkSize >= 4 && reader.remaining() >= 4) {
                         header.factSamples = header.bigEndian ? reader.u32be() : reader.u32le();
@@ -938,6 +966,12 @@ public final class WavDemuxer implements Demuxer {
             return;
         }
         var body = reader.bytes(chunkSize, MAX_LIST_SIZE);
+        if (body[0] == 'a' && body[1] == 'd' && body[2] == 't' && body[3] == 'l') {
+            if (header.adtl == null) {
+                header.adtl = body;
+            }
+            return;
+        }
         if (body[0] != 'I' || body[1] != 'N' || body[2] != 'F' || body[3] != 'O') {
             return;
         }
@@ -964,6 +998,54 @@ public final class WavDemuxer implements Demuxer {
         }
     }
 
+    /**
+     * Parses a descriptive chunk: {@code bext}, {@code iXML}, {@code axml}, {@code chna} and {@code smpl} into
+     * metadata, and keeps the {@code cue } chunk for the chapters.
+     *
+     * @param reader the reader positioned at the chunk body
+     * @param header receives the metadata
+     * @param id the chunk identifier
+     * @param chunkSize the chunk body size
+     */
+    private void parseDescriptive(SourceReader reader, Header header, int id, long chunkSize) {
+        if (chunkSize > MAX_LIST_SIZE || chunkSize > reader.remaining()) {
+            return;
+        }
+        var body = reader.bytes(chunkSize, MAX_LIST_SIZE);
+        var little = !header.bigEndian;
+        var entries = new ArrayList<MediaTags.Entry>();
+        switch (id) {
+            case 0x62657874 -> RiffMetadataChunks.decodeBext(body, little, entries);
+            case 0x69584D4C -> RiffMetadataChunks.decodeXml("iXML", body, entries);
+            case 0x61786D6C -> RiffMetadataChunks.decodeXml("axml", body, entries);
+            case 0x63686E61 -> RiffMetadataChunks.decodeChna(body, little, entries);
+            case 0x736D706C -> RiffMetadataChunks.decodeSmpl(body, little, entries);
+            default -> {
+                if (header.cue == null) {
+                    header.cue = body;
+                }
+            }
+        }
+        for (var entry : entries) {
+            header.metadata.merge(entry.key(), entry.value(), (previous, next) -> previous + "; " + next);
+        }
+    }
+
+    /**
+     * Decodes the chapters of the {@code cue } chunk and its {@code adtl} list.
+     *
+     * @param header the parsed header
+     * @param durationMicros the duration of the audio, or {@code -1}
+     * @return the chapters, empty without a {@code cue } chunk
+     */
+    private static List<Chapter> cueChapters(Header header, long durationMicros) {
+        if (header.cue == null) {
+            return List.of();
+        }
+        return List.copyOf(RiffMetadataChunks.decodeCue(header.cue, header.adtl, !header.bigEndian,
+                header.sampleRate, durationMicros));
+    }
+
     @Override
     public ContainerFormat format() {
         return ContainerFormat.WAV;
@@ -981,7 +1063,7 @@ public final class WavDemuxer implements Demuxer {
 
     @Override
     public List<Chapter> chapters() {
-        return coded == null ? List.of() : coded.chapters();
+        return coded == null || coded.chapters().isEmpty() ? cueChapters : coded.chapters();
     }
 
     @Override

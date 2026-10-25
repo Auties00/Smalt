@@ -3,6 +3,8 @@ package com.github.auties00.smalt.internal.tags;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Attachment;
+import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.edit.EditPlan;
 import com.github.auties00.smalt.io.MediaSource;
@@ -23,7 +25,7 @@ import java.util.Map;
 import java.util.function.LongUnaryOperator;
 
 /**
- * Edits the tags, chapters and picture attachments of a Matroska or WebM file.
+ * Edits the tags, chapter editions and attachments of a Matroska or WebM file.
  *
  * <p>The level-1 elements of the segment are listed up to the end of the file (or up to the first
  * cluster of unknown size). An edit first tries to fit every changed element ({@code Tags},
@@ -51,6 +53,11 @@ final class MatroskaTagFile implements TagFile {
     private static final int MAX_ELEMENTS = 1 << 20;
 
     /**
+     * The largest EBML header whose {@code DocTypeVersion} an edit raises.
+     */
+    private static final int MAX_EBML_HEADER = 4096;
+
+    /**
      * The flag elements of a {@code TrackEntry} and the dispositions they store.
      */
     private static final Map<Integer, TrackDisposition> FLAGS = flags();
@@ -74,6 +81,28 @@ final class MatroskaTagFile implements TagFile {
      * The offset of the segment header.
      */
     private final long segmentOffset;
+
+    /**
+     * The offset of the data of the {@code DocTypeVersion} element of a Matroska (not WebM) file's EBML header, or
+     * {@code -1} when there is none.
+     */
+    private final long docTypeVersionAt;
+
+    /**
+     * The width of the data of the {@code DocTypeVersion} element.
+     */
+    private final int docTypeVersionWidth;
+
+    /**
+     * The {@code DocTypeVersion} of the file.
+     */
+    private final long docTypeVersion;
+
+    /**
+     * Whether the {@code DocType} of the file is {@code webm}, whose {@code Chapters} and {@code Attachments}
+     * hold less than Matroska's.
+     */
+    private final boolean webm;
 
     /**
      * Whether the segment size is unknown.
@@ -157,7 +186,7 @@ final class MatroskaTagFile implements TagFile {
      *
      * @param source the Matroska file; not closed
      * @param limits the resource bounds
-     * @throws MediaException.Malformed if the EbmlIds.EBML header or the segment is missing
+     * @throws MediaException.Malformed if the EBML header or the segment is missing
      */
     MatroskaTagFile(MediaSource source, MediaLimits limits) {
         this.source = source;
@@ -165,12 +194,17 @@ final class MatroskaTagFile implements TagFile {
         var size = source.size();
         var header = headerAt(0);
         if (header == null || header.id() != EbmlIds.EBML || header.size() == Ebml.UNKNOWN) {
-            throw new MediaException.Malformed("Matroska file without an EbmlIds.EBML header");
+            throw new MediaException.Malformed("Matroska file without an EBML header");
         }
         var position = header.length() + header.size();
+        var version = findDocTypeVersion(header);
+        this.docTypeVersionAt = version[0];
+        this.docTypeVersionWidth = (int) version[1];
+        this.docTypeVersion = version[2];
+        this.webm = version[3] != 0;
         var segment = headerAt(position);
         if (segment == null || segment.id() != EbmlIds.SEGMENT) {
-            throw new MediaException.Malformed("Matroska file without a segment after its EbmlIds.EBML header");
+            throw new MediaException.Malformed("Matroska file without a segment after its EBML header");
         }
         this.segmentOffset = position;
         this.segmentData = position + segment.length();
@@ -215,13 +249,15 @@ final class MatroskaTagFile implements TagFile {
             builder.add(entry.key(), entry.value());
         }
         if (chaptersElement != null) {
-            builder.chapters(MatroskaTags.decodeChapters(chaptersElement, root(chaptersElement), durationMicros()));
+            builder.editions(MatroskaTags.decodeEditions(chaptersElement, root(chaptersElement), durationMicros()));
         }
         var pictures = new ArrayList<AttachedPicture>();
+        var attachments = new ArrayList<Attachment>();
         var files = new ArrayList<byte[]>();
         if (attachmentsElement != null) {
-            MatroskaTags.decodeAttachments(attachmentsElement, root(attachmentsElement), pictures, files);
+            MatroskaTags.decodeAttachments(attachmentsElement, root(attachmentsElement), pictures, attachments, files);
         }
+        builder.attachments(attachments);
         this.opaqueFiles = List.copyOf(files);
         this.tracksElement = readFirst(EbmlIds.TRACKS);
         this.trackTags = new LinkedHashMap<>();
@@ -377,6 +413,62 @@ final class MatroskaTagFile implements TagFile {
     }
 
     /**
+     * Locates the {@code DocTypeVersion} element of the EBML header of a Matroska file.
+     *
+     * @param header the EBML header, at the start of the file
+     * @return the offset of its data (or {@code -1} when the header has none, is larger than
+     * {@value #MAX_EBML_HEADER} bytes, or belongs to a file whose {@code DocType} is not {@code matroska}), the
+     * width of its data, its value, and 1 when the {@code DocType} is {@code webm} (else 0)
+     */
+    private long[] findDocTypeVersion(Ebml.Header header) {
+        var none = new long[]{-1, 0, 0, 0};
+        var total = header.length() + header.size();
+        if (total > MAX_EBML_HEADER) {
+            return none;
+        }
+        var bytes = TagIo.readAvailable(source, 0, (int) total);
+        var children = Ebml.children(bytes, header.length(), bytes.length);
+        var docType = Ebml.find(children, EbmlIds.DOC_TYPE);
+        var version = Ebml.find(children, EbmlIds.DOC_TYPE_VERSION);
+        if (docType != null && Ebml.string(bytes, docType).equals("webm")) {
+            return new long[]{-1, 0, 0, 1};
+        }
+        if (docType == null || !Ebml.string(bytes, docType).equals("matroska") || version == null
+                || version.size() < 1 || version.size() > 8) {
+            return none;
+        }
+        return new long[]{version.data(), version.size(), Ebml.unsigned(bytes, version), 0};
+    }
+
+    /**
+     * Returns the write that raises the {@code DocTypeVersion} of the file to what a {@code Chapters} element of
+     * editions needs.
+     *
+     * @param editions the editions written
+     * @return the write, or {@code null} when the version is already high enough or the file declares none
+     */
+    private DocTypeVersionWrite docTypeVersionWrite(List<ChapterEdition> editions) {
+        var needed = MatroskaTags.docTypeVersion(editions);
+        if (docTypeVersionAt < 0 || docTypeVersion >= needed) {
+            return null;
+        }
+        var data = new byte[docTypeVersionWidth];
+        for (var index = 0; index < data.length; index++) {
+            data[index] = (byte) (needed >>> 8 * (data.length - 1 - index));
+        }
+        return new DocTypeVersionWrite(docTypeVersionAt, data);
+    }
+
+    /**
+     * Describes the new data of the {@code DocTypeVersion} element.
+     *
+     * @param offset the offset of the element's data in the file
+     * @param data the new data, as wide as the old
+     */
+    private record DocTypeVersionWrite(long offset, byte[] data) {
+    }
+
+    /**
      * Returns the element that spans a whole array.
      *
      * @param bytes the element bytes
@@ -503,20 +595,27 @@ final class MatroskaTagFile implements TagFile {
             }
             replacements.add(new Replacement(EbmlIds.TAGS, MatroskaTags.encodeTags(tagsPart, kept)));
         }
-        if (!newTags.chapters().equals(tags.chapters())) {
-            replacements.add(new Replacement(EbmlIds.CHAPTERS, MatroskaTags.encodeChapters(newTags.chapters())));
+        if (!newTags.editions().equals(tags.editions())) {
+            replacements.add(new Replacement(EbmlIds.CHAPTERS, MatroskaTags.encodeEditions(newTags.editions(),
+                    webm)));
         }
-        if (!newTags.pictures().equals(tags.pictures()) || (!keepOpaque && !opaqueFiles.isEmpty())) {
-            replacements.add(new Replacement(EbmlIds.ATTACHMENTS,
-                    MatroskaTags.encodeAttachments(newTags.pictures(), keepOpaque ? opaqueFiles : List.of())));
+        if (!newTags.pictures().equals(tags.pictures()) || !newTags.attachments().equals(tags.attachments())
+                || (!keepOpaque && !opaqueFiles.isEmpty())) {
+            var files = newTags.attachments();
+            if (webm) {
+                files = files.stream().filter(tags.attachments()::contains).toList();
+            }
+            replacements.add(new Replacement(EbmlIds.ATTACHMENTS, MatroskaTags.encodeAttachments(newTags.pictures(),
+                    files, keepOpaque ? opaqueFiles : List.of())));
         }
         if (replacements.isEmpty()) {
             return EditPlan.builder().copy(0, source.size()).build();
         }
+        var version = docTypeVersionWrite(newTags.editions());
         // TODO: when an element does not fit, void it and append the new one at the segment end with an updated
         // SeekHead entry, as mkvpropedit does, instead of rewriting the whole segment.
-        var inPlace = planInPlace(replacements);
-        return inPlace != null ? inPlace : planRewrite(replacements, options);
+        var inPlace = planInPlace(replacements, version);
+        return inPlace != null ? inPlace : planRewrite(replacements, version, options);
     }
 
     /**
@@ -525,11 +624,16 @@ final class MatroskaTagFile implements TagFile {
      * first cluster.
      *
      * @param replacements the elements to replace
+     * @param version the new {@code DocTypeVersion} data, or {@code null}
      * @return the plan, or {@code null} when an element does not fit
      */
-    private EditPlan planInPlace(List<Replacement> replacements) {
+    private EditPlan planInPlace(List<Replacement> replacements, DocTypeVersionWrite version) {
         var writes = new ArrayList<long[]>();
         var contents = new ArrayList<byte[]>();
+        if (version != null) {
+            writes.add(new long[]{version.offset(), version.data().length});
+            contents.add(version.data());
+        }
         var used = new boolean[elements.size()];
         for (var replacement : replacements) {
             var index = indexOf(replacement.id());
@@ -670,11 +774,12 @@ final class MatroskaTagFile implements TagFile {
      * Plans a rewrite of the segment with the new metadata elements before the clusters.
      *
      * @param replacements the elements to replace
+     * @param version the new {@code DocTypeVersion} data, or {@code null}
      * @param options the write options
      * @return the plan
      * @throws MediaException.LimitExceeded if the cues exceed the limits
      */
-    private EditPlan planRewrite(List<Replacement> replacements, TagWriteOptions options) {
+    private EditPlan planRewrite(List<Replacement> replacements, DocTypeVersionWrite version, TagWriteOptions options) {
         var firstCluster = indexOf(EbmlIds.CLUSTER);
         var headerEnd = firstCluster >= 0 ? firstCluster : elements.size();
         var replaced = new HashMap<Integer, byte[]>();
@@ -773,7 +878,14 @@ final class MatroskaTagFile implements TagFile {
             return old;
         };
         var plan = EditPlan.builder();
-        plan.copy(0, segmentOffset);
+        if (version != null) {
+            plan.copy(0, version.offset());
+            plan.bytes(version.data());
+            var after = version.offset() + version.data().length;
+            plan.copy(after, segmentOffset - after);
+        } else {
+            plan.copy(0, segmentOffset);
+        }
         var segmentHeader = new ByteWriter(12);
         Ebml.id(segmentHeader, EbmlIds.SEGMENT);
         Ebml.size(segmentHeader, unknownSize ? Ebml.UNKNOWN : segmentSize, 8);

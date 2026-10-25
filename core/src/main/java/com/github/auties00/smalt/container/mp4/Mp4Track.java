@@ -976,6 +976,12 @@ final class Mp4Track {
                 if (entry.interlacing() != null) {
                     builder.interlacing(entry.interlacing());
                 }
+                if (entry.spherical() != null) {
+                    builder.spherical(entry.spherical());
+                }
+                if (entry.stereoMode() != null) {
+                    builder.stereoMode(entry.stereoMode());
+                }
                 yield builder.build();
             }
             case AUDIO -> AudioTrack.builder().id(id).codec(entry.codec()).timeBase(timeBase).duration(duration)

@@ -45,12 +45,17 @@ public interface Muxer extends AutoCloseable {
      * Sets the tags, attached pictures (cover art) and chapters the output carries.
      *
      * <p>The tags are written in the container's own form: an iTunes {@code ilst} and a Nero
-     * {@code chpl} box for MP4 (with a QuickTime chapter track from {@code Mp4Muxer}),
-     * {@code Tags}, {@code Chapters} and picture {@code Attachments} for
-     * Matroska, Vorbis comments for Ogg and FLAC, ID3v2 for MP3, ADTS, raw AC-3 and AMR, the {@code LIST/INFO}
-     * and {@code id3 } chunks for WAV, the text and {@code ID3 } chunks for AIFF, the {@code LIST INFO} chunk for
-     * AVI. The {@linkplain MediaTags#tracks() track tags} of the declared tracks become their names, tags and
-     * dispositions in MP4, Matroska, AVI and MPEG-TS, as
+     * {@code chpl} box for MP4 (with a QuickTime chapter track, and a timecode track for a {@code timecode}
+     * tag, from {@code Mp4Muxer}), {@code Tags}, {@code Chapters} (every {@linkplain MediaTags#editions() edition},
+     * nested chapters and localized titles included) and {@code Attachments} (pictures and
+     * {@linkplain MediaTags#attachments() other files}) for Matroska, Vorbis comments for Ogg and FLAC (with a
+     * {@code CUESHEET} block for the chapters of native FLAC), ID3v2 for MP3, ADTS, raw AC-3 and AMR, the
+     * {@code LIST/INFO} and {@code id3 } chunks, the Broadcast Wave and sampler chunks and cue points for WAV,
+     * the text, {@code ID3 }, {@code MARK} and {@code INST} chunks for AIFF, the {@code LIST INFO} chunk for
+     * AVI. Formats that store a single edition write the chapters of the default one, and formats without nested
+     * chapters or localized titles write the top-level chapters and their
+     * {@linkplain Chapter#title() titles}. The {@linkplain MediaTags#tracks() track tags} of the declared tracks
+     * become their names, tags and dispositions in MP4, Matroska, AVI and MPEG-TS, as
      * {@link com.github.auties00.smalt.metadata.TrackTags TrackTags} lists; track tags naming no declared track are
      * ignored. A later call replaces the tags of an earlier one. A value the container cannot hold is rejected
      * by this call, checked against the tracks declared before it, so that the tags can be reduced before the first

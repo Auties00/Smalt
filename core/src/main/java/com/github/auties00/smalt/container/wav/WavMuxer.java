@@ -107,9 +107,9 @@ public final class WavMuxer implements Muxer {
     private long dataSize;
 
     /**
-     * The metadata chunks the tags were encoded to, written before {@code data}.
+     * The tags of {@link #setTags(MediaTags)}, encoded into chunks before {@code data} when the header is written.
      */
-    private List<byte[]> metadata = List.of();
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether the header was written.
@@ -220,9 +220,15 @@ public final class WavMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * <p>The tags become a {@code LIST/INFO} chunk for the values it can hold and, when pictures,
-     * chapters or other keys need it, an {@code id3 } chunk with every tag, both before
-     * {@code data}.
+     * <p>The tags become a {@code LIST/INFO} chunk for the values it can hold and, when pictures
+     * or other keys need it, an {@code id3 } chunk with every tag, and the Broadcast Wave,
+     * {@code iXML}, {@code axml}, {@code chna} and {@code smpl} keys their own chunks, as
+     * {@link com.github.auties00.smalt.metadata.TagEditor} writes them. The chapters become cue points:
+     * a {@code cue } chunk and a {@code LIST adtl} chunk holding a {@code labl} title and an {@code ltxt}
+     * length per chapter. Every chunk is written before {@code data}.
+     *
+     * @throws IllegalArgumentException if the value of a {@code chna}, {@code smpl}, {@code umid}, loudness or
+     * {@code time_reference} key is malformed
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -230,7 +236,8 @@ public final class WavMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        this.metadata = MuxerTags.riffChunks(tags, false);
+        MuxerTags.riffChunks(tags, false, 0);
+        this.tags = tags;
     }
 
     /**
@@ -369,7 +376,7 @@ public final class WavMuxer implements Muxer {
             factOffset = header.size();
             header.u32le(0);
         }
-        for (var chunk : metadata) {
+        for (var chunk : MuxerTags.riffChunks(tags, false, track.sampleRate())) {
             header.bytes(chunk);
         }
         header.fourCc("data");

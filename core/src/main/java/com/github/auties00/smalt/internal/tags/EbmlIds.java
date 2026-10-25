@@ -554,6 +554,31 @@ public final class EbmlIds {
     public static final int PROJECTION_POSE_ROLL = 0x7675;
 
     /**
+     * The {@code ProjectionType} element of {@code Projection}.
+     */
+    public static final int PROJECTION_TYPE = 0x7671;
+
+    /**
+     * The {@code ProjectionPrivate} element of {@code Projection}.
+     */
+    public static final int PROJECTION_PRIVATE = 0x7672;
+
+    /**
+     * The {@code ProjectionPoseYaw} element of {@code Projection}, in degrees.
+     */
+    public static final int PROJECTION_POSE_YAW = 0x7673;
+
+    /**
+     * The {@code ProjectionPosePitch} element of {@code Projection}, in degrees.
+     */
+    public static final int PROJECTION_POSE_PITCH = 0x7674;
+
+    /**
+     * The {@code StereoMode} element of {@code Video}.
+     */
+    public static final int STEREO_MODE = 0x53B8;
+
+    /**
      * The {@code Cues} element.
      */
     public static final int CUES = 0x1C53BB6B;
@@ -642,6 +667,36 @@ public final class EbmlIds {
      * The {@code ChapLanguage} element.
      */
     public static final int CHAP_LANGUAGE = 0x437C;
+
+    /**
+     * The {@code ChapLanguageBCP47} element of {@code ChapterDisplay}.
+     */
+    public static final int CHAP_LANGUAGE_BCP47 = 0x437D;
+
+    /**
+     * The {@code EditionFlagHidden} element of {@code EditionEntry}.
+     */
+    public static final int EDITION_FLAG_HIDDEN = 0x45BD;
+
+    /**
+     * The {@code EditionFlagOrdered} element of {@code EditionEntry}.
+     */
+    public static final int EDITION_FLAG_ORDERED = 0x45DD;
+
+    /**
+     * The {@code EditionDisplay} element of {@code EditionEntry}.
+     */
+    public static final int EDITION_DISPLAY = 0x4520;
+
+    /**
+     * The {@code EditionString} element of {@code EditionDisplay}.
+     */
+    public static final int EDITION_STRING = 0x4521;
+
+    /**
+     * The {@code EditionLanguageIETF} element of {@code EditionDisplay}.
+     */
+    public static final int EDITION_LANGUAGE_IETF = 0x45E4;
 
     /**
      * The {@code Attachments} element.

@@ -14,6 +14,7 @@ import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
 import com.github.auties00.smalt.container.mpeg.internal.TrailingTags;
+import com.github.auties00.smalt.internal.tags.FlacCuesheet;
 import com.github.auties00.smalt.internal.tags.FlacPicture;
 import com.github.auties00.smalt.internal.io.ArrayBacked;
 import com.github.auties00.smalt.internal.io.ByteArrays;
@@ -72,7 +73,9 @@ import java.util.Objects;
  * frame.
  *
  * <p>{@code PICTURE} blocks and ID3v2 {@code APIC} frames become {@link #attachedPictures()}, and
- * the {@code CHAPTERxxx} Vorbis comments become {@link #chapters()} instead of tags.
+ * the {@code CHAPTERxxx} Vorbis comments become {@link #chapters()} instead of tags. Without such comments,
+ * the tracks of a {@code CUESHEET} block become the chapters, untitled: each starts at its index point 1 (its
+ * first index point when it has none numbered 1) and ends where the next starts, the last at the lead-out.
  *
  * <p>A stream of known size can seek. {@link #seek(long)} starts from the last {@code SEEKTABLE}
  * point at or before the target, when the stream has one, bisects the remaining byte range on the
@@ -245,6 +248,11 @@ public final class FlacDemuxer implements Demuxer {
     private final Annotations annotations = new Annotations();
 
     /**
+     * The body of the first {@code CUESHEET} block, or {@code null}.
+     */
+    private byte[] cuesheet;
+
+    /**
      * The chapters of the stream.
      */
     private final List<Chapter> chapters;
@@ -365,6 +373,15 @@ public final class FlacDemuxer implements Demuxer {
                 TrailingTags.readMetadata(tail, List.of(), trailing, tags, annotations, Id3v2.Merge.FILL);
             }
             this.metadata = Collections.unmodifiableMap(tags);
+            if (!annotations.hasChapters() && cuesheet != null) {
+                try {
+                    for (var chapter : FlacCuesheet.decode(cuesheet, 0, cuesheet.length, rate)) {
+                        annotations.addChapter(chapter.startMicros(), chapter.endMicros(), null);
+                    }
+                } catch (MediaException.Malformed ignored) {
+                    // a damaged cue sheet leaves the stream playable
+                }
+            }
             this.chapters = annotations.chapters(durationMicros);
             this.pictures = annotations.pictures();
         } catch (MediaException exception) {
@@ -452,6 +469,8 @@ public final class FlacDemuxer implements Demuxer {
                     Annotations.readVorbisComments(body, 0, length, tags, annotations);
                 } else if (type == 3) {
                     readSeekTable(body);
+                } else if (type == 5 && cuesheet == null) {
+                    cuesheet = body;
                 }
                 blocks.write(header[0] & 0x7F);
                 blocks.write(header, 1, 3);

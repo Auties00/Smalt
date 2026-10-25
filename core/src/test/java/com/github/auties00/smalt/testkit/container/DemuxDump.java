@@ -1,5 +1,7 @@
 package com.github.auties00.smalt.testkit.container;
 
+import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.testkit.Dumps;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -18,7 +20,8 @@ import java.util.TreeMap;
 
 /**
  * Writes the readable text form of a demux: the container header (format, duration, seekability,
- * metadata, chapters, attached pictures), one block per track, and one line per packet with its track,
+ * metadata, chapters with their localized titles and nested chapters, the chapter editions when the container
+ * stores more than one plain edition, attached pictures and other attachments, the timecode), one block per track, and one line per packet with its track,
  * timestamps, duration, flags, size, side data and the CRC-32 of its payload, in the spirit of FFmpeg's
  * {@code framecrc} and Media3's extractor dumps.
  *
@@ -43,14 +46,35 @@ public final class DemuxDump {
         text.append("seekable ").append(demuxer.isSeekable()).append('\n');
         appendMap(text, "metadata", "", demuxer.metadata());
         for (var chapter : demuxer.chapters()) {
-            text.append("chapter ").append(chapter.startMicros()).append(' ').append(chapter.endMicros())
-                    .append(chapter.title().map(title -> " " + quote(title)).orElse("")).append('\n');
+            appendChapter(text, "", chapter);
+        }
+        var chapters = demuxer.chapters();
+        var editions = demuxer.chapterEditions();
+        if (!editions.equals(chapters.isEmpty() ? List.of() : List.of(ChapterEdition.of(chapters)))) {
+            for (var edition : editions) {
+                text.append("edition default=").append(edition.defaultEdition()).append(" ordered=")
+                        .append(edition.ordered());
+                for (var name : edition.names()) {
+                    text.append(' ').append(name.language()).append(':').append(quote(name.text()));
+                }
+                text.append('\n');
+                for (var chapter : edition.chapters()) {
+                    appendChapter(text, "  ", chapter);
+                }
+            }
         }
         for (var picture : demuxer.attachedPictures()) {
             text.append("picture ").append(picture.type()).append(' ').append(picture.mediaType()).append(' ')
                     .append(quote(picture.description())).append(" size=").append(picture.size()).append(" crc=")
                     .append(Dumps.crc32(picture.data())).append('\n');
         }
+        for (var attachment : demuxer.attachments()) {
+            text.append("attachment ").append(quote(attachment.fileName())).append(' ').append(attachment.mediaType())
+                    .append(' ').append(quote(attachment.description())).append(" size=").append(attachment.size())
+                    .append(" crc=").append(Dumps.crc32(attachment.data())).append('\n');
+        }
+        demuxer.timecode().ifPresent(timecode -> text.append("timecode ").append(timecode).append(" fps=")
+                .append(timecode.framesPerSecond()).append('\n'));
         for (var track : demuxer.tracks()) {
             appendTrack(text, track);
             appendMap(text, "metadata", "  ", demuxer.trackMetadata(track.id()));
@@ -110,6 +134,18 @@ public final class DemuxDump {
         return lines;
     }
 
+    private static void appendChapter(StringBuilder text, String indent, Chapter chapter) {
+        text.append(indent).append("chapter ").append(chapter.startMicros()).append(' ').append(chapter.endMicros())
+                .append(chapter.title().map(title -> " " + quote(title)).orElse(""));
+        for (var title : chapter.titles()) {
+            text.append(' ').append(title.language()).append(':').append(quote(title.text()));
+        }
+        text.append('\n');
+        for (var child : chapter.children()) {
+            appendChapter(text, indent + "  ", child);
+        }
+    }
+
     private static void appendTrack(StringBuilder text, Track track) {
         text.append("track ").append(track.id()).append(' ').append(track.kind()).append(' ').append(track.codec())
                 .append(" timebase=").append(rational(track.timeBase()))
@@ -125,7 +161,12 @@ public final class DemuxDump {
                 video.frameRate().ifPresent(rate -> text.append(" rate=").append(rational(rate)));
                 video.sampleAspectRatio().ifPresent(sar -> text.append(" sar=").append(rational(sar)));
                 video.interlacing().ifPresent(interlacing -> text.append(" interlacing=").append(interlacing));
+                video.stereoMode().ifPresent(mode -> text.append(" stereo=").append(mode));
                 text.append('\n');
+                video.spherical().ifPresent(spherical -> text.append("  spherical ").append(spherical.projection())
+                        .append(" yaw=").append(spherical.yaw()).append(" pitch=").append(spherical.pitch())
+                        .append(" roll=").append(spherical.roll()).append(" source=")
+                        .append(quote(spherical.metadataSource())).append('\n'));
                 video.color().ifPresent(color -> text.append("  color ").append(color).append('\n'));
             }
             case AudioTrack audio -> {

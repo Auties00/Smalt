@@ -3,7 +3,7 @@ format MATROSKA
 duration 333000
 seekable true
 track 1 VIDEO VP9 timebase=1/1000 duration=333 language=eng config=none
-  video 64x64 orientation=NORMAL
+  video 64x64 orientation=NORMAL stereo=MONO
 packets 10
 0 t1 pts=0 dts=0 dur=? flags=KEY size=347 crc=c3473428
 1 t1 pts=33 dts=33 dur=? flags=- size=25 crc=001337a5

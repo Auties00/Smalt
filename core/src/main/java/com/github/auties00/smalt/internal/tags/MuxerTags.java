@@ -104,7 +104,9 @@ public final class MuxerTags {
      * blocks are kept in order; the {@code VORBIS_COMMENT} block (keeping its vendor string) and
      * the {@code PICTURE} blocks are rebuilt from the tags and follow them, and the {@code PADDING}
      * blocks come last, so that a header whose seek table grows into its padding keeps its length
-     * once tagged. The last block gets the last-block flag.
+     * once tagged. Chapters, besides their {@code CHAPTERxxx} comments, replace the {@code CUESHEET}
+     * with one built from them ({@link FlacCuesheet}) when there are at most
+     * {@value FlacCuesheet#MAX_CHAPTERS}. The last block gets the last-block flag.
      *
      * @param header the {@code fLaC} marker and well-formed metadata blocks
      * @param tags the tags, pictures and chapters to store
@@ -115,11 +117,21 @@ public final class MuxerTags {
         var blocks = new ArrayList<byte[]>();
         var padding = new ArrayList<byte[]>();
         var vendor = VorbisComment.DEFAULT_VENDOR;
+        byte[] cuesheet = null;
+        if (header.length >= 8 + 18 && (header[4] & 0x7F) == 0) {
+            var rate = (ByteArrays.u24be(header, 8 + 10) >>> 4) & 0xFFFFF;
+            var total = ((header[8 + 13] & 0x0FL) << 32) | ByteArrays.u32be(header, 8 + 14);
+            cuesheet = FlacCuesheet.encode(tags.chapters(), rate, total);
+        }
         var offset = 4;
         while (offset + 4 <= header.length) {
             var type = header[offset] & 0x7F;
             var length = ByteArrays.u24be(header, offset + 1);
             var end = Math.min(header.length, offset + 4 + length);
+            if (type == 5 && cuesheet != null) {
+                offset = end;
+                continue;
+            }
             switch (type) {
                 case 1 -> padding.add(withType(1, java.util.Arrays.copyOfRange(header, offset + 4, end)));
                 case 6 -> {
@@ -128,6 +140,9 @@ public final class MuxerTags {
                 default -> blocks.add(withType(type, java.util.Arrays.copyOfRange(header, offset + 4, end)));
             }
             offset = end;
+        }
+        if (cuesheet != null) {
+            blocks.add(withType(5, cuesheet));
         }
         blocks.add(withType(4, VorbisComment.encode(vendor, tags.toBuilder().pictures(List.of()).build(), false)));
         for (var picture : flacPictures(tags)) {
@@ -175,7 +190,7 @@ public final class MuxerTags {
      * @return the three elements in this order, each empty when there is nothing to write
      */
     public static byte[][] matroska(MediaTags tags) {
-        return matroska(tags, List.of());
+        return matroska(tags, List.of(), false);
     }
 
     /**
@@ -184,13 +199,15 @@ public final class MuxerTags {
      *
      * @param tags the tags, pictures and chapters to store
      * @param trackTags the complete {@code Tag} elements of the tracks
+     * @param webm whether the elements are for a WebM file, which stores the chapters in their
+     * {@linkplain MatroskaTags#webmEditions WebM form} and no attachment that is not a picture
      * @return the three elements in this order, each empty when there is nothing to write
      */
-    public static byte[][] matroska(MediaTags tags, List<byte[]> trackTags) {
+    public static byte[][] matroska(MediaTags tags, List<byte[]> trackTags, boolean webm) {
         return new byte[][]{
                 MatroskaTags.encodeTags(tags, trackTags),
-                MatroskaTags.encodeChapters(tags.chapters()),
-                MatroskaTags.encodeAttachments(tags.pictures(), List.of())
+                MatroskaTags.encodeEditions(tags.editions(), webm),
+                MatroskaTags.encodeAttachments(tags.pictures(), webm ? List.of() : tags.attachments(), List.of())
         };
     }
 
@@ -218,21 +235,31 @@ public final class MuxerTags {
     }
 
     /**
-     * Encodes the metadata chunks of a WAV or AIFF file: the text chunks, then an ID3v2 chunk
-     * when the tags hold more than the text chunks can.
+     * Encodes the metadata chunks of a WAV or AIFF file: the text chunks, an ID3v2 chunk when the tags hold
+     * pictures or more than the text chunks can, then the descriptive chunks {@link RiffMetadataChunks} writes
+     * (the Broadcast Wave and sampler chunks and the cue points of a WAV file, the markers and instrument of an
+     * AIFF file), which hold the chapters.
      *
-     * @param tags the tags and pictures to store
+     * @param tags the tags, pictures and chapters to store
      * @param aiff whether the file is AIFF
+     * @param sampleRate the sampling rate of the audio, in hertz, or 0 when unknown, which writes no chapters
      * @return the complete chunks, with headers and pad bytes
+     * @throws IllegalArgumentException if a value of a key of a descriptive chunk is malformed
      */
-    public static List<byte[]> riffChunks(MediaTags tags, boolean aiff) {
+    public static List<byte[]> riffChunks(MediaTags tags, boolean aiff, int sampleRate) {
         var result = new ArrayList<byte[]>();
-        if (isGlobalEmpty(tags)) {
-            return result;
+        var plain = RiffMetadataChunks.withoutOwned(tags, aiff);
+        if (!plain.entries().isEmpty() || !plain.pictures().isEmpty()) {
+            var allText = RiffTagFile.encodeText(aiff, aiff, plain, result, new HashSet<>());
+            if (!allText || !plain.pictures().isEmpty()) {
+                result.add(RiffTagFile.chunk(aiff, aiff ? "ID3 " : "id3 ",
+                        id3v2(plain.toBuilder().chapters(List.of()).build())));
+            }
         }
-        var allText = RiffTagFile.encodeText(aiff, aiff, tags, result, new HashSet<>());
-        if (!allText || !tags.pictures().isEmpty() || !tags.chapters().isEmpty()) {
-            result.add(RiffTagFile.chunk(aiff, aiff ? "ID3 " : "id3 ", id3v2(tags)));
+        if (aiff) {
+            result.addAll(RiffMetadataChunks.encodeMarkers(tags.chapters(), tags, sampleRate));
+        } else {
+            result.addAll(RiffMetadataChunks.waveChunks(tags, true, sampleRate));
         }
         return result;
     }

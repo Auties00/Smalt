@@ -3,6 +3,7 @@
 core/src/test/resources/samples/ac3/ac3.ac3	32322	b3927abe93db8a170f4c0e698f772fc86b3fb974d38d7a2b60511bc19fcc59ce	make-samples.sh
 core/src/test/resources/samples/ac3/eac3.eac3	24240	400d4df66702dc55e5386a0525678c77a1a81992456931e6bb5c0dfe749ec986	make-samples.sh
 core/src/test/resources/samples/adts/aac.aac	16672	402c234b16a46779b820e19712b09b77070920f6299152664757ec5de94fdd29	make-samples.sh
+core/src/test/resources/samples/aiff/markers.aiff	16200	3f7f05851c739cf957c03aa8a16a09dd484f02fd1a3c575d5dbeeb757621e688	make-descriptive-samples.py
 core/src/test/resources/samples/aiff/s24.aiff	79434	ebf14564d8e9bfc6ecd8519f3e880fd48595927c54df40f1132a7d6420a3384c	make-samples.sh
 core/src/test/resources/samples/amr/nb-stereo.amr	6046	d40d1fb20f5dfde8e971710e28170d3ba60472f0cb95962e07d8574f817aef60	make-amr-mc-samples.py
 core/src/test/resources/samples/amr/nb-tags.amr	3496	f988b6243a86c13a5cb39cb622bd3f5428879df3bb52e59fafac4d1436be509d	make-tag-samples.py
@@ -17,9 +18,11 @@ core/src/test/resources/samples/elementary/h263.263	31736	1bbd3e459ac6c382583220
 core/src/test/resources/samples/elementary/h264.h264	31309	5db9e92e8162fa8e37ecab7f699726af7ec8f9864339d4c863ffb87e5bda09c8	make-samples.sh
 core/src/test/resources/samples/elementary/hevc.h265	18756	f173383521ea3912fbc79d4237392bd49d7e9037f3dc4ecbe5b58bbf352182e6	make-samples.sh
 core/src/test/resources/samples/elementary/mpeg4.m4v	48722	fab0246b11352d4b08a0d7b6bba3af4197175065f1e8a13cee68ae0d47f1e0b9	make-samples.sh
+core/src/test/resources/samples/flac/cuesheet.flac	20925	2d20344714a889ebde9731b78362990881e8327df711c8cf5705e7c00fe126d8	make-descriptive-samples.py
 core/src/test/resources/samples/flac/flac.flac	41162	ce6a98f6c7c00d9c83f7937ff762b2397322ded955d980e2c26e02253c82db78	make-samples.sh
 core/src/test/resources/samples/ivf/av1.ivf	15789	183cdc6db1fb06753f9e9b1c1e08d33c22a6d3e450c056fb8f2ed2cf8daa761c	make-samples.sh
 core/src/test/resources/samples/ivf/vp8.ivf	26473	ce9c8209c150f896f751f82167ae8131668b8c5037ff7424776f5284a5e8e32a	make-samples.sh
+core/src/test/resources/samples/matroska/editions.mkv	20004	9f1d4908991bf072a0fbdc88cc9d3e5bdf00dbf28a1bafb316edeaa3fb749b66	make-descriptive-samples.py
 core/src/test/resources/samples/matroska/flac.mka	33512	ac1975ad374f475c70b81e40f222627176b0ac58f054af62142efbaf2b8b1ed0	make-samples.sh
 core/src/test/resources/samples/matroska/h264-opus.mkv	42823	597f618dcacde3dc4964fa011395778eba2c0439c421286d3606510d5db752d2	make-samples.sh
 core/src/test/resources/samples/matroska/pgs.mkv	4842	9e52367bb683df887f5d4c905b3471706ed1d12775a5345d0cd244d185c48334	make-samples.sh, make-bitmap-caption-samples.py
@@ -41,6 +44,7 @@ core/src/test/resources/samples/mp4/moov-last.mp4	45860	f07f29483d40c24ccdbed683
 core/src/test/resources/samples/mp4/motion.mj2	18352	9c3c18eeee3e9fe70749ac0b6671c29d712f7a559d34cf38fe52ff24978976c3	make-mj2-sample.py
 core/src/test/resources/samples/mp4/prores.mov	11125	76b429c682e15e7ea6537ac906d400030dbae4fbf322415798be2633f13ea71c	make-samples.sh
 core/src/test/resources/samples/mp4/quicktime.mov	65138	aa49fbc8e1940cb53ce15527fcb2b4e8f6204f0c628824655c7178227c9001ae	make-samples.sh
+core/src/test/resources/samples/mp4/timecode-spherical.mov	16384	45ecc9d0b26f2948bcbf18aee14ad74dfec237c399b63bb258c5b571cdeda227	make-descriptive-samples.py
 core/src/test/resources/samples/mp4/vobsub.mp4	6344	764945832252bf06f3b6819a9cadcda14147a18adba3f0c9c3d897a10f4d7ded	make-samples.sh, make-bitmap-caption-samples.py
 core/src/test/resources/samples/ogg/chained.ogg	10178	143e9c49ce5401aa9da89334a3f834acebfc9c5b32ff44d8f9c90bbf12f48e01	make-samples.sh
 core/src/test/resources/samples/ogg/flac.oga	34014	35fbcd1131ae0a7cec861958eb461ad41ada8cfe68916840d89af93f1b1959f9	make-samples.sh
@@ -73,6 +77,7 @@ core/src/test/resources/samples/ts/teletext.ts	2068	898068f4e85efb92586d19fbaeb6
 core/src/test/resources/samples/wav/aac-raw.wav	8082	ced6abefd6ca5a8e4e315de9b087bdc5c62fff7eb740031901becf99c426867b	make-wav-samples.py
 core/src/test/resources/samples/wav/ac3.wav	16476	b76cc7668502a43cd91534ccef394cc8a67c247dfa57f76caa2fd9ffbf88c9d1	make-wav-samples.py
 core/src/test/resources/samples/wav/amr.wav	1118	edb864115c08bd6a0cb0919b6b713d359819a44db0e89c20b39c67741a3f228d	make-wav-samples.py
+core/src/test/resources/samples/wav/bext-cue.wav	17034	1a5769f993ed51e70fc7d754af073f5466571a3c93068488258f19969c164da6	make-descriptive-samples.py
 core/src/test/resources/samples/wav/dts.wav	96348	5852e31b5ab4c5455122f40569f691dc30e586528c592b8c7b03a1191023fa82	make-wav-samples.py
 core/src/test/resources/samples/wav/f32.wav	64092	39cb532d4c92aeb26b927aee2c75b25108c8dd14d16a03ff8fca064aa598d7de	make-samples.sh
 core/src/test/resources/samples/wav/flac.wav	32956	82db89a3f894a290b565da374247de11ffa800cbf67e24c8d39a6cb94f91002d	make-wav-samples.py

@@ -8,6 +8,7 @@ import com.github.auties00.smalt.track.TrackDisposition;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -86,6 +87,46 @@ public interface Demuxer extends AutoCloseable {
      */
     default List<Chapter> chapters() {
         return List.of();
+    }
+
+    /**
+     * Returns every chapter edition of the presentation, in container order.
+     *
+     * <p>Only Matroska stores several editions; the chapters of every other container form one edition.
+     * {@link #chapters()} returns the chapters of the {@linkplain ChapterEdition#defaultIndex default} one.
+     *
+     * @implSpec The default implementation returns one edition holding {@link #chapters()}, or none when there are
+     * no chapters.
+     *
+     * @return the editions; unmodifiable
+     */
+    default List<ChapterEdition> chapterEditions() {
+        var chapters = chapters();
+        return chapters.isEmpty() ? List.of() : List.of(ChapterEdition.of(chapters));
+    }
+
+    /**
+     * Returns the files embedded in the container that are not pictures, such as the fonts of
+     * subtitle tracks, in container order.
+     *
+     * @implSpec The default implementation returns an empty list.
+     *
+     * @return the attachments; unmodifiable
+     */
+    default List<Attachment> attachments() {
+        return List.of();
+    }
+
+    /**
+     * Returns the time address the container gives the first frame of the presentation, from a
+     * timecode track or tag.
+     *
+     * @implSpec The default implementation returns an empty optional.
+     *
+     * @return the timecode, or empty when the container declares none
+     */
+    default Optional<Timecode> timecode() {
+        return Optional.empty();
     }
 
     /**

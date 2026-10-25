@@ -62,7 +62,7 @@ VERSION_ARGS = {
     'webpmux': ['-version'], 'img2webp': ['-version'], 'gif2webp': ['-version'], 'webpinfo': ['-version'],
     'cjxl': ['--version'], 'djxl': ['--version'], 'opj_compress': ['-h'], 'opj_decompress': ['-h'], 'opj_dump': ['-h'],
     'cjpeg': ['-version'], 'djpeg': ['-version'], 'jpegtran': ['-version'], 'exiftool': ['-ver'],
-    'flac': ['--version'], 'opusenc': ['--version'], 'opusdec': ['--version'], 'opus_compare': [],
+    'flac': ['--version'], 'metaflac': ['--version'], 'mkvextract': ['--version'], 'opusenc': ['--version'], 'opusdec': ['--version'], 'opus_compare': [],
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
     'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [],
@@ -505,6 +505,8 @@ def build(row, target):
                                                       '-DWITH_OGG=OFF'], env=env)
             build_all(build_dir, target, env)
             shutil.copy2(find_file(build_dir, 'flac' + EXE), executable)
+            shutil.copy2(find_file(build_dir, 'metaflac' + EXE), os.path.join(os.path.dirname(executable),
+                                                                            'metaflac' + EXE))
         elif name == 'libjpeg-turbo':
             tree = source_tree(row, work)
             build_dir = os.path.join(work, 'build')

@@ -150,6 +150,10 @@ class TagVocabularyTest {
             case MATROSKA -> List.of("SORT_WITH", "REPLAYGAIN_GAIN", "REPLAYGAIN_PEAK", "CONDUCTOR", "LYRICIST", "BPM",
                     "ISRC", "MUSICBRAINZ_TRACKID", "MUSICBRAINZ_ALBUMID", "RATING", "DESCRIPTION", "TRACK");
         };
+        if (container.name().equals("wav")) {
+            // a WAV file stores the description in the Description field of its Broadcast Wave chunk
+            names = names.stream().map(name -> name.equals("DESCRIPTION") ? "bext" : name).toList();
+        }
         var text = new String(bytes, StandardCharsets.ISO_8859_1);
         for (var name : names) {
             assertTrue(text.contains(name), name + " missing from " + container);

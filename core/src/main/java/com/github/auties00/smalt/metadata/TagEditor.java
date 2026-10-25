@@ -12,7 +12,7 @@ import java.nio.file.Path;
 import java.util.Objects;
 
 /**
- * Reads and writes the tags, cover art and chapters of audio and video files without touching
+ * Reads and writes the tags, cover art, attachments and chapters of audio and video files without touching
  * their audio or video data.
  *
  * <p>The supported containers and the tag formats they carry:
@@ -25,7 +25,10 @@ import java.util.Objects;
  *       its extended header flags it as an update) and merged into the leading tag on a rewrite;
  *       Lyrics3 blocks are kept, a Lyrics3v1 block only while an ID3v1 tag follows it;</li>
  *   <li>FLAC: the {@code VORBIS_COMMENT} and {@code PICTURE} metadata blocks, reusing the
- *       {@code PADDING} block, and an APE and an ID3v1 tag after the frames;</li>
+ *       {@code PADDING} block, and an APE and an ID3v1 tag after the frames; chapters in
+ *       {@code CHAPTERxxx} comments or, without any, the tracks of a {@code CUESHEET} block (each starting at
+ *       its index point 1), which is kept while the chapters are unchanged and otherwise replaced by one
+ *       built from them;</li>
  *   <li>Ogg Vorbis, Opus and FLAC: the comment header, pictures as
  *       {@code METADATA_BLOCK_PICTURE}, chapters as {@code CHAPTERxxx} comments;</li>
  *   <li>MP4, M4A and MOV: the iTunes {@code ilst} list, with the integer atoms ({@code tmpo},
@@ -36,18 +39,55 @@ import java.util.Objects;
  *       audio and video tracks reference through {@code tref/chap}), which is kept while the
  *       chapters are unchanged and otherwise replaced in the space of the old one. A rewrite that
  *       moves media data past 4 GiB turns the 32-bit chunk offset tables it overflows into 64-bit
- *       ones;</li>
- *   <li>Matroska and WebM: global {@code Tags}, {@code Chapters} and picture
- *       {@code Attachments};</li>
+ *       ones. A {@code timecode} key is stored as a free-form atom, which {@code Mp4Demuxer} reads as the
+ *       timecode of a file without timecode track; the timecode track of a file is kept as it is, and only
+ *       the MP4 muxers write one;</li>
+ *   <li>Matroska and WebM: global {@code Tags}, {@code Chapters} (every edition that is not hidden, with
+ *       its nested chapters and localized titles) and {@code Attachments} (pictures, and the other files as
+ *       {@linkplain MediaTags#attachments() attachments}); edition names raise the {@code DocTypeVersion} of
+ *       a Matroska file to 5, the version of their {@code EditionDisplay} elements. A WebM file is
+ *       written the chapters of the default edition alone, without edition flags or names and keeping only
+ *       the localized titles in ISO 639-2 languages, and gains no attachment that is not a picture, as the
+ *       WebM specification allows none of them;</li>
  *   <li>WAV (RIFF, big-endian RIFX, RF64 and BW64): the {@code LIST/INFO} chunk and an {@code id3 }
  *       chunk, a RIFF file the edit takes past 4 GiB becoming an RF64 file; AIFF: the text chunks and
- *       an {@code ID3 } chunk;</li>
+ *       an {@code ID3 } chunk. The descriptive chunks below are read into their keys and rewritten from them;
+ *       the ID3v2 chapters take precedence over the cue points and markers;</li>
  *   <li>AVI: the {@code LIST INFO} chunk, which stores no pictures or chapters;</li>
  *   <li>MPEG-TS: track tags only (the program map table of the program {@code TsDemuxer} exposes),
  *       so a write holding tags, pictures or chapters for the whole file is rejected; every copy of
  *       the table is rewritten in its own transport packets, and an edit that outgrows them is
  *       rejected.</li>
  * </ul>
+ *
+ * <p>The WAV and AIFF chunks that are not text map to these keys and to the chapters:
+ * <table class="striped">
+ * <caption>Descriptive chunks of WAV and AIFF files</caption>
+ * <thead><tr><th scope="col">Chunk</th><th scope="col">Keys or chapters</th></tr></thead>
+ * <tbody>
+ * <tr><td>WAV {@code bext} (EBU Tech 3285 version 2)</td><td>{@code description}, {@code originator},
+ * {@code originator_reference}, {@code origination_date}, {@code origination_time}, {@code time_reference}
+ * (samples since midnight), {@code umid} ({@code 0x} and the hexadecimal digits of 32 or 64 bytes),
+ * {@code loudness_value}, {@code loudness_range}, {@code max_true_peak_level}, {@code max_momentary_loudness},
+ * {@code max_short_term_loudness} (two decimals) and {@code coding_history}</td></tr>
+ * <tr><td>WAV {@code iXML}, {@code axml}</td><td>{@code ixml}, {@code axml}: the XML text</td></tr>
+ * <tr><td>WAV {@code chna} (ITU-R BS.2088)</td><td>{@code chna}: one line per audio identifier, its track
+ * index, UID, track format and pack format references separated by spaces</td></tr>
+ * <tr><td>WAV {@code smpl}</td><td>{@code smpl:manufacturer}, {@code smpl:product},
+ * {@code smpl:sample_period}, {@code smpl:unity_note}, {@code smpl:pitch_fraction}, {@code smpl:smpte_format},
+ * {@code smpl:smpte_offset} ({@code HH:MM:SS:FF}) and one {@code smpl:loop} per loop (cue point identifier,
+ * type, start, end, fraction and play count)</td></tr>
+ * <tr><td>WAV {@code cue } and {@code LIST adtl}</td><td>the chapters: one cue point each, titled by a
+ * {@code labl} entry and lasting the length of an {@code ltxt} region (or until the next cue point)</td></tr>
+ * <tr><td>AIFF {@code MARK}</td><td>the chapters: one marker each, named by its title, lasting until the next
+ * one</td></tr>
+ * <tr><td>AIFF {@code INST}</td><td>{@code inst:base_note}, {@code inst:detune}, {@code inst:low_note},
+ * {@code inst:high_note}, {@code inst:low_velocity}, {@code inst:high_velocity}, {@code inst:gain} and
+ * {@code inst:sustain_loop} and {@code inst:release_loop} (play mode and the sample positions of the two loop
+ * markers, which are not chapters)</td></tr>
+ * <tr><td>AIFF {@code COMT}</td><td>{@code comment} values, written back as {@code ANNO} chunks</td></tr>
+ * </tbody>
+ * </table>
  *
  * <p>In MP4, Matroska, AVI and MPEG-TS files the {@linkplain MediaTags#tracks() track tags} of every
  * track are read too, and a write replaces the name, tags and dispositions of each track the written
@@ -58,7 +98,7 @@ import java.util.Objects;
  * fits the space the old one used (padding included), only the metadata bytes are rewritten in
  * place; otherwise the file is streamed to a temporary file with fresh padding, which then
  * replaces it. Items {@link MediaTags} cannot represent, such as binary ID3v2 frames or
- * non-picture Matroska attachments, are kept unless
+ * Matroska attachments without a name or media type, are kept unless
  * {@link TagWriteOptions#preserveUnknown()} is off.
  *
  * <p>When a file holds tags of several formats, a read takes each key from the first format that

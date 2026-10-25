@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.Languages;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
+import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.ChromaSiting;
 import com.github.auties00.smalt.image.Chromaticity;
@@ -27,6 +28,8 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.SphericalVideo;
+import com.github.auties00.smalt.track.StereoMode;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -185,9 +188,19 @@ final class MatroskaTrackEntry {
     ColorInfo color;
 
     /**
-     * The display orientation of the {@code Projection} roll.
+     * The display orientation of the {@code Projection} roll of a rectangular projection.
      */
     Orientation orientation = Orientation.NORMAL;
+
+    /**
+     * The spherical projection of a {@code Projection} of another type, or {@code null}.
+     */
+    SphericalVideo spherical;
+
+    /**
+     * The {@code StereoMode}, or {@code null} when absent or unknown.
+     */
+    StereoMode stereoMode;
 
     /**
      * The {@code SamplingFrequency} in hertz.
@@ -318,22 +331,57 @@ final class MatroskaTrackEntry {
                 case EbmlIds.FIELD_ORDER -> fieldOrder = body.unsigned();
                 case EbmlIds.COLOUR_SPACE -> colourSpace = body.bytes();
                 case EbmlIds.COLOR -> color = parseColor(body);
-                case EbmlIds.PROJECTION -> {
-                    while (body.hasMore()) {
-                        var child = body.next();
-                        if (child.id() == EbmlIds.PROJECTION_POSE_ROLL) {
-                            var roll = child.payload().floating();
-                            if (Double.isFinite(roll)) {
-                                // the roll is counter-clockwise, the orientation clockwise
-                                orientation = Orientation.ofRotation((int) Math.round(-roll), false);
-                            }
-                        }
-                    }
+                case EbmlIds.PROJECTION -> parseProjection(body);
+                case EbmlIds.STEREO_MODE -> {
+                    var mode = body.unsigned();
+                    stereoMode = mode >= 0 && mode <= 14 ? StereoMode.ofCode(mode) : null;
                 }
                 default -> {
                 }
             }
         }
+    }
+
+    /**
+     * Parses a {@code Projection} element: the roll of a rectangular projection becomes the orientation, and the
+     * other projections, with their private data and pose, the spherical projection. A missing private data reads
+     * as zero bytes, except for a mesh projection; a projection whose private data or pose is invalid is ignored.
+     *
+     * @param projection the element data
+     */
+    private void parseProjection(EbmlCursor projection) {
+        var type = 0L;
+        byte[] payload = null;
+        var yaw = 0.0;
+        var pitch = 0.0;
+        var roll = 0.0;
+        while (projection.hasMore()) {
+            var child = projection.next();
+            var body = child.payload();
+            switch ((int) child.id()) {
+                case EbmlIds.PROJECTION_TYPE -> type = body.unsigned();
+                case EbmlIds.PROJECTION_PRIVATE -> payload = body.bytes();
+                case EbmlIds.PROJECTION_POSE_YAW -> yaw = body.floating();
+                case EbmlIds.PROJECTION_POSE_PITCH -> pitch = body.floating();
+                case EbmlIds.PROJECTION_POSE_ROLL -> roll = body.floating();
+                default -> {
+                }
+            }
+        }
+        if (type == 0) {
+            if (Double.isFinite(roll)) {
+                // the roll is counter-clockwise, the orientation clockwise
+                orientation = Orientation.ofRotation((int) Math.round(-roll), false);
+            }
+            return;
+        }
+        if (payload == null && type != SphericalBoxes.MESH) {
+            // Spherical Video V2 reads a missing ProjectionPrivate as 20 zero bytes: a full equirectangular
+            // projection, or a cubemap of the default layout without padding
+            payload = new byte[20];
+        }
+        var shape = payload == null ? null : SphericalBoxes.parse(type, payload, 0, payload.length);
+        spherical = SphericalBoxes.spherical(shape, yaw, pitch, roll, "");
     }
 
     /**
@@ -653,6 +701,12 @@ final class MatroskaTrackEntry {
             var scan = interlacing();
             if (scan != null) {
                 builder.interlacing(scan);
+            }
+            if (spherical != null) {
+                builder.spherical(spherical);
+            }
+            if (stereoMode != null) {
+                builder.stereoMode(stereoMode);
             }
             return builder.build();
         }

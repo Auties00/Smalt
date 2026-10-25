@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.metadata;
 
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.container.ChapterEdition;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -16,7 +18,7 @@ import java.util.Set;
 
 /**
  * Holds the descriptive metadata of an audio or video file: text tags, attached pictures such as
- * cover art, chapters, and the names, tags and dispositions of its tracks.
+ * cover art, other attached files, chapters, and the names, tags and dispositions of its tracks.
  *
  * <p>Tags are an ordered list of {@link Entry key-value entries}; a key may repeat, which is how
  * multi-valued tags (several artists, several genres) are represented. Keys are normalized when
@@ -31,6 +33,10 @@ import java.util.Set;
  * other keys in the format's free-form slot (ID3v2 {@code TXXX}, a Vorbis comment field, an MP4
  * {@code ----} atom, a Matroska {@code SimpleTag}).
  *
+ * <p>Chapters are grouped in {@linkplain #editions() editions}; {@link #chapters()} returns those of the
+ * default one, and the writers of formats that store a single edition write those. Only Matroska stores
+ * several editions and the {@linkplain #attachments() attachments} that are not pictures.
+ *
  * <p>The {@linkplain #tracks() track tags} describe single tracks of a container, each identified by
  * the {@link com.github.auties00.smalt.track.Track#id() identifier} its demuxer reports; {@link TrackTags} lists
  * what each container stores. A file of a format without track metadata has none, and its writers ignore them.
@@ -44,7 +50,7 @@ public final class MediaTags {
     /**
      * An instance with no tag, picture or chapter.
      */
-    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of(), List.of());
+    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of(), List.of(), List.of());
 
     /**
      * The separator {@link #asMap()} joins repeated values with.
@@ -62,7 +68,17 @@ public final class MediaTags {
     private final List<AttachedPicture> pictures;
 
     /**
-     * The chapters, in start order.
+     * The attachments that are not pictures, in order.
+     */
+    private final List<Attachment> attachments;
+
+    /**
+     * The chapter editions, in order.
+     */
+    private final List<ChapterEdition> editions;
+
+    /**
+     * The chapters of the default edition, in start order.
      */
     private final List<Chapter> chapters;
 
@@ -76,17 +92,35 @@ public final class MediaTags {
      *
      * @param entries the tag entries
      * @param pictures the attached pictures
-     * @param chapters the chapters in start order
+     * @param attachments the attachments that are not pictures
+     * @param editions the chapter editions; the top-level chapters of those that are not ordered are sorted by start
      * @param tracks the track tags, one per track identifier
      */
-    private MediaTags(List<Entry> entries, List<AttachedPicture> pictures, List<Chapter> chapters,
-                      List<TrackTags> tracks) {
+    private MediaTags(List<Entry> entries, List<AttachedPicture> pictures, List<Attachment> attachments,
+                      List<ChapterEdition> editions, List<TrackTags> tracks) {
         this.entries = List.copyOf(entries);
         this.pictures = List.copyOf(pictures);
+        this.attachments = List.copyOf(attachments);
+        var normalized = new ArrayList<ChapterEdition>(editions.size());
+        for (var edition : editions) {
+            normalized.add(edition.ordered() ? edition : edition.withChapters(sorted(edition.chapters())));
+        }
+        this.editions = List.copyOf(normalized);
+        var index = ChapterEdition.defaultIndex(this.editions);
+        this.chapters = index < 0 ? List.of() : sorted(this.editions.get(index).chapters());
+        this.tracks = List.copyOf(tracks);
+    }
+
+    /**
+     * Sorts chapters by start, keeping the order of those that start together.
+     *
+     * @param chapters the chapters to sort
+     * @return the sorted chapters; unmodifiable
+     */
+    private static List<Chapter> sorted(List<Chapter> chapters) {
         var sorted = new ArrayList<>(chapters);
         sorted.sort((first, second) -> Long.compare(first.startMicros(), second.startMicros()));
-        this.chapters = List.copyOf(sorted);
-        this.tracks = List.copyOf(tracks);
+        return List.copyOf(sorted);
     }
 
     /**
@@ -116,7 +150,8 @@ public final class MediaTags {
         var builder = new Builder();
         builder.entries.addAll(entries);
         builder.pictures.addAll(pictures);
-        builder.chapters.addAll(chapters);
+        builder.attachments.addAll(attachments);
+        builder.editions.addAll(editions);
         builder.tracks.addAll(tracks);
         return builder;
     }
@@ -290,12 +325,31 @@ public final class MediaTags {
     }
 
     /**
-     * Returns the chapters in start order.
+     * Returns the attached files that are not pictures, such as fonts.
      *
-     * @return the chapters; unmodifiable
+     * @return the attachments in order; unmodifiable
+     */
+    public List<Attachment> attachments() {
+        return attachments;
+    }
+
+    /**
+     * Returns the chapters of the {@linkplain ChapterEdition#defaultIndex default edition}, in start order.
+     *
+     * @return the chapters; unmodifiable, empty without editions
      */
     public List<Chapter> chapters() {
         return chapters;
+    }
+
+    /**
+     * Returns the chapter editions, in order; the top-level chapters of an edition that is not
+     * {@linkplain ChapterEdition#ordered() ordered} are in start order.
+     *
+     * @return the editions; unmodifiable
+     */
+    public List<ChapterEdition> editions() {
+        return editions;
     }
 
     /**
@@ -323,29 +377,31 @@ public final class MediaTags {
     }
 
     /**
-     * Returns whether this instance holds no tag, picture, chapter or track tags.
+     * Returns whether this instance holds no tag, picture, attachment, chapter edition or track tags.
      *
      * @return {@code true} when empty
      */
     public boolean isEmpty() {
-        return entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty() && tracks.isEmpty();
+        return entries.isEmpty() && pictures.isEmpty() && attachments.isEmpty() && editions.isEmpty()
+                && tracks.isEmpty();
     }
 
     @Override
     public boolean equals(Object other) {
         return other instanceof MediaTags that && entries.equals(that.entries) && pictures.equals(that.pictures)
-                && chapters.equals(that.chapters) && tracks.equals(that.tracks);
+                && attachments.equals(that.attachments) && editions.equals(that.editions)
+                && tracks.equals(that.tracks);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(entries, pictures, chapters, tracks);
+        return Objects.hash(entries, pictures, attachments, editions, tracks);
     }
 
     @Override
     public String toString() {
-        return "MediaTags[entries=" + entries + ", pictures=" + pictures + ", chapters=" + chapters + ", tracks="
-                + tracks + "]";
+        return "MediaTags[entries=" + entries + ", pictures=" + pictures + ", attachments=" + attachments
+                + ", editions=" + editions + ", tracks=" + tracks + "]";
     }
 
     /**
@@ -400,9 +456,14 @@ public final class MediaTags {
         private final List<AttachedPicture> pictures = new ArrayList<>();
 
         /**
-         * The chapters.
+         * The attachments.
          */
-        private final List<Chapter> chapters = new ArrayList<>();
+        private final List<Attachment> attachments = new ArrayList<>();
+
+        /**
+         * The chapter editions.
+         */
+        private final List<ChapterEdition> editions = new ArrayList<>();
 
         /**
          * The track tags.
@@ -509,7 +570,7 @@ public final class MediaTags {
         }
 
         /**
-         * Removes every tag entry, keeping pictures, chapters and track tags.
+         * Removes every tag entry, keeping pictures, attachments, chapters and track tags.
          *
          * @return this builder
          */
@@ -544,18 +605,54 @@ public final class MediaTags {
         }
 
         /**
-         * Appends a chapter.
+         * Appends an attachment.
+         *
+         * @param attachment the attachment to append
+         * @return this builder
+         */
+        public Builder addAttachment(Attachment attachment) {
+            attachments.add(Objects.requireNonNull(attachment, "attachment"));
+            return this;
+        }
+
+        /**
+         * Replaces every attachment.
+         *
+         * @param attachments the attachments, in order
+         * @return this builder
+         * @throws NullPointerException if an attachment is {@code null}
+         */
+        public Builder attachments(List<Attachment> attachments) {
+            var copy = List.copyOf(attachments);
+            this.attachments.clear();
+            this.attachments.addAll(copy);
+            return this;
+        }
+
+        /**
+         * Appends a chapter to the {@linkplain ChapterEdition#defaultIndex default edition}, creating an edition
+         * when there is none.
          *
          * @param chapter the chapter to append
          * @return this builder
          */
         public Builder addChapter(Chapter chapter) {
-            chapters.add(Objects.requireNonNull(chapter, "chapter"));
+            Objects.requireNonNull(chapter, "chapter");
+            var index = ChapterEdition.defaultIndex(editions);
+            if (index < 0) {
+                editions.add(ChapterEdition.of(List.of(chapter)));
+            } else {
+                var edition = editions.get(index);
+                var chapters = new ArrayList<>(edition.chapters());
+                chapters.add(chapter);
+                editions.set(index, edition.withChapters(chapters));
+            }
             return this;
         }
 
         /**
-         * Replaces every chapter.
+         * Replaces every chapter edition with one edition holding these chapters, or with none when the list is
+         * empty.
          *
          * @param chapters the chapters, in any order
          * @return this builder
@@ -563,8 +660,24 @@ public final class MediaTags {
          */
         public Builder chapters(List<Chapter> chapters) {
             var copy = List.copyOf(chapters);
-            this.chapters.clear();
-            this.chapters.addAll(copy);
+            this.editions.clear();
+            if (!copy.isEmpty()) {
+                this.editions.add(ChapterEdition.of(copy));
+            }
+            return this;
+        }
+
+        /**
+         * Replaces every chapter edition.
+         *
+         * @param editions the editions, in order
+         * @return this builder
+         * @throws NullPointerException if an edition is {@code null}
+         */
+        public Builder editions(List<ChapterEdition> editions) {
+            var copy = List.copyOf(editions);
+            this.editions.clear();
+            this.editions.addAll(copy);
             return this;
         }
 
@@ -614,14 +727,15 @@ public final class MediaTags {
         }
 
         /**
-         * Removes every entry, picture, chapter and track tags.
+         * Removes every entry, picture, attachment, chapter edition and track tags.
          *
          * @return this builder
          */
         public Builder clear() {
             entries.clear();
             pictures.clear();
-            chapters.clear();
+            attachments.clear();
+            editions.clear();
             tracks.clear();
             return this;
         }
@@ -632,10 +746,11 @@ public final class MediaTags {
          * @return the tags
          */
         public MediaTags build() {
-            if (entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty() && tracks.isEmpty()) {
+            if (entries.isEmpty() && pictures.isEmpty() && attachments.isEmpty() && editions.isEmpty()
+                    && tracks.isEmpty()) {
                 return EMPTY;
             }
-            return new MediaTags(entries, pictures, chapters, tracks);
+            return new MediaTags(entries, pictures, attachments, editions, tracks);
         }
     }
 }

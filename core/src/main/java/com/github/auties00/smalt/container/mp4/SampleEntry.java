@@ -13,6 +13,7 @@ import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
@@ -27,9 +28,12 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.SphericalVideo;
+import com.github.auties00.smalt.track.StereoMode;
 import com.github.auties00.smalt.track.TrackKind;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -57,6 +61,10 @@ import java.util.List;
  * @param sampleAspect the sample aspect ratio of a visual entry ({@code pasp}), or {@code null} without a valid
  * {@code pasp} box
  * @param interlacing the scan of a visual entry (QuickTime {@code fiel}), or {@code null} without a {@code fiel} box
+ * @param spherical the spherical projection of a visual entry (Spherical Video V2 {@code sv3d}), or {@code null}
+ * without a valid {@code sv3d} box
+ * @param stereoMode the stereo mode of a visual entry (Spherical Video V2 {@code st3d}), or {@code null} without a
+ * valid {@code st3d} box
  * @param channels the channel count of an audio entry, or {@code 0}
  * @param sampleRate the sampling rate of an audio entry in hertz, or {@code 0}
  * @param layout the declared channel layout of an audio entry, or {@code null}
@@ -64,8 +72,8 @@ import java.util.List;
  * @param frameBytes the size of one PCM frame (one sample of every channel), or {@code 0}
  */
 record SampleEntry(int format, Codec codec, byte[] config, int width, int height, ColorInfo color,
-                   Rational sampleAspect, Interlacing interlacing, int channels, int sampleRate, ChannelLayout layout,
-                   int bitsPerSample, int frameBytes) {
+                   Rational sampleAspect, Interlacing interlacing, SphericalVideo spherical, StereoMode stereoMode,
+                   int channels, int sampleRate, ChannelLayout layout, int bitsPerSample, int frameBytes) {
     /**
      * The size of the fields of a visual sample entry that precede its child boxes.
      */
@@ -281,8 +289,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * @return the modified description
      */
     SampleEntry withCodec(Codec replacement) {
-        return new SampleEntry(format, replacement, config, width, height, color, sampleAspect, interlacing, channels,
-                sampleRate, layout, bitsPerSample, frameBytes);
+        return new SampleEntry(format, replacement, config, width, height, color, sampleAspect, interlacing, spherical,
+                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes);
     }
 
     /**
@@ -292,8 +300,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * @return the modified description
      */
     SampleEntry withConfig(byte[] replacement) {
-        return new SampleEntry(format, codec, replacement, width, height, color, sampleAspect, interlacing, channels,
-                sampleRate, layout, bitsPerSample, frameBytes);
+        return new SampleEntry(format, codec, replacement, width, height, color, sampleAspect, interlacing, spherical,
+                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes);
     }
 
     /**
@@ -347,6 +355,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         ContentLightLevel lightLevel = null;
         Rational sampleAspect = null;
         Interlacing interlacing = null;
+        SphericalVideo spherical = null;
+        StereoMode stereoMode = null;
         ByteArrayOutputStream avid = null;
         for (var box : children(payload)) {
             var body = box;
@@ -373,6 +383,12 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 case BoxTypes.CLLI -> lightLevel = parseLightLevel(body);
                 case BoxTypes.PASP -> sampleAspect = parseAspect(body);
                 case BoxTypes.FIEL -> interlacing = parseFields(body);
+                case BoxTypes.ST3D -> {
+                    if (body.remaining() >= 5 && body.fullBoxHeader() >>> 24 == 0) {
+                        stereoMode = SphericalBoxes.stereoMode(body.u8());
+                    }
+                }
+                case BoxTypes.SV3D -> spherical = parseSpherical(body);
                 default -> {
                     if (CodecConfigs.isAvidExtension(box.type())) {
                         if (avid == null) {
@@ -461,7 +477,51 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 }
             }
         }
-        return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, 0, 0, null, 0, 0);
+        return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, spherical,
+                stereoMode, 0, 0, null, 0, 0);
+    }
+
+    /**
+     * Parses a Spherical Video V2 {@code sv3d} box: the metadata source of its {@code svhd} box and the pose and
+     * projection of its {@code proj} box.
+     *
+     * @param body the box payload
+     * @return the projection, or {@code null} when the box has no {@code proj} box with a known projection, or a
+     * pose out of range
+     */
+    private static SphericalVideo parseSpherical(BoxCursor body) {
+        var source = "";
+        SphericalVideo.Projection projection = null;
+        var pose = new int[3];
+        for (var child : children(body)) {
+            if (child.type() == BoxTypes.SVHD && child.remaining() >= 4 && child.fullBoxHeader() >>> 24 == 0) {
+                var bytes = child.rest();
+                var length = 0;
+                while (length < bytes.length && bytes[length] != 0) {
+                    length++;
+                }
+                source = new String(bytes, 0, length, StandardCharsets.UTF_8);
+            } else if (child.type() == BoxTypes.PROJ) {
+                for (var part : children(child)) {
+                    var type = switch (part.type()) {
+                        case BoxTypes.EQUI -> SphericalBoxes.EQUIRECTANGULAR;
+                        case BoxTypes.CBMP -> SphericalBoxes.CUBEMAP;
+                        case BoxTypes.MSHP -> SphericalBoxes.MESH;
+                        default -> 0;
+                    };
+                    if (part.type() == BoxTypes.PRHD && part.remaining() >= 16 && part.fullBoxHeader() >>> 24 == 0) {
+                        pose[0] = part.s32();
+                        pose[1] = part.s32();
+                        pose[2] = part.s32();
+                    } else if (type != 0 && projection == null) {
+                        var bytes = part.rest();
+                        projection = SphericalBoxes.parse(type, bytes, 0, bytes.length);
+                    }
+                }
+            }
+        }
+        return SphericalBoxes.spherical(projection, SphericalBoxes.degrees(pose[0]), SphericalBoxes.degrees(pose[1]),
+                SphericalBoxes.degrees(pose[2]), source);
     }
 
     /**
@@ -822,7 +882,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (frameBytes == 0 && bytesPerFrame > 0 && codec.isPcm()) {
             frameBytes = bytesPerFrame;
         }
-        return new SampleEntry(format, codec, config, 0, 0, null, null, null, channels, sampleRate, layout, bits,
+        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, channels, sampleRate, layout,
+                bits,
                 frameBytes);
     }
 
@@ -898,7 +959,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             default -> Codec.DATA;
         };
         if (codec == Codec.CEA_608 || codec == Codec.CEA_708) {
-            return new SampleEntry(format, codec, null, 0, 0, null, null, null, 0, 0, null, 0, 0);
+            return new SampleEntry(format, codec, null, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0);
         }
         if (payload.remaining() > 8) {
             payload.skip(8);
@@ -915,7 +976,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 if (codec != Codec.DVD_SUBTITLE) {
                     config = null;
                 }
-                return new SampleEntry(format, codec, config, 0, 0, null, null, null, 0, 0, null, 0, 0);
+                return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0);
             }
             if (codec == Codec.WEBVTT) {
                 for (var child : children(payload)) {
@@ -932,7 +993,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (codec == Codec.TTML && (config == null || TtmlEntries.problem(config) != null)) {
             codec = Codec.DATA;
         }
-        return new SampleEntry(format, codec, config, 0, 0, null, null, null, 0, 0, null, 0, 0);
+        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0);
     }
 
     /**

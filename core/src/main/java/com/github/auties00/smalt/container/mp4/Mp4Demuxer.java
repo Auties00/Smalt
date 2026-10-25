@@ -7,9 +7,11 @@ import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.Timecode;
 import com.github.auties00.smalt.container.internal.AacExtensions;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.internal.SeekTimes;
+import com.github.auties00.smalt.container.internal.TimecodeTags;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.heif.DataReferences;
@@ -51,6 +53,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -176,7 +179,14 @@ import java.util.Set;
  * Nero {@code chpl} box or, without one, from the first QuickTime chapter text track a track
  * references through {@code tref}/{@code chap}, whose samples hold the titles; the chapter track
  * is also preferred when it completes the chapters or titles a full {@code chpl} box had to cut
- * (255 chapters, 255-byte titles). Seeking uses the
+ * (255 chapters, 255-byte titles). The first QuickTime timecode track ({@code tmcd} handler and sample entry)
+ * gives {@link #timecode()}: the frame number of its first sample, counted at the nominal rate and with the
+ * drop-frame flag of its sample entry (a counter track gives none); the track itself is a data track. Without
+ * such a track, a {@code timecode} iTunes item gives it, counted at the first video track's frame rate rounded
+ * up (at 30 frames per second for a drop-frame address when there is no rate). A visual
+ * sample entry's Spherical Video V2 {@code st3d} and {@code sv3d} boxes give the track's
+ * {@link com.github.auties00.smalt.track.VideoTrack#stereoMode() stereo mode} and
+ * {@link com.github.auties00.smalt.track.VideoTrack#spherical() spherical projection}. Seeking uses the
  * sample index, as {@link #seek(long)} describes.
  *
  * <p>A source that is not in memory is read forwards as far as the layout allows: a file whose
@@ -334,6 +344,11 @@ public final class Mp4Demuxer implements Demuxer {
      * The cover pictures of the {@code covr} items.
      */
     private final List<AttachedPicture> pictures;
+
+    /**
+     * The timecode of the first timecode track, or {@code null}.
+     */
+    private final Timecode timecode;
 
     /**
      * The end of the furthest sample, past which the read-ahead window never reads.
@@ -623,6 +638,9 @@ public final class Mp4Demuxer implements Demuxer {
                 this.chapters = completeNeroChapters(annotations.chapters(durationMicros));
             }
             this.pictures = annotations.pictures();
+            var tracked = readTimecode();
+            this.timecode = tracked != null ? tracked : TimecodeTags.parse(TimecodeTags.lookup(metadata,
+                    "timecode"), TimecodeTags.firstVideo(tracks));
             this.mixedSources = Arrays.stream(active).anyMatch(Mp4Demuxer::hasMixedSources);
             rewind();
         } catch (RuntimeException exception) {
@@ -792,6 +810,41 @@ public final class Mp4Demuxer implements Demuxer {
     @Override
     public List<AttachedPicture> attachedPictures() {
         return pictures;
+    }
+
+    @Override
+    public Optional<Timecode> timecode() {
+        return Optional.ofNullable(timecode);
+    }
+
+    /**
+     * Reads the timecode of the first QuickTime timecode track: the frame number of its first sample, counted as
+     * its {@code tmcd} sample entry describes.
+     *
+     * @return the timecode, or {@code null} when there is no timecode track with a readable first sample
+     */
+    private Timecode readTimecode() {
+        for (var track : allTracks) {
+            if (track.handler != BoxTypes.TMCD || track.entries == null || track.entries.length == 0
+                    || track.entries[0] == null || track.entries[0].format() != BoxTypes.TMCD
+                    || track.samples.count == 0) {
+                continue;
+            }
+            var size = track.samples.sizes[0];
+            if (size < 4 || size > 64) {
+                continue;
+            }
+            var sample = new byte[size];
+            var from = Objects.requireNonNullElse(sourceOf(track, 0), source);
+            if (SourceBytes.readAvailable(from, track.samples.offsets[0], sample, 0, size) < size) {
+                continue;
+            }
+            var timecode = TimecodeTrack.read(track.entries[0].config(), sample);
+            if (timecode != null) {
+                return timecode;
+            }
+        }
+        return null;
     }
 
     /**

@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
+import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
@@ -20,6 +21,7 @@ import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
 import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.internal.tags.Ebml;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
+import com.github.auties00.smalt.internal.tags.MatroskaTags;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.MediaTags;
@@ -32,6 +34,8 @@ import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.track.SphericalVideo;
+import com.github.auties00.smalt.track.StereoMode;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
@@ -112,7 +116,11 @@ import java.util.Set;
  * {@code DisplayHeight} of a video track with a declared
  * {@link VideoTrack#sampleAspectRatio() sample aspect ratio} (in pixels with the coded height when
  * the stretched width is a whole number, otherwise as a display aspect ratio, {@code DisplayUnit}
- * 3), and the sampling frequency, channel count and (for PCM) bit depth of an audio track. An audio
+ * 3), the {@code StereoMode} of a video track with a declared {@link VideoTrack#stereoMode() stereo mode}
+ * (in WebM only the mono, side by side and top-bottom modes the WebM specification allows),
+ * the {@code Projection} of a video track with a {@link VideoTrack#spherical() spherical projection} (its
+ * type, the payload of its Spherical Video V2 box as {@code ProjectionPrivate} and its pose), and the
+ * sampling frequency, channel count and (for PCM) bit depth of an audio track. An audio
  * track's {@link AudioTrack#skipSamples()} becomes its {@code CodecDelay}; Opus stores its pre-skip there
  * instead, with an 80 ms {@code SeekPreRoll}.
  * The {@code Colour} element holds the matrix, range, transfer characteristics and primaries, the
@@ -635,12 +643,16 @@ public final class MatroskaMuxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The title becomes the segment title of {@code Info}, replacing the configured one; the
-     * other tags become a {@code Tags} element, the chapters a {@code Chapters} element and the
-     * pictures {@code Attachments} (the first front cover named {@code cover.*}), all written
+     * other tags become a {@code Tags} element, the chapter editions a {@code Chapters} element (nested
+     * chapters and localized titles included; an edition's names make a Matroska file declare
+     * {@code DocTypeVersion} 5, the version of their {@code EditionDisplay} elements) and the pictures
+     * (the first front cover named {@code cover.*}) and the other attachments {@code Attachments}, all written
      * after {@code Tracks} and indexed by the {@code SeekHead}. The tags of a declared track
      * become its {@code Name} (the title), its flag elements (the dispositions, replacing those
      * of {@link #addTrack(Track, Set)}) and a {@code Tag} targeting its {@code TrackUID} (the other
-     * entries).
+     * entries). A WebM file stores the default edition alone, without edition flags or names and keeping
+     * only the localized titles in ISO 639-2 languages, and no attachment that is not a picture, as the WebM
+     * specification allows none of them.
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -668,7 +680,8 @@ public final class MatroskaMuxer implements Muxer {
                 trackTags.add(MuxerTags.matroskaTrackTag(uid(state.number), entries));
             }
         }
-        var encoded = MuxerTags.matroska(tags.toBuilder().remove(StandardTag.TITLE).build(), trackTags);
+        var encoded = MuxerTags.matroska(tags.toBuilder().remove(StandardTag.TITLE).build(), trackTags,
+                options.docType() == MatroskaDocType.WEBM);
         this.metadata = new byte[][]{encoded[1], encoded[2], encoded[0]};
     }
 
@@ -1022,7 +1035,8 @@ public final class MatroskaMuxer implements Muxer {
         header.unsigned(EbmlIds.EBML_MAX_ID_LENGTH, 4);
         header.unsigned(EbmlIds.EBML_MAX_SIZE_LENGTH, 8);
         header.string(EbmlIds.DOC_TYPE, options.docType() == MatroskaDocType.WEBM ? "webm" : "matroska");
-        header.unsigned(EbmlIds.DOC_TYPE_VERSION, 4);
+        header.unsigned(EbmlIds.DOC_TYPE_VERSION, options.docType() == MatroskaDocType.WEBM ? 4
+                : MatroskaTags.docTypeVersion(tags.editions()));
         header.unsigned(EbmlIds.DOC_TYPE_READ_VERSION, 2);
         header.end();
         header.id(EbmlIds.SEGMENT);
@@ -2064,10 +2078,13 @@ public final class MatroskaMuxer implements Muxer {
                         out.unsigned(EbmlIds.FIELD_ORDER, scan.code());
                     }
                 });
+                videoTrack.stereoMode().filter(mode -> options.docType() != MatroskaDocType.WEBM || webmStereo(mode))
+                        .ifPresent(mode -> out.unsigned(EbmlIds.STEREO_MODE, mode.code()));
                 out.unsigned(EbmlIds.PIXEL_WIDTH, videoTrack.width());
                 out.unsigned(EbmlIds.PIXEL_HEIGHT, videoTrack.height());
                 videoTrack.sampleAspectRatio().ifPresent(aspect -> writeDisplaySize(out, videoTrack, aspect));
                 videoTrack.color().ifPresent(color -> writeColor(out, color));
+                videoTrack.spherical().ifPresent(spherical -> writeProjection(out, spherical));
                 out.end();
             } else if (!sparse) {
                 if (aacFrameSamples > 0) {
@@ -2082,6 +2099,44 @@ public final class MatroskaMuxer implements Muxer {
                     out.unsigned(EbmlIds.BIT_DEPTH, track.codec().pcmBitsPerSample().orElseThrow());
                 }
                 out.end();
+            }
+            out.end();
+        }
+
+        /**
+         * Returns whether a WebM file can store a stereo mode: mono, the two side by side and the two top-bottom
+         * packings.
+         *
+         * @param mode the stereo mode
+         * @return {@code true} when the WebM {@code StereoMode} element accepts it
+         */
+        private static boolean webmStereo(StereoMode mode) {
+            return switch (mode) {
+                case MONO, SIDE_BY_SIDE_LEFT_FIRST, SIDE_BY_SIDE_RIGHT_FIRST, TOP_BOTTOM_LEFT_FIRST,
+                     TOP_BOTTOM_RIGHT_FIRST -> true;
+                default -> false;
+            };
+        }
+
+        /**
+         * Writes the {@code Projection} element of a spherical projection: its type, the payload of its
+         * Spherical Video V2 box as {@code ProjectionPrivate}, and the angles of its pose that are not zero.
+         *
+         * @param out the destination, inside the {@code Video} element
+         * @param spherical the projection
+         */
+        private static void writeProjection(EbmlOutput out, SphericalVideo spherical) {
+            out.begin(EbmlIds.PROJECTION);
+            out.unsigned(EbmlIds.PROJECTION_TYPE, SphericalBoxes.type(spherical.projection()));
+            out.binary(EbmlIds.PROJECTION_PRIVATE, SphericalBoxes.payload(spherical.projection()));
+            if (spherical.yaw() != 0) {
+                out.floating(EbmlIds.PROJECTION_POSE_YAW, spherical.yaw());
+            }
+            if (spherical.pitch() != 0) {
+                out.floating(EbmlIds.PROJECTION_POSE_PITCH, spherical.pitch());
+            }
+            if (spherical.roll() != 0) {
+                out.floating(EbmlIds.PROJECTION_POSE_ROLL, spherical.roll());
             }
             out.end();
         }

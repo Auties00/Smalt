@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.Timecode;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.caption.QuickTimeCaptions;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
@@ -16,6 +17,7 @@ import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -104,6 +106,11 @@ public final class Mp4Muxer implements Muxer {
     private static final long U32_MAX = 0xFFFFFFFFL;
 
     /**
+     * The key of the tag that becomes the timecode track.
+     */
+    static final String TIMECODE_TAG = "timecode";
+
+    /**
      * The output sink, or {@code null} for a planning muxer.
      */
     private final MediaSink output;
@@ -168,6 +175,21 @@ public final class Mp4Muxer implements Muxer {
      * The offset of the chapter samples from the start of the media data.
      */
     private long chapterDataOffset;
+
+    /**
+     * The {@code timecode} tag, or {@code null} when the tags hold none.
+     */
+    private String timecodeText;
+
+    /**
+     * The timecode track laid out by {@link #finish()}, or {@code null} when there is none.
+     */
+    private TimecodeTrack timecodeTrack;
+
+    /**
+     * The offset of the timecode sample from the start of the media data.
+     */
+    private long timecodeDataOffset;
 
     /**
      * Whether a packet was written.
@@ -525,6 +547,14 @@ public final class Mp4Muxer implements Muxer {
      * {@link com.github.auties00.smalt.track.TrackDisposition#DEFAULT} (the first video and the first
      * audio track stay enabled when no track of their kind is), and a track without tags stays enabled.
      *
+     * <p>A {@code timecode} tag, a {@link com.github.auties00.smalt.container.Timecode} in its text form such as
+     * {@code 01:00:00;00}, becomes a QuickTime timecode track instead of an iTunes item: a {@code tmcd} track after
+     * the declared tracks (and after the chapter track), whose one sample holds the frame number of the address,
+     * counted at the nominal rate of the first video track's frame rate rounded up, and which every video track
+     * references through {@code tref/tmcd}. Without a video track that declares a frame rate, only a drop-frame
+     * address is written, at 30000/1001 frames per second.
+     *
+     * @throws IllegalArgumentException if the {@code timecode} tag is not a time address
      * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
      * the atom holds
      */
@@ -534,14 +564,35 @@ public final class Mp4Muxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        var userData = MuxerTags.mp4UserData(tags);
+        var timecode = tags.get(TIMECODE_TAG).orElse(null);
+        if (timecode != null) {
+            checkTimecode(timecode.strip());
+        }
+        var userData = MuxerTags.mp4UserData(tags.toBuilder().remove(TIMECODE_TAG).build());
         for (var track : tags.tracks()) {
             // the track boxes are written with the movie box, but their values are checked now
             Mp4TrackMetadata.userData(track);
         }
         this.userData = userData;
         this.chapters = tags.chapters();
+        this.timecodeText = timecode == null ? null : timecode.strip();
         this.tags = tags;
+    }
+
+    /**
+     * Checks that a {@code timecode} tag is a time address at some nominal rate, before the rate it is counted at
+     * is known.
+     *
+     * @param text the tag value
+     * @throws IllegalArgumentException if the value is no time address at the highest nominal rate, or for a
+     * drop-frame address at the highest multiple of 30
+     */
+    static void checkTimecode(String text) {
+        try {
+            Timecode.parse(text, 255);
+        } catch (IllegalArgumentException exception) {
+            Timecode.parse(text, 240);
+        }
     }
 
     /**
@@ -950,6 +1001,8 @@ public final class Mp4Muxer implements Muxer {
     /**
      * {@inheritDoc}
      *
+     * @throws IllegalArgumentException if the {@code timecode} tag is not a valid address at the nominal rate of
+     * the first video track, or there is no video track with a frame rate and the address is not a drop-frame one
      * @throws IllegalStateException if the muxer is already finished, or a VP9 or AV1 track has no
      * configuration and no key frame it can be derived from
      */
@@ -957,6 +1010,16 @@ public final class Mp4Muxer implements Muxer {
     public void finish() {
         if (finished) {
             throw new IllegalStateException("the muxer is already finished");
+        }
+        if (timecodeText != null && !tracks.isEmpty()) {
+            Rational rate = null;
+            for (var track : tracks) {
+                if (track.track instanceof VideoTrack video && video.frameRate().isPresent()) {
+                    rate = video.frameRate().get();
+                    break;
+                }
+            }
+            timecodeTrack = TimecodeTrack.of(timecodeText, rate);
         }
         for (var text : textTracks) {
             text.finish();
@@ -991,6 +1054,11 @@ public final class Mp4Muxer implements Muxer {
             chapterTrack = Mp4ChapterTrack.of(chapters, durationMicros);
             chapterDataOffset = dataSize;
             writeData(chapterTrack.data(), chapterTrack.dataLength());
+        }
+        if (timecodeTrack != null) {
+            timecodeDataOffset = dataSize;
+            var sample = timecodeTrack.sample();
+            writeData(sample, sample.length);
         }
         if (planning) {
             plannedHeader = fastStartHeader(plans, movieTimescale);
@@ -1174,8 +1242,9 @@ public final class Mp4Muxer implements Muxer {
         }
         writer.begin(BoxTypes.MOOV);
         var chapterId = tracks.size() + 1;
+        var timecodeId = chapterTrack != null ? chapterId + 1 : chapterId;
         MovieHeaderWriter.writeMovieHeader(writer, movieTimescale, duration,
-                chapterTrack != null ? chapterId + 1 : chapterId);
+                timecodeTrack != null ? timecodeId + 1 : timecodeId);
         var media = false;
         for (var track : tracks) {
             media |= track.kind() == TrackKind.AUDIO || track.kind() == TrackKind.VIDEO;
@@ -1192,11 +1261,15 @@ public final class Mp4Muxer implements Muxer {
             var kind = plan.track.kind();
             var references = chapterTrack != null && (kind == TrackKind.AUDIO || kind == TrackKind.VIDEO
                     || !media && plan.track == tracks.getFirst());
-            writeTrack(writer, plan, dataStart, co64, references ? chapterId : -1, enabled[index],
+            writeTrack(writer, plan, dataStart, co64, references ? chapterId : -1,
+                    timecodeTrack != null && kind == TrackKind.VIDEO ? timecodeId : -1, enabled[index],
                     described.get(index));
         }
         if (chapterTrack != null) {
             writer.bytes(chapterTrack.trak(chapterId, movieTimescale, dataStart + chapterDataOffset, co64));
+        }
+        if (timecodeTrack != null) {
+            timecodeTrack.writeTrak(writer, timecodeId, movieTimescale, duration, dataStart + timecodeDataOffset, co64);
         }
         writer.bytes(userData);
         writer.end();
@@ -1211,14 +1284,22 @@ public final class Mp4Muxer implements Muxer {
      * @param dataStart the file offset of the first media data byte
      * @param co64 whether chunk offsets are 64-bit
      * @param chapterId the identifier of the chapter track the track references, or {@code -1}
+     * @param timecodeId the identifier of the timecode track the track references, or {@code -1}
      * @param enabled whether the track is enabled
      * @param described the tags of the track, or {@code null}
      */
     private void writeTrack(BoxWriter writer, TrackPlan plan, long dataStart, boolean co64, int chapterId,
-                            boolean enabled, TrackTags described) {
+                            int timecodeId, boolean enabled, TrackTags described) {
         writer.begin(BoxTypes.TRAK);
         MovieHeaderWriter.writeTrackHeader(writer, plan.track, plan.trackDuration, enabled);
-        if (chapterId > 0) {
+        if (timecodeId > 0) {
+            writer.begin(BoxTypes.TREF);
+            if (chapterId > 0) {
+                writer.bytes(Mp4ChapterTrack.chapReference(chapterId));
+            }
+            TimecodeTrack.writeReference(writer, timecodeId);
+            writer.end();
+        } else if (chapterId > 0) {
             writer.bytes(Mp4ChapterTrack.trackReference(chapterId));
         }
         if (plan.hasEdits) {

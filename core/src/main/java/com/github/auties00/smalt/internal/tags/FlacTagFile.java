@@ -3,6 +3,7 @@ package com.github.auties00.smalt.internal.tags;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.mpeg.internal.TrailingTags;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -23,9 +24,12 @@ import java.util.Set;
  * <p>The file is an optional ID3v2 prefix, the {@code fLaC} marker, metadata blocks (each a
  * four-byte header: a last-block flag, a seven-bit type and a 24-bit length) and the audio
  * frames. The rewrite keeps {@code STREAMINFO} and {@code SEEKTABLE} (whose offsets are relative
- * to the first frame and so survive any metadata change), keeps {@code APPLICATION},
- * {@code CUESHEET} and unknown blocks when unknown items are preserved, and replaces
- * {@code VORBIS_COMMENT}, {@code PICTURE} and {@code PADDING}. When the new blocks fit the space
+ * to the first frame and so survive any metadata change), keeps {@code APPLICATION} and unknown
+ * blocks when unknown items are preserved, and replaces {@code VORBIS_COMMENT}, {@code PICTURE}
+ * and {@code PADDING}. The chapters are the {@code CHAPTERxxx} comments or, without any, the
+ * tracks of the {@code CUESHEET} block ({@link FlacCuesheet}); the {@code CUESHEET} is kept while
+ * the chapters do not change, and is otherwise replaced by one built from the new chapters
+ * (removed without chapters), which are also written as comments. When the new blocks fit the space
  * of the old ones, a padding block fills the rest and the frames do not move.
  *
  * <p>Tags after the frames are read after the metadata blocks: an APE tag and then an ID3v1 tag
@@ -54,6 +58,11 @@ final class FlacTagFile implements TagFile {
      * The {@code VORBIS_COMMENT} block type.
      */
     private static final int VORBIS_COMMENT = 4;
+
+    /**
+     * The {@code CUESHEET} block type.
+     */
+    private static final int CUESHEET = 5;
 
     /**
      * The {@code PICTURE} block type.
@@ -196,6 +205,9 @@ final class FlacTagFile implements TagFile {
             }
         }
         var builder = comments.toBuilder();
+        if (comments.chapters().isEmpty()) {
+            builder.chapters(cuesheetChapters());
+        }
         var pictures = new ArrayList<AttachedPicture>();
         for (var block : blocks) {
             if (block.type() == PICTURE) {
@@ -243,6 +255,51 @@ final class FlacTagFile implements TagFile {
     }
 
     /**
+     * {@return the chapters of the first {@code CUESHEET} block, empty without one or when it is damaged}
+     */
+    private List<Chapter> cuesheetChapters() {
+        for (var block : blocks) {
+            if (block.type() == CUESHEET) {
+                try {
+                    return FlacCuesheet.decode(block.body(), 0, block.body().length, sampleRate());
+                } catch (MediaException.Malformed ignored) {
+                    // a damaged cue sheet gives no chapters; the block is kept as it is
+                    return List.of();
+                }
+            }
+        }
+        return List.of();
+    }
+
+    /**
+     * {@return whether the {@code VORBIS_COMMENT} block holds chapters}
+     */
+    private boolean commentHasChapters() {
+        for (var block : blocks) {
+            if (block.type() == VORBIS_COMMENT) {
+                var parsed = VorbisComment.parse(block.body(), 0, block.body().length);
+                return !VorbisComment.decode(parsed.fields(), durationMicros()).chapters().isEmpty();
+            }
+        }
+        return false;
+    }
+
+    /**
+     * {@return the sampling rate recorded in {@code STREAMINFO}, in hertz}
+     */
+    private int sampleRate() {
+        return (ByteArrays.u24be(blocks.getFirst().body(), 10) >>> 4) & 0xFFFFF;
+    }
+
+    /**
+     * {@return the number of samples recorded in {@code STREAMINFO}, 0 when unknown}
+     */
+    private long totalSamples() {
+        var info = blocks.getFirst().body();
+        return ((info[13] & 0x0FL) << 32) | ByteArrays.u32be(info, 14);
+    }
+
+    /**
      * {@return the duration recorded in {@code STREAMINFO}, in microseconds, or {@code -1} when the total is unknown}
      */
     private long durationMicros() {
@@ -269,6 +326,12 @@ final class FlacTagFile implements TagFile {
         }
         var commentTags = tags.toBuilder().pictures(List.of()).tracks(List.of()).build();
         var keepPictures = current.equals(tags.pictures());
+        var read = read();
+        var keepChapters = read.chapters().equals(tags.chapters());
+        if (keepChapters && !commentHasChapters()) {
+            commentTags = commentTags.toBuilder().chapters(List.of()).build();
+        }
+        var cuesheet = keepChapters ? null : FlacCuesheet.encode(tags.chapters(), sampleRate(), totalSamples());
         var out = new ByteWriter(4096);
         var pending = new ArrayList<Block>();
         for (var block : blocks) {
@@ -278,6 +341,11 @@ final class FlacTagFile implements TagFile {
                 }
                 case PICTURE -> {
                     if (keepPictures) {
+                        pending.add(block);
+                    }
+                }
+                case CUESHEET -> {
+                    if (keepChapters) {
                         pending.add(block);
                     }
                 }
@@ -291,6 +359,9 @@ final class FlacTagFile implements TagFile {
         var insertAt = 1;
         while (insertAt < pending.size() && pending.get(insertAt).type() == SEEKTABLE) {
             insertAt++;
+        }
+        if (cuesheet != null) {
+            pending.add(insertAt, new Block(CUESHEET, cuesheet.length, cuesheet));
         }
         if (hadComment || !commentTags.isEmpty()) {
             var comment = VorbisComment.encode(vendor, commentTags, false);

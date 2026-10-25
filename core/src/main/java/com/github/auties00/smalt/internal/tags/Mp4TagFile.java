@@ -1250,6 +1250,8 @@ final class Mp4TagFile implements TagFile {
         Rewrite(MediaTags newTags, TagWriteOptions options) {
             this.keepOpaque = options.preserveUnknown();
             var children = Mp4Boxes.children(moov, moovPayload(), moov.length);
+            // TODO: write a timecode tag as a QuickTime timecode track replacing the file's, as Mp4Muxer does; it is
+            // stored as a free-form iTunes item meanwhile and the file's timecode track is kept as it is.
             this.udta = buildUdta(Mp4Boxes.find(children, "udta"), newTags, options);
             var kinds = new ArrayList<TrackKind>();
             var effective = new ArrayList<TrackTags>();
