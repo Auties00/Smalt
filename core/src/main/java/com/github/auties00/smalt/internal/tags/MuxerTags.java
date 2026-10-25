@@ -100,12 +100,12 @@ public final class MuxerTags {
     /**
      * Replaces the comment and picture blocks of a FLAC stream header.
      *
-     * <p>The {@code STREAMINFO}, {@code SEEKTABLE}, {@code APPLICATION} and {@code CUESHEET}
-     * blocks are kept in order; the {@code VORBIS_COMMENT} block (keeping its vendor string) and
-     * the {@code PICTURE} blocks are rebuilt from the tags and follow them, and the {@code PADDING}
-     * blocks come last, so that a header whose seek table grows into its padding keeps its length
-     * once tagged. Chapters, besides their {@code CHAPTERxxx} comments, replace the {@code CUESHEET}
-     * with one built from them ({@link FlacCuesheet}) when there are at most
+     * <p>The {@code STREAMINFO}, {@code SEEKTABLE} and {@code APPLICATION} blocks are kept in
+     * order; the {@code VORBIS_COMMENT} block (keeping its vendor string) and the {@code PICTURE}
+     * blocks are rebuilt from the tags and follow them, and the {@code PADDING} blocks come last, so
+     * that a header whose seek table grows into its padding keeps its length once tagged. The
+     * {@code CUESHEET} of the header is dropped: chapters, besides their {@code CHAPTERxxx} comments,
+     * get one built from them ({@link FlacCuesheet}) when there are at most
      * {@value FlacCuesheet#MAX_CHAPTERS}. The last block gets the last-block flag.
      *
      * @param header the {@code fLaC} marker and well-formed metadata blocks
@@ -128,7 +128,7 @@ public final class MuxerTags {
             var type = header[offset] & 0x7F;
             var length = ByteArrays.u24be(header, offset + 1);
             var end = Math.min(header.length, offset + 4 + length);
-            if (type == 5 && cuesheet != null) {
+            if (type == 5) {
                 offset = end;
                 continue;
             }

@@ -16,7 +16,7 @@ edition default=true ordered=true
   chapter 0 500000 "Early" eng:"Early"
 attachment "Font.ttf" font/ttf "subtitle font" size=512 crc=1c613576
 attachment "notes.txt" text/plain "" size=20 crc=4bdd9fc2
-track 1 VIDEO UNKNOWN_VIDEO timebase=1/1000 duration=1000 language=eng config=none
+track 1 VIDEO RAW_VIDEO timebase=1/1000 duration=1000 language=eng config=19:4c81075d
   video 16x16 orientation=NORMAL rate=5/1 stereo=SIDE_BY_SIDE_LEFT_FIRST
   spherical Equirectangular[top=268435456, bottom=536870912, left=0, right=0] yaw=90.0 pitch=-45.0 roll=30.0 source=""
 track 2 AUDIO PCM_S16LE timebase=1/8000 duration=8000 language=eng config=none

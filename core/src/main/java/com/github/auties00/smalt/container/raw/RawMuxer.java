@@ -376,7 +376,8 @@ public final class RawMuxer implements Muxer {
      * <p>An MP3, MP2, AC-3, E-AC-3 or AMR stream gets an ID3v2.4 tag before its first frame (before the AMR
      * magic); a FLAC stream gets a
      * {@code VORBIS_COMMENT} block (with the chapters) and one {@code PICTURE} block per picture,
-     * replacing those of the track configuration and placed before its padding. The track must be declared first.
+     * replacing those of the track configuration and placed before its padding, and a {@code CUESHEET} built from
+     * the chapters (none without chapters) in place of the configuration's. The track must be declared first.
      * The tags are encoded here, so a tag the stream cannot hold is rejected before any packet is written.
      *
      * @throws MediaException.Unsupported if no track is declared or its raw form stores no tags
