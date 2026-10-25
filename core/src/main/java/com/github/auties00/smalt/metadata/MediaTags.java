@@ -16,20 +16,24 @@ import java.util.Set;
 
 /**
  * Holds the descriptive metadata of an audio or video file: text tags, attached pictures such as
- * cover art, and chapters.
+ * cover art, chapters, and the names, tags and dispositions of its tracks.
  *
  * <p>Tags are an ordered list of {@link Entry key-value entries}; a key may repeat, which is how
  * multi-valued tags (several artists, several genres) are represented. Keys are normalized when
  * an entry is added: a name {@link StandardTag#fromName(String) recognized} by the shared
  * vocabulary becomes its {@link StandardTag#key() normalized key} ({@code "TIT2"},
  * {@code "TITLE"} and {@code "title"} all become {@code "title"}); any other key is kept as given,
- * which is how format-specific tags such as {@code "REPLAYGAIN_TRACK_GAIN"}, {@code "TBPM"} or
- * MusicBrainz identifiers stay available. Lookups by key ignore case.
+ * which is how format-specific tags such as {@code "MOOD"} or {@code "iTunNORM"} stay available.
+ * Lookups by key ignore case.
  *
  * <p>The same instance describes the tags of every format {@link TagEditor} reads and writes and
  * the muxers accept: each writer maps the standard keys to the format's native names and stores
  * other keys in the format's free-form slot (ID3v2 {@code TXXX}, a Vorbis comment field, an MP4
  * {@code ----} atom, a Matroska {@code SimpleTag}).
+ *
+ * <p>The {@linkplain #tracks() track tags} describe single tracks of a container, each identified by
+ * the {@link com.github.auties00.smalt.track.Track#id() identifier} its demuxer reports; {@link TrackTags} lists
+ * what each container stores. A file of a format without track metadata has none, and its writers ignore them.
  *
  * <p>Instances are immutable and thread-safe; the {@link Builder} is not.
  *
@@ -40,7 +44,7 @@ public final class MediaTags {
     /**
      * An instance with no tag, picture or chapter.
      */
-    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of());
+    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of(), List.of());
 
     /**
      * The separator {@link #asMap()} joins repeated values with.
@@ -63,18 +67,26 @@ public final class MediaTags {
     private final List<Chapter> chapters;
 
     /**
+     * The track tags, in order.
+     */
+    private final List<TrackTags> tracks;
+
+    /**
      * Constructs an instance.
      *
      * @param entries the tag entries
      * @param pictures the attached pictures
      * @param chapters the chapters in start order
+     * @param tracks the track tags, one per track identifier
      */
-    private MediaTags(List<Entry> entries, List<AttachedPicture> pictures, List<Chapter> chapters) {
+    private MediaTags(List<Entry> entries, List<AttachedPicture> pictures, List<Chapter> chapters,
+                      List<TrackTags> tracks) {
         this.entries = List.copyOf(entries);
         this.pictures = List.copyOf(pictures);
         var sorted = new ArrayList<>(chapters);
         sorted.sort((first, second) -> Long.compare(first.startMicros(), second.startMicros()));
         this.chapters = List.copyOf(sorted);
+        this.tracks = List.copyOf(tracks);
     }
 
     /**
@@ -105,6 +117,7 @@ public final class MediaTags {
         builder.entries.addAll(entries);
         builder.pictures.addAll(pictures);
         builder.chapters.addAll(chapters);
+        builder.tracks.addAll(tracks);
         return builder;
     }
 
@@ -286,28 +299,53 @@ public final class MediaTags {
     }
 
     /**
-     * Returns whether this instance holds no tag, picture or chapter.
+     * Returns the tags of the tracks.
+     *
+     * @return the track tags, at most one per track identifier, in the order they were added; unmodifiable
+     */
+    public List<TrackTags> tracks() {
+        return tracks;
+    }
+
+    /**
+     * Returns the tags of one track.
+     *
+     * @param trackId the track identifier
+     * @return the track tags, or empty when this instance holds none for the track
+     */
+    public Optional<TrackTags> track(int trackId) {
+        for (var track : tracks) {
+            if (track.trackId() == trackId) {
+                return Optional.of(track);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * Returns whether this instance holds no tag, picture, chapter or track tags.
      *
      * @return {@code true} when empty
      */
     public boolean isEmpty() {
-        return entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty();
+        return entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty() && tracks.isEmpty();
     }
 
     @Override
     public boolean equals(Object other) {
         return other instanceof MediaTags that && entries.equals(that.entries) && pictures.equals(that.pictures)
-                && chapters.equals(that.chapters);
+                && chapters.equals(that.chapters) && tracks.equals(that.tracks);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(entries, pictures, chapters);
+        return Objects.hash(entries, pictures, chapters, tracks);
     }
 
     @Override
     public String toString() {
-        return "MediaTags[entries=" + entries + ", pictures=" + pictures + ", chapters=" + chapters + "]";
+        return "MediaTags[entries=" + entries + ", pictures=" + pictures + ", chapters=" + chapters + ", tracks="
+                + tracks + "]";
     }
 
     /**
@@ -365,6 +403,11 @@ public final class MediaTags {
          * The chapters.
          */
         private final List<Chapter> chapters = new ArrayList<>();
+
+        /**
+         * The track tags.
+         */
+        private final List<TrackTags> tracks = new ArrayList<>();
 
         /**
          * Constructs an empty builder.
@@ -466,7 +509,7 @@ public final class MediaTags {
         }
 
         /**
-         * Removes every tag entry, keeping pictures and chapters.
+         * Removes every tag entry, keeping pictures, chapters and track tags.
          *
          * @return this builder
          */
@@ -526,7 +569,52 @@ public final class MediaTags {
         }
 
         /**
-         * Removes every entry, picture and chapter.
+         * Sets the tags of one track, replacing those this builder holds for the same track identifier.
+         *
+         * @param track the track tags
+         * @return this builder
+         */
+        public Builder track(TrackTags track) {
+            Objects.requireNonNull(track, "track");
+            for (var index = 0; index < tracks.size(); index++) {
+                if (tracks.get(index).trackId() == track.trackId()) {
+                    tracks.set(index, track);
+                    return this;
+                }
+            }
+            tracks.add(track);
+            return this;
+        }
+
+        /**
+         * Removes the tags of one track.
+         *
+         * @param trackId the track identifier
+         * @return this builder
+         */
+        public Builder removeTrack(int trackId) {
+            tracks.removeIf(track -> track.trackId() == trackId);
+            return this;
+        }
+
+        /**
+         * Replaces the tags of every track.
+         *
+         * @param tracks the track tags; a later one replaces an earlier one of the same track identifier
+         * @return this builder
+         * @throws NullPointerException if an element is {@code null}
+         */
+        public Builder tracks(List<TrackTags> tracks) {
+            var copy = List.copyOf(tracks);
+            this.tracks.clear();
+            for (var track : copy) {
+                track(track);
+            }
+            return this;
+        }
+
+        /**
+         * Removes every entry, picture, chapter and track tags.
          *
          * @return this builder
          */
@@ -534,6 +622,7 @@ public final class MediaTags {
             entries.clear();
             pictures.clear();
             chapters.clear();
+            tracks.clear();
             return this;
         }
 
@@ -543,10 +632,10 @@ public final class MediaTags {
          * @return the tags
          */
         public MediaTags build() {
-            if (entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty()) {
+            if (entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty() && tracks.isEmpty()) {
                 return EMPTY;
             }
-            return new MediaTags(entries, pictures, chapters);
+            return new MediaTags(entries, pictures, chapters, tracks);
         }
     }
 }
