@@ -116,7 +116,8 @@ import java.util.PriorityQueue;
  * its first packets. Packets of every track are interleaved by decoding time: a packet is written once
  * every video and audio track has a later one queued, or once it is more than a second older than
  * the newest packet. Timestamps become 90 kHz PES timestamps, shifted so that the first decoding
- * time equals {@link TsMuxerOptions#delayMicros()}, modulo 2^33. The program clock reference rides
+ * time (or the {@linkplain TsMuxerOptions#timestampOriginMicros() timestamp origin}) equals
+ * {@link TsMuxerOptions#delayMicros()}, modulo 2^33. The program clock reference rides
  * on the first video track (the first track otherwise): at a variable rate it is the decoding time
  * of the PES packet being written less the delay, with adaptation-field-only packets filling
  * longer gaps than {@link TsMuxerOptions#pcrIntervalMicros()}; at a constant rate it is the
@@ -1101,7 +1102,9 @@ public final class TsMuxer implements Muxer {
         var pts90 = timeBase.rescale(pts, TICKS);
         var dts90 = timeBase.rescale(dts, TICKS);
         if (shift == Long.MIN_VALUE) {
-            shift = options.delayMicros() * 9 / 100 - dts90;
+            var origin = options.timestampOriginMicros();
+            shift = options.delayMicros() * 9 / 100 - (origin.isPresent()
+                    ? Rational.MICROSECONDS.rescale(origin.getAsLong(), TICKS) : dts90);
             tablesDue = true;
         }
         var ptsMicros = timeBase.toMicros(pts);

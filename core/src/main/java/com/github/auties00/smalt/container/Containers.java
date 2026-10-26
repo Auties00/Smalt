@@ -9,7 +9,9 @@ import com.github.auties00.smalt.container.aiff.AiffMuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
 import com.github.auties00.smalt.container.avi.AviDemuxer;
 import com.github.auties00.smalt.container.avi.AviMuxer;
+import com.github.auties00.smalt.container.dash.DashDemuxer;
 import com.github.auties00.smalt.container.flac.FlacDemuxer;
+import com.github.auties00.smalt.container.hls.HlsDemuxer;
 import com.github.auties00.smalt.container.ivf.IvfDemuxer;
 import com.github.auties00.smalt.container.ivf.IvfMuxer;
 import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
@@ -94,7 +96,8 @@ import java.util.function.Predicate;
  * two consecutive consistent frame headers. Elementary video streams are recognized by their structure up to a
  * sequence header: H.264 and HEVC Annex B streams by {@link AnnexBDemuxer#detect(byte[])}, AV1 OBU streams by
  * {@link ObuDemuxer#detect(byte[])}, MPEG-4 Part 2 and H.263 streams by {@link Mpeg4VideoDemuxer#detect(byte[])}.
- * Text subtitle files are recognized last, in this order: a WebVTT file by its {@code WEBVTT} signature, a TTML
+ * Text files are recognized last, in this order: an HLS playlist by its {@code #EXTM3U} first line, a DASH manifest
+ * by its {@code MPD} root element, a WebVTT file by its {@code WEBVTT} signature, a TTML
  * document by its {@code tt} root element, a SAMI file by its {@code SAMI} tag, an SSA or ASS script by its
  * {@code [Script Info]} section, a SubRip file by a timing line among its first lines, a MicroDVD file by a
  * {@code {start}{end}} first line, and an LRC file by a time or ID tag on its first line. Raw PCM
@@ -259,6 +262,8 @@ public final class Containers {
                 yield new VobSubDemuxer(source, options);
             }
             case AVI -> new AviDemuxer(source, options);
+            case HLS -> new HlsDemuxer(source, options);
+            case DASH -> new DashDemuxer(source, options);
             case H264, HEVC -> new AnnexBDemuxer(source, ElementaryStreamOptions.of(options));
             case AV1, AV1_ANNEX_B -> new ObuDemuxer(source, ElementaryStreamOptions.of(options));
             case MPEG4_VIDEO, H263 -> new Mpeg4VideoDemuxer(source, options);
@@ -297,7 +302,7 @@ public final class Containers {
             case LRC -> LrcMuxer.supports(codec);
             case MICRODVD -> MicroDvdMuxer.supports(codec);
             case SUP -> SupMuxer.supports(codec);
-            case VOBSUB -> false;
+            case VOBSUB, HLS, DASH -> false;
             case AVI -> AviMuxer.supports(codec);
             case Y4M -> Y4mMuxer.supports(codec);
         };
@@ -330,7 +335,8 @@ public final class Containers {
      * @param output the sink, written from its position and not closed by the muxer
      * @return the muxer, which the caller finishes and closes
      * @throws IllegalArgumentException if {@code format} is {@link ContainerFormat#VOBSUB}, which writes two files
-     * ({@code VobSubMuxer})
+     * ({@code VobSubMuxer}), or {@link ContainerFormat#HLS} or {@link ContainerFormat#DASH}, presentations of many
+     * files that {@link com.github.auties00.smalt.container.packaging.Packager} writes
      * @throws MediaException.Io if the sink position cannot be read
      */
     public static Muxer openMuxer(ContainerFormat format, MediaSink output) {
@@ -358,6 +364,8 @@ public final class Containers {
             case MICRODVD -> new MicroDvdMuxer(output);
             case SUP -> new SupMuxer(output);
             case VOBSUB -> throw new IllegalArgumentException("VobSub writes two files: use VobSubMuxer");
+            case HLS, DASH -> throw new IllegalArgumentException("an " + format + " presentation is many files: use "
+                    + "Packager");
             case AVI -> new AviMuxer(output);
             case Y4M -> new Y4mMuxer(output);
         };
@@ -566,6 +574,12 @@ public final class Containers {
             return null;
         }
         var text = TextFiles.decode(header);
+        if (text.startsWith("#EXTM3U") && (text.length() == 7 || text.charAt(7) == '\n' || text.charAt(7) == '\r')) {
+            return ContainerFormat.HLS;
+        }
+        if (isManifest(text)) {
+            return ContainerFormat.DASH;
+        }
         if (WebVttText.isSignature(text)) {
             return ContainerFormat.WEBVTT;
         }
@@ -598,6 +612,41 @@ public final class Containers {
             return ContainerFormat.LRC;
         }
         return null;
+    }
+
+    /**
+     * Returns whether text is an XML document whose root element is a DASH {@code MPD}: after an XML declaration,
+     * comments and blanks, the first element is {@code MPD}, with or without a prefix.
+     *
+     * @param text the leading text
+     * @return {@code true} for a DASH manifest
+     */
+    private static boolean isManifest(String text) {
+        var position = 0;
+        while (position < text.length()) {
+            var c = text.charAt(position);
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r') {
+                position++;
+            } else if (text.startsWith("<?", position) || text.startsWith("<!--", position)) {
+                var end = text.indexOf(text.startsWith("<?", position) ? "?>" : "-->", position);
+                if (end < 0) {
+                    return false;
+                }
+                position = end + (text.startsWith("?>", end) ? 2 : 3);
+            } else {
+                break;
+            }
+        }
+        if (!text.startsWith("<", position)) {
+            return false;
+        }
+        var end = position + 1;
+        while (end < text.length() && !Character.isWhitespace(text.charAt(end)) && text.charAt(end) != '>'
+                && text.charAt(end) != '/') {
+            end++;
+        }
+        var name = text.substring(position + 1, end);
+        return end < text.length() && (name.equals("MPD") || name.endsWith(":MPD"));
     }
 
     /**

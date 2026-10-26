@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -22,7 +23,13 @@ import java.util.Set;
  * durations, every URI and byte range, every segment (as a transport stream, or as an fMP4 media segment against its
  * initialization segment), the continuity of the fragment timelines, independent segments starting with a sync
  * sample, and, in the master playlist, {@code BANDWIDTH} and {@code AVERAGE-BANDWIDTH} against the measured segment
- * bit rates, {@code CODECS} and {@code RESOLUTION} against the segments, and the rendition groups.
+ * bit rates, {@code CODECS} and {@code RESOLUTION} against the segments, and the rendition groups. WebVTT segments
+ * are checked for their {@code X-TIMESTAMP-MAP} and cue timings, each cue placed on the timeline of the first
+ * variant: it must first appear in the segment during which it starts and be repeated while it is shown (RFC 8216
+ * clause 3.5). I-frame playlists ({@code EXT-X-I-FRAMES-ONLY}) must address key frames: a video PES packet at a
+ * random access point, or a movie fragment starting with a sync sample. Event and live playlists follow the rules of
+ * RFC 8216 clause 6.2.2 (an event never removes segments, a live window lasts three target durations), and program
+ * dates advance by the segment durations.
  */
 public final class HlsValidator {
     /** The highest compatibility version RFC 8216 defines. */
@@ -36,11 +43,16 @@ public final class HlsValidator {
      * @param codecs the codecs parameters derived from the segments
      * @param width the picture width, or 0 when unknown
      * @param height the picture height, or 0 when unknown
+     * @param startTicks the 90 kHz timestamp of the first segment's start, or -1 when unknown
      */
-    public record Media(long peakBitrate, long averageBitrate, Set<String> codecs, int width, int height) {
+    public record Media(long peakBitrate, long averageBitrate, Set<String> codecs, int width, int height,
+                        long startTicks) {
     }
 
     private final Findings findings;
+
+    /** The 90 kHz timestamp of the first variant's start, or {@link Long#MIN_VALUE} when unknown. */
+    private long subtitleOrigin = Long.MIN_VALUE;
 
     private HlsValidator(Findings findings) {
         this.findings = findings;
@@ -96,7 +108,9 @@ public final class HlsValidator {
     private void master(Path playlist, List<String> lines) {
         var where = playlist.getFileName().toString();
         var version = version(lines, where);
+        subtitleOrigin = originOf(playlist, lines);
         var groups = new LinkedHashMap<String, List<Media>>();
+        var groupFiles = new HashMap<String, List<Path>>();
         var defaults = new HashMap<String, Integer>();
         var names = new HashMap<String, Set<String>>();
         var variants = 0;
@@ -114,6 +128,19 @@ public final class HlsValidator {
                 var type = attributes.getOrDefault("TYPE", "");
                 findings.require(Set.of("AUDIO", "VIDEO", "SUBTITLES", "CLOSED-CAPTIONS").contains(type), at,
                         "TYPE " + type);
+                findings.require(!attributes.containsKey("FORCED") || type.equals("SUBTITLES"), at,
+                        "FORCED on a rendition that is not SUBTITLES");
+                if ("YES".equals(attributes.get("FORCED"))) {
+                    findings.require(!"NO".equals(attributes.get("AUTOSELECT")), at, "FORCED=YES with AUTOSELECT=NO");
+                }
+                if (attributes.containsKey("LANGUAGE")) {
+                    var language = unquote(attributes.get("LANGUAGE"));
+                    findings.require(language.matches("[A-Za-z]{2,8}(-[A-Za-z0-9]{1,8})*"), at, "LANGUAGE " + language
+                            + " is not an RFC 5646 tag");
+                }
+                if (type.equals("SUBTITLES")) {
+                    findings.require(attributes.containsKey("URI"), at, "a SUBTITLES rendition without a URI");
+                }
                 var group = type + "/" + unquote(attributes.getOrDefault("GROUP-ID", ""));
                 findings.require(names.computeIfAbsent(group, key -> new java.util.HashSet<>())
                         .add(unquote(attributes.getOrDefault("NAME", ""))), at, "a duplicate NAME in group " + group);
@@ -127,6 +154,7 @@ public final class HlsValidator {
                     findings.require(!type.equals("CLOSED-CAPTIONS"), at, "a URI on CLOSED-CAPTIONS");
                     var media = resolve(playlist, unquote(attributes.get("URI")), at);
                     if (media != null) {
+                        groupFiles.computeIfAbsent(group, key -> new ArrayList<>()).add(media);
                         var lines2 = read(media);
                         if (lines2 != null) {
                             var measured = media(media, lines2);
@@ -144,6 +172,10 @@ public final class HlsValidator {
         }
         for (var index = 0; index < lines.size(); index++) {
             var line = lines.get(index);
+            if (line.startsWith("#EXT-X-I-FRAME-STREAM-INF:")) {
+                iFrameStream(playlist, line, where + ":" + (index + 1));
+                continue;
+            }
             if (!line.startsWith("#EXT-X-STREAM-INF:")) {
                 continue;
             }
@@ -181,6 +213,10 @@ public final class HlsValidator {
                     findings.add(at, kind + " group " + group + " is not declared by EXT-X-MEDIA");
                     continue;
                 }
+                if (groupFiles.getOrDefault(group, List.of()).contains(file)) {
+                    // the variant is one of the group's renditions, already measured
+                    continue;
+                }
                 var groupPeak = 0L;
                 var groupAverage = 0L;
                 for (var rendition : renditions) {
@@ -216,6 +252,44 @@ public final class HlsValidator {
         findings.require(version <= MAX_VERSION, where, "EXT-X-VERSION " + version);
     }
 
+    /**
+     * Checks an {@code EXT-X-I-FRAME-STREAM-INF} and its I-frame playlist: the URI, the I-frame segments, and the
+     * {@code BANDWIDTH}, {@code CODECS} and {@code RESOLUTION} against them.
+     */
+    private void iFrameStream(Path playlist, String line, String at) {
+        var attributes = attributes(line.substring("#EXT-X-I-FRAME-STREAM-INF:".length()), at);
+        if (!attributes.containsKey("URI")) {
+            findings.add(at, "EXT-X-I-FRAME-STREAM-INF without a URI");
+            return;
+        }
+        var bandwidth = number(attributes.get("BANDWIDTH"), at, "BANDWIDTH");
+        var file = resolve(playlist, unquote(attributes.get("URI")), at);
+        var lines = file == null ? null : read(file);
+        if (lines == null) {
+            return;
+        }
+        findings.require(lines.contains("#EXT-X-I-FRAMES-ONLY"), at, "an I-frame stream whose playlist is not "
+                + "EXT-X-I-FRAMES-ONLY");
+        var measured = media(file, lines);
+        if (measured == null) {
+            return;
+        }
+        if (bandwidth >= 0) {
+            findings.require(bandwidth >= measured.peakBitrate() * 0.98, at, "BANDWIDTH " + bandwidth
+                    + " is below the peak I-frame bit rate " + measured.peakBitrate());
+        }
+        if (attributes.containsKey("CODECS")) {
+            codecs(unquote(attributes.get("CODECS")), measured.codecs(), at);
+        } else {
+            findings.add(at, "EXT-X-I-FRAME-STREAM-INF without CODECS");
+        }
+        if (measured.width() > 0) {
+            var resolution = attributes.get("RESOLUTION");
+            findings.require((measured.width() + "x" + measured.height()).equals(resolution), at, "RESOLUTION "
+                    + resolution + ", the I-frames are " + measured.width() + "x" + measured.height());
+        }
+    }
+
     private void codecs(String declared, Set<String> derived, String at) {
         var tokens = new ArrayList<String>();
         for (var token : declared.split(",")) {
@@ -244,16 +318,23 @@ public final class HlsValidator {
         var target = -1L;
         var targetCount = 0;
         var endList = false;
-        var vod = false;
+        String type = null;
         var independent = false;
+        var iFrames = lines.contains("#EXT-X-I-FRAMES-ONLY");
         var map = (Segment) null;
         var duration = -1.0;
         var range = (long[]) null;
         var lastRangeEnd = new HashMap<Path, Long>();
         var segments = new ArrayList<Segment>();
-        var needs = 1;
+        var needs = iFrames ? 4 : 1;
         Key key = null;
         var sequence = 0L;
+        var firstSequence = 0L;
+        java.time.Instant programDate = null;
+        java.time.Instant previousDate = null;
+        var previousDuration = 0.0;
+        var discontinuity = false;
+        var total = 0.0;
         for (var index = 0; index < lines.size(); index++) {
             var line = lines.get(index);
             var at = where + ":" + (index + 1);
@@ -266,16 +347,24 @@ public final class HlsValidator {
             } else if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
                 findings.require(segments.isEmpty() && duration < 0, at, "EXT-X-MEDIA-SEQUENCE after a segment");
                 sequence = number(line.substring(22), at, "EXT-X-MEDIA-SEQUENCE");
+                firstSequence = sequence;
             } else if (line.startsWith("#EXT-X-PLAYLIST-TYPE:")) {
-                var type = line.substring(21);
+                type = line.substring(21);
                 findings.require(type.equals("VOD") || type.equals("EVENT"), at, "EXT-X-PLAYLIST-TYPE " + type);
-                vod = type.equals("VOD");
             } else if (line.equals("#EXT-X-ENDLIST")) {
                 endList = true;
             } else if (line.equals("#EXT-X-INDEPENDENT-SEGMENTS")) {
                 independent = true;
+            } else if (line.equals("#EXT-X-DISCONTINUITY")) {
+                discontinuity = true;
+            } else if (line.startsWith("#EXT-X-PROGRAM-DATE-TIME:")) {
+                try {
+                    programDate = java.time.OffsetDateTime.parse(line.substring(25)).toInstant();
+                } catch (java.time.format.DateTimeParseException exception) {
+                    findings.add(at, "EXT-X-PROGRAM-DATE-TIME " + line.substring(25) + " is not an ISO 8601 date");
+                }
             } else if (line.startsWith("#EXT-X-MAP:")) {
-                needs = Math.max(needs, 6);
+                needs = Math.max(needs, iFrames ? 5 : 6);
                 var attributes = attributes(line.substring(11), at);
                 var file = resolve(playlist, unquote(attributes.getOrDefault("URI", "\"\"")), at);
                 var mapRange = attributes.containsKey("BYTERANGE")
@@ -335,6 +424,17 @@ public final class HlsValidator {
                     findings.add(at, "a URI without EXTINF");
                     continue;
                 }
+                if (programDate != null && previousDate != null && !discontinuity) {
+                    var gap = java.time.Duration.between(previousDate, programDate).toNanos() / 1e9;
+                    findings.require(Math.abs(gap - previousDuration) <= 0.002, at, "EXT-X-PROGRAM-DATE-TIME advances "
+                            + gap + " s over a segment of " + previousDuration + " s");
+                }
+                if (programDate != null) {
+                    previousDate = programDate;
+                }
+                previousDuration = duration;
+                discontinuity = false;
+                programDate = null;
                 var file = resolve(playlist, line, at);
                 if (file != null) {
                     if (range != null && range[1] < 0) {
@@ -348,12 +448,14 @@ public final class HlsValidator {
                     if (range != null) {
                         lastRangeEnd.put(file, range[1] + range[0]);
                     }
+                    findings.require(!iFrames || range != null, at, "an I-frame segment without EXT-X-BYTERANGE");
                     segments.add(new Segment(file, range, duration, at, map, key, sequence));
                     if (target >= 0) {
                         findings.require(Math.round(duration) <= target, at, "EXTINF " + duration
                                 + " rounds above EXT-X-TARGETDURATION " + target);
                     }
                 }
+                total += duration;
                 duration = -1;
                 range = null;
                 sequence++;
@@ -362,11 +464,18 @@ public final class HlsValidator {
             }
         }
         findings.require(targetCount == 1, where, targetCount + " EXT-X-TARGETDURATION tags, exactly one required");
-        findings.require(!vod || endList, where, "a VOD playlist without EXT-X-ENDLIST");
+        findings.require(!"VOD".equals(type) || endList, where, "a VOD playlist without EXT-X-ENDLIST");
+        findings.require(!"EVENT".equals(type) || firstSequence == 0, where, "an EVENT playlist that removed "
+                + "segments (EXT-X-MEDIA-SEQUENCE " + firstSequence + ")");
+        if (type == null && !endList && firstSequence > 0 && target > 0) {
+            // RFC 8216 clause 6.2.2: a live playlist that dropped segments still lasts three target durations
+            findings.require(total >= 3 * target - 0.001, where, "a live playlist of " + total + " s, below three "
+                    + "target durations after removing segments");
+        }
         findings.require(!segments.isEmpty(), where, "no segments");
         findings.require(version >= needs, where, "EXT-X-VERSION " + version + ", the playlist's features need "
                 + needs);
-        return segments(segments, independent);
+        return segments(segments, independent, iFrames, target);
     }
 
     /**
@@ -409,17 +518,23 @@ public final class HlsValidator {
         }
     }
 
-    private Media segments(List<Segment> segments, boolean independent) {
-        var peak = 0L;
+    private Media segments(List<Segment> segments, boolean independent, boolean iFrames, long target) {
+        var sizes = new ArrayList<double[]>();
         var bits = 0.0;
         var seconds = 0.0;
         var codecs = new LinkedHashSet<String>();
         var width = 0;
         var height = 0;
+        var startTicks = -1L;
         var initializations = new HashMap<String, Map<Integer, IsoBmffValidator.Track>>();
         var nextDecode = new HashMap<Integer, Long>();
         var firstSegment = true;
-        for (var segment : segments) {
+        var elapsed = 0.0;
+        Map<String, double[]> previousCues = null;
+        for (var number = 0; number < segments.size(); number++) {
+            var segment = segments.get(number);
+            var windowStart = elapsed;
+            elapsed += segment.duration();
             var stored = bytes(segment.file(), segment.range(), segment.where());
             if (stored == null) {
                 continue;
@@ -434,7 +549,24 @@ public final class HlsValidator {
                     continue;
                 }
             }
-            if (segment.map() != null) {
+            if (segment.map() == null && isWebVtt(bytes)) {
+                previousCues = webVtt(bytes, windowStart, elapsed, number + 1 == segments.size(), previousCues,
+                        segmentFindings);
+            } else if (iFrames) {
+                iFrame(bytes, segment, initializations, segmentFindings, codecs);
+                if (segment.map() != null) {
+                    var tracks = initializations.get(segment.map().file() + "@"
+                            + (segment.map().range() == null ? "" : segment.map().range()[1]));
+                    if (tracks != null) {
+                        for (var track : tracks.values()) {
+                            if (track.width() > 0) {
+                                width = track.width();
+                                height = track.height();
+                            }
+                        }
+                    }
+                }
+            } else if (segment.map() != null) {
                 var key = segment.map().file() + "@" + (segment.map().range() == null ? "" : segment.map().range()[1]);
                 var tracks = initializations.get(key);
                 if (tracks == null) {
@@ -484,6 +616,9 @@ public final class HlsValidator {
                     }
                     var fragment = first.get(entry.getKey());
                     if (fragment.baseDecodeTime() >= 0) {
+                        if (startTicks < 0) {
+                            startTicks = Math.round((double) fragment.baseDecodeTime() * 90_000 / track.timescale());
+                        }
                         var expected = nextDecode.get(entry.getKey());
                         if (expected != null) {
                             segmentFindings.require(expected == fragment.baseDecodeTime(), "track " + entry.getKey(),
@@ -508,17 +643,306 @@ public final class HlsValidator {
                 var summary = TsValidator.validate(bytes, segmentFindings);
                 segmentFindings.require(summary.tablesFirst(), "/", "a PES packet before the PAT and the PMT");
                 codecs.addAll(TsCodecs.of(bytes, summary));
+                if (startTicks < 0) {
+                    startTicks = TsCodecs.firstPts(bytes, summary);
+                }
             }
             segmentFindings.problems().forEach(problem -> findings.add(segment.where() + " " + segment.file()
                     .getFileName(), problem));
-            if (segment.duration() > 0) {
-                var rate = (long) Math.ceil(stored.length * 8 / segment.duration());
-                peak = Math.max(peak, rate);
-            }
+            sizes.add(new double[]{stored.length * 8.0, segment.duration()});
             bits += stored.length * 8.0;
             seconds += segment.duration();
         }
-        return new Media(peak, seconds > 0 ? Math.round(bits / seconds) : 0, codecs, width, height);
+        return new Media(peak(sizes, target), seconds > 0 ? Math.round(bits / seconds) : 0, codecs, width, height,
+                startTicks);
+    }
+
+    /**
+     * Returns the peak segment bit rate of RFC 8216 clause 4.3.4.2: the largest bit rate of any contiguous set of
+     * segments lasting between half and one and a half target durations; without such a set, the largest bit rate
+     * of one segment.
+     *
+     * @param sizes the bits and the duration in seconds of each segment
+     * @param target the target duration in seconds
+     * @return the bit rate in bits per second
+     */
+    static long peak(List<double[]> sizes, long target) {
+        var peak = 0.0;
+        for (var first = 0; first < sizes.size(); first++) {
+            var bits = 0.0;
+            var seconds = 0.0;
+            for (var last = first; last < sizes.size(); last++) {
+                bits += sizes.get(last)[0];
+                seconds += sizes.get(last)[1];
+                if (target > 0 && seconds > 1.5 * target + 1e-9) {
+                    break;
+                }
+                if (seconds > 0 && (target <= 0 || seconds >= 0.5 * target - 1e-9)) {
+                    peak = Math.max(peak, bits / seconds);
+                }
+            }
+        }
+        if (peak == 0) {
+            for (var size : sizes) {
+                if (size[1] > 0) {
+                    peak = Math.max(peak, size[0] / size[1]);
+                }
+            }
+        }
+        return (long) Math.ceil(peak);
+    }
+
+    /** Returns whether a segment is a WebVTT file. */
+    private static boolean isWebVtt(byte[] bytes) {
+        var text = new String(bytes, 0, Math.min(bytes.length, 16), StandardCharsets.UTF_8);
+        if (text.startsWith("﻿")) {
+            text = text.substring(1);
+        }
+        return text.startsWith("WEBVTT") && (text.length() == 6 || " \t\r\n".indexOf(text.charAt(6)) >= 0);
+    }
+
+    /**
+     * Checks a WebVTT segment (RFC 8216 clause 3.5): the signature, the {@code X-TIMESTAMP-MAP}, the cue timings, and,
+     * once the presentation's timeline is known, that each cue first appears in the segment during which it starts
+     * and that a cue still shown at the end of a segment is repeated in the next.
+     *
+     * @return the cues of the segment, by text, with their start and end on the presentation timeline in seconds
+     */
+    private Map<String, double[]> webVtt(byte[] bytes, double windowStart, double windowEnd, boolean last,
+                                         Map<String, double[]> previous, Findings segmentFindings) {
+        var text = new String(bytes, StandardCharsets.UTF_8);
+        if (text.startsWith("﻿")) {
+            text = text.substring(1);
+        }
+        var lines = text.split("\r?\n", -1);
+        var mpegTs = 0L;
+        var local = 0.0;
+        var index = 1;
+        for (; index < lines.length && !lines[index].isBlank(); index++) {
+            var line = lines[index];
+            if (!line.startsWith("X-TIMESTAMP-MAP=")) {
+                continue;
+            }
+            var fields = new HashMap<String, String>();
+            for (var field : line.substring(16).split(",")) {
+                var colon = field.indexOf(':');
+                if (colon < 0) {
+                    segmentFindings.add("X-TIMESTAMP-MAP", "a field without a colon: " + field);
+                    continue;
+                }
+                fields.put(field.substring(0, colon).strip(), field.substring(colon + 1).strip());
+            }
+            segmentFindings.require(fields.containsKey("MPEGTS") && fields.containsKey("LOCAL"), "X-TIMESTAMP-MAP",
+                    "not both MPEGTS and LOCAL: " + line);
+            try {
+                mpegTs = Long.parseLong(fields.getOrDefault("MPEGTS", "0"));
+                segmentFindings.require(mpegTs >= 0 && mpegTs < 1L << 33, "X-TIMESTAMP-MAP", "MPEGTS " + mpegTs
+                        + " is not a 33-bit timestamp");
+            } catch (NumberFormatException exception) {
+                segmentFindings.add("X-TIMESTAMP-MAP", "MPEGTS " + fields.get("MPEGTS"));
+            }
+            var parsed = cueTime(fields.getOrDefault("LOCAL", "00:00:00.000"));
+            if (parsed < 0) {
+                segmentFindings.add("X-TIMESTAMP-MAP", "LOCAL " + fields.get("LOCAL"));
+            } else {
+                local = parsed;
+            }
+        }
+        var cues = new LinkedHashMap<String, double[]>();
+        var timeline = subtitleOrigin != Long.MIN_VALUE;
+        for (; index < lines.length; index++) {
+            var line = lines[index];
+            var arrow = line.indexOf("-->");
+            if (arrow < 0) {
+                continue;
+            }
+            var start = cueTime(line.substring(0, arrow).strip());
+            var rest = line.substring(arrow + 3).strip();
+            var space = rest.indexOf(' ');
+            var end = cueTime(space < 0 ? rest : rest.substring(0, space));
+            if (start < 0 || end < 0) {
+                segmentFindings.add("cue", "a timing line that does not parse: " + line);
+                continue;
+            }
+            segmentFindings.require(end >= start, "cue", "a cue that ends before it starts: " + line);
+            var payload = new StringBuilder(line);
+            for (var next = index + 1; next < lines.length && !lines[next].isBlank(); next++) {
+                payload.append('\n').append(lines[next]);
+            }
+            var ticks = Math.floorMod(mpegTs - (timeline ? subtitleOrigin : 0), 1L << 33);
+            if (ticks >= 1L << 32) {
+                ticks -= 1L << 33;
+            }
+            var offset = ticks / 90_000.0 - local;
+            var mapped = new double[]{start + offset, end + offset};
+            cues.put(payload.toString(), mapped);
+            if (!timeline) {
+                continue;
+            }
+            var repeated = previous != null && previous.containsKey(payload.toString());
+            if (repeated) {
+                segmentFindings.require(mapped[0] < windowStart + 0.05, "cue", "a cue repeated from the previous segment"
+                        + " starts at " + mapped[0] + " s, inside this segment " + windowStart + ".." + windowEnd);
+            } else {
+                segmentFindings.require(mapped[0] >= windowStart - 0.05 && (last || mapped[0] < windowEnd + 0.05),
+                        "cue", "a cue starting at " + mapped[0] + " s first appears in the segment " + windowStart
+                                + ".." + windowEnd + " s");
+            }
+        }
+        if (timeline && previous != null) {
+            for (var entry : previous.entrySet()) {
+                if (entry.getValue()[1] > windowStart + 0.05) {
+                    segmentFindings.require(cues.containsKey(entry.getKey()), "cue", "a cue shown until "
+                            + entry.getValue()[1] + " s is not repeated in the segment that starts at " + windowStart
+                            + " s");
+                }
+            }
+        }
+        segmentFindings.require(lines.length > 0 && lines[0].startsWith("WEBVTT"), "/", "a WebVTT segment that does "
+                + "not start with WEBVTT");
+        return cues;
+    }
+
+    /** Parses a WebVTT timestamp, {@code [hh:]mm:ss.ttt}, in seconds, or returns -1. */
+    private static double cueTime(String text) {
+        var matcher = java.util.regex.Pattern.compile("(?:(\\d+):)?([0-5]\\d):([0-5]\\d)\\.(\\d{3})").matcher(text);
+        if (!matcher.matches()) {
+            return -1;
+        }
+        var hours = matcher.group(1) == null ? 0 : Long.parseLong(matcher.group(1));
+        return hours * 3600 + Integer.parseInt(matcher.group(2)) * 60 + Integer.parseInt(matcher.group(3))
+                + Integer.parseInt(matcher.group(4)) / 1000.0;
+    }
+
+    /**
+     * Checks an I-frame segment (RFC 8216 clause 4.3.3.6): with the program tables of its {@code EXT-X-MAP}, a
+     * transport stream byte range must start with the PES packet of a key frame on a video PID; with an
+     * initialization section, a fragmented MP4 byte range must start at a movie fragment whose first sample is a sync
+     * sample and end at or after that sample's data.
+     */
+    private void iFrame(byte[] bytes, Segment segment, Map<String, Map<Integer, IsoBmffValidator.Track>> inits,
+                        Findings segmentFindings, Set<String> codecs) {
+        if (segment.map() == null) {
+            segmentFindings.add("/", "an I-frame segment without EXT-X-MAP");
+            return;
+        }
+        var map = bytes(segment.map().file(), segment.map().range(), segment.map().where());
+        if (map == null) {
+            return;
+        }
+        var key = segment.map().file() + "@" + (segment.map().range() == null ? "" : segment.map().range()[1]);
+        if (isTransportStream(map)) {
+            var tables = TsValidator.validate(map, new Findings("map"));
+            var videoPids = new java.util.HashSet<Integer>();
+            for (var entry : tables.streamTypes().entrySet()) {
+                if (List.of(0x1B, 0xDB, 0x24, 0x10, 0x02).contains(entry.getValue())) {
+                    videoPids.add(entry.getKey());
+                }
+            }
+            segmentFindings.require(!videoPids.isEmpty(), "EXT-X-MAP", "program tables without a video stream");
+            if (bytes.length < 188 || (bytes[0] & 0xFF) != 0x47) {
+                segmentFindings.add("/", "an I-frame byte range that does not start with a transport packet");
+                return;
+            }
+            segmentFindings.require(bytes.length % 188 == 0, "/", "an I-frame byte range of " + bytes.length
+                    + " bytes, not whole transport packets");
+            var pid = (bytes[1] & 0x1F) << 8 | bytes[2] & 0xFF;
+            var control = (bytes[3] >> 4) & 3;
+            var randomAccess = (control & 2) != 0 && (bytes[4] & 0xFF) > 0 && (bytes[5] & 0x40) != 0;
+            segmentFindings.require(videoPids.contains(pid) && (bytes[1] & 0x40) != 0 && randomAccess, "/",
+                    "an I-frame byte range that does not start with a video PES packet at a random access point");
+            var joined = new byte[map.length + bytes.length];
+            System.arraycopy(map, 0, joined, 0, map.length);
+            System.arraycopy(bytes, 0, joined, map.length, bytes.length);
+            var summary = TsValidator.validate(Arrays.copyOf(joined, map.length + 188), new Findings("i-frame"));
+            for (var codec : TsCodecs.of(joined, summary)) {
+                if (codec.startsWith("avc1") || codec.startsWith("hvc1")) {
+                    codecs.add(codec);
+                }
+            }
+            return;
+        }
+        var tracks = inits.get(key);
+        if (tracks == null) {
+            var initFindings = new Findings(segment.map().where());
+            tracks = IsoBmffValidator.validate(map, initFindings, IsoBmffValidator.Kind.INIT_SEGMENT, Map.of()).tracks();
+            initFindings.problems().forEach(problem -> findings.add("EXT-X-MAP " + segment.map().where(), problem));
+            inits.put(key, tracks);
+        }
+        for (var track : tracks.values()) {
+            if (!track.codecs().isEmpty()) {
+                codecs.add(track.codecs());
+            }
+        }
+        var boxes = IsoBmff.parse(bytes, new Findings("i-frame"));
+        var moof = boxes.stream().filter(box -> box.type().equals("moof")).findFirst();
+        if (moof.isEmpty() || boxes.indexOf(moof.get()) > 1
+                || boxes.indexOf(moof.get()) == 1 && !boxes.getFirst().type().equals("styp")) {
+            segmentFindings.add("/", "an I-frame byte range that does not start with a movie fragment");
+            return;
+        }
+        var trun = moof.get().find("traf", "trun");
+        var tfhd = moof.get().find("traf", "tfhd");
+        if (trun.isEmpty() || tfhd.isEmpty()) {
+            segmentFindings.add("moof", "a movie fragment without tfhd and trun");
+            return;
+        }
+        var flags = IsoBmff.flags(bytes, trun.get());
+        var at = trun.get().payload() + 8;
+        var dataOffset = 0L;
+        if ((flags & 0x01) != 0) {
+            dataOffset = IsoBmff.s32(bytes, at);
+            at += 4;
+        }
+        var sampleFlags = -1L;
+        if ((flags & 0x04) != 0) {
+            sampleFlags = IsoBmff.u32(bytes, at);
+            at += 4;
+        }
+        if ((flags & 0x100) != 0) {
+            at += 4;
+        }
+        var size = -1L;
+        if ((flags & 0x200) != 0) {
+            size = IsoBmff.u32(bytes, at);
+            at += 4;
+        }
+        if (sampleFlags < 0 && (flags & 0x400) != 0) {
+            sampleFlags = IsoBmff.u32(bytes, at);
+        }
+        segmentFindings.require(sampleFlags < 0 || (sampleFlags & 0x10000) == 0, "trun",
+                "an I-frame whose first sample is not a sync sample");
+        if (size >= 0) {
+            segmentFindings.require(bytes.length >= moof.get().offset() + dataOffset + size, "/",
+                    "an I-frame byte range that ends before its first sample");
+        }
+    }
+
+    /** Returns whether bytes start with transport stream packets. */
+    private static boolean isTransportStream(byte[] data) {
+        return data.length >= 188 && (data[0] & 0xFF) == 0x47 && (data.length < 376 || (data[188] & 0xFF) == 0x47);
+    }
+
+    /**
+     * Returns the 90 kHz timestamp the presentation's first variant starts at: the earliest PES presentation time of
+     * its first transport stream segment, or the first decoding time of its first fMP4 segment, so that the cue times
+     * of WebVTT segments can be placed on the presentation timeline; {@link Long#MIN_VALUE} when unknown.
+     */
+    private long originOf(Path master, List<String> lines) {
+        for (var index = 0; index + 1 < lines.size(); index++) {
+            if (!lines.get(index).startsWith("#EXT-X-STREAM-INF:")) {
+                continue;
+            }
+            var quiet = new HlsValidator(new Findings("origin"));
+            var file = quiet.resolve(master, lines.get(index + 1), "origin");
+            var media = file == null ? null : quiet.read(file);
+            if (media == null) {
+                return Long.MIN_VALUE;
+            }
+            var measured = quiet.media(file, media);
+            return measured == null || measured.startTicks() < 0 ? Long.MIN_VALUE : measured.startTicks();
+        }
+        return Long.MIN_VALUE;
     }
 
     private byte[] bytes(Path file, long[] range, String where) {
@@ -683,6 +1107,29 @@ public final class HlsValidator {
                 }
             }
             return out.toByteArray();
+        }
+
+        /** Returns the earliest PES presentation time of the audio and video streams, in 90 kHz ticks, or -1. */
+        static long firstPts(byte[] data, TsValidator.Summary summary) {
+            var earliest = -1L;
+            for (var at = 0; at + 188 <= data.length; at += 188) {
+                var pid = (data[at + 1] & 0x1F) << 8 | data[at + 2] & 0xFF;
+                var type = summary.streamTypes().get(pid);
+                if (type == null || (data[at + 1] & 0x40) == 0 || type == 0x15 || type == 0x86) {
+                    continue;
+                }
+                var control = (data[at + 3] >> 4) & 3;
+                var start = at + 4 + ((control & 2) != 0 ? 1 + (data[at + 4] & 0xFF) : 0);
+                if ((control & 1) == 0 || start + 14 > at + 188 || data[start] != 0 || data[start + 1] != 0
+                        || data[start + 2] != 1 || (data[start + 7] & 0x80) == 0) {
+                    continue;
+                }
+                var p = start + 9;
+                var pts = ((long) (data[p] & 0x0E) << 29) | ((data[p + 1] & 0xFFL) << 22) | ((data[p + 2] & 0xFEL) << 14)
+                        | ((data[p + 3] & 0xFFL) << 7) | ((data[p + 4] & 0xFEL) >> 1);
+                earliest = earliest < 0 ? pts : Math.min(earliest, pts);
+            }
+            return earliest;
         }
 
         private static String avc(byte[] data, int pid) {

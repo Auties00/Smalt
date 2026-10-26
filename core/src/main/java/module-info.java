@@ -24,7 +24,8 @@
  * so a module or class-path jar adds a codec by providing an implementation. Inputs are read
  * through {@code MediaSource} and outputs written through {@code MediaSink}. The {@code transcode}
  * package converts files on top of them: remuxing, re-encoding, trimming, scaling and resampling;
- * the {@code container.packaging} package segments them into HLS and DASH presentations.
+ * the {@code container.packaging} package segments them into HLS and DASH presentations, which the
+ * {@code container.hls} and {@code container.dash} demuxers read back.
  * The {@code metadata} package reads and writes the tags, cover art and chapters of audio and video
  * files without touching their streams, and models XMP packets. The {@code subtitle} package reads,
  * writes and converts text subtitles, and {@code audio.loudness} measures loudness (EBU R128),
@@ -87,7 +88,9 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.aiff;
     exports com.github.auties00.smalt.container.amr;
     exports com.github.auties00.smalt.container.avi;
+    exports com.github.auties00.smalt.container.dash;
     exports com.github.auties00.smalt.container.flac;
+    exports com.github.auties00.smalt.container.hls;
     exports com.github.auties00.smalt.container.ivf;
     exports com.github.auties00.smalt.container.matroska;
     exports com.github.auties00.smalt.container.mp4;

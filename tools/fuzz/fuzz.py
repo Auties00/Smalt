@@ -155,7 +155,7 @@ def discover():
             for match in re.finditer(r'@FuzzTest[^\n]*\n\s*(?:public\s+)?void\s+(\w+)\s*\(byte\[\]\s+\w+\)\s*\{', text):
                 body = text[match.end():text.find('\n    }', match.end())]
                 framed = ('FuzzMedia.video(' in body or 'FuzzMedia.videoAlpha(' in body or 'FuzzMedia.audio(' in body
-                          or 'FuzzPackets' in body)
+                          or 'FuzzPackets' in body or 'FuzzPresentations' in body)
                 found.append(Target(module, package, source.stem, match.group(1), framed))
     return found
 

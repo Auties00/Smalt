@@ -11,6 +11,7 @@ import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.ts.TsMuxerOptions;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.container.PresentationSamples;
 import com.github.auties00.smalt.testkit.validate.Findings;
 import com.github.auties00.smalt.testkit.validate.IsoBmff;
 import com.github.auties00.smalt.testkit.validate.IsoBmffValidator;
@@ -749,6 +750,139 @@ class ValidatorsTest {
             }
             var missing = assertThrows(AssertionFailedError.class, () -> Validators.assertValidDash(manifest));
             assertTrue(missing.getMessage().contains("does not exist"), missing.getMessage());
+        }
+    }
+
+    @Nested
+    @DisplayName("subtitle, trick-play and live presentations")
+    class Streaming {
+        /** Writes one of the test kit's packaged presentations into a fresh directory and returns its manifest. */
+        private Path presentation(String name, String directory) {
+            var target = OUTPUT.resolve(directory);
+            try {
+                if (Files.isDirectory(target)) {
+                    try (var stale = Files.list(target)) {
+                        for (var file : stale.toList()) {
+                            Files.delete(file);
+                        }
+                    }
+                }
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+            return PresentationSamples.write(PresentationSamples.of(name, Long.MAX_VALUE), target);
+        }
+
+        private void assertRejected(Path manifest, String expected) {
+            var error = assertThrows(AssertionFailedError.class, () -> {
+                if (manifest.getFileName().toString().endsWith(".mpd")) {
+                    Validators.assertValidDash(manifest);
+                } else {
+                    Validators.assertValidHls(manifest);
+                }
+            });
+            assertTrue(error.getMessage().contains(expected), error.getMessage());
+        }
+
+        private void replace(Path file, String from, String to) {
+            var original = text(file);
+            assertTrue(original.contains(from), from + " in " + original);
+            writeText(file, original.replace(from, to));
+        }
+
+        @Test
+        @DisplayName("accept the packager's subtitle, I-frame, trick-play and live presentations")
+        void accepts() {
+            for (var name : List.of("hls-ts", "hls-cmaf", "hls-iframes", "hls-cmaf-iframes", "dash-template",
+                    "dash-live")) {
+                var manifest = presentation(name, "streaming-" + name);
+                if (name.startsWith("dash")) {
+                    Validators.assertValidDash(manifest);
+                } else {
+                    Validators.assertValidHls(manifest);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("reject WebVTT segments on the wrong timeline, and a spanning cue that is not repeated")
+        void webVtt() {
+            var shifted = presentation("hls-ts", "streaming-vtt-map");
+            try (var segments = Files.list(shifted.getParent())) {
+                for (var file : segments.filter(path -> path.toString().endsWith(".vtt")).toList()) {
+                    replace(file, "MPEGTS:63000", "MPEGTS:0");
+                }
+            } catch (IOException exception) {
+                throw new UncheckedIOException(exception);
+            }
+            assertRejected(shifted, "first appears in the segment");
+            var dropped = presentation("hls-ts", "streaming-vtt-repeat");
+            replace(dropped.resolveSibling("cues_00002.vtt"), "00:00:00.500 --> 00:00:00.900", "00:00:00.700 --> "
+                    + "00:00:00.900");
+            assertRejected(dropped, "is not repeated");
+        }
+
+        @Test
+        @DisplayName("reject an I-frame range that does not start at a key frame")
+        void iFrames() {
+            var master = presentation("hls-ts", "streaming-iframes");
+            var playlist = master.resolveSibling("clip_iframes.m3u8");
+            var text = text(playlist);
+            var matcher = java.util.regex.Pattern.compile("#EXT-X-BYTERANGE:(\\d+)@(\\d+)\nclip_00002").matcher(text);
+            assertTrue(matcher.find(), text);
+            var length = Long.parseLong(matcher.group(1));
+            var offset = Long.parseLong(matcher.group(2));
+            writeText(playlist, text.replace(matcher.group(), "#EXT-X-BYTERANGE:" + (length - 188) + "@"
+                    + (offset + 188) + "\nclip_00002"));
+            assertRejected(master, "random access point");
+        }
+
+        @Test
+        @DisplayName("reject an event that removed segments, program dates that skip, and a live window too short")
+        void live() {
+            var master = presentation("hls-ts", "streaming-event");
+            var media = master.resolveSibling("clip.m3u8");
+            replace(media, "#EXT-X-PLAYLIST-TYPE:VOD", "#EXT-X-PLAYLIST-TYPE:EVENT");
+            replace(media, "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-MEDIA-SEQUENCE:1");
+            assertRejected(media, "an EVENT playlist that removed segments");
+            var window = presentation("hls-ts", "streaming-window");
+            var playlist = window.resolveSibling("clip.m3u8");
+            replace(playlist, "#EXT-X-PLAYLIST-TYPE:VOD\n", "");
+            replace(playlist, "#EXT-X-ENDLIST\n", "");
+            replace(playlist, "#EXT-X-MEDIA-SEQUENCE:0", "#EXT-X-MEDIA-SEQUENCE:5");
+            assertRejected(playlist, "below three target durations");
+            var dates = presentation("hls-ts", "streaming-dates");
+            var dated = dates.resolveSibling("clip.m3u8");
+            var lines = new ArrayList<>(List.of(text(dated).split("\n")));
+            var second = 0;
+            for (var index = 0; index < lines.size(); index++) {
+                if (lines.get(index).startsWith("#EXTINF")) {
+                    lines.add(index, second++ == 0 ? "#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:00.000Z"
+                            : "#EXT-X-PROGRAM-DATE-TIME:2026-01-01T00:00:10.000Z");
+                    index++;
+                }
+            }
+            writeText(dated, String.join("\n", lines) + "\n");
+            assertRejected(dated, "EXT-X-PROGRAM-DATE-TIME advances");
+        }
+
+        @Test
+        @DisplayName("reject a dynamic manifest without its times, and a trick-play set that names no video set")
+        void dash() {
+            var live = presentation("dash-live", "streaming-dynamic");
+            var text = text(live);
+            writeText(live, text.replaceFirst(" availabilityStartTime=\"[^\"]+\"", ""));
+            assertRejected(live, "without availabilityStartTime");
+            var future = presentation("dash-live", "streaming-future");
+            writeText(future, text(future).replaceFirst("publishTime=\"[^\"]+\"",
+                    "publishTime=\"2026-01-01T00:00:00.500Z\""));
+            assertRejected(future, "after the publish time");
+            var trick = presentation("dash-template", "streaming-trick");
+            replace(trick, "trickmode\" value=\"0\"", "trickmode\" value=\"9\"");
+            assertRejected(trick, "no video AdaptationSet");
+            var dependent = presentation("dash-template", "streaming-coding");
+            replace(dependent, "codingDependency=\"false\"", "codingDependency=\"true\"");
+            assertRejected(dependent, "codingDependency");
         }
     }
 

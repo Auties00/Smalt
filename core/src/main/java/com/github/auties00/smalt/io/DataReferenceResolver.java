@@ -11,8 +11,11 @@ import java.util.Optional;
  *
  * <p>A demuxer asks for each {@link DataReference} once, the first time a track uses it, and closes the returned
  * source when it is closed (or when its construction fails); an image decoder asks each time it reads an item
- * stored elsewhere and closes the source once it has read the item. A reference the resolver cannot supply makes
- * the samples or items that use it fail with {@link MediaException.Unsupported}, as they do without a resolver.
+ * stored elsewhere and closes the source once it has read the item. The HLS and DASH demuxers, whose references are
+ * the URLs of their playlists, segments and keys ({@link DataReference.Kind#URL}), ask for each file once to learn
+ * its size and again whenever they read it after a few other files, closing every source they no longer hold open.
+ * A reference the resolver cannot supply makes the samples or items that use it fail with
+ * {@link MediaException.Unsupported}, as they do without a resolver.
  * A resolver may be called from several threads at once when several readers share it.
  *
  * <p>Resolving a reference reads a file the media file chose, so a resolver for untrusted input should supply

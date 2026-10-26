@@ -5,12 +5,14 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 
 /**
  * Builds the {@code CODECS} values of HLS playlists and the {@code codecs} attributes of DASH
  * manifests (RFC 6381, ISO/IEC 14496-15 Annex E, the VP codec, AV1, Opus and AC-3 ISOBMFF
- * bindings, and the sample entry types of the other codecs a CMAF segment carries).
+ * bindings, the sample entry types of the other codecs a CMAF segment carries, and the ISO/IEC 14496-30 text
+ * tracks with the IMSC profile of a TTML track).
  */
 final class CodecStrings {
     private CodecStrings() {
@@ -22,7 +24,8 @@ final class CodecStrings {
      *
      * @param track the track to describe
      * @param keyFrame the first key frame of a video track, which describes a VP8, VP9, AV1 or MPEG-4
-     * Part 2 track without a configuration and a ProRes or DNxHD track, or {@code null}
+     * Part 2 track without a configuration and a ProRes or DNxHD track, or the first document of a TTML track,
+     * which names its IMSC profile, or {@code null}
      * @return the codec string, or {@code null} when the codec has none
      */
     static String of(Track track, byte[] keyFrame) {
@@ -55,8 +58,46 @@ final class CodecStrings {
             case AMR_WB -> "sawb";
             case PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE -> "ipcm";
             case PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE -> "fpcm";
+            case WEBVTT -> "wvtt";
+            case TTML -> ttml(config, keyFrame);
             default -> null;
         };
+    }
+
+    /**
+     * Returns the codec string of a TTML track: {@code stpp.ttml.} and the code of the IMSC profile its
+     * configuration's auxiliary MIME types or its first document declare ({@code im1t} and {@code im1i} for the
+     * IMSC 1 text and image profiles, {@code im2t} and {@code im2i} for IMSC 1.1), or {@code stpp}.
+     *
+     * @param config the {@code stpp} configuration, or {@code null}
+     * @param document the first document, or {@code null}
+     * @return the codec string
+     */
+    private static String ttml(byte[] config, byte[] document) {
+        for (var text : new byte[][]{config, document}) {
+            if (text == null) {
+                continue;
+            }
+            var value = new String(text, StandardCharsets.UTF_8);
+            for (var code : new String[]{"im1t", "im1i", "im2t", "im2i"}) {
+                if (value.contains("codecs=" + code)) {
+                    return "stpp.ttml." + code;
+                }
+            }
+            if (value.contains("http://www.w3.org/ns/ttml/profile/imsc1.1/text")) {
+                return "stpp.ttml.im2t";
+            }
+            if (value.contains("http://www.w3.org/ns/ttml/profile/imsc1.1/image")) {
+                return "stpp.ttml.im2i";
+            }
+            if (value.contains("http://www.w3.org/ns/ttml/profile/imsc1/text")) {
+                return "stpp.ttml.im1t";
+            }
+            if (value.contains("http://www.w3.org/ns/ttml/profile/imsc1/image")) {
+                return "stpp.ttml.im1i";
+            }
+        }
+        return "stpp";
     }
 
     /**

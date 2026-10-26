@@ -20,7 +20,9 @@ import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 import com.github.auties00.smalt.metadata.TrackTags;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.container.PresentationSamples;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
+import com.github.auties00.smalt.testkit.fuzz.FuzzPresentations;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.testkit.subtitle.BitmapStreams;
 import com.github.auties00.smalt.testkit.subtitle.CaptionScript;
@@ -868,5 +870,15 @@ class FuzzSeedWriter {
             throw new IllegalStateException("no " + types + " box");
         }
         return out.toByteArray();
+    }
+
+    @Test
+    @DisplayName("HLS and DASH presentations packaged by Smalt from the behavior samples, the first half second")
+    void presentations() {
+        for (var name : PresentationSamples.names()) {
+            var sample = PresentationSamples.of(name, 500_000);
+            write(DemuxerFuzzTest.class, name.startsWith("dash") ? "dash" : "hls", "valid-" + name,
+                    FuzzPresentations.pack(sample.manifestBytes(), sample.others()));
+        }
     }
 }

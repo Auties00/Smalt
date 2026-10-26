@@ -74,9 +74,10 @@ public final class IsoBmffValidator {
      * @param samples the number of samples
      * @param firstSync whether the first sample is a sync sample
      * @param bytes the number of sample bytes
+     * @param syncSamples the number of sync samples
      */
     public record Fragment(long moofOffset, long sequence, int trackId, long baseDecodeTime, long duration, int samples,
-                           boolean firstSync, long bytes) {
+                           boolean firstSync, long bytes, int syncSamples) {
     }
 
     /**
@@ -1065,6 +1066,7 @@ public final class IsoBmffValidator {
         var samples = 0;
         var bytes = 0L;
         var firstSync = true;
+        var syncSamples = 0;
         var dataPosition = base;
         var dataEnd = base;
         for (var trun : traf.all("trun")) {
@@ -1120,6 +1122,9 @@ public final class IsoBmffValidator {
                 if (samples == 0) {
                     firstSync = (sampleFlags & NON_SYNC) == 0;
                 }
+                if ((sampleFlags & NON_SYNC) == 0) {
+                    syncSamples++;
+                }
                 duration += sampleDuration;
                 bytes += sampleSize;
                 dataPosition += sampleSize;
@@ -1133,7 +1138,7 @@ public final class IsoBmffValidator {
         }
         findings.require(samples > 0 || kind == Kind.FILE, where, "a track fragment without samples");
         return new ParsedFragment(new Fragment(moof.offset(), sequence, trackId, baseDecodeTime, duration, samples,
-                firstSync, bytes), dataEnd);
+                firstSync, bytes, syncSamples), dataEnd);
     }
 
     private void segmentIndex(List<Box> boxes, Box sidx, Map<Integer, Track> tracks, List<Fragment> fragments) {

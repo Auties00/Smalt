@@ -1572,6 +1572,17 @@ public final class TsDemuxer implements Demuxer {
         return parsers.get(trackId);
     }
 
+    /**
+     * {@return the PES presentation time, in 90 kHz ticks, that the demuxer's timeline
+     * starts from: the earliest presentation time of the probed packets, which the packets report as zero}
+     *
+     * @apiNote Streams of one program cut apart, such as the variants and renditions of an HLS presentation, share
+     * their PES timestamps; subtracting the differences of their origins puts their packets on one timeline.
+     */
+    public long originTicks() {
+        return origin;
+    }
+
     @Override
     public long durationMicros() {
         return durationMicros;

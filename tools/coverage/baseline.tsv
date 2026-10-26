@@ -20,7 +20,9 @@ container/adts	84.0
 container/aiff	81.4
 container/amr	97.8
 container/avi	74.6
+container/dash	74.3
 container/flac	81.8
+container/hls	79.0
 container/ivf	77.6
 container/matroska	81.4
 container/mp4	81.1

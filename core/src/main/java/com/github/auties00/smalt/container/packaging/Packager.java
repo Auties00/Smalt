@@ -4,87 +4,88 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
-import com.github.auties00.smalt.container.Muxer;
-import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
-import com.github.auties00.smalt.container.mp4.CommonEncryption;
-import com.github.auties00.smalt.container.mp4.FragmentedMp4MuxerOptions;
 import com.github.auties00.smalt.container.ts.TsMuxer;
-import com.github.auties00.smalt.container.ts.TsMuxerOptions;
 import com.github.auties00.smalt.internal.tags.TagCarry;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.TagMode;
 import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.VideoTrack;
 
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.security.SecureRandom;
-import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Set;
+import java.util.function.IntFunction;
 
 /**
- * Packages media files for adaptive streaming: HLS (RFC 8216) and DASH (ISO/IEC 23009-1) video
- * on demand, without re-encoding.
+ * Packages media files for adaptive streaming: HLS (RFC 8216) and DASH (ISO/IEC 23009-1) presentations, on demand,
+ * as events or live, without re-encoding the audio and video.
  *
- * <p>Each {@link Rendition} is one encode of the content (feed several encodes at different
- * sizes and bit rates for an adaptive ladder, for example the outputs of
- * {@link com.github.auties00.smalt.transcode.Transcoder}); its first video track and first audio
- * track are packaged, other tracks are ignored. Segments are cut at key frames of the video track
- * (at any audio frame for an audio-only rendition) once they last
- * {@link PackagingOptions#segmentMicros()}, so encodes with closed GOPs whose key frames align
- * produce switchable renditions.
+ * <p>A presentation is a list of {@link Rendition}s: variants (each an encode of the content; feed several encodes
+ * at different sizes and bit rates for an adaptive ladder, for example the outputs of
+ * {@link com.github.auties00.smalt.transcode.Transcoder}), alternate audio renditions (languages, commentaries) and
+ * subtitle renditions. A variant packages its first video track and, unless the presentation has audio renditions,
+ * its first audio track; an audio or subtitle rendition packages one track. Segments are cut at key frames of the
+ * video track (at any audio frame for audio alone) once they last {@link PackagingOptions#segmentMicros()}, so
+ * encodes with closed GOPs whose key frames align produce switchable variants. Several renditions may read one
+ * source, which is then demuxed once.
  *
- * <p>Files written, side by side through the {@link PackageOutput} (with {@code r} a rendition
- * name):
+ * <p>Files written, side by side through the {@link PackageOutput} (with {@code r} a rendition name):
  * <ul>
- *   <li>transport stream segments: {@code r_00001.ts}, ... with the rendition's audio and video
- *       muxed, and the media playlist {@code r.m3u8};</li>
- *   <li>CMAF segments: per track, {@code r_video_init.mp4} or {@code r_audio_init.mp4} and
- *       {@code r_video_00001.m4s}, ..., with the media playlists {@code r_video.m3u8} and
- *       {@code r_audio.m3u8} when HLS is written;</li>
- *   <li>with byte-range addressing, one file per stream instead ({@code r.ts},
- *       {@code r_video.mp4}, {@code r_audio.mp4}) whose segments the manifests address by byte
- *       range;</li>
+ *   <li>transport stream segments: {@code r_00001.ts}, ... with a variant's audio and video muxed, or an audio
+ *       rendition's audio, and the media playlist {@code r.m3u8};</li>
+ *   <li>CMAF segments: per track, {@code r_video_init.mp4}, {@code r_audio_init.mp4} or {@code r_text_init.mp4}
+ *       and {@code r_video_00001.m4s}, ..., with the media playlists {@code r_video.m3u8} and {@code r_audio.m3u8}
+ *       when HLS is written; the text track of a subtitle rendition and the key frames of a trick-play stream
+ *       ({@code r_trick_init.mp4}, ...) are written for DASH only;</li>
+ *   <li>the WebVTT segments of a subtitle rendition, {@code r_00001.vtt}, ... with the playlist {@code r.m3u8},
+ *       for HLS: each spans one segment of the first video stream (or the first audio stream), holds every cue
+ *       shown during it, cues of other text codecs converted to WebVTT, and maps the cue times to the media
+ *       timestamps with an {@code X-TIMESTAMP-MAP} (RFC 8216 clause 3.5); cues that start after the last segment
+ *       are kept in it;</li>
+ *   <li>the I-frame playlists of trick play, {@code r_iframes.m3u8} or {@code r_video_iframes.m3u8};</li>
+ *   <li>with byte-range addressing, one file per audio or video stream instead ({@code r.ts},
+ *       {@code r_video.mp4}, {@code r_audio.mp4}) whose segments the manifests address by byte range;</li>
  *   <li>the HLS master playlist and the DASH manifest
  *       ({@link PackagingOptions#masterPlaylistName()}, {@link PackagingOptions#manifestName()}).</li>
  * </ul>
- * The master playlist lists one variant per rendition with its peak and average bandwidth,
- * {@code CODECS}, resolution and frame rate; CMAF audio becomes an audio rendition group of its
- * variant. The DASH manifest is static, with one adaptation set per kind, codec and language and
- * a {@code SegmentTemplate} with a {@code SegmentTimeline} per representation (a
+ * The master playlist lists each variant with its peak and average bandwidth, {@code CODECS}, resolution and frame
+ * rate. Without audio renditions, CMAF audio becomes an audio group of its own variant; with them, the audio
+ * renditions form one group per codec that every variant references, a variant listed once per group, and an
+ * audio-only presentation lists one variant per group. Subtitle renditions form the group every variant names in
+ * {@code SUBTITLES}. Languages, labels, the default and forced flags of each {@link Rendition}, and the accessibility
+ * dispositions of its track, become the {@code EXT-X-MEDIA} attributes and the DASH {@code lang}, {@code Label},
+ * {@code Role} and {@code Accessibility} of its adaptation set. The DASH manifest has one adaptation set per kind,
+ * codec, language and role, and a {@code SegmentTemplate} with a {@code SegmentTimeline} per representation (a
  * {@code SegmentList} with media ranges under byte-range addressing, and a {@code BaseURL} with a
- * {@code SegmentBase} in the on-demand profile when {@link PackagingOptions#segmentIndex()} puts a
- * single {@code sidx} in each stream's file). {@link PackagingOptions#encryption()} encrypts the segments; a key
- * file is written only when {@link PackagingEncryption#keyFileName()} names one. The rendition's tags, cover art,
- * chapters and track tags go into the segments as {@link PackagingOptions#tagMode()} selects.
+ * {@code SegmentBase} in the on-demand profile when {@link PackagingOptions#segmentIndex()} puts a single
+ * {@code sidx} in each stream's file). {@link PackagingOptions#presentation()} chooses between video on demand, an
+ * event and a live sliding window, {@link PackagingOptions#trickPlay()} adds trick play,
+ * {@link PackagingOptions#encryption()} encrypts the audio and video segments (subtitles stay clear); a key file is
+ * written only when {@link PackagingEncryption#keyFileName()} names one. The rendition's tags, cover art, chapters
+ * and track tags go into the segments as {@link PackagingOptions#tagMode()} selects.
  *
- * <p>The packager is stateless; every method may be called from any thread, each call reading its
- * own sources.
+ * <p>The packager is stateless; every method may be called from any thread, each call reading its own sources.
  *
- * @apiNote Packaging copies the coded streams; transcode first to change codecs, sizes or key
- * frame spacing. Transport stream segments take H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3 and
- * Opus; CMAF segments take the audio and video codecs {@link FragmentedMp4Muxer#supports} lists,
- * although HLS players support only some of them in CMAF (Apple players: H.264, HEVC, AAC, AC-3,
- * E-AC-3, FLAC, ALAC, Opus).
+ * @apiNote Packaging copies the coded streams; transcode first to change codecs, sizes or key frame spacing.
+ * Transport stream segments take H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3 and Opus; CMAF segments take the audio
+ * and video codecs {@link FragmentedMp4Muxer#supports} lists, although HLS players support only some of them in
+ * CMAF (Apple players: H.264, HEVC, AAC, AC-3, E-AC-3, FLAC, ALAC, Opus). Subtitle renditions take the text
+ * subtitle codecs (SubRip, WebVTT, 3GPP timed text, ASS and TTML) from any container or subtitle file.
  */
 public final class Packager {
-    /**
-     * The minimum buffer time declared in DASH manifests, in microseconds.
-     */
-    private static final long MIN_BUFFER_MICROS = 2_000_000;
-
     private Packager() {
         throw new AssertionError();
     }
@@ -109,27 +110,122 @@ public final class Packager {
     }
 
     /**
-     * Packages renditions through an output.
+     * Packages renditions read from media files through an output.
      *
-     * @param renditions the renditions, at least one, with distinct names
+     * <p>Each distinct source is demuxed once, and the sources side by side, their packets taken in decoding order,
+     * so that the segments of all renditions progress together and an event or live presentation rewrites its
+     * manifests as a live source would.
+     *
+     * @param renditions the renditions, at least one variant or audio rendition, with distinct names; each read
+     * from a media file
      * @param output opens the files written
      * @param options the packaging options
      * @return the description of what was written
-     * @throws IllegalArgumentException if there is no rendition, or two share a name
-     * @throws MediaException.Unsupported if a rendition has no video or audio track the segment
-     * format carries, or its configuration cannot be expressed in it
+     * @throws IllegalArgumentException if there is no variant or audio rendition, two renditions share a name, two
+     * audio or two subtitle renditions share a label, a rendition declares its tracks instead of reading a file, or
+     * two streams of the presentation would have the same file names
+     * @throws MediaException.Unsupported if a rendition has no track of its kind that the segment format carries,
+     * a variant has no video track next to audio renditions, or a track's configuration cannot be expressed in the
+     * segment format
      * @throws MediaException.Malformed if an input is corrupt
      * @throws MediaException.Io if reading or writing fails
      */
     public static PackagingResult pack(List<Rendition> renditions, PackageOutput output, PackagingOptions options) {
-        Objects.requireNonNull(renditions, "renditions");
         Objects.requireNonNull(output, "output");
         Objects.requireNonNull(options, "options");
+        var names = names(renditions);
+        for (var index = 0; index < renditions.size(); index++) {
+            if (renditions.get(index).source().isEmpty()) {
+                throw new IllegalArgumentException("rendition " + names.get(index)
+                        + " declares its tracks: write its packets through Packager.open");
+            }
+        }
+        var sources = new IdentityHashMap<MediaSource, Source>();
+        var ordered = new ArrayList<Source>();
+        try {
+            var alternateAudio = hasAlternateAudio(renditions);
+            var members = new ArrayList<Presentation.Member>();
+            for (var index = 0; index < renditions.size(); index++) {
+                var rendition = renditions.get(index);
+                var mediaSource = rendition.source().orElseThrow();
+                var source = sources.get(mediaSource);
+                if (source == null) {
+                    var demuxer = Containers.openDemuxer(mediaSource);
+                    source = new Source(demuxer);
+                    sources.put(mediaSource, source);
+                    ordered.add(source);
+                    var mode = options.tagMode();
+                    source.tags = mode == TagMode.COPY || mode == TagMode.MERGE
+                            ? TagCarry.read(mediaSource, demuxer, MediaLimits.DEFAULT) : null;
+                }
+                var demuxer = source.demuxer;
+                members.add(resolve(index, names.get(index), rendition, demuxer.tracks(), demuxer::trackDisposition,
+                        source.tags, options, alternateAudio));
+                source.members.add(index);
+            }
+            try (var presentation = new Presentation(members, output, options)) {
+                pump(ordered, presentation);
+                return presentation.finish();
+            }
+        } finally {
+            for (var source : ordered) {
+                source.demuxer.close();
+            }
+        }
+    }
+
+    /**
+     * Opens a presentation whose packets the application writes, for example the output of real-time encoders,
+     * to be packaged as {@link PackagingOptions#presentation()} describes.
+     *
+     * @param renditions the renditions, at least one variant or audio rendition, with distinct names; each
+     * declaring its tracks ({@link Rendition#builder(List)})
+     * @param output opens the files written
+     * @param options the packaging options
+     * @return the writer, which the caller finishes and closes
+     * @throws IllegalArgumentException if there is no variant or audio rendition, two renditions share a name, two
+     * audio or two subtitle renditions share a label, a rendition reads a file, or two streams of the presentation
+     * would have the same file names
+     * @throws MediaException.Unsupported if a rendition has no track of its kind that the segment format carries,
+     * a variant has no video track next to audio renditions, or a track's configuration cannot be expressed in the
+     * segment format
+     * @throws MediaException.Io if writing the key file fails
+     */
+    public static PackageWriter open(List<Rendition> renditions, PackageOutput output, PackagingOptions options) {
+        Objects.requireNonNull(output, "output");
+        Objects.requireNonNull(options, "options");
+        var names = names(renditions);
+        var alternateAudio = hasAlternateAudio(renditions);
+        var members = new ArrayList<Presentation.Member>();
+        for (var index = 0; index < renditions.size(); index++) {
+            var rendition = renditions.get(index);
+            if (rendition.source().isPresent()) {
+                throw new IllegalArgumentException("rendition " + names.get(index)
+                        + " reads a file: package it with Packager.pack");
+            }
+            members.add(resolve(index, names.get(index), rendition, rendition.tracks(), id -> Set.of(), null, options,
+                    alternateAudio));
+        }
+        return new PackageWriter(new Presentation(members, output, options), names);
+    }
+
+    /**
+     * Names the renditions and checks the presentation they make.
+     *
+     * @param renditions the renditions as the caller gave them
+     * @return the name of each rendition, in order
+     * @throws IllegalArgumentException if there is no variant or audio rendition, or two renditions share a name,
+     * or two audio or two subtitle renditions share a label
+     */
+    private static List<String> names(List<Rendition> renditions) {
+        Objects.requireNonNull(renditions, "renditions");
         if (renditions.isEmpty()) {
             throw new IllegalArgumentException("no rendition to package");
         }
         var names = new ArrayList<String>();
         var unique = new HashSet<String>();
+        var labels = new HashMap<Rendition.Kind, Set<String>>();
+        var playable = false;
         for (var index = 0; index < renditions.size(); index++) {
             var rendition = Objects.requireNonNull(renditions.get(index), "rendition");
             var name = rendition.name().orElse("r" + index);
@@ -137,421 +233,249 @@ public final class Packager {
                 throw new IllegalArgumentException("two renditions are named " + name);
             }
             names.add(name);
-        }
-        var files = new ArrayList<String>();
-        var grouped = new ArrayList<Manifests.RenditionStreams>();
-        var all = new ArrayList<SegmentedStream>();
-        var keys = Keys.of(options);
-        if (keys != null && keys.settings.keyFileName().isPresent()) {
-            var keyFile = keys.settings.keyFileName().get();
-            var sink = output.open(keyFile);
-            try {
-                sink.write(ByteBuffer.wrap(keys.settings.key()));
-            } finally {
-                sink.close();
-            }
-            files.add(keyFile);
-        }
-        for (var index = 0; index < renditions.size(); index++) {
-            var streams = packRendition(renditions.get(index), names.get(index), output, options, files, keys);
-            grouped.add(streams);
-            for (var stream : new SegmentedStream[]{streams.video(), streams.audio(), streams.muxed()}) {
-                if (stream != null) {
-                    all.add(stream);
+            playable |= rendition.kind() != Rendition.Kind.SUBTITLES;
+            if (rendition.kind() != Rendition.Kind.VARIANT) {
+                var label = rendition.label().orElse(name);
+                if (!labels.computeIfAbsent(rendition.kind(), ignored -> new HashSet<>()).add(label)) {
+                    throw new IllegalArgumentException("two " + rendition.kind().name().toLowerCase(Locale.ROOT)
+                            + " renditions are labeled " + label);
                 }
             }
         }
-        var duration = 0L;
-        for (var stream : all) {
-            duration = Math.max(duration, stream.durationMicros());
+        if (!playable) {
+            throw new IllegalArgumentException("a presentation needs a variant or an audio rendition");
         }
-        var cmaf = options.segmentFormat() == PackagingOptions.SegmentFormat.CMAF;
-        String master = null;
-        if (options.hlsEnabled()) {
-            var version = Manifests.hlsVersion(cmaf, options.byteRanges());
-            var keyTag = keys == null ? null : keys.playlistTag();
-            if (keys != null) {
-                version = Math.max(version, keys.hlsVersion());
-            }
-            for (var stream : all) {
-                write(output, Manifests.playlistName(stream), Manifests.mediaPlaylist(stream, version, keyTag), files);
-            }
-            master = options.masterPlaylistName();
-            write(output, master, Manifests.masterPlaylist(grouped, version), files);
-        }
-        String manifest = null;
-        if (options.dashEnabled()) {
-            manifest = options.manifestName();
-            write(output, manifest, Manifests.dashManifest(all, duration, MIN_BUFFER_MICROS,
-                    keys == null ? null : keys.dashScheme(), keys == null ? null : keys.settings.keyId().orElse(null)),
-                    files);
-        }
-        var described = new ArrayList<PackagedStream>();
-        for (var stream : all) {
-            var codecs = stream.tracks.stream().map(Track::codec).toList();
-            var kinds = stream.tracks.stream().map(Track::kind).toList();
-            described.add(new PackagedStream(stream.name, stream.rendition, codecs, kinds, stream.codecString(),
-                    stream.segments.size(), stream.longestSegment(), stream.durationMicros(), stream.peakBandwidth(),
-                    stream.averageBandwidth(),
-                    options.hlsEnabled() ? Optional.of(Manifests.playlistName(stream)) : Optional.empty()));
-        }
-        return new PackagingResult(files, Optional.ofNullable(master), Optional.ofNullable(manifest), duration, described);
+        return names;
     }
 
     /**
-     * Segments one rendition.
+     * {@return whether a presentation has audio renditions}
      *
-     * @param rendition the rendition to segment
+     * @param renditions the renditions as the caller gave them
+     */
+    private static boolean hasAlternateAudio(List<Rendition> renditions) {
+        return renditions.stream().anyMatch(rendition -> rendition.kind() == Rendition.Kind.AUDIO);
+    }
+
+    /**
+     * Chooses the tracks of a rendition.
+     *
+     * @param index the position of the rendition
      * @param name its name
-     * @param output the destination of the segments
+     * @param rendition the rendition whose tracks are chosen
+     * @param tracks the tracks of its file, or its declared tracks
+     * @param dispositions the dispositions of a track, by identifier
+     * @param tags the tags of its file, or {@code null}
      * @param options the packaging options
-     * @param files receives the names of the files written
-     * @param keys the encryption, or {@code null} for clear segments
-     * @return the streams written
+     * @param alternateAudio whether the presentation has audio renditions
+     * @return the member of the presentation
+     * @throws MediaException.Unsupported if the rendition has no track of its kind that the segment format carries,
+     * or a variant has no video track next to audio renditions
      */
-    private static Manifests.RenditionStreams packRendition(Rendition rendition, String name, PackageOutput output,
-                                                            PackagingOptions options, List<String> files, Keys keys) {
-        try (var demuxer = Containers.openDemuxer(rendition.source())) {
-            var ts = options.segmentFormat() == PackagingOptions.SegmentFormat.MPEG_TS;
-            VideoTrack video = null;
-            AudioTrack audio = null;
-            for (var track : demuxer.tracks()) {
-                var carried = ts ? TsMuxer.supports(track.codec()) : FragmentedMp4Muxer.supports(track.codec());
-                if (!carried) {
-                    continue;
+    private static Presentation.Member resolve(int index, String name, Rendition rendition, List<Track> tracks,
+                                               IntFunction<Set<TrackDisposition>> dispositions, MediaTags tags,
+                                               PackagingOptions options, boolean alternateAudio) {
+        var ts = options.segmentFormat() == PackagingOptions.SegmentFormat.MPEG_TS;
+        var format = ts ? "a transport stream" : "a CMAF segment";
+        switch (rendition.kind()) {
+            case VARIANT -> {
+                VideoTrack video = null;
+                AudioTrack audio = null;
+                for (var track : tracks) {
+                    if (!carries(ts, track.codec())) {
+                        continue;
+                    }
+                    if (video == null && track instanceof VideoTrack candidate) {
+                        video = candidate;
+                    } else if (audio == null && track instanceof AudioTrack candidate) {
+                        audio = candidate;
+                    }
                 }
-                if (video == null && track instanceof VideoTrack candidate) {
-                    video = candidate;
-                } else if (audio == null && track instanceof AudioTrack candidate) {
-                    audio = candidate;
+                if (video == null && audio == null) {
+                    throw new MediaException.Unsupported("packaging", "rendition " + name
+                            + " has no video or audio track " + format + " carries");
                 }
+                if (alternateAudio) {
+                    if (video == null) {
+                        throw new MediaException.Unsupported("packaging", "rendition " + name + " has no video track "
+                                + format + " carries; next to audio renditions, a variant carries video only");
+                    }
+                    audio = null;
+                }
+                return new Presentation.Member(index, name, rendition, video, audio, null, tags, Set.of());
             }
-            if (video == null && audio == null) {
-                throw new MediaException.Unsupported("packaging", "rendition " + name + " has no video or audio track "
-                        + (ts ? "a transport stream" : "a CMAF segment") + " carries");
+            case AUDIO -> {
+                var track = select(rendition, tracks, name, "audio");
+                if (!(track instanceof AudioTrack audio) || !carries(ts, track.codec())) {
+                    throw new MediaException.Unsupported("packaging", "rendition " + name + " has no audio track "
+                            + format + " carries");
+                }
+                return new Presentation.Member(index, name, rendition, null, audio, null, tags,
+                        dispositions.apply(track.id()));
             }
-            var mode = options.tagMode();
-            var tags = mode == TagMode.COPY || mode == TagMode.MERGE
-                    ? TagCarry.read(rendition.source(), demuxer, MediaLimits.DEFAULT) : null;
-            return ts ? packTs(demuxer, name, video, audio, output, options, files, tags, keys)
-                    : packCmaf(demuxer, name, video, audio, output, options, files, tags, keys);
+            case SUBTITLES -> {
+                var track = select(rendition, tracks, name, "text subtitle");
+                if (track == null || !isText(track.codec())) {
+                    throw new MediaException.Unsupported("packaging", "rendition " + name
+                            + " has no text subtitle track");
+                }
+                return new Presentation.Member(index, name, rendition, null, null, track, tags,
+                        dispositions.apply(track.id()));
+            }
+            default -> throw new IllegalStateException(rendition.kind().name());
         }
     }
 
     /**
-     * Segments a rendition into transport stream segments.
+     * Returns the track an audio or subtitle rendition packages.
      *
-     * @param demuxer the demuxer of the rendition
-     * @param name the rendition name
-     * @param video the video track, or {@code null}
-     * @param audio the audio track, or {@code null}
-     * @param output the destination of the segments
-     * @param options the packaging options
-     * @param files receives the names of the files written
-     * @param tags the tags of the rendition, or {@code null} when the options do not use them
-     * @param keys the encryption, or {@code null} for clear segments
-     * @return the streams written
+     * @param rendition the audio or subtitle rendition
+     * @param tracks the tracks to choose from
+     * @param name the rendition name, for the message
+     * @param kind the kind of track, for the message
+     * @return the track of the rendition's identifier, or else the first audio track of an audio rendition and
+     * the first text subtitle track of a subtitle rendition, or {@code null}
+     * @throws MediaException.Unsupported if the rendition names a track that does not exist
      */
-    private static Manifests.RenditionStreams packTs(Demuxer demuxer, String name, VideoTrack video, AudioTrack audio,
-                                                     PackageOutput output, PackagingOptions options, List<String> files,
-                                                     MediaTags tags, Keys keys) {
-        var tracks = new ArrayList<Track>();
-        if (video != null) {
-            tracks.add(video);
-        }
-        if (audio != null) {
-            tracks.add(audio);
-        }
-        var stream = new SegmentedStream(name, name, tracks, ".ts", options.byteRanges(), output, files);
-        var muxerBuilder = TsMuxerOptions.builder().segmentMicros(options.segmentMicros());
-        if (keys != null && keys.settings.method() == PackagingEncryption.Method.SAMPLE_AES) {
-            muxerBuilder.sampleAes(keys.settings.key(), keys.iv);
-        } else if (keys != null) {
-            stream.encryptSegments(keys.settings.key(), keys.iv);
-        }
-        var muxerOptions = muxerBuilder.build();
-        try (var muxer = new TsMuxer(segment -> stream.openSegment(segment.sequenceNumber(), segment.startMicros(),
-                segment.durationMicros(), segment.independent()), muxerOptions)) {
+    private static Track select(Rendition rendition, List<Track> tracks, String name, String kind) {
+        if (rendition.trackId().isPresent()) {
+            var id = rendition.trackId().getAsInt();
             for (var track : tracks) {
-                declare(muxer, track, name);
-            }
-            setTags(muxer, tags, options, tracks);
-            copy(demuxer, Map.of(trackKey(video), muxer, trackKey(audio), muxer), video, stream);
-            muxer.finish();
-        } finally {
-            stream.close();
-        }
-        return new Manifests.RenditionStreams(null, null, stream);
-    }
-
-    /**
-     * Segments a rendition into CMAF tracks.
-     *
-     * @param demuxer the demuxer of the rendition
-     * @param name the rendition name
-     * @param video the video track, or {@code null}
-     * @param audio the audio track, or {@code null}
-     * @param output the destination of the segments
-     * @param options the packaging options
-     * @param files receives the names of the files written
-     * @param tags the tags of the rendition, or {@code null} when the options do not use them
-     * @param keys the encryption, or {@code null} for clear segments
-     * @return the streams written
-     */
-    private static Manifests.RenditionStreams packCmaf(Demuxer demuxer, String name, VideoTrack video, AudioTrack audio,
-                                                       PackageOutput output, PackagingOptions options, List<String> files,
-                                                       MediaTags tags, Keys keys) {
-        var fragmentBuilder = (options.segmentIndex() ? FragmentedMp4MuxerOptions.dashOnDemand()
-                : FragmentedMp4MuxerOptions.cmaf()).toBuilder().fragmentMicros(options.segmentMicros());
-        if (keys != null && keys.settings.method() != PackagingEncryption.Method.AES_128) {
-            fragmentBuilder.encryption(keys.commonEncryption());
-        }
-        var fragmentOptions = fragmentBuilder.build();
-        SegmentedStream videoStream = null;
-        SegmentedStream audioStream = null;
-        var muxers = new HashMap<Integer, Muxer>();
-        var opened = new ArrayList<Muxer>();
-        var indexed = new HashMap<FragmentedMp4Muxer, SegmentedStream>();
-        try {
-            if (video != null) {
-                var stream = new SegmentedStream(name + "_video", name, List.of(video), ".m4s", options.byteRanges(), output, files);
-                if (keys != null && keys.settings.method() == PackagingEncryption.Method.AES_128) {
-                    stream.encryptSegments(keys.settings.key(), keys.iv);
+                if (track.id() == id) {
+                    return track;
                 }
-                var muxer = cmafMuxer(stream, fragmentOptions, indexed);
-                declare(muxer, video, name);
-                setTags(muxer, tags, options, List.of(video));
-                muxers.put(video.id(), muxer);
-                opened.add(muxer);
-                videoStream = stream;
             }
-            if (audio != null) {
-                var stream = new SegmentedStream(name + "_audio", name, List.of(audio), ".m4s", options.byteRanges(), output, files);
-                if (keys != null && keys.settings.method() == PackagingEncryption.Method.AES_128) {
-                    stream.encryptSegments(keys.settings.key(), keys.iv);
-                }
-                var muxer = cmafMuxer(stream, fragmentOptions, indexed);
-                declare(muxer, TagCarry.withoutEmbeddedTags(audio), name);
-                setTags(muxer, tags, options, List.of(audio));
-                muxers.put(audio.id(), muxer);
-                opened.add(muxer);
-                audioStream = stream;
-            }
-            copy(demuxer, muxers, video, videoStream);
-            for (var muxer : opened) {
-                muxer.finish();
-            }
-            for (var entry : indexed.entrySet()) {
-                entry.getValue().indexed(entry.getKey().indexLayout().orElseThrow());
-            }
-        } finally {
-            for (var muxer : opened) {
-                muxer.close();
-            }
-            if (videoStream != null) {
-                videoStream.close();
-            }
-            if (audioStream != null) {
-                audioStream.close();
-            }
+            throw new MediaException.Unsupported("packaging", "rendition " + name + " has no track " + id);
         }
-        return new Manifests.RenditionStreams(videoStream, audioStream, null);
-    }
-
-    /**
-     * Creates the CMAF muxer of a stream: a segmented muxer, or a single-file muxer whose layout
-     * is recorded when the options ask for a single segment index.
-     *
-     * @param stream the segmented stream the muxer writes
-     * @param options the fragment options
-     * @param indexed the single-file muxers and their streams, completed with this muxer when
-     * it writes a single segment index
-     * @return the muxer
-     */
-    private static FragmentedMp4Muxer cmafMuxer(SegmentedStream stream, FragmentedMp4MuxerOptions options,
-                                                Map<FragmentedMp4Muxer, SegmentedStream> indexed) {
-        if (options.segmentIndex() == FragmentedMp4MuxerOptions.SegmentIndex.SINGLE) {
-            var muxer = new FragmentedMp4Muxer(stream.openIndexed(), options);
-            indexed.put(muxer, stream);
-            return muxer;
-        }
-        return new FragmentedMp4Muxer(segment -> segment.kind() == Segment.Kind.INIT
-                ? stream.openInit()
-                : stream.openSegment(segment.sequenceNumber(), segment.startMicros(), segment.durationMicros(),
-                segment.independent()), options);
-    }
-
-    /**
-     * Returns the identifier of a track, or a value no track has.
-     *
-     * @param track the track, or {@code null}
-     * @return the identifier, or {@link Integer#MIN_VALUE}
-     */
-    private static int trackKey(Track track) {
-        return track == null ? Integer.MIN_VALUE : track.id();
-    }
-
-    /**
-     * Copies the packets of the packaged tracks to their muxers.
-     *
-     * @param demuxer the demuxer of the rendition
-     * @param muxers the muxer of each packaged track, by track identifier
-     * @param video the video track, or {@code null}
-     * @param stream the stream that keeps the video track's first key frame, or {@code null}
-     */
-    private static void copy(Demuxer demuxer, Map<Integer, Muxer> muxers, VideoTrack video, SegmentedStream stream) {
-        Packet packet;
-        while ((packet = demuxer.read()) != null) {
-            var muxer = muxers.get(packet.trackId());
-            if (muxer == null) {
-                continue;
-            }
-            if (video != null && stream != null && stream.keyFrame == null && packet.trackId() == video.id()
-                    && packet.keyframe()) {
-                stream.keyFrame = packet.data();
-            }
-            try {
-                muxer.writePacket(packet);
-            } catch (IllegalArgumentException exception) {
-                throw new MediaException.Malformed("a packet of track " + packet.trackId() + " cannot be packaged: "
-                        + exception.getMessage(), exception);
-            }
-        }
-    }
-
-    /**
-     * Declares a track to a muxer, reporting a track the segment format cannot carry as
-     * unsupported.
-     *
-     * @param muxer the muxer of the stream
-     * @param track the track to declare
-     * @param rendition the rendition name, for the message
-     * @throws MediaException.Unsupported if the muxer rejects the track, for example an AAC
-     * configuration ADTS cannot express
-     */
-    private static void declare(Muxer muxer, Track track, String rendition) {
-        try {
-            muxer.addTrack(track);
-        } catch (IllegalArgumentException exception) {
-            throw new MediaException.Unsupported("packaging", "rendition " + rendition + ": " + exception.getMessage());
-        }
-    }
-
-    /**
-     * Gives a muxer the tags of the tracks it writes, as the options select.
-     *
-     * @param muxer the muxer, with its tracks declared
-     * @param tags the tags of the rendition, or {@code null} when the options do not use them
-     * @param options the packaging options
-     * @param tracks the tracks the muxer writes, under their identifiers in the rendition
-     */
-    private static void setTags(Muxer muxer, MediaTags tags, PackagingOptions options, List<Track> tracks) {
-        var ids = new HashMap<Integer, Integer>();
         for (var track : tracks) {
-            ids.put(track.id(), track.id());
+            if (rendition.kind() == Rendition.Kind.AUDIO ? track instanceof AudioTrack : isText(track.codec())) {
+                return track;
+            }
         }
-        var given = options.tags().orElse(null);
-        var resolved = TagCarry.resolve(options.tagMode(), given, tags,
-                new TagCarry.Mapping(ids, Set.of(), false, false, 0, -1));
-        TagCarry.apply(muxer, resolved, options.tagMode(), given);
+        return null;
     }
 
     /**
-     * The encryption of one packaging: the settings and the initialization vector its segments use.
+     * {@return whether a codec is a text subtitle codec a subtitle rendition packages}
      *
-     * @param settings the encryption settings
-     * @param iv the initialization vector: the one of every AES-128 segment or {@code null} for their media sequence
-     * numbers, the SAMPLE-AES one of transport stream samples and the constant {@code cbcs} one of CMAF samples, or
-     * the first {@code cenc} one, or {@code null} for random ones
+     * @param codec the codec to look up
      */
-    private record Keys(PackagingEncryption settings, byte[] iv) {
+    private static boolean isText(Codec codec) {
+        return codec.isSubtitle() || codec == Codec.TTML;
+    }
+
+    /**
+     * Returns whether the segment format carries a codec.
+     *
+     * @param ts whether segments are transport streams
+     * @param codec the codec to look up
+     * @return {@code true} when the segment muxer accepts it
+     */
+    private static boolean carries(boolean ts, Codec codec) {
+        return ts ? TsMuxer.supports(codec) : FragmentedMp4Muxer.supports(codec);
+    }
+
+    /**
+     * Writes the packets of every source to the presentation, in decoding order across the sources.
+     *
+     * @param sources the sources, each with the renditions that read it
+     * @param presentation the presentation the packets go to
+     */
+    private static void pump(List<Source> sources, Presentation presentation) {
+        for (var source : sources) {
+            source.advance();
+        }
+        while (true) {
+            Source earliest = null;
+            for (var source : sources) {
+                if (source.next != null && (earliest == null || source.time < earliest.time)) {
+                    earliest = source;
+                }
+            }
+            if (earliest == null) {
+                return;
+            }
+            var packet = earliest.next;
+            for (var member : earliest.members) {
+                presentation.write(member, packet);
+            }
+            earliest.advance();
+        }
+    }
+
+    /**
+     * One demuxed source and the renditions that read it.
+     */
+    private static final class Source {
         /**
-         * Returns the encryption of a packaging, drawing the initialization vector it needs.
+         * The demuxer.
+         */
+        final Demuxer demuxer;
+
+        /**
+         * The identifier of each track.
+         */
+        private final int[] trackIds;
+
+        /**
+         * The time base of each track, in the order of {@link #trackIds}.
+         */
+        private final Rational[] timeBases;
+
+        /**
+         * The indices of the renditions that read the source.
+         */
+        final List<Integer> members = new ArrayList<>();
+
+        /**
+         * The tags of the source, or {@code null}.
+         */
+        MediaTags tags;
+
+        /**
+         * The next packet, or {@code null} at the end.
+         */
+        Packet next;
+
+        /**
+         * The decoding time of the next packet, in microseconds.
+         */
+        long time = Long.MIN_VALUE;
+
+        /**
+         * Constructs a source.
          *
-         * @param options the packaging options
-         * @return the encryption, or {@code null} for clear segments
+         * @param demuxer the demuxer of the source
          */
-        static Keys of(PackagingOptions options) {
-            var settings = options.encryption().orElse(null);
-            if (settings == null) {
-                return null;
+        Source(Demuxer demuxer) {
+            this.demuxer = demuxer;
+            var tracks = demuxer.tracks();
+            this.trackIds = new int[tracks.size()];
+            this.timeBases = new Rational[tracks.size()];
+            for (var index = 0; index < tracks.size(); index++) {
+                trackIds[index] = tracks.get(index).id();
+                timeBases[index] = tracks.get(index).timeBase();
             }
-            var iv = settings.initializationVector().orElse(null);
-            if (iv == null && settings.method() == PackagingEncryption.Method.SAMPLE_AES) {
-                iv = new byte[16];
-                new SecureRandom().nextBytes(iv);
-            }
-            return new Keys(settings, iv);
         }
 
         /**
-         * {@return the Common Encryption of CMAF segments}
+         * Reads the next packet; a packet without a timestamp keeps the time of the previous one.
          */
-        CommonEncryption commonEncryption() {
-            var builder = CommonEncryption.builder()
-                    .scheme(settings.method() == PackagingEncryption.Method.SAMPLE_AES ? CommonEncryption.Scheme.CBCS
-                            : CommonEncryption.Scheme.CENC)
-                    .keyId(settings.keyId().orElseThrow()).key(settings.key());
-            if (iv != null) {
-                builder.initializationVector(iv);
+        void advance() {
+            next = demuxer.read();
+            if (next == null) {
+                return;
             }
-            return builder.build();
-        }
-
-        /**
-         * {@return the scheme DASH manifests declare, or {@code null} when they declare none}
-         */
-        String dashScheme() {
-            return switch (settings.method()) {
-                case SAMPLE_AES -> "cbcs";
-                case SAMPLE_AES_CTR -> "cenc";
-                case AES_128 -> null;
-            };
-        }
-
-        /**
-         * {@return the lowest HLS protocol version the key tag needs (RFC 8216 clause 7)}
-         */
-        int hlsVersion() {
-            if (settings.method() != PackagingEncryption.Method.AES_128 || settings.keyFormat().isPresent()) {
-                return 5;
+            var value = next.dts() != Packet.NO_TIMESTAMP ? next.dts() : next.pts();
+            if (value == Packet.NO_TIMESTAMP) {
+                return;
             }
-            return iv != null ? 2 : 1;
-        }
-
-        /**
-         * {@return the {@code EXT-X-KEY} tag of the media playlists}
-         */
-        String playlistTag() {
-            var tag = new StringBuilder("#EXT-X-KEY:METHOD=").append(switch (settings.method()) {
-                case AES_128 -> "AES-128";
-                case SAMPLE_AES -> "SAMPLE-AES";
-                case SAMPLE_AES_CTR -> "SAMPLE-AES-CTR";
-            });
-            tag.append(",URI=\"").append(settings.keyUri().orElseThrow()).append('"');
-            if (iv != null && iv.length == 16 && settings.method() != PackagingEncryption.Method.SAMPLE_AES_CTR) {
-                tag.append(",IV=0x").append(HexFormat.of().formatHex(iv));
+            for (var index = 0; index < trackIds.length; index++) {
+                if (trackIds[index] == next.trackId()) {
+                    time = timeBases[index].toMicros(value);
+                    return;
+                }
             }
-            settings.keyFormat().ifPresent(format -> tag.append(",KEYFORMAT=\"").append(format).append('"'));
-            return tag.toString();
         }
-    }
-
-    /**
-     * Writes a text file.
-     *
-     * @param output the destination of the file
-     * @param name the file name
-     * @param text the content
-     * @param files receives the file name
-     */
-    private static void write(PackageOutput output, String name, String text, List<String> files) {
-        var sink = output.open(name);
-        try {
-            sink.write(ByteBuffer.wrap(text.getBytes(StandardCharsets.UTF_8)));
-        } finally {
-            sink.close();
-        }
-        files.add(name);
     }
 }

@@ -198,7 +198,22 @@ class ContainerBombTest {
                 })),
                 Arguments.of(new Input("Ogg packet continued over 100 pages", ContainerBombTest::endlessOgg)),
                 Arguments.of(new Input("MPEG-TS PES of unbounded length over 40000 packets",
-                        ContainerBombTest::endlessTs)));
+                        ContainerBombTest::endlessTs)),
+                Arguments.of(new Input("DASH segment timeline repeated 2^31 times", () -> dash(
+                        "<SegmentTemplate media=\"s$Number$.m4s\"><SegmentTimeline><S t=\"0\" d=\"1\" "
+                                + "r=\"2147483647\"/></SegmentTimeline></SegmentTemplate>"))),
+                Arguments.of(new Input("DASH segment template of 2^40 segments by duration", () -> dash(
+                        "<SegmentTemplate media=\"s$Number$.m4s\" duration=\"1\"/>"))));
+    }
+
+    /**
+     * Returns a DASH manifest of one representation addressed as given, over a presentation of 2^40 seconds.
+     */
+    static byte[] dash(String addressing) {
+        return ("<?xml version=\"1.0\"?><MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" "
+                + "mediaPresentationDuration=\"PT1099511627776S\"><Period><AdaptationSet mimeType=\"video/mp4\">"
+                + "<Representation id=\"r\" bandwidth=\"1\">" + addressing + "</Representation></AdaptationSet>"
+                + "</Period></MPD>").getBytes(java.nio.charset.StandardCharsets.UTF_8);
     }
 
     @Nested

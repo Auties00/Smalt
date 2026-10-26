@@ -558,6 +558,8 @@ container below; each muxer that has the fields writes them from the track.
 | VobSub (`.idx` and `.sub`) | yes: `VobSubDemuxer(idx, sub, options)`, the MPEG program stream of subpicture units with one track per subpicture stream, and the index header (palette, size, time offset) and stream languages; a `.sub` alone decodes with a gray palette | the index entries | languages, canvas size | yes (`VobSubMuxer(idx, sub)`, one track) | `container.subtitle` | de facto format (DVD-Video subpictures) |
 | Raw elementary streams | yes: H.264 and HEVC Annex B (`AnnexBDemuxer`: access units split as ITU-T H.264 7.4.1.2.3 and H.265 7.4.2.4.4 define them, H.264 field pairs joined, `avcC`/`hvcC` built from the parameter sets, timestamps derived from the picture order counts, each picture timed at the rate of its own sequence parameter set (VUI, else HEVC VPS, else `ElementaryStreamOptions`) for the fields its `pic_struct` displays, decoding times from the decoder's reorder depth, the pictures `no_output_of_prior_pics_flag` discards left without a presentation time), AV1 low-overhead OBUs and Annex B (`ObuDemuxer`), MPEG-4 Part 2 (`.m4v`) and H.263 (`.263`) (`Mpeg4VideoDemuxer`: timestamps from the VOP times, group of VOP time codes and H.263 temporal references and picture clock), and headerless PCM in a sample format the caller gives (`PcmDemuxer`, `PcmDemuxerOptions`) | Annex B: the key frame at or before the target, resuming from the IDR or IRAP picture that starts its run (the first seek reads the stream once); AV1: key temporal units (one walk of the unit headers); MPEG-4 Part 2 and H.263: the intra picture at or before the target (the first seek reads the stream once); PCM: to the sample | picture size, frame rate, color and sample aspect ratio from the sequence headers | H.264 and HEVC Annex B, AV1 low-overhead or Annex B (`RawMuxerOptions.av1AnnexB`), MPEG-4 Part 2, H.263 and PCM through `RawMuxer` (`ContainerFormat.H264`, `HEVC`, `AV1`, `AV1_ANNEX_B`, `MPEG4_VIDEO`, `H263` and `PCM`, and the transcoder targets `OutputContainer.H264`, `HEVC` and `AV1`) | `container.raw` | spec (ITU-T H.264 and H.265 Annex B and clause 8.2.1 / 8.3.1, AV1 specification section 5 and Annex B) |
 | YUV4MPEG2 (`.y4m`) | yes: `C` colorspaces `420jpeg`, `420mpeg2`, `420paldv`, `422`, `444`, `411`, `444alpha`, `mono` and the 9 to 16-bit `420pN`, `422pN`, `444pN`, `monoN`; `F`, `A`, `I` and `XCOLORRANGE` parameters | to the frame | frame rate, sample aspect ratio, interlacing, range and chroma siting | yes (`Y4mMuxer`, transcoder target `OutputContainer.Y4M`) | `container.y4m` | YUV4MPEG2 description (mjpegtools) |
+| HLS (`.m3u8`) | yes: a master playlist with every media playlist it names, or one media playlist (`HlsDemuxer.open(Path)` for one on disk; otherwise the segments, initialization sections and keys opened through `DemuxerOptions.dataReferences`, such as an application's HTTP resolver, whose sources may stream without a known length): transport stream, fragmented MP4, WebVTT (cue times moved by each `X-TIMESTAMP-MAP`, repeated cues read once) and packed audio segments (timed by their ID3 `transportStreamTimestamp`), byte ranges, gaps, the `identity` key among several `KEYFORMAT`s, `AES-128` segments, CMAF `SAMPLE-AES` and `SAMPLE-AES-CTR` with the options' keys or the key URI's, I-frame playlists read alone; the tracks of all streams on one timeline | through the demuxer of each stream | a rendition's `LANGUAGE`, `NAME` (as the `title`), `DEFAULT`, `FORCED` and accessibility `CHARACTERISTICS` | presentations, through `Packager` | `container.hls` | RFC 8216 |
+| MPEG-DASH (`.mpd`) | yes: every representation of every period (`DashDemuxer`, `DashDemuxer.open(Path)`; segments opened as for HLS): `SegmentTemplate` with a `SegmentTimeline` (repeats to the next entry or the period's end included) or a segment duration (over the period, or in a dynamic manifest up to its `publishTime` and within its `timeShiftBufferDepth`), `$RepresentationID$`, `$Number$`, `$Time$`, `$Bandwidth$` and their widths, `SegmentList` with media ranges, `SegmentBase`, side files such as WebVTT and TTML subtitles; nested `BaseURL`s, period starts and presentation time offsets; adaptation sets with an `EssentialProperty` (trick play) left out | through the demuxer of each stream | `lang`, `Label` (as the `title`), roles and audio description `Accessibility` as dispositions | presentations, through `Packager` | `container.dash` | ISO/IEC 23009-1 |
 
 QuickTime movies are written by `Mp4Muxer` with `Mp4MuxerOptions.quickTime()` (major brand `qt  `), which
 also takes ProRes and DNxHD tracks with PCM audio (the deliverable of the professional intra codecs, as
@@ -645,16 +647,36 @@ target. `Thumbnails` and `Waveform` (package `preview`) build on them.
 
 `smalt-core` package `container.packaging` packages encodes for adaptive streaming without re-encoding:
 `Packager.pack` takes one or more renditions (any file the containers above read) and writes, through a
-`PackageOutput` (a directory or any sink factory), the segments, media playlists and manifests.
+`PackageOutput` (a directory or any sink factory), the segments, media playlists and manifests;
+`Packager.open` returns a `PackageWriter` that packages the packets an application writes (a live encoder's)
+the same way. The `container.hls` and `container.dash` demuxers read the presentations back.
 
 | Output | Segments | Manifest | Source |
 |---|---|---|---|
-| HLS (`PackagingOptions.hls()`) | MPEG-TS, audio and video muxed, cut at video key frames | master playlist (one variant per rendition with peak and average bandwidth, `CODECS`, resolution, frame rate) and VOD media playlists | RFC 8216 |
+| HLS (`PackagingOptions.hls()`) | MPEG-TS, audio and video muxed, cut at video key frames | master playlist (one variant per rendition with peak and average bandwidth, `CODECS`, resolution, frame rate) and media playlists, on demand, as an event or live (below) | RFC 8216 |
 | HLS with CMAF (`hlsCmaf()`) | CMAF tracks (`_init.mp4`, `.m4s`) | as above, CMAF audio as an `EXT-X-MEDIA` audio group, `EXT-X-MAP` | RFC 8216 |
-| DASH (`dash()`) | CMAF tracks | static MPD, one adaptation set per kind, codec and language, `SegmentTemplate` with `SegmentTimeline` | ISO/IEC 23009-1 |
+| DASH (`dash()`) | CMAF tracks | static MPD (dynamic for an event or live), one adaptation set per kind, codec, language and role, `SegmentTemplate` with `SegmentTimeline` | ISO/IEC 23009-1 |
 | HLS and DASH (`cmaf()`) | one set of CMAF tracks | both | |
 | Byte ranges (`byteRanges(true)`) | one file per stream | `EXT-X-BYTERANGE`; DASH `SegmentList` with media ranges | |
 | DASH on demand (`dashOnDemand()`, or `segmentIndex(true)` with byte ranges) | one CMAF file per stream, a single `sidx` after the `moov` (`FragmentedMp4MuxerOptions.SegmentIndex.SINGLE`) | on-demand profile MPD: `BaseURL` and `SegmentBase` with `indexRange` and `Initialization range`; HLS keeps `EXT-X-BYTERANGE` past the `sidx` | ISO/IEC 23009-1 clause 8.3 |
+
+A `Rendition` is a variant (`Rendition.of`: its first video and audio track), an alternate audio rendition
+(`Rendition.ofAudio`, or a `Rendition.builder` of kind `AUDIO` that names a track) or a subtitle rendition
+(`ofSubtitles`: SubRip, WebVTT, 3GPP timed text, ASS or TTML from any container or subtitle file), with a
+language, a label, and the default and forced flags:
+
+| Feature | HLS | DASH |
+|---|---|---|
+| Alternate audio | one `EXT-X-MEDIA` audio group per codec that every variant names (`AUDIO`), the variants then video only; an audio-only presentation lists one variant per group | an adaptation set per codec, language and label, `Label`, roles `main`/`alternate` (and `commentary`, `dub`, `description`) |
+| Subtitles | WebVTT segments (`.vtt`) cut at the first video stream's segments, cues of the other codecs converted, spanning cues repeated, `X-TIMESTAMP-MAP` onto the segments' 90 kHz timeline; a `SUBTITLES` group with `FORCED` and `CHARACTERISTICS` | CMAF text tracks: `wvtt` (other codecs converted), TTML as `stpp` with its IMSC profile in `codecs`; `contentType="text"`, roles `subtitle`/`forced-subtitle`/`caption` |
+| Trick play (`trickPlay(true)`) | an I-frame playlist per video stream (`EXT-X-I-FRAME-STREAM-INF`): byte ranges of every key frame of transport stream segments behind the program tables of an `EXT-X-MAP`, or of each CMAF segment's first key frame | a trick-play adaptation set (`EssentialProperty` `http://dashif.org/guidelines/trickmode`) of the key frames alone, each lasting until the next, `maxPlayoutRate` and `codingDependency="false"` |
+| Events and live (`presentation(EVENT)`, `presentation(LIVE)`) | playlists rewritten after every segment, `EXT-X-PLAYLIST-TYPE:EVENT`, or a sliding window of `windowSegments` (grown to three target durations) whose expired segments `removeExpiredSegments` deletes once players cannot need them; `EXT-X-PROGRAM-DATE-TIME` from `programDateTime` | a dynamic manifest after every segment: `availabilityStartTime`, `publishTime`, `UTCTiming`, `minimumUpdatePeriod` until the end, `timeShiftBufferDepth` and windowed timelines for live |
+
+The transport stream segments of every rendition share one timeline (media time zero is the 700 ms
+multiplexing delay), so variants and alternate renditions stay in sync. The test kit's HLS and DASH
+validators check every layout, including each version of a live presentation as it is written; ffmpeg plays the
+playlists and manifests and reads each WebVTT segment (its HLS demuxer skips subtitle renditions), and the HLS
+and DASH demuxers read every presentation back to the input's packets and cues on one timeline.
 
 Encryption (`PackagingOptions.encryption`, a `PackagingEncryption`) takes three methods, with clear keys
 (`EXT-X-KEY` with the key URI, the initialization vector and the key format; an optional key file written with
@@ -1003,6 +1025,15 @@ checks a FLAC source's MD5 signature on the way.
   of a file) are not recognized. In FLAC files `TagEditor` keeps ID3v2 tags, leading or appended, without reading
   them, while the FLAC demuxer reports their fields. The offset of an ID3v2.4 `SEEK` frame is taken as the exact
   start of the next tag, while the specification makes it a minimum from which a reader may search.
+- Streaming: the HLS demuxer does not decrypt `SAMPLE-AES` transport stream segments, rejects a media playlist whose
+  initialization section changes (a discontinuity to another encoding), and reads an I-frame playlist of fragmented
+  MP4 segments by the first sample of each range alone (timed by `tfdt` and the composition offset, without the edit
+  list, not decrypted). The DASH demuxer reads each period as streams of their own (a representation continued
+  across periods is not joined), does not resolve `xlink` references or `$SubNumber$`, and needs a `publishTime` to
+  list the segments of a live representation addressed by duration. The packager writes HLS subtitles as WebVTT
+  only (IMSC in fragmented MP4 is written for DASH), packages no bitmap subtitles or closed captions, addresses only
+  the first key frame of each CMAF segment in I-frame playlists, and declares a growing live playlist's target
+  duration as its longest segment so far, which changes if a later segment is longer.
 - Encryption: keys are clear keys only; no digital rights management system is contacted and `pssh` data is not
   interpreted. Decryption is a demuxer and remuxer option (`DemuxerOptions.decryptionKeys`,
   `RemuxOptions.decryptionKeys`): `Media.probe`, the readers and the transcoder open protected files without keys
@@ -2067,7 +2098,26 @@ try (var high = MediaSource.of(Path.of("clip-1080p.mp4"));
 `dash()` DASH alone, `byteRanges(true)` one file per stream addressed by byte ranges, and `dashOnDemand()` the
 DASH on-demand profile (one file per stream indexed by a single `sidx`, addressed by `SegmentBase`). Segments are cut
 at key frames, so encode the renditions with aligned closed GOPs (for example with `Transcoder`) to let players
-switch between them. Each CMAF initialization segment carries the rendition's tags, cover art and chapters, and
+switch between them. Alternate audio and subtitles are renditions of their own:
+
+```java
+try (var video = MediaSource.of(Path.of("clip-720p.mp4"));
+     var english = MediaSource.of(Path.of("english.m4a"));
+     var spanish = MediaSource.of(Path.of("spanish.m4a"));
+     var captions = MediaSource.of(Path.of("captions.srt"))) {
+    Packager.pack(List.of(Rendition.of("720p", video),
+                    Rendition.builder(english).kind(Rendition.Kind.AUDIO).name("en").label("English")
+                            .defaultRendition(true).build(),
+                    Rendition.builder(spanish).kind(Rendition.Kind.AUDIO).name("es").label("Espanol").build(),
+                    Rendition.builder(captions).kind(Rendition.Kind.SUBTITLES).name("cc").language("en").build()),
+            PackageOutput.directory(Path.of("site/clip")),
+            PackagingOptions.cmaf().toBuilder().trickPlay(true).build());
+}
+// read it back: one track per stream, on one timeline
+try (var demuxer = HlsDemuxer.open(Path.of("site/clip/master.m3u8"))) {
+    demuxer.tracks();
+}
+``` Each CMAF initialization segment carries the rendition's tags, cover art and chapters, and
 the transport stream segments its track names, unless `PackagingOptions.Builder.noTags()` drops them.
 
 ### Walk the packets of any container
@@ -2546,7 +2596,7 @@ format; Adobe's TIFF and
 [DNG](https://helpx.adobe.com/camera-raw/desktop/dng-and-file-formats/digital-negative.html)
 specifications, EXIF, XMP, IPTC and the ICC profile format; the W3C's PNG, WebVTT, TTML and IMSC, and Compositing and
 Blending specifications; 3GPP TS 26.245 (timed text) and Apple's QuickTime File Format; the SubStation Alpha v4.00+
-script format, with [libass](https://github.com/libass/libass) settling how players read scripts; RFC 8216 and MPEG-DASH; ITU-T H.273, ITU-R BT.2100, BT.2390 and BS.1770, ISO 21496-1, the Adobe gain map specification, Google's Ultra HDR
+script format, with [libass](https://github.com/libass/libass) settling how players read scripts; RFC 8216 and MPEG-DASH, with the DASH-IF interoperability guidelines for trick play and live presentations; ITU-T H.273, ITU-R BT.2100, BT.2390 and BS.1770, ISO 21496-1, the Adobe gain map specification, Google's Ultra HDR
 image format and Apple's description of its HDR gain map, CIPA DC-007, and EBU R 128
 with EBU Tech 3341 and 3342, EBU Tech 3306 (RF64), ATSC A/65 and the MPEG-DASH role scheme for track metadata, and
 the tag mapping of [MusicBrainz Picard](https://picard-docs.musicbrainz.org/)'s documentation for the native names of

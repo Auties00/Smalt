@@ -65,7 +65,8 @@ class DeepNestingTest {
                 new Input("MP4 metadata boxes nested " + DEPTH + " deep", () -> mp4("meta", true)),
                 new Input("AVI lists nested " + DEPTH + " deep", DeepNestingTest::avi),
                 new Input("MP3 whose ID3 tables of contents nest 2000 deep", () -> id3Chain(2000)),
-                new Input("TTML spans nested " + DEPTH + " deep", () -> ttml(DEPTH)));
+                new Input("TTML spans nested " + DEPTH + " deep", () -> ttml(DEPTH)),
+                new Input("DASH manifest elements nested " + DEPTH + " deep", () -> mpd(DEPTH)));
     }
 
     @Nested
@@ -136,6 +137,13 @@ class DeepNestingTest {
         var builder = new StringBuilder("<tt xmlns=\"http://www.w3.org/ns/ttml\"><body><div><p begin=\"0s\" end=\"1s\">");
         builder.append("<span>".repeat(depth)).append("deep").append("</span>".repeat(depth));
         builder.append("</p></div></body></tt>");
+        return builder.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    static byte[] mpd(int depth) {
+        var builder = new StringBuilder("<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"><Period>");
+        builder.append("<AdaptationSet>".repeat(depth)).append("</AdaptationSet>".repeat(depth));
+        builder.append("</Period></MPD>");
         return builder.toString().getBytes(StandardCharsets.UTF_8);
     }
 

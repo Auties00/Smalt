@@ -4,6 +4,7 @@ import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.TagMode;
 
+import java.time.Instant;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -31,16 +32,49 @@ public final class PackagingOptions {
     }
 
     /**
+     * Enumerates the timelines of a presentation.
+     */
+    public enum Presentation {
+        /**
+         * Video on demand: the manifests are written once, complete, after the last segment (HLS
+         * {@code EXT-X-PLAYLIST-TYPE:VOD}, a static DASH manifest).
+         */
+        ON_DEMAND,
+
+        /**
+         * An event: the manifests are written after every segment and list every segment written so far, so that
+         * players start while the presentation is still being packaged (HLS {@code EXT-X-PLAYLIST-TYPE:EVENT}, a
+         * dynamic DASH manifest); the end of the presentation completes them.
+         */
+        EVENT,
+
+        /**
+         * A live presentation with a sliding window: the manifests are written after every segment and list the
+         * last {@link PackagingOptions#windowSegments()} segments (HLS playlists without a playlist type whose
+         * {@code EXT-X-MEDIA-SEQUENCE} advances, a dynamic DASH manifest with a {@code timeShiftBufferDepth}); the
+         * end of the presentation completes them.
+         */
+        LIVE
+    }
+
+    /**
      * The default shortest segment, in microseconds: six seconds, the target duration the HLS
      * authoring guidelines recommend.
      */
     public static final long DEFAULT_SEGMENT_MICROS = 6_000_000;
 
     /**
+     * The default number of segments of a live window: six, so that the window lasts at least three target durations,
+     * as RFC 8216 clause 6.2.2 requires, even when segments are half the target duration.
+     */
+    public static final int DEFAULT_WINDOW_SEGMENTS = 6;
+
+    /**
      * The options of {@link #hls()}.
      */
     private static final PackagingOptions HLS = new PackagingOptions(true, false, SegmentFormat.MPEG_TS,
-            DEFAULT_SEGMENT_MICROS, false, false, "master.m3u8", "manifest.mpd", TagMode.COPY, null, null);
+            DEFAULT_SEGMENT_MICROS, false, false, "master.m3u8", "manifest.mpd", TagMode.COPY, null, null,
+            Presentation.ON_DEMAND, DEFAULT_WINDOW_SEGMENTS, false, null, false);
 
     /**
      * The options of {@link #hlsCmaf()}.
@@ -83,9 +117,22 @@ public final class PackagingOptions {
      */
     private final PackagingEncryption encryption;
 
+    private final Presentation presentation;
+    private final int windowSegments;
+    private final boolean removeExpiredSegments;
+
+    /**
+     * The wall-clock time of media time zero, or {@code null} for none.
+     */
+    private final Instant programDateTime;
+
+    private final boolean trickPlay;
+
     private PackagingOptions(boolean hls, boolean dash, SegmentFormat segmentFormat, long segmentMicros,
                              boolean byteRanges, boolean segmentIndex, String masterPlaylistName, String manifestName,
-                             TagMode tagMode, MediaTags tags, PackagingEncryption encryption) {
+                             TagMode tagMode, MediaTags tags, PackagingEncryption encryption, Presentation presentation,
+                             int windowSegments, boolean removeExpiredSegments, Instant programDateTime,
+                             boolean trickPlay) {
         this.hls = hls;
         this.dash = dash;
         this.segmentFormat = segmentFormat;
@@ -97,6 +144,11 @@ public final class PackagingOptions {
         this.tagMode = tagMode;
         this.tags = tags;
         this.encryption = encryption;
+        this.presentation = presentation;
+        this.windowSegments = windowSegments;
+        this.removeExpiredSegments = removeExpiredSegments;
+        this.programDateTime = programDateTime;
+        this.trickPlay = trickPlay;
     }
 
     /**
@@ -264,6 +316,70 @@ public final class PackagingOptions {
         return Optional.ofNullable(encryption);
     }
 
+    /**
+     * {@return the timeline of the presentation; {@link Presentation#ON_DEMAND} in every preset}
+     *
+     * <p>An event or live presentation rewrites each media playlist after each of its segments, the DASH manifest
+     * after every segment, and the master playlist once every stream has a segment and again at the end; a
+     * {@link PackageOutput} that serves the files replaces a file whenever it is opened again. The HLS target
+     * duration of a growing playlist is its longest segment so far, which stays constant when key frames are at
+     * most {@link #segmentMicros()} apart. The dynamic DASH manifest declares its {@code availabilityStartTime} at
+     * {@link #programDateTime()}, or at the time packaging started without one, and a {@code publishTime} and a
+     * {@code UTCTiming} of that time plus the media time reached, so it describes the presentation as a live
+     * source producing it in real time would.
+     */
+    public Presentation presentation() {
+        return presentation;
+    }
+
+    /**
+     * {@return the number of segments a {@link Presentation#LIVE} window lists, at least 1;
+     * {@link #DEFAULT_WINDOW_SEGMENTS} by default}
+     *
+     * <p>The window grows past this number when that is needed to last three target durations (RFC 8216 clause
+     * 6.2.2).
+     */
+    public int windowSegments() {
+        return windowSegments;
+    }
+
+    /**
+     * {@return whether the segment files a {@link Presentation#LIVE} window no longer lists are deleted through
+     * {@link PackageOutput#delete(String)}, once the window has moved by its own length and one more segment past
+     * them, so that players holding an older playlist still find them (RFC 8216 clause 6.2.2: for the duration of
+     * the segment plus that of the playlist); {@code false} by default}
+     *
+     * <p>The transport stream segment whose program tables an I-frame playlist names as its {@code EXT-X-MAP} is
+     * kept.
+     */
+    public boolean removeExpiredSegments() {
+        return removeExpiredSegments;
+    }
+
+    /**
+     * {@return the wall-clock time of media time zero, or empty for none; empty by default}
+     *
+     * <p>Each HLS media segment then carries an {@code EXT-X-PROGRAM-DATE-TIME} tag with this time plus its start,
+     * and a dynamic DASH manifest takes it as its {@code availabilityStartTime}.
+     */
+    public Optional<Instant> programDateTime() {
+        return Optional.ofNullable(programDateTime);
+    }
+
+    /**
+     * {@return whether trick play (fast forward, rewind and scrubbing thumbnails) is described; {@code false} by
+     * default}
+     *
+     * <p>HLS gets an I-frame playlist ({@code EXT-X-I-FRAME-STREAM-INF}, RFC 8216 clause 4.3.4.3) per video stream,
+     * whose byte ranges address the key frames of its segments: every key frame of transport stream segments, the
+     * first of each CMAF segment. DASH gets a trick-play adaptation set per video adaptation set (DASH-IF IOP clause
+     * 3.2.9: an {@code EssentialProperty} of the {@code http://dashif.org/guidelines/trickmode} scheme naming the
+     * video adaptation set), whose CMAF segments hold the key frames only, each lasting until the next.
+     */
+    public boolean trickPlay() {
+        return trickPlay;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof PackagingOptions that && hls == that.hls && dash == that.dash
@@ -273,13 +389,17 @@ public final class PackagingOptions {
                 && manifestName.equals(that.manifestName)
                 && tagMode == that.tagMode
                 && Objects.equals(tags, that.tags)
-                && Objects.equals(encryption, that.encryption);
+                && Objects.equals(encryption, that.encryption)
+                && presentation == that.presentation && windowSegments == that.windowSegments
+                && removeExpiredSegments == that.removeExpiredSegments
+                && Objects.equals(programDateTime, that.programDateTime) && trickPlay == that.trickPlay;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(hls, dash, segmentFormat, segmentMicros, byteRanges, segmentIndex, masterPlaylistName,
-                manifestName, tagMode, tags, encryption);
+                manifestName, tagMode, tags, encryption, presentation, windowSegments, removeExpiredSegments,
+                programDateTime, trickPlay);
     }
 
     @Override
@@ -288,7 +408,10 @@ public final class PackagingOptions {
                 + ", segmentMicros=" + segmentMicros + ", byteRanges=" + byteRanges + ", segmentIndex=" + segmentIndex
                 + ", masterPlaylistName="
                 + masterPlaylistName + ", manifestName=" + manifestName + ", tagMode=" + tagMode
-                + (tags == null ? "" : ", tags=" + tags) + (encryption == null ? "" : ", encryption=" + encryption) + "]";
+                + (tags == null ? "" : ", tags=" + tags) + (encryption == null ? "" : ", encryption=" + encryption)
+                + ", presentation=" + presentation + ", windowSegments=" + windowSegments + ", removeExpiredSegments="
+                + removeExpiredSegments + (programDateTime == null ? "" : ", programDateTime=" + programDateTime)
+                + ", trickPlay=" + trickPlay + "]";
     }
 
     /**
@@ -309,6 +432,11 @@ public final class PackagingOptions {
         private TagMode tagMode;
         private MediaTags tags;
         private PackagingEncryption encryption;
+        private Presentation presentation;
+        private int windowSegments;
+        private boolean removeExpiredSegments;
+        private Instant programDateTime;
+        private boolean trickPlay;
 
         private Builder(PackagingOptions options) {
             this.hls = options.hls;
@@ -322,6 +450,11 @@ public final class PackagingOptions {
             this.tagMode = options.tagMode;
             this.tags = options.tags;
             this.encryption = options.encryption;
+            this.presentation = options.presentation;
+            this.windowSegments = options.windowSegments;
+            this.removeExpiredSegments = options.removeExpiredSegments;
+            this.programDateTime = options.programDateTime;
+            this.trickPlay = options.trickPlay;
         }
 
         /**
@@ -486,6 +619,71 @@ public final class PackagingOptions {
         }
 
         /**
+         * Sets the timeline of the presentation; see {@link PackagingOptions#presentation()}.
+         *
+         * @param presentation the value
+         * @return this builder
+         */
+        public Builder presentation(Presentation presentation) {
+            this.presentation = Objects.requireNonNull(presentation, "presentation");
+            return this;
+        }
+
+        /**
+         * Sets the number of segments of a live window; see {@link PackagingOptions#windowSegments()}.
+         *
+         * @param segments the value
+         * @return this builder
+         */
+        public Builder windowSegments(int segments) {
+            this.windowSegments = segments;
+            return this;
+        }
+
+        /**
+         * Sets whether expired live segments are deleted; see {@link PackagingOptions#removeExpiredSegments()}.
+         *
+         * @param enabled the value
+         * @return this builder
+         */
+        public Builder removeExpiredSegments(boolean enabled) {
+            this.removeExpiredSegments = enabled;
+            return this;
+        }
+
+        /**
+         * Sets the wall-clock time of media time zero; see {@link PackagingOptions#programDateTime()}.
+         *
+         * @param time the value
+         * @return this builder
+         */
+        public Builder programDateTime(Instant time) {
+            this.programDateTime = Objects.requireNonNull(time, "time");
+            return this;
+        }
+
+        /**
+         * Writes no program date and time, the default; see {@link PackagingOptions#programDateTime()}.
+         *
+         * @return this builder
+         */
+        public Builder noProgramDateTime() {
+            this.programDateTime = null;
+            return this;
+        }
+
+        /**
+         * Sets whether trick play is described; see {@link PackagingOptions#trickPlay()}.
+         *
+         * @param enabled the value
+         * @return this builder
+         */
+        public Builder trickPlay(boolean enabled) {
+            this.trickPlay = enabled;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -496,7 +694,10 @@ public final class PackagingOptions {
          * {@link PackagingEncryption.Method#AES_128} with DASH or a segment index,
          * {@link PackagingEncryption.Method#SAMPLE_AES_CTR} with transport stream segments, a
          * method that encrypts CMAF samples without a key identifier, or a key file named as the
-         * master playlist or the manifest
+         * master playlist or the manifest; or if the live window is not positive, an event or live presentation
+         * asks for a single segment index, expired segments are removed outside a live presentation or from
+         * byte-range files, or HLS trick play is asked of {@link PackagingEncryption.Method#AES_128} segments, whose
+         * key frames cannot be decrypted alone
          */
         public PackagingOptions build() {
             if (encryption != null) {
@@ -521,6 +722,17 @@ public final class PackagingOptions {
                     throw new IllegalArgumentException("the key file \"" + keyFile + "\" would replace a manifest");
                 }
             }
+            Checks.positive("live window", windowSegments);
+            if (presentation != Presentation.ON_DEMAND && segmentIndex) {
+                throw new IllegalArgumentException("a single segment index is written at the end and cannot be live");
+            }
+            if (removeExpiredSegments && (presentation != Presentation.LIVE || byteRanges)) {
+                throw new IllegalArgumentException("expired segments are removed from the segment files of a live "
+                        + "presentation only");
+            }
+            if (trickPlay && hls && encryption != null && encryption.method() == PackagingEncryption.Method.AES_128) {
+                throw new IllegalArgumentException("I-frame playlists cannot address key frames of AES-128 segments");
+            }
             if (!hls && !dash) {
                 throw new IllegalArgumentException("neither HLS nor DASH is requested");
             }
@@ -532,7 +744,8 @@ public final class PackagingOptions {
             }
             return new PackagingOptions(hls, dash, segmentFormat, Checks.positive("segment duration", segmentMicros),
                     byteRanges, segmentIndex, checkName("master playlist name", masterPlaylistName),
-                    checkName("manifest name", manifestName), tagMode, tags, encryption);
+                    checkName("manifest name", manifestName), tagMode, tags, encryption, presentation,
+                    windowSegments, removeExpiredSegments, programDateTime, trickPlay);
         }
 
         /**

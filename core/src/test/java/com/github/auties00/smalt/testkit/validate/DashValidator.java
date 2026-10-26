@@ -33,7 +33,11 @@ import java.util.regex.Pattern;
  * {@code SegmentTimeline}, {@code SegmentList} and {@code SegmentBase} with its index), every initialization and
  * media segment (validated as ISOBMFF segments), the timeline of the segments against {@code tfdt} and the fragment
  * durations, {@code codecs}, {@code width} and {@code height} against the sample entries, the presentation duration,
- * and {@code bandwidth} with {@code minBufferTime} against the segment sizes.
+ * and {@code bandwidth} with {@code minBufferTime} against the segment sizes. A dynamic MPD must declare its
+ * {@code availabilityStartTime} and {@code publishTime}, an update period until it declares its duration, and list
+ * only segments available at its publish time; a trick-play adaptation set (DASH-IF IOP clause 3.2.9) must name a
+ * video adaptation set of its period, and its representations hold sync samples only and declare
+ * {@code codingDependency="false"} and a {@code maxPlayoutRate}; text adaptation sets carry ISOBMFF text tracks.
  */
 public final class DashValidator {
     /** The schema files of ISO/IEC 23009-1 and the W3C schemas it imports, by the name they are imported with. */
@@ -51,6 +55,12 @@ public final class DashValidator {
     private static Schema schema;
 
     private final Findings findings;
+
+    /** The availability start of a dynamic MPD, or {@code null}. */
+    private java.time.Instant availabilityStart;
+
+    /** The publish time of a dynamic MPD, or {@code null}. */
+    private java.time.Instant publishTime;
 
     private DashValidator(Findings findings) {
         this.findings = findings;
@@ -137,6 +147,25 @@ public final class DashValidator {
         var presentation = seconds(mpd.getAttribute("mediaPresentationDuration"), where);
         if (type.equals("static")) {
             findings.require(presentation >= 0, where, "a static MPD without mediaPresentationDuration");
+        } else {
+            availabilityStart = dateTime(mpd.getAttribute("availabilityStartTime"), where);
+            publishTime = dateTime(mpd.getAttribute("publishTime"), where);
+            findings.require(availabilityStart != null, where, "a dynamic MPD without availabilityStartTime");
+            findings.require(publishTime != null, where, "a dynamic MPD without publishTime");
+            if (availabilityStart != null && publishTime != null) {
+                findings.require(!publishTime.isBefore(availabilityStart), where, "publishTime before "
+                        + "availabilityStartTime");
+            }
+            findings.require(presentation >= 0 || mpd.hasAttribute("minimumUpdatePeriod"), where, "a dynamic MPD "
+                    + "with neither mediaPresentationDuration nor minimumUpdatePeriod");
+            for (var timing : children(mpd, "UTCTiming")) {
+                var scheme = timing.getAttribute("schemeIdUri");
+                findings.require(scheme.startsWith("urn:mpeg:dash:utc:"), where, "UTCTiming scheme " + scheme);
+                if (scheme.equals("urn:mpeg:dash:utc:direct:2014")) {
+                    findings.require(dateTime(timing.getAttribute("value"), where) != null, where, "a direct UTCTiming "
+                            + "whose value is not a date");
+                }
+            }
         }
         var minBuffer = Math.max(0, seconds(mpd.getAttribute("minBufferTime"), where));
         var base = manifest.toAbsolutePath().getParent();
@@ -145,18 +174,46 @@ public final class DashValidator {
         findings.require(!periods.isEmpty(), where, "no Period");
         for (var period : periods) {
             var periodBase = baseUrl(base, period);
+            var periodStart = Math.max(0, seconds(period.getAttribute("start"), where));
             var ids = new HashSet<String>();
+            var videoSets = new HashSet<String>();
+            for (var set : children(period, "AdaptationSet")) {
+                var content = set.getAttribute("contentType");
+                if (content.equals("video") || set.getAttribute("mimeType").startsWith("video/")) {
+                    videoSets.add(set.getAttribute("id"));
+                }
+            }
             for (var set : children(period, "AdaptationSet")) {
                 var setBase = baseUrl(periodBase, set);
                 var representations = children(set, "Representation");
                 findings.require(!representations.isEmpty(), where, "an AdaptationSet without a Representation");
+                var trick = false;
+                for (var property : children(set, "EssentialProperty")) {
+                    if (property.getAttribute("schemeIdUri").equals("http://dashif.org/guidelines/trickmode")) {
+                        trick = true;
+                        findings.require(videoSets.contains(property.getAttribute("value")), where, "a trick-play "
+                                + "AdaptationSet names " + property.getAttribute("value") + ", no video AdaptationSet");
+                    }
+                }
+                if (set.getAttribute("contentType").equals("text")) {
+                    findings.require(List.of("application/mp4", "text/vtt", "application/ttml+xml")
+                            .contains(set.getAttribute("mimeType")), where, "a text AdaptationSet of mimeType "
+                            + set.getAttribute("mimeType"));
+                }
                 for (var representation : representations) {
                     var id = representation.getAttribute("id");
                     var at = where + " Representation " + id;
                     findings.require(!id.isBlank() && !id.contains(" "), at, "an id that is empty or has spaces");
                     findings.require(ids.add(id), at, "a duplicate Representation id");
+                    if (trick) {
+                        findings.require("false".equals(attribute(representation, set, "codingDependency")), at,
+                                "a trick-play Representation without codingDependency=\"false\"");
+                        var rate = attribute(representation, set, "maxPlayoutRate");
+                        findings.require(rate.matches("\\d+(\\.\\d+)?") && Double.parseDouble(rate) > 0, at,
+                                "a trick-play Representation with maxPlayoutRate " + rate);
+                    }
                     var duration = representation(representation, set, period, baseUrl(setBase, representation),
-                            minBuffer, at);
+                            minBuffer, at, periodStart, trick);
                     longest = Math.max(longest, duration);
                 }
             }
@@ -169,7 +226,7 @@ public final class DashValidator {
 
     /** Returns the duration of a Representation's segments, in seconds, after checking them. */
     private double representation(Element representation, Element set, Element period, Path base, double minBuffer,
-                                  String at) {
+                                  String at, double periodStart, boolean trick) {
         var bandwidth = attribute(representation, set, "bandwidth");
         findings.require(bandwidth.matches("\\d+") && Long.parseLong(bandwidth) > 0, at, "bandwidth " + bandwidth);
         var codecs = attribute(representation, set, "codecs");
@@ -179,6 +236,7 @@ public final class DashValidator {
         var segments = new ArrayList<Segment>();
         Segment init = null;
         var timescale = 1L;
+        var timeOffset = 0L;
         var template = inherited(representation, set, period, "SegmentTemplate");
         var list = inherited(representation, set, period, "SegmentList");
         var segmentBase = inherited(representation, set, period, "SegmentBase");
@@ -195,7 +253,10 @@ public final class DashValidator {
             var media = template.getAttribute("media");
             findings.require(!media.isBlank(), at, "SegmentTemplate without media");
             var number = number(template, "startNumber", 1);
+            var offset = number(template, "presentationTimeOffset", 0);
+            timeOffset = offset;
             for (var entry : timeline(template, timescale, at)) {
+                available(entry, timescale, offset, periodStart, at);
                 var file = resolve(base, substitute(media, representation, number, entry[0], at), at);
                 segments.add(new Segment(file, null, entry[0], entry[1]));
                 number++;
@@ -253,6 +314,13 @@ public final class DashValidator {
             var segmentFindings = new Findings(at);
             var media = IsoBmffValidator.validate(bytes, segmentFindings, IsoBmffValidator.Kind.MEDIA_SEGMENT,
                     movie.tracks());
+            if (trick) {
+                for (var fragment : media.fragments()) {
+                    segmentFindings.require(fragment.syncSamples() == fragment.samples(), "track " + fragment.trackId(),
+                            "a trick-play fragment of " + fragment.samples() + " samples, " + fragment.syncSamples()
+                                    + " of them sync samples");
+                }
+            }
             var duration = segmentDuration(media, movie.tracks(), segment, timescale, nextTime,
                     segmentFindings);
             segmentFindings.problems().forEach(problem -> findings.add(at + " " + segment.file().getFileName()
@@ -261,7 +329,17 @@ public final class DashValidator {
             sizes.add(new long[]{bytes.length, Math.round(duration * 1_000_000)});
         }
         bucket(Long.parseLong(bandwidth.matches("\\d+") ? bandwidth : "0"), minBuffer, sizes, at);
-        return total;
+        if (availabilityStart == null) {
+            return total;
+        }
+        // a dynamic MPD lists a window of segments: the presentation lasts until the end of the last one
+        var end = 0.0;
+        for (var segment : segments) {
+            if (segment.time() >= 0) {
+                end = Math.max(end, (double) (segment.time() + segment.duration() - timeOffset) / timescale);
+            }
+        }
+        return Math.max(total, end);
     }
 
     /** Checks a single indexed file addressed by a {@code SegmentBase}, and returns its duration in seconds. */
@@ -399,6 +477,31 @@ public final class DashValidator {
         }
     }
 
+    /** Checks that a dynamic MPD lists a segment only once it is available, at its publish time. */
+    private void available(long[] entry, long timescale, long offset, double periodStart, String at) {
+        if (availabilityStart == null || publishTime == null) {
+            return;
+        }
+        var end = availabilityStart.toEpochMilli() / 1000.0 + periodStart
+                + (double) (entry[0] + entry[1] - offset) / timescale;
+        var publish = publishTime.toEpochMilli() / 1000.0;
+        findings.require(end <= publish + 0.002, at, "the segment at " + entry[0] + " ends " + (end - publish)
+                + " s after the publish time");
+    }
+
+    /** Parses an {@code xs:dateTime}, or returns {@code null} for none or a malformed one. */
+    private java.time.Instant dateTime(String text, String at) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            return java.time.OffsetDateTime.parse(text).toInstant();
+        } catch (java.time.format.DateTimeParseException exception) {
+            findings.add(at, "date " + text);
+            return null;
+        }
+    }
+
     /** Returns the start and duration of each segment of a timeline, or of the segments of a fixed duration. */
     private List<long[]> timeline(Element scheme, long timescale, String at) {
         var segments = new ArrayList<long[]>();
@@ -420,7 +523,7 @@ public final class DashValidator {
             var d = Long.parseLong(s.getAttribute("d"));
             findings.require(d > 0, at, "S@d " + d);
             var repeat = s.hasAttribute("r") ? Long.parseLong(s.getAttribute("r")) : 0;
-            findings.require(repeat >= 0, at, "a negative S@r in a static timeline");
+            findings.require(repeat >= 0, at, "a negative S@r");
             for (var index = 0; index <= repeat; index++) {
                 segments.add(new long[]{time, d});
                 time += d;

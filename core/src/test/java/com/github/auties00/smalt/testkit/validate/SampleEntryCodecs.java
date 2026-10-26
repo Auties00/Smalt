@@ -53,7 +53,7 @@ public final class SampleEntryCodecs {
                     .map(box -> av1(data, box.payload())).orElse(format);
             case "mp4a" -> entry.child("esds").or(() -> entry.find("wave", "esds")).map(box -> mpeg4Audio(data, box))
                     .orElse(format);
-            case "Opus", "fLaC", "ac-3", "ec-3", "ipcm", "fpcm", "alac", "wvtt", "mp4v" -> format;
+            case "Opus", "fLaC", "ac-3", "ec-3", "ipcm", "fpcm", "alac", "wvtt", "stpp", "mp4v" -> format;
             default -> "";
         };
     }
@@ -69,6 +69,10 @@ public final class SampleEntryCodecs {
     public static boolean agree(String declared, String derived) {
         if (declared.equalsIgnoreCase(derived)) {
             return true;
+        }
+        if (derived.equals("stpp")) {
+            // the IMSC profile of a TTML track is in its documents, not its sample entry
+            return declared.matches("stpp\\.ttml\\.im[12][ti]");
         }
         var a = declared.split("\\.");
         var b = derived.split("\\.");

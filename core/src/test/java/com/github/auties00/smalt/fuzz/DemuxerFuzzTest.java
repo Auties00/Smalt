@@ -4,6 +4,7 @@ import com.code_intelligence.jazzer.junit.FuzzTest;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.testkit.fuzz.FuzzMedia;
+import com.github.auties00.smalt.testkit.fuzz.FuzzPresentations;
 
 import java.util.HexFormat;
 
@@ -144,5 +145,15 @@ class DemuxerFuzzTest {
     @FuzzTest
     void vobSub(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.VOBSUB, data);
+    }
+
+    @FuzzTest
+    void hls(byte[] data) {
+        FuzzPresentations.demuxer(ContainerFormat.HLS, data);
+    }
+
+    @FuzzTest
+    void dash(byte[] data) {
+        FuzzPresentations.demuxer(ContainerFormat.DASH, data);
     }
 }

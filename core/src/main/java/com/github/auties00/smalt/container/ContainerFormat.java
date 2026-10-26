@@ -168,6 +168,18 @@ public enum ContainerFormat {
     Y4M,
 
     /**
+     * An HTTP Live Streaming playlist ({@code .m3u8}, RFC 8216), master or media, with the segments it names: text
+     * starting with {@code #EXTM3U}.
+     */
+    HLS,
+
+    /**
+     * An MPEG-DASH media presentation description ({@code .mpd}, ISO/IEC 23009-1), with the segments it addresses:
+     * XML whose root element is {@code MPD}.
+     */
+    DASH,
+
+    /**
      * Raw PCM samples without a header ({@code .pcm}, {@code .raw}), whose sample format, rate and channel count
      * the reader must know. Never recognized.
      */
