@@ -111,7 +111,7 @@ public final class RawDecoder {
                 facts.sensorWidth(), facts.sensorHeight(), facts.orientation(), facts.bitsPerSample(), facts.cfa(),
                 facts.compression(), facts.unsupported(), facts.calibrated(), facts.iso(), facts.exposureTime(),
                 facts.fNumber(), facts.focalLength(), facts.lens(), facts.captureTime(), facts.dngVersion(),
-                facts.previews());
+                facts.previews(), facts.layout(), facts.profiles(), facts.enhanced());
     }
 
     /**
@@ -151,11 +151,14 @@ public final class RawDecoder {
      * Decodes a raw image.
      *
      * <p>Without a size hint the sensor image is rendered at full size. With one, the result is
-     * the largest embedded preview when one is at least as large as the hint (and the options
-     * allow it), else a half-size rendering when that is large enough, else the full rendering;
-     * {@link DecodedImage#sourceWidth()} and {@link DecodedImage#sourceHeight()} always give the
-     * size of the full rendering. A file whose sensor data does not decode returns its largest
-     * preview when a size hint is set and it has one.
+     * the smallest embedded preview (JPEG, or JPEG XL in a DNG 1.7 file) at least as large as the
+     * hint when the options allow it, else the smallest rendering at least as large as the hint
+     * among a rendering of a reduced-resolution linear raw image the DNG file stores (when the
+     * options apply the default crop and the opcode lists, which such an image has applied), a half-size
+     * rendering and the full rendering; {@link DecodedImage#sourceWidth()} and
+     * {@link DecodedImage#sourceHeight()} always give the size of the full rendering. A file whose
+     * sensor data does not decode returns its largest preview when a size hint is set and it has
+     * one.
      *
      * @param source the input
      * @param options the rendering settings, size hint and limits
@@ -202,8 +205,10 @@ public final class RawDecoder {
     /**
      * Extracts the linear sensor image of a raw file, before demosaicing and color rendering.
      *
-     * <p>The options' limits, opcode and default crop choices apply, and their white balance and
-     * color matrix decide the image's color description; the rendering choices are ignored.
+     * <p>The options' limits, opcode, default crop, user crop, enhanced image and camera profile
+     * choices apply, and their white balance and color matrix decide the image's color description;
+     * the rendering choices are ignored. A four-color sensor whose file carries no color matrices
+     * decodes with an empty color matrix unless the options supply one.
      *
      * @param source the input
      * @param options the limits, the opcode and crop choices and the color description
@@ -221,13 +226,13 @@ public final class RawDecoder {
             var file = RawDecoding.open(source, options.limits());
             var image = RawDecoding.sensorImage(file, options);
             return new RawImage(image.width(), image.height(), image.channels(), image.samples(), image.cfa(),
-                    image.neutral(), image.balancedToXyz());
+                    image.neutral(), image.balancedToXyz(), image.layout());
         }
     }
 
     /**
      * Returns the largest JPEG preview a raw file embeds, as stored: usually the camera's own
-     * rendering of the shot at full or near full size.
+     * rendering of the shot at full or near full size. JPEG XL previews are left out.
      *
      * @param source the input
      * @return the JPEG stream, or empty when the file embeds no JPEG preview

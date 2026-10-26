@@ -1,0 +1,238 @@
+# Capture devices on the hosted runners: each job provisions the virtual devices its operating system allows, runs
+# capture's suite against them with smalt.capture.requireDevices naming what it provisioned (so a provisioned device
+# that is missing fails instead of skipping), and checks its skips against the baseline. The fixtures reach the tests
+# through environment variables (SMALT_TEST_AUDIO_LOOPBACK, SMALT_TEST_SCREEN_COLOR, SMALT_CAPTURE_LIVE,
+# SMALT_CAPTURE_REQUIRE_DEVICES), which the forked test JVMs inherit.
+#   Linux:   an Xvfb display with a solid red root window (X11 screen capture, MIT-SHM, Composite and XFixes window
+#            and pointer capture, AWT for the fixture windows), a PulseAudio null sink whose monitor is the default
+#            source (ALSA through the pulse plugin), a v4l2loopback camera fed by ffmpeg (the module built from its
+#            pinned release against the running kernel's headers), a vivid test camera for the camera controls
+#            (checked against v4l2-ctl), and a script that adds and removes a v4l2loopback camera for the hotplug
+#            test (SMALT_TEST_CAMERA_HOTPLUG).
+#   Windows: VB-Audio Virtual Cable (WASAPI loopback pair) and microphone access; the runner's desktop session
+#            (DXGI desktop duplication, GDI, Windows Graphics Capture and PrintWindow of the fixture windows).
+#   macOS:   BlackHole (CoreAudio loopback pair, made the default devices); the runner's display, which the image
+#            grants Screen Recording to (ScreenCaptureKit screens and windows); no camera can be provisioned.
+# Nightly calls it (nightly.yml with jobs=capture runs it alone).
+name: Capture
+
+on:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  JAVA_VERSION: '26'
+
+jobs:
+  capture:
+    name: capture (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    # a cold oracle cache builds ffmpeg on Windows and macOS (about an hour) before the tests
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: maven
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Name the job in the skip baseline
+        shell: bash
+        run: echo "SMALT_SKIP_JOB=$(echo '${{ runner.os }}-${{ runner.arch }}-capture' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
+
+      - name: Provision the Linux devices
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends xvfb x11-xserver-utils pulseaudio pulseaudio-utils \
+            libasound2-plugins alsa-utils ffmpeg libxcomposite1 libxfixes3 libxtst6 libxi6 libxrender1 fontconfig \
+            v4l-utils
+          Xvfb :99 -screen 0 1280x720x24 +extension MIT-SHM -nolisten tcp -noreset &
+          for _ in $(seq 1 50); do xdpyinfo -display :99 > /dev/null 2>&1 && break; sleep 0.2; done
+          xsetroot -display :99 -solid '#ff0000'
+          # the fixture itself: ffmpeg's x11grab must see the red root window the tests compare with
+          root=$(ffmpeg -v error -f x11grab -video_size 16x16 -i :99 -frames:v 1 -f rawvideo -pix_fmt rgb24 - | od -An -tx1 -N3 | tr -d ' \n')
+          echo "root window pixel: $root"
+          test "$root" = ff0000
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          pulseaudio -D --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=smalt sink_properties=device.description=Smalt
+          pactl set-default-sink smalt
+          pactl set-default-source smalt.monitor
+          pactl info
+          aplay -L | head -n 20
+          echo "SMALT_TEST_SCREEN_COLOR=ff0000" >> "$GITHUB_ENV"
+          echo "SMALT_TEST_AUDIO_LOOPBACK=default|default" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,x11-composite,cursor,audio-loopback,audio-input,audio-output" >> "$GITHUB_ENV"
+
+      # The distribution's v4l2loopback-dkms (0.12) no longer builds against the runners' kernels, so the module is
+      # built from its pinned release. videodev ships in linux-modules on the newer Azure kernels and in
+      # linux-modules-extra on the older ones.
+      - name: Provision a v4l2loopback camera
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          kernel=$(uname -r)
+          sudo apt-get install -y -q --no-install-recommends build-essential "linux-headers-$kernel"
+          if ! modinfo videodev > /dev/null 2>&1; then
+            sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$kernel"
+          fi
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/v4l2loopback.tar.gz" \
+            https://github.com/v4l2loopback/v4l2loopback/archive/refs/tags/v0.15.4.tar.gz
+          echo "21a17702648aa6a937b88a93bd71ef9f547815ead28719cafcfcc247396643dc  $RUNNER_TEMP/v4l2loopback.tar.gz" \
+            | sha256sum -c -
+          mkdir "$RUNNER_TEMP/v4l2loopback"
+          tar -xzf "$RUNNER_TEMP/v4l2loopback.tar.gz" -C "$RUNNER_TEMP/v4l2loopback" --strip-components=1
+          (cd "$RUNNER_TEMP/v4l2loopback" && make KERNELRELEASE="$kernel" v4l2loopback.ko && make utils)
+          # new video nodes (the hotplug test's) open to the runner's user
+          echo 'KERNEL=="video[0-9]*", MODE="0666"' | sudo tee /etc/udev/rules.d/99-smalt-video.rules
+          sudo udevadm control --reload-rules
+          sudo modprobe videodev
+          sudo insmod "$RUNNER_TEMP/v4l2loopback/v4l2loopback.ko" devices=1 video_nr=10 card_label=Smalt exclusive_caps=1
+          for _ in $(seq 1 50); do test -c /dev/video10 && break; sleep 0.2; done
+          # udev sets the node's mode after it appears: let it finish, then open the node to the runner's user
+          sudo udevadm settle
+          sudo chmod a+rw /dev/video10
+          ls -l /dev/video10
+          nohup ffmpeg -nostdin -v error -re -f lavfi -i testsrc2=size=640x480:rate=30 -pix_fmt yuyv422 -f v4l2 \
+            /dev/video10 > ffmpeg-v4l2.log 2>&1 &
+          sleep 2
+          # the fixture itself: a reader must receive frames from the camera
+          timeout 20 ffmpeg -nostdin -v error -f v4l2 -i /dev/video10 -frames:v 3 -f null -
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,camera" >> "$GITHUB_ENV"
+
+      # The hotplug test adds and removes a loopback camera through v4l2loopback's control device and feeds it with
+      # ffmpeg, so that it advertises capture (exclusive_caps).
+      - name: Provision the camera hotplug script
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          ctl="$RUNNER_TEMP/v4l2loopback/utils/v4l2loopback-ctl"
+          test -x "$ctl"
+          script="$RUNNER_TEMP/camera-hotplug.sh"
+          cat > "$script" << EOF
+          #!/usr/bin/env bash
+          set -euo pipefail
+          case "\$1" in
+            add)
+              sudo $ctl add -n SmaltHotplug -x 1 /dev/video40 > /dev/null
+              sudo udevadm settle
+              sudo chmod a+rw /dev/video40
+              nohup ffmpeg -nostdin -v error -re -f lavfi -i testsrc2=size=320x240:rate=15 -pix_fmt yuyv422 -f v4l2 /dev/video40 < /dev/null > $RUNNER_TEMP/hotplug-ffmpeg.log 2>&1 &
+              echo \$! > $RUNNER_TEMP/hotplug.pid
+              ;;
+            remove)
+              if [ -f $RUNNER_TEMP/hotplug.pid ]; then kill \$(cat $RUNNER_TEMP/hotplug.pid) || true; rm -f $RUNNER_TEMP/hotplug.pid; sleep 1; fi
+              sudo $ctl delete /dev/video40
+              ;;
+          esac
+          EOF
+          chmod +x "$script"
+          cat "$script"
+          # the fixture itself: the script must add and remove a capture node
+          "$script" add
+          sleep 3
+          v4l2-ctl -d /dev/video40 --all > "$RUNNER_TEMP/hotplug-ctl.txt"
+          head -n 20 "$RUNNER_TEMP/hotplug-ctl.txt"
+          "$script" remove
+          test ! -e /dev/video40
+          echo "SMALT_TEST_CAMERA_HOTPLUG=$script" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,camera-hotplug" >> "$GITHUB_ENV"
+
+      # vivid ships in linux-modules-extra; its controls are the reference of the camera controls test.
+      - name: Provision a vivid camera
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          kernel=$(uname -r)
+          if ! modinfo vivid > /dev/null 2>&1; then
+            sudo apt-get install -y -q --no-install-recommends "linux-modules-extra-$kernel" || true
+          fi
+          sudo modprobe vivid n_devs=1 node_types=0x1 vid_cap_nr=30
+          for _ in $(seq 1 50); do test -c /dev/video30 && break; sleep 0.2; done
+          sudo udevadm settle
+          sudo chmod a+rw /dev/video30
+          v4l2-ctl -d /dev/video30 --list-ctrls
+          echo "SMALT_TEST_CAMERA_CONTROLS=/dev/video30" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=$SMALT_CAPTURE_REQUIRE_DEVICES,camera-controls" >> "$GITHUB_ENV"
+
+      - name: Provision the Windows devices
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          ./.github/scripts/windows-audio.ps1
+          New-Item -Force -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" | Out-Null
+          New-ItemProperty -Force -Path "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AppPrivacy" -Name LetAppsAccessMicrophone -Value 1 -PropertyType DWord | Out-Null
+          "SMALT_TEST_AUDIO_LOOPBACK=Speakers (VB-Audio|CABLE Output" >> $env:GITHUB_ENV
+          "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,audio-loopback,audio-input,audio-output" >> $env:GITHUB_ENV
+
+      - name: Provision the macOS devices
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          brew install --quiet switchaudio-osx blackhole-2ch
+          sudo killall -9 coreaudiod || true
+          sleep 10
+          SwitchAudioSource -s "BlackHole 2ch" -t input
+          SwitchAudioSource -s "BlackHole 2ch" -t output
+          SwitchAudioSource -a
+          echo "SMALT_CAPTURE_LIVE=true" >> "$GITHUB_ENV"
+          echo "SMALT_TEST_AUDIO_LOOPBACK=BlackHole 2ch|BlackHole 2ch" >> "$GITHUB_ENV"
+          echo "SMALT_CAPTURE_REQUIRE_DEVICES=screen,window,audio-loopback,audio-input,audio-output" >> "$GITHUB_ENV"
+
+      # JavaSoundReadTest compares with ffmpeg, which the Linux devices step installs from apt; Windows and macOS
+      # restore the pinned oracle build.
+      - name: Install the oracle tools (Windows, macOS)
+        if: runner.os != 'Linux'
+        uses: ./.github/actions/oracles
+
+      - name: Capture tests
+        id: test
+        shell: bash
+        run: >
+          mvn -B -ntp -fae -pl capture,desktop -am verify
+          -Dtest='com/github/auties00/smalt/capture/**/*,com/github/auties00/smalt/desktop/sound/JavaSoundReadTest'
+          -Dsurefire.failIfNoSpecifiedTests=false
+
+      - name: Check the skips against the baseline
+        if: always() && steps.test.outcome != 'skipped'
+        shell: bash
+        run: |
+          python tools/testdata/skips.py report --job "$SMALT_SKIP_JOB" --out "target/skips-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py outcomes --job "$SMALT_SKIP_JOB" --out "target/outcomes-$SMALT_SKIP_JOB.tsv" || true
+          python tools/testdata/skips.py check --job "$SMALT_SKIP_JOB"
+
+      - name: Upload the outcomes
+        if: always() && steps.test.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: outcomes-${{ env.SMALT_SKIP_JOB }}
+          path: target/outcomes-*.tsv
+          retention-days: 14
+
+      - name: Upload the test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: capture-reports-${{ matrix.os }}
+          path: |
+            **/target/surefire-reports/
+            **/hs_err_pid*.log
+            target/skips-*.tsv
+            ffmpeg-v4l2.log
+            ${{ runner.temp }}/hotplug-ffmpeg.log
+          retention-days: 14

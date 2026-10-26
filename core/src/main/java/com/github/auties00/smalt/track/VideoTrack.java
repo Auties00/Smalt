@@ -70,6 +70,26 @@ public final class VideoTrack implements Track {
      */
     private final ColorInfo color;
 
+    /**
+     * The sample aspect ratio, or {@code null}.
+     */
+    private final Rational sampleAspectRatio;
+
+    /**
+     * The declared scan, or {@code null}.
+     */
+    private final Interlacing interlacing;
+
+    /**
+     * The spherical projection, or {@code null}.
+     */
+    private final SphericalVideo spherical;
+
+    /**
+     * The stereoscopic packing, or {@code null}.
+     */
+    private final StereoMode stereoMode;
+
     private VideoTrack(Builder builder) {
         this.id = builder.id;
         this.codec = builder.codec;
@@ -82,14 +102,19 @@ public final class VideoTrack implements Track {
         this.orientation = builder.orientation;
         this.frameRate = builder.frameRate;
         this.color = builder.color;
+        this.sampleAspectRatio = builder.sampleAspectRatio;
+        this.interlacing = builder.interlacing;
+        this.spherical = builder.spherical;
+        this.stereoMode = builder.stereoMode;
     }
 
     /**
      * Returns a builder of video tracks.
      *
      * <p>The codec and the time base must be set; every other property starts at its "unknown"
-     * value: identifier {@code 0}, duration {@code -1}, no configuration, language, frame rate or
-     * color, size {@code 0x0} and {@link Orientation#NORMAL}.
+     * value: identifier {@code 0}, duration {@code -1}, no configuration, language, frame rate,
+     * color, sample aspect ratio, scan, spherical projection or stereo mode, size {@code 0x0} and
+     * {@link Orientation#NORMAL}.
      *
      * @return the builder
      */
@@ -115,6 +140,10 @@ public final class VideoTrack implements Track {
         builder.orientation = orientation;
         builder.frameRate = frameRate;
         builder.color = color;
+        builder.sampleAspectRatio = sampleAspectRatio;
+        builder.interlacing = interlacing;
+        builder.spherical = spherical;
+        builder.stereoMode = stereoMode;
         return builder;
     }
 
@@ -199,6 +228,52 @@ public final class VideoTrack implements Track {
     }
 
     /**
+     * Returns the shape of a coded sample declared by the container: its width divided by its
+     * height, so that a picture is displayed {@code width() * sampleAspectRatio()} pixels wide and
+     * {@code height()} pixels high.
+     *
+     * <p>The ratio is in coded orientation, before {@link #orientation()} is applied, and in lowest
+     * terms. A container that declares square samples gives {@code 1/1}; an empty result means the
+     * container is silent, and the bitstream's own signaling (or square samples) applies. A
+     * container without a field of its own (MPEG-TS) reports the ratio the sequence parameter set
+     * signals.
+     *
+     * @return the sample aspect ratio, or empty when the container does not declare one
+     */
+    public Optional<Rational> sampleAspectRatio() {
+        return Optional.ofNullable(sampleAspectRatio);
+    }
+
+    /**
+     * Returns the scan of the frames declared by the container.
+     *
+     * @return the scan, or empty when the container does not declare whether the frames are
+     * interlaced
+     */
+    public Optional<Interlacing> interlacing() {
+        return Optional.ofNullable(interlacing);
+    }
+
+    /**
+     * Returns how the pictures of a 360-degree video map onto a sphere, as the container declares it.
+     *
+     * @return the projection, or empty for flat video or when the container declares none
+     */
+    public Optional<SphericalVideo> spherical() {
+        return Optional.ofNullable(spherical);
+    }
+
+    /**
+     * Returns how the pictures pack the views of the two eyes, as the container declares it.
+     *
+     * @return the packing, or empty when the container does not declare one; {@link StereoMode#MONO} when it
+     * declares a single view
+     */
+    public Optional<StereoMode> stereoMode() {
+        return Optional.ofNullable(stereoMode);
+    }
+
+    /**
      * Compares two tracks property by property, the configuration by content.
      *
      * @param other the object to compare with
@@ -210,7 +285,9 @@ public final class VideoTrack implements Track {
                 && id == that.id && codec == that.codec && timeBase.equals(that.timeBase) && duration == that.duration
                 && Arrays.equals(codecConfig, that.codecConfig) && Objects.equals(language, that.language)
                 && width == that.width && height == that.height && orientation == that.orientation
-                && Objects.equals(frameRate, that.frameRate) && Objects.equals(color, that.color);
+                && Objects.equals(frameRate, that.frameRate) && Objects.equals(color, that.color)
+                && Objects.equals(sampleAspectRatio, that.sampleAspectRatio) && interlacing == that.interlacing
+                && Objects.equals(spherical, that.spherical) && stereoMode == that.stereoMode;
     }
 
     /**
@@ -221,7 +298,7 @@ public final class VideoTrack implements Track {
     @Override
     public int hashCode() {
         return Objects.hash(id, codec, timeBase, duration, Arrays.hashCode(codecConfig), language, width, height,
-                orientation, frameRate, color);
+                orientation, frameRate, color, sampleAspectRatio, interlacing, spherical, stereoMode);
     }
 
     /**
@@ -235,7 +312,9 @@ public final class VideoTrack implements Track {
         return "VideoTrack[id=" + id + ", codec=" + codec + ", timeBase=" + timeBase + ", duration=" + duration
                 + ", codecConfig=" + (codecConfig == null ? "none" : codecConfig.length + " bytes")
                 + ", language=" + language + ", width=" + width + ", height=" + height
-                + ", orientation=" + orientation + ", frameRate=" + frameRate + ", color=" + color + "]";
+                + ", orientation=" + orientation + ", frameRate=" + frameRate + ", color=" + color
+                + ", sampleAspectRatio=" + sampleAspectRatio + ", interlacing=" + interlacing
+                + ", spherical=" + spherical + ", stereoMode=" + stereoMode + "]";
     }
 
     /**
@@ -298,6 +377,26 @@ public final class VideoTrack implements Track {
          * The color description, or {@code null}.
          */
         private ColorInfo color;
+
+        /**
+         * The sample aspect ratio in lowest terms, or {@code null}.
+         */
+        private Rational sampleAspectRatio;
+
+        /**
+         * The scan, or {@code null}.
+         */
+        private Interlacing interlacing;
+
+        /**
+         * The spherical projection, or {@code null}.
+         */
+        private SphericalVideo spherical;
+
+        /**
+         * The stereoscopic packing, or {@code null}.
+         */
+        private StereoMode stereoMode;
 
         /**
          * Constructs a builder with every property unknown.
@@ -425,6 +524,93 @@ public final class VideoTrack implements Track {
          */
         public Builder color(ColorInfo color) {
             this.color = color;
+            return this;
+        }
+
+        /**
+         * Sets the sample aspect ratio declared by the container; see
+         * {@link VideoTrack#sampleAspectRatio()}.
+         *
+         * @param sampleAspectRatio the width of a coded sample divided by its height; stored in
+         * lowest terms
+         * @return this builder
+         */
+        public Builder sampleAspectRatio(Rational sampleAspectRatio) {
+            this.sampleAspectRatio = Objects.requireNonNull(sampleAspectRatio, "sampleAspectRatio").reduce();
+            return this;
+        }
+
+        /**
+         * Removes the sample aspect ratio, so that the track declares none.
+         *
+         * @return this builder
+         */
+        public Builder noSampleAspectRatio() {
+            this.sampleAspectRatio = null;
+            return this;
+        }
+
+        /**
+         * Sets the scan of the frames declared by the container; see
+         * {@link VideoTrack#interlacing()}.
+         *
+         * @param interlacing the scan
+         * @return this builder
+         */
+        public Builder interlacing(Interlacing interlacing) {
+            this.interlacing = Objects.requireNonNull(interlacing, "interlacing");
+            return this;
+        }
+
+        /**
+         * Removes the scan, so that the track does not declare whether its frames are interlaced.
+         *
+         * @return this builder
+         */
+        public Builder noInterlacing() {
+            this.interlacing = null;
+            return this;
+        }
+
+        /**
+         * Sets the spherical projection declared by the container; see {@link VideoTrack#spherical()}.
+         *
+         * @param spherical the projection
+         * @return this builder
+         */
+        public Builder spherical(SphericalVideo spherical) {
+            this.spherical = Objects.requireNonNull(spherical, "spherical");
+            return this;
+        }
+
+        /**
+         * Removes the spherical projection, so that the track is flat video.
+         *
+         * @return this builder
+         */
+        public Builder noSpherical() {
+            this.spherical = null;
+            return this;
+        }
+
+        /**
+         * Sets the stereoscopic packing declared by the container; see {@link VideoTrack#stereoMode()}.
+         *
+         * @param stereoMode the packing
+         * @return this builder
+         */
+        public Builder stereoMode(StereoMode stereoMode) {
+            this.stereoMode = Objects.requireNonNull(stereoMode, "stereoMode");
+            return this;
+        }
+
+        /**
+         * Removes the stereoscopic packing, so that the track declares none.
+         *
+         * @return this builder
+         */
+        public Builder noStereoMode() {
+            this.stereoMode = null;
             return this;
         }
 

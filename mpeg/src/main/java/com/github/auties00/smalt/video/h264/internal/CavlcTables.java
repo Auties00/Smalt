@@ -11,7 +11,8 @@ package com.github.auties00.smalt.video.h264.internal;
  * symbol that has no code.
  *
  * @implNote This implementation transcribes the code lengths and values of ITU-T H.264 Tables
- * 9-5, 9-7, 9-8, 9-9 and 9-10 in the layout of the JM reference decoder's tables.
+ * 9-5, 9-7, 9-8, 9-9 and 9-10 in the layout of the JM reference decoder's tables; the 4:2:2
+ * chroma DC tables come from the Recommendation alone.
  */
 public final class CavlcTables {
     /**
@@ -87,6 +88,27 @@ public final class CavlcTables {
     };
 
     /**
+     * The {@code coeff_token} code lengths for 4:2:2 chroma DC ({@code nC == -2}), indexed
+     * {@code [trailingOnes * 9 + totalCoeff]} (ITU-T H.264 Table 9-5).
+     */
+    public static final byte[] CHROMA_DC_422_TOKEN_LENGTH = {
+            1, 7, 7, 9, 9, 10, 11, 12, 13,
+            0, 2, 7, 7, 9, 10, 11, 12, 12,
+            0, 0, 3, 7, 7, 9, 10, 11, 12,
+            0, 0, 0, 5, 6, 7, 7, 10, 11
+    };
+
+    /**
+     * The {@code coeff_token} code values matching {@link #CHROMA_DC_422_TOKEN_LENGTH}.
+     */
+    public static final byte[] CHROMA_DC_422_TOKEN_CODE = {
+            1, 15, 14, 7, 6, 7, 7, 7, 7,
+            0, 1, 13, 12, 5, 6, 6, 6, 5,
+            0, 0, 1, 11, 10, 4, 5, 5, 4,
+            0, 0, 0, 1, 1, 9, 8, 4, 4
+    };
+
+    /**
      * The {@code total_zeros} code lengths for 4x4 blocks, indexed
      * {@code [totalCoeff - 1][totalZeros]} (ITU-T H.264 Tables 9-7 and 9-8).
      */
@@ -146,6 +168,33 @@ public final class CavlcTables {
             {1, 1, 1, 0},
             {1, 1, 0},
             {1, 0}
+    };
+
+    /**
+     * The {@code total_zeros} code lengths for 4:2:2 chroma DC blocks, indexed
+     * {@code [totalCoeff - 1][totalZeros]} (ITU-T H.264 Table 9-9b).
+     */
+    public static final byte[][] CHROMA_DC_422_TOTAL_ZEROS_LENGTH = {
+            {1, 3, 3, 4, 4, 4, 5, 5},
+            {3, 2, 3, 3, 3, 3, 3},
+            {3, 3, 2, 2, 3, 3},
+            {3, 2, 2, 2, 3},
+            {2, 2, 2, 2},
+            {2, 2, 1},
+            {1, 1}
+    };
+
+    /**
+     * The {@code total_zeros} code values matching {@link #CHROMA_DC_422_TOTAL_ZEROS_LENGTH}.
+     */
+    public static final byte[][] CHROMA_DC_422_TOTAL_ZEROS_CODE = {
+            {1, 2, 3, 2, 3, 1, 1, 0},
+            {0, 1, 1, 4, 5, 6, 7},
+            {0, 1, 1, 2, 6, 7},
+            {6, 0, 1, 2, 7},
+            {0, 1, 2, 3},
+            {0, 1, 1},
+            {0, 1}
     };
 
     /**
