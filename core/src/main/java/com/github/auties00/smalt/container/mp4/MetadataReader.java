@@ -352,8 +352,12 @@ final class MetadataReader {
             case 21, 22, 0 -> switch (length) {
                 case 1 -> Integer.toString(type == 21 ? (byte) body.u8() : body.u8());
                 case 2 -> Integer.toString(type == 21 ? body.s16() : body.u16());
+                case 3 -> {
+                    var value = (body.u16() << 8) | body.u8();
+                    yield Integer.toString(type == 21 ? value << 8 >> 8 : value);
+                }
                 case 4 -> type == 21 ? Integer.toString(body.s32()) : Long.toString(body.u32());
-                case 8 -> Long.toString(body.u64());
+                case 8 -> type == 22 ? Long.toUnsignedString(body.u64()) : Long.toString(body.u64());
                 default -> null;
             };
             case 23 -> length == 4 ? Float.toString(Float.intBitsToFloat(body.s32())) : null;

@@ -1,8 +1,11 @@
-/* Ports webrtc-audio-processing 2.1 (modules/audio_processing/aec3/aec_state.cc). Copyright (c) 2011, The WebRTC
-   project authors; BSD 3-Clause License. Modified for Smalt. */
+/* Ports webrtc-audio-processing 2.1 (modules/audio_processing/aec3/aec_state.cc, subtractor_output_analyzer.cc,
+   reverb_model_estimator.cc, reverb_frequency_response.cc). Copyright (c) 2011, The WebRTC project authors; BSD
+   3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.voice.internal.aec3;
 
 import com.github.auties00.smalt.audio.voice.internal.FloatMath;
+
+import java.util.Arrays;
 
 import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.BLOCK_SIZE;
 import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.FFT_LENGTH_BY_2;
@@ -10,19 +13,20 @@ import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.FFT_LENGT
 
 /**
  * Tracks the state of the echo canceller that the residual echo estimation and the suppressor
- * depend on: whether the linear filter is usable, the echo path delay and gain, the echo return
- * loss enhancement, saturation, the initial state, transparent mode and the reverberation model.
+ * depend on: whether the linear filters are usable, the echo path delay and gain of every capture
+ * channel, the echo return loss enhancement, saturation, the initial state, transparent mode and
+ * the reverberation model.
  *
  * @implNote This implementation ports {@code AecState} of WebRTC's
  * {@code modules/audio_processing/aec3/aec_state.cc}, with its nested {@code InitialState},
  * {@code FilterDelay}, {@code FilteringQualityAnalyzer} and {@code SaturationDetector}, and
  * {@code SubtractorOutputAnalyzer}, {@code ReverbModelEstimator} and
- * {@code ReverbFrequencyResponse} of the same directory, for one render and one capture channel
- * with the default configuration. With the default {@code ep_strength.default_len} the reverb
- * decay estimator only ever reports its fixed decay, and with the default
- * {@code echo_audibility} the render stationarity flags are never set, so neither is modeled. The
- * echo return loss estimator ({@code ErlEstimator}) only feeds the reference's metrics and is
- * omitted.
+ * {@code ReverbFrequencyResponse} of the same directory, with the default configuration. With
+ * the default {@code ep_strength.default_len} the reverb decay estimator only ever reports its
+ * fixed decay, and with the default {@code echo_audibility} the render stationarity flags are
+ * never set, so neither is modeled. Only the first capture channel's reverberation frequency
+ * response is used, so only that one is computed. The echo return loss estimator
+ * ({@code ErlEstimator}) only feeds the reference's metrics and is omitted.
  */
 final class AecState {
     /**
@@ -31,9 +35,14 @@ final class AecState {
     private static final float ACTIVE_RENDER_ENERGY = (Aec3.ACTIVE_RENDER_LIMIT * Aec3.ACTIVE_RENDER_LIMIT) * FFT_LENGTH_BY_2;
 
     /**
+     * The number of capture channels.
+     */
+    private final int numChannels;
+
+    /**
      * The filter response analyzer.
      */
-    private final FilterAnalyzer filterAnalyzer = new FilterAnalyzer();
+    private final FilterAnalyzer filterAnalyzer;
 
     /**
      * The transparent mode detector.
@@ -41,27 +50,32 @@ final class AecState {
     private final TransparentMode transparentMode = new TransparentMode();
 
     /**
-     * The echo return loss enhancement estimator.
+     * The echo return loss enhancement estimator of every capture channel.
      */
-    final ErleEstimator erleEstimator = new ErleEstimator();
+    final ErleEstimator[] erleEstimators;
 
     /**
-     * The reverberation model of the render signal at the echo path delay.
+     * The reverberation of the average render spectrum.
      */
     private final ReverbModel avgRenderReverb = new ReverbModel();
 
     /**
-     * The render power with reverberation at the echo path delay.
+     * The average render spectrum at the delay plus its reverberation.
      */
     private final float[] avgRenderSpectrumWithReverb = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * The estimated frequency response of the echo tail.
+     * The scratch average render spectrum.
+     */
+    private final float[] x2Average = new float[FFT_LENGTH_BY_2_PLUS_1];
+
+    /**
+     * The reverberation frequency response of the first capture channel.
      */
     private final float[] tailResponse = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * The smoothed ratio of tail to direct-path energy of the filter.
+     * The smoothed decay of the first capture channel's filter.
      */
     private float averageDecay;
 
@@ -71,27 +85,27 @@ final class AecState {
     private boolean captureSignalSaturation;
 
     /**
-     * Whether the echo is saturated.
+     * Whether the echo is estimated to saturate the capture signal.
      */
     private boolean saturatedEcho;
 
     /**
-     * The number of strong, unsaturated render blocks.
+     * The number of active, non-saturated render blocks since the last reset.
      */
     private long strongNotSaturatedRenderBlocks;
 
     /**
-     * The number of active render blocks.
+     * The number of active render blocks since the last reset.
      */
     private long blocksWithActiveRender;
 
     /**
-     * Whether the filter of the capture channel has converged.
+     * Whether every capture channel's filters converged in the last block.
      */
-    private boolean filterConverged;
+    private final boolean[] filtersConverged;
 
     /**
-     * Whether the transition out of the initial state happened in the last update.
+     * Whether the initial state was left in the last block.
      */
     private boolean transitionTriggered;
 
@@ -101,22 +115,27 @@ final class AecState {
     private boolean initialState = true;
 
     /**
-     * The number of strong, unsaturated render blocks since the initial state began.
+     * The number of active, non-saturated render blocks counted by the initial state.
      */
     private long initialStateStrongBlocks;
 
     /**
-     * The last external delay estimate, or {@code -1} when none was reported.
+     * The last external delay in blocks, or {@code -1} when none was reported.
      */
     private int externalDelay = -1;
 
     /**
-     * The delay of the direct path of the filter, in blocks.
+     * The direct path delay of every capture channel's filter in blocks.
+     */
+    private final int[] filterDelays;
+
+    /**
+     * The smallest of {@link #filterDelays}.
      */
     private int minFilterDelay;
 
     /**
-     * Whether the linear filter output is usable.
+     * Whether the linear filters are usable.
      */
     private boolean usableLinearEstimates;
 
@@ -131,130 +150,89 @@ final class AecState {
     private long filterUpdateBlocksSinceStart;
 
     /**
-     * Whether a filter has ever converged.
+     * Whether a filter ever converged.
      */
     private boolean convergenceSeen;
 
     /**
-     * Creates the state of a fresh canceller.
+     * Creates the state.
+     *
+     * @param numChannels the number of capture channels
      */
-    AecState() {
+    AecState(int numChannels) {
+        this.numChannels = numChannels;
+        this.filterAnalyzer = new FilterAnalyzer(numChannels);
+        this.erleEstimators = new ErleEstimator[numChannels];
+        for (var ch = 0; ch < numChannels; ch++) {
+            erleEstimators[ch] = new ErleEstimator();
+        }
+        this.filtersConverged = new boolean[numChannels];
+        this.filterDelays = new int[numChannels];
+        Arrays.fill(filterDelays, Aec3.DELAY_HEADROOM_SAMPLES / BLOCK_SIZE);
+        this.minFilterDelay = Aec3.DELAY_HEADROOM_SAMPLES / BLOCK_SIZE;
     }
 
-    /**
-     * Returns whether the linear filter estimate is usable.
-     *
-     * @return whether the linear echo estimate can be relied on
-     */
     boolean usableLinearEstimate() {
         return usableLinearEstimates;
     }
 
-    /**
-     * Returns whether the suppressor works on the linear filter output.
-     *
-     * @return whether the linear filter output replaces the capture signal
-     */
     boolean useLinearFilterOutput() {
         return usableLinearEstimates;
     }
 
     /**
-     * Returns the per-bin echo return loss enhancement.
+     * Returns a channel's echo return loss enhancement.
      *
-     * @param onsetCompensated whether the onset-compensated estimate is returned
-     * @return the live array of 65 estimates
+     * @param ch the capture channel
+     * @param onsetCompensated whether the onset compensated estimate is returned
+     * @return the 65 bins
      */
-    float[] erle(boolean onsetCompensated) {
-        return erleEstimator.erle(onsetCompensated);
+    float[] erle(int ch, boolean onsetCompensated) {
+        return erleEstimators[ch].erle(onsetCompensated);
     }
 
     /**
-     * Returns the unbounded per-bin echo return loss enhancement.
+     * Returns a channel's unbounded echo return loss enhancement.
      *
-     * @return the live array of 65 estimates
+     * @param ch the capture channel
+     * @return the 65 bins
      */
-    float[] erleUnbounded() {
-        return erleEstimator.erleUnbounded;
+    float[] erleUnbounded(int ch) {
+        return erleEstimators[ch].erleUnbounded;
     }
 
-    /**
-     * Returns the delay of the direct path of the filter.
-     *
-     * @return the delay in blocks
-     */
     int minDirectPathFilterDelay() {
         return minFilterDelay;
     }
 
-    /**
-     * Returns whether the capture signal is saturated.
-     *
-     * @return the saturation flag of the current block
-     */
     boolean saturatedCapture() {
         return captureSignalSaturation;
     }
 
-    /**
-     * Returns whether the echo is saturated.
-     *
-     * @return whether the echo may have been clipped
-     */
     boolean saturatedEcho() {
         return saturatedEcho;
     }
 
-    /**
-     * Sets whether the capture signal of the current block is saturated.
-     *
-     * @param saturation the saturation flag
-     */
     void updateCaptureSaturation(boolean saturation) {
         captureSignalSaturation = saturation;
     }
 
-    /**
-     * Returns whether transparent mode is active.
-     *
-     * @return whether the suppressor should be transparent
-     */
     boolean transparentModeActive() {
         return transparentMode.active();
     }
 
-    /**
-     * Returns the reverberation decay per block.
-     *
-     * @return {@code ep_strength.default_len}, for normal and for mild decay alike
-     */
     float reverbDecay() {
         return Aec3.EP_DEFAULT_LEN;
     }
 
-    /**
-     * Returns the estimated frequency response of the echo tail.
-     *
-     * @return the live array of 65 values
-     */
     float[] reverbFrequencyResponse() {
         return tailResponse;
     }
 
-    /**
-     * Returns whether the canceller left its initial state in the last update.
-     *
-     * @return whether the transition happened
-     */
     boolean transitionTriggered() {
         return transitionTriggered;
     }
 
-    /**
-     * Returns the length of the refined filter response.
-     *
-     * @return the length in blocks
-     */
     int filterLengthBlocks() {
         return filterAnalyzer.filterLengthBlocks();
     }
@@ -263,7 +241,7 @@ final class AecState {
      * Resets the state after an echo path change.
      *
      * @param gainChange whether the echo path gain changed
-     * @param delayChange whether the echo path delay changed
+     * @param delayChange whether the delay changed
      */
     void handleEchoPathChange(boolean gainChange, boolean delayChange) {
         if (delayChange) {
@@ -274,65 +252,76 @@ final class AecState {
             initialState = true;
             initialStateStrongBlocks = 0;
             transparentMode.reset();
-            erleEstimator.reset(true);
+            for (var erleEstimator : erleEstimators) {
+                erleEstimator.reset(true);
+            }
             usableLinearEstimates = false;
             filterUpdateBlocksSinceReset = 0;
         } else if (gainChange) {
-            erleEstimator.reset(false);
+            for (var erleEstimator : erleEstimators) {
+                erleEstimator.reset(false);
+            }
         }
-        filterConverged = false;
+        Arrays.fill(filtersConverged, false);
     }
 
     /**
-     * Updates the state with one block.
+     * Updates the state with the results of a block.
      *
-     * @param externalDelayBlocks the delay estimate of the delay controller in blocks, or
-     * {@code -1} when there is none
-     * @param subtractor the subtractor, whose refined filter is analyzed
-     * @param renderBuffer the render rings
-     * @param e2 the power spectrum of the linear filter output
-     * @param y2 the capture power spectrum
-     * @param output the subtractor output
+     * @param externalDelayBlocks the delay estimate in blocks, or {@code -1} when there is none
+     * @param subtractor the linear filters whose responses and outputs are analyzed
+     * @param renderBuffer the render buffer
+     * @param e2 the power spectra of the linear filter outputs, per capture channel
+     * @param y2 the power spectra of the capture signal, per capture channel
+     * @param outputs the subtractor outputs, per capture channel
      */
-    void update(int externalDelayBlocks, Subtractor subtractor, RenderBuffer renderBuffer, float[] e2, float[] y2,
-                SubtractorOutput output) {
-        var y2Energy = output.y2;
-        var e2RefinedEnergy = output.e2Refined;
-        var e2CoarseEnergy = output.e2Coarse;
-        var convergenceThreshold = 50 * 50 * BLOCK_SIZE;
-        var convergenceThresholdLowLevel = 20 * 20 * BLOCK_SIZE;
-        var refinedFilterConverged = e2RefinedEnergy < 0.5f * y2Energy && y2Energy > convergenceThreshold;
-        var coarseFilterConvergedStrict = e2CoarseEnergy < 0.05f * y2Energy && y2Energy > convergenceThreshold;
-        var coarseFilterConvergedRelaxed = e2CoarseEnergy < 0.3f * y2Energy && y2Energy > convergenceThresholdLowLevel;
-        var minE2 = FloatMath.min(e2RefinedEnergy, e2CoarseEnergy);
-        var filterDiverged = minE2 > 1.5f * y2Energy && y2Energy > 30.f * 30.f * BLOCK_SIZE;
-        filterConverged = refinedFilterConverged || coarseFilterConvergedStrict;
-        var anyFilterConverged = filterConverged;
-        var allFiltersDiverged = filterDiverged;
-
-        filterAnalyzer.update(subtractor.refinedImpulseResponse, renderBuffer);
-        var anyFilterConsistent = filterAnalyzer.consistentEstimate();
-        var maxEchoPathGain = filterAnalyzer.gain();
-
-        updateFilterDelay(filterAnalyzer.filterDelayBlocks(), externalDelayBlocks);
-
-        var blocks = renderBuffer.blocks;
-        var alignedOffset = renderBuffer.blockOffset(-minFilterDelay);
-        var renderEnergy = 0.f;
-        for (var i = 0; i < BLOCK_SIZE; i++) {
-            renderEnergy = renderEnergy + blocks[alignedOffset + i] * blocks[alignedOffset + i];
+    void update(int externalDelayBlocks, Subtractor subtractor, RenderBuffer renderBuffer, float[][] e2, float[][] y2,
+                SubtractorOutput[] outputs) {
+        var anyFilterConverged = false;
+        var allFiltersDiverged = true;
+        for (var ch = 0; ch < numChannels; ch++) {
+            var output = outputs[ch];
+            var y2Energy = output.y2;
+            var e2RefinedEnergy = output.e2Refined;
+            var e2CoarseEnergy = output.e2Coarse;
+            var convergenceThreshold = 50 * 50 * BLOCK_SIZE;
+            var refinedFilterConverged = e2RefinedEnergy < 0.5f * y2Energy && y2Energy > convergenceThreshold;
+            var coarseFilterConvergedStrict = e2CoarseEnergy < 0.05f * y2Energy && y2Energy > convergenceThreshold;
+            var minE2 = FloatMath.min(e2RefinedEnergy, e2CoarseEnergy);
+            var filterDiverged = minE2 > 1.5f * y2Energy && y2Energy > 30.f * 30.f * BLOCK_SIZE;
+            filtersConverged[ch] = refinedFilterConverged || coarseFilterConvergedStrict;
+            anyFilterConverged = anyFilterConverged || filtersConverged[ch];
+            allFiltersDiverged = allFiltersDiverged && filterDiverged;
         }
-        var activeRender = renderEnergy > ACTIVE_RENDER_ENERGY;
+        filterAnalyzer.update(subtractor.refinedImpulseResponses, renderBuffer);
+        var anyFilterConsistent = filterAnalyzer.anyFilterConsistent();
+        var maxEchoPathGain = filterAnalyzer.maxEchoPathGain();
+        updateFilterDelay(filterAnalyzer.filterDelaysBlocks(), externalDelayBlocks);
+        var blocks = renderBuffer.blocks;
+        var activeRender = false;
+        for (var r = 0; r < renderBuffer.numChannels; r++) {
+            var alignedOffset = renderBuffer.blockOffset(-minFilterDelay, 0, r);
+            var renderEnergy = 0.f;
+            for (var i = 0; i < BLOCK_SIZE; i++) {
+                renderEnergy = renderEnergy + blocks[alignedOffset + i] * blocks[alignedOffset + i];
+            }
+            if (renderEnergy > ACTIVE_RENDER_ENERGY) {
+                activeRender = true;
+                break;
+            }
+        }
         blocksWithActiveRender += activeRender ? 1 : 0;
         strongNotSaturatedRenderBlocks += activeRender && !captureSignalSaturation ? 1 : 0;
-
         computeAvgRenderReverb(renderBuffer);
-
         if (transitionTriggered) {
-            erleEstimator.reset(false);
+            for (var erleEstimator : erleEstimators) {
+                erleEstimator.reset(false);
+            }
         }
-        erleEstimator.update(avgRenderSpectrumWithReverb, y2, e2, filterConverged);
-        updateSaturation(blocks, alignedOffset, output, maxEchoPathGain);
+        for (var ch = 0; ch < numChannels; ch++) {
+            erleEstimators[ch].update(avgRenderSpectrumWithReverb, y2[ch], e2[ch], filtersConverged[ch]);
+        }
+        updateSaturation(renderBuffer, outputs, maxEchoPathGain);
         updateInitialState(activeRender);
         transparentMode.update(minFilterDelay, anyFilterConsistent, anyFilterConverged, allFiltersDiverged, activeRender,
                 captureSignalSaturation);
@@ -340,37 +329,42 @@ final class AecState {
         updateReverbFrequencyResponse(subtractor);
     }
 
-    /**
-     * Updates the external delay and the direct path delay of the filter.
-     *
-     * @param analyzerFilterDelayBlocks the delay of the filter peak in blocks
-     * @param externalDelayBlocks the delay controller's estimate in blocks, or {@code -1}
-     */
-    private void updateFilterDelay(int analyzerFilterDelayBlocks, int externalDelayBlocks) {
+    private void updateFilterDelay(int[] analyzerFilterDelayBlocks, int externalDelayBlocks) {
         if (externalDelayBlocks >= 0 && (externalDelay < 0 || externalDelay != externalDelayBlocks)) {
             externalDelay = externalDelayBlocks;
         }
         var delayEstimatorMayNotHaveConverged = strongNotSaturatedRenderBlocks < 2 * Aec3.NUM_BLOCKS_PER_SECOND;
         if (delayEstimatorMayNotHaveConverged && externalDelay >= 0) {
-            minFilterDelay = Aec3.DELAY_HEADROOM_SAMPLES / BLOCK_SIZE;
+            Arrays.fill(filterDelays, Aec3.DELAY_HEADROOM_SAMPLES / BLOCK_SIZE);
         } else {
-            minFilterDelay = analyzerFilterDelayBlocks;
+            System.arraycopy(analyzerFilterDelayBlocks, 0, filterDelays, 0, numChannels);
         }
+        var min = filterDelays[0];
+        for (var ch = 1; ch < numChannels; ch++) {
+            min = Math.min(min, filterDelays[ch]);
+        }
+        minFilterDelay = min;
     }
 
-    /**
-     * Updates the render reverberation model and the render power with reverberation at the
-     * direct path delay.
-     *
-     * @param renderBuffer the render rings
-     */
     private void computeAvgRenderReverb(RenderBuffer renderBuffer) {
+        var numRenderChannels = renderBuffer.numChannels;
         var idxAtDelay = RenderBuffer.offsetIndex(renderBuffer.spectrumRead, minFilterDelay);
         var idxPast = RenderBuffer.incIndex(idxAtDelay);
-        avgRenderReverb.updateReverbNoFreqShaping(renderBuffer.spectra, idxPast * FFT_LENGTH_BY_2_PLUS_1, 1.0f,
-                reverbDecay());
-        var x2 = renderBuffer.spectra;
-        var o = idxAtDelay * FFT_LENGTH_BY_2_PLUS_1;
+        var spectra = renderBuffer.spectra;
+        float[] x2;
+        int o;
+        if (numRenderChannels > 1) {
+            averageChannels(spectra, idxPast * numRenderChannels * FFT_LENGTH_BY_2_PLUS_1, numRenderChannels, x2Average);
+            avgRenderReverb.updateReverbNoFreqShaping(x2Average, 0, 1.0f, reverbDecay());
+            averageChannels(spectra, idxAtDelay * numRenderChannels * FFT_LENGTH_BY_2_PLUS_1, numRenderChannels,
+                    x2Average);
+            x2 = x2Average;
+            o = 0;
+        } else {
+            avgRenderReverb.updateReverbNoFreqShaping(spectra, idxPast * FFT_LENGTH_BY_2_PLUS_1, 1.0f, reverbDecay());
+            x2 = spectra;
+            o = idxAtDelay * FFT_LENGTH_BY_2_PLUS_1;
+        }
         var reverbPower = avgRenderReverb.reverb;
         for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; ++k) {
             avgRenderSpectrumWithReverb[k] = x2[o + k] + reverbPower[k];
@@ -378,25 +372,46 @@ final class AecState {
     }
 
     /**
-     * Updates the echo saturation flag.
+     * Averages the power spectra of the render channels of a slot.
      *
-     * @param blocks the render block ring
-     * @param alignedOffset the start of the render block at the direct path delay
-     * @param output the subtractor output
-     * @param echoPathGain the echo path gain estimate
+     * @param spectra the power spectra
+     * @param base the index of the slot's first channel
+     * @param numRenderChannels the number of render channels
+     * @param out receives the 65 averages
      */
-    private void updateSaturation(float[] blocks, int alignedOffset, SubtractorOutput output, float echoPathGain) {
+    private static void averageChannels(float[] spectra, int base, int numRenderChannels, float[] out) {
+        Arrays.fill(out, 0.f);
+        for (var ch = 0; ch < numRenderChannels; ++ch) {
+            var o = base + ch * FFT_LENGTH_BY_2_PLUS_1;
+            for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; ++k) {
+                out[k] += spectra[o + k];
+            }
+        }
+        var normalizer = 1.f / numRenderChannels;
+        for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; ++k) {
+            out[k] *= normalizer;
+        }
+    }
+
+    private void updateSaturation(RenderBuffer renderBuffer, SubtractorOutput[] outputs, float echoPathGain) {
         saturatedEcho = false;
         if (!captureSignalSaturation) {
             return;
         }
         if (usableLinearEstimates) {
             var saturationThreshold = 20000.f;
-            saturatedEcho = output.sRefinedMaxAbs > saturationThreshold || output.sCoarseMaxAbs > saturationThreshold;
+            for (var ch = 0; ch < numChannels; ch++) {
+                saturatedEcho = saturatedEcho || (outputs[ch].sRefinedMaxAbs > saturationThreshold
+                        || outputs[ch].sCoarseMaxAbs > saturationThreshold);
+            }
         } else {
+            var blocks = renderBuffer.blocks;
             var maxSample = 0.f;
-            for (var i = 0; i < BLOCK_SIZE; i++) {
-                maxSample = FloatMath.max(maxSample, Math.abs(blocks[alignedOffset + i]));
+            for (var r = 0; r < renderBuffer.numChannels; r++) {
+                var alignedOffset = renderBuffer.blockOffset(-minFilterDelay, 0, r);
+                for (var i = 0; i < BLOCK_SIZE; i++) {
+                    maxSample = FloatMath.max(maxSample, Math.abs(blocks[alignedOffset + i]));
+                }
             }
             var margin = 10.f;
             var peakEchoAmplitude = maxSample * echoPathGain * margin;
@@ -404,11 +419,6 @@ final class AecState {
         }
     }
 
-    /**
-     * Updates the initial state and detects the transition out of it.
-     *
-     * @param activeRender whether the render block is active
-     */
     private void updateInitialState(boolean activeRender) {
         initialStateStrongBlocks += activeRender && !captureSignalSaturation ? 1 : 0;
         var previous = initialState;
@@ -416,13 +426,6 @@ final class AecState {
         transitionTriggered = !initialState && previous;
     }
 
-    /**
-     * Updates whether the linear filter output is usable.
-     *
-     * @param activeRender whether the render block is active
-     * @param externalDelayBlocks the delay controller's estimate in blocks, or {@code -1}
-     * @param anyFilterConverged whether a filter converged
-     */
     private void updateFilteringQuality(boolean activeRender, int externalDelayBlocks, boolean anyFilterConverged) {
         var filterUpdate = activeRender && !captureSignalSaturation;
         filterUpdateBlocksSinceReset += filterUpdate ? 1 : 0;
@@ -437,18 +440,14 @@ final class AecState {
         usableLinearEstimates = usable;
     }
 
-    /**
-     * Updates the frequency response of the echo tail from the refined filter.
-     *
-     * @param subtractor the subtractor holding the refined filter
-     */
     private void updateReverbFrequencyResponse(Subtractor subtractor) {
+        var erleEstimator = erleEstimators[0];
         if (!erleEstimator.hasLinearFilterQuality()) {
             return;
         }
-        var responses = subtractor.refinedFrequencyResponses;
-        var tail = (subtractor.refinedFrequencyResponsesSize - 1) * FFT_LENGTH_BY_2_PLUS_1;
-        var direct = minFilterDelay * FFT_LENGTH_BY_2_PLUS_1;
+        var responses = subtractor.refinedFrequencyResponses[0];
+        var tail = (subtractor.refinedFrequencyResponsesSizes[0] - 1) * FFT_LENGTH_BY_2_PLUS_1;
+        var direct = filterDelays[0] * FFT_LENGTH_BY_2_PLUS_1;
         var decay = averageDecayWithinFilter(responses, direct, tail);
         var smoothing = 0.2f * erleEstimator.linearFilterQuality();
         averageDecay += smoothing * (decay - averageDecay);
@@ -464,15 +463,6 @@ final class AecState {
         }
     }
 
-    /**
-     * Returns the ratio of the tail energy to the direct path energy of the filter, skipping the
-     * DC bin.
-     *
-     * @param responses the power responses of the filter partitions
-     * @param direct the start of the direct path partition
-     * @param tail the start of the last partition
-     * @return the ratio, or {@code 0} when the direct path has no energy
-     */
     private static float averageDecayWithinFilter(float[] responses, int direct, int tail) {
         var directPathEnergy = 0.f;
         for (var k = 1; k < FFT_LENGTH_BY_2_PLUS_1; k++) {

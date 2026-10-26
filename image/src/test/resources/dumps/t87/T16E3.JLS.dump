@@ -1,0 +1,13 @@
+# image dump of t87/T16E3.JLS; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=256, height=256, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 256x256 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=3b1f6b32
+  format=JPEG orientation=NORMAL source=256x256
+  icc=none exif=none xmp=none
+  profile=none
+scaled 64x64
+picture 256x256 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=3b1f6b32
+  format=JPEG orientation=NORMAL source=256x256
+  icc=none exif=none xmp=none
+  profile=none

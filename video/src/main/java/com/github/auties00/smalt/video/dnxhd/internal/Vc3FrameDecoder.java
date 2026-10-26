@@ -50,6 +50,8 @@ import java.util.Arrays;
  * or a plane of 8-bit samples, one row of the picture's width after the other, which may be
  * followed by unused bytes.</li>
  * </ul>
+ * The video of a coding unit with the premultiplied alpha flag {@code PMA} set is divided by the
+ * in-band alpha as {@link Vc3Premultiplied} defines, so that pictures always carry straight alpha.
  *
  * <p>Instances are not thread-safe.
  *
@@ -178,7 +180,8 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
             if (second.fieldCount() != 3 || second.width() != first.width() || second.lines() != first.lines()
                     || second.compression() != first.compression() || second.depth() != first.depth()
                     || second.subsampling() != first.subsampling() || second.colorFormat() != first.colorFormat()
-                    || second.alpha() != first.alpha() || second.losslessAlpha() != first.losslessAlpha()) {
+                    || second.alpha() != first.alpha() || second.losslessAlpha() != first.losslessAlpha()
+                    || second.premultipliedAlpha() != first.premultipliedAlpha()) {
                 throw new MediaException.Malformed("the second field of a VC-3 frame does not match the first");
             }
         } else {
@@ -200,7 +203,7 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
         var alpha = first.alpha() || outOfBandAlpha;
         allocate(sizes, wide, alpha);
         var transformScale = depth == 12 ? 4f : 1f;
-        var scale = transformScale * (float) Math.pow(2, outputDepth - depth);
+        var scale = transformScale * (float) StrictMath.pow(2, outputDepth - depth);
         var levelShift = 1 << (outputDepth - 1);
         var targets = new Vc3Target[fields];
         for (var f = 0; f < fields; f++) {
@@ -235,10 +238,56 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
             }
         });
         if (outOfBandAlpha) {
-            outOfBandAlpha(data, offset + videoLength, length - videoLength - 4, width, height, stride, wide,
-                    outputDepth);
+            outOfBandAlpha(data, offset + videoLength, length - videoLength - 4, first.compression(), width, height,
+                    stride, wide, outputDepth);
+        }
+        if (first.premultipliedAlpha() && !rgb) {
+            straighten(width, height, strides, layout, wide, outputDepth);
         }
         return picture(first, width, height, stride, strides, wide, outputDepth, layout, alpha);
+    }
+
+    /**
+     * Divides the Y'CbCr samples of a premultiplied frame by alpha, luma about the black level and
+     * chroma about the middle code, in parallel bands of rows.
+     *
+     * @param width the picture width
+     * @param height the picture height
+     * @param strides the stride of every plane
+     * @param layout the macroblock layout
+     * @param wide whether the planes are 16-bit
+     * @param depth the output bit depth
+     */
+    private void straighten(int width, int height, int[] strides, Vc3Layout layout, boolean wide, int depth) {
+        var shiftX = layout.chromaShiftX;
+        var shiftY = layout.chromaShiftY;
+        var chromaWidth = (width + (1 << shiftX) - 1) >> shiftX;
+        var chromaRows = (height + (1 << shiftY) - 1) >> shiftY;
+        var black = 16 << (depth - 8);
+        var middle = 1 << (depth - 1);
+        var max = (1 << depth) - 1;
+        var bands = threads == 1 ? 1 : ParallelBands.bands(height, (long) width * height * 2);
+        ParallelBands.run(bands, band -> {
+            var lumaStart = ParallelBands.start(band, bands, height);
+            var lumaEnd = ParallelBands.start(band + 1, bands, height);
+            var chromaStart = ParallelBands.start(band, bands, chromaRows);
+            var chromaEnd = ParallelBands.start(band + 1, bands, chromaRows);
+            if (wide) {
+                Vc3Premultiplied.remove(planes16[0], strides[0], width, lumaStart, lumaEnd, 0, 0, alpha16, strides[0],
+                        max, black);
+                for (var plane = 1; plane < 3; plane++) {
+                    Vc3Premultiplied.remove(planes16[plane], strides[plane], chromaWidth, chromaStart, chromaEnd,
+                            shiftX, shiftY, alpha16, strides[0], max, middle);
+                }
+            } else {
+                Vc3Premultiplied.remove(planes8[0], strides[0], width, lumaStart, lumaEnd, 0, 0, alpha8, strides[0],
+                        black);
+                for (var plane = 1; plane < 3; plane++) {
+                    Vc3Premultiplied.remove(planes8[plane], strides[plane], chromaWidth, chromaStart, chromaEnd, shiftX,
+                            shiftY, alpha8, strides[0], middle);
+                }
+            }
+        });
     }
 
     /**
@@ -277,9 +326,13 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
      * Decodes Avid's out-of-band alpha into the alpha plane: a coding unit whose luma holds the
      * alpha codes, or 8-bit samples row after row. Alpha that is neither leaves the plane opaque.
      *
+     * <p>The alpha is a coding unit when it starts with a header of a plausible size, a known
+     * header version and the compression ID of the video; anything else is read as samples.
+     *
      * @param data the array holding the frame
      * @param start the index of the alpha's first byte
      * @param length the number of bytes of alpha
+     * @param compression the compression ID of the video
      * @param width the picture width
      * @param height the picture height
      * @param stride the alpha plane's row stride
@@ -288,11 +341,12 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
      * @throws MediaException.Malformed if the alpha coding unit is corrupt or does not match the
      * picture
      */
-    private void outOfBandAlpha(byte[] data, int start, int length, int width, int height, int stride, boolean wide,
-                                int outputDepth) {
+    private void outOfBandAlpha(byte[] data, int start, int length, Vc3Compression compression, int width, int height,
+                                int stride, boolean wide, int outputDepth) {
         var max = (1 << outputDepth) - 1;
-        if (length >= Vc3Header.BASE_HEADER_SIZE && data[start] == 0 && data[start + 1] == 0
-                && data[start + 4] >= 1 && data[start + 4] <= 4) {
+        if (length >= Vc3Header.BASE_HEADER_SIZE && ByteArrays.i32be(data, start) >= Vc3Header.BASE_HEADER_SIZE
+                && ByteArrays.i32be(data, start) < length && data[start + 4] >= 1 && data[start + 4] <= 4
+                && ByteArrays.i32be(data, start + 0x28) == compression.cid()) {
             if (alphaDecoder == null) {
                 alphaDecoder = new Vc3FrameDecoder(limits, threads, highBitDepth);
             }
@@ -394,7 +448,8 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
     private Picture picture(Vc3Header header, int width, int height, int stride, int[] strides, boolean wide,
                             int depth, Vc3Layout layout, boolean alpha) {
         if (header.rgb()) {
-            return rgb(width, height, stride, depth, header.colorVolume() == Vc3Header.OUT_OF_BAND_VOLUME, alpha);
+            return rgb(width, height, stride, depth, header.colorVolume() == Vc3Header.OUT_OF_BAND_VOLUME, alpha,
+                    header.premultipliedAlpha());
         }
         var format = layout == Vc3Layout.YUV444 ? ChromaFormat.YUV444
                 : layout == Vc3Layout.YUV420 ? ChromaFormat.YUV420 : ChromaFormat.YUV422;
@@ -406,8 +461,6 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
                     TransferCharacteristics.UNSPECIFIED);
             default -> ColorInfo.BT709_LIMITED;
         };
-        // TODO: return straight alpha for pre-multiplied streams (PMA set), whose video channels the
-        // pictures, which carry straight alpha, currently hold multiplied by alpha
         if (wide) {
             return Yuv16Picture.builder().size(width, height).chromaFormat(format).bitDepth(depth).color(color)
                     .luma(planes16[0], stride).chroma(planes16[1], planes16[2], strides[1])
@@ -430,23 +483,27 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
      * the full range rather than the BT.709 levels
      * @param alpha whether the alpha plane holds the frame's alpha; the picture is opaque
      * otherwise
+     * @param premultiplied whether the components are premultiplied by alpha, and are divided by it
      * @return the picture
      */
-    private Picture rgb(int width, int height, int stride, int depth, boolean outOfBand, boolean alpha) {
+    private Picture rgb(int width, int height, int stride, int depth, boolean outOfBand, boolean alpha,
+                        boolean premultiplied) {
         var r = planes16[0];
         var g = planes16[1];
         var b = planes16[2];
         var a = alpha ? alpha16 : null;
+        var straighten = premultiplied && a != null;
         if (highBitDepth) {
             var pixels = new short[width * height * 4];
             for (var y = 0; y < height; y++) {
                 for (var x = 0; x < width; x++) {
                     var from = y * stride + x;
                     var to = (y * width + x) * 4;
-                    pixels[to] = (short) Vc3Rgb.expand(r[from], depth, outOfBand, 65535);
-                    pixels[to + 1] = (short) Vc3Rgb.expand(g[from], depth, outOfBand, 65535);
-                    pixels[to + 2] = (short) Vc3Rgb.expand(b[from], depth, outOfBand, 65535);
-                    pixels[to + 3] = a == null ? (short) 0xFFFF : (short) Vc3Rgb.expand(a[from], depth, true, 65535);
+                    var opacity = a == null ? 65535 : Vc3Rgb.expand(a[from], depth, true, 65535);
+                    pixels[to] = (short) component(r[from], depth, outOfBand, opacity, straighten);
+                    pixels[to + 1] = (short) component(g[from], depth, outOfBand, opacity, straighten);
+                    pixels[to + 2] = (short) component(b[from], depth, outOfBand, opacity, straighten);
+                    pixels[to + 3] = (short) opacity;
                 }
             }
             return Rgba16Picture.of(width, height, width * 4, pixels, alpha);
@@ -456,12 +513,45 @@ public final class Vc3FrameDecoder implements IntraFramePipeline.FrameDecoder {
             for (var x = 0; x < width; x++) {
                 var from = y * stride + x;
                 var to = (y * width + x) * 4;
-                pixels[to] = (byte) Vc3Rgb.expand(r[from], depth, outOfBand, 255);
-                pixels[to + 1] = (byte) Vc3Rgb.expand(g[from], depth, outOfBand, 255);
-                pixels[to + 2] = (byte) Vc3Rgb.expand(b[from], depth, outOfBand, 255);
+                if (straighten) {
+                    var opacity = Vc3Rgb.expand(a[from], depth, true, 65535);
+                    pixels[to] = (byte) narrow(component(r[from], depth, outOfBand, opacity, true));
+                    pixels[to + 1] = (byte) narrow(component(g[from], depth, outOfBand, opacity, true));
+                    pixels[to + 2] = (byte) narrow(component(b[from], depth, outOfBand, opacity, true));
+                } else {
+                    pixels[to] = (byte) Vc3Rgb.expand(r[from], depth, outOfBand, 255);
+                    pixels[to + 1] = (byte) Vc3Rgb.expand(g[from], depth, outOfBand, 255);
+                    pixels[to + 2] = (byte) Vc3Rgb.expand(b[from], depth, outOfBand, 255);
+                }
                 pixels[to + 3] = a == null ? (byte) 0xFF : (byte) Vc3Rgb.expand(a[from], depth, true, 255);
             }
         }
         return RgbaPicture.of(width, height, width * 4, pixels, alpha);
+    }
+
+    /**
+     * Returns a coded RGB component as a full-range 16-bit value, divided by alpha when the video
+     * is premultiplied.
+     *
+     * @param code the coded component
+     * @param depth the sample bit depth
+     * @param outOfBand whether the codes span the full range rather than the BT.709 levels
+     * @param opacity the full-range 16-bit alpha
+     * @param straighten whether to divide the component by {@code opacity}
+     * @return the component, from 0 to 65535
+     */
+    private static int component(int code, int depth, boolean outOfBand, int opacity, boolean straighten) {
+        var value = Vc3Rgb.expand(code, depth, outOfBand, 65535);
+        return straighten ? Vc3Premultiplied.remove(value, opacity, 65535) : value;
+    }
+
+    /**
+     * Rounds a full-range 16-bit value to 8 bits.
+     *
+     * @param value the value, from 0 to 65535
+     * @return the value from 0 to 255
+     */
+    private static int narrow(int value) {
+        return (value * 255 + 32767) / 65535;
     }
 }

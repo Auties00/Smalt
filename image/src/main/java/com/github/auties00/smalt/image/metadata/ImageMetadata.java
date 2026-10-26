@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifReader;
+import com.github.auties00.smalt.internal.codec.XmpLocations;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
@@ -31,13 +32,31 @@ import java.util.Optional;
  *       chunk, and the {@code tEXt}, {@code zTXt} and {@code iTXt} text, the {@code Comment}
  *       keyword giving the comments;</li>
  *   <li>WebP: the {@code EXIF}, {@code XMP } and {@code ICCP} chunks;</li>
- *   <li>GIF: the comment extensions and the {@code XMP DataXMP} application extension;</li>
+ *   <li>GIF: the comment extensions, the {@code XMP DataXMP} application extension and the
+ *       {@code ICCRGBG1} application extension;</li>
  *   <li>HEIC and AVIF: the {@code Exif} and XMP items describing the primary item, and its ICC
  *       color property;</li>
- *   <li>TIFF: IFD0 as EXIF, with the XMP (tag 700), IPTC (tag 33723) and ICC (tag 34675)
- *       entries;</li>
- *   <li>BMP: nothing.</li>
+ *   <li>TIFF and BigTIFF: the descriptive entries of IFD0 and its Exif, GPS and interoperability
+ *       directories as EXIF (the entries that lay out the coded image are left out), with the XMP
+ *       (tag 700), IPTC (tag 33723, or else the IPTC resource of the Photoshop image resources in
+ *       tag 34377) and ICC (tag 34675) entries;</li>
+ *   <li>DNG and the TIFF-structured camera raw files (Canon CR2, Nikon NEF and NRW, Sony ARW, SR2
+ *       and SRF, Pentax PEF, Samsung SRW, Olympus ORF, Panasonic RW2): their first directory, as
+ *       for TIFF (in RW2 files the Panasonic tags below 254 are left out too);</li>
+ *   <li>Canon CR3: the {@code CMT1}, {@code CMT2} and {@code CMT4} directories of the Canon
+ *       {@code uuid} box combined into one EXIF block, and the XMP {@code uuid} box; Fujifilm RAF:
+ *       the EXIF block and XMP packet of the embedded JPEG preview; Minolta MRW: the TIFF
+ *       structure of the {@code TTW} block;</li>
+ *   <li>JPEG XL: the {@code Exif} and {@code xml } boxes of the container, also when compressed in
+ *       {@code brob} boxes, and the ICC profile of the codestream;</li>
+ *   <li>JPEG 2000 (JP2 and JPX): the EXIF, XMP and IPTC {@code uuid} boxes, an {@code xml } box
+ *       holding an XMP packet, and the ICC profile of the color specification of the JP2 header
+ *       box; a raw codestream holds none;</li>
+ *   <li>BMP: the ICC profile a V5 header embeds.</li>
  * </ul>
+ *
+ * <p>Reading a Canon CRW or Sigma X3F file, which holds no EXIF block, raises
+ * {@link MediaException.Unsupported}.
  *
  * <p>Instances are immutable and thread-safe; the byte-array accessors return copies.
  *
@@ -113,7 +132,8 @@ public final class ImageMetadata {
      * @param source the image, read from offset zero; not closed
      * @return the metadata
      * @throws NullPointerException         if {@code source} is {@code null}
-     * @throws MediaException.Unsupported   if the format is not recognized
+     * @throws MediaException.Unsupported   if the format is not recognized, or is a camera raw format
+     *                                     whose metadata is not read (Canon CRW, Sigma X3F)
      * @throws MediaException.Malformed     if the file structure is corrupt
      * @throws MediaException.LimitExceeded if a metadata item exceeds the limits
      * @throws MediaException.Io            if reading fails
@@ -132,7 +152,8 @@ public final class ImageMetadata {
      * @param limits the resource bounds
      * @return the metadata
      * @throws NullPointerException         if an argument is {@code null}
-     * @throws MediaException.Unsupported   if the format is not recognized
+     * @throws MediaException.Unsupported   if the format is not recognized, or is a camera raw format
+     *                                     whose metadata is not read (Canon CRW, Sigma X3F)
      * @throws MediaException.Malformed     if the file structure is corrupt
      * @throws MediaException.LimitExceeded if a metadata item exceeds the limits
      * @throws MediaException.Io            if reading fails
@@ -149,7 +170,8 @@ public final class ImageMetadata {
      * @param image the complete image file
      * @return the metadata
      * @throws NullPointerException if {@code image} is {@code null}
-     * @throws MediaException.Unsupported if the format is not recognized
+     * @throws MediaException.Unsupported if the format is not recognized, or is a camera raw format
+     * whose metadata is not read (Canon CRW, Sigma X3F)
      * @throws MediaException.Malformed if the file structure is corrupt
      */
     public static ImageMetadata read(byte[] image) {
@@ -162,7 +184,8 @@ public final class ImageMetadata {
      * @param file the path of the image file
      * @return the metadata
      * @throws NullPointerException if {@code file} is {@code null}
-     * @throws MediaException.Unsupported if the format is not recognized
+     * @throws MediaException.Unsupported if the format is not recognized, or is a camera raw format
+     * whose metadata is not read (Canon CRW, Sigma X3F)
      * @throws MediaException.Malformed if the file structure is corrupt
      * @throws MediaException.Io if the file cannot be read
      */
@@ -292,7 +315,7 @@ public final class ImageMetadata {
         }
         if (xmp != null) {
             for (var property : xmp.properties()) {
-                if (Locations.isLocation(property)) {
+                if (XmpLocations.isLocation(property)) {
                     return true;
                 }
             }
