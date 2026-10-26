@@ -1,6 +1,6 @@
 # Restores the oracle data files that .github/workflows/oracle-tools.yml writes (the DNG files of Adobe DNG Converter,
-# the libxaac and FDK AAC decodes of the AAC-ELD streams, the OpenSlide renderings of the Aperio slides) into the
-# conformance cache, where the raw, mpeg and image tests read them by default. The entries are saved with paths
+# the libxaac and FDK AAC decodes of the AAC-ELD streams, the MPEG Surround reference decodes, the OpenSlide
+# renderings of the Aperio slides) into the conformance cache, where the raw, mpeg and image tests read them by default. The entries are saved with paths
 # relative to the workspace, on Windows or Linux, so every operating system restores them alike. An entry that is
 # missing (its generation failed) leaves its tests to skip, which the skip baseline then reports.
 name: Oracle data
@@ -38,6 +38,14 @@ runs:
         key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
         enableCrossOsArchive: true
 
+    - name: Restore the MPEG Surround oracle files
+      id: mps
+      uses: actions/cache/restore@v4
+      with:
+        path: .oracle-data/mps-oracle
+        key: oracle-data-mps-${{ hashFiles('tools/testdata/mps-oracle.py', 'tools/testdata/mps-oracle/**') }}
+        enableCrossOsArchive: true
+
     - name: Restore the Aperio slide oracle files
       id: svs
       uses: actions/cache/restore@v4
@@ -49,7 +57,8 @@ runs:
     - name: Download the oracle data files of this run
       if: >-
         inputs.artifact == 'true' && (steps.raw.outputs.cache-hit != 'true' || steps.nef.outputs.cache-hit != 'true'
-        || steps.eld.outputs.cache-hit != 'true' || steps.svs.outputs.cache-hit != 'true')
+        || steps.eld.outputs.cache-hit != 'true' || steps.mps.outputs.cache-hit != 'true'
+        || steps.svs.outputs.cache-hit != 'true')
       continue-on-error: true
       uses: actions/download-artifact@v4
       with:

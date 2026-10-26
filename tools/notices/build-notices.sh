@@ -110,6 +110,8 @@ Contents
   53. Shaka Packager
   54. MPEG-4 Visual reference software (Microsoft)
   55. dovi_tool (the dolby_vision crate)
+  56. ISO/IEC 23003-3 MPEG-D USAC reference software
+  57. ISO/IEC 23003-4 MPEG-D DRC reference software
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1550,6 +1552,8 @@ Derived Smalt packages:
   audio.aac.internal (CodewordReordering, ReversibleScalefactors,
   LowDelayWindows, SamplingTables)
   audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData)
+  audio.aac.internal.usac (Avq, LpdDecoder, LpdState, LpdTables: the USAC
+  linear prediction domain decoder)
 
 Derivation: Huffman codeword reordering follows the codebook priorities,
 section sorting, segmentation and set-wise decoding of
@@ -1560,8 +1564,12 @@ taken from low_delay_window_eld of encoder/ixheaace_rom.c, the CLD QMF
 prototype of low delay SBR from cld_fb_64_640 of encoder/ixheaace_sbr_rom.c,
 the scalefactor band offsets and TNS limits of 512- and 480-sample frames
 from decoder/ixheaacd_aac_rom.c, and the LD_TRAN envelope tables from
-decoder/ixheaacd_env_extr.c. The Java code is a new implementation; it is
-not a copy of the original files.
+decoder/ixheaacd_env_extr.c. The USAC linear prediction domain decoder
+(ACELP, TCX, the LPC and FAC decoding and the RE8 lattice of the AVQ) is
+translated from decoder/ixheaacd_acelp_*.c, ixheaacd_lpc*.c, ixheaacd_tcx_*.c,
+ixheaacd_fwd_alias_cnx.c, ixheaacd_avq_dec.c and the tables of
+ixheaacd_rom.c and ixheaacd_avq_rom.c. The other Java code is a new
+implementation; it is not a copy of the original files.
 
 Copyright:
   Copyright (C) 2018, 2023 The Android Open Source Project
@@ -1931,6 +1939,75 @@ Copyright:
 EOF2
 license_start "dovi_tool license (LICENSE)"
 cat "$LIC/dovi-tool-LICENSE"
+
+section "56. ISO/IEC 23003-3 MPEG-D USAC reference software"
+cat <<'EOF'
+Project:      the reference software of ISO/IEC 23003-3:2019 (MPEG-D Unified
+              Speech and Audio Coding), MPEG-D_USAC_refSoft_src_v02_03_00_20190711,
+              with the MPEG Surround decoder of ISO/IEC 23003-1, the SBR
+              decoder of ISO/IEC 14496-3 and the ER BSAC and scalable AAC
+              decoders of ISO/IEC 14496-3 it includes
+Source:       ISO/IEC 23003-3:2019 reference software, ISO's Publicly
+              Available Standards
+License text: the notices of the source files
+License:      free license to the software modules or modifications thereof
+              for use in implementations of ISO/IEC 23003 and products claiming
+              conformance to the MPEG-2 AAC/MPEG-4 Audio standards
+
+Derived Smalt packages:
+  audio.aac.internal (BsacDecoder, BsacTables: the ER BSAC decoder of
+  sam_decode_frame.c, sam_decoder.c, sam_decode_bsac.c, sam_fadecode.c,
+  sam_bitbuffer.c, sam_tns.c and the models of sam_model.h; ScalableDecoder:
+  the scalable AAC decoder of scal_dec_frame.c)
+  audio.aac.internal.usac (the frequency domain decoder, the arithmetic
+  spectral decoder, complex prediction, the time-warped filterbank of
+  usac_tw_tools.c, the frame and extension element decoding of src_usac;
+  eSBR with the QMF transposer and PVC of the ct_*,
+  harmsbrQmftrans.c and sony_pvc* files of src_tf; the MPEG Surround 2-1-2
+  decoder of the sac_* files of mp4spatialdec)
+  audio.aac.internal.mps (the MPEG Surround decoder of the sac_* files of
+  mp4spatialdec: the SpatialSpecificConfig and SpatialFrame parsers, the
+  parameter mapping, the M1 and M2 matrices of every tree, smoothing, the
+  decorrelators, the hybrid and QMF filterbanks, subband domain temporal
+  processing, guided envelope shaping and the MDCT to QMF conversion of the
+  residual signals)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  AT&T, Dolby Laboratories, Fraunhofer IIS, VoiceAge Corp., Sony
+  Corporation, Coding Technologies, Agere Systems, Philips, Samsung AIT and
+  ISO/IEC (1999 to 2019)
+EOF
+license_start "Notices of the source files"
+cat "$LIC/iso23003-3-usac-refsoft-notice.txt"
+
+section "57. ISO/IEC 23003-4 MPEG-D DRC reference software"
+cat <<'EOF'
+Project:      the reference software of ISO/IEC 23003-4 (MPEG-D Dynamic Range
+              Control), MPEG_D_DRC_refsoft
+Source:       ISO/IEC 23003-4 reference software, ISO's Publicly Available
+              Standards
+License text: the notices of the source files
+License:      royalty-free copyright license for use in implementations or
+              products claiming conformance to ISO/IEC 23003-4
+
+Derived Smalt packages:
+  audio.aac.internal.drc (the bitstream parser of uniDrcParser.c and
+  uniDrcInterfaceParser.c, the selection process of uniDrcSelectionProcess*,
+  the gain decoder of uniDrcGainDecoder.c, uniDrcGainDecoder_*.c and
+  uniDrcFilterBank.c, the parametric DRC of parametricDrcDecoder.c, the shape
+  filters of uniDrcShapeFilter.c, the time domain equalizer of uniDrcEq.c,
+  the peak limiter of peakLimiter.c, the tables of uniDrcTables.c and the
+  processing chain of drcToolDecoder.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Apple Inc., Fraunhofer IIS and ISO/IEC (2014)
+EOF
+license_start "Notices of the source files"
+cat "$LIC/iso23003-4-drc-refsoft-notice.txt"
 } > "$OUT"
 
 echo "wrote $OUT"

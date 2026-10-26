@@ -15,3 +15,5 @@ image/src/test/resources/samples/** -text
 # Fuzz seeds and saved findings are byte-exact inputs, text-looking ones (subtitles, XMP) included.
 **/src/test/resources/**/*Inputs/** -text -diff
 **/src/test/resources/fuzz-regressions/** -text -diff
+# Reference outputs stored as raw float32 samples are byte-exact.
+**/src/test/resources/**/*.f32 -text -diff

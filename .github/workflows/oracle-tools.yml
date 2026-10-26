@@ -7,8 +7,9 @@
 # uploads them for the jobs of the run that find the entry evicted from the 10 GB cache, as data-artifact does for
 # the oracle data files); and writes the oracle data files that scripted black boxes produce
 # (tools/testdata/raw-oracle.py and nef-oracle.py with Adobe DNG Converter, eld-sbr-oracle.py with libxaac and FDK
-# AAC, and svs-oracle.py with OpenSlide and imagecodecs, all on Windows) into cross-OS cache entries keyed by their
-# script, which .github/actions/oracle-data restores on every test runner. ci.yml, nightly.yml, package.yml and
+# AAC, mps-oracle.py with the MPEG Surround reference decoder, and svs-oracle.py with OpenSlide and imagecodecs, all
+# on Windows) into cross-OS cache entries keyed by their script, which .github/actions/oracle-data restores on every
+# test runner. ci.yml, nightly.yml, package.yml and
 # warm-caches.yml call it; it can also be run by hand to warm the caches of a branch (the pkg/* branches only
 # restore them, see .github/scripts/cache-policy.sh).
 name: Oracle tools
@@ -112,7 +113,7 @@ jobs:
   # Adobe DNG Converter is a Windows program: its uncompressed DNG files are the oracle of the raw module's sensor
   # values. The cache paths are relative to the workspace, so that every operating system restores them alike.
   data-windows:
-    name: oracle data (Adobe DNG Converter, libxaac, FDK AAC)
+    name: oracle data (Adobe DNG Converter, libxaac, FDK AAC, MPEG Surround)
     if: inputs.data != false
     runs-on: windows-latest
     timeout-minutes: 120
@@ -207,6 +208,35 @@ jobs:
             .oracle-data/eld-sbr-oracle
             .oracle-data/eld-sbr-fdk
           key: oracle-data-eld-sbr-${{ hashFiles('tools/testdata/eld-sbr-oracle.py') }}
+          enableCrossOsArchive: true
+
+      # The MPEG Surround decoder of the ISO/IEC 23003-3 reference software, patched to the full 23003-1 syntax and
+      # built with MSYS2's gcc, decodes synthetic and reference-encoded MPEG Surround streams.
+      - name: Look up the MPEG Surround oracle files
+        id: mps
+        uses: actions/cache/restore@v4
+        with:
+          path: .oracle-data/mps-oracle
+          key: oracle-data-mps-${{ hashFiles('tools/testdata/mps-oracle.py', 'tools/testdata/mps-oracle/**') }}
+          enableCrossOsArchive: true
+          lookup-only: ${{ !inputs.data-artifact }}
+
+      - name: Decode the MPEG Surround streams with the reference software
+        if: steps.mps.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          /c/msys64/usr/bin/pacman.exe -S --noconfirm --needed mingw-w64-ucrt-x86_64-gcc
+          export PATH="/c/msys64/ucrt64/bin:$PATH"
+          python -I tools/testdata/mps-oracle.py "$RUNNER_TEMP/mps"
+          mkdir -p .oracle-data
+          cp -r ~/.smalt/cache/conformance/mps-oracle .oracle-data/mps-oracle
+
+      - name: Save the MPEG Surround oracle files
+        if: steps.mps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .oracle-data/mps-oracle
+          key: oracle-data-mps-${{ hashFiles('tools/testdata/mps-oracle.py', 'tools/testdata/mps-oracle/**') }}
           enableCrossOsArchive: true
 
       - name: Upload the oracle data files

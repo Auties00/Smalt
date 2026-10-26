@@ -82,6 +82,11 @@ public final class ChannelStream {
     private static final int TNS_STRIDE = TNS_MAX_ORDER_LONG_MAIN + 1;
 
     /**
+     * The largest magnitude of a spectral line {@link #loadSpectrum} keeps.
+     */
+    private static final double SPECTRUM_LIMIT = 0x1p40;
+
+    /**
      * The LTP coefficient of each {@code ltp_coef} code (ISO/IEC 14496-3 Table 4.152).
      */
     private static final float[] LTP_COEFFICIENTS = {
@@ -372,7 +377,8 @@ public final class ChannelStream {
         this.tableIndex = tableIndex;
         this.objectType = objectType;
         this.errorResilient = objectType == AudioSpecificConfig.AOT_ER_LC || objectType == AudioSpecificConfig.AOT_ER_LTP
-                || objectType == AudioSpecificConfig.AOT_ER_LD || objectType == AudioSpecificConfig.AOT_ER_ELD;
+                || objectType == AudioSpecificConfig.AOT_ER_SCALABLE || objectType == AudioSpecificConfig.AOT_ER_LD
+                || objectType == AudioSpecificConfig.AOT_ER_ELD;
         this.lowDelay = objectType == AudioSpecificConfig.AOT_ER_LD;
         this.enhancedLowDelay = objectType == AudioSpecificConfig.AOT_ER_ELD;
         this.virtualCodebooks = errorResilient && (resilience & AudioSpecificConfig.VIRTUAL_CODEBOOKS) != 0;
@@ -428,17 +434,7 @@ public final class ChannelStream {
         }
         if (windowSequence == EIGHT_SHORT_SEQUENCE) {
             maxBands = reader.read(4);
-            var grouping = reader.read(7);
-            windowCount = 8;
-            groupCount = 1;
-            groupLengths[0] = 1;
-            for (var i = 6; i >= 0; i--) {
-                if ((grouping >>> i & 1) != 0) {
-                    groupLengths[groupCount - 1]++;
-                } else {
-                    groupLengths[groupCount++] = 1;
-                }
-            }
+            applyGrouping(reader.read(7));
             if (maxBands > shortOffsets.length - 1) {
                 throw new MediaException.Malformed("AAC max_sfb " + maxBands + " exceeds " + (shortOffsets.length - 1) + " short bands");
             }
@@ -455,6 +451,101 @@ public final class ChannelStream {
                 readPredictorData(reader, partner);
             }
         }
+    }
+
+    /**
+     * Splits the eight short windows into the groups of a {@code scale_factor_grouping}.
+     *
+     * @param grouping the 7-bit grouping: bit {@code 6 - i} set joins window {@code i + 1} to the group of window
+     * {@code i}
+     */
+    private void applyGrouping(int grouping) {
+        windowCount = 8;
+        groupCount = 1;
+        groupLengths[0] = 1;
+        for (var i = 6; i >= 0; i--) {
+            if ((grouping >>> i & 1) != 0) {
+                groupLengths[groupCount - 1]++;
+            } else {
+                groupLengths[groupCount++] = 1;
+            }
+        }
+    }
+
+    /**
+     * Sets the window information a scalable AAC layer carries in its header instead of {@code ics_info}, and
+     * clears the tool data of the previous frame.
+     *
+     * @param windowSequence the window sequence, one of the {@code *_SEQUENCE} constants
+     * @param windowShape the window shape, 0 for the sine window and 1 for the Kaiser-Bessel derived window
+     * @param maxBands the number of transmitted bands per window group ({@code max_sfb})
+     * @param grouping the {@code scale_factor_grouping} of an eight short sequence, unused otherwise
+     * @throws MediaException.Malformed if {@code maxBands} exceeds the bands of the window
+     */
+    public void setScalableInfo(int windowSequence, int windowShape, int maxBands, int grouping) {
+        this.windowSequence = windowSequence;
+        this.windowShape = windowShape;
+        this.maxBands = maxBands;
+        predictorPresent = false;
+        predictorResetGroup = 0;
+        ltpPresent = false;
+        tnsPresent = false;
+        gainBands = 0;
+        pulseCount = 0;
+        if (windowSequence == EIGHT_SHORT_SEQUENCE) {
+            applyGrouping(grouping);
+        } else {
+            windowCount = 1;
+            groupCount = 1;
+            groupLengths[0] = 1;
+        }
+        var bands = (windowCount == 8 ? shortOffsets : longOffsets).length - 1;
+        if (maxBands > bands) {
+            throw new MediaException.Malformed("AAC max_sfb " + maxBands + " exceeds " + bands + " bands");
+        }
+    }
+
+    /**
+     * Reads the {@code ltp_data} of a scalable AAC layer header, after its {@code ltp_data_present} flag.
+     *
+     * <p>An eight short sequence codes only the lag and the coefficient, and is not predicted.
+     *
+     * @param reader the bit source
+     */
+    public void readScalableLtp(AacBitReader reader) {
+        if (windowCount == 8) {
+            ltpPresent = false;
+            ltpLag = reader.read(11);
+            reader.read(3);
+            return;
+        }
+        ltpLag = reader.read(11);
+        ltpCoefficient = LTP_COEFFICIENTS[reader.read(3)];
+        var used = Math.min(maxBands, LTP_MAX_BANDS);
+        for (var band = 0; band < used; band++) {
+            ltpUsed[band] = reader.readFlag();
+        }
+        Arrays.fill(ltpUsed, used, LTP_MAX_BANDS, false);
+        ltpPresent = true;
+    }
+
+    /**
+     * Clears the {@code ltp_long_used} flag of a band, so that long term prediction leaves it alone.
+     *
+     * @param band the band, below {@link #LTP_MAX_BANDS}
+     */
+    public void clearLtpUsed(int band) {
+        ltpUsed[band] = false;
+    }
+
+    /**
+     * Reads the {@code tns_data} of a scalable AAC layer header.
+     *
+     * @param reader the bit source
+     * @throws MediaException.Malformed if a filter order exceeds the profile limit
+     */
+    public void readScalableTns(AacBitReader reader) {
+        readTns(reader);
     }
 
     /**
@@ -538,6 +629,118 @@ public final class ChannelStream {
         predictorPresent = other.predictorPresent;
         predictorResetGroup = other.predictorResetGroup;
         System.arraycopy(other.predictionUsed, 0, predictionUsed, 0, MAX_BANDS);
+    }
+
+    /**
+     * Loads a spectrum decoded outside this stream, as the ER BSAC decoder decodes it, without tool data: no TNS,
+     * prediction or gain control remains to apply.
+     *
+     * @param windowSequence the window sequence, one of the {@code *_SEQUENCE} constants
+     * @param windowShape the window shape, 0 for the sine window and 1 for the Kaiser-Bessel derived window
+     * @param source the spectrum; the windows of an eight short sequence start 128 lines apart. Values beyond
+     * {@code 2^40} in magnitude, which no conforming stream reaches, are clamped so that the filterbank stays finite
+     */
+    public void loadSpectrum(int windowSequence, int windowShape, double[] source) {
+        this.windowSequence = windowSequence;
+        this.windowShape = windowShape;
+        var eightShort = windowSequence == EIGHT_SHORT_SEQUENCE;
+        maxBands = 0;
+        windowCount = eightShort ? 8 : 1;
+        groupCount = windowCount;
+        Arrays.fill(groupLengths, 1);
+        predictorPresent = false;
+        ltpPresent = false;
+        tnsPresent = false;
+        gainBands = 0;
+        pulseCount = 0;
+        if (eightShort) {
+            for (var w = 0; w < 8; w++) {
+                for (var i = 0; i < shortLength; i++) {
+                    spectrum[w * shortLength + i] = (float) Math.clamp(source[w * 128 + i], -SPECTRUM_LIMIT,
+                            SPECTRUM_LIMIT);
+                }
+            }
+        } else {
+            for (var i = 0; i < frameLength; i++) {
+                spectrum[i] = (float) Math.clamp(source[i], -SPECTRUM_LIMIT, SPECTRUM_LIMIT);
+            }
+        }
+    }
+
+    /**
+     * Loads a spectrum combined outside this stream, as the scalable AAC decoder combines its layers, without tool
+     * data: no TNS, prediction or gain control remains to apply.
+     *
+     * @param windowSequence the window sequence, one of the {@code *_SEQUENCE} constants
+     * @param windowShape the window shape, 0 for the sine window and 1 for the Kaiser-Bessel derived window
+     * @param source the spectrum, laid out as {@link #spectrum()}
+     */
+    public void loadSpectrum(int windowSequence, int windowShape, float[] source) {
+        this.windowSequence = windowSequence;
+        this.windowShape = windowShape;
+        var eightShort = windowSequence == EIGHT_SHORT_SEQUENCE;
+        maxBands = 0;
+        windowCount = eightShort ? 8 : 1;
+        groupCount = windowCount;
+        Arrays.fill(groupLengths, 1);
+        predictorPresent = false;
+        ltpPresent = false;
+        tnsPresent = false;
+        gainBands = 0;
+        pulseCount = 0;
+        System.arraycopy(source, 0, spectrum, 0, frameLength);
+    }
+
+    /**
+     * Parses the {@code individual_channel_stream(1, 1)} of a scalable AAC layer, whose window information
+     * {@link #setScalableInfo} set, and inverse-quantizes its coded bands.
+     *
+     * <p>The stream carries neither pulses, nor TNS, nor gain control flags; the error resilient object type reads
+     * its TNS data in the order of its error sensitivity categories, after the RVLC codewords and before the
+     * spectral data, when {@code tnsData} is set.
+     *
+     * @param main the source of the side information
+     * @param reversible the source of the RVLC codewords
+     * @param tns the source of the TNS data
+     * @param spectral the source of the spectral data
+     * @param intensityAllowed whether intensity stereo codebooks may appear
+     * @param tnsData whether the error resilient stream carries TNS data
+     * @throws MediaException.Malformed if the stream is invalid
+     */
+    public void parseScalable(AacBitReader main, AacBitReader reversible, AacBitReader tns, AacBitReader spectral,
+                              boolean intensityAllowed, boolean tnsData) {
+        globalGain = main.read(8);
+        readSections(main, intensityAllowed);
+        if (reversibleScalefactors != null) {
+            reversibleScalefactors.readSideInfo(main, windowCount == 8, hasNoiseBands());
+        } else {
+            readScalefactors(main);
+        }
+        pulseCount = 0;
+        if (errorResilient) {
+            if (reordering != null) {
+                reorderedBits = main.read(14);
+                longestCodeword = main.read(6);
+            }
+            main.checkNotOverrun();
+            if (reversibleScalefactors != null) {
+                reversibleScalefactors.decode(reversible, globalGain, bandTypes, bandValues, groupCount, maxBands);
+                reversible.checkNotOverrun();
+            }
+            if (tnsData) {
+                readTns(tns);
+            }
+            tns.checkNotOverrun();
+        }
+        main.checkNotOverrun();
+        if (reordering != null) {
+            reordering.decode(spectral, reorderedBits, longestCodeword, sectionCodebooks, bandOffsets(), maxBands,
+                    groupLengths, groupCount, windowCount, windowLength(), quant);
+        } else {
+            readSpectralData(spectral);
+        }
+        spectral.checkNotOverrun();
+        dequantize();
     }
 
     /**
@@ -1063,6 +1266,47 @@ public final class ChannelStream {
     }
 
     /**
+     * Applies the TNS synthesis filters of one window of the current frame to a spectrum of the same window
+     * structure, with the filters limited to a number of bands, if the frame carries TNS data.
+     *
+     * @param target the spectrum to filter in place
+     * @param window the window index, 0 for a long window, below 8 for short windows
+     * @param bands the number of bands the filters may cover, besides the object type's limit
+     */
+    public void applyTns(float[] target, int window, int bands) {
+        if (tnsPresent) {
+            filterTnsWindow(target, window, bands, false);
+        }
+    }
+
+    /**
+     * {@return whether the frame carries TNS data}
+     */
+    public boolean tnsPresent() {
+        return tnsPresent;
+    }
+
+    /**
+     * {@return the number of TNS filters of a window}
+     *
+     * @param window the window index, 0 for a long window, below 8 for short windows
+     */
+    public int tnsFilterCount(int window) {
+        return tnsPresent ? tnsFilterCounts[window] : 0;
+    }
+
+    /**
+     * Returns the lowest band of the first TNS filter of a window, as its length gives it, which may be negative.
+     *
+     * @param window the window index, 0 for a long window, below 8 for short windows
+     * @return the band count of the window minus the length of its first filter
+     */
+    public int tnsFirstBand(int window) {
+        var offsets = windowCount == 8 ? shortOffsets : longOffsets;
+        return offsets.length - 1 - tnsLengths[window * 4];
+    }
+
+    /**
      * Applies the TNS analysis filters of the current frame to a spectrum of the same window
      * structure, if the frame carries TNS data.
      *
@@ -1085,6 +1329,21 @@ public final class ChannelStream {
      * synthesis filters
      */
     private void filterTns(float[] target, boolean analysis) {
+        for (var window = 0; window < windowCount; window++) {
+            filterTnsWindow(target, window, maxBands, analysis);
+        }
+    }
+
+    /**
+     * Runs the TNS filters of one window of the current frame over a spectrum.
+     *
+     * @param target the spectrum to filter in place
+     * @param window the window index, 0 for a long window, below 8 for short windows
+     * @param bands the number of bands the filters may cover, besides the object type's limit
+     * @param analysis whether to run the all-zero analysis filters instead of the all-pole
+     * synthesis filters
+     */
+    private void filterTnsWindow(float[] target, int window, int bands, boolean analysis) {
         var shortWindow = windowCount == 8;
         var offsets = shortWindow ? shortOffsets : longOffsets;
         var bandCount = offsets.length - 1;
@@ -1093,34 +1352,32 @@ public final class ChannelStream {
                 ? SamplingTables.tnsMaxBandsPqf(tableIndex, shortWindow)
                 : lowDelay || enhancedLowDelay ? SamplingTables.tnsMaxBandsLowDelay(tableIndex, frameLength)
                 : SamplingTables.tnsMaxBands(tableIndex, shortWindow);
-        var limit = Math.min(bandLimit, maxBands);
-        for (var window = 0; window < windowCount; window++) {
-            var bottom = bandCount;
-            for (var filter = 0; filter < tnsFilterCounts[window]; filter++) {
-                var entry = window * 4 + filter;
-                var top = bottom;
-                bottom = Math.max(top - tnsLengths[entry], 0);
-                var order = tnsOrders[entry];
-                if (order == 0) {
-                    continue;
-                }
-                var start = offsets[Math.min(bottom, limit)];
-                var end = offsets[Math.min(top, limit)];
-                var size = end - start;
-                if (size <= 0) {
-                    continue;
-                }
-                var increment = 1;
-                var line = window * windowLength + start;
-                if (tnsDownward[entry]) {
-                    increment = -1;
-                    line = window * windowLength + end - 1;
-                }
-                if (analysis) {
-                    filterAllZero(target, line, increment, size, entry * TNS_STRIDE, order);
-                } else {
-                    filterAllPole(target, line, increment, size, entry * TNS_STRIDE, order);
-                }
+        var limit = Math.min(bandLimit, bands);
+        var bottom = bandCount;
+        for (var filter = 0; filter < tnsFilterCounts[window]; filter++) {
+            var entry = window * 4 + filter;
+            var top = bottom;
+            bottom = Math.max(top - tnsLengths[entry], 0);
+            var order = tnsOrders[entry];
+            if (order == 0) {
+                continue;
+            }
+            var start = offsets[Math.min(bottom, limit)];
+            var end = offsets[Math.min(top, limit)];
+            var size = end - start;
+            if (size <= 0) {
+                continue;
+            }
+            var increment = 1;
+            var line = window * windowLength + start;
+            if (tnsDownward[entry]) {
+                increment = -1;
+                line = window * windowLength + end - 1;
+            }
+            if (analysis) {
+                filterAllZero(target, line, increment, size, entry * TNS_STRIDE, order);
+            } else {
+                filterAllPole(target, line, increment, size, entry * TNS_STRIDE, order);
             }
         }
     }

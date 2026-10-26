@@ -4,10 +4,14 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
+import com.github.auties00.smalt.audio.aac.internal.mps.MpsUpmixer;
 import com.github.auties00.smalt.audio.aac.internal.sbr.SbrElement;
 
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import java.util.Arrays;
+import java.util.List;
 import java.util.function.Consumer;
 
 /**
@@ -26,7 +30,8 @@ import java.util.function.Consumer;
  * and the filterbank memory is reset.
  *
  * <p>Data stream elements and fill elements are skipped, except the spectral band replication
- * payloads of fill elements while the {@link SbrMode} decodes them; program configuration
+ * payloads of fill elements while the {@link SbrMode} decodes them and, once {@link #enableSurround} is called,
+ * the MPEG Surround payloads, which an {@link MpsUpmixer} turns into an upmix of the block; program configuration
  * elements replace the mapping. When spectral band replication is decoded, every channel element
  * runs through an {@link SbrElement}: the filterbank writes the core samples of each coded
  * channel to a scratch buffer, and the element turns them into the output samples, at twice the
@@ -169,6 +174,41 @@ public final class FrameDecoder {
      * Whether channel streams carry RVLC codewords, which form a category instance of their own.
      */
     private final boolean reversibleScalefactors;
+
+    /**
+     * The ER BSAC decoder, or {@code null} for the other object types.
+     */
+    private final BsacDecoder bsac;
+
+    /**
+     * The scalable AAC decoder, or {@code null} for the other object types.
+     */
+    private final ScalableDecoder scalable;
+
+    /**
+     * The access unit of the main layer of a scalable stream decoded from one packet.
+     */
+    private final byte[][] scalableUnit = new byte[1][];
+
+    /**
+     * The frame an ER BSAC block is decoded from: its access units, concatenated.
+     */
+    private byte[] bsacFrame = new byte[0];
+
+    /**
+     * The reader of the spectral band replication payloads of an ER BSAC frame.
+     */
+    private final AacBitReader bsacReader = new AacBitReader(new byte[0]);
+
+    /**
+     * The speaker types of the elements of the last ER BSAC block whose mapping {@link #bsacMapping} holds.
+     */
+    private int[] bsacSpeakerTypes = new int[0];
+
+    /**
+     * The mapping of the elements of the last ER BSAC block, or {@code null} before the first.
+     */
+    private ChannelMapping bsacMapping;
 
     /**
      * The readers of the category instances of the current block, reused block after block.
@@ -393,6 +433,42 @@ public final class FrameDecoder {
     private final int[][] couplingLists = new int[16][16];
 
     /**
+     * The MPEG Surround upmixer, or {@code null} while MPEG Surround is not decoded.
+     */
+    private MpsUpmixer surround;
+
+    /**
+     * The output buffer of the upmix, or {@code null} before the first upmixed block.
+     */
+    private AudioBuffer surroundOutput;
+
+    /**
+     * The real parts of the subband matrix of each output channel of the last block, when spectral band
+     * replication synthesized every channel from its own matrix.
+     */
+    private float[][] subbandsReal = new float[0][];
+
+    /**
+     * The imaginary parts of the subband matrix of each output channel of the last block.
+     */
+    private float[][] subbandsImag = new float[0][];
+
+    /**
+     * Whether {@link #subbandsReal} and {@link #subbandsImag} hold the last block.
+     */
+    private boolean subbandsValid;
+
+    /**
+     * Whether the last decoded block was upmixed with MPEG Surround.
+     */
+    private boolean surroundUpmixed;
+
+    /**
+     * Whether a block was decoded.
+     */
+    private boolean blockDecoded;
+
+    /**
      * Creates a decoder for a configuration.
      *
      * @param config the stream configuration
@@ -402,10 +478,56 @@ public final class FrameDecoder {
      * @param sbrMode how spectral band replication is treated
      * @param parametricStereo whether a mono layout outputs two channels through parametric
      * stereo once spectral band replication is decoded
+     * @param dynamicRange the dynamic range control, or {@code null}
      * @throws MediaException.LimitExceeded if the configuration exceeds the limits
      */
     public FrameDecoder(AudioSpecificConfig config, MediaLimits limits, ChannelLayout fallbackLayout, SbrMode sbrMode,
                         boolean parametricStereo, DynamicRangeControl dynamicRange) {
+        this(config, limits, fallbackLayout, sbrMode, parametricStereo, dynamicRange, -1);
+    }
+
+    /**
+     * Creates a decoder for a configuration that decodes ER BSAC streams up to a layer.
+     *
+     * @param config the stream configuration
+     * @param limits the resource limits
+     * @param fallbackLayout the layout to report while the configuration leaves it to the
+     * bitstream and no block was decoded yet
+     * @param sbrMode how spectral band replication is treated
+     * @param parametricStereo whether a mono layout outputs two channels through parametric
+     * stereo once spectral band replication is decoded
+     * @param dynamicRange the dynamic range control, or {@code null}
+     * @param maxLayer the highest ER BSAC layer to decode, or -1 for every layer
+     * @throws MediaException.LimitExceeded if the configuration exceeds the limits
+     */
+    public FrameDecoder(AudioSpecificConfig config, MediaLimits limits, ChannelLayout fallbackLayout, SbrMode sbrMode,
+                        boolean parametricStereo, DynamicRangeControl dynamicRange, int maxLayer) {
+        this(List.of(config), limits, fallbackLayout, sbrMode, parametricStereo, dynamicRange, maxLayer);
+    }
+
+    /**
+     * Creates a decoder for the configurations of the elementary streams of an audio object, which decodes ER
+     * BSAC and scalable AAC streams up to a layer.
+     *
+     * <p>Only scalable AAC uses the configurations after the first: one per layer, or with {@code epConfig} 1 one
+     * per category instance, in stream order. The layers they omit are not decoded.
+     *
+     * @param configs the configuration of each elementary stream, in stream order
+     * @param limits the resource limits
+     * @param fallbackLayout the layout to report while the configuration leaves it to the
+     * bitstream and no block was decoded yet
+     * @param sbrMode how spectral band replication is treated
+     * @param parametricStereo whether a mono layout outputs two channels through parametric
+     * stereo once spectral band replication is decoded
+     * @param dynamicRange the dynamic range control, or {@code null}
+     * @param maxLayer the highest ER BSAC or scalable AAC layer to decode, or -1 for every layer
+     * @throws MediaException.LimitExceeded if the configuration exceeds the limits
+     * @throws MediaException.Unsupported if a scalable AAC layer depends on a core coder
+     * @throws MediaException.Malformed if the scalable AAC configurations do not describe the layers of one object
+     */
+    public FrameDecoder(List<AudioSpecificConfig> configs, MediaLimits limits, ChannelLayout fallbackLayout,
+                        SbrMode sbrMode, boolean parametricStereo, DynamicRangeControl dynamicRange, int maxLayer) {
+        var config = configs.getFirst();
         this.dynamicRange = dynamicRange != null && dynamicRange.active() ? dynamicRange : null;
         this.frameLength = config.frameLength();
         this.tableIndex = config.tableIndex();
@@ -416,7 +538,9 @@ public final class FrameDecoder {
         this.enhancedLowDelay = config.objectType() == AudioSpecificConfig.AOT_ER_ELD;
         this.resilience = config.resilience();
         this.lowDelaySbr = config.lowDelaySbr();
-        this.separateCategories = config.epConfig() == 1;
+        this.bsac = config.bsac() ? new BsacDecoder(config, maxLayer, limits) : null;
+        this.scalable = config.scalable() ? new ScalableDecoder(configs, maxLayer, AacKernels.INSTANCE) : null;
+        this.separateCategories = config.epConfig() == 1 && bsac == null && scalable == null;
         this.reversibleScalefactors = (config.resilience() & AudioSpecificConfig.RVLC_SCALEFACTORS) != 0;
         this.coreRate = config.sampleRate();
         this.sbrMode = sbrMode;
@@ -429,7 +553,9 @@ public final class FrameDecoder {
         this.lowDelayFilterbank = enhancedLowDelay ? new LowDelayFilterbank(frameLength, kernel) : null;
         this.ssrSynthesis = objectType == AudioSpecificConfig.AOT_SSR ? new SsrSynthesis(kernel) : null;
         this.fallbackLayout = fallbackLayout;
-        if (config.programConfig() != null) {
+        if (scalable != null) {
+            useMapping(ChannelMapping.ofConfiguration(scalable.channels(), limits));
+        } else if (config.programConfig() != null) {
             useMapping(ChannelMapping.ofProgram(config.programConfig(), limits));
         } else if (config.channelConfiguration() != 0) {
             useMapping(ChannelMapping.ofConfiguration(config.channelConfiguration(), limits));
@@ -446,25 +572,97 @@ public final class FrameDecoder {
     }
 
     /**
+     * Decodes MPEG Surround from now on: blocks whose downmix matches a configuration are upmixed.
+     *
+     * <p>The configuration comes either from the separate MPEG Surround elementary stream of the object (object
+     * type 30), or, when {@code config} is {@code null}, from the first spatial audio coding payload of the
+     * blocks that carries it. Until a configuration and a first spatial frame are known, and for blocks whose
+     * downmix layout does not match the configuration, the downmix is output.
+     *
+     * @param config the configuration of a separate MPEG Surround elementary stream, or {@code null}
+     */
+    public void enableSurround(MpsConfig config) {
+        surround = new MpsUpmixer();
+        if (config != null) {
+            surround.configure(config);
+        }
+    }
+
+    /**
+     * Hands the {@code SpatialFrame()} of a separate MPEG Surround elementary stream to the next block.
+     *
+     * @param data the access unit
+     * @param offset the index of its first byte
+     * @param length its number of bytes
+     * @throws IllegalStateException if MPEG Surround is not decoded
+     */
+    public void addSurroundFrame(byte[] data, int offset, int length) {
+        if (surround == null) {
+            throw new IllegalStateException("MPEG Surround is not decoded");
+        }
+        surround.addFrame(data, offset, length);
+    }
+
+    /**
+     * Returns whether a layout is the downmix of the MPEG Surround configuration: mono, stereo or 5.1 in the
+     * order of {@link ChannelLayout}.
+     *
+     * @param layout the downmix layout
+     * @return {@code true} when the upmixer takes it
+     */
+    private boolean surroundDownmix(ChannelLayout layout) {
+        return switch (surround.inputChannels()) {
+            case 1 -> layout.equals(ChannelLayout.MONO);
+            case 2 -> layout.equals(ChannelLayout.STEREO);
+            case 6 -> layout.equals(ChannelLayout.SURROUND_5_1);
+            default -> false;
+        };
+    }
+
+    /**
      * Returns the output layout of the last decoded block, or the configured one before any.
      *
      * @return the layout in WAVE order
      */
     public ChannelLayout layout() {
+        ChannelLayout layout;
         if (mapping == null) {
-            return stereoOutput(fallbackLayout.channels() == 1) ? ChannelLayout.STEREO : fallbackLayout;
+            layout = stereoOutput(fallbackLayout.channels() == 1) ? ChannelLayout.STEREO : fallbackLayout;
+        } else {
+            layout = stereoOutput(mapping.channels() == 1) ? ChannelLayout.STEREO : mapping.layout();
         }
-        return stereoOutput(mapping.channels() == 1) ? ChannelLayout.STEREO : mapping.layout();
+        if (surround != null && surround.configured() && surroundDownmix(layout)
+                && (surroundUpmixed || !blockDecoded)) {
+            return surround.layout();
+        }
+        return layout;
     }
 
     /**
      * Returns whether a layout outputs two channels through parametric stereo.
      *
+     * <p>A mono layout stays mono while MPEG Surround upmixes a mono downmix, which takes the place of
+     * parametric stereo.
+     *
      * @param mono whether the coded layout is a single channel
      * @return {@code true} when a mono layout is decoded as stereo
      */
     private boolean stereoOutput(boolean mono) {
-        return mono && parametricStereo && sbrActive();
+        return mono && parametricStereo && sbrActive() && (surround == null || surround.inputChannels() != 1);
+    }
+
+    /**
+     * Reallocates the output buffer when a new MPEG Surround configuration changes whether a mono layout
+     * outputs two channels.
+     */
+    private void refreshOutput() {
+        if (mapping == null || output == null) {
+            return;
+        }
+        var layout = stereoOutput(mapping.channels() == 1) ? ChannelLayout.STEREO : mapping.layout();
+        if (!output.layout().equals(layout)) {
+            output = new AudioBuffer(layout, output.sampleRate(), output.capacity());
+        }
     }
 
     /**
@@ -510,6 +708,24 @@ public final class FrameDecoder {
         if (length == 0) {
             throw new MediaException.Malformed("empty AAC packet");
         }
+        if (bsac != null) {
+            if (bsacFrame.length < length) {
+                bsacFrame = new byte[length];
+            }
+            System.arraycopy(data, offset, bsacFrame, 0, length);
+            output.accept(decodeBsac(length));
+            return;
+        }
+        if (scalable != null) {
+            scalableUnit[0] = offset == 0 && length == data.length ? data : Arrays.copyOfRange(data, offset,
+                    offset + length);
+            try {
+                output.accept(decodeScalable(scalableUnit, 1));
+            } finally {
+                scalableUnit[0] = null;
+            }
+            return;
+        }
         var reader = new AacBitReader(data, offset, length);
         for (var block = 0; ; block++) {
             if (block == MAX_BLOCKS) {
@@ -542,6 +758,33 @@ public final class FrameDecoder {
      * @throws MediaException.LimitExceeded if the block declares too many channels
      */
     public void decodeInstances(byte[][] data, int count, Consumer<AudioBuffer> output) {
+        if (bsac != null) {
+            var length = 0L;
+            for (var i = 0; i < count; i++) {
+                length += data[i].length;
+            }
+            if (length == 0) {
+                throw new MediaException.Malformed("empty ER BSAC frame");
+            }
+            if (length > Integer.MAX_VALUE - 8) {
+                throw new MediaException.Malformed("ER BSAC frame too large");
+            }
+            if (bsacFrame.length < length) {
+                LimitChecks.checkAllocation(limits, length);
+                bsacFrame = new byte[(int) length];
+            }
+            var position = 0;
+            for (var i = 0; i < count; i++) {
+                System.arraycopy(data[i], 0, bsacFrame, position, data[i].length);
+                position += data[i].length;
+            }
+            output.accept(decodeBsac(position));
+            return;
+        }
+        if (scalable != null) {
+            output.accept(decodeScalable(data, count));
+            return;
+        }
         if (!separateCategories) {
             throw new IllegalStateException("the configuration does not store category instances separately");
         }
@@ -630,16 +873,142 @@ public final class FrameDecoder {
      * @return the decoded samples, valid until the next block
      */
     private AudioBuffer decodeBlock(AacBitReader reader) {
-        streamCount = 0;
-        elementCount = 0;
-        couplingCount = 0;
-        sbrInBlock = false;
+        beginBlock();
         ChannelMapping announced = null;
         if (errorResilient) {
             readErrorResilientElements(reader);
         } else {
             announced = readElements(reader);
         }
+        return finishBlock(announced);
+    }
+
+    /**
+     * Decodes one ER BSAC frame from {@link #bsacFrame}.
+     *
+     * @param length the number of bytes of the frame
+     * @return the decoded samples, valid until the next block
+     */
+    private AudioBuffer decodeBsac(int length) {
+        beginBlock();
+        bsac.decode(bsacFrame, length);
+        for (var element = 0; element < bsac.elementCount(); element++) {
+            var type = switch (bsac.elementType(element)) {
+                case BsacDecoder.CENTER_FRONT, BsacDecoder.REAR_SURROUND -> ElementId.SCE;
+                case BsacDecoder.LOW_FREQUENCY -> ElementId.LFE;
+                default -> ElementId.CPE;
+            };
+            var first = streamCount;
+            var channel = bsac.elementChannel(element);
+            var sequence = bsac.windowSequence(element);
+            var shape = bsac.windowShape(element);
+            nextStream().loadSpectrum(sequence, shape, bsac.spectrum(channel));
+            if (type == ElementId.CPE) {
+                nextStream().loadSpectrum(sequence, shape, bsac.spectrum(channel + 1));
+            }
+            addElement(type, 0, first);
+        }
+        if (sbrMode != SbrMode.OFF && bsac.sbrCount() > 0) {
+            bsacReader.reset(bsacFrame, 0, length);
+            for (var payload = 0; payload < bsac.sbrCount(); payload++) {
+                var element = bsac.sbrElement(payload);
+                var type = elementTypes[element];
+                if (type == ElementId.LFE) {
+                    continue;
+                }
+                bsacReader.seek(bsac.sbrPosition(payload));
+                sbrInBlock = true;
+                sbrElement(element, type).parse(bsacReader, bsac.sbrBits(payload), bsac.sbrCrc(payload));
+            }
+        }
+        return finishBlock(bsacMapping());
+    }
+
+    /**
+     * Decodes one scalable AAC frame from the access units of its elementary streams.
+     *
+     * @param units the access units in stream order, in their first {@code count} entries
+     * @param count the number of access units
+     * @return the decoded samples, valid until the next block
+     */
+    private AudioBuffer decodeScalable(byte[][] units, int count) {
+        beginBlock();
+        scalable.decode(units, count);
+        var first = streamCount;
+        var sequence = scalable.windowSequence();
+        var shape = scalable.windowShape();
+        nextStream().loadSpectrum(sequence, shape, scalable.spectrum(0));
+        var pair = scalable.channels() == 2;
+        if (pair) {
+            nextStream().loadSpectrum(sequence, shape, scalable.spectrum(1));
+        }
+        addElement(pair ? ElementId.CPE : ElementId.SCE, 0, first);
+        return finishBlock(null);
+    }
+
+    /**
+     * Returns the mapping of the elements of the current ER BSAC block, from the loudspeakers they name: the
+     * front center, front left and right, rear center, left and right surround (fed to the back speakers), LFE
+     * and left and right outside (fed to the side speakers) channels.
+     *
+     * @return the mapping, shared with the previous block when its elements name the same loudspeakers
+     */
+    private ChannelMapping bsacMapping() {
+        var count = bsac.elementCount();
+        var same = bsacMapping != null && bsacSpeakerTypes.length == count;
+        for (var element = 0; same && element < count; element++) {
+            same = bsacSpeakerTypes[element] == bsac.elementType(element);
+        }
+        if (same) {
+            return bsacMapping;
+        }
+        var speakers = new Speaker[streamCount];
+        var types = new int[count];
+        bsacSpeakerTypes = new int[count];
+        var channel = 0;
+        for (var element = 0; element < count; element++) {
+            var type = bsac.elementType(element);
+            bsacSpeakerTypes[element] = type;
+            types[element] = elementTypes[element];
+            switch (type) {
+                case BsacDecoder.CENTER_FRONT -> speakers[channel++] = Speaker.FRONT_CENTER;
+                case BsacDecoder.REAR_SURROUND -> speakers[channel++] = Speaker.BACK_CENTER;
+                case BsacDecoder.LOW_FREQUENCY -> speakers[channel++] = Speaker.LOW_FREQUENCY;
+                case BsacDecoder.LR_FRONT -> {
+                    speakers[channel++] = Speaker.FRONT_LEFT;
+                    speakers[channel++] = Speaker.FRONT_RIGHT;
+                }
+                case BsacDecoder.LR_SURROUND -> {
+                    speakers[channel++] = Speaker.BACK_LEFT;
+                    speakers[channel++] = Speaker.BACK_RIGHT;
+                }
+                default -> {
+                    speakers[channel++] = Speaker.SIDE_LEFT;
+                    speakers[channel++] = Speaker.SIDE_RIGHT;
+                }
+            }
+        }
+        bsacMapping = ChannelMapping.ofSpeakers(types, speakers, limits);
+        return bsacMapping;
+    }
+
+    /**
+     * Clears the elements of the previous block.
+     */
+    private void beginBlock() {
+        streamCount = 0;
+        elementCount = 0;
+        couplingCount = 0;
+        sbrInBlock = false;
+    }
+
+    /**
+     * Decodes the parsed elements of a block into samples.
+     *
+     * @param announced the mapping of the last program configuration element of the block, or {@code null}
+     * @return the decoded samples, valid until the next block
+     */
+    private AudioBuffer finishBlock(ChannelMapping announced) {
         if (sbrMode == SbrMode.DETECT_DUAL_RATE || sbrMode == SbrMode.DETECT_DOWNSAMPLED) {
             decideSbr();
         }
@@ -687,11 +1056,49 @@ public final class FrameDecoder {
                 longTermPredictors[channel].update(plane, 0);
             }
         }
+        subbandsValid = false;
         if (sbr) {
             applySbr();
         }
         output.setFrames(outputLength);
+        if (surround != null) {
+            return upmix(output);
+        }
         return output;
+    }
+
+    /**
+     * Upmixes a decoded block with MPEG Surround when its layout is the configuration's downmix and a spatial
+     * frame is known; the subband matrices of spectral band replication feed the upmix directly when every
+     * channel has its own 64-band matrix, the samples otherwise.
+     *
+     * @param downmix the decoded block
+     * @return the upmix, or {@code downmix} when the block is not upmixed
+     */
+    private AudioBuffer upmix(AudioBuffer downmix) {
+        blockDecoded = true;
+        surroundUpmixed = false;
+        if (!surround.configured() || !surroundDownmix(downmix.layout())) {
+            return downmix;
+        }
+        if (!surround.prepare(sampleRate, outputLength)) {
+            return downmix;
+        }
+        surroundUpmixed = true;
+        var layout = surround.layout();
+        if (surroundOutput == null || !surroundOutput.layout().equals(layout)
+                || surroundOutput.sampleRate() != sampleRate || surroundOutput.capacity() < outputLength) {
+            LimitChecks.checkAllocation(limits, 4L * layout.channels() * outputLength);
+            surroundOutput = new AudioBuffer(layout, sampleRate, outputLength);
+        }
+        var planes = surroundOutput.planes();
+        if (subbandsValid && sbrMode == SbrMode.DUAL_RATE && surround.acceptsQmf()) {
+            surround.upmixQmf(subbandsReal, subbandsImag, planes);
+        } else {
+            surround.upmix(downmix.planes(), planes);
+        }
+        surroundOutput.setFrames(outputLength);
+        return surroundOutput;
     }
 
     /**
@@ -826,6 +1233,39 @@ public final class FrameDecoder {
                         == ChannelStream.EIGHT_SHORT_SEQUENCE) : null;
             }
             sbr.decode(elementCore, elementOutput, stereo, gains);
+            if (surround != null) {
+                keepSubbands(sbr, channel, pair, stereo);
+            }
+        }
+    }
+
+    /**
+     * Keeps references to the subband matrices an element synthesized for its output channels, for the MPEG
+     * Surround upmix.
+     *
+     * @param sbr the element's decoder
+     * @param channel the element's first coded channel
+     * @param pair whether the element is a channel pair
+     * @param stereo whether parametric stereo may turn the element into two channels
+     */
+    private void keepSubbands(SbrElement sbr, int channel, boolean pair, boolean stereo) {
+        var channels = output.planes().length;
+        if (subbandsReal.length != channels) {
+            subbandsReal = new float[channels][];
+            subbandsImag = new float[channels][];
+        }
+        if (!subbandsValid) {
+            Arrays.fill(subbandsReal, null);
+            subbandsValid = true;
+        }
+        if (!sbr.subbandsAvailable() || stereo) {
+            subbandsValid = false;
+            return;
+        }
+        for (var c = 0; c < (pair ? 2 : 1); c++) {
+            var plane = mapping.outputIndex(channel + c);
+            subbandsReal[plane] = sbr.subbandsReal(c);
+            subbandsImag[plane] = sbr.subbandsImag(c);
         }
     }
 
@@ -1377,7 +1817,7 @@ public final class FrameDecoder {
         }
         var bits = 8L * count;
         var previous = elementCount == 0 ? -1 : elementTypes[elementCount - 1];
-        if (dynamicRange == null
+        if (dynamicRange == null && surround == null
                 && (sbrMode == SbrMode.OFF || (previous != ElementId.SCE && previous != ElementId.CPE))) {
             reader.skip(bits);
             return;
@@ -1393,6 +1833,15 @@ public final class FrameDecoder {
                 }
                 count -= used;
                 continue;
+            }
+            if (type == MpsUpmixer.EXT_SAC_DATA && surround != null) {
+                var inputs = surround.inputChannels();
+                surround.readExtension(reader, count);
+                if (surround.inputChannels() != inputs) {
+                    refreshOutput();
+                }
+                reader.seek(end);
+                return;
             }
             if ((type != EXT_SBR_DATA && type != EXT_SBR_DATA_CRC) || sbrMode == SbrMode.OFF
                     || (previous != ElementId.SCE && previous != ElementId.CPE)) {

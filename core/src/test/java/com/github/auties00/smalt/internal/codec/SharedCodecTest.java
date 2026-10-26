@@ -147,7 +147,7 @@ class SharedCodecTest {
 
         @ParameterizedTest(name = "type {0}, {1} Hz, configuration {2}, output {3} Hz, PS {4}")
         @CsvSource({"2, 44100, 2, 0, false", "2, 48000, 1, 0, false", "2, 22050, 1, 44100, false",
-                "2, 24000, 1, 48000, true", "2, 44000, 2, 0, false", "1, 8000, 7, 0, false", "42, 32000, 2, 0, false",
+                "2, 24000, 1, 48000, true", "2, 44000, 2, 0, false", "1, 8000, 7, 0, false", "40, 32000, 2, 0, false",
                 "2, 16000, 2, 37000, false"})
         @DisplayName("builds an AudioSpecificConfig that parses back to its fields")
         void audioSpecificConfig(int type, int rate, int channels, int output, boolean ps) {
@@ -173,6 +173,24 @@ class SharedCodecTest {
             assertEquals(frameLength, parsed.frameLength());
             assertEquals(output, parsed.outputRate());
             assertEquals(sbr, parsed.sbr());
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"f9464362, 48000, 24000, 1024, true, 2, 2", "f94a2541, 32000, 12000, 768, true, 1, 1"})
+        @DisplayName("parses the output and core rates, frame length and channels of USAC configurations")
+        void usac(String hex, int output, int rate, int frameLength, boolean sbr, int channels, int configuration) {
+            // object type 42, then the start of UsacConfig: the 2:1 SBR of 1024-sample frames at 48 kHz in stereo,
+            // and the 8:3 SBR of 768-sample frames at 32 kHz in mono
+            var parsed = AudioConfigs.parseAac(java.util.HexFormat.of().parseHex(hex));
+            assertEquals(42, parsed.objectType());
+            assertEquals(output, parsed.outputRate());
+            assertEquals(rate, parsed.sampleRate());
+            assertEquals(frameLength, parsed.frameLength());
+            assertEquals(sbr, parsed.sbr());
+            assertEquals(channels, parsed.channels());
+            assertEquals(configuration, parsed.channelConfiguration());
+            assertThrows(MediaException.Malformed.class,
+                    () -> AudioConfigs.parseAac(java.util.HexFormat.of().parseHex(hex.substring(0, 6))));
         }
 
         @Test

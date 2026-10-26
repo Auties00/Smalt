@@ -34,6 +34,8 @@ Contents
   30. VisualOn AMR-WB encoder (vo-amrwbenc)
   42. libxaac
   54. MPEG-4 Visual reference software (Microsoft)
+  56. ISO/IEC 23003-3 MPEG-D USAC reference software
+  57. ISO/IEC 23003-4 MPEG-D DRC reference software
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1755,6 +1757,8 @@ Derived Smalt packages:
   audio.aac.internal (CodewordReordering, ReversibleScalefactors,
   LowDelayWindows, SamplingTables)
   audio.aac.internal.sbr (LowDelayQmfWindow, SbrFrameData)
+  audio.aac.internal.usac (Avq, LpdDecoder, LpdState, LpdTables: the USAC
+  linear prediction domain decoder)
 
 Derivation: Huffman codeword reordering follows the codebook priorities,
 section sorting, segmentation and set-wise decoding of
@@ -1765,8 +1769,12 @@ taken from low_delay_window_eld of encoder/ixheaace_rom.c, the CLD QMF
 prototype of low delay SBR from cld_fb_64_640 of encoder/ixheaace_sbr_rom.c,
 the scalefactor band offsets and TNS limits of 512- and 480-sample frames
 from decoder/ixheaacd_aac_rom.c, and the LD_TRAN envelope tables from
-decoder/ixheaacd_env_extr.c. The Java code is a new implementation; it is
-not a copy of the original files.
+decoder/ixheaacd_env_extr.c. The USAC linear prediction domain decoder
+(ACELP, TCX, the LPC and FAC decoding and the RE8 lattice of the AVQ) is
+translated from decoder/ixheaacd_acelp_*.c, ixheaacd_lpc*.c, ixheaacd_tcx_*.c,
+ixheaacd_fwd_alias_cnx.c, ixheaacd_avq_dec.c and the tables of
+ixheaacd_rom.c and ixheaacd_avq_rom.c. The other Java code is a new
+implementation; it is not a copy of the original files.
 
 Copyright:
   Copyright (C) 2018, 2023 The Android Open Source Project
@@ -2039,3 +2047,340 @@ assign or donate the code to a third party and to inhibit third parties from usi
 This copyright notice must be included in all copies or derivative works.
 
 Copyright (c) 1996, 1997.
+
+
+===============================================================================
+56. ISO/IEC 23003-3 MPEG-D USAC reference software
+===============================================================================
+
+Project:      the reference software of ISO/IEC 23003-3:2019 (MPEG-D Unified
+              Speech and Audio Coding), MPEG-D_USAC_refSoft_src_v02_03_00_20190711,
+              with the MPEG Surround decoder of ISO/IEC 23003-1, the SBR
+              decoder of ISO/IEC 14496-3 and the ER BSAC and scalable AAC
+              decoders of ISO/IEC 14496-3 it includes
+Source:       ISO/IEC 23003-3:2019 reference software, ISO's Publicly
+              Available Standards
+License text: the notices of the source files
+License:      free license to the software modules or modifications thereof
+              for use in implementations of ISO/IEC 23003 and products claiming
+              conformance to the MPEG-2 AAC/MPEG-4 Audio standards
+
+Derived Smalt packages:
+  audio.aac.internal (BsacDecoder, BsacTables: the ER BSAC decoder of
+  sam_decode_frame.c, sam_decoder.c, sam_decode_bsac.c, sam_fadecode.c,
+  sam_bitbuffer.c, sam_tns.c and the models of sam_model.h; ScalableDecoder:
+  the scalable AAC decoder of scal_dec_frame.c)
+  audio.aac.internal.usac (the frequency domain decoder, the arithmetic
+  spectral decoder, complex prediction, the time-warped filterbank of
+  usac_tw_tools.c, the frame and extension element decoding of src_usac;
+  eSBR with the QMF transposer and PVC of the ct_*,
+  harmsbrQmftrans.c and sony_pvc* files of src_tf; the MPEG Surround 2-1-2
+  decoder of the sac_* files of mp4spatialdec)
+  audio.aac.internal.mps (the MPEG Surround decoder of the sac_* files of
+  mp4spatialdec: the SpatialSpecificConfig and SpatialFrame parsers, the
+  parameter mapping, the M1 and M2 matrices of every tree, smoothing, the
+  decorrelators, the hybrid and QMF filterbanks, subband domain temporal
+  processing, guided envelope shaping and the MDCT to QMF conversion of the
+  residual signals)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  AT&T, Dolby Laboratories, Fraunhofer IIS, VoiceAge Corp., Sony
+  Corporation, Coding Technologies, Agere Systems, Philips, Samsung AIT and
+  ISO/IEC (1999 to 2019)
+
+-------------------------------------------------------------------------------
+Notices of the source files
+-------------------------------------------------------------------------------
+
+The ISO/IEC 23003-3:2019 reference software (MPEG-D USAC, MPEG-D_USAC_refSoft_src_v02_03_00_20190711,
+from ISO's Publicly Available Standards) carries these notices in its source files.
+
+USAC decoder modules (usacEncDec/src_usac/decoder_usac.c; the same notice, naming their developers, heads the other src_usac files and the eSBR, PVC and harmonic transposer modules of src_tf):
+
+/*******************************************************************************
+This software module was originally developed by
+
+AT&T, Dolby Laboratories, Fraunhofer IIS, VoiceAge Corp.
+
+and edited by
+Yoshiaki Oikawa     (Sony Corporation),
+Mitsuyuki Hatanaka  (Sony Corporation),
+Ralph Sperschneider (Fraunhofer Gesellschaft IIS)
+Markus Werner       (SEED / Software Development Karlsruhe)
+Eugen Dodenhoeft    (Fraunhofer IIS)
+
+-
+
+in the course of development of ISO/IEC 23003 for reference purposes and its
+performance may not have been optimized. This software module is an
+implementation of one or more tools as specified by ISO/IEC 23003. ISO/IEC gives
+You a royalty-free, worldwide, non-exclusive, copyright license to copy,
+distribute, and make derivative works of this software module or modifications
+thereof for use in implementations of ISO/IEC 23003 in products that satisfy
+conformance criteria (if any). Those intending to use this software module in
+products are advised that its use may infringe existing patents. ISO/IEC have no
+liability for use of this software module or modifications thereof. Copyright is
+not released for products that do not conform to audiovisual and image-coding
+related ITU Recommendations and/or ISO/IEC International Standards.
+
+Assurance that the originally developed software module can be used (1) in
+ISO/IEC 23003 once ISO/IEC 23003 has been adopted; and (2) to develop ISO/IEC
+23003:s
+Fraunhofer IIS, VoiceAge Corp. grant(s) ISO/IEC all
+rights necessary to include the originally developed software module or
+modifications thereof in ISO/IEC 23003 and to permit ISO/IEC to offer You a
+royalty-free, worldwide, non-exclusive, copyright license to copy, distribute,
+and make derivative works for use in implementations of ISO/IEC 23003 in
+products that satisfy conformance criteria (if any), and to the extent that such
+originally developed software module or portions of it are included in ISO/IEC
+23003. To the extent that Fraunhofer IIS, VoiceAge Corp.
+own(s) patent rights that would be required to make, use, or sell the
+originally developed software module or portions thereof included in ISO/IEC
+23003 in a conforming product, Fraunhofer IIS, VoiceAge Corp.
+will assure the ISO/IEC that it is (they are) willing to negotiate
+licenses under reasonable and non-discriminatory terms and conditions with
+applicants throughout the world. ISO/IEC gives You a free license to this
+software module or modifications thereof for the sole purpose of developing
+ISO/IEC 23003.
+
+Fraunhofer IIS, VoiceAge Corp. retain full right to
+modify and use the code for its (their) own purpose, assign or donate the code
+to a third party and to inhibit third parties from using the code for products
+that do not conform to MPEG-related ITU Recommendations and/or ISO/IEC
+International Standards. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) ISO/IEC 2008.
+$Id: decoder_usac.c,v 1.21.2.1 2012-04-19 09:15:33 frd Exp $
+*******************************************************************************/
+
+MPEG Surround decoder modules (mp4spatialdec/src/sac_dec.c; the same notice heads the other sac_* files):
+
+/*******************************************************************************
+This software module was originally developed by
+
+Agere Systems, Coding Technologies, Fraunhofer IIS, Philips
+
+and edited by
+
+-
+
+in the course of development of ISO/IEC 23003 for reference purposes and its
+performance may not have been optimized. This software module is an
+implementation of one or more tools as specified by ISO/IEC 23003. ISO/IEC gives
+You a royalty-free, worldwide, non-exclusive, copyright license to copy,
+distribute, and make derivative works of this software module or modifications
+thereof for use in implementations of ISO/IEC 23003 in products that satisfy
+conformance criteria (if any). Those intending to use this software module in
+products are advised that its use may infringe existing patents. ISO/IEC have no
+liability for use of this software module or modifications thereof. Copyright is
+not released for products that do not conform to audiovisual and image-coding
+related ITU Recommendations and/or ISO/IEC International Standards.
+
+Agere Systems, Coding Technologies, Fraunhofer IIS, Philips retain full right to
+modify and use the code for its (their) own purpose, assign or donate the code
+to a third party and to inhibit third parties from using the code for products
+that do not conform to MPEG-related ITU Recommendations and/or ISO/IEC
+International Standards. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) ISO/IEC 2008.
+*******************************************************************************/
+
+SBR decoder modules (usacEncDec/src_tf/ct_sbrdec.c; the same notice heads the other ct_* files):
+
+/****************************************************************************
+
+SC 29 Software Copyright Licencing Disclaimer:
+
+This software module was originally developed by
+  Coding Technologies
+
+and edited by
+  -
+
+in the course of development of the ISO/IEC 13818-7 and ISO/IEC 14496-3
+standards for reference purposes and its performance may not have been
+optimized. This software module is an implementation of one or more tools as
+specified by the ISO/IEC 13818-7 and ISO/IEC 14496-3 standards.
+ISO/IEC gives users free license to this software module or modifications
+thereof for use in products claiming conformance to audiovisual and
+image-coding related ITU Recommendations and/or ISO/IEC International
+Standards. ISO/IEC gives users the same free license to this software module or
+modifications thereof for research purposes and further ISO/IEC standardisation.
+Those intending to use this software module in products are advised that its
+use may infringe existing patents. ISO/IEC have no liability for use of this
+software module or modifications thereof. Copyright is not released for
+products that do not conform to audiovisual and image-coding related ITU
+Recommendations and/or ISO/IEC International Standards.
+The original developer retains full right to modify and use the code for its
+own purpose, assign or donate the code to a third party and to inhibit third
+parties from using the code for products that do not conform to audiovisual and
+image-coding related ITU Recommendations and/or ISO/IEC International Standards.
+This copyright notice must be included in all copies or derivative works.
+Copyright (c) ISO/IEC 2002.
+
+ $Id: ct_sbrdec.c,v 1.37.2.1 2012-04-19 09:15:33 frd Exp $
+
+*******************************************************************************/
+
+ER BSAC decoder modules (usacEncDec/src_tf/sam_decode_frame.c; the same notice heads the other sam_* files):
+
+/**********************************************************************
+MPEG-4 Audio VM
+
+This software module was originally developed by
+  Y.B. Thomas Kim and S.H. Park (Samsung AIT)
+and edited by
+  Y.B. Thomas Kim (Samsung AIT) on 1999-07-30
+
+in the course of development of the MPEG-2 AAC/MPEG-4 Audio standard
+ISO/IEC 13818-7, 14496-1,2 and 3. This software module is an
+implementation of a part of one or more MPEG-2 AAC/MPEG-4 Audio tools
+as specified by the MPEG-2 AAC/MPEG-4 Audio standard. ISO/IEC gives
+users of the MPEG-2 AAC/MPEG-4 Audio standards free license to this
+software module or modifications thereof for use in hardware or
+software products claiming conformance to the MPEG-2 AAC/ MPEG-4 Audio
+standards. Those intending to use this software module in hardware or
+software products are advised that this use may infringe existing
+patents. The original developer of this software module and his/her
+company, the subsequent editors and their companies, and ISO/IEC have
+no liability for use of this software module or modifications thereof
+in an implementation. Copyright is not released for non MPEG-2
+AAC/MPEG-4 Audio conforming products. The original developer retains
+full right to use the code for his/her own purpose, assign or donate
+the code to a third party and to inhibit third party from using the
+code for non MPEG-2 AAC/MPEG-4 Audio conforming products. This
+copyright notice must be included in all copies or derivative works.
+
+Copyright (c) 1999.
+
+**********************************************************************/
+
+Scalable AAC decoder module (usacEncDec/src_tf/scal_dec_frame.c):
+
+/*******************************************************************************
+This software module was originally developed by
+
+Fraunhofer IIS, VoiceAge Corp.
+
+
+Initial author:
+Bodo Teichmann      (Fraunhofer IIS)
+
+and edited by
+Bernhard Grill      (Fraunhofer IIS)
+Takashi koike       (Sony Corporation)
+Markus Werner       (SEED / Software Development Karlsruhe) 
+Olaf Kaehler        (Fraunhofer IIS)
+
+-
+
+in the course of development of ISO/IEC 23003 for reference purposes and its
+performance may not have been optimized. This software module is an
+implementation of one or more tools as specified by ISO/IEC 23003. ISO/IEC gives
+You a royalty-free, worldwide, non-exclusive, copyright license to copy,
+distribute, and make derivative works of this software module or modifications
+thereof for use in implementations of ISO/IEC 23003 in products that satisfy
+conformance criteria (if any). Those intending to use this software module in
+products are advised that its use may infringe existing patents. ISO/IEC have no
+liability for use of this software module or modifications thereof. Copyright is
+not released for products that do not conform to audiovisual and image-coding
+related ITU Recommendations and/or ISO/IEC International Standards.
+
+Assurance that the originally developed software module can be used (1) in
+ISO/IEC 23003 once ISO/IEC 23003 has been adopted; and (2) to develop ISO/IEC
+23003:s
+Fraunhofer IIS, VoiceAge Corp. grant(s) ISO/IEC all
+rights necessary to include the originally developed software module or
+modifications thereof in ISO/IEC 23003 and to permit ISO/IEC to offer You a
+royalty-free, worldwide, non-exclusive, copyright license to copy, distribute,
+and make derivative works for use in implementations of ISO/IEC 23003 in
+products that satisfy conformance criteria (if any), and to the extent that such
+originally developed software module or portions of it are included in ISO/IEC
+23003. To the extent that Fraunhofer IIS, VoiceAge Corp.
+own(s) patent rights that would be required to make, use, or sell the
+originally developed software module or portions thereof included in ISO/IEC
+23003 in a conforming product, Fraunhofer IIS, VoiceAge Corp. 
+will assure the ISO/IEC that it is (they are) willing to negotiate
+licenses under reasonable and non-discriminatory terms and conditions with
+applicants throughout the world. ISO/IEC gives You a free license to this
+software module or modifications thereof for the sole purpose of developing
+ISO/IEC 23003.
+
+Fraunhofer IIS, VoiceAge Corp. retain full right to
+modify and use the code for its (their) own purpose, assign or donate the code
+to a third party and to inhibit third parties from using the code for products
+that do not conform to MPEG-related ITU Recommendations and/or ISO/IEC
+International Standards. This copyright notice must be included in all copies or
+derivative works.
+
+Copyright (c) ISO/IEC 2008.
+$Id: scal_dec_frame.c,v 1.1.1.1 2009-05-29 14:10:17 mul Exp $
+*******************************************************************************/
+
+
+===============================================================================
+57. ISO/IEC 23003-4 MPEG-D DRC reference software
+===============================================================================
+
+Project:      the reference software of ISO/IEC 23003-4 (MPEG-D Dynamic Range
+              Control), MPEG_D_DRC_refsoft
+Source:       ISO/IEC 23003-4 reference software, ISO's Publicly Available
+              Standards
+License text: the notices of the source files
+License:      royalty-free copyright license for use in implementations or
+              products claiming conformance to ISO/IEC 23003-4
+
+Derived Smalt packages:
+  audio.aac.internal.drc (the bitstream parser of uniDrcParser.c and
+  uniDrcInterfaceParser.c, the selection process of uniDrcSelectionProcess*,
+  the gain decoder of uniDrcGainDecoder.c, uniDrcGainDecoder_*.c and
+  uniDrcFilterBank.c, the parametric DRC of parametricDrcDecoder.c, the shape
+  filters of uniDrcShapeFilter.c, the time domain equalizer of uniDrcEq.c,
+  the peak limiter of peakLimiter.c, the tables of uniDrcTables.c and the
+  processing chain of drcToolDecoder.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Apple Inc., Fraunhofer IIS and ISO/IEC (2014)
+
+-------------------------------------------------------------------------------
+Notices of the source files
+-------------------------------------------------------------------------------
+
+The ISO/IEC 23003-4 reference software (MPEG-D DRC) carries this notice in its source files
+(modules/uniDrcModules/uniDrcBitstreamDecoderLib/src/uniDrcParser.c; the peak limiter of
+peakLimiter.c names Fraunhofer IIS alone):
+
+/***********************************************************************************
+
+ This software module was originally developed by
+
+ Apple Inc. and Fraunhofer IIS
+
+ in the course of development of the ISO/IEC 23003-4 for reference purposes and its
+ performance may not have been optimized. This software module is an implementation
+ of one or more tools as specified by the ISO/IEC 23003-4 standard. ISO/IEC gives
+ you a royalty-free, worldwide, non-exclusive, copyright license to copy, distribute,
+ and make derivative works of this software module or modifications  thereof for use
+ in implementations or products claiming conformance to the ISO/IEC 23003-4 standard
+ and which satisfy any specified conformance criteria. Those intending to use this
+ software module in products are advised that its use may infringe existing patents.
+ ISO/IEC have no liability for use of this software module or modifications thereof.
+ Copyright is not released for products that do not conform to the ISO/IEC 23003-4
+ standard.
+
+ Apple Inc. and Fraunhofer IIS retains full right to modify and use the code for its
+ own purpose, assign or donate the code to a third party and to inhibit third parties
+ from using the code for products that do not conform to MPEG-related ITU Recommenda-
+ tions and/or ISO/IEC International Standards.
+
+ This copyright notice must be included in all copies or derivative works.
+
+ Copyright (c) ISO/IEC 2014.
+
+ ***********************************************************************************/

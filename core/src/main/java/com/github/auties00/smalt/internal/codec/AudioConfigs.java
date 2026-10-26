@@ -87,12 +87,13 @@ public final class AudioConfigs {
      * @param sampleRate the core sampling rate in hertz
      * @param channels the channel count, or {@code 0} when a program config element defines it
      * @param frameLength the number of samples per frame at the core rate, {@code 1024} or {@code 960}, or {@code 512}
-     * or {@code 480} for AAC-LD and AAC-ELD
+     * or {@code 480} for AAC-LD and AAC-ELD, or {@code 1024} or {@code 768} for USAC (object type 42)
      * @param outputRate the output sampling rate in hertz, which is twice the core rate when spectral band replication
      * is signaled at dual rate
      * @param sbr whether spectral band replication is signaled explicitly, the low delay one of AAC-ELD included
      * @param channelConfiguration the {@code channelConfiguration} field, {@code 0} when a program config element
-     * defines the channels
+     * defines the channels; for USAC the {@code channelConfigurationIndex} where it names the layout of the same AAC
+     * configuration, otherwise {@code 0}
      */
     public record AacConfig(int objectType, int sampleRate, int channels, int frameLength, int outputRate, boolean sbr,
                             int channelConfiguration) {
@@ -130,6 +131,9 @@ public final class AudioConfigs {
             outputRate = readSampleRate(reader);
             objectType = readObjectType(reader);
         }
+        if (objectType == 42) {
+            return parseUsac(reader);
+        }
         var frameLength = 1024;
         if (objectType == 23 || objectType == 39) {
             frameLength = reader.readFlag() ? 480 : 512;
@@ -155,6 +159,66 @@ public final class AudioConfigs {
         }
         return new AacConfig(objectType, sampleRate, AAC_CHANNELS[channelConfiguration], frameLength, outputRate, sbr,
                 channelConfiguration);
+    }
+
+    /**
+     * The sampling frequency of each {@code usacSamplingFrequencyIndex} (ISO/IEC 23003-3 Table 69), 0 where
+     * reserved.
+     */
+    private static final int[] USAC_RATES = {96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000,
+            11025, 8000, 7350, 0, 0, 57600, 51200, 40000, 38400, 34150, 28800, 25600, 20000, 19200, 17075, 14400, 12800,
+            9600, 0, 0, 0};
+
+    /**
+     * The channel count of each USAC {@code channelConfigurationIndex} from 1 to 13.
+     */
+    private static final int[] USAC_CHANNELS = {0, 1, 2, 3, 4, 5, 6, 8, 2, 3, 4, 7, 8, 24};
+
+    /**
+     * Parses the start of the {@code UsacConfig} of an {@code AudioSpecificConfig} of object type 42 (ISO/IEC
+     * 23003-3 subclause 5.2): the output rate, the frame length and SBR ratio, and the channel configuration.
+     *
+     * @param reader the bit reader, after the {@code AudioSpecificConfig} channel configuration
+     * @return the parsed fields; {@code sampleRate} and {@code frameLength} describe the core coder
+     * @throws MediaException.Malformed if the configuration is truncated or reserved
+     */
+    private static AacConfig parseUsac(MsbBitReader reader) {
+        var index = reader.read(5);
+        var outputRate = index == 0x1F ? reader.read(24) : USAC_RATES[index];
+        if (outputRate <= 0) {
+            throw new MediaException.Malformed("reserved usacSamplingFrequencyIndex " + index);
+        }
+        var coreSbr = reader.read(3);
+        if (coreSbr > 4) {
+            throw new MediaException.Malformed("reserved coreSbrFrameLengthIndex " + coreSbr);
+        }
+        var configuration = reader.read(5);
+        int channels;
+        if (configuration == 0) {
+            channels = reader.read(5);
+            if (channels == 31) {
+                var add = reader.read(8);
+                channels += add;
+                if (add == 255) {
+                    channels += reader.read(16);
+                }
+            }
+        } else if (configuration < USAC_CHANNELS.length) {
+            channels = USAC_CHANNELS[configuration];
+        } else {
+            throw new MediaException.Malformed("reserved USAC channelConfigurationIndex " + configuration);
+        }
+        reader.checkNotOverrun();
+        var frameLength = coreSbr == 0 || coreSbr == 2 ? 768 : 1024;
+        var coreRate = switch (coreSbr) {
+            case 2 -> outputRate * 3 / 8;
+            case 3 -> outputRate / 2;
+            case 4 -> outputRate / 4;
+            default -> outputRate;
+        };
+        var layoutConfiguration = configuration <= 7 || (configuration >= 11 && configuration <= 13) ? configuration
+                : 0;
+        return new AacConfig(42, coreRate, channels, frameLength, outputRate, coreSbr >= 2, layoutConfiguration);
     }
 
     /**

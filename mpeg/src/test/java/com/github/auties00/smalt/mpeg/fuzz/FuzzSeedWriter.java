@@ -7,6 +7,7 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.HeifBuilder;
 import com.github.auties00.smalt.testkit.HevcAccessUnit;
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
@@ -16,7 +17,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.net.URISyntaxException;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,7 +37,8 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
  * Writes the committed seeds of the mpeg fuzz targets (tools/fuzz/README.md): short streams encoded by ffmpeg and
  * converted to the packet format through Smalt's demuxers, raw elementary streams and H.264 parameter sets made by
  * ffmpeg (and from a separate-color-plane test stream), HEIF stills built with the test kit's
- * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, AAC LTP, ER AAC LTP and SSR streams written bit by bit, and
+ * {@link HeifBuilder} around x265 and x264 pictures and uncompressed pixels, AAC LTP, ER AAC LTP, SSR and ER BSAC streams
+ * written bit by bit, AAC with MPEG Surround side information (from the {@code MpegSurroundTest} resources), and
  * the scalable and alpha H.264 test streams, one NAL unit per packet. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
@@ -127,6 +133,498 @@ class FuzzSeedWriter {
                 FuzzPackets.audio(0, 44100, 2, 0, new byte[]{(byte) 0x9A, 0x11, 0x00}, errorResilientLtp));
         write(MpegFuzzTest.class, "aac", "valid-ssr-gain-control.bin",
                 FuzzPackets.audio(0, 44100, 1, 0, new byte[]{0x1A, 0x08}, ssr));
+    }
+
+    @Test
+    @DisplayName("writes the ER BSAC seeds of the AAC target")
+    void bsac() {
+        // no available encoder writes ER BSAC, so these frames are built bit by bit: valid headers over
+        // pseudo-random arithmetic coded layers, which the decoder reads whatever their bits
+        var mono = new ArrayList<FuzzPackets.Part>();
+        var stereo = new ArrayList<FuzzPackets.Part>();
+        var surround = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 8; frame++) {
+            mono.add(new FuzzPackets.Part(bsacFrame(frame, 1, false, false), true));
+            stereo.add(new FuzzPackets.Part(bsacFrame(frame, 2, true, false), true));
+            surround.add(new FuzzPackets.Part(bsacFrame(frame, 2, frame % 2 == 0, true), true));
+        }
+        // AudioSpecificConfigs: object type 22 with the extension flag (numOfSubFrame 1, layer_length 0) and
+        // epConfig 0, at 48 kHz mono, 44.1 kHz stereo, and 24 kHz stereo with the sync extension of type 22 that
+        // signals spectral band replication at 48 kHz
+        write(MpegFuzzTest.class, "aac", "valid-bsac-mono.bin",
+                FuzzPackets.audio(0, 48000, 1, 0, bsacConfig(3, 1, false), mono));
+        write(MpegFuzzTest.class, "aac", "valid-bsac-stereo-sba.bin",
+                FuzzPackets.audio(0, 44100, 2, 0, bsacConfig(4, 2, false), stereo));
+        write(MpegFuzzTest.class, "aac", "valid-bsac-surround-sbr.bin",
+                FuzzPackets.audio(0, 48000, 2, 0, bsacConfig(6, 2, true), surround));
+    }
+
+    @Test
+    @DisplayName("writes the USAC seeds of the AAC target with the libxaac encoder")
+    void usac() throws Exception {
+        var encoder = System.getProperty("smalt.fuzz.xaacenc");
+        Skip.unless(encoder != null, "opt-in:fuzz-seeds",
+                "needs -Dsmalt.fuzz.xaacenc naming the libxaac encoder (xaacenc)");
+        // the frequency domain coder in stereo, the switched coder with eSBR and MPEG-D DRC (the encoder reads
+        // impd_drc_config_params.txt of libxaac's test/encoder from its working directory, copied from the
+        // encoder's directory), and the switched coder with eSBR and MPEG Surround 2-1-2
+        usacSeed(encoder, "valid-usac-fd-stereo.bin", 48000, 2, "-usac:1", "-br:64000");
+        usacSeed(encoder, "valid-usac-switched-esbr-drc.bin", 32000, 1, "-usac:0", "-ccfl_idx:3", "-br:16000",
+                "-drc:1");
+        usacSeed(encoder, "valid-usac-mps212.bin", 48000, 2, "-usac:0", "-mps:1", "-ccfl_idx:3", "-br:32000");
+    }
+
+    /**
+     * Encodes a two-tone signal of 0.4 seconds with the libxaac encoder as USAC and writes it as a seed: the
+     * encoder's elementary stream holds the {@code AudioSpecificConfig} and then the access units, whose sizes its
+     * metadata file lists.
+     */
+    private static void usacSeed(String encoder, String name, int rate, int channels, String... options)
+            throws Exception {
+        var directory = java.nio.file.Files.createTempDirectory("smalt-usac-seed");
+        var parameters = Path.of(encoder).resolveSibling("impd_drc_config_params.txt");
+        if (java.nio.file.Files.exists(parameters)) {
+            java.nio.file.Files.copy(parameters, directory.resolve(parameters.getFileName()));
+        }
+        var frames = (int) (0.4 * rate);
+        var wave = new ByteArrayOutputStream();
+        var data = new byte[frames * channels * 2];
+        for (var i = 0; i < frames; i++) {
+            for (var c = 0; c < channels; c++) {
+                var value = 0.3 * StrictMath.sin(2 * StrictMath.PI * 440 * (c + 1) * i / rate)
+                        + ((i / 2400) % 2 == 1 ? 0.1 * StrictMath.sin(2 * StrictMath.PI * 3100 * i / rate) : 0);
+                var sample = (int) (value * 32767);
+                data[(i * channels + c) * 2] = (byte) sample;
+                data[(i * channels + c) * 2 + 1] = (byte) (sample >> 8);
+            }
+        }
+        var header = java.nio.ByteBuffer.allocate(44).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        header.put("RIFF".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(36 + data.length)
+                .put("WAVEfmt ".getBytes(java.nio.charset.StandardCharsets.US_ASCII)).putInt(16).putShort((short) 1)
+                .putShort((short) channels).putInt(rate).putInt(rate * channels * 2).putShort((short) (channels * 2))
+                .putShort((short) 16).put("data".getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+                .putInt(data.length);
+        wave.writeBytes(header.array());
+        wave.writeBytes(data);
+        java.nio.file.Files.write(directory.resolve("in.wav"), wave.toByteArray());
+        var command = new ArrayList<>(List.of(encoder, "-ifile:in.wav", "-ofile:out.es", "-aot:42"));
+        command.addAll(List.of(options));
+        var process = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true)
+                .redirectOutput(ProcessBuilder.Redirect.DISCARD).start();
+        if (process.waitFor() != 0) {
+            throw new IllegalStateException(name + ": the encoder failed");
+        }
+        var stream = java.nio.file.Files.readAllBytes(directory.resolve("out.es"));
+        var position = 0;
+        byte[] config = null;
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var line : java.nio.file.Files.readAllLines(directory.resolve("out.txt"))) {
+            if (line.startsWith("-dec_info_init:")) {
+                var size = Integer.parseInt(line.substring(15).trim());
+                config = Arrays.copyOfRange(stream, 0, size);
+                position = size;
+            } else if (line.startsWith("-ia_mp4_stsz_size:")) {
+                var size = Integer.parseInt(line.substring(18).trim());
+                parts.add(new FuzzPackets.Part(Arrays.copyOfRange(stream, position, position + size), true));
+                position += size;
+            }
+        }
+        write(MpegFuzzTest.class, "aac", name, FuzzPackets.audio(0, rate, channels, 0, config, parts));
+    }
+
+    @Test
+    @DisplayName("writes the scalable AAC seeds of the layered AAC target")
+    void scalable() {
+        // no available encoder writes scalable AAC, so these frames are built bit by bit: two mono layers (long
+        // term prediction, TNS and noise substitution in the first) under two stereo layers (M/S, frequency
+        // selective switching, TNS of the first stereo layer, intensity stereo and noise in both), cycling through
+        // the four window sequences, of object type 6, of object type 20 with epConfig 0, and of object type 20
+        // with every error sensitivity category instance in an access unit of its own (epConfig 1)
+        var plain = new ArrayList<FuzzPackets.Part>();
+        var resilient = new ArrayList<FuzzPackets.Part>();
+        var instances = new ArrayList<FuzzPackets.Part>();
+        for (var frame = 0; frame < 8; frame++) {
+            plain.add(new FuzzPackets.Part(MpegFuzzTest.units(scalableFrame(frame, false, false)), true));
+            resilient.add(new FuzzPackets.Part(MpegFuzzTest.units(scalableFrame(frame, true, false)), true));
+            instances.add(new FuzzPackets.Part(MpegFuzzTest.units(scalableFrame(frame, true, true)), true));
+        }
+        write(MpegFuzzTest.class, "aacScalable", "valid-scalable-mono-stereo.bin",
+                FuzzPackets.audio(7, 48000, 2, 0, scalableConfigs(false, false), plain));
+        write(MpegFuzzTest.class, "aacScalable", "valid-er-scalable-mono-stereo.bin",
+                FuzzPackets.audio(7, 48000, 2, 0, scalableConfigs(true, false), resilient));
+        write(MpegFuzzTest.class, "aacScalable", "valid-er-scalable-instances.bin",
+                FuzzPackets.audio(2, 48000, 2, 0, scalableConfigs(true, true), instances));
+    }
+
+    /**
+     * Returns the {@code AudioSpecificConfig}s of the four layers of a scalable seed at 48 kHz, two mono and two
+     * stereo, in the format of {@link MpegFuzzTest#units}: one per category instance with {@code epConfig} 1.
+     */
+    private static byte[] scalableConfigs(boolean errorResilient, boolean separate) {
+        var configs = new ArrayList<byte[]>();
+        for (var layer = 0; layer < 4; layer++) {
+            var channels = layer < 2 ? 1 : 2;
+            var writer = new MsbBitWriter();
+            writer.write(errorResilient ? 20 : 6, 5);
+            writer.write(3, 4);
+            writer.write(channels, 4);
+            writer.write(0, 1);
+            writer.write(0, 1);
+            writer.write(errorResilient ? 1 : 0, 1);
+            writer.write(layer, 3);
+            if (errorResilient) {
+                writer.write(0, 3);
+                writer.write(0, 1);
+                writer.write(separate ? 1 : 0, 2);
+            }
+            writer.alignWithZeros();
+            var config = writer.toByteArray();
+            var copies = separate ? (channels == 1 ? 3 : 7) : 1;
+            for (var i = 0; i < copies; i++) {
+                configs.add(config);
+            }
+        }
+        return MpegFuzzTest.units(configs);
+    }
+
+    /**
+     * Builds the access units of one frame of a scalable seed: one per layer, or with {@code separate} one per
+     * category instance (a mono layer the side information, TNS and spectral instances, a stereo layer the
+     * instance of its common header and those of each channel).
+     */
+    private static List<byte[]> scalableFrame(int frame, boolean errorResilient, boolean separate) {
+        int[] sequences = {0, 1, 2, 3};
+        var sequence = sequences[frame % 4];
+        var eightShort = sequence == 2;
+        var bands = eightShort ? 12 : 40;
+        var units = new ArrayList<byte[]>();
+        for (var layer = 0; layer < 4; layer++) {
+            var stereo = layer >= 2;
+            var channels = stereo ? 2 : 1;
+            var header = new MsbBitWriter();
+            var flags = new MsbBitWriter[]{new MsbBitWriter(), new MsbBitWriter()};
+            var diff = new MsbBitWriter[]{new MsbBitWriter(), new MsbBitWriter()};
+            var stream = new MsbBitWriter[]{new MsbBitWriter(), new MsbBitWriter()};
+            var tns = new MsbBitWriter[]{new MsbBitWriter(), new MsbBitWriter()};
+            if (layer == 0) {
+                header.write(0, 1);
+                header.write(sequence, 2);
+                header.write(frame & 1, 1);
+                header.write(bands, eightShort ? 4 : 6);
+                if (eightShort) {
+                    header.write(0b1010110, 7);
+                }
+            } else {
+                header.write(bands, eightShort ? 4 : 6);
+            }
+            if (stereo) {
+                header.write(layer == 2 ? 1 : 2, 2);
+                if (layer == 2) {
+                    for (var group = 0; group < (eightShort ? 4 : 1); group++) {
+                        for (var band = 0; band < bands; band++) {
+                            header.write(band % 3 == 0 ? 1 : 0, 1);
+                        }
+                    }
+                }
+            }
+            for (var channel = 0; channel < channels; channel++) {
+                var tnsData = layer == 0 || (layer == 2 && channel == 0);
+                if (layer == 0 || layer == 2) {
+                    flags[channel].write(tnsData ? 1 : 0, 1);
+                    if (tnsData) {
+                        scalableTns(errorResilient ? tns[channel] : flags[channel], eightShort);
+                    }
+                }
+                if (layer == 0) {
+                    flags[channel].write(eightShort ? 0 : 1, 1);
+                    if (!eightShort) {
+                        flags[channel].write((300 + frame * 53) % 2048, 11);
+                        flags[channel].write(frame & 7, 3);
+                        for (var band = 0; band < bands; band++) {
+                            flags[channel].write(band & 1, 1);
+                        }
+                    }
+                }
+                if (layer == 2) {
+                    if (eightShort) {
+                        diff[channel].write(frame % 2 == 0 ? 0b10110100 : 0b01001011, 8);
+                    } else {
+                        for (var band = 0; band < bands; band++) {
+                            if (band % 3 != 0) {
+                                diff[channel].write(band & 1, 1);
+                            }
+                        }
+                    }
+                }
+                scalableStream(stream[channel], eightShort, stereo && channel == 1, layer);
+            }
+            if (!separate) {
+                var unit = new MsbBitWriter();
+                append(unit, header);
+                if (errorResilient) {
+                    for (var channel = 0; channel < channels; channel++) {
+                        append(unit, flags[channel]);
+                        append(unit, diff[channel]);
+                        append(unit, stream[channel]);
+                        append(unit, tns[channel]);
+                    }
+                } else {
+                    for (var part : List.of(flags, diff, stream)) {
+                        for (var channel = 0; channel < channels; channel++) {
+                            append(unit, part[channel]);
+                        }
+                    }
+                }
+                units.add(aligned(unit));
+                continue;
+            }
+            if (stereo) {
+                units.add(aligned(header));
+            }
+            for (var channel = 0; channel < channels; channel++) {
+                var first = new MsbBitWriter();
+                if (!stereo) {
+                    append(first, header);
+                }
+                append(first, flags[channel]);
+                append(first, diff[channel]);
+                append(first, stream[channel]);
+                units.add(aligned(first));
+                units.add(aligned(tns[channel]));
+                units.add(new byte[0]);
+            }
+        }
+        return units;
+    }
+
+    /**
+     * Writes the {@code tns_data} of a scalable seed: one filter over the upper bands of a long window, or of the
+     * first of eight short windows.
+     */
+    private static void scalableTns(MsbBitWriter writer, boolean eightShort) {
+        if (!eightShort) {
+            tnsData(writer);
+            return;
+        }
+        writer.write(1, 1);
+        writer.write(1, 1);
+        writer.write(8, 4);
+        writer.write(2, 3);
+        writer.write(0, 2);
+        writer.write(0x5C, 8);
+        for (var window = 1; window < 8; window++) {
+            writer.write(0, 1);
+        }
+    }
+
+    /**
+     * Writes the {@code individual_channel_stream(1, 1)} of a scalable seed: global gain, sections of zero bands
+     * with a noise band at the top of every group, and an intensity band below it in the right channel of a stereo
+     * layer, with their scalefactors; zero and noise bands carry no spectral data.
+     */
+    private static void scalableStream(MsbBitWriter writer, boolean eightShort, boolean right, int layer) {
+        var bands = eightShort ? 12 : 40;
+        var groups = eightShort ? 4 : 1;
+        var lengthBits = eightShort ? 3 : 5;
+        writer.write(100, 8);
+        for (var group = 0; group < groups; group++) {
+            var zero = right ? bands - 2 : bands - 1;
+            writer.write(0, 4);
+            sectionLength(writer, zero, lengthBits);
+            if (right) {
+                writer.write(layer == 3 ? 14 : 15, 4);
+                sectionLength(writer, 1, lengthBits);
+            }
+            writer.write(13, 4);
+            sectionLength(writer, 1, lengthBits);
+        }
+        var firstNoise = true;
+        for (var group = 0; group < groups; group++) {
+            if (right) {
+                writer.write(0, 1);
+            }
+            if (firstNoise) {
+                writer.write(256 + 40 + layer, 9);
+                firstNoise = false;
+            } else {
+                writer.write(0, 1);
+            }
+        }
+    }
+
+    /** Writes a section length with its escapes. */
+    private static void sectionLength(MsbBitWriter writer, int length, int bits) {
+        var escape = (1 << bits) - 1;
+        while (length >= escape) {
+            writer.write(escape, bits);
+            length -= escape;
+        }
+        writer.write(length, bits);
+    }
+
+    /** Appends the bits of one writer to another. */
+    private static void append(MsbBitWriter target, MsbBitWriter source) {
+        var bytes = source.toByteArray();
+        var bits = (int) source.bitCount();
+        for (var i = 0; i < bits; i++) {
+            target.write(bytes[i >> 3] >> (7 - (i & 7)) & 1, 1);
+        }
+    }
+
+    /** Returns the bits of a writer padded to a byte. */
+    private static byte[] aligned(MsbBitWriter writer) {
+        writer.alignWithZeros();
+        return writer.toByteArray();
+    }
+
+    /**
+     * Builds an ER BSAC {@code AudioSpecificConfig}.
+     */
+    private static byte[] bsacConfig(int rateIndex, int channels, boolean sbr) {
+        var writer = new MsbBitWriter();
+        writer.write(22, 5);
+        writer.write(rateIndex, 4);
+        writer.write(channels, 4);
+        writer.write(0, 1);
+        writer.write(0, 1);
+        writer.write(1, 1);
+        writer.write(1, 5);
+        writer.write(0, 11);
+        writer.write(0, 1);
+        writer.write(0, 2);
+        if (sbr) {
+            writer.write(0x2B7, 11);
+            writer.write(22, 5);
+            writer.write(1, 1);
+            writer.write(3, 4);
+            writer.write(channels, 4);
+        }
+        writer.alignWithZeros();
+        return writer.toByteArray();
+    }
+
+    /**
+     * Builds an ER BSAC frame: a base element and, for {@code extensions}, the zero code and sync word, a spectral
+     * band replication payload of the base element, then a center channel and a surround pair extension element,
+     * each with its spectral band replication payload ({@code EXT_BSAC_CHANNEL_SBR}).
+     */
+    private static byte[] bsacFrame(int frame, int channels, boolean segmented, boolean extensions) {
+        var writer = new MsbBitWriter();
+        writeBytes(writer, bsacElement(frame, channels, segmented, -1, extensions ? 480 : 160));
+        if (extensions) {
+            writeBytes(writer, new byte[]{0, 0, 0, 0, (byte) 0xF0});
+            writeBytes(writer, bsacSbrPayload(frame));
+            writer.write(0x0E, 4);
+            writeBytes(writer, bsacElement(frame + 1, 1, segmented, 0, 64));
+            writeBytes(writer, bsacSbrPayload(frame + 1));
+            writer.write(0, 4);
+            writer.write(0x0E, 4);
+            writeBytes(writer, bsacElement(frame + 2, 2, segmented, 3, 96));
+            writeBytes(writer, bsacSbrPayload(frame + 2));
+        }
+        writer.alignWithZeros();
+        var result = writer.toByteArray();
+        result[0] = (byte) (result.length >> 3);
+        result[1] = (byte) ((result[1] & 0x1F) | ((result.length & 7) << 5));
+        return result;
+    }
+
+    /**
+     * Writes the bits of an array.
+     */
+    private static void writeBytes(MsbBitWriter writer, byte[] bytes) {
+        for (var b : bytes) {
+            writer.write(b & 0xFF, 8);
+        }
+    }
+
+    /**
+     * Builds a spectral band replication payload of an ER BSAC extension ({@code extended_bsac_sbr_data}): a count
+     * of 6, an SBR header and pseudo-random SBR data, 48 bits in all.
+     */
+    private static byte[] bsacSbrPayload(int seed) {
+        var writer = new MsbBitWriter();
+        writer.write(6, 4);
+        writer.write(1, 1);
+        writer.write(0, 1);
+        writer.write(5, 4);
+        writer.write(9, 4);
+        writer.write(0, 3);
+        writer.write(0, 2);
+        writer.write(0, 1);
+        writer.write(0, 1);
+        var state = 0x2545F491 + seed * 7919;
+        while (writer.bitCount() < 48) {
+            state = state * 1103515245 + 12345;
+            writer.write((state >>> 16) & 1, 1);
+        }
+        return writer.toByteArray();
+    }
+
+    /**
+     * Builds one ER BSAC element of {@code bytes} bytes: its {@code bsac_header} and {@code general_header}, then
+     * pseudo-random layer data. A channel configuration index of -1 builds a base element.
+     */
+    private static byte[] bsacElement(int frame, int channels, boolean segmented, int channelIndex, int bytes) {
+        var writer = new MsbBitWriter();
+        writer.write(bytes, 11);
+        if (channelIndex >= 0) {
+            writer.write(channelIndex, 4);
+        }
+        var shortWindows = frame % 4 == 2;
+        writer.write(0, 4);
+        writer.write(segmented ? 1 : 0, 1);
+        writer.write(12, 6);
+        writer.write(frame % 3, 2);
+        for (var ch = 0; ch < channels; ch++) {
+            writer.write(60 + 4 * ch, 8);
+        }
+        writer.write(shortWindows ? 4 : 10, 5);
+        for (var ch = 0; ch < channels; ch++) {
+            writer.write(9 + frame % 12, 5);
+            writer.write(1 + ch, 3);
+            writer.write(2, 3);
+            writer.write(5, 4);
+        }
+        writer.write(0, 1);
+        writer.write(shortWindows ? 2 : frame % 2 == 0 ? 0 : 1, 2);
+        writer.write(frame & 1, 1);
+        if (shortWindows) {
+            writer.write(10, 4);
+            writer.write(0b0101100, 7);
+        } else {
+            writer.write(28, 6);
+        }
+        var noise = frame % 3 == 1;
+        writer.write(noise ? 1 : 0, 1);
+        if (noise) {
+            writer.write(shortWindows ? 6 : 18, 6);
+        }
+        if (channels == 2) {
+            writer.write(1 + frame % 3, 2);
+        }
+        for (var ch = 0; ch < channels; ch++) {
+            var tns = ch == 0 && !shortWindows;
+            writer.write(tns ? 1 : 0, 1);
+            if (tns) {
+                writer.write(1, 2);
+                writer.write(1, 1);
+                writer.write(12, 6);
+                writer.write(4, 5);
+                writer.write(0, 1);
+                writer.write(0, 1);
+                for (var k = 0; k < 4; k++) {
+                    writer.write((k * 5 + frame) & 15, 4);
+                }
+            }
+            writer.write(0, 1);
+        }
+        var state = 0x1F2E3D4C + frame * 104729 + channels;
+        while (writer.bitCount() < 8L * bytes) {
+            state = state * 1664525 + 1013904223;
+            writer.write((state >>> 24) & 0xFF, 8);
+        }
+        return Arrays.copyOf(writer.toByteArray(), bytes);
     }
 
     /**
@@ -780,5 +1278,64 @@ class FuzzSeedWriter {
                 com.github.auties00.smalt.image.heic.HeicGainMapTest.exif(1, 2, 3, 100));
         com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write(MpegFuzzTest.class, "heicGainMap", "valid-portrait.heic",
                 portrait);
+    }
+
+    @Test
+    @DisplayName("writes the MPEG Surround seeds of the AAC targets")
+    void surround() throws IOException {
+        // the first eight blocks of the MpegSurroundTest streams: spatial frames embedded in the fill elements of a
+        // mono Low Complexity and a stereo HE-AAC downmix, and the same frames in a separate elementary stream
+        var lc = surroundStream("mps-lc5151");
+        write(MpegFuzzTest.class, "aac", "valid-mps-lc5151-embedded.bin",
+                FuzzPackets.audio(0, 48000, 1, 0, lc.getFirst(), surroundParts(lc.subList(1, 9))));
+        var he = surroundStream("mps-he525-static");
+        write(MpegFuzzTest.class, "aac", "valid-mps-he525-embedded.bin",
+                FuzzPackets.audio(0, 48000, 2, 0, he.getFirst(), surroundParts(he.subList(1, 9))));
+        var core = surroundStream("mps-lc5151-core");
+        var spatial = new ArrayList<byte[]>();
+        var data = Files.readAllBytes(SURROUND_RESOURCES.resolve("mps-lc5151.bs"));
+        var buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        for (var position = 0; position + 4 <= data.length; position += 4 + buffer.getInt(position)) {
+            spatial.add(Arrays.copyOfRange(data, position + 4, position + 4 + buffer.getInt(position)));
+        }
+        var header = spatial.getFirst();
+        var config = new MsbBitWriter();
+        config.write(30, 5);
+        config.write(3, 4);
+        config.write(0, 4);
+        config.write(0, 1);
+        for (var i = 1; i < header.length; i++) {
+            config.write(header[i] & 0xFF, 8);
+        }
+        var parts = new ArrayList<FuzzPackets.Part>();
+        for (var block = 0; block < 8; block++) {
+            parts.add(new FuzzPackets.Part(MpegFuzzTest.units(List.of(core.get(block + 1), spatial.get(block + 1))),
+                    true));
+        }
+        write(MpegFuzzTest.class, "aacSurround", "valid-mps-lc5151-separate.bin", FuzzPackets.audio(0, 48000, 1, 0,
+                MpegFuzzTest.units(List.of(core.getFirst(), config.toByteArray())), parts));
+    }
+
+    private static final Path SURROUND_RESOURCES = Path.of("src", "test", "resources", "com", "github", "auties00",
+            "smalt", "audio", "aac");
+
+    /** Reads an MpegSurroundTest stream: its configuration, then its access units. */
+    private static List<byte[]> surroundStream(String name) throws IOException {
+        var data = Files.readAllBytes(SURROUND_RESOURCES.resolve(name + ".raw"));
+        var units = new ArrayList<byte[]>();
+        var position = 0;
+        for (var line : Files.readAllLines(SURROUND_RESOURCES.resolve(name + ".meta"))) {
+            var parts = line.split(":");
+            if (parts[0].equals("-dec_info_init") || parts[0].equals("-ia_mp4_stsz_size")) {
+                var size = Integer.parseInt(parts[1].trim());
+                units.add(Arrays.copyOfRange(data, position, position + size));
+                position += size;
+            }
+        }
+        return units;
+    }
+
+    private static List<FuzzPackets.Part> surroundParts(List<byte[]> units) {
+        return units.stream().map(unit -> new FuzzPackets.Part(unit, true)).toList();
     }
 }

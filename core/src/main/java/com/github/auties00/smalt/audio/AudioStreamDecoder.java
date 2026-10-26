@@ -1544,7 +1544,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * Returns whether a track's codec keeps a prediction state that a restart never reproduces:
          * AAC Main (backward-adaptive prediction), AAC LTP, ER AAC LTP and AAC-LD (long term prediction), and
          * AAC-ELD with low delay spectral band replication, whose SBR state no pre-roll of a few frames
-         * reproduces.
+         * reproduces, and USAC, whose arithmetic coder context, linear prediction state and enhanced SBR state
+         * reach back to the last independent frame and beyond.
          *
          * @param track the track to restart, whose codec configuration names the AAC object type
          * @return {@code true} when every restart must begin at the track's first packet
@@ -1558,7 +1559,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 var aac = AudioConfigs.parseAac(config.get());
                 var objectType = aac.objectType();
                 return objectType == 1 || objectType == 4 || objectType == 19 || objectType == 23
-                        || (objectType == 39 && aac.sbr());
+                        || (objectType == 39 && aac.sbr()) || objectType == 42;
             } catch (MediaException exception) {
                 return false;
             }

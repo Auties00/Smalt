@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -135,6 +136,37 @@ class AacDecoderRobustnessTest {
                             }
                             case 1 -> mutated = Arrays.copyOf(mutated, random.nextInt(mutated.length + 1));
                             case 2 -> random.nextBytes(mutated);
+                            default -> {
+                            }
+                        }
+                        frames.add(mutated);
+                    }
+                    decodeTolerantly(new AacDecoder(stream.track()), frames);
+                }
+            });
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"er_bs01_48_ep0", "er_bs09_48_ep0", "er_bs13_sbr_1_48"})
+        @DisplayName("decode or raise MediaException for mutations of ER BSAC streams")
+        void bsac(String name) {
+            var stream = AacTestSupport.parseMp4(Fixtures.read(Conformance.fetchListed("mpeg4audio-" + name + ".mp4")));
+            assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
+                var random = new Random(name.hashCode());
+                for (var round = 0; round < 150; round++) {
+                    var frames = new ArrayList<byte[]>();
+                    for (var frame : stream.frames().subList(20, 32)) {
+                        var mutated = frame.clone();
+                        switch (random.nextInt(5)) {
+                            case 0 -> {
+                                for (var flips = 1 + random.nextInt(8); flips > 0; flips--) {
+                                    var position = random.nextInt(mutated.length);
+                                    mutated[position] ^= (byte) (1 << random.nextInt(8));
+                                }
+                            }
+                            case 1 -> mutated = Arrays.copyOf(mutated, random.nextInt(mutated.length + 1));
+                            case 2 -> random.nextBytes(mutated);
+                            case 3 -> mutated = Arrays.copyOf(mutated, mutated.length + 1 + random.nextInt(64));
                             default -> {
                             }
                         }

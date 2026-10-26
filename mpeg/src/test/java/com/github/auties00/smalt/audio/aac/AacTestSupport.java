@@ -179,6 +179,14 @@ final class AacTestSupport {
             var sizes = sampleSizes(data, findBox(data, stbl[0], stbl[1], "stsz"));
             var offsets = sampleOffsets(data, stbl, sizes.length);
             var frames = new ArrayList<byte[]>();
+            var outside = false;
+            for (var i = 0; i < sizes.length; i++) {
+                outside |= offsets[i] + sizes[i] > data.length;
+            }
+            if (outside) {
+                // er_bs02_*_ep0.mp4 of ISO/IEC 14496-26 lists layer tracks whose samples lie past the end of the file.
+                continue;
+            }
             for (var i = 0; i < sizes.length; i++) {
                 var frame = new byte[sizes[i]];
                 System.arraycopy(data, (int) offsets[i], frame, 0, sizes[i]);
@@ -209,6 +217,24 @@ final class AacTestSupport {
             tracks.add(new Stream(config, frames, rate, channels, skip, presented));
         }
         return tracks;
+    }
+
+    /** Returns the number of MP4A tracks an MP4 file lists, those whose samples lie past its end included. */
+    static int mp4AudioTrackCount(byte[] data) {
+        var moov = findBox(data, 0, data.length, "moov");
+        var count = 0;
+        for (var trak : findBoxes(data, moov[0], moov[1], "trak")) {
+            var stbl = path(data, trak[0], trak[1], "mdia", "minf", "stbl");
+            if (stbl == null) {
+                continue;
+            }
+            var stsd = findBox(data, stbl[0], stbl[1], "stsd");
+            var entry = stsd[0] + 8;
+            if (new String(data, entry + 4, 4, java.nio.charset.StandardCharsets.ISO_8859_1).equals("mp4a")) {
+                count++;
+            }
+        }
+        return count;
     }
 
     private static byte[] decoderSpecificInfo(byte[] data, int start, int end) {
@@ -390,7 +416,15 @@ final class AacTestSupport {
 
     /** Decodes an epConfig 1 stream whose category instances are the samples of the given tracks. */
     static Decoded decodeInstances(List<Stream> tracks) {
-        try (var decoder = new AacDecoder(tracks.getFirst().track())) {
+        return decodeInstances(tracks, AacDecoderOptions.defaults());
+    }
+
+    /**
+     * Decodes a stream whose blocks are split over the samples of the given tracks (epConfig 1 category instances, or
+     * the elementary streams of ER BSAC and scalable AAC), under options.
+     */
+    static Decoded decodeInstances(List<Stream> tracks, AacDecoderOptions options) {
+        try (var decoder = new AacDecoder(tracks.stream().map(Stream::track).toList(), options)) {
             var collected = new ArrayList<float[][]>();
             var layout = new ChannelLayout[1];
             var rate = new int[1];
@@ -424,6 +458,7 @@ final class AacTestSupport {
                 collected.add(copy(buffer));
             });
         }
+        decoder.flush(buffer -> collected.add(copy(buffer)));
         return concatenate(collected, decoder, rate[0], layout[0]);
     }
 

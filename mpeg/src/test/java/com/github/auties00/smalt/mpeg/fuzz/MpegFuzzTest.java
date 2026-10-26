@@ -2,6 +2,9 @@ package com.github.auties00.smalt.mpeg.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.audio.aac.AacDecoder;
+import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.DecodedImage;
@@ -14,6 +17,8 @@ import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 import com.github.auties00.smalt.testkit.fuzz.FuzzGainMaps;
 import com.github.auties00.smalt.testkit.fuzz.FuzzMedia;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
+import com.github.auties00.smalt.testkit.fuzz.FuzzRun;
+import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
@@ -41,7 +46,9 @@ import java.util.function.Consumer;
  * {@link FuzzMedia#audio}), among them the HEVC decoder decoding the layers of an output layer set, of the HEIC
  * image decoder (see {@link FuzzMedia#image}), of the MPEG-4 Part 2 and H.263 elementary stream reader, of the
  * MPEG-4 Part 2 decoder decoding the two layers of a scalable object (see {@link #mpeg4Layers}), of the H.264
- * parameter set parser and of the H.264 decoder decoding every layer of a stream (see {@link #h264Layers}).
+ * parameter set parser, of the H.264 decoder decoding every layer of a stream (see {@link #h264Layers}) and of the
+ * AAC decoder decoding the layers of a scalable object from several elementary streams (see {@link #aacScalable})
+ * or a downmix with a separate MPEG Surround elementary stream (see {@link #aacSurround}).
  */
 class MpegFuzzTest {
     /** The packets of an elementary stream that are decoded after it is split. */
@@ -196,6 +203,133 @@ class MpegFuzzTest {
     @FuzzTest
     void aac(byte[] data) {
         FuzzMedia.audio(Codec.AAC, data);
+    }
+
+    /**
+     * Decodes a scalable AAC object whose layers come in several elementary streams: the codec configuration of the
+     * {@link FuzzPackets} input lists the {@code AudioSpecificConfig} of each stream and every packet the access
+     * units of one frame, in the format of {@link #units(byte[])}; bits 0 to 2 of the options give the highest layer
+     * to decode, 7 for every layer. Inputs whose first configuration is not of object type 6 or 20 are skipped.
+     */
+    @FuzzTest
+    void aacScalable(byte[] data) {
+        var run = Fuzz.start("aacScalable");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var configs = units(input.header().config().orElse(new byte[0]));
+        var type = configs.isEmpty() || configs.getFirst().length == 0 ? 0 : (configs.getFirst()[0] & 0xFF) >>> 3;
+        if (type != 6 && type != 20) {
+            run.skip("not scalable AAC");
+            return;
+        }
+        var options = AacDecoderOptions.builder().limits(Fuzz.LIMITS);
+        var layer = input.header().options() & 7;
+        if (layer != 7) {
+            options.maxLayer(layer);
+        }
+        decodeStreams(run, input, configs, options.build());
+    }
+
+    /**
+     * Decodes an AAC downmix with a separate MPEG Surround elementary stream: the codec configuration of the
+     * {@link FuzzPackets} input lists the {@code AudioSpecificConfig} of the downmix and of the MPEG Surround stream
+     * (object type 30), and every packet their access units, in the format of {@link #units(byte[])}; bit 0 of the
+     * options turns MPEG Surround off. Inputs whose second configuration is not of object type 30 are skipped.
+     */
+    @FuzzTest
+    void aacSurround(byte[] data) {
+        var run = Fuzz.start("aacSurround");
+        var input = FuzzPackets.parse(data, FuzzPackets.AUDIO_FIELDS);
+        var configs = units(input.header().config().orElse(new byte[0]));
+        if (configs.size() < 2 || configs.get(1).length == 0 || (configs.get(1)[0] & 0xFF) >>> 3 != 30) {
+            run.skip("no MPEG Surround stream");
+            return;
+        }
+        var options = AacDecoderOptions.builder().limits(Fuzz.LIMITS)
+                .mpegSurround((input.header().options() & 1) == 0).build();
+        decodeStreams(run, input, configs, options);
+    }
+
+    /**
+     * Decodes an AAC object from the access units of several elementary streams, one track per configuration.
+     *
+     * @param run the fuzz run
+     * @param input the parsed input, every packet a list of access units
+     * @param configs the {@code AudioSpecificConfig} of each elementary stream
+     * @param options the decoder options
+     */
+    private static void decodeStreams(FuzzRun run, FuzzPackets input, List<byte[]> configs,
+                                      AacDecoderOptions options) {
+        var tracks = new ArrayList<AudioTrack>();
+        for (var config : configs) {
+            tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.AAC).timeBase(new Rational(1, 48_000))
+                    .codecConfig(config).build());
+        }
+        var decoder = run.value("open", () -> new AacDecoder(tracks, options));
+        if (decoder.isEmpty()) {
+            return;
+        }
+        Consumer<AudioBuffer> sink = buffer -> {
+            for (var channel = 0; channel < buffer.channels(); channel++) {
+                var plane = buffer.plane(channel);
+                for (var i = 0; i < buffer.frames(); i++) {
+                    if (!Float.isFinite(plane[i])) {
+                        throw new IllegalStateException("decoded a non-finite sample");
+                    }
+                }
+            }
+            run.output();
+        };
+        try (var opened = decoder.get()) {
+            for (var index = 0; index < input.packets().size(); index++) {
+                var packets = new ArrayList<Packet>();
+                for (var unit : units(input.packets().get(index).data())) {
+                    packets.add(new Packet(1, unit, index * 1024L, index * 1024L, 1024, true));
+                }
+                run.step("packet " + index, () -> opened.decode(packets, sink));
+            }
+        }
+    }
+
+    /**
+     * Splits a list of byte strings: a count byte followed by, for each entry, its 16-bit big-endian length and its
+     * bytes. A truncated entry ends the list.
+     *
+     * @param data the list
+     * @return the entries
+     */
+    static List<byte[]> units(byte[] data) {
+        var units = new ArrayList<byte[]>();
+        if (data.length == 0) {
+            return units;
+        }
+        var position = 1;
+        for (var i = 0; i < (data[0] & 0xFF) && position + 2 <= data.length; i++) {
+            var length = (data[position] & 0xFF) << 8 | data[position + 1] & 0xFF;
+            position += 2;
+            if (position + length > data.length) {
+                break;
+            }
+            units.add(Arrays.copyOfRange(data, position, position + length));
+            position += length;
+        }
+        return units;
+    }
+
+    /**
+     * Joins byte strings into the list format of {@link #units(byte[])}.
+     *
+     * @param units the entries, at most 255, each at most 65535 bytes
+     * @return the list
+     */
+    static byte[] units(List<byte[]> units) {
+        var out = new ByteArrayOutputStream();
+        out.write(units.size());
+        for (var unit : units) {
+            out.write(unit.length >>> 8);
+            out.write(unit.length);
+            out.writeBytes(unit);
+        }
+        return out.toByteArray();
     }
 
     @FuzzTest

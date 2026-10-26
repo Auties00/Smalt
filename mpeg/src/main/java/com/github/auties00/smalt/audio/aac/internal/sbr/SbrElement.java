@@ -130,6 +130,11 @@ public final class SbrElement {
     private long consumed;
 
     /**
+     * Whether the last frame synthesized each channel from its own subband matrix, without parametric stereo.
+     */
+    private boolean plainSynthesis;
+
+    /**
      * Creates the decoder of one channel element.
      *
      * @param channelCount the element's channels: 1 for a single channel or LFE element, 2
@@ -471,6 +476,7 @@ public final class SbrElement {
                 }
             }
         }
+        plainSynthesis = !withStereo;
         if (withStereo) {
             var usb = active ? tables.kx + tables.m : 32;
             stereo.process(matrixRe[0], matrixIm[0], matrixRe[1], matrixIm[1], slots, usb);
@@ -488,6 +494,40 @@ public final class SbrElement {
             channel.finish(active, tables.kx, tables.kx + tables.m);
         }
         frameData = false;
+    }
+
+    /**
+     * {@return whether the last frame synthesized every channel from its own subband matrix, so
+     * {@link #subbandsReal(int)} and {@link #subbandsImag(int)} hold the frame, which is the case without
+     * parametric stereo}
+     */
+    public boolean subbandsAvailable() {
+        return plainSynthesis;
+    }
+
+    /**
+     * Returns the real parts of the subband matrix the last frame synthesized for a channel of the element.
+     *
+     * <p>The matrix holds 64 subbands per slot, after the dynamic range control gains, in the scale of the
+     * synthesis input (a full-scale 16-bit signal spans {@code [-32768, 32768]}); it is valid until the next
+     * frame and must not be modified.
+     *
+     * @param channel the channel of the element
+     * @return the matrix, the frame's slots first
+     */
+    public float[] subbandsReal(int channel) {
+        return channels[channel].highRe;
+    }
+
+    /**
+     * Returns the imaginary parts of the subband matrix the last frame synthesized for a channel of the element.
+     *
+     * @param channel the channel of the element
+     * @return the matrix, the frame's slots first
+     * @see #subbandsReal(int)
+     */
+    public float[] subbandsImag(int channel) {
+        return channels[channel].highIm;
     }
 
     /**

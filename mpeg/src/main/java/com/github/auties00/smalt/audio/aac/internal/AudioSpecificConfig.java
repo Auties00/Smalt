@@ -17,7 +17,8 @@ import com.github.auties00.smalt.internal.header.AacRates;
  * and {@link #extensionSampleRate()}.
  *
  * @param objectType the core audio object type: {@link #AOT_MAIN}, {@link #AOT_LC}, {@link #AOT_SSR},
- * {@link #AOT_LTP}, {@link #AOT_ER_LC}, {@link #AOT_ER_LTP}, {@link #AOT_ER_LD} or {@link #AOT_ER_ELD}
+ * {@link #AOT_LTP}, {@link #AOT_SCALABLE}, {@link #AOT_ER_LC}, {@link #AOT_ER_LTP}, {@link #AOT_ER_SCALABLE},
+ * {@link #AOT_ER_BSAC}, {@link #AOT_ER_LD} or {@link #AOT_ER_ELD}
  * @param sampleRate the core sampling frequency in hertz
  * @param tableIndex the index of the sampling tables serving {@code sampleRate}
  * @param channelConfiguration the channel configuration, 0 when a program configuration (or,
@@ -37,11 +38,14 @@ import com.github.auties00.smalt.internal.header.AacRates;
  * {@link #VIRTUAL_CODEBOOKS}, {@link #RVLC_SCALEFACTORS} and {@link #CODEWORD_REORDERING}
  * @param epConfig the error protection configuration of the error resilient object types, 0 or 1
  * @param lowDelaySbr the low delay spectral band replication of AAC-ELD, or {@code null}
+ * @param layer the coding layer of a scalable AAC configuration ({@code layerNr}, from 0 to 7), 0 otherwise
+ * @param coreCoderDelay the delay of the core coder a scalable AAC layer depends on ({@code coreCoderDelay}, in
+ * samples), or -1 when the layer depends on no core coder
  */
 public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex, int channelConfiguration,
                                   ProgramConfig programConfig, int frameLength, boolean sbr, boolean ps,
                                   int extensionSampleRate, boolean sbrSignaled, boolean psSignaled, int resilience,
-                                  int epConfig, LowDelaySbr lowDelaySbr) {
+                                  int epConfig, LowDelaySbr lowDelaySbr, int layer, int coreCoderDelay) {
     /**
      * The audio object type of AAC Main, which adds backward-adaptive frequency-domain prediction.
      */
@@ -63,6 +67,12 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
     public static final int AOT_LTP = 4;
 
     /**
+     * The audio object type of scalable AAC, whose layers each add an {@code aac_scalable_main_element} or
+     * {@code aac_scalable_extension_element}.
+     */
+    public static final int AOT_SCALABLE = 6;
+
+    /**
      * The audio object type of error resilient AAC Low Complexity.
      */
     public static final int AOT_ER_LC = 17;
@@ -71,6 +81,16 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
      * The audio object type of error resilient AAC Long Term Prediction.
      */
     public static final int AOT_ER_LTP = 19;
+
+    /**
+     * The audio object type of error resilient scalable AAC.
+     */
+    public static final int AOT_ER_SCALABLE = 20;
+
+    /**
+     * The audio object type of error resilient bit-sliced arithmetic coding (ER BSAC).
+     */
+    public static final int AOT_ER_BSAC = 22;
 
     /**
      * The audio object type of error resilient AAC Low Delay (AAC-LD).
@@ -148,7 +168,8 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
      * @return the configuration
      * @throws MediaException.Malformed if the configuration is truncated or invalid
      * @throws MediaException.Unsupported if it describes an object type other than AAC Main, Low
-     * Complexity, SSR, LTP, ER LC, ER LTP, LD or ELD (possibly with SBR or PS), or error protection
+     * Complexity, SSR, LTP, scalable, ER LC, ER LTP, ER scalable, ER BSAC, LD or ELD (possibly with SBR or PS), or
+     * error protection
      */
     public static AudioSpecificConfig parse(byte[] data) {
         if (data.length == 0) {
@@ -170,7 +191,7 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
             psSignaled = ps;
             extensionSampleRate = readSampleRate(reader);
             objectType = readObjectType(reader);
-            if (objectType == 22) {
+            if (objectType == AOT_ER_BSAC) {
                 reader.read(4);
             }
         }
@@ -178,6 +199,8 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
         validateChannelConfiguration(channelConfiguration);
         int frameLength;
         var resilience = 0;
+        var layer = 0;
+        var coreCoderDelay = -1;
         ProgramConfig programConfig = null;
         LowDelaySbr lowDelaySbr = null;
         if (objectType == AOT_ER_ELD) {
@@ -203,13 +226,24 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
                 throw new MediaException.Malformed("AAC SSR configuration sets the frame length flag");
             }
             if (reader.readFlag()) {
-                reader.read(14);
+                coreCoderDelay = reader.read(14);
             }
             var extensionFlag = reader.readFlag();
             if (channelConfiguration == 0 && reader.bitsLeft() > 0) {
                 programConfig = ProgramConfig.parse(reader);
             }
+            if (isScalable(objectType)) {
+                layer = reader.read(3);
+                if (channelConfiguration != 1 && channelConfiguration != 2) {
+                    throw new MediaException.Malformed("scalable AAC layer with channel configuration "
+                            + channelConfiguration);
+                }
+            }
             if (extensionFlag) {
+                if (objectType == AOT_ER_BSAC) {
+                    reader.read(5);
+                    reader.read(11);
+                }
                 if (isErrorResilient(objectType)) {
                     resilience = reader.read(3);
                 }
@@ -217,13 +251,14 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
             }
         }
         var epConfig = 0;
-        if (isErrorResilient(objectType)) {
+        if (isErrorResilient(objectType) || objectType == AOT_ER_BSAC) {
             epConfig = reader.read(2);
             checkErrorResilience(objectType, epConfig, channelConfiguration);
         }
         reader.checkNotOverrun();
-        if (!sbr && !isErrorResilient(objectType) && reader.bitsLeft() >= 16) {
-            if (reader.read(11) == SYNC_EXTENSION_SBR && readObjectType(reader) == AOT_SBR) {
+        if (!sbr && !isErrorResilient(objectType) && reader.bitsLeft() >= 16 && reader.read(11) == SYNC_EXTENSION_SBR) {
+            var extensionType = readObjectType(reader);
+            if (extensionType == AOT_SBR) {
                 sbrSignaled = true;
                 if (reader.readFlag()) {
                     sbr = true;
@@ -233,6 +268,13 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
                         ps = reader.readFlag();
                     }
                 }
+            } else if (extensionType == AOT_ER_BSAC && objectType == AOT_ER_BSAC) {
+                sbrSignaled = true;
+                if (reader.readFlag()) {
+                    sbr = true;
+                    extensionSampleRate = readSampleRate(reader);
+                }
+                reader.read(4);
             }
             if (reader.overrun()) {
                 sbr = false;
@@ -244,7 +286,21 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
         }
         return new AudioSpecificConfig(objectType, sampleRate, SamplingTables.tableIndexFor(sampleRate),
                 channelConfiguration, programConfig, frameLength, sbr, ps, extensionSampleRate, sbrSignaled,
-                psSignaled, resilience, epConfig, lowDelaySbr);
+                psSignaled, resilience, epConfig, lowDelaySbr, layer, coreCoderDelay);
+    }
+
+    /**
+     * Returns the audio object type an {@code AudioSpecificConfig} declares, before any SBR or PS signaling
+     * is resolved.
+     *
+     * @param data the configuration bytes
+     * @return the object type, or 0 for an empty configuration
+     */
+    public static int objectTypeOf(byte[] data) {
+        if (data.length == 0) {
+            return 0;
+        }
+        return readObjectType(new AacBitReader(data));
     }
 
     /**
@@ -252,6 +308,20 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
      */
     public boolean errorResilient() {
         return isErrorResilient(objectType);
+    }
+
+    /**
+     * {@return whether the payload is a layer of scalable AAC ({@link #AOT_SCALABLE} or {@link #AOT_ER_SCALABLE})}
+     */
+    public boolean scalable() {
+        return isScalable(objectType);
+    }
+
+    /**
+     * {@return whether the payload is bit-sliced arithmetic coded ({@link #AOT_ER_BSAC})}
+     */
+    public boolean bsac() {
+        return objectType == AOT_ER_BSAC;
     }
 
     /**
@@ -293,11 +363,21 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
      * Returns whether an object type uses the error resilient syntax.
      *
      * @param objectType the core audio object type
-     * @return {@code true} for ER AAC LC, ER AAC LTP, AAC-LD and AAC-ELD
+     * @return {@code true} for ER AAC LC, ER AAC LTP, ER AAC scalable, AAC-LD and AAC-ELD
      */
     private static boolean isErrorResilient(int objectType) {
-        return objectType == AOT_ER_LC || objectType == AOT_ER_LTP || objectType == AOT_ER_LD
-                || objectType == AOT_ER_ELD;
+        return objectType == AOT_ER_LC || objectType == AOT_ER_LTP || objectType == AOT_ER_SCALABLE
+                || objectType == AOT_ER_LD || objectType == AOT_ER_ELD;
+    }
+
+    /**
+     * Returns whether an object type is scalable AAC.
+     *
+     * @param objectType the core audio object type
+     * @return {@code true} for AAC scalable and ER AAC scalable
+     */
+    private static boolean isScalable(int objectType) {
+        return objectType == AOT_SCALABLE || objectType == AOT_ER_SCALABLE;
     }
 
     /**
@@ -419,8 +499,8 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
     }
 
     /**
-     * Rejects every core object type other than AAC Main, Low Complexity, SSR, LTP, ER LC, ER LTP,
-     * LD and ELD.
+     * Rejects every core object type other than AAC Main, Low Complexity, SSR, LTP, scalable, ER LC, ER LTP,
+     * ER scalable, ER BSAC, LD and ELD.
      *
      * @param objectType the core audio object type
      * @throws MediaException.Unsupported if the object type is another one
@@ -428,13 +508,13 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
      */
     private static void checkObjectType(int objectType) {
         switch (objectType) {
-            case AOT_MAIN, AOT_LC, AOT_SSR, AOT_LTP, AOT_ER_LC, AOT_ER_LTP, AOT_ER_LD, AOT_ER_ELD -> {
+            case AOT_MAIN, AOT_LC, AOT_SSR, AOT_LTP, AOT_SCALABLE, AOT_ER_LC, AOT_ER_LTP, AOT_ER_SCALABLE, AOT_ER_BSAC,
+                 AOT_ER_LD, AOT_ER_ELD -> {
             }
             case 0 -> throw new MediaException.Malformed("AudioSpecificConfig declares a null object type");
             case AOT_SBR, AOT_PS -> throw new MediaException.Malformed("nested SBR or PS object type");
-            case 6, 20 -> throw new MediaException.Unsupported("aac scalable", "scalable AAC is not supported");
-            case 22 -> throw new MediaException.Unsupported("aac er bsac", "ER BSAC is not supported");
-            case 42 -> throw new MediaException.Unsupported("usac", "MPEG-D USAC is not supported");
+            case 42 -> throw new MediaException.Unsupported("usac",
+                    "USAC (object type 42) decodes only from the AudioSpecificConfig of a USAC track");
             default -> throw new MediaException.Unsupported("mpeg-4 audio object type " + objectType,
                     "MPEG-4 audio object type " + objectType + " is not AAC");
         }

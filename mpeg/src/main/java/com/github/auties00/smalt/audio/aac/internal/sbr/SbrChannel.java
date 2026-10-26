@@ -365,11 +365,14 @@ final class SbrChannel {
     }
 
     /**
-     * Analyzes the current frame's core samples into the low band.
+     * Analyzes the current frame's core samples into the low band and clears the high band
+     * buffer, which holds the previous frame's subband matrix until then.
      *
      * @param core the core samples
      */
     void analyze(float[] core) {
+        Arrays.fill(highRe, 0);
+        Arrays.fill(highIm, 0);
         analysis.analyze(core, slots, lowRe, lowIm, lowLead * 32);
     }
 
@@ -939,8 +942,6 @@ final class SbrChannel {
         System.arraycopy(lowIm, slots * 32, lowIm, 0, lowLead * 32);
         System.arraycopy(highRe, slots * 64, carryRe, 0, HIGH_LEAD * 64);
         System.arraycopy(highIm, slots * 64, carryIm, 0, HIGH_LEAD * 64);
-        Arrays.fill(highRe, 0);
-        Arrays.fill(highIm, 0);
         carrySlots = active ? Math.max(0, lastSlot - slots) : 0;
         previousKx = active ? kx : 32;
         previousEnd = active ? end : 32;

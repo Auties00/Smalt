@@ -74,8 +74,8 @@ final class MpegWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the HEVC, HEIC, MPEG-4 Part 2 and H.263 decoders and the separate color plane path of the
-        //  H.264 decoder, which need streams that no Smalt encoder produces
+        // TODO: train the HEVC, HEIC, MPEG-4 Part 2, H.263 and USAC decoders and the separate color plane path of
+        //  the H.264 decoder, which need streams that no Smalt encoder produces
         return List.of(
                 realtime("h264-encode-rt-t1", () -> h264Encode(1, null, null)),
                 realtime("h264-encode-rt-tools", MpegWorkloads::h264RealtimeTools),
@@ -111,6 +111,9 @@ final class MpegWorkloads {
                 file("aac-ld-decode", () -> aacLowDelayDecode(4)),
                 file("aac-eld-decode", () -> aacEnhancedLowDelayDecode("aac-eld-decode", false, 4)),
                 file("aac-eld-sbr-decode", () -> aacEnhancedLowDelayDecode("aac-eld-sbr-decode", true, 4)),
+                file("aac-er-bsac-decode", () -> aacBsacDecode(2)),
+                file("aac-scalable-decode", () -> aacScalableDecode(2)),
+                file("aac-surround-decode", () -> aacSurroundDecode(4)),
                 file("ac3", () -> ac3(6)),
                 file("eac3", () -> eac3("eac3", Eac3EncoderOptions.defaults(), 6)),
                 file("iec61937-wav", () -> iec61937(4)),
@@ -629,6 +632,112 @@ final class MpegWorkloads {
         var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, 44100)).sampleRate(44100)
                 .layout(ChannelLayout.MONO).codecConfig(config).build();
         return AudioStreams.decode("aac-ld-decode", packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes synthetic ER BSAC frames: a mono stream at 48 kHz, and a stereo stream at
+     * 24 kHz with center and surround extension elements and spectral band replication to 48 kHz, every layer of
+     * both decoded.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacBsacDecode(double seconds) {
+        var monoFrames = (int) Math.ceil(seconds * 48000 / 1024);
+        var surroundFrames = (int) Math.ceil(seconds * 24000 / 1024);
+        var mono = new ArrayList<Packet>(monoFrames);
+        for (var frame = 0; frame < monoFrames; frame++) {
+            mono.add(new Packet(1, SyntheticAac.bsacFrame(frame, 1, false, false), frame * 1024L, frame * 1024L,
+                    1024, true));
+        }
+        var surround = new ArrayList<Packet>(surroundFrames);
+        for (var frame = 0; frame < surroundFrames; frame++) {
+            surround.add(new Packet(1, SyntheticAac.bsacFrame(frame, 2, frame % 2 == 0, true), frame * 2048L,
+                    frame * 2048L, 2048, true));
+        }
+        var monoDecoder = new AacDecoder(AudioStreams.track(Codec.AAC, 48000, ChannelLayout.MONO,
+                SyntheticAac.bsacConfig(3, 1, false)));
+        var surroundDecoder = new AacDecoder(AudioStreams.track(Codec.AAC, 48000, ChannelLayout.STEREO,
+                SyntheticAac.bsacConfig(6, 2, true)));
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("aac-er-bsac-decode", () -> {
+            for (var packet : mono) {
+                monoDecoder.decode(packet, output);
+            }
+            for (var packet : surround) {
+                surroundDecoder.decode(packet, output);
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes synthetic scalable AAC of object types 6 and 20 at 48 kHz: two mono layers
+     * under two stereo layers, each in an access unit of its own, with long term prediction, TNS, M/S, intensity
+     * stereo, noise substitution and the frequency selective switch.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacScalableDecode(double seconds) {
+        var frames = (int) Math.ceil(seconds * 48000 / 1024);
+        var decoders = new ArrayList<AacDecoder>(2);
+        var streams = new ArrayList<List<List<Packet>>>(2);
+        for (var errorResilient : new boolean[]{false, true}) {
+            var tracks = new ArrayList<AudioTrack>(4);
+            for (var config : SyntheticAac.scalableConfigs(errorResilient)) {
+                tracks.add(AudioTrack.builder().id(tracks.size() + 1).codec(Codec.AAC).timeBase(new Rational(1, 48000))
+                        .sampleRate(48000).codecConfig(config).build());
+            }
+            decoders.add(new AacDecoder(tracks));
+            var units = new ArrayList<List<Packet>>(frames);
+            for (var frame = 0; frame < frames; frame++) {
+                var layers = new ArrayList<Packet>(4);
+                for (var unit : SyntheticAac.scalableFrame(frame, errorResilient)) {
+                    layers.add(new Packet(layers.size() + 1, unit, frame * 1024L, frame * 1024L, 1024, true));
+                }
+                units.add(layers);
+            }
+            streams.add(units);
+        }
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("aac-scalable-decode", () -> {
+            for (var i = 0; i < decoders.size(); i++) {
+                var decoder = decoders.get(i);
+                for (var units : streams.get(i)) {
+                    decoder.decode(units, output);
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that upmixes a 48 kHz mono AAC-LC downmix of synthetic speech to 5.1 with MPEG Surround,
+     * from the spatial frames of a separate elementary stream: the 5-1-5 tree with its decorrelators and the
+     * subband domain temporal processing.
+     *
+     * @param seconds the audio decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacSurroundDecode(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.MONO, 64000));
+        var core = AudioStreams.encodeAll(encoder, new float[][]{SyntheticAudio.speech(48000, seconds)},
+                ChannelLayout.MONO, 48000);
+        var coreTrack = AudioStreams.track(Codec.AAC, 48000, ChannelLayout.MONO, encoder.codecConfig().orElseThrow());
+        var surroundTrack = AudioTrack.builder().id(2).codec(Codec.AAC).timeBase(new Rational(1, 48000))
+                .sampleRate(48000).codecConfig(SyntheticAac.surroundConfig()).build();
+        var decoder = new AacDecoder(List.of(coreTrack, surroundTrack));
+        var blocks = new ArrayList<List<Packet>>(core.size());
+        for (var block = 0; block < core.size(); block++) {
+            var spatial = new Packet(2, SyntheticAac.surroundFrame(block), core.get(block).pts(), core.get(block).dts(),
+                    1024, true);
+            blocks.add(List.of(core.get(block), spatial));
+        }
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("aac-surround-decode", () -> {
+            for (var units : blocks) {
+                decoder.decode(units, output);
+            }
+        });
     }
 
     /**

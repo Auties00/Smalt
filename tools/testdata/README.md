@@ -740,6 +740,39 @@ downloaded unless `--fdk` names a library; elsewhere `--fdk` names the system's 
 are deterministic for a build, and the script reports a stream whose digest differs from the reference build's.
 Without these files the comparisons are skipped.
 
+## MPEG Surround oracle
+
+The MPEG Surround (ISO/IEC 23003-1) conformance streams are not public, so `MpegSurroundOracleTest` (`smalt-mpeg`)
+compares Smalt's spatial decoder with the MPEG Surround decoder of the ISO/IEC 23003-3 reference software
+(mp4spatialdec, which is the full 23003-1 decoder). `python -I tools/testdata/mps-oracle.py <work directory>` (with
+gcc; on Windows from an MSYS2 UCRT64 shell) downloads the reference software from ISO's Publicly Available
+Standards (pinned by SHA-256), patches copies of `sac_bitdec.c` and `bitstream.c`, which the USAC distribution
+trims to the 2-1-2 tree, to read and write the full `SpatialSpecificConfig`, builds the decoder and encoder
+libraries with the frontend `mps-oracle/mpsref.c`, and writes into `<conformance cache>/mps-oracle`
+(`-Dsmalt.test.mpsOracle` overrides the directory the test reads), for each case, the side information as
+length-prefixed blocks (`.bs`: the header, then one spatial frame per block), the downmix (`_dmx.wav`) and the
+reference decoder's upmix (`_ref.wav`, float):
+
+- the synthetic streams of `mps-oracle/mpsgen.py`, which covers every tree, quantization and TTT mode, temporal
+  shaping, arbitrary downmix gains, residual and downmix residual coding at 24, 48 and 96 kHz;
+- the reference encoder's streams of a synthetic 5.1 signal (both 5-1-5 trees and 5-2-5, 16 and 32 slots per frame).
+
+Without these files the comparisons are skipped. The AAC side (embedded and separate side information, the QMF
+domain path) is covered by `MpegSurroundTest` from committed streams.
+
+## USAC time-warped filterbank oracle
+
+No ISO/IEC 23003-3 conformance stream uses the time-warped MDCT (`tw_mdct`), so `TimeWarpedSynthesisTest`
+(`smalt-mpeg`) compares Smalt's time-warped filterbank with the reference software's, bit for bit, over
+pseudo-random window sequences, window shapes, warp ratios and transform outputs that the test rebuilds from a
+xorshift32 generator. The reference outputs are committed (`mpeg/src/test/resources/.../usac/tw-1024.f32` and
+`tw-768.f32`); `python -I tools/testdata/usac-tw-oracle.py <work directory> <output directory>` (with gcc; on
+Windows from an MSYS2 UCRT64 shell) rewrites them: it downloads the reference software (pinned by SHA-256), builds
+its `usac_tw_tools.c`, `usac_calcWindow.c` and `vector_ops.c` against the stand-in headers of
+`usac-tw-oracle/shim` with the frontend `usac-tw-oracle/twref.c` (which holds the time-warped branch of
+`fd2buffer` and documents the generator) and runs it. The committed files were written with mingw-w64 gcc 15.2 on
+Windows x64.
+
 ## Conformance suites read from remote archives
 
 - Argon AV1 coverage streams (AOMedia, version 2.1.1, licence unstated: used for testing only): 25 archive sets

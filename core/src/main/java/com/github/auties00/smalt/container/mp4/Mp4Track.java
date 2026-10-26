@@ -828,7 +828,7 @@ final class Mp4Track {
         try {
             var aac = AudioConfigs.parseAac(config);
             return switch (aac.objectType()) {
-                case 1, 4, 19, 23 -> index > lastDecoded ? index - (lastDecoded + 1) : 2;
+                case 1, 4, 19, 23, 42 -> index > lastDecoded ? index - (lastDecoded + 1) : 2;
                 case 39 -> !aac.sbr() ? 3 : index > lastDecoded ? index - (lastDecoded + 1) : 2;
                 default -> 2;
             };

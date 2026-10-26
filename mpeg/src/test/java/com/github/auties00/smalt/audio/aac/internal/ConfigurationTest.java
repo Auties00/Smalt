@@ -304,13 +304,71 @@ class ConfigurationTest {
         }
 
         @ParameterizedTest(name = "object type {0}")
-        @CsvSource({"6, aac scalable", "20, aac scalable", "22, aac er bsac", "42, usac",
-                "8, mpeg-4 audio object type 8"})
+        @CsvSource({"42, usac", "7, mpeg-4 audio object type 7", "8, mpeg-4 audio object type 8",
+                "24, mpeg-4 audio object type 24"})
         @DisplayName("rejects other object types as unsupported, naming them")
         void unsupported(int objectType, String format) {
             var config = objectType < 31 ? bits(objectType, 5, 3, 4, 2, 4, 0, 3) : bits(31, 5, objectType - 32, 6, 3, 4, 2, 4, 0, 3);
             var exception = assertThrows(MediaException.Unsupported.class, () -> AudioSpecificConfig.parse(config));
             assertEquals(format, exception.format());
+        }
+
+        @Test
+        @DisplayName("parses scalable AAC layer configurations with their layer number, core delay and resilience flags")
+        void scalable() {
+            // ac02, layer 4: a stereo AAC scalable layer at 48 kHz
+            var stereo = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("319080"));
+            assertEquals(AudioSpecificConfig.AOT_SCALABLE, stereo.objectType());
+            assertTrue(stereo.scalable() && !stereo.errorResilient());
+            assertEquals(48000, stereo.sampleRate());
+            assertEquals(2, stereo.channelConfiguration());
+            assertEquals(4, stereo.layer());
+            assertEquals(-1, stereo.coreCoderDelay());
+            assertEquals(1024, stereo.frameLength());
+            // er_ac118, layer 3: ER AAC scalable at 64 kHz with virtual codebooks and codeword reordering
+            var resilient = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("a1117400"));
+            assertEquals(AudioSpecificConfig.AOT_ER_SCALABLE, resilient.objectType());
+            assertTrue(resilient.scalable() && resilient.errorResilient());
+            assertEquals(64000, resilient.sampleRate());
+            assertEquals(3, resilient.layer());
+            assertEquals(AudioSpecificConfig.VIRTUAL_CODEBOOKS | AudioSpecificConfig.CODEWORD_REORDERING,
+                    resilient.resilience());
+            assertEquals(0, resilient.epConfig());
+            // ac04, layer 0: a 960-sample layer over a CELP core delayed by 8000 samples
+            var cored = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("320efa0000"));
+            assertEquals(44100, cored.sampleRate());
+            assertEquals(960, cored.frameLength());
+            assertEquals(8000, cored.coreCoderDelay());
+            assertEquals(0, cored.layer());
+            // a scalable layer must be mono or stereo
+            for (var channels : new int[]{3, 6}) {
+                var config = bits(6, 5, 3, 4, channels, 4, 0, 3, 0, 3);
+                var exception = assertThrows(MediaException.Malformed.class, () -> AudioSpecificConfig.parse(config));
+                assertTrue(exception.getMessage().contains("scalable AAC layer"), exception.getMessage());
+            }
+        }
+
+        @Test
+        @DisplayName("parses ER BSAC configurations with their layer fields, epConfig and SBR sync extension")
+        void bsac() {
+            // er_bs01_48_ep1: numOfSubFrame 1, layer_length 11, epConfig 1
+            var layered = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("b189080b20"));
+            assertEquals(AudioSpecificConfig.AOT_ER_BSAC, layered.objectType());
+            assertTrue(layered.bsac());
+            assertEquals(48000, layered.sampleRate());
+            assertEquals(1, layered.channelConfiguration());
+            assertEquals(1024, layered.frameLength());
+            assertEquals(1, layered.epConfig());
+            assertTrue(!layered.sbr() && !layered.errorResilient());
+            // er_bs13_sbr_1_48: sync extension with extensionAudioObjectType 22, SBR at 48 kHz over a 24 kHz core
+            var sbr = AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("b30908000adedf00bb8010"));
+            assertEquals(24000, sbr.sampleRate());
+            assertTrue(sbr.sbr() && sbr.sbrSignaled());
+            assertEquals(48000, sbr.extensionSampleRate());
+            assertEquals(0, sbr.epConfig());
+            var exception = assertThrows(MediaException.Unsupported.class,
+                    () -> AudioSpecificConfig.parse(java.util.HexFormat.of().parseHex("b189080b60")));
+            assertEquals("aac er epconfig 3", exception.format());
         }
 
         @Test
