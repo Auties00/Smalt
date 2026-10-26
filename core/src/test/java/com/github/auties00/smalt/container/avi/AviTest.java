@@ -60,7 +60,11 @@ class AviTest {
                 new Sample("H.264 and AC-3", List.of("-c:v", "libx264", "-preset", "ultrafast", "-c:a", "ac3")),
                 new Sample("Motion-JPEG and AAC", List.of("-c:v", "mjpeg", "-q:v", "5", "-c:a", "aac")),
                 new Sample("Motion-JPEG and unsigned PCM", List.of("-c:v", "mjpeg", "-q:v", "5", "-c:a", "pcm_u8",
-                        "-ac", "1")));
+                        "-ac", "1")),
+                new Sample("Motion JPEG 2000 and PCM", List.of("-c:v", "jpeg2000", "-pix_fmt", "yuv420p", "-c:a",
+                        "pcm_s16le")),
+                new Sample("Motion JPEG 2000 codestreams and MP3", List.of("-c:v", "libopenjpeg", "-format", "j2k",
+                        "-pix_fmt", "yuv422p", "-c:a", "libmp3lame")));
     }
 
     static Path fixture(Sample sample) {
@@ -91,6 +95,29 @@ class AviTest {
             var expected = probe.packetsOf(track.id() - 1).stream().filter(packet -> packet.size() > 0).toList();
             var actual = ours.packetsOf(track);
             assertEquals(expected.size(), actual.size(), "packet count of " + track.codec());
+            if (track.codec() == Codec.H264 || track.codec() == Codec.HEVC) {
+                // The demuxer returns AVI's Annex B chunks length-prefixed: the NAL units must be those of the file.
+                assertTrue(track.codecConfig().isPresent(), "configuration of " + track.codec());
+                var units = new ArrayList<byte[]>();
+                for (var i = 0; i < actual.size(); i++) {
+                    assertEquals(expected.get(i).key(), actual.get(i).keyframe(), "key flag " + i + " of " + track.codec());
+                    var data = actual.get(i).data();
+                    var end = com.github.auties00.smalt.internal.nal.NalUnits.forEachLengthPrefixed(data, 4,
+                            (unit, offset, length) -> units.add(Arrays.copyOfRange(unit, offset, offset + length)));
+                    assertEquals(data.length, end, "length-prefixed packet " + i + " of " + track.codec());
+                }
+                var raw = com.github.auties00.smalt.testkit.Oracle.run(com.github.auties00.smalt.testkit.Oracle.Tool.FFMPEG,
+                        Duration.ofMinutes(1), List.of("-v", "error", "-i", file.toString(), "-map", "0:v:0", "-c", "copy",
+                                "-f", track.codec() == Codec.H264 ? "h264" : "hevc", "-"));
+                var reference = new ArrayList<byte[]>();
+                com.github.auties00.smalt.internal.nal.NalUnits.forEachAnnexB(raw,
+                        (unit, offset, length) -> reference.add(Arrays.copyOfRange(unit, offset, offset + length)));
+                assertEquals(reference.size(), units.size(), "NAL units of " + track.codec());
+                for (var i = 0; i < units.size(); i++) {
+                    assertArrayEquals(reference.get(i), units.get(i), "NAL unit " + i + " of " + track.codec());
+                }
+                continue;
+            }
             for (var i = 0; i < expected.size(); i++) {
                 assertEquals(expected.get(i).hash(), ContainerProbe.crc32(actual.get(i).data()),
                         "payload " + i + " of " + track.codec());
@@ -123,6 +150,53 @@ class AviTest {
             var times = ours.packetsOf(video).stream().map(Packet::pts).toList();
             for (var i = 1; i < times.size(); i++) {
                 assertTrue(times.get(i) > times.get(i - 1), "video timestamps increase");
+            }
+        }
+
+        @ParameterizedTest(name = "into {0}")
+        @org.junit.jupiter.params.provider.EnumSource(value = com.github.auties00.smalt.transcode.OutputContainer.class,
+                names = {"MP4", "MATROSKA", "MPEG_TS"})
+        @DisplayName("gives Annex B H.264 a configuration record, so that it remuxes into other containers")
+        void annexBRemux(com.github.auties00.smalt.transcode.OutputContainer container) {
+            var file = fixture(samples().toList().get(2));
+            var source = demux(file);
+            var video = (VideoTrack) source.tracks().getFirst();
+            assertEquals(Codec.H264, video.codec());
+            assertTrue(video.codecConfig().isPresent(), "configuration record");
+            var output = MediaSink.memory();
+            com.github.auties00.smalt.transcode.Transcoder.transcode(MediaSource.of(file), output,
+                    com.github.auties00.smalt.transcode.TranscodeOptions.remux(container));
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(output.toByteArray()))) {
+                var remuxed = demuxer.tracks().stream().filter(track -> track.codec() == Codec.H264).findFirst()
+                        .orElseThrow();
+                var count = 0;
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    if (packet.trackId() == remuxed.id()) {
+                        count++;
+                    }
+                }
+                assertEquals(source.packetsOf(video).size(), count, "remuxed video packets");
+            }
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @org.junit.jupiter.params.provider.CsvSource({"eac3, EAC3", "pcm_s64le, PCM_S64LE", "dca, DTS"})
+        @DisplayName("maps the extensible sub-formats ffmpeg writes for E-AC-3 and 64-bit PCM, and the DTS tag")
+        void extensibleAudio(String encoder, Codec codec) {
+            var options = new java.util.ArrayList<>(List.of("-t", "1", "-c:v", "mjpeg", "-c:a", encoder, "-ac", "2"));
+            if (codec == Codec.DTS) {
+                options.addAll(0, List.of("-strict", "-2"));
+            }
+            var file = Fixtures.ffmpeg("avi", List.of("-f", "lavfi", "-i", "testsrc2=size=64x48:rate=25", "-f", "lavfi",
+                    "-i", "sine=frequency=440:sample_rate=48000"), options);
+            var ours = demux(file);
+            assertEquals(codec, ours.tracks().get(1).codec());
+            assertMatchesProbe(file, ours);
+            if (codec == Codec.PCM_S64LE) {
+                var output = Muxing.remux(ours, AviMuxerOptions.defaults());
+                var back = demux(output);
+                Muxing.assertSame(ours, back);
+                assertMatchesProbe(MuxSupport.save("remux-s64.avi", output), back);
             }
         }
 
@@ -234,6 +308,53 @@ class AviTest {
                     assertArrayEquals(config, track.codecConfig().orElseThrow());
                 }
             }
+        }
+
+        @Test
+        @DisplayName("reports an unknown duration when the stream's end does not fit in microseconds")
+        void hugeTimeBase() {
+            // 5000 chunks of one second end at 5000 s; of 2^31 - 1 seconds each, past Long.MAX_VALUE microseconds
+            try (var demuxer = new AviDemuxer(MediaSource.of(chunkedAudio(1, 1, 5000)))) {
+                assertEquals(5_000_000_000L, demuxer.durationMicros());
+            }
+            try (var demuxer = new AviDemuxer(MediaSource.of(chunkedAudio(Integer.MAX_VALUE, 1, 5000)))) {
+                assertEquals(-1, demuxer.durationMicros());
+            }
+        }
+
+        // an AAC audio-only file of one-frame chunks whose stream header has the given scale and rate
+        private static byte[] chunkedAudio(int scale, int rate, int count) {
+            var format = java.nio.ByteBuffer.allocate(20).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            format.putShort((short) 0x00FF).putShort((short) 2).putInt(44100).putInt(16000).putShort((short) 1)
+                    .putShort((short) 0).putShort((short) 2).put(new byte[]{0x12, 0x10});
+            var file = audioOnly(format.array());
+            var strh = indexOf(file, "auds".getBytes(StandardCharsets.ISO_8859_1));
+            java.nio.ByteBuffer.wrap(file).order(java.nio.ByteOrder.LITTLE_ENDIAN).putInt(strh + 20, scale)
+                    .putInt(strh + 24, rate);
+            var frame = new byte[]{0x21, 0x10, 0x04, 0x60, (byte) 0x8C, 0x1C};
+            var chunks = new byte[count][];
+            var index = java.nio.ByteBuffer.allocate(16 * count).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            for (var i = 0; i < count; i++) {
+                chunks[i] = chunk("00wb", frame);
+                index.put("00wb".getBytes(StandardCharsets.ISO_8859_1)).putInt(0x10).putInt(4 + 14 * i)
+                        .putInt(frame.length);
+            }
+            // the hdrl list follows the RIFF header and form type
+            var hdrlSize = java.nio.ByteBuffer.wrap(file).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt(16);
+            var body = new java.io.ByteArrayOutputStream();
+            body.writeBytes(Arrays.copyOfRange(file, 12, 20 + hdrlSize + (hdrlSize & 1)));
+            body.writeBytes(list("LIST", "movi", chunks));
+            body.writeBytes(chunk("idx1", index.array()));
+            return list("RIFF", "AVI ", body.toByteArray());
+        }
+
+        private static int indexOf(byte[] data, byte[] pattern) {
+            for (var at = 0; at + pattern.length <= data.length; at++) {
+                if (Arrays.equals(data, at, at + pattern.length, pattern, 0, pattern.length)) {
+                    return at;
+                }
+            }
+            throw new AssertionError("pattern not found");
         }
 
         @Test

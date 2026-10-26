@@ -62,7 +62,6 @@ public final class ImageFilters {
      * @param sigma the standard deviation in pixels, from {@code 0} to {@link #MAX_RADIUS}
      * @return the blurred picture, as {@link #gaussianBlur(Picture, double, BlurMethod)} describes
      * @throws IllegalArgumentException if {@code sigma} is out of range or not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture gaussianBlur(Picture picture, double sigma) {
@@ -82,7 +81,6 @@ public final class ImageFilters {
      * @param method how to compute the blur
      * @return the blurred picture
      * @throws IllegalArgumentException if {@code sigma} is out of range or not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture gaussianBlur(Picture picture, double sigma, BlurMethod method) {
@@ -111,7 +109,6 @@ public final class ImageFilters {
      * @param radius the radius in pixels, from {@code 0} to {@link #MAX_RADIUS}
      * @return the blurred picture
      * @throws IllegalArgumentException if {@code radius} is out of range or not finite
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture boxBlur(Picture picture, double radius) {
@@ -140,7 +137,6 @@ public final class ImageFilters {
      * @param threshold the difference, in 8-bit units, at or below which a sample is left alone
      * @return the sharpened picture, as {@link #unsharpMask(Picture, double, double, int, BlurMethod)} describes
      * @throws IllegalArgumentException if an argument is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture unsharpMask(Picture picture, double sigma, double amount, int threshold) {
@@ -166,7 +162,6 @@ public final class ImageFilters {
      * @param method how to compute the blur
      * @return the sharpened picture
      * @throws IllegalArgumentException if an argument is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture unsharpMask(Picture picture, double sigma, double amount, int threshold, BlurMethod method) {
@@ -195,7 +190,6 @@ public final class ImageFilters {
      *
      * @param picture the picture to sharpen
      * @return the sharpened picture, as {@link #convolve} describes
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      * @see ConvolutionKernel#sharpen()
      */
@@ -216,7 +210,6 @@ public final class ImageFilters {
      * @param picture the picture to filter
      * @param kernel the convolution weights
      * @return the filtered picture
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture convolve(Picture picture, ConvolutionKernel kernel) {
@@ -243,7 +236,6 @@ public final class ImageFilters {
      * @param radius the window radius, from {@code 1} to {@link #MAX_MEDIAN_RADIUS}
      * @return the filtered picture
      * @throws IllegalArgumentException if {@code radius} is out of range
-     * @throws MediaException.Unsupported if the picture's matrix coefficients are not supported
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture median(Picture picture, int radius) {

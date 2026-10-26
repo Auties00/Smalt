@@ -17,8 +17,10 @@ import com.github.auties00.smalt.video.av1.internal.Av1Picture;
  *
  * <p>Color samples are written as the AV1 decoder writes its 8-bit output: copied at the source
  * depth, or reduced to 8 bits by rounding to nearest. Alpha samples are full range at the source
- * depth; a limited-range alpha frame is first expanded to full range, and an 8-bit picture of a
- * deeper source holds alpha rescaled exactly, {@code min(255, (a * 255 + max / 2) / max)}, as
+ * depth; a limited-range alpha frame is first expanded to full range, alpha of another depth than
+ * the color is rescaled to it, {@code (a * max + amax / 2) / amax} for alpha of largest value
+ * {@code amax}, and an 8-bit picture of a deeper source holds alpha rescaled exactly,
+ * {@code min(255, (a * 255 + max / 2) / max)}, as
  * {@link com.github.auties00.smalt.image.ops.ImageOps#toEightBit(Yuv16Picture)} reduces it, so
  * that reducing the deep picture gives the 8-bit picture sample for sample.
  *
@@ -161,32 +163,83 @@ final class Canvas {
     /**
      * Copies the luma plane of a decoded alpha frame into a region of the alpha plane.
      *
-     * @param frame the decoded alpha frame, of the canvas bit depth
+     * @param frame the decoded alpha frame, of any bit depth
      * @param x the left edge of the region
      * @param y the top edge of the region
      * @param w the region width, at most the frame width
      * @param h the region height, at most the frame height
      * @param limited whether the alpha frame is limited range
      */
-    void writeAlpha(Av1Picture frame, int x, int y, int w, int h,
-                    boolean limited) {
-        var src = frame.data[0];
-        var stride = frame.stride[0];
-        var max = (1 << bitDepth) - 1;
-        var low = 16 << (bitDepth - 8);
-        var span = (235 - 16) << (bitDepth - 8);
+    void writeAlpha(Av1Picture frame, int x, int y, int w, int h, boolean limited) {
+        writeAlpha(frame.data[0], 0, frame.stride[0], frame.bpc, x, y, w, h, limited);
+    }
+
+    /**
+     * Copies the top-left region of the luma plane of a planar alpha picture into a region of the
+     * alpha plane.
+     *
+     * @param picture the alpha picture, a {@link YuvPicture} or a {@link Yuv16Picture} at least
+     * {@code w} by {@code h}
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     * @param limited whether the alpha samples are limited range
+     * @throws MediaException.Malformed if the picture is not planar
+     */
+    void writeAlpha(Picture picture, int x, int y, int w, int h, boolean limited) {
+        switch (picture) {
+            case YuvPicture yuv -> {
+                var samples = new short[w];
+                for (var row = 0; row < h; row++) {
+                    var in = row * yuv.yStride();
+                    for (var col = 0; col < w; col++) {
+                        samples[col] = (short) (yuv.y()[in + col] & 0xFF);
+                    }
+                    writeAlpha(samples, 0, w, 8, x, y + row, w, 1, limited);
+                }
+            }
+            case Yuv16Picture yuv -> writeAlpha(yuv.y(), 0, yuv.yStride(), yuv.bitDepth(), x, y, w, h, limited);
+            default -> throw new MediaException.Malformed("avif: the alpha image is not a planar picture");
+        }
+    }
+
+    /**
+     * Copies alpha samples into a region of the alpha plane, expanding limited range and
+     * rescaling another depth to the canvas depth.
+     *
+     * @param src the alpha samples
+     * @param srcOffset the first sample
+     * @param stride the source stride
+     * @param depth the bit depth of the samples
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width
+     * @param h the region height
+     * @param limited whether the samples are limited range
+     */
+    private void writeAlpha(short[] src, int srcOffset, int stride, int depth, int x, int y, int w, int h,
+                            boolean limited) {
+        var max = (1 << depth) - 1;
+        var low = 16 << (depth - 8);
+        var span = (235 - 16) << (depth - 8);
+        var canvasMax = (1 << bitDepth) - 1;
         for (var row = 0; row < h; row++) {
-            var in = row * stride;
+            var in = srcOffset + row * stride;
             var out = x + (y + row) * width;
             for (var col = 0; col < w; col++) {
-                var value = src[in + col] & 0xFFFF;
+                long value = Math.min(src[in + col] & 0xFFFF, max);
                 if (limited) {
                     value = Math.clamp(((value - low) * max + span / 2) / span, 0, max);
+                }
+                if (depth != bitDepth) {
+                    value = (value * canvasMax + max / 2) / max;
                 }
                 if (wide) {
                     widePlanes[3][out + col] = (short) value;
                 } else {
-                    narrowPlanes[3][out + col] = (byte) (bitDepth == 8 ? value : Math.min(255, (value * 255 + max / 2) / max));
+                    narrowPlanes[3][out + col] = (byte) (bitDepth == 8 ? value
+                            : Math.min(255, (value * 255 + canvasMax / 2) / canvasMax));
                 }
             }
         }

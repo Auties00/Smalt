@@ -67,16 +67,17 @@ public final class OggMuxerOptions {
     }
 
     /**
-     * {@return the vendor string of the {@code OpusTags} header, identifying the encoder;
-     * {@code "Smalt"} by default}
+     * {@return the vendor string of the {@code OpusTags} header, of the Speex comment header and of a
+     * rebuilt FLAC {@code VORBIS_COMMENT} block, identifying the encoder; {@code "Smalt"} by default}
      */
     public String vendor() {
         return vendor;
     }
 
     /**
-     * {@return the user comments of the {@code OpusTags} header, unmodifiable, in write order; empty by
-     * default}
+     * {@return the user comments of the {@code OpusTags} header, of the Speex comment header, of a
+     * rebuilt FLAC {@code VORBIS_COMMENT} block and of a Vorbis or Theora comment header rebuilt from
+     * tags, unmodifiable, in write order; empty by default}
      *
      * <p>Comment names are non-empty and use only printable ASCII other than {@code '='}; values are
      * written as UTF-8.

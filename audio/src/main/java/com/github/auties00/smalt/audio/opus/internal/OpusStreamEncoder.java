@@ -320,6 +320,17 @@ public final class OpusStreamEncoder {
     private int rangeFinal;
 
     /**
+     * Whether the stream codes a low-frequency effects channel ({@code lfe}).
+     */
+    private boolean lfe;
+
+    /**
+     * The surround masking of each band and channel, 21 values per channel, or {@code null}
+     * ({@code energy_masking}).
+     */
+    private float[] energy_masking;
+
+    /**
      * The SILK encoder.
      */
     private final SilkEncoder silk_enc;
@@ -386,14 +397,31 @@ public final class OpusStreamEncoder {
     private final int[] bandwidthRef = new int[1];
 
     /**
-     * The scratch buffer holding the frames of a multi-frame packet ({@code tmp_data}).
+     * The scratch buffer holding the frames of a multi-frame packet ({@code tmp_data}), grown to the
+     * largest frame space a call has needed.
      */
-    private final byte[] multiframeBuffer = new byte[1276 + OpusPacket.MAX_FRAMES];
+    private byte[] multiframeBuffer = new byte[1276 + OpusPacket.MAX_FRAMES];
 
     /**
      * The repacketizer assembling multi-frame packets.
      */
     private final Repacketizer rp = new Repacketizer();
+
+    /**
+     * The repacketizer padding constant-bitrate packets, apart from {@link #rp}, which may hold the
+     * frames of a multi-frame packet while one of them is padded.
+     */
+    private final Repacketizer padder = new Repacketizer();
+
+    /**
+     * The three feed-forward coefficients of the VoIP high-pass filter in Q28.
+     */
+    private final int[] hpB_Q28 = new int[3];
+
+    /**
+     * The two feedback coefficients of the VoIP high-pass filter in Q28.
+     */
+    private final int[] hpA_Q28 = new int[2];
 
     /**
      * Creates an encoder ({@code opus_encoder_init}).
@@ -663,6 +691,29 @@ public final class OpusStreamEncoder {
     }
 
     /**
+     * Marks the stream as a low-frequency effects channel, coded in narrowband CELT
+     * ({@code OPUS_SET_LFE}).
+     *
+     * @param value {@code true} for an LFE stream
+     */
+    void setLfe(boolean value) {
+        lfe = value;
+        celt_enc.setLfe(value ? 1 : 0);
+    }
+
+    /**
+     * Sets the surround masking the SILK and CELT rate decisions use ({@code OPUS_SET_ENERGY_MASK}).
+     *
+     * <p>The array is referenced, not copied; {@link #reset()} clears it.
+     *
+     * @param value the masking in log2 units, 21 values per channel, or {@code null} for none
+     */
+    void setEnergyMask(float[] value) {
+        energy_masking = value;
+        celt_enc.setEnergyMask(value);
+    }
+
+    /**
      * Returns the encoder look-ahead ({@code OPUS_GET_LOOKAHEAD}).
      *
      * @return the number of samples at the input rate
@@ -686,6 +737,15 @@ public final class OpusStreamEncoder {
      */
     public int bitrate() {
         return userBitrateToBitrate(prev_framesize, 1276);
+    }
+
+    /**
+     * Returns whether the bitrate is variable ({@code OPUS_GET_VBR}).
+     *
+     * @return {@code true} for variable bitrate
+     */
+    boolean vbr() {
+        return use_vbr != 0;
     }
 
     /**
@@ -743,6 +803,7 @@ public final class OpusStreamEncoder {
         peak_signal_energy = 0;
         nonfinal_frame = false;
         rangeFinal = 0;
+        energy_masking = null;
         celt_enc.resetState();
         silk_enc.initEncoder(new SilkEncControl());
         variable_HP_smth2_Q15 = LinLog.lin2log(TuningParameters.VARIABLE_HP_MIN_CUTOFF_HZ) << 8;
@@ -828,10 +889,10 @@ public final class OpusStreamEncoder {
      * @param channels  the number of channels
      * @param Fs        the sampling rate
      */
-    private static void hpCutoff(float[] in, int inOff, int cutoff_Hz, float[] out, int outOff, float[] hp_mem,
-                                 int len, int channels, int Fs) {
-        var B_Q28 = new int[3];
-        var A_Q28 = new int[2];
+    private void hpCutoff(float[] in, int inOff, int cutoff_Hz, float[] out, int outOff, float[] hp_mem,
+                          int len, int channels, int Fs) {
+        var B_Q28 = hpB_Q28;
+        var A_Q28 = hpA_Q28;
         var Fc_Q19 = SigProcFix.div32_16(SigProcFix.smulbb(SigProcFix.fixConst(1.5 * 3.14159 / 1000, 19), cutoff_Hz), Fs / 1000);
         var r_Q28 = SigProcFix.fixConst(1.0, 28) - SigProcFix.fixConst(0.92, 9) * Fc_Q19;
         B_Q28[0] = r_Q28;
@@ -1268,11 +1329,11 @@ public final class OpusStreamEncoder {
      * @return the packet length, or a negative error code
      */
     public int encodeFloat(float[] pcm, int pcmOff, int frame_size, byte[] data, int dataOff, int out_data_bytes) {
-        var fs = frameSizeSelect(frame_size);
+        var fs = frameSizeSelect(frame_size, Fs);
         if (fs <= 0) {
             return OPUS_BAD_ARG;
         }
-        return encodeNative(pcm, pcmOff, fs, data, dataOff, out_data_bytes, 24, frame_size);
+        return encodeNative(pcm, pcmOff, fs, data, dataOff, out_data_bytes, 24, pcm, pcmOff, frame_size, 0, -2, channels);
     }
 
     /**
@@ -1297,7 +1358,7 @@ public final class OpusStreamEncoder {
      * @return the packet length, or a negative error code
      */
     public int encode(short[] pcm, int pcmOff, int frame_size, byte[] data, int dataOff, int out_data_bytes) {
-        var fs = frameSizeSelect(frame_size);
+        var fs = frameSizeSelect(frame_size, Fs);
         if (fs <= 0) {
             return OPUS_BAD_ARG;
         }
@@ -1306,16 +1367,17 @@ public final class OpusStreamEncoder {
         for (var i = 0; i < count; i++) {
             in[i] = (1.0f / 32768) * pcm[pcmOff + i];
         }
-        return encodeNative(in, 0, fs, data, dataOff, out_data_bytes, 16, frame_size);
+        return encodeNative(in, 0, fs, data, dataOff, out_data_bytes, 16, in, 0, frame_size, 0, -2, channels);
     }
 
     /**
      * Validates a frame size ({@code frame_size_select} with {@code OPUS_FRAMESIZE_ARG}).
      *
      * @param frame_size the frame size in samples
+     * @param Fs         the sampling rate
      * @return the frame size, or {@code -1} when it is not a valid Opus duration
      */
-    private int frameSizeSelect(int frame_size) {
+    static int frameSizeSelect(int frame_size, int Fs) {
         if (frame_size < Fs / 400) {
             return -1;
         }
@@ -1338,11 +1400,18 @@ public final class OpusStreamEncoder {
      * @param dataOff             the index of the first output byte
      * @param out_data_bytes      the space available
      * @param lsb_depth           the effective bit depth of the input
+     * @param analysis_pcm        the interleaved input of the tonality analysis, which a multistream
+     *                            encoder shares between its streams
+     * @param analysisOff         the index of the first sample of {@code analysis_pcm}
      * @param analysis_frame_size the number of new samples for the analysis
+     * @param c1                  the first channel of {@code analysis_pcm} the analysis mixes
+     * @param c2                  the second channel, {@code -1} for none or {@code -2} for all others
+     * @param analysis_channels   the number of interleaved channels of {@code analysis_pcm}
      * @return the packet length, or a negative error code
      */
-    private int encodeNative(float[] pcm, int pcmOff, int frame_size, byte[] data, int dataOff, int out_data_bytes,
-                             int lsb_depth, int analysis_frame_size) {
+    int encodeNative(float[] pcm, int pcmOff, int frame_size, byte[] data, int dataOff, int out_data_bytes,
+                     int lsb_depth, float[] analysis_pcm, int analysisOff, int analysis_frame_size, int c1, int c2,
+                     int analysis_channels) {
         var prefill = 0;
         var redundancy = 0;
         var celt_to_silk = 0;
@@ -1374,7 +1443,8 @@ public final class OpusStreamEncoder {
             is_silence = isDigitalSilence(pcm, pcmOff, frame_size, channels, lsb_depth);
             analysis_read_pos_bak = analysis.read_pos;
             analysis_read_subframe_bak = analysis.read_subframe;
-            analysis.runAnalysis(pcm, pcmOff, analysis_frame_size, frame_size, 0, -2, channels, Fs, lsb_depth, analysis_info);
+            analysis.runAnalysis(analysis_pcm, analysisOff, analysis_frame_size, frame_size, c1, c2, analysis_channels, Fs,
+                    lsb_depth, analysis_info);
             if (!is_silence && analysis_info.activity_probability > Define.DTX_ACTIVITY_THRESHOLD) {
                 var decayed = 0.999f * peak_signal_energy;
                 var energy = computeFrameEnergy(pcm, pcmOff, frame_size, channels);
@@ -1467,7 +1537,7 @@ public final class OpusStreamEncoder {
                 data[dataOff + 1] = (byte) num_multiframes;
             }
             if (use_vbr == 0) {
-                ret = Repacketizer.pad(data, dataOff, ret, max_data_bytes);
+                ret = padder.pad(data, dataOff, ret, max_data_bytes);
                 if (ret == OPUS_OK) {
                     ret = max_data_bytes;
                 } else {
@@ -1541,6 +1611,9 @@ public final class OpusStreamEncoder {
             mode = user_forced_mode;
         }
         if (mode != MODE_CELT_ONLY && frame_size < Fs / 100) {
+            mode = MODE_CELT_ONLY;
+        }
+        if (lfe) {
             mode = MODE_CELT_ONLY;
         }
         if (prev_mode > 0 && ((mode != MODE_CELT_ONLY && prev_mode == MODE_CELT_ONLY)
@@ -1654,6 +1727,9 @@ public final class OpusStreamEncoder {
         if (mode == MODE_CELT_ONLY && bandwidth == OPUS_BANDWIDTH_MEDIUMBAND) {
             bandwidth = OPUS_BANDWIDTH_WIDEBAND;
         }
+        if (lfe) {
+            bandwidth = OPUS_BANDWIDTH_NARROWBAND;
+        }
         curr_bandwidth = bandwidth;
         if (mode == MODE_SILK_ONLY && curr_bandwidth > OPUS_BANDWIDTH_WIDEBAND) {
             mode = MODE_HYBRID;
@@ -1687,7 +1763,10 @@ public final class OpusStreamEncoder {
                 repacketize_len = Math.min(cbr_bytes, out_data_bytes);
             }
             var max_len_sum = nb_frames + repacketize_len - max_header_bytes;
-            var tmp_data = max_len_sum <= multiframeBuffer.length ? multiframeBuffer : new byte[Math.max(max_len_sum, 0)];
+            if (max_len_sum > multiframeBuffer.length) {
+                multiframeBuffer = new byte[max_len_sum];
+            }
+            var tmp_data = multiframeBuffer;
             var curr_data = 0;
             rp.init();
             var bak_to_mono = silk_mode.toMono;
@@ -1734,6 +1813,43 @@ public final class OpusStreamEncoder {
             return encodeFrameNative(pcm, pcmOff, frame_size, data, dataOff, max_data_bytes, is_silence,
                     redundancy, celt_to_silk, prefill, equiv_rate, to_celt);
         }
+    }
+
+    /**
+     * Returns the change of the SILK bitrate that the surround masking of the other channels allows,
+     * half of it in hybrid frames' SILK layer (the surround masking block of
+     * {@code opus_encode_frame_native}).
+     *
+     * @return the bitrate change in bits per second, usually negative
+     */
+    private int surroundSilkRateOffset() {
+        var mask_sum = 0f;
+        var end = 17;
+        var srate = 16000;
+        if (bandwidth == OPUS_BANDWIDTH_NARROWBAND) {
+            end = 13;
+            srate = 8000;
+        } else if (bandwidth == OPUS_BANDWIDTH_MEDIUMBAND) {
+            end = 15;
+            srate = 12000;
+        }
+        for (var c = 0; c < channels; c++) {
+            for (var i = 0; i < end; i++) {
+                var mask = MathOps.max(MathOps.min(energy_masking[21 * c + i], .5f), -2.0f);
+                if (mask > 0) {
+                    mask = .5f * mask;
+                }
+                mask_sum += mask;
+            }
+        }
+        var masking_depth = mask_sum / end * channels;
+        masking_depth += .2f;
+        var rate_offset = (int) (srate * masking_depth);
+        rate_offset = Math.max(rate_offset, -2 * silk_mode.bitRate / 3);
+        if (bandwidth == OPUS_BANDWIDTH_SUPERWIDEBAND || bandwidth == OPUS_BANDWIDTH_FULLBAND) {
+            return 3 * rate_offset / 5;
+        }
+        return rate_offset;
     }
 
     /**
@@ -1839,10 +1955,15 @@ public final class OpusStreamEncoder {
             if (mode == MODE_HYBRID) {
                 silk_mode.bitRate = computeSilkRateForHybrid(total_bitRate, curr_bandwidth, Fs == 50 * frame_size ? 1 : 0,
                         use_vbr, silk_mode.LBRR_coded, stream_channels);
-                celt_rate = total_bitRate - silk_mode.bitRate;
-                HB_gain = 1.0f - MathOps.celtExp2(-celt_rate * (1.f / 1024));
+                if (energy_masking == null) {
+                    celt_rate = total_bitRate - silk_mode.bitRate;
+                    HB_gain = 1.0f - MathOps.celtExp2(-celt_rate * (1.f / 1024));
+                }
             } else {
                 silk_mode.bitRate = total_bitRate;
+            }
+            if (energy_masking != null && use_vbr != 0 && !lfe) {
+                silk_mode.bitRate += surroundSilkRateOffset();
             }
             silk_mode.payloadSize_ms = 1000 * frame_size / Fs;
             silk_mode.nChannelsAPI = channels;
@@ -1982,7 +2103,7 @@ public final class OpusStreamEncoder {
                 silk_mode.stereoWidth_Q14 = 16384 - 2048 * (32000 - equiv_rate) / (equiv_rate - 14000);
             }
         }
-        if (channels == 2) {
+        if (energy_masking == null && channels == 2) {
             if (hybrid_stereo_width_Q14 < (1 << 14) || silk_mode.stereoWidth_Q14 < (1 << 14)) {
                 float g1 = hybrid_stereo_width_Q14;
                 float g2 = silk_mode.stereoWidth_Q14;
@@ -2132,7 +2253,7 @@ public final class OpusStreamEncoder {
         ret += 1 + redundancy_bytes;
         apply_padding = use_vbr == 0;
         if (apply_padding) {
-            if (Repacketizer.pad(data, dataOff, ret, max_data_bytes) != OPUS_OK) {
+            if (padder.pad(data, dataOff, ret, max_data_bytes) != OPUS_OK) {
                 return OPUS_INTERNAL_ERROR;
             }
             ret = max_data_bytes;
