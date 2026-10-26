@@ -97,8 +97,6 @@ final class NefParser {
             try {
                 sensor.reader = uncompressed(raw, sensor);
                 if (interlaced(file)) {
-                    // TODO: render the cyan, yellow, green and magenta E5700: it needs color matrices, and its CFA tag
-                    //  (YCGM) is one row off the pattern Adobe DNG Converter stores for it (GMYC)
                     sensor.reader = interlaced(sensor.reader);
                 }
             } catch (MediaException.Unsupported exception) {
@@ -110,6 +108,13 @@ final class NefParser {
         if (sensor.cfa == null) {
             file.unsupported = "the NEF raw image has no CFA pattern";
             return;
+        }
+        if (!sensor.cfa.isRgb()) {
+            // the four-color E5700's CFA tag (YCGM) is one row off the pattern its photosites follow (GMYC, which
+            // Adobe DNG Converter stores over the same samples); the planes are green, magenta, cyan and yellow, in
+            // the order the converter stores them
+            sensor.cfa = sensor.cfa.shifted(1, 0);
+            sensor.planeOfColor = new int[]{-1, 0, -1, 2, 1, 3, -1};
         }
         if (note != null) {
             levels(note, sensor, file);
@@ -211,13 +216,15 @@ final class NefParser {
         return (plane, limits) -> {
             reader.read(plane, limits);
             var stride = plane.width * plane.samplesPerPixel;
-            LimitChecks.checkAllocation(limits, (long) stride * plane.height * 2);
-            var stored = plane.integers.clone();
+            LimitChecks.checkAllocation(limits, (long) stride * plane.height * (plane.integers != null ? 2 : 4));
+            Object samples = plane.integers != null ? plane.integers : plane.wide != null ? plane.wide : plane.floats;
+            var stored = plane.integers != null ? (Object) plane.integers.clone()
+                    : plane.wide != null ? plane.wide.clone() : plane.floats.clone();
             var even = (plane.height + 1) / 2;
             for (var row = 0; row < plane.height; row++) {
                 var source = row < even ? row : row - even;
                 var target = row < even ? 2 * source : 2 * source + 1;
-                System.arraycopy(stored, row * stride, plane.integers, target * stride, stride);
+                System.arraycopy(stored, row * stride, samples, target * stride, stride);
             }
         };
     }

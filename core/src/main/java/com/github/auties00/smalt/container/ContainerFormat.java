@@ -1,14 +1,17 @@
 package com.github.auties00.smalt.container;
 
 /**
- * Enumerates the container formats this module can recognize.
+ * Enumerates the container formats this module can recognize or write.
+ *
+ * <p>Every constant is recognized by {@link Containers#detect(com.github.auties00.smalt.io.MediaSource)} except
+ * {@link #PCM}, raw samples that carry no header to recognize them by.
  *
  * <p>Constants may be added in minor releases as new formats are recognized, so a {@code switch}
  * over this type needs a {@code default} branch.
  */
 public enum ContainerFormat {
     /**
-     * ISO base media file format: MP4, MOV, M4A, M4V, 3GP and 3G2.
+     * ISO base media file format: MP4, MOV, M4A, M4V, 3GP, 3G2 and Motion JPEG 2000 (MJ2).
      */
     MP4,
 
@@ -18,7 +21,7 @@ public enum ContainerFormat {
     MATROSKA,
 
     /**
-     * Ogg, carrying Opus, Vorbis, FLAC or Speex.
+     * Ogg, carrying Opus, Vorbis, FLAC, Speex or Theora.
      */
     OGG,
 
@@ -81,5 +84,104 @@ public enum ContainerFormat {
     /**
      * A WebVTT ({@code .vtt}) text subtitle file.
      */
-    WEBVTT
+    WEBVTT,
+
+    /**
+     * A SubStation Alpha ({@code .ssa}, v4.00) or Advanced SubStation Alpha ({@code .ass}, v4.00+) script,
+     * starting with {@code [Script Info]}.
+     */
+    ASS,
+
+    /**
+     * A TTML document ({@code .ttml}, {@code .dfxp}, {@code .xml}): W3C TTML, DFXP and the IMSC profiles, an
+     * XML document whose root element is {@code tt}.
+     */
+    TTML,
+
+    /**
+     * A SAMI ({@code .smi}) subtitle file, starting with a {@code SAMI} tag.
+     */
+    SAMI,
+
+    /**
+     * An LRC ({@code .lrc}) lyrics file of {@code [mm:ss.xx]} time tags.
+     */
+    LRC,
+
+    /**
+     * A MicroDVD ({@code .sub}) subtitle file of {@code {start}{end}} frame-numbered cues.
+     */
+    MICRODVD,
+
+    /**
+     * A Blu-ray presentation graphic stream file ({@code .sup}): {@code "PG"}-headed PGS segments.
+     */
+    SUP,
+
+    /**
+     * VobSub subtitles: the MPEG program stream of DVD subpictures of a {@code .sub} file, with the {@code .idx}
+     * index that names its palette and languages. Recognized from either file; a demuxer opened from a source reads
+     * the program stream alone, and {@link com.github.auties00.smalt.container.subtitle.VobSubDemuxer} and
+     * {@link com.github.auties00.smalt.container.subtitle.VobSubMuxer} read and write the pair.
+     */
+    VOBSUB,
+
+    /**
+     * An H.264 elementary stream in the Annex B byte stream format ({@code .h264}, {@code .264}): start-code
+     * prefixed NAL units.
+     */
+    H264,
+
+    /**
+     * An HEVC elementary stream in the Annex B byte stream format ({@code .h265}, {@code .265}): start-code
+     * prefixed NAL units.
+     */
+    HEVC,
+
+    /**
+     * An AV1 elementary stream in the low-overhead bitstream format of the AV1 specification, section 5
+     * ({@code .obu}): temporal units of OBUs with size fields, each starting with a temporal delimiter.
+     */
+    AV1,
+
+    /**
+     * An AV1 elementary stream in the length-delimited bitstream format of the AV1 specification, Annex B
+     * ({@code .obu}): temporal units and frame units prefixed with their sizes.
+     */
+    AV1_ANNEX_B,
+
+    /**
+     * An MPEG-4 Part 2 video elementary stream ({@code .m4v}, {@code .cmp}): start-code prefixed visual object
+     * sequence, video object layer and video object plane headers.
+     */
+    MPEG4_VIDEO,
+
+    /**
+     * An H.263 video elementary stream ({@code .263}): pictures after picture start codes.
+     */
+    H263,
+
+    /**
+     * A YUV4MPEG2 file ({@code .y4m}): uncompressed video frames after a text header, magic
+     * {@code YUV4MPEG2}.
+     */
+    Y4M,
+
+    /**
+     * An HTTP Live Streaming playlist ({@code .m3u8}, RFC 8216), master or media, with the segments it names: text
+     * starting with {@code #EXTM3U}.
+     */
+    HLS,
+
+    /**
+     * An MPEG-DASH media presentation description ({@code .mpd}, ISO/IEC 23009-1), with the segments it addresses:
+     * XML whose root element is {@code MPD}.
+     */
+    DASH,
+
+    /**
+     * Raw PCM samples without a header ({@code .pcm}, {@code .raw}), whose sample format, rate and channel count
+     * the reader must know. Never recognized.
+     */
+    PCM
 }

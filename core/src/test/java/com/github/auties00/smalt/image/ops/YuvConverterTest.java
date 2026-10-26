@@ -123,8 +123,7 @@ class YuvConverterTest {
             var converter = YuvConverter.create(ChromaFormat.YUV420, BT709);
             var ictcp = new ColorInfo(MatrixCoefficients.ICTCP, ColorRange.LIMITED, ColorPrimaries.BT2020,
                     TransferCharacteristics.UNSPECIFIED);
-            assertThrows(com.github.auties00.smalt.MediaException.Unsupported.class,
-                    () -> converter.convert(yuv(ChromaFormat.YUV420, false, ictcp)));
+            assertEquals(BT709, converter.convert(yuv(ChromaFormat.YUV420, false, ictcp)).color());
         }
     }
 
