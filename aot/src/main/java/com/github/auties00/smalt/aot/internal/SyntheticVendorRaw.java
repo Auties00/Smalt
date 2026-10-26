@@ -256,7 +256,7 @@ final class SyntheticVendorRaw {
      * @param range the distance from black to the value of a full channel
      * @return the photosites, row by row
      */
-    private static int[] mosaic(RgbaPicture picture, int black, int range) {
+    static int[] mosaic(RgbaPicture picture, int black, int range) {
         var width = picture.width();
         var height = picture.height();
         var samples = new int[width * height];

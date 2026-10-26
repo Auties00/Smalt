@@ -355,7 +355,7 @@ Sigma X3F files) with the camera's color description and the layout of the photo
 |---|---|---|---|---|
 | DNG 1.0-1.7 | CFA (any repeat up to 16x16: Bayer, X-Trans, others with RGB filters; four-color cyan, yellow, green and magenta or red, green, blue and emerald 2x2 arrays; every CFALayout: rectangular and the staggered layouts 2 to 9 of the Fujifilm SuperCCD and others, demosaiced at the photosites' physical places onto the stored grid), linear raw, monochrome; uncompressed 1-32-bit integer and 16/24/32-bit float, interleaved or separately stored planes (PlanarConfiguration 2), lossless JPEG (tiles, interleaved components; also JPEG-LS codestreams in its place, without subsampling), Deflate with the integer and floating-point predictors (DNG 1.4), lossy JPEG (DNG 1.4), JPEG XL (DNG 1.7, through `image.jxl`); SubTileBlockSize, RowInterleaveFactor and ColumnInterleaveFactor (DNG 1.7 JPEG XL files store a CFA as interleaved subimages); linearization table, black level pattern and row/column deltas, white levels, active area (the CFA pattern starts at its corner), default crop and scale, DefaultUserCrop (`RawDecoderOptions.userCrop`); opcode lists 1-3 (GainMap, WarpRectilinear, WarpRectilinear2, WarpFisheye, FixVignetteRadial, FixBadPixelsConstant/List, TrimBounds, MapTable, MapPolynomial, Delta/ScalePerRow/Column); the enhanced image (NewSubFileType 16, `RawDecoderOptions.enhancedImage`); size hints met from JPEG and JPEG XL previews (one tile or several) and from the reduced-resolution linear raw previews of fast load data (RawToPreviewGain); ColorMatrix, CameraCalibration (kept only when CameraCalibrationSignature matches the profile's ProfileCalibrationSignature), AnalogBalance, ForwardMatrix with two or three illuminants (DNG 1.6, IlluminantData as xy or spectrum), AsShotNeutral/AsShotWhiteXY, BaselineExposure and BaselineExposureOffset, ProfileHueSatMap, ProfileLookTable, ProfileToneCurve, ProfileGainTableMap and ProfileGainTableMap2 (every gain encoding), RGBTables over semantic masks (weighted sum and sequential, every transfer curve and set of primaries, gamut extension), DefaultBlackRender (honored by the automatic black subtraction of `RawDecoderOptions.autoBlack`), ExtraCameraProfiles and AsShotProfileName (`RawInfo.cameraProfiles`, `RawDecoderOptions.cameraProfile`); four-color files take four multipliers, a twelve-value matrix override and blended highlights, and `decodeRaw` returns the samples of one without color matrices | the ProfileDynamicRange of high-dynamic-range camera profiles (their tables apply as standard ones); semantic masks serve only the RGB tables; JPEG XL previews are not returned by `extractPreview` | Adobe DNG Specification 1.7.1; ITU-T T.81 annex H; Wyman, Sloan and Shirley (2013) for the CIE 1931 color matching functions of spectral IlluminantData | DNG patent license (royalty-free; notice in the artifact's notices) |
 | Canon CR2 | lossless JPEG with slices; SensorInfo crop, ColorData white balance, black and white levels; mRAW and sRAW (subsampled lossless JPEG, YCbCr to RGB as Adobe DNG Converter does it, ColorData versions 3, 6, 7, 9 to 13 and 15) | sRAW and mRAW of ColorData versions no sample has shown | Laurent Clevy's CR2 write-up (facts only), ExifTool tag documentation; sRAW and mRAW derived from CC0 samples against Adobe DNG Converter (see below) | none known |
-| Canon CR3 | - | CRX codec (metadata, EXIF and the PRVW and full-size JPEGs are read) | Laurent Clevy's CR3 write-up | - |
+| Canon CR3 | the CRX codec, as every CC0 sample (29 model names) codes it: lossless (the four color planes coded directly, in one or two tiles) and lossy C-RAW (the subbands of a three-level 5/3 wavelet transform of each plane, quantized with one step per subband in codec version 1 and through a coded quantization map in version 2, with the tiles' overlapping coefficients), both coded in raster order with an adaptive Golomb-Rice code and a run mode; the image area and crop of the `IAD1` box; white balance, black and white levels from the color data of the maker note the timed metadata track carries; the main image of dual pixel files; metadata, EXIF and the PRVW and full-size JPEGs | the frames of raw burst rolls (CRX encoding type 3), wavelet depths other than three and quantized third-level subbands in codec version 2 (rejected as unsupported; no sample has them), and the second photodiode image of dual pixel files | Laurent Clevy's CR3 write-up (box and header layout, facts only), Canon's patent application US 2016/0323602 A1 (the three-level wavelet and the Golomb-Rice parameter update); the CRX coding derived clean-room from CC0 samples against Adobe DNG Converter (see below) | Canon's US 2016/0323602 A1 describes the wavelet coding |
 | Canon CRW | the CIFF files of the EOS D30, D60, 10D and 300D (Digital Rebel) and the PowerShot G1, G5 and G6: Canon's lossless compression (blocks of 64 photosites coded with the JPEG-style DC and AC Huffman codes of the file's table set 0, 1 or 2, each photosite predicted from the one two columns to its left) with the two low bits of the 12-bit files; image area, black levels measured on the masked area, white levels, white balance of the shot's setting (estimated from the preview when the file has none), ISO, exposure, aperture, focal length, lens range, capture time and rotation; the large JPEG preview and the thumbnail | Huffman codes no sample has used (rejected as unsupported), files without a decoder table and other table sets; rendering the green, magenta, yellow and cyan PowerShot G1 without a color matrix (it has none; it renders with a twelve-value `colorMatrix`, and `decodeRaw` returns its samples); the headerless CHDK dumps also named `.CRW` are not CRW files | Canon's CIFF specification 1.0 revision 4, ExifTool tag documentation (record and field names); the compression, its Huffman tables, the low-bit layout, the levels and the shot fields derived clean-room from CC0 samples against Adobe DNG Converter (see below) | none known |
 | Nikon NEF/NRW | lossless and lossy Huffman compression, lossy files that switch tables at a split row, the linearization curves (versions 0x44 0x10, 0x20 and 0x40), uncompressed 16-bit words and 12-bit packing (rows interlaced in the E-series Coolpix files); white balance (tag 0x000C, or the Coolpix block 0x0014), black levels | HE and HE*; Huffman codes no sample has used (rejected as unsupported); rendering the four-color E5700 without a color matrix (it has none; it renders with a twelve-value `colorMatrix`) | layout from the ExifTool documentation and Bill Claff's notes; Huffman tables and the Coolpix layout derived clean-room from CC0 samples against Adobe DNG Converter (see below) | none known |
 | Sony ARW | cRAW (ARW2, with the tone curve), uncompressed 16-bit words; centered crop from EXIF | white balance and levels of the encrypted SR2 directory (white balance is estimated from the embedded preview; black 512, white 16383) | Henry Dietz's description; block layout of the MIT `arw` Go package | none known |
@@ -379,19 +379,23 @@ accepts the model's DNG `ColorMatrix` (for example from an Adobe DNG Converter f
 
 Provenance of the vendor codings. The NEF Huffman tables, the Olympus ORF compression and layouts, the
 Panasonic RW2 versions 4, 5, 6 and 8, the Pentax PEF tables, Canon's sRAW and mRAW, Canon's CRW compression
-and its tables, the layout of the Nikon E-series Coolpix files and the Minolta MRW layouts, crop and levels
-were derived clean-room, without reading any other decoder: from CC0 sample files of the raw.pixls.us
+and its tables, Canon's CRX coding of CR3 files, the layout of the Nikon E-series Coolpix files and the Minolta
+MRW layouts, crop and levels were derived clean-room, without reading any other decoder: from CC0 sample files of the raw.pixls.us
 archive and the sensor values Adobe DNG Converter, run as a black box writing uncompressed DNG files, stores
 for them, read back with Smalt's own DNG reader. Every claimed file decodes to the converter's values
 photosite for photosite (121 NEF files of 60 models, 63 ORF models, 112 RW2 and RWL models, 29 PEF models,
 21 sRAW and mRAW files of 15 Canon models, the 8 CC0 MRW files of seven model names, whose crop, levels and
 white balance also equal the converter's, and the 11 CC0 CRW files of eight model names, whose image area,
 white levels and white balance also equal the converter's and whose black levels are within one unit of it;
-the converter leaves the low bits out of the photosites after a 12-bit CRW file's last whole group of 256).
+the converter leaves the low bits out of the photosites after a 12-bit CRW file's last whole group of 256; and
+the 41 CC0 CR3 files of 29 model names, lossless and C-RAW of both codec versions, in one and two tiles, a dual
+pixel file among them, whose image area and white balance also equal the converter's, whose black levels are
+within one unit of it and whose white levels equal it except where the converter writes a full-range level of
+its own).
 Codes no sample has used raise `MediaException.Unsupported` instead of being guessed. The test sources of
 `smalt-raw` re-run every derivation (`NikonTableDerivation`, `OlympusDerivation`, `PanasonicDerivation`,
-`CrwTableDerivation`) and check the decoders against the converter (`RawOracleTest`,
-`RawOracleCoverageTest`, `CrwTablesTest`); `tools/testdata/nef-oracle.py` and `raw-oracle.py` write the
+`CrwTableDerivation`, `CrxDerivationTest`) and check the decoders against the converter (`RawOracleTest`,
+`RawOracleCoverageTest`, `CrwTablesTest`, `Cr3OracleTest`); `tools/testdata/nef-oracle.py` and `raw-oracle.py` write the
 oracle files they need on Windows, and the tests skip without them.
 
 Provenance of the Sigma X3F decoder. The container, the property list and the previews follow Sigma's published
@@ -1436,10 +1440,14 @@ checks a FLAC source's MD5 signature on the way.
   Little CMS 2.17 on purpose: a device link read through its `D2B0` fallback (no `D2Bn` of the intent) has its XYZ
   or L*a*b* ends scaled like any floating-point table, and the colors of a named color profile with an XYZ
   connection space are read as XYZ, where Little CMS reads them as L*a*b*.
-- Camera raw: Canon CR3 (CRX) and compressed Fujifilm RAF sensor data, Nikon HE and HE* files and PEF files
-  without a Huffman table, the green-first MRW files of the DiMAGE A200, and CRW streams that use a Huffman
-  code no CC0 sample has shown (set 1, used by the EOS D30 and the PowerShot G1 and G5, lacks the most) are not
-  decoded; the Nikon E5700 and the PowerShot G1 carry no color matrices, so they render only with a twelve-value
+- Camera raw: compressed Fujifilm RAF sensor data, Nikon HE and HE* files and PEF files
+  without a Huffman table, the green-first MRW files of the DiMAGE A200, CRW streams that use a Huffman
+  code no CC0 sample has shown (set 1, used by the EOS D30 and the PowerShot G1 and G5, lacks the most) and the
+  frames of CR3 raw burst rolls (CRX encoding type 3) are not decoded, and the second photodiode image of a dual
+  pixel CR3 file is not exposed; CRX images of more than two tile columns or of several tile rows, and C-RAW images of
+  codec version 2 in more than one tile, which no CC0 sample shows, are decoded by the rules of the files that do; the lens distortion and chromatic aberration
+  correction Adobe DNG Converter applies to the PowerShot compacts' CR3 files (as a WarpRectilinear opcode) is not
+  applied, so their renderings keep the lens's barrel distortion; the Nikon E5700 and the PowerShot G1 carry no color matrices, so they render only with a twelve-value
   `RawDecoderOptions.colorMatrix` (for example from an Adobe DNG Converter file of the model); RW2 version 8 gain and offset tags
   other than the identity are ignored. Cameras outside the 52 profiled models (Minolta's and the CRW bodies
   among them) use a generic color matrix, and Sony white balance, and that of the CRW files without white
@@ -2537,7 +2545,8 @@ the tag mapping of [MusicBrainz Picard](https://picard-docs.musicbrainz.org/)'s 
 the tag vocabulary; the CIE TC1-34 report on CIECAM97s, with its worked examples, as Mark Fairchild
 publishes it, for the CIECAM97s J*a*b* of JPX files.
 For the camera raw formats, Canon's CIFF specification, Sigma's FOVb (X3F) specification, Laurent Clevy's
-CR2 and CR3 write-ups, Bill Claff's notes, Henry Dietz's description of Sony's cRAW,
+CR2 and CR3 write-ups, Canon's patent application US 2016/0323602 A1 on the CRX wavelet coding, Bill Claff's notes,
+Henry Dietz's description of Sony's cRAW,
 [ExifTool](https://exiftool.org/)'s tag documentation and the [raw.pixls.us](https://raw.pixls.us/) archive of CC0 sample files made the clean-room derivations possible,
 and Wyman, Sloan and Shirley's analytic fit of the CIE color matching functions serves the DNG
 reader's spectral illuminants.

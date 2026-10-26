@@ -45,8 +45,7 @@ animation and as pages; a raw file rendered three ways) runs one of those ways, 
 Every build runs each module's `FuzzRegressionTest`, which replays every seed and every saved finding through its
 target as a plain test, without Jazzer's agent, under a 60-second deadline. A seed named `valid-*` must be
 accepted by every step of its target and produce output, and every target must have one, so a target that
-silently rejects everything fails the build. The only target without a valid seed is `RawFuzzTest.cr3`: Smalt does
-not decode the CRX sensor data of CR3 files, so no CR3 input can be accepted by every step.
+silently rejects everything fails the build.
 
 Packet decoder targets read the `FuzzPackets` format: a header (an options byte, the stream fields, the codec
 configuration) followed by packets, the parts separated by the marker `FUZZ-TAG`, so that a mutation of one

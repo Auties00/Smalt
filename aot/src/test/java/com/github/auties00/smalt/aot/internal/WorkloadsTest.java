@@ -159,15 +159,18 @@ class WorkloadsTest {
     }
 
     @Test
-    @DisplayName("synthetic MRW, CRW and X3F files are decodable files of their formats")
+    @DisplayName("synthetic MRW, CRW, CR3 and X3F files are decodable files of their formats")
     void syntheticVendorRaw() {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(64, 48, 1).getFirst(), false);
         var files = List.of(SyntheticVendorRaw.mrw(picture, true), SyntheticVendorRaw.mrw(picture, false),
                 SyntheticVendorRaw.crw(picture), SyntheticVendorRaw.x3f(picture, false),
-                SyntheticVendorRaw.x3f(picture, true));
-        var formats = List.of(RawFormat.MRW, RawFormat.MRW, RawFormat.CRW, RawFormat.X3F, RawFormat.X3F);
-        // the image areas: MRW 8 photosites smaller, CRW without its masked columns, X3F its active area
-        var sizes = new int[][]{{56, 40}, {56, 40}, {56, 44}, {60, 44}, {60, 44}};
+                SyntheticVendorRaw.x3f(picture, true), SyntheticCr3.cr3(picture, 0, 0x100),
+                SyntheticCr3.cr3(picture, 3, 0x100), SyntheticCr3.cr3(picture, 3, 0x200));
+        var formats = List.of(RawFormat.MRW, RawFormat.MRW, RawFormat.CRW, RawFormat.X3F, RawFormat.X3F, RawFormat.CR3,
+                RawFormat.CR3, RawFormat.CR3);
+        // the image areas: MRW 8 photosites smaller, CRW without its masked columns, X3F its active area, CR3 its
+        // crop 8 photosites in from every edge
+        var sizes = new int[][]{{56, 40}, {56, 40}, {56, 44}, {60, 44}, {60, 44}, {48, 32}, {48, 32}, {48, 32}};
         for (var index = 0; index < files.size(); index++) {
             var info = RawDecoder.info(MediaSource.of(files.get(index)));
             assertEquals(formats.get(index), info.format());

@@ -10,8 +10,7 @@ import java.util.stream.Stream;
 
 @DisplayName("raw fuzz targets: seeds and saved findings")
 class FuzzRegressionTest {
-    // the CRX sensor data of CR3 files is not decoded (see Cr3Parser), so no CR3 input is accepted by every step
-    private static final Set<String> PARTIAL = Set.of("RawFuzzTest.cr3");
+    private static final Set<String> PARTIAL = Set.of();
 
     @TestFactory
     @DisplayName("replays every seed and finding, and accepts every valid seed")

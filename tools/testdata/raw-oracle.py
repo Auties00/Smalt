@@ -4,7 +4,7 @@ PanasonicDerivationTest and RawOracleCoverageTest.
 
 The tests check that the decoder reproduces, exactly, the sensor values Adobe DNG Converter stores
 for CC0 sample files of the formats whose coding was worked out against it (ORF, RW2,
-PEF variants, Canon mRAW and sRAW, Canon CRW, interlaced Coolpix NEF, Minolta MRW), check the image
+PEF variants, Canon mRAW and sRAW, Canon CRW, Canon CR3, interlaced Coolpix NEF, Minolta MRW), check the image
 area and the rendering of the Sigma X3F samples it converts (DP1, SD14, SD15), re-derive the Olympus compression and
 Panasonic's raw format version 4 from witness samples, and compare the rendering of the
 converter's four-color DNG files with the previews it renders into them (Canon PowerShot G1, Nikon
@@ -108,6 +108,47 @@ SAMPLES = [
     'rawpixls-sigma-dp1-3-2-1116.x3f',
     'rawpixls-sigma-sigma-sd14-3-2-4462.x3f',
     'rawpixls-sigma-sigma-sd15-3-2-1863.x3f',
+    'rawpixls-canon-eos-1d-x-mark-iii-3-2.cr3',
+    'rawpixls-canon-eos-200d-mark-ii-3-2.cr3',
+    'rawpixls-canon-eos-250d-c-raw-3-2.cr3',
+    'rawpixls-canon-eos-250d-raw-3-2.cr3',
+    'rawpixls-canon-eos-850d-3-2.cr3',
+    'rawpixls-canon-eos-90d-3-2.cr3',
+    'rawpixls-canon-eos-kiss-m-3-2.cr3',
+    'rawpixls-canon-eos-m200-craw-3-2.cr3',
+    'rawpixls-canon-eos-m200-raw-3-2.cr3',
+    'rawpixls-canon-eos-m50-3-2.cr3',
+    'rawpixls-canon-eos-m50-craw-3-2.cr3',
+    'rawpixls-canon-eos-m50-mark-ii-3-2.cr3',
+    'rawpixls-canon-eos-m6-mark-ii-c-raw-3-2.cr3',
+    'rawpixls-canon-eos-m6-mark-ii-raw-3-2.cr3',
+    'rawpixls-canon-eos-r-3-2.cr3',
+    'rawpixls-canon-eos-r10-3-2.cr3',
+    'rawpixls-canon-eos-r100-craw-3-2.cr3',
+    'rawpixls-canon-eos-r100-raw-3-2.cr3',
+    'rawpixls-canon-eos-r3-3-2.cr3',
+    'rawpixls-canon-eos-r5-3-2.cr3',
+    'rawpixls-canon-eos-r5-mark-ii-craw-3-2.cr3',
+    'rawpixls-canon-eos-r5-mark-ii-raw-3-2.cr3',
+    'rawpixls-canon-eos-r5-raw-1.6-crop-dual-pixel-3-2.cr3',
+    'rawpixls-canon-eos-r50-craw-3-2.cr3',
+    'rawpixls-canon-eos-r50-raw-3-2.cr3',
+    'rawpixls-canon-eos-r50-v-raw-3-2.cr3',
+    'rawpixls-canon-eos-r6-3-2.cr3',
+    'rawpixls-canon-eos-r6-mark-ii-3-2.cr3',
+    'rawpixls-canon-eos-r6-mark-iii-craw-3-2.cr3',
+    'rawpixls-canon-eos-r6-mark-iii-raw-3-2.cr3',
+    'rawpixls-canon-eos-r7-3-2.cr3',
+    'rawpixls-canon-eos-r8-3-2.cr3',
+    'rawpixls-canon-eos-rebel-sl3-3-2.cr3',
+    'rawpixls-canon-eos-rp-3-2.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-1-1.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-3-2.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-raw-3-2.cr3',
+    'rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3',
+    'rawpixls-canon-powershot-sx70-hs-c-raw-3-2-3-2.cr3',
+    'rawpixls-canon-powershot-sx70-hs-raw-3-2-3-2.cr3',
+    'rawpixls-canon-powershot-v1-craw-3-2.cr3',
 ]
 
 

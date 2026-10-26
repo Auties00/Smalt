@@ -14,7 +14,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 /**
  * Creates the workloads of {@link TrainingFamily#RAW}, the camera raw decoder of
  * {@code smalt-raw}, on synthetic DNG (Bayer, linear raw, and a staggered mosaic with profile
- * tables), Minolta MRW, Canon CRW and Sigma X3F files.
+ * tables), Minolta MRW, Canon CRW, Canon CR3 and Sigma X3F files.
  */
 final class RawWorkloads {
     /**
@@ -36,6 +36,7 @@ final class RawWorkloads {
                 file("raw-decode-staggered", RawWorkloads::staggered),
                 file("raw-decode-mrw", RawWorkloads::mrw),
                 file("raw-decode-crw", RawWorkloads::crw),
+                file("raw-decode-cr3", RawWorkloads::cr3),
                 file("raw-decode-x3f", RawWorkloads::x3f));
     }
 
@@ -113,6 +114,18 @@ final class RawWorkloads {
     private static TrainingWorkload crw() {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
         return vendor("raw-decode-crw", List.of(SyntheticVendorRaw.crw(picture)));
+    }
+
+    /**
+     * Returns a workload that describes, extracts the sensor values of and decodes with Menon
+     * demosaicing three 1024x768 CR3 files: lossless CRX, and C-RAW of codec versions 1 and 2.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload cr3() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
+        return vendor("raw-decode-cr3", List.of(SyntheticCr3.cr3(picture, 0, 0x100), SyntheticCr3.cr3(picture, 3, 0x100),
+                SyntheticCr3.cr3(picture, 3, 0x200)));
     }
 
     /**

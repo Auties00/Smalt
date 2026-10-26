@@ -17,8 +17,9 @@ import java.util.zip.CRC32;
  * Runs the DNG and camera raw decoders through the I/O behavior harness ({@link ImageDecoderAsserts}), with
  * the sensor data of {@link RawDecoder#decodeRaw} as an extra decode, over DNG files made by
  * {@link TinyDng} in every sample layout and by {@link DngSpecSamples} in the layouts and profile features of DNG
- * 1.2 to 1.7, synthetic Sigma X3F files ({@link X3fWriter}), a smoke-tier DNG and one full-tier file of each
- * camera raw format,
+ * 1.2 to 1.7, synthetic Sigma X3F files ({@link X3fWriter}) and Canon CR3 files ({@link Cr3Writer}), a smoke-tier DNG
+ * and full-tier files of every camera raw format (three for CR3: a lossless file, a version 2 C-RAW file and a
+ * version 1 C-RAW file of two tiles),
  * comparing each with its golden dump under {@code src/test/resources/dumps}.
  */
 @DisplayName("raw decoder I/O behaviors")
@@ -148,15 +149,42 @@ class RawDecoderBehaviorTest {
         harness("x3f/" + name, x3fFile(name).write()).run();
     }
 
+    static Cr3Writer cr3File(String name) {
+        var cr3 = new Cr3Writer();
+        cr3.width = 64;
+        cr3.height = 48;
+        switch (name) {
+            case "lossless" -> {
+            }
+            case "lossless-two-tiles" -> cr3.tiles = 2;
+            case "lossy-version-1" -> cr3.levels = 3;
+            case "lossy-version-2" -> {
+                cr3.levels = 3;
+                cr3.version = 0x200;
+            }
+            default -> throw new IllegalArgumentException(name);
+        }
+        return cr3;
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"lossless", "lossless-two-tiles", "lossy-version-1", "lossy-version-2"})
+    @DisplayName("synthetic Canon CR3 files of both CRX codings and codec versions: identical pictures and sensor "
+            + "data under every source behavior and clean faults")
+    void cr3(String name) {
+        harness("cr3/" + name, cr3File(name).write()).run();
+    }
+
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"rawpixls-sony-nex-6-12bit-12bit-compressed-3-2.arw",
             "rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2", "rawpixls-canon-eos-5d-mark-iii.cr2",
-            "rawpixls-canon-eos-d30-raw-3-2.crw",
+            "rawpixls-canon-eos-d30-raw-3-2.crw", "rawpixls-canon-eos-r6-3-2.cr3",
+            "rawpixls-canon-eos-r6-mark-iii-raw-3-2.cr3", "rawpixls-canon-eos-90d-3-2.cr3",
             "rawpixls-minolta-dimage-5-4-3.mrw", "rawpixls-nikon-d70s-12bit-12bit-compressed-lossy-type-1-3-2.nef",
             "rawpixls-olympus-e-10-16bit-4-3.orf", "rawpixls-pentax-ist-dl-12bit-3-2.pef",
             "rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf", "rawpixls-panasonic-dmc-lx3-1-1.rw2",
             "rawpixls-sigma-dp1-3-2-1116.x3f"})
-    @DisplayName("camera raw files of the full tier, one per format: identical pictures and sensor data under every "
+    @DisplayName("camera raw files of the full tier, at least one per format: identical pictures and sensor data under every "
             + "source behavior and clean faults")
     void camera(String name) throws IOException {
         harness("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name)))

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.image.raw.fuzz;
 
+import com.github.auties00.smalt.image.raw.Cr3Writer;
 import com.github.auties00.smalt.image.raw.DngSpecSamples;
 import com.github.auties00.smalt.image.raw.TinyDng;
 import org.junit.jupiter.api.DisplayName;
@@ -23,8 +24,8 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
  * Writes the committed seeds of the raw fuzz targets (tools/fuzz/README.md): DNG files built with
  * {@link TinyDng} and {@link DngSpecSamples}, CC0 samples from raw.pixls.us (listed in {@code tools/testdata/vectors.tsv}) reduced by
  * {@link RawSeedReducer} to their first {@value #ROWS} sensor rows and tiny previews, and the first {@value #HEAD}
- * bytes of a compressed RAF sample, whose sensor data is not decoded. The CRW, MRW and X3F seeds are written by the
- * synthetic-file builders of their parser tests. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
+ * bytes of a compressed RAF sample, whose sensor data is not decoded, and CR3 files written by {@link Cr3Writer}. The
+ * CRW, MRW and X3F seeds are written by the synthetic-file builders of their parser tests. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
@@ -107,9 +108,30 @@ class FuzzSeedWriter {
         reduce("pef", "rawpixls-pentax-k-5-14bit-3-2.pef", RawSeedReducer.Layout.PEF, jpeg);
         reduce("raf", "rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf", RawSeedReducer.Layout.RAF, jpeg);
         reduce("raf", "rawpixls-fujifilm-x-e2-14bit-14bit-uncompressed-3-2.raf", RawSeedReducer.Layout.RAF, jpeg);
-        // the CRX sensor data is not decoded, so the reduced CR3 file is a seed but not a valid one
+        // the reduced CR3 file keeps only the start of its CRX samples, so it is a seed but not a valid one
         write(RawFuzzTest.class, "cr3", "reduced-canon-eos-250d-raw-3-2.cr3", RawSeedReducer.reduce(
                 Files.readAllBytes(vector("rawpixls-canon-eos-250d-raw-3-2.cr3")), RawSeedReducer.Layout.CR3, ROWS, jpeg));
+    }
+
+    @Test
+    @DisplayName("writes the CR3 seeds")
+    void cr3() {
+        var lossless = new Cr3Writer();
+        lossless.width = 48;
+        lossless.height = 32;
+        lossless.tiles = 2;
+        write(RawFuzzTest.class, "cr3", "valid-crx-lossless-two-tiles.cr3", lossless.write());
+        var first = new Cr3Writer();
+        first.width = 64;
+        first.height = 48;
+        first.levels = 3;
+        write(RawFuzzTest.class, "cr3", "valid-crx-lossy-version-1.cr3", first.write());
+        var second = new Cr3Writer();
+        second.width = 64;
+        second.height = 48;
+        second.levels = 3;
+        second.version = 0x200;
+        write(RawFuzzTest.class, "cr3", "valid-crx-lossy-version-2.cr3", second.write());
     }
 
     private static void reduce(String method, String vector, RawSeedReducer.Layout layout, byte[] jpeg)
