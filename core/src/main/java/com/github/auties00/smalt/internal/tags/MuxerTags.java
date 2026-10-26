@@ -7,7 +7,6 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 
 /**
  * Encodes tags in the forms the muxers write when a caller sets them with
@@ -26,37 +25,41 @@ public final class MuxerTags {
      * Returns whether tags hold nothing a container stores for the whole file.
      *
      * @param tags the tags whose track tags are not counted
-     * @return {@code true} when they hold no entry, picture or chapter, whatever their track tags
+     * @return {@code true} when they hold no entry, picture, chapter or XMP packet, whatever their track tags
      */
     public static boolean isGlobalEmpty(MediaTags tags) {
-        return tags.entries().isEmpty() && tags.pictures().isEmpty() && tags.chapters().isEmpty();
+        return tags.entries().isEmpty() && tags.pictures().isEmpty() && tags.chapters().isEmpty()
+                && tags.xmp().isEmpty();
     }
 
     /**
-     * Encodes an MP4 {@code udta} box holding an iTunes {@code meta}/{@code ilst} and, with
-     * chapters, a Nero {@code chpl} box.
+     * Encodes the boxes of the tags at the end of an MP4 {@code moov}: a {@code udta} box holding an iTunes
+     * {@code meta}/{@code ilst}, the 3GPP {@code loci} boxes of the {@code loci} key, a Nero {@code chpl} box of the
+     * chapters and, in a QuickTime movie, an {@code XMP_} atom of the XMP packet; then a QuickTime keyed metadata
+     * {@code meta} box (handler {@code mdta}) holding the reverse-DNS keys, such as {@code com.apple.quicktime.make}.
      *
      * @param tags the tags and chapters to store
-     * @return the box, or an empty array for empty tags
+     * @param quickTime whether the movie is a QuickTime movie rather than an ISO file
+     * @return the boxes, or an empty array for empty tags
      * @throws com.github.auties00.smalt.MediaException.Unsupported if a value of an iTunes integer
-     * atom, such as {@code tmpo}, is not an integer the atom holds
+     * atom, such as {@code tmpo}, is not an integer the atom holds, or a value of the {@code loci} key is not ISO 6709
+     * coordinates
      */
-    public static byte[] mp4UserData(MediaTags tags) {
+    public static byte[] mp4UserData(MediaTags tags, boolean quickTime) {
         if (isGlobalEmpty(tags)) {
             return new byte[0];
         }
-        var out = new ByteWriter(4096);
-        if (!tags.entries().isEmpty() || !tags.pictures().isEmpty()) {
-            var meta = new ByteWriter(4096);
-            meta.u32be(0);
-            meta.bytes(Mp4TagFile.handler());
-            meta.bytes(Mp4TagFile.ilst(tags, List.of(), Map.of(), new HashSet<>()));
-            Mp4Boxes.box(out, "meta", meta.toByteArray());
-        }
-        if (!tags.chapters().isEmpty()) {
-            out.bytes(Mp4TagFile.chapterBox(tags.chapters()));
-        }
-        return Mp4Boxes.box("udta", out.toByteArray());
+        return Mp4TagFile.movieBoxes(tags, quickTime);
+    }
+
+    /**
+     * Encodes the top-level {@code uuid} box (XMP Specification Part 3) holding the XMP packet of an ISO file.
+     *
+     * @param tags the tags whose packet is encoded
+     * @return the box, or an empty array without a packet
+     */
+    public static byte[] mp4Xmp(MediaTags tags) {
+        return Mp4TagFile.xmpBox(tags);
     }
 
     /**
@@ -236,7 +239,8 @@ public final class MuxerTags {
 
     /**
      * Encodes the metadata chunks of a WAV or AIFF file: the text chunks, an ID3v2 chunk when the tags hold
-     * pictures or more than the text chunks can, then the descriptive chunks {@link RiffMetadataChunks} writes
+     * pictures or more than the text chunks can, the {@code _PMX} or {@code APPL} chunk of the XMP packet, then the
+     * descriptive chunks {@link RiffMetadataChunks} writes
      * (the Broadcast Wave and sampler chunks and the cue points of a WAV file, the markers and instrument of an
      * AIFF file), which hold the chapters.
      *
@@ -248,13 +252,16 @@ public final class MuxerTags {
      */
     public static List<byte[]> riffChunks(MediaTags tags, boolean aiff, int sampleRate) {
         var result = new ArrayList<byte[]>();
-        var plain = RiffMetadataChunks.withoutOwned(tags, aiff);
+        var plain = RiffMetadataChunks.withoutOwned(tags, aiff).toBuilder().noXmp().build();
         if (!plain.entries().isEmpty() || !plain.pictures().isEmpty()) {
             var allText = RiffTagFile.encodeText(aiff, aiff, plain, result, new HashSet<>());
             if (!allText || !plain.pictures().isEmpty()) {
                 result.add(RiffTagFile.chunk(aiff, aiff ? "ID3 " : "id3 ",
                         id3v2(plain.toBuilder().chapters(List.of()).build())));
             }
+        }
+        if (tags.xmp().isPresent()) {
+            result.add(RiffTagFile.xmpChunk(aiff, aiff, tags.xmp().get()));
         }
         if (aiff) {
             result.addAll(RiffMetadataChunks.encodeMarkers(tags.chapters(), tags, sampleRate));

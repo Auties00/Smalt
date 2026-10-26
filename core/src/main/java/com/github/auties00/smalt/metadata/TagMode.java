@@ -46,9 +46,9 @@ public enum TagMode {
      *
      * <p>Each key of the given tags replaces every value the input has for it, and a given entry with an empty
      * value removes the key. Given pictures replace the input's when there is at least one, and so do given
-     * chapters. Given track tags update the input's tags of the same track the same way, and their dispositions
-     * replace the track's when they hold at least one. A given value the output container rejects fails the
-     * conversion.
+     * chapters; a given XMP packet replaces the input's. Given track tags update the input's tags of the same track
+     * the same way, and their dispositions replace the track's when they hold at least one. A given value the output
+     * container rejects fails the conversion.
      */
     MERGE
 }

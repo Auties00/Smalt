@@ -10,6 +10,7 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagEditor;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.XmpPacket;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.transcode.OutputContainer;
@@ -25,13 +26,15 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Tag editing round trips, for every container {@link TagEditor} writes: every standard tag the format's tag system
- * stores (with non-ASCII, multi-valued and long values), a custom key and a front cover are read back as written;
- * writing what was read back changes nothing (the edit is idempotent); clearing the tags leaves none; and through
- * every edit the media packets stay byte for byte those of the original file.
+ * stores (with non-ASCII, multi-valued and long values), a custom key, a front cover and an XMP packet are read back
+ * as written; writing what was read back changes nothing (the edit is idempotent); clearing the tags leaves none;
+ * stripping the location leaves no place and keeps the rest; and through every edit the media packets stay byte for
+ * byte those of the original file.
  */
 @DisplayName("Tag edits")
 class TagRoundTripTest {
@@ -107,6 +110,37 @@ class TagRoundTripTest {
         }
         assertEquals(0, empty.pictures().size(), base + " pictures after clearing");
         assertSamePackets(base + " after clearing", packets, packets(cleared));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("bases")
+    @DisplayName("stores the XMP packet where the format keeps one, and strips the places from it and from the tags")
+    void xmpAndLocation(Base base) {
+        var original = file(base);
+        var packets = packets(original);
+        var xmp = XmpPacket.empty().with(XmpPacket.DC, "title", "Packet \u00E8").with(XmpPacket.EXIF, "GPSLatitude",
+                "45,27.852N").with(XmpPacket.PHOTOSHOP, "City", "Milano");
+        var tags = MediaTags.builder().set(StandardTag.TITLE, "located").set("location", "+45.4642+009.19/").xmp(xmp)
+                .build();
+        var written = TagEditor.write(original, tags, TagWriteOptions.defaults());
+        assertSamePackets(base + " after writing", packets, packets(written));
+        var read = TagEditor.read(MediaSource.of(written));
+        var storesXmp = switch (base.format()) {
+            case MP4, MPEG_AUDIO, ADTS, WAV, AIFF, AC3 -> true;
+            default -> false;
+        };
+        assertEquals(storesXmp ? java.util.Optional.of(xmp) : java.util.Optional.empty(), read.xmp(), base + " xmp");
+        assertEquals(java.util.Optional.of("+45.4642+009.19/"), read.get("location"), base + " location");
+        assertTrue(read.hasLocation(), base.toString());
+        var stripped = TagEditor.stripLocation(written, TagWriteOptions.defaults());
+        var reread = TagEditor.read(MediaSource.of(stripped));
+        assertFalse(reread.hasLocation(), base + " " + reread);
+        assertEquals(java.util.Optional.of("located"), reread.get(StandardTag.TITLE), base + " title");
+        if (storesXmp) {
+            assertEquals(java.util.Optional.of("Packet \u00E8"), reread.xmp().orElseThrow().text(XmpPacket.DC, "title"));
+        }
+        assertSamePackets(base + " after stripping", packets, packets(stripped));
+        assertArrayEquals(stripped, TagEditor.stripLocation(stripped, TagWriteOptions.defaults()), base + " idempotent");
     }
 
     /** Returns whether the tag system a container is written with stores a standard tag natively. */

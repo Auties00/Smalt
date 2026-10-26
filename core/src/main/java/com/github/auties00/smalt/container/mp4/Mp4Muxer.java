@@ -163,6 +163,11 @@ public final class Mp4Muxer implements Muxer {
     private byte[] userData = new byte[0];
 
     /**
+     * The top-level {@code uuid} box of the XMP packet, written after {@code ftyp}, empty without one.
+     */
+    private byte[] xmpBox = new byte[0];
+
+    /**
      * The tags of {@link #setTags(MediaTags)}, whose track tags go in the {@code trak} boxes.
      */
     private MediaTags tags = MediaTags.empty();
@@ -541,7 +546,12 @@ public final class Mp4Muxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The tags become a {@code udta} box at the end of {@code moov}: an iTunes {@code ilst}
-     * with cover art in {@code covr}, and a Nero {@code chpl} box for the chapters. The iTunes
+     * with cover art in {@code covr}, the 3GPP location information boxes of the {@code loci} key (ISO 6709
+     * coordinates), and a Nero {@code chpl} box for the chapters. Reverse-DNS keys such as
+     * {@code com.apple.quicktime.make} go to a QuickTime keyed metadata {@code meta} box (handler {@code mdta})
+     * after it, as text. The {@linkplain MediaTags#xmp() XMP packet} goes in a top-level {@code uuid} box after
+     * {@code ftyp} (XMP Specification Part 3), or in an {@code XMP_} atom of {@code udta} in a
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME QuickTime} movie. The iTunes
      * integer atoms ({@code tmpo}, {@code rtng}, {@code stik}, {@code pgap}, {@code hdvd},
      * {@code tvsn}, {@code tves}, {@code plID} and the other store identifiers) take decimal
      * values. The chapters are also written as a QuickTime chapter track: a disabled text track,
@@ -562,7 +572,7 @@ public final class Mp4Muxer implements Muxer {
      *
      * @throws IllegalArgumentException if the {@code timecode} tag is not a time address
      * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
-     * the atom holds
+     * the atom holds, or a value of the {@code loci} key is not ISO 6709 coordinates
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -574,12 +584,14 @@ public final class Mp4Muxer implements Muxer {
         if (timecode != null) {
             checkTimecode(timecode.strip());
         }
-        var userData = MuxerTags.mp4UserData(tags.toBuilder().remove(TIMECODE_TAG).build());
+        var quickTime = options.brand() == Mp4MuxerOptions.Brand.QUICKTIME;
+        var userData = MuxerTags.mp4UserData(tags.toBuilder().remove(TIMECODE_TAG).build(), quickTime);
         for (var track : tags.tracks()) {
             // the track boxes are written with the movie box, but their values are checked now
             Mp4TrackMetadata.userData(track);
         }
         this.userData = userData;
+        this.xmpBox = quickTime ? new byte[0] : MuxerTags.mp4Xmp(tags);
         this.chapters = tags.chapters();
         this.timecodeText = timecode == null ? null : timecode.strip();
         this.tags = tags;
@@ -1193,7 +1205,7 @@ public final class Mp4Muxer implements Muxer {
 
     /**
      * Writes the {@code ftyp} box of the configured brand, after the JPEG 2000 signature box in a Motion JPEG 2000
-     * file.
+     * file, and the {@code uuid} box of the XMP packet.
      *
      * @param writer the box writer of the output
      */
@@ -1229,6 +1241,7 @@ public final class Mp4Muxer implements Muxer {
             writer.u32(BoxTypes.MP41);
         }
         writer.end();
+        writer.bytes(xmpBox);
     }
 
     /**

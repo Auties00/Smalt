@@ -46,22 +46,24 @@ import java.util.Set;
  *
  * @param trackId the identifier of the track, as {@link com.github.auties00.smalt.track.Track#id() Track.id()}
  * reports it
- * @param tags the tags of the track; no pictures, chapters or track tags
+ * @param tags the tags of the track; no pictures, chapters, track tags or XMP packet
  * @param disposition the dispositions of the track; copied
  */
 public record TrackTags(int trackId, MediaTags tags, Set<TrackDisposition> disposition) {
     /**
      * Validates and copies the components.
      *
-     * @throws IllegalArgumentException if {@code tags} holds pictures, attachments, chapter editions or track tags
+     * @throws IllegalArgumentException if {@code tags} holds pictures, attachments, chapter editions, track tags or an
+     * XMP packet
      * @throws NullPointerException if {@code disposition} holds {@code null}
      */
     public TrackTags {
         Objects.requireNonNull(tags, "tags");
         Objects.requireNonNull(disposition, "disposition");
         if (!tags.pictures().isEmpty() || !tags.attachments().isEmpty() || !tags.editions().isEmpty()
-                || !tags.tracks().isEmpty()) {
-            throw new IllegalArgumentException("the tags of a track hold no pictures, attachments, chapters or track tags");
+                || !tags.tracks().isEmpty() || tags.xmp().isPresent()) {
+            throw new IllegalArgumentException("the tags of a track hold no pictures, attachments, chapters, track tags"
+                    + " or XMP packet");
         }
         var copy = EnumSet.noneOf(TrackDisposition.class);
         for (var value : disposition) {
@@ -131,9 +133,10 @@ public record TrackTags(int trackId, MediaTags tags, Set<TrackDisposition> dispo
     /**
      * Returns a copy with other tags.
      *
-     * @param tags the tags; no pictures, chapters or track tags
+     * @param tags the tags; no pictures, chapters, track tags or XMP packet
      * @return the copy
-     * @throws IllegalArgumentException if {@code tags} holds pictures, attachments, chapter editions or track tags
+     * @throws IllegalArgumentException if {@code tags} holds pictures, attachments, chapter editions, track tags or an
+     * XMP packet
      */
     public TrackTags withTags(MediaTags tags) {
         return new TrackTags(trackId, tags, disposition);

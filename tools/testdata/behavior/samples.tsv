@@ -45,8 +45,10 @@ core/src/test/resources/samples/mp4/h264-422-10.mov	13774	c9165c7b3ad544676da171
 core/src/test/resources/samples/mp4/h264-444.mp4	11523	065db6efeb6ba3d033ff466cb7011199beaacb959fb63212cfcd4745a14101ba	make-samples.sh
 core/src/test/resources/samples/mp4/hevc.mp4	18875	128b382bc84d00e2e8bd72f6890174a4b6b8260abc840a7bb4a5c5efc634ebf1	make-samples.sh
 core/src/test/resources/samples/mp4/jpeg2000.mov	22043	61fcdfd99ef4e81586e7b3a125a64b5c8d62778d5f3cbcc85f4fc3bc0868e0a0	make-samples.sh
+core/src/test/resources/samples/mp4/location-xmp.mp4	46724	bc9b03c9b5c01af5c51feea19da11d7d2a6d4cd0070777a7633f972371c79943	make-samples.sh, make-keyed-metadata-samples.py
 core/src/test/resources/samples/mp4/moov-last.mp4	45860	f07f29483d40c24ccdbed6833e4a04f5d22e446968b7448c4cf0ad36cc8281dc	make-samples.sh
 core/src/test/resources/samples/mp4/motion.mj2	18352	9c3c18eeee3e9fe70749ac0b6671c29d712f7a559d34cf38fe52ff24978976c3	make-mj2-sample.py
+core/src/test/resources/samples/mp4/phone-keyed.mov	66772	59469e2655e2cc162445bfee9c0ba275d9aa8c8f38f4ad3510a6c80ffec35e70	make-samples.sh, make-keyed-metadata-samples.py
 core/src/test/resources/samples/mp4/prores.mov	11125	76b429c682e15e7ea6537ac906d400030dbae4fbf322415798be2633f13ea71c	make-samples.sh
 core/src/test/resources/samples/mp4/quicktime.mov	65138	aa49fbc8e1940cb53ce15527fcb2b4e8f6204f0c628824655c7178227c9001ae	make-samples.sh
 core/src/test/resources/samples/mp4/timecode-spherical.mov	16384	45ecc9d0b26f2948bcbf18aee14ad74dfec237c399b63bb258c5b571cdeda227	make-descriptive-samples.py

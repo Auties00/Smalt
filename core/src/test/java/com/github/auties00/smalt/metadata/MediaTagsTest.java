@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.metadata;
 
 import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.track.TrackDisposition;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -10,8 +11,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -106,5 +110,69 @@ class MediaTagsTest {
     @DisplayName("rejects values holding a NUL character")
     void invalidValue() {
         assertThrows(IllegalArgumentException.class, () -> MediaTags.builder().add("key", "a\0b"));
+    }
+
+    @Test
+    @DisplayName("holds an XMP packet that counts in equality and emptiness and is cleared by noXmp")
+    void xmp() {
+        var packet = XmpPacket.empty().with(XmpPacket.DC, "title", "Packet");
+        var tags = MediaTags.builder().xmp(packet).build();
+        assertFalse(tags.isEmpty());
+        assertEquals(Optional.of(packet), tags.xmp());
+        assertEquals(tags, tags.toBuilder().build());
+        assertNotEquals(tags, MediaTags.empty());
+        assertSame(MediaTags.empty(), tags.toBuilder().noXmp().build());
+        assertSame(MediaTags.empty(), tags.toBuilder().clear().build());
+        assertTrue(tags.toString().contains("Packet"), tags.toString());
+        assertThrows(NullPointerException.class, () -> MediaTags.builder().xmp(null));
+        assertThrows(IllegalArgumentException.class, () -> new TrackTags(1, tags, Set.of()));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"location", "LOCATION", "recording_location", "\u00A9xyz", "loci",
+            "com.apple.quicktime.location.ISO6709", "com.apple.quicktime.location.accuracy.horizontal",
+            "COM.APPLE.QUICKTIME.LOCATION.NAME"})
+    @DisplayName("recognizes every key that records a place and removes it from the file and its tracks")
+    void locationKeys(String key) {
+        var tags = MediaTags.builder().set(StandardTag.TITLE, "kept").add(key, "+45.4642+009.1900/")
+                .add("com.apple.quicktime.make", "Apple").build();
+        assertTrue(tags.hasLocation(), key);
+        var stripped = tags.toBuilder().removeLocation().build();
+        assertFalse(stripped.hasLocation());
+        assertEquals(List.of("title", "com.apple.quicktime.make"), List.copyOf(stripped.keys()));
+        var track = new TrackTags(2, MediaTags.builder().set(StandardTag.TITLE, "track").add(key, "x").build(),
+                Set.of(TrackDisposition.DEFAULT));
+        var withTrack = MediaTags.builder().track(track).build();
+        assertTrue(withTrack.hasLocation());
+        var strippedTrack = withTrack.toBuilder().removeLocation().build().track(2).orElseThrow();
+        assertEquals(List.of("title"), List.copyOf(strippedTrack.tags().keys()));
+        assertEquals(Set.of(TrackDisposition.DEFAULT), strippedTrack.disposition());
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"locations", "com.apple.quicktime.make", "com.apple.quicktime.locationx", "geo", "xyz"})
+    @DisplayName("does not take other keys for a place")
+    void otherKeys(String key) {
+        var tags = MediaTags.builder().add(key, "value").build();
+        assertFalse(tags.hasLocation(), key);
+        assertEquals(tags, tags.toBuilder().removeLocation().build());
+    }
+
+    @Test
+    @DisplayName("removes the XMP properties that record a place and drops a packet left empty")
+    void xmpLocation() {
+        var packet = XmpPacket.empty().with(XmpPacket.DC, "title", "Kept").with(XmpPacket.EXIF, "GPSLatitude",
+                "45,27.852N").with(XmpPacket.PHOTOSHOP, "City", "Milano")
+                .with(XmpPacket.IPTC_EXTENSION, "LocationShown", "Duomo");
+        var tags = MediaTags.builder().xmp(packet).build();
+        assertTrue(tags.hasLocation());
+        var stripped = tags.toBuilder().removeLocation().build();
+        assertFalse(stripped.hasLocation());
+        assertEquals(Optional.of("Kept"), stripped.xmp().orElseThrow().text(XmpPacket.DC, "title"));
+        assertEquals(1, stripped.xmp().orElseThrow().properties().size());
+        var onlyPlace = MediaTags.builder().xmp(XmpPacket.empty().with(XmpPacket.EXIF, "GPSLongitude", "9,11.4E"))
+                .build();
+        assertTrue(onlyPlace.toBuilder().removeLocation().build().xmp().isEmpty());
+        assertFalse(MediaTags.builder().xmp(XmpPacket.empty().with(XmpPacket.DC, "title", "x")).build().hasLocation());
     }
 }

@@ -9,6 +9,7 @@ import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
 import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
@@ -32,7 +33,8 @@ import java.util.zip.Inflater;
  * <p>Reading turns the tag into frames held in a canonical form: the per-frame
  * unsynchronization, data length indicator and compression of the stored frame are undone, so a
  * frame can be written back without them. Text, comment, lyrics, URL, picture and chapter frames
- * are then decoded into {@link MediaTags}; every other frame (binary frames such as {@code PRIV},
+ * are then decoded into {@link MediaTags}, and so is the XMP packet of a {@code PRIV} frame of owner {@code XMP}
+ * (XMP Specification Part 3); every other frame (binary frames such as {@code PRIV},
  * {@code GEOB}, {@code POPM}, comments with a description) is kept as an opaque {@link Frame}
  * that a rewrite can carry over, except a {@code SEEK} frame, whose offset no longer holds once
  * the tag is rewritten ({@link #seekOffset()} reads it).
@@ -49,6 +51,11 @@ public final class Id3v2Tag {
      * The size of the tag header, in bytes.
      */
     public static final int HEADER_SIZE = 10;
+
+    /**
+     * The owner identifier of the {@code PRIV} frame holding XMP, with its terminator.
+     */
+    private static final byte[] XMP_OWNER = {'X', 'M', 'P', 0};
 
     /**
      * The largest tag body a syncsafe size can declare.
@@ -441,6 +448,8 @@ public final class Id3v2Tag {
         var lyricsSeen = false;
         var ratingSeen = false;
         var dateIndex = -1;
+        XmpPacket xmp = null;
+        Frame xmpFrame = null;
         for (var frame : frames) {
             if ((frame.flags() & ENCRYPTED) != 0) {
                 opaque.add(frame);
@@ -511,6 +520,15 @@ public final class Id3v2Tag {
                             opaque.add(frame);
                         }
                     }
+                    case "PRIV" -> {
+                        var packet = xmp == null ? xmpPacket(data) : null;
+                        if (packet != null) {
+                            xmp = packet;
+                            xmpFrame = frame;
+                        } else {
+                            opaque.add(frame);
+                        }
+                    }
                     case "POPM" -> {
                         var popularimeter = ratingSeen ? null : Popularimeter.parse(data);
                         if (popularimeter != null) {
@@ -543,7 +561,25 @@ public final class Id3v2Tag {
             entries.add(Math.max(0, Math.min(dateIndex, entries.size())), new MediaTags.Entry(StandardTag.DATE.key(), date));
         }
         decodeChapters(chapterFrames, chapters);
-        return new Content(entries, pictures, chapters, opaque, chapterFrames);
+        return new Content(entries, pictures, chapters, opaque, chapterFrames, xmp, xmpFrame);
+    }
+
+    /**
+     * Decodes the XMP packet of a {@code PRIV} frame.
+     *
+     * @param data the frame content: a terminated ISO-8859-1 owner and the private data
+     * @return the packet, or {@code null} for another owner or data that is no packet
+     */
+    private static XmpPacket xmpPacket(byte[] data) {
+        if (data.length <= XMP_OWNER.length || !Arrays.equals(data, 0, XMP_OWNER.length, XMP_OWNER, 0,
+                XMP_OWNER.length)) {
+            return null;
+        }
+        try {
+            return XmpPacket.parse(Arrays.copyOfRange(data, XMP_OWNER.length, data.length));
+        } catch (MediaException.Malformed exception) {
+            return null;
+        }
     }
 
     /**
@@ -1029,7 +1065,8 @@ public final class Id3v2Tag {
      *
      * <p>The entries become text, comment, lyrics and URL frames in order of first appearance of
      * their key, followed by one {@code APIC} frame per picture, a {@code CTOC} frame and one
-     * {@code CHAP} frame per chapter, and the carried-over frames. When {@code exactSize} is
+     * {@code CHAP} frame per chapter, the {@code PRIV} frame of the XMP packet, and the carried-over frames. When
+     * {@code exactSize} is
      * positive and the frames fit it, the tag is padded to exactly that size; otherwise
      * {@code padding} zero bytes follow the frames.
      *
@@ -1046,6 +1083,28 @@ public final class Id3v2Tag {
      */
     public static byte[] encode(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, int major,
                                 long exactSize, int padding) {
+        return encode(tags, preserved, chapterFrames, null, major, exactSize, padding);
+    }
+
+    /**
+     * Encodes a tag, keeping the {@code PRIV} frame the XMP packet was read from while the packet is unchanged.
+     *
+     * @param tags the tags to write
+     * @param preserved the opaque frames to carry over; frames of another version than {@code major} are converted when
+     * possible and dropped otherwise
+     * @param chapterFrames the chapter frames to carry over unchanged instead of encoding {@code tags.chapters()}, or
+     * {@code null}
+     * @param xmpFrame the frame the XMP packet of the file was read from, written unchanged when it holds the packet
+     * of {@code tags}, or {@code null}
+     * @param major the version to write, 3 or 4
+     * @param exactSize the size to fill, or {@code 0}
+     * @param padding the padding when the tag does not fill {@code exactSize}
+     * @return the encoded tag, header included
+     * @throws MediaException.LimitExceeded if the tag exceeds the 256 MiB an ID3v2 tag can hold
+     * @see #encode(MediaTags, List, List, int, long, int)
+     */
+    public static byte[] encode(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, Frame xmpFrame,
+                                int major, long exactSize, int padding) {
         var out = new ByteWriter(4096);
         var grouped = new LinkedHashMap<String, List<String>>();
         for (var entry : tags.entries()) {
@@ -1064,6 +1123,17 @@ public final class Id3v2Tag {
             }
         } else if (!tags.chapters().isEmpty()) {
             writeChapters(out, tags.chapters(), major);
+        }
+        if (tags.xmp().isPresent()) {
+            var packet = tags.xmp().get();
+            if (xmpFrame != null && packet.equals(xmpPacket(xmpFrame.data())) && xmpFrame.major() != 2) {
+                writePreserved(out, xmpFrame, major);
+            } else {
+                var content = new ByteWriter(4096);
+                content.bytes(XMP_OWNER);
+                content.bytes(packet.toBytes());
+                writeFrame(out, "PRIV", 0, content.toByteArray(), major);
+            }
         }
         for (var frame : preserved) {
             if ((frame.flags() & TAG_ALTER) == 0 && frame != template) {
@@ -1096,11 +1166,13 @@ public final class Id3v2Tag {
      * @param tags the tags to encode
      * @param preserved the opaque frames to carry over
      * @param chapterFrames the chapter frames to carry over, or {@code null}
+     * @param xmpFrame the frame the XMP packet of the file was read from, or {@code null}
      * @param major the version
      * @return the size in bytes
      */
-    public static long framesSize(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, int major) {
-        return encode(tags, preserved, chapterFrames, major, 0, 0).length - HEADER_SIZE;
+    public static long framesSize(MediaTags tags, List<Frame> preserved, List<Frame> chapterFrames, Frame xmpFrame,
+                                  int major) {
+        return encode(tags, preserved, chapterFrames, xmpFrame, major, 0, 0).length - HEADER_SIZE;
     }
 
     /**
@@ -1692,9 +1764,11 @@ public final class Id3v2Tag {
      * @param chapters the chapters in start order
      * @param opaque the frames without a {@link MediaTags} representation
      * @param chapterFrames the {@code CHAP} and {@code CTOC} frames as read
+     * @param xmp the XMP packet of the first {@code PRIV} frame of owner {@code XMP} that holds one, or {@code null}
+     * @param xmpFrame the frame {@code xmp} was read from, or {@code null}
      */
     public record Content(List<MediaTags.Entry> entries, List<AttachedPicture> pictures, List<Chapter> chapters,
-                          List<Frame> opaque, List<Frame> chapterFrames) {
+                          List<Frame> opaque, List<Frame> chapterFrames, XmpPacket xmp, Frame xmpFrame) {
         /**
          * {@return the decoded content as tags}
          */
@@ -1702,6 +1776,9 @@ public final class Id3v2Tag {
             var builder = MediaTags.builder();
             for (var entry : entries) {
                 builder.add(entry.key(), entry.value());
+            }
+            if (xmp != null) {
+                builder.xmp(xmp);
             }
             return builder.pictures(pictures).chapters(chapters).build();
         }

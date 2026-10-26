@@ -205,7 +205,8 @@ public final class AiffMuxer implements Muxer {
      *
      * <p>The tags become {@code NAME}, {@code AUTH}, {@code (c) } and {@code ANNO} chunks for the
      * values they can hold and, when pictures or other keys need it, an {@code ID3 } chunk with every
-     * tag. The chapters become the markers of a {@code MARK} chunk, named by their titles, and the
+     * tag, and the XMP packet an {@code APPL} chunk of signature {@code XMP }. The chapters become the markers of a
+     * {@code MARK} chunk, named by their titles, and the
      * instrument keys an {@code INST} chunk (whose loops add markers), as
      * {@link com.github.auties00.smalt.metadata.TagEditor} writes them. Every chunk is written before
      * {@code SSND}.

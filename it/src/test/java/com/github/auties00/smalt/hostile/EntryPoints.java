@@ -112,6 +112,7 @@ final class EntryPoints {
             var tags = TagEditor.read(MediaSource.of(data), TagReadOptions.builder().limits(limits).build());
             var edited = (tags == null ? MediaTags.builder() : tags.toBuilder()).set(StandardTag.TITLE, "x").build();
             TagEditor.write(data, edited, TagWriteOptions.builder().limits(limits).build());
+            TagEditor.stripLocation(data, TagWriteOptions.builder().limits(limits).build());
         });
         return failures;
     }

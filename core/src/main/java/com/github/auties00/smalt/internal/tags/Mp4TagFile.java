@@ -17,6 +17,7 @@ import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
 import com.github.auties00.smalt.metadata.TrackTags;
+import com.github.auties00.smalt.metadata.XmpPacket;
 import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.TrackKind;
 
@@ -33,6 +34,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.zip.GZIPInputStream;
@@ -46,6 +48,22 @@ import java.util.zip.GZIPInputStream;
  * signed or unsigned integer, read and written as decimal text), cover art in {@code covr} and
  * free-form items in {@code ----} atoms named by {@code mean} and {@code name}. Items with another
  * binary payload or a non-Apple {@code mean} are opaque and kept.
+ *
+ * <p>QuickTime keyed metadata ({@link Mp4KeyedMetadata}), a {@code meta} box of handler {@code mdta} in
+ * {@code moov} or in its {@code udta}, is read under its key names after the {@code ilst} items, which take
+ * precedence for a key both hold. A rewrite stores a key in the keyed metadata boxes that held it (and in the
+ * {@code ilst} too when that held it as well), and a reverse-DNS key no box of the file holds, such as
+ * {@code com.apple.quicktime.make}, in the file's first keyed metadata box or in a new one at the end of
+ * {@code moov}. The 3GPP location information box ({@code loci}, {@link LocationInformation}) of {@code udta} is read
+ * as the key {@code loci}, its coordinates in ISO 6709 form, and kept while they are unchanged.
+ *
+ * <p>The XMP packet is read from a top-level {@code uuid} box of type {@code BE7ACFCB-97A9-42E8-9C71-999491E3AFAC}
+ * or, failing one, from a {@code udta/XMP_} atom (XMP Specification Part 3). It is kept where it is while it is
+ * unchanged; a new packet goes where the file kept its packet, or for a file without one in a {@code uuid} box after
+ * {@code moov}, or in a {@code udta/XMP_} atom for a QuickTime file (major brand {@code qt  } or no {@code ftyp}). A
+ * new packet whose {@code uuid} box fits the old one takes its place, the rest of the old box becoming a zeroed
+ * {@code free} box, so the media data stays where it is; otherwise the new box follows {@code moov}, and the old one
+ * joins the space of {@code moov} when it follows it or becomes a zeroed {@code free} box of its size.
  *
  * <p>Chapters are written twice: as a Nero {@code chpl} box in {@code udta}, which stores start
  * times only, and as a QuickTime chapter track ({@link Mp4ChapterTrack}) that every audio and
@@ -145,6 +163,22 @@ final class Mp4TagFile implements TagFile {
     private static final String COMPRESSED_MOVIE = "!mov";
 
     /**
+     * The extended type of the {@code uuid} box holding XMP, {@code BE7ACFCB-97A9-42E8-9C71-999491E3AFAC}.
+     */
+    private static final byte[] XMP_UUID = {(byte) 0xBE, 0x7A, (byte) 0xCF, (byte) 0xCB, (byte) 0x97, (byte) 0xA9, 0x42,
+            (byte) 0xE8, (byte) 0x9C, 0x71, (byte) 0x99, (byte) 0x94, (byte) 0x91, (byte) 0xE3, (byte) 0xAF, (byte) 0xAC};
+
+    /**
+     * The QuickTime user data atom holding XMP.
+     */
+    private static final String XMP_ATOM = "XMP_";
+
+    /**
+     * The key the coordinates of the 3GPP location information box are read under.
+     */
+    private static final String LOCI = "loci";
+
+    /**
      * The width in bytes of the iTunes atoms that hold a signed integer: tempo ({@code tmpo}),
      * content rating ({@code rtng}), media kind ({@code stik}), gapless playback ({@code pgap}),
      * HD video ({@code hdvd}), TV season and episode ({@code tvsn}, {@code tves}), the store
@@ -226,6 +260,42 @@ final class Mp4TagFile implements TagFile {
     private final Map<Long, TrackInfo> trackInfo = new LinkedHashMap<>();
 
     /**
+     * The keyed metadata boxes, those of {@code moov} first.
+     */
+    private final List<KeyedSlot> keyedSlots = new ArrayList<>();
+
+    /**
+     * The indexes in {@link #keyedSlots} of the boxes holding each decoded key, by normalized key in lower case.
+     */
+    private final Map<String, Set<Integer>> keyedKeys = new HashMap<>();
+
+    /**
+     * The normalized keys in lower case that the {@code ilst} items and the QuickTime text atoms of {@code udta}
+     * hold.
+     */
+    private final Set<String> ilstKeys = new HashSet<>();
+
+    /**
+     * The index in {@link #topLevel} of the {@code uuid} box holding XMP, or {@code -1}.
+     */
+    private final int xmpIndex;
+
+    /**
+     * Whether the file is a QuickTime movie: major brand {@code qt  }, or no {@code ftyp} box.
+     */
+    private final boolean quickTime;
+
+    /**
+     * The coordinates of the first decodable {@code loci} box of {@code udta}, or {@code null}.
+     */
+    private String lociValue;
+
+    /**
+     * The XMP packet, or {@code null}.
+     */
+    private XmpPacket xmp;
+
+    /**
      * Parses the top-level boxes and the metadata of {@code moov}.
      *
      * @param source the file to parse; not closed
@@ -241,6 +311,8 @@ final class Mp4TagFile implements TagFile {
         var position = 0L;
         var moovAt = -1;
         var compressedAt = -1;
+        var xmpBoxes = new ArrayList<Integer>();
+        var brand = (String) null;
         while (size - position >= 8) {
             if (boxes.size() >= MAX_TOP_LEVEL) {
                 throw new MediaException.Malformed("more than " + MAX_TOP_LEVEL + " top-level MP4 boxes");
@@ -264,12 +336,18 @@ final class Mp4TagFile implements TagFile {
                 boxSize = size - position;
             }
             var type = Mp4Boxes.type(header, 4);
+            var headerSize = ByteArrays.u32be(header, 0) == 1 ? 16 : 8;
             if (type.equals("moov") && moovAt < 0) {
                 moovAt = boxes.size();
             } else if (type.equals(COMPRESSED_MOVIE) && compressedAt < 0) {
                 compressedAt = boxes.size();
+            } else if (type.equals("uuid") && boxSize >= headerSize + 16
+                    && Arrays.equals(TagIo.read(source, position + headerSize, 16, limits), XMP_UUID)) {
+                xmpBoxes.add(boxes.size());
+            } else if (type.equals("ftyp") && boxes.isEmpty() && boxSize >= headerSize + 4) {
+                brand = Mp4Boxes.type(TagIo.read(source, position + headerSize, 4, limits), 0);
             }
-            boxes.add(new long[]{position, boxSize, ByteArrays.u32be(header, 0) == 1 ? 16 : 8});
+            boxes.add(new long[]{position, boxSize, headerSize});
             types.add(type);
             position += boxSize;
         }
@@ -284,6 +362,15 @@ final class Mp4TagFile implements TagFile {
                 : decompressMovie(moovBox);
         this.movieSaved = moovAt >= 0 ? 0 : moov.length - moovBox[1];
         this.chapterTracks = findChapterTracks();
+        this.quickTime = brand == null || brand.equals("qt  ");
+        var xmpAt = -1;
+        for (var candidate : xmpBoxes) {
+            if (readXmpBox(boxes.get(candidate))) {
+                xmpAt = candidate;
+                break;
+            }
+        }
+        this.xmpIndex = xmpAt;
         var opaque = new ArrayList<byte[]>();
         this.integerForms = new HashMap<>();
         var decoded = decode(opaque);
@@ -294,6 +381,32 @@ final class Mp4TagFile implements TagFile {
             withTracks.track(info.tags());
         }
         this.tags = withTracks.build();
+    }
+
+    /**
+     * Reads the packet of the top-level XMP {@code uuid} box into {@link #xmp}.
+     *
+     * @param box the offset, size and header size of the box
+     * @return {@code true} when the box holds a packet, {@code false} when it does not parse as one
+     * @throws MediaException.LimitExceeded if the box is larger than the byte limit
+     */
+    private boolean readXmpBox(long[] box) {
+        var start = box[0] + box[2] + 16;
+        try {
+            xmp = XmpPacket.parse(TagIo.read(source, start, box[0] + box[1] - start, limits));
+            return true;
+        } catch (MediaException.Malformed exception) {
+            return false;
+        }
+    }
+
+    /**
+     * Describes a keyed metadata box.
+     *
+     * @param box the {@code meta} box, in {@link #moov}
+     * @param metadata its parsed items
+     */
+    private record KeyedSlot(Mp4Boxes.Box box, Mp4KeyedMetadata metadata) {
     }
 
     /**
@@ -337,6 +450,8 @@ final class Mp4TagFile implements TagFile {
      * @return the track
      */
     private TrackInfo decodeTrack(Mp4Boxes.Box trak, int publicId) {
+        // TODO: read the keyed metadata of the track (trak/meta of handler mdta) into its track tags and rewrite it
+        // from them; it is kept as it is meanwhile
         var children = Mp4Boxes.children(moov, trak.payload(), trak.end());
         var tkhd = Mp4Boxes.find(children, "tkhd");
         var enabled = tkhd == null || tkhd.size() < 12 || (moov[tkhd.payload() + 3] & Mp4TrackMetadata.ENABLED) != 0;
@@ -595,13 +710,16 @@ final class Mp4TagFile implements TagFile {
         var builder = MediaTags.builder();
         var children = Mp4Boxes.children(moov, moovPayload(), moov.length);
         var udta = Mp4Boxes.find(children, "udta");
-        if (udta == null) {
-            return builder.chapters(trackChapters()).build();
+        var udtaChildren = udta == null ? List.<Mp4Boxes.Box>of() : Mp4Boxes.children(moov, udta.payload(), udta.end());
+        Mp4Boxes.Box meta = null;
+        for (var child : udtaChildren) {
+            if (child.type().equals("meta") && isItunesMeta(child)) {
+                meta = child;
+                break;
+            }
         }
-        var udtaChildren = Mp4Boxes.children(moov, udta.payload(), udta.end());
-        var meta = Mp4Boxes.find(udtaChildren, "meta");
         var keys = new HashSet<String>();
-        if (meta != null && isItunesMeta(meta)) {
+        if (meta != null) {
             var ilst = Mp4Boxes.find(Mp4Boxes.children(moov, metaChildren(meta), meta.end()), "ilst");
             if (ilst != null) {
                 for (var item : Mp4Boxes.children(moov, ilst.payload(), ilst.end())) {
@@ -620,6 +738,29 @@ final class Mp4TagFile implements TagFile {
                 }
             }
         }
+        ilstKeys.addAll(keys);
+        for (var child : udtaChildren) {
+            if (child.type().equals(LocationInformation.TYPE) && lociValue == null) {
+                lociValue = LocationInformation.coordinates(moov, child.payload(), child.end());
+            }
+        }
+        if (lociValue != null && keys.add(LOCI)) {
+            builder.add(LOCI, lociValue);
+        }
+        decodeKeyed(children, udtaChildren, builder, keys);
+        if (xmp == null) {
+            var atom = Mp4Boxes.find(udtaChildren, XMP_ATOM);
+            if (atom != null) {
+                try {
+                    xmp = XmpPacket.parse(Arrays.copyOfRange(moov, atom.payload(), atom.end()));
+                } catch (MediaException.Malformed ignored) {
+                    // an atom that holds no packet is kept as it is
+                }
+            }
+        }
+        if (xmp != null) {
+            builder.xmp(xmp);
+        }
         var chpl = Mp4Boxes.find(udtaChildren, "chpl");
         if (chpl != null) {
             var nero = decodeChapters(chpl);
@@ -634,6 +775,57 @@ final class Mp4TagFile implements TagFile {
             builder.chapters(trackChapters());
         }
         return builder.build();
+    }
+
+    /**
+     * Decodes the keyed metadata boxes of {@code moov} and of its {@code udta}.
+     *
+     * @param children the children of {@code moov}
+     * @param udtaChildren the children of {@code udta}
+     * @param builder receives the values of the keys not read before
+     * @param keys the normalized keys in lower case read so far, which receives those added
+     */
+    private void decodeKeyed(List<Mp4Boxes.Box> children, List<Mp4Boxes.Box> udtaChildren, MediaTags.Builder builder,
+                             Set<String> keys) {
+        for (var level : List.of(children, udtaChildren)) {
+            for (var child : level) {
+                if (child.type().equals("meta") && Mp4KeyedMetadata.isKeyed(moov, child)) {
+                    keyedSlots.add(new KeyedSlot(child, Mp4KeyedMetadata.parse(moov, child)));
+                }
+            }
+        }
+        for (var index = 0; index < keyedSlots.size(); index++) {
+            var added = new HashSet<String>();
+            for (var item : keyedSlots.get(index).metadata().items()) {
+                if (!item.isDecoded()) {
+                    continue;
+                }
+                var lower = StandardTag.normalize(item.key()).toLowerCase(Locale.ROOT);
+                keyedKeys.computeIfAbsent(lower, _ -> new HashSet<>()).add(index);
+                if (!keys.contains(lower) || added.contains(lower)) {
+                    for (var value : item.values()) {
+                        builder.add(item.key(), value);
+                    }
+                    added.add(lower);
+                }
+            }
+            keys.addAll(added);
+        }
+    }
+
+    /**
+     * Returns the index of a keyed metadata box.
+     *
+     * @param box a {@code meta} box of {@link #moov}
+     * @return the index in {@link #keyedSlots}, or {@code -1}
+     */
+    private int keyedSlot(Mp4Boxes.Box box) {
+        for (var index = 0; index < keyedSlots.size(); index++) {
+            if (keyedSlots.get(index).box().offset() == box.offset()) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     /**
@@ -1010,17 +1202,22 @@ final class Mp4TagFile implements TagFile {
         if (rewrite.dropping && moovIndex > 0 && reclaimable(moovIndex - 1)) {
             slotStart = topLevel.get(moovIndex - 1)[0];
         }
+        var blank = rewrite.xmpChanged ? xmpIndex : -1;
         var next = moovIndex + 1;
-        while (next < topLevel.size() && (isFree(topLevelTypes.get(next)) || rewrite.dropping && reclaimable(next))) {
+        while (next < topLevel.size() && (isFree(topLevelTypes.get(next)) || rewrite.dropping && reclaimable(next)
+                || next == blank)) {
             slotEnd = topLevel.get(next)[0] + topLevel.get(next)[1];
             next++;
         }
+        var blanked = blank > moovIndex && blank < next ? null : blank >= 0 ? topLevel.get(blank) : null;
+        var replacement = blanked == null ? null : rewrite.replaceXmp(blanked[1]);
         rewrite.place(slotStart);
         var base = rewrite.build(0, Long.MAX_VALUE);
         var last = next == topLevel.size();
         var fileSize = source.size();
         var slot = slotEnd - slotStart;
-        var plan = EditPlan.builder().copy(0, slotStart);
+        var plan = EditPlan.builder();
+        copyBlanking(plan, 0, slotStart, blanked, replacement);
         if (base.length == slot || last || base.length + 8 <= slot) {
             plan.bytes(base);
             if (base.length != slot && !last) {
@@ -1028,7 +1225,7 @@ final class Mp4TagFile implements TagFile {
             }
             if (!last && movieSaved != 0) {
                 checkCompressedFragments(next, -movieSaved);
-                plan.transform(new Shift(slotEnd, fileSize - slotEnd, -movieSaved, limits));
+                plan.transform(new Shift(slotEnd, fileSize - slotEnd, -movieSaved, limits, blanked, replacement));
                 return plan.build();
             }
         } else {
@@ -1048,14 +1245,33 @@ final class Mp4TagFile implements TagFile {
             }
             if (fileSize > slotEnd) {
                 checkCompressedFragments(next, delta - movieSaved);
-                plan.transform(new Shift(slotEnd, fileSize - slotEnd, delta - movieSaved, limits));
+                plan.transform(new Shift(slotEnd, fileSize - slotEnd, delta - movieSaved, limits, blanked, replacement));
             }
             return plan.build();
         }
         if (!last) {
-            plan.copy(slotEnd, fileSize - slotEnd);
+            copyBlanking(plan, slotEnd, fileSize, blanked, replacement);
         }
         return plan.build();
+    }
+
+    /**
+     * Copies a range of the file, writing other bytes of the same size in place of one top-level box.
+     *
+     * @param plan receives the pieces
+     * @param start the offset of the first copied byte
+     * @param end the offset after the last copied byte
+     * @param blanked the offset, size and header size of the box to replace, or {@code null}
+     * @param replacement the bytes written in its place, as long as the box, or {@code null} with {@code blanked}
+     */
+    private static void copyBlanking(EditPlan.Builder plan, long start, long end, long[] blanked, byte[] replacement) {
+        if (blanked == null || blanked[0] < start || blanked[0] + blanked[1] > end) {
+            plan.copy(start, end - start);
+            return;
+        }
+        plan.copy(start, blanked[0] - start);
+        plan.bytes(replacement);
+        plan.copy(blanked[0] + blanked[1], end - blanked[0] - blanked[1]);
     }
 
     /**
@@ -1231,6 +1447,27 @@ final class Mp4TagFile implements TagFile {
         private final boolean keepOpaque;
 
         /**
+         * Whether the XMP packet changes.
+         */
+        private final boolean xmpChanged;
+
+        /**
+         * The top-level {@code uuid} box of the new XMP packet, written after {@code moov}, or an empty array (also
+         * once {@link #replaceXmp(long)} has placed it in the old box).
+         */
+        private byte[] xmpBox;
+
+        /**
+         * The rebuilt keyed metadata boxes, parallel to {@link #keyedSlots}; an empty array removes one.
+         */
+        private final byte[][] keyedBoxes;
+
+        /**
+         * The new keyed metadata box written at the end of {@code moov}, or an empty array.
+         */
+        private final byte[] freshKeyed;
+
+        /**
          * The {@code mdat} holding the samples of the new chapter track, or an empty array.
          */
         private byte[] chapterData = new byte[0];
@@ -1250,9 +1487,22 @@ final class Mp4TagFile implements TagFile {
         Rewrite(MediaTags newTags, TagWriteOptions options) {
             this.keepOpaque = options.preserveUnknown();
             var children = Mp4Boxes.children(moov, moovPayload(), moov.length);
+            var routing = route(newTags);
+            this.keyedBoxes = new byte[keyedSlots.size()][];
+            for (var index = 0; index < keyedSlots.size(); index++) {
+                var slot = keyedSlots.get(index);
+                keyedBoxes[index] = slot.metadata().rebuild(moov, slot.box(), routing.keyed().get(index), keepOpaque);
+            }
+            this.freshKeyed = routing.fresh().isEmpty() ? new byte[0]
+                    : Mp4KeyedMetadata.create(routing.fresh());
+            this.xmpChanged = !Objects.equals(newTags.xmp().orElse(null), xmp);
+            var packet = xmpChanged ? newTags.xmp().map(XmpPacket::toBytes).orElse(null) : null;
+            var inUuid = packet != null && (xmpIndex >= 0 || xmp == null && !quickTime);
+            this.xmpBox = inUuid ? Mp4Boxes.box("uuid", concat(XMP_UUID, packet)) : new byte[0];
             // TODO: write a timecode tag as a QuickTime timecode track replacing the file's, as Mp4Muxer does; it is
             // stored as a free-form iTunes item meanwhile and the file's timecode track is kept as it is.
-            this.udta = buildUdta(Mp4Boxes.find(children, "udta"), newTags, options);
+            this.udta = buildUdta(Mp4Boxes.find(children, "udta"), routing, newTags.chapters(), keyedBoxes, xmpChanged,
+                    inUuid ? null : packet, options);
             var kinds = new ArrayList<TrackKind>();
             var effective = new ArrayList<TrackTags>();
             var fileIds = new ArrayList<Long>();
@@ -1327,6 +1577,27 @@ final class Mp4TagFile implements TagFile {
         }
 
         /**
+         * Returns the bytes that take the place of the file's old XMP {@code uuid} box: the new {@code uuid} box
+         * followed by a zeroed {@code free} box of the rest when it fits, which then is no longer written after
+         * {@code moov}, or a zeroed {@code free} box of the old size.
+         *
+         * @param size the size of the old box
+         * @return the bytes, {@code size} long
+         */
+        byte[] replaceXmp(long size) {
+            if (xmpBox.length == 0 || xmpBox.length != size && xmpBox.length + 8 > size) {
+                return Mp4Boxes.free(size);
+            }
+            var out = new ByteWriter((int) size);
+            out.bytes(xmpBox);
+            if (xmpBox.length < size) {
+                out.bytes(Mp4Boxes.free(size - xmpBox.length));
+            }
+            xmpBox = new byte[0];
+            return out.toByteArray();
+        }
+
+        /**
          * Places the new chapter samples at the start of the space the rewrite fills.
          *
          * @param slotStart the file offset where the rewritten boxes start
@@ -1376,6 +1647,10 @@ final class Mp4TagFile implements TagFile {
                     case "mvhd" -> body.bytes(chapterTrack != null ? withNextTrackId(child) : copy(child));
                     case "mvex" -> body.bytes(chapterTrack != null || !removed.isEmpty() ? withChapterExtends(child)
                             : copy(child));
+                    case "meta" -> {
+                        var slot = keyedSlot(child);
+                        body.bytes(slot >= 0 ? keyedBoxes[slot] : copy(child));
+                    }
                     default -> body.bytes(moov, child.offset(), child.size());
                 }
                 if (index == lastTrak && chapterTrack != null) {
@@ -1386,7 +1661,9 @@ final class Mp4TagFile implements TagFile {
             if (!udtaWritten && udta.length > 8) {
                 body.bytes(udta);
             }
+            body.bytes(freshKeyed);
             Mp4Boxes.box(out, "moov", body.toByteArray());
+            out.bytes(xmpBox);
             return out.toByteArray();
         }
 
@@ -1740,24 +2017,109 @@ final class Mp4TagFile implements TagFile {
     }
 
     /**
+     * Assigns the entries of new tags to the places that store them.
+     *
+     * @param newTags the tags
+     * @return where each entry goes
+     * @throws MediaException.Unsupported if a value of the {@code loci} key is not ISO 6709 coordinates in range
+     */
+    private Routing route(MediaTags newTags) {
+        var grouped = new LinkedHashMap<String, List<String>>();
+        for (var entry : newTags.entries()) {
+            grouped.computeIfAbsent(entry.key(), _ -> new ArrayList<>()).add(entry.value());
+        }
+        var keyed = new ArrayList<Map<String, List<String>>>();
+        for (var ignored : keyedSlots) {
+            keyed.add(new LinkedHashMap<>());
+        }
+        var fresh = new LinkedHashMap<String, List<String>>();
+        var toIlst = new HashSet<String>();
+        List<String> loci = List.of();
+        for (var group : grouped.entrySet()) {
+            var key = group.getKey();
+            var lower = key.toLowerCase(Locale.ROOT);
+            var holders = keyedKeys.get(lower);
+            if (lower.equals(LOCI)) {
+                loci = List.copyOf(group.getValue());
+                for (var value : loci) {
+                    try {
+                        LocationInformation.parse(value);
+                    } catch (IllegalArgumentException exception) {
+                        throw new MediaException.Unsupported("mp4", "the 3GPP loci box holds ISO 6709 coordinates, "
+                                + exception.getMessage());
+                    }
+                }
+            } else if (holders != null) {
+                for (var holder : holders) {
+                    keyed.get(holder).put(key, group.getValue());
+                }
+                if (ilstKeys.contains(lower)) {
+                    toIlst.add(lower);
+                }
+            } else if (!ilstKeys.contains(lower) && Mp4KeyedMetadata.isReverseDns(key)) {
+                (keyedSlots.isEmpty() ? fresh : keyed.getFirst()).put(key, group.getValue());
+            } else {
+                toIlst.add(lower);
+            }
+        }
+        var ilst = MediaTags.builder().pictures(newTags.pictures());
+        for (var entry : newTags.entries()) {
+            if (toIlst.contains(entry.key().toLowerCase(Locale.ROOT))) {
+                ilst.add(entry.key(), entry.value());
+            }
+        }
+        return new Routing(ilst.build(), loci, keyed, fresh);
+    }
+
+    /**
+     * Where the entries of new tags go.
+     *
+     * @param ilst the entries and pictures of the {@code ilst}
+     * @param loci the coordinates of the {@code loci} boxes
+     * @param keyed the values of each keyed metadata box, parallel to {@link #keyedSlots}, by key in order
+     * @param fresh the values of a new keyed metadata box, by key in order
+     */
+    private record Routing(MediaTags ilst, List<String> loci, List<Map<String, List<String>>> keyed,
+                           Map<String, List<String>> fresh) {
+    }
+
+    /**
      * Builds the new {@code udta}.
      *
      * @param old the old {@code udta}, or {@code null}
-     * @param newTags the tags
+     * @param routing where the entries go
+     * @param chapters the chapters of the Nero {@code chpl} box
+     * @param keyedBoxes the rebuilt keyed metadata boxes, parallel to {@link #keyedSlots}
+     * @param xmpChanged whether the XMP packet changes
+     * @param xmpData the new XMP packet to store in an {@code XMP_} atom, or {@code null}
      * @param options the write options
      * @return the box
      * @throws MediaException.Unsupported if an integer atom holds a value it cannot store
      */
-    private byte[] buildUdta(Mp4Boxes.Box old, MediaTags newTags, TagWriteOptions options) {
+    private byte[] buildUdta(Mp4Boxes.Box old, Routing routing, List<Chapter> chapters, byte[][] keyedBoxes,
+                             boolean xmpChanged, byte[] xmpData, TagWriteOptions options) {
         var written = new HashSet<String>();
-        var ilst = ilst(newTags, options.preserveUnknown() ? opaqueItems : List.of(), integerForms, written);
+        var ilst = ilst(routing.ilst(), options.preserveUnknown() ? opaqueItems : List.of(), integerForms, written);
         var out = new ByteWriter(ilst.length + 256);
         var metaWritten = false;
+        var replaceLoci = !routing.loci().equals(lociValue == null ? List.of() : List.of(lociValue));
+        var lociWritten = false;
+        Mp4Boxes.Box lociTemplate = null;
+        var xmpWritten = false;
         if (old != null) {
+            for (var child : Mp4Boxes.children(moov, old.payload(), old.end())) {
+                if (child.type().equals(LocationInformation.TYPE) && lociTemplate == null
+                        && LocationInformation.coordinates(moov, child.payload(), child.end()) != null) {
+                    lociTemplate = child;
+                }
+            }
             for (var child : Mp4Boxes.children(moov, old.payload(), old.end())) {
                 switch (child.type()) {
                     case "meta" -> {
-                        if (isItunesMeta(child)) {
+                        var slot = keyedSlot(child);
+                        if (slot >= 0) {
+                            out.bytes(keyedBoxes[slot]);
+                        } else if (isItunesMeta(child)) {
                             out.bytes(buildMeta(child, ilst));
                             metaWritten = true;
                         } else {
@@ -1765,6 +2127,22 @@ final class Mp4TagFile implements TagFile {
                         }
                     }
                     case "chpl" -> {
+                    }
+                    case LocationInformation.TYPE -> {
+                        if (!replaceLoci) {
+                            out.bytes(moov, child.offset(), child.size());
+                        } else if (!lociWritten) {
+                            out.bytes(lociBoxes(routing.loci(), lociTemplate));
+                            lociWritten = true;
+                        }
+                    }
+                    case XMP_ATOM -> {
+                        if (!xmpChanged) {
+                            out.bytes(moov, child.offset(), child.size());
+                        } else if (xmpData != null && !xmpWritten) {
+                            Mp4Boxes.box(out, XMP_ATOM, xmpData);
+                            xmpWritten = true;
+                        }
                     }
                     default -> {
                         if (quickTimeText(child) == null) {
@@ -1777,10 +2155,107 @@ final class Mp4TagFile implements TagFile {
         if (!metaWritten && ilst.length > 8) {
             out.bytes(buildMeta(null, ilst));
         }
-        if (!newTags.chapters().isEmpty()) {
-            out.bytes(chapterBox(newTags.chapters()));
+        if (replaceLoci && !lociWritten) {
+            out.bytes(lociBoxes(routing.loci(), lociTemplate));
+        }
+        if (xmpData != null && !xmpWritten) {
+            Mp4Boxes.box(out, XMP_ATOM, xmpData);
+        }
+        if (!chapters.isEmpty()) {
+            out.bytes(chapterBox(chapters));
         }
         return Mp4Boxes.box("udta", out.toByteArray());
+    }
+
+    /**
+     * Builds the {@code loci} boxes of coordinates.
+     *
+     * @param coordinates the ISO 6709 coordinates, one box each
+     * @param template the old box whose other fields the new boxes keep, or {@code null}
+     * @return the boxes
+     */
+    private byte[] lociBoxes(List<String> coordinates, Mp4Boxes.Box template) {
+        var out = new ByteWriter(64 * coordinates.size());
+        for (var value : coordinates) {
+            out.bytes(template == null ? LocationInformation.box(null, 0, 0, value)
+                    : LocationInformation.box(moov, template.payload(), template.end(), value));
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Encodes the boxes the MP4 muxers write at the end of {@code moov}: a {@code udta} box holding an iTunes
+     * {@code meta} box with the entries and pictures, the {@code loci} boxes of the {@code loci} key, an
+     * {@code XMP_} atom of the XMP packet in a QuickTime movie and a Nero {@code chpl} box of the chapters, then a
+     * keyed metadata {@code meta} box of the reverse-DNS keys.
+     *
+     * @param tags the tags to store
+     * @param quickTime whether the movie is a QuickTime movie, whose keyed metadata box is a plain atom and whose XMP
+     * packet goes in {@code udta}
+     * @return the boxes, or an empty array when there is nothing to store
+     * @throws MediaException.Unsupported if a value of an iTunes integer atom is not an integer the atom holds, or a
+     * value of the {@code loci} key is not ISO 6709 coordinates in range
+     */
+    static byte[] movieBoxes(MediaTags tags, boolean quickTime) {
+        var grouped = new LinkedHashMap<String, List<String>>();
+        for (var entry : tags.entries()) {
+            grouped.computeIfAbsent(entry.key(), _ -> new ArrayList<>()).add(entry.value());
+        }
+        var ilstTags = MediaTags.builder().pictures(tags.pictures());
+        var keyed = new LinkedHashMap<String, List<String>>();
+        var loci = new ByteWriter(64);
+        for (var group : grouped.entrySet()) {
+            if (group.getKey().equalsIgnoreCase(LOCI)) {
+                for (var value : group.getValue()) {
+                    try {
+                        loci.bytes(LocationInformation.box(null, 0, 0, value));
+                    } catch (IllegalArgumentException exception) {
+                        throw new MediaException.Unsupported("mp4", "the 3GPP loci box holds ISO 6709 coordinates, "
+                                + exception.getMessage());
+                    }
+                }
+            } else if (Mp4KeyedMetadata.isReverseDns(group.getKey())) {
+                keyed.put(group.getKey(), group.getValue());
+            } else {
+                for (var value : group.getValue()) {
+                    ilstTags.add(group.getKey(), value);
+                }
+            }
+        }
+        var ilstOnly = ilstTags.build();
+        var userData = new ByteWriter(4096);
+        if (!ilstOnly.entries().isEmpty() || !ilstOnly.pictures().isEmpty()) {
+            var meta = new ByteWriter(4096);
+            meta.u32be(0);
+            meta.bytes(handler());
+            meta.bytes(ilst(ilstOnly, List.of(), Map.of(), new HashSet<>()));
+            Mp4Boxes.box(userData, "meta", meta.toByteArray());
+        }
+        userData.bytes(loci.toByteArray());
+        if (quickTime && tags.xmp().isPresent()) {
+            Mp4Boxes.box(userData, XMP_ATOM, tags.xmp().get().toBytes());
+        }
+        if (!tags.chapters().isEmpty()) {
+            userData.bytes(chapterBox(tags.chapters()));
+        }
+        var out = new ByteWriter(userData.size() + 512);
+        if (userData.size() > 0) {
+            Mp4Boxes.box(out, "udta", userData.toByteArray());
+        }
+        if (!keyed.isEmpty()) {
+            out.bytes(Mp4KeyedMetadata.create(keyed));
+        }
+        return out.toByteArray();
+    }
+
+    /**
+     * Encodes the top-level XMP {@code uuid} box of the tags' XMP packet.
+     *
+     * @param tags the tags whose packet is encoded
+     * @return the box, or an empty array without a packet
+     */
+    static byte[] xmpBox(MediaTags tags) {
+        return tags.xmp().map(packet -> Mp4Boxes.box("uuid", concat(XMP_UUID, packet.toBytes()))).orElse(new byte[0]);
     }
 
     /**
@@ -2130,18 +2605,33 @@ final class Mp4TagFile implements TagFile {
         private final MediaLimits limits;
 
         /**
+         * The offset, size and header size of the top-level box written as {@link #replacement}, or {@code null}.
+         */
+        private final long[] blanked;
+
+        /**
+         * The bytes written in place of {@link #blanked}, or {@code null}.
+         */
+        private final byte[] replacement;
+
+        /**
          * Constructs the transformation.
          *
          * @param start the offset of the first copied byte
          * @param length the number of copied bytes
          * @param delta the shift
          * @param limits the resource bounds
+         * @param blanked the offset, size and header size of the top-level box written as other bytes, or
+         * {@code null}
+         * @param replacement the bytes written in place of {@code blanked}, as long as it, or {@code null} with it
          */
-        Shift(long start, long length, long delta, MediaLimits limits) {
+        Shift(long start, long length, long delta, MediaLimits limits, long[] blanked, byte[] replacement) {
             this.start = start;
             this.length = length;
             this.delta = delta;
             this.limits = limits;
+            this.blanked = blanked;
+            this.replacement = replacement;
         }
 
         @Override
@@ -2170,7 +2660,9 @@ final class Mp4TagFile implements TagFile {
                     return;
                 }
                 var type = Mp4Boxes.type(header, 4);
-                if ((type.equals("moof") || type.equals("mfra")) && size <= MAX_FRAGMENT) {
+                if (blanked != null && position == blanked[0] && size == blanked[1]) {
+                    sink.write(replacement, 0, replacement.length);
+                } else if ((type.equals("moof") || type.equals("mfra")) && size <= MAX_FRAGMENT) {
                     var box = TagIo.read(source, position, size, limits);
                     if (type.equals("moof")) {
                         patchFragment(box, 8, box.length, 0);

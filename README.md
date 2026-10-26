@@ -795,9 +795,9 @@ them as a text subtitle track.
 `image.metadata` (`smalt-image`) reads the metadata of every image format and of camera raw files, and edits it
 in JPEG, PNG, WebP, GIF, HEIC, AVIF, TIFF, DNG, JPEG XL, JPEG 2000 and BMP files and the camera raw files with a TIFF signature
 without re-encoding the pixels (`ImageMetadata`, `ImageMetadataEdit`, `ImageMetadataEditor`).
-`metadata` (`smalt-core`) reads and writes the tags, cover art and chapters of audio and video files
-(`TagEditor`, `MediaTags`), holds the tag vocabulary `Media.probe` shares (`StandardTag`), and models XMP
-packets (`XmpPacket`). The image decoders return the embedded XMP packet with the pixels, as
+`metadata` (`smalt-core`) reads and writes the tags, cover art, chapters and XMP packets of audio and video files
+(`TagEditor`, `MediaTags`, with `TagEditor.stripLocation` removing where a video or a recording was made), holds the
+tag vocabulary `Media.probe` shares (`StandardTag`), and models XMP packets (`XmpPacket`). The image decoders return the embedded XMP packet with the pixels, as
 `DecodedImage.xmp()` (JPEG, with Extended XMP merged; PNG; WebP; GIF; TIFF; JPEG 2000; JPEG XL; HEIC; AVIF), next to
 the EXIF block and the ICC profile, and the physical pixel density (or only the pixel aspect ratio) the file
 declares, as `DecodedImage.density()`: a `PixelDensity` in the unit the file uses (the JFIF header of a JPEG, or
@@ -815,8 +815,9 @@ format without CMYK) converts the pixels to sRGB instead, and a still format wit
 BMP, ICO, ANI) turns the picture upright. The EXIF block is embedded byte for byte, maker note included, with
 only its orientation patched in place; TIFF and JPEG 2000 rebuild it from its entries. Everything
 here is written from the specifications (EXIF 2.32, XMP parts 1-3, IPTC
-IIM 4.2, ID3v2.3/2.4, APEv1/APEv2, Lyrics3, Vorbis comment, FLAC format, Apple QTFF and iTunes metadata, Matroska
-tags); the tests use exiftool and ffprobe as independent readers.
+IIM 4.2, ID3v2.3/2.4, APEv1/APEv2, Lyrics3, Vorbis comment, FLAC format, Apple QTFF, its keyed metadata and iTunes
+metadata, 3GPP TS 26.244 asset boxes, ISO 6709, Matroska tags); the tests use exiftool and ffprobe as independent
+readers.
 
 | Image format | EXIF | XMP | IPTC-IIM | ICC | Comments, text | Editing |
 |---|---|---|---|---|---|---|
@@ -837,13 +838,13 @@ tags); the tests use exiftool and ffprobe as independent readers.
 
 | Container | Tags | Pictures | Chapters | Edited in place when | Muxers that store tags |
 |---|---|---|---|---|---|
-| MP3, ADTS, raw AC-3 and E-AC-3, AMR | ID3v2.2 (read), ID3v2.3, ID3v2.4 (tags appended with a `3DI` footer or found through a `SEEK` frame are read as ID3v2.4 section 5 says, each replacing the tags before it unless flagged as an update, and merged into the leading tag); APEv1 (read) and APEv2 (read, updated, added or removed); ID3v1 (read, updated, added or removed); Lyrics3v2 kept, Lyrics3v1 kept while an ID3v1 tag follows it | `APIC`, APE `Cover Art (...)` items | `CHAP` and `CTOC` | the new ID3v2 tag fits the old tags with their padding (the trailing tags never move the audio) | `RawMuxer` (MP3, MP2, AC-3, E-AC-3, AMR), `AdtsMuxer` |
+| MP3, ADTS, raw AC-3 and E-AC-3, AMR | ID3v2.2 (read), ID3v2.3, ID3v2.4 (tags appended with a `3DI` footer or found through a `SEEK` frame are read as ID3v2.4 section 5 says, each replacing the tags before it unless flagged as an update, and merged into the leading tag), the XMP packet in a `PRIV` frame of owner `XMP`; APEv1 (read) and APEv2 (read, updated, added or removed); ID3v1 (read, updated, added or removed); Lyrics3v2 kept, Lyrics3v1 kept while an ID3v1 tag follows it | `APIC`, APE `Cover Art (...)` items | `CHAP` and `CTOC` | the new ID3v2 tag fits the old tags with their padding (the trailing tags never move the audio) | `RawMuxer` (MP3, MP2, AC-3, E-AC-3, AMR), `AdtsMuxer` |
 | FLAC | `VORBIS_COMMENT`; APE and ID3v1 after the frames, as for MP3 | `PICTURE` (APE cover art read) | `CHAPTERxxx` comments, else the tracks of the `CUESHEET`, which is kept while the chapters are unchanged and otherwise rebuilt from them | the blocks fit the old ones and the `PADDING` | `RawMuxer` (FLAC) |
 | Ogg Vorbis, Opus, FLAC | comment header of every link: the first link takes the new tags, every later link keeps its own with the fields, pictures and chapters the edit changes replaced | `METADATA_BLOCK_PICTURE` | `CHAPTERxxx` comments | the Vorbis or Opus comment header, padded, keeps its pages; otherwise later pages are renumbered | `OggMuxer` |
-| MP4, M4A, MOV | iTunes `ilst` (text, `trkn`, `disk`, `cpil`, `gnre`, free-form `----`; the integer atoms `tmpo`, `rtng`, `stik`, `pgap`, `hdvd`, `tvsn`, `tves`, `plID`, `cnID`, `atID`, `geID`, `sfID`, `cmID`, `akID`, `shwm` and any other atom stored as a signed or unsigned integer, as decimal text in the width and signedness the file uses; other binary atoms kept), `udta` text atoms; per track the `udta` `name`, DASH role `kind` boxes, an `ilst` and the `tkhd` enabled flag | `covr` | Nero `chpl` and a QuickTime chapter track (a disabled `text` track with UTF-8 titles that every audio and video track references through `tref/chap`; read from `chpl`, or from the track when `chpl` lacks it or the track completes the chapters or titles a full `chpl` cut), kept while the chapters are unchanged, otherwise replaced in the space of the old one | `moov` fits its space, the following `free` boxes and the samples of a replaced chapter track, or ends the file; otherwise `stco`/`co64`, `tfhd` and `tfra` offsets are shifted, and a `stco` table an offset overflows becomes `co64` | `Mp4Muxer` (chapter track included), `FragmentedMp4Muxer` (`chpl` only), both with the track tags |
+| MP4, M4A, MOV | iTunes `ilst` (text, `trkn`, `disk`, `cpil`, `gnre`, free-form `----`; the integer atoms `tmpo`, `rtng`, `stik`, `pgap`, `hdvd`, `tvsn`, `tves`, `plID`, `cnID`, `atID`, `geID`, `sfID`, `cmID`, `akID`, `shwm` and any other atom stored as a signed or unsigned integer, as decimal text in the width and signedness the file uses; other binary atoms kept), `udta` text atoms (the copyright-sign `xyz`, `mak`, ... atoms); QuickTime keyed metadata (`meta` of handler `mdta` in `moov` or `udta`: the make, model, creation date and location keys phones write, such as `com.apple.quicktime.location.ISO6709`, read under their names with numbers as decimal text, written back in the item's data type and locale; binary items kept; a new reverse-DNS key goes to the file's keyed metadata or a new `moov/meta`); the 3GPP `loci` box as the key `loci` (ISO 6709 coordinates, place name, role, body and notes kept); the XMP packet in a top-level `uuid` box or a `udta/XMP_` atom; per track the `udta` `name`, DASH role `kind` boxes, an `ilst` and the `tkhd` enabled flag | `covr` | Nero `chpl` and a QuickTime chapter track (a disabled `text` track with UTF-8 titles that every audio and video track references through `tref/chap`; read from `chpl`, or from the track when `chpl` lacks it or the track completes the chapters or titles a full `chpl` cut), kept while the chapters are unchanged, otherwise replaced in the space of the old one | `moov` fits its space, the following `free` boxes and the samples of a replaced chapter track, or ends the file; otherwise `stco`/`co64`, `tfhd` and `tfra` offsets are shifted, and a `stco` table an offset overflows becomes `co64` | `Mp4Muxer` (chapter track included; keyed metadata, `loci` and XMP), `FragmentedMp4Muxer` (`chpl` only; keyed metadata, `loci` and XMP), both with the track tags |
 | Matroska, WebM | global `Tags` (sort names as nested `SORT_WITH`, track ReplayGain in a level-30 tag), `Info` title; per track `Name`, the flag elements and the `Tag` targeting its `TrackUID` | image `Attachments` (`cover.*`); the other attachments as `MediaTags.attachments()` | `Chapters`: every edition (`MediaTags.editions()`), nested chapters, titles per language | the elements fit their old space and the following `Void`; otherwise the segment is rewritten with a new `SeekHead` and relocated `Cues` | `MatroskaMuxer` |
-| WAV (RIFF, RIFX, RF64, BW64) | `LIST/INFO`, `id3 ` chunk, the `bext`, `iXML`, `axml`, `chna` and `smpl` chunks under their keys (`TagEditor` lists them); a RIFF file an edit takes past 4 GiB becomes RF64 (a `ds64` chunk in place of a leading `JUNK` or inserted first) | in the `id3 ` chunk | cue points (`cue ` and `LIST adtl`), or the `id3 ` chunk | the chunks fit their slots and `JUNK`, or end the file | `WavMuxer` |
-| AIFF | `NAME`, `AUTH`, `(c) `, `ANNO`, `ID3 ` chunk, `INST` under its keys, `COMT` texts read as comments | in the `ID3 ` chunk | `MARK` markers, or the `ID3 ` chunk | as WAV | `AiffMuxer` |
+| WAV (RIFF, RIFX, RF64, BW64) | `LIST/INFO`, `id3 ` chunk, the `bext`, `iXML`, `axml`, `chna` and `smpl` chunks under their keys (`TagEditor` lists them), the XMP packet of a `_PMX` chunk (or of the `id3 ` chunk's `PRIV` frame, written back there); a RIFF file an edit takes past 4 GiB becomes RF64 (a `ds64` chunk in place of a leading `JUNK` or inserted first) | in the `id3 ` chunk | cue points (`cue ` and `LIST adtl`), or the `id3 ` chunk | the chunks fit their slots and `JUNK`, or end the file | `WavMuxer` |
+| AIFF | `NAME`, `AUTH`, `(c) `, `ANNO`, `ID3 ` chunk, `INST` under its keys, `COMT` texts read as comments, the XMP packet of an `APPL` chunk of signature `XMP ` | in the `ID3 ` chunk | `MARK` markers, or the `ID3 ` chunk | as WAV | `AiffMuxer` |
 | AVI | `LIST INFO` (the entries it has identifiers for); per track the `strn` name | - | - | the header list, the `INFO` list and the `JUNK` before `movi` hold the new ones; otherwise the media moves with its `indx`, `ix##` and absolute `idx1` offsets | `AviMuxer` |
 | MPEG-TS | per track an ATSC A/65 component name and the ISO 639 `audio_type` (no global tags) | - | - | every copy of the program map table is rewritten in its own transport packets; an edit that outgrows them is rejected | `TsMuxer` |
 
@@ -1024,7 +1025,10 @@ checks a FLAC source's MD5 signature on the way.
   PQ or HLG transcode into them is coded at 8 bits; Motion JPEG 2000 codes the depth but its samples are declared
   sYCC, so only the output track's color tells a PQ or HLG stream apart.
 - MP4 tags: `FragmentedMp4Muxer` stores chapters in the Nero `chpl` box only, without a QuickTime chapter track
-  (`TagEditor` adds one to its output). When `TagEditor` replaces the chapter track of a fragmented file whose
+  (`TagEditor` adds one to its output). The keyed metadata of a track (`trak/meta`, which phones
+  use for the video orientation and live photo data) is kept as it is, not read into its track tags. A binary keyed
+  metadata item is kept while its key is unchanged and is not counted as a location, so
+  `TagEditor.stripLocation` removes only the text and number items of the location keys (the ones phones write). When `TagEditor` replaces the chapter track of a fragmented file whose
   fragments carry that track's samples, the old track stays as a `text` track that no chapter reference names,
   since a track fragment must name a track of the movie; the fragments are not rewritten. The iTunes integer atoms
   `TagEditor` and `Mp4Muxer` know take decimal integers their width holds; other values are rejected, except by
@@ -1777,6 +1781,23 @@ The edits rewrite only the metadata segments, chunks, blocks or items of JPEG, P
 files and copy the compressed pixels byte for byte. `stripLocation()` removes the EXIF GPS directory, the XMP coordinates and
 place names and the IPTC place fields; `stripAll()` removes every kind but the ICC profile, which defines the
 colors. EXIF edits keep the maker note and every unchanged value at its offset and zero what they remove.
+
+### Strip location from a video
+
+```java
+TagEditor.stripLocation(Path.of("IMG_0042.MOV"));     // UNCHANGED when the file records no place
+
+var tags = TagEditor.read(Path.of("clip.mp4"));
+tags.get("com.apple.quicktime.make");                  // keyed metadata, under its key name
+tags.get("loci");                                      // the 3GPP location, as ISO 6709: "+45.4642+009.19+120/"
+tags.xmp().flatMap(xmp -> xmp.text(XmpPacket.DC, "title"));
+TagEditor.write(Path.of("clip.mp4"), tags.toBuilder().set("com.apple.quicktime.model", "Camera").build());
+```
+
+`stripLocation` removes the location keys of the file and of its tracks (`com.apple.quicktime.location.*`,
+the copyright-sign `xyz` atom, `loci`, `location`, `recording_location`) and the coordinates and place names of its XMP packet, and keeps
+everything else: the media data does not move unless the metadata outgrows its space. It works on every format
+`TagEditor` writes; `MediaTags.hasLocation()` and `MediaTags.Builder.removeLocation()` do the same on tags in memory.
 
 ### Take a video thumbnail
 

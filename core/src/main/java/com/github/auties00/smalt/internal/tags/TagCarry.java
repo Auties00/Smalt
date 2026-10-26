@@ -254,6 +254,7 @@ public final class TagCarry {
         var builder = mergeEntries(base, update).toBuilder();
         builder.pictures(update.pictures().isEmpty() ? base.pictures() : update.pictures());
         builder.chapters(update.chapters().isEmpty() ? base.chapters() : update.chapters());
+        update.xmp().or(base::xmp).ifPresent(builder::xmp);
         var tracks = new LinkedHashMap<Integer, TrackTags>();
         for (var track : base.tracks()) {
             tracks.put(track.trackId(), track);

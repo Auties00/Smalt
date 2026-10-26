@@ -222,7 +222,8 @@ public final class WavMuxer implements Muxer {
      *
      * <p>The tags become a {@code LIST/INFO} chunk for the values it can hold and, when pictures
      * or other keys need it, an {@code id3 } chunk with every tag, and the Broadcast Wave,
-     * {@code iXML}, {@code axml}, {@code chna} and {@code smpl} keys their own chunks, as
+     * {@code iXML}, {@code axml}, {@code chna} and {@code smpl} keys their own chunks, the XMP packet a {@code _PMX}
+     * chunk, as
      * {@link com.github.auties00.smalt.metadata.TagEditor} writes them. The chapters become cue points:
      * a {@code cue } chunk and a {@code LIST adtl} chunk holding a {@code labl} title and an {@code ltxt}
      * length per chapter. Every chunk is written before {@code data}.

@@ -9,6 +9,7 @@ import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
 import com.github.auties00.smalt.metadata.TagWriteOptions;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
 import java.nio.ByteBuffer;
 import java.nio.charset.CharacterCodingException;
@@ -18,6 +19,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Set;
 
 /**
@@ -35,6 +37,11 @@ import java.util.Set;
  * both, the ID3v2 values first. Writing stores the values the text chunks can hold in them and,
  * when the file already had an ID3v2 chunk or the tags need one (pictures, chapters, other keys),
  * every tag in an ID3v2 chunk.
+ *
+ * <p>The XMP packet (XMP Specification Part 3) is read from a WAV {@code _PMX} chunk or an AIFF {@code APPL} chunk of
+ * application signature {@code XMP }, or, failing one, from a {@code PRIV} frame of the ID3v2 chunk. A rewrite keeps
+ * the chunk while the packet is unchanged, writes a packet the file kept only in its ID3v2 chunk back there, and
+ * any other packet in a {@code _PMX} or {@code APPL} chunk.
  *
  * <p>The new chunks reuse the space of the old ones when they fit (the rest becoming a
  * {@code JUNK} chunk), or replace them at the end of the file when the old metadata chunks were
@@ -72,6 +79,21 @@ final class RiffTagFile implements TagFile {
      * The largest descriptive chunk read.
      */
     private static final int MAX_DESCRIPTIVE = 16 << 20;
+
+    /**
+     * The identifier of the WAV chunk holding XMP.
+     */
+    private static final String WAVE_XMP = "_PMX";
+
+    /**
+     * The identifier of the AIFF application chunk.
+     */
+    private static final String AIFF_APPLICATION = "APPL";
+
+    /**
+     * The application signature of the AIFF {@code APPL} chunk holding XMP.
+     */
+    private static final String AIFF_XMP = "XMP ";
 
     /**
      * The AIFF text chunks and the standard tags they hold.
@@ -128,6 +150,21 @@ final class RiffTagFile implements TagFile {
      * The ID3v2 tag of the file, or {@code null}.
      */
     private final Id3v2Tag id3;
+
+    /**
+     * The offsets of the {@code _PMX} and {@code APPL} chunks that hold an XMP packet.
+     */
+    private final Set<Long> xmpChunks = new HashSet<>();
+
+    /**
+     * The XMP packet of the first chunk of {@link #xmpChunks}, or {@code null}.
+     */
+    private XmpPacket xmp;
+
+    /**
+     * The first chunk of {@link #xmpChunks} as stored, or {@code null}.
+     */
+    private byte[] xmpChunk;
 
     /**
      * The sampling rate of the audio, in hertz, or 0 when unknown.
@@ -219,7 +256,9 @@ final class RiffTagFile implements TagFile {
                 }
                 continue;
             }
-            if (isId3(chunk) && found == null && chunk.payloadSize() >= Id3v2Tag.HEADER_SIZE) {
+            if (xmpCandidate(chunk) && chunk.payloadSize() <= MAX_DESCRIPTIVE) {
+                readXmp(chunk);
+            } else if (isId3(chunk) && found == null && chunk.payloadSize() >= Id3v2Tag.HEADER_SIZE) {
                 var bytes = TagIo.read(source, chunk.offset() + 8, chunk.payloadSize(), limits);
                 if (Id3v2Tag.size(bytes, 0) >= 0) {
                     found = Id3v2Tag.parse(bytes, limits);
@@ -270,6 +309,11 @@ final class RiffTagFile implements TagFile {
                 builder.add(entry.key(), entry.value());
             }
         }
+        if (xmp != null) {
+            builder.xmp(xmp);
+        } else if (found != null && found.decode().xmp() != null) {
+            builder.xmp(found.decode().xmp());
+        }
         if (found == null || found.decode().chapters().isEmpty()) {
             if (aiff) {
                 builder.chapters(RiffMetadataChunks.markerChapters(markers, loopMarkers, sampleRate, duration));
@@ -278,6 +322,61 @@ final class RiffTagFile implements TagFile {
             }
         }
         this.tags = builder.build();
+    }
+
+    /**
+     * Returns whether a chunk may hold an XMP packet: a WAV {@code _PMX} chunk, or an AIFF {@code APPL} chunk of
+     * signature {@code XMP }.
+     *
+     * @param chunk a top-level chunk
+     * @return {@code true} for such a chunk
+     */
+    private boolean xmpCandidate(Chunk chunk) {
+        if (!aiff) {
+            return chunk.id().equals(WAVE_XMP);
+        }
+        return chunk.id().equals(AIFF_APPLICATION) && chunk.payloadSize() >= 4
+                && TagIo.matches(TagIo.readAvailable(source, chunk.offset() + 8, 4), 0, AIFF_XMP);
+    }
+
+    /**
+     * Parses the XMP packet of a chunk, recording the chunk in {@link #xmpChunks} when it holds one.
+     *
+     * @param chunk a chunk {@link #xmpCandidate(Chunk)} accepts
+     */
+    private void readXmp(Chunk chunk) {
+        var skip = aiff ? 4 : 0;
+        var payload = TagIo.read(source, chunk.offset() + 8 + skip, chunk.payloadSize() - skip, limits);
+        XmpPacket packet;
+        try {
+            packet = XmpPacket.parse(payload);
+        } catch (MediaException.Malformed exception) {
+            return;
+        }
+        xmpChunks.add(chunk.offset());
+        if (xmp == null) {
+            xmp = packet;
+            xmpChunk = TagIo.read(source, chunk.offset(), chunk.total(), limits);
+        }
+    }
+
+    /**
+     * Encodes the chunk of an XMP packet.
+     *
+     * @param aiff whether the chunk is an AIFF {@code APPL} chunk rather than a WAV {@code _PMX} chunk
+     * @param bigEndian whether the size is big-endian (AIFF and RIFX)
+     * @param packet the packet to store
+     * @return the chunk, header and pad byte included
+     */
+    static byte[] xmpChunk(boolean aiff, boolean bigEndian, XmpPacket packet) {
+        var bytes = packet.toBytes();
+        if (!aiff) {
+            return chunk(bigEndian, WAVE_XMP, bytes);
+        }
+        var payload = new byte[4 + bytes.length];
+        System.arraycopy(AIFF_XMP.getBytes(StandardCharsets.US_ASCII), 0, payload, 0, 4);
+        System.arraycopy(bytes, 0, payload, 4, bytes.length);
+        return chunk(true, AIFF_APPLICATION, payload);
     }
 
     /**
@@ -393,10 +492,12 @@ final class RiffTagFile implements TagFile {
      * Returns whether a chunk is one of the metadata chunks this editor replaces.
      *
      * @param chunk a top-level chunk
-     * @return {@code true} for ID3v2, {@code INFO}, AIFF text chunks and the descriptive chunks
+     * @return {@code true} for ID3v2, {@code INFO}, AIFF text chunks, the descriptive chunks and the chunks holding
+     * XMP
      */
     private boolean isMetadata(Chunk chunk) {
-        return isId3(chunk) || isInfo(chunk) || (aiff && aiffKey(chunk.id()) != null) || descriptive(chunk) != null;
+        return isId3(chunk) || isInfo(chunk) || (aiff && aiffKey(chunk.id()) != null) || descriptive(chunk) != null
+                || xmpChunks.contains(chunk.offset());
     }
 
     /**
@@ -487,6 +588,16 @@ final class RiffTagFile implements TagFile {
         var textChunks = new ArrayList<byte[]>();
         var textKeys = new HashSet<String>();
         var plain = RiffMetadataChunks.withoutOwned(newTags, aiff);
+        var id3Xmp = id3 == null ? null : id3.decode().xmp();
+        var xmpInId3 = xmp == null && id3Xmp != null && newTags.xmp().isPresent();
+        byte[] xmpBytes = null;
+        if (!xmpInId3) {
+            if (newTags.xmp().isPresent()) {
+                xmpBytes = Objects.equals(newTags.xmp().get(), xmp) ? xmpChunk
+                        : xmpChunk(aiff, bigEndian, newTags.xmp().get());
+            }
+            plain = plain.toBuilder().noXmp().build();
+        }
         var allText = encodeText(aiff, bigEndian, plain, textChunks, textKeys);
         var needsId3 = id3 != null || !plain.pictures().isEmpty() || !allText;
         var newChunks = new ArrayList<byte[]>(textChunks);
@@ -494,8 +605,11 @@ final class RiffTagFile implements TagFile {
             var major = options.id3Version().map(version -> version == TagWriteOptions.Id3Version.V2_3 ? 3 : 4)
                     .orElse(id3 != null && id3.major() == 3 ? 3 : 4);
             var preserved = id3 != null && options.preserveUnknown() ? id3.decode().opaque() : List.<Id3v2Tag.Frame>of();
-            newChunks.add(chunk(bigEndian, aiff ? "ID3 " : "id3 ", Id3v2Tag.encode(plain, preserved, null, major, 0,
-                    0)));
+            newChunks.add(chunk(bigEndian, aiff ? "ID3 " : "id3 ", Id3v2Tag.encode(plain, preserved, null,
+                    id3 == null ? null : id3.decode().xmpFrame(), major, 0, 0)));
+        }
+        if (xmpBytes != null) {
+            newChunks.add(xmpBytes);
         }
         if (aiff) {
             newChunks.addAll(RiffMetadataChunks.encodeMarkers(newTags.chapters(), newTags, sampleRate));

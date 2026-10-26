@@ -67,7 +67,12 @@ public interface Muxer extends AutoCloseable {
      * {@code CUESHEET} block for the chapters of native FLAC), ID3v2 for MP3, ADTS, raw AC-3 and AMR, the
      * {@code LIST/INFO} and {@code id3 } chunks, the Broadcast Wave and sampler chunks and cue points for WAV,
      * the text, {@code ID3 }, {@code MARK} and {@code INST} chunks for AIFF, the {@code LIST INFO} chunk for
-     * AVI. Formats that store a single edition write the chapters of the default one, and formats without nested
+     * AVI. The {@linkplain MediaTags#xmp() XMP packet} goes in a top-level {@code uuid} box (or a {@code udta/XMP_}
+     * atom of a QuickTime movie) from the MP4 muxers, a {@code PRIV} frame of the ID3v2 tag, a WAV {@code _PMX} chunk
+     * and an AIFF {@code APPL} chunk; the other containers do not store it. QuickTime keyed metadata keys (reverse-DNS
+     * names such as {@code com.apple.quicktime.make}) go to a keyed metadata box and the {@code loci} key to a 3GPP
+     * location box in MP4. Formats that store a single edition write the chapters of the default one, and formats
+     * without nested
      * chapters or localized titles write the top-level chapters and their
      * {@linkplain Chapter#title() titles}. The {@linkplain MediaTags#tracks() track tags} of the declared tracks
      * become their names, tags and dispositions in MP4, Matroska, AVI and MPEG-TS, as

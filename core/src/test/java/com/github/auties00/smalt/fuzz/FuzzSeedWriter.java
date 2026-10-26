@@ -374,6 +374,23 @@ class FuzzSeedWriter {
         write(TagFuzzTest.class, "tags", "valid-cuesheet.flac", flac);
     }
 
+    @Test
+    @DisplayName("writes the tag seeds that carry XMP packets, QuickTime keyed metadata and 3GPP locations")
+    void xmpAndPhoneMetadata() throws IOException {
+        var samples = Path.of("src", "test", "resources", "samples", "mp4");
+        copy(TagFuzzTest.class, "tags", "valid-phone-keyed.mov", samples.resolve("phone-keyed.mov"));
+        copy(TagFuzzTest.class, "tags", "valid-location-xmp.mp4", samples.resolve("location-xmp.mp4"));
+        var seeds = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "fuzz",
+                "TagFuzzTestInputs", "tags");
+        var packet = com.github.auties00.smalt.metadata.XmpPacket.parse(XMP);
+        for (var base : List.of("valid-s16.wav", "valid-markers.aiff", "valid-mp3-id3.mp3")) {
+            var data = Files.readAllBytes(seeds.resolve(base));
+            var name = "valid-xmp-" + base.substring("valid-".length());
+            write(TagFuzzTest.class, "tags", name, TagEditor.write(data, TagEditor.read(MediaSource.of(data)).toBuilder()
+                    .set(StandardTag.TITLE, "seed").xmp(packet).build(), TagWriteOptions.defaults()));
+        }
+    }
+
     private static byte[] muxed(java.util.function.Function<MediaSink, com.github.auties00.smalt.container.Muxer> factory,
                                 List<com.github.auties00.smalt.track.Track> tracks,
                                 List<com.github.auties00.smalt.track.Packet> packets, MediaTags tags) {

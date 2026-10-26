@@ -12,14 +12,15 @@ import java.nio.file.Path;
 import java.util.Objects;
 
 /**
- * Reads and writes the tags, cover art, attachments and chapters of audio and video files without touching
- * their audio or video data.
+ * Reads and writes the tags, cover art, attachments, chapters and XMP packet of audio and video files without
+ * touching their audio or video data.
  *
  * <p>The supported containers and the tag formats they carry:
  * <ul>
  *   <li>MP3, ADTS AAC, raw AC-3 and E-AC-3, and AMR: ID3v2.2 (read), ID3v2.3 and ID3v2.4 at the start, an APEv1
  *       (read) or APEv2 tag and an ID3v1 tag at the end; pictures in {@code APIC} frames and APE
- *       {@code "Cover Art (...)"} items, chapters in {@code CHAP}/{@code CTOC} frames. ID3v2.4
+ *       {@code "Cover Art (...)"} items, chapters in {@code CHAP}/{@code CTOC} frames, the XMP packet in a
+ *       {@code PRIV} frame of owner {@code XMP} (XMP Specification Part 3). ID3v2.4
  *       tags found through a {@code SEEK} frame or appended after the audio with a footer are read
  *       as ID3v2.4 section 5 says (each replaces the ID3v2 tags before it, or updates them when
  *       its extended header flags it as an update) and merged into the leading tag on a rewrite;
@@ -41,7 +42,18 @@ import java.util.Objects;
  *       moves media data past 4 GiB turns the 32-bit chunk offset tables it overflows into 64-bit
  *       ones. A {@code timecode} key is stored as a free-form atom, which {@code Mp4Demuxer} reads as the
  *       timecode of a file without timecode track; the timecode track of a file is kept as it is, and only
- *       the MP4 muxers write one;</li>
+ *       the MP4 muxers write one. QuickTime keyed metadata (a {@code meta} box of handler {@code mdta} in
+ *       {@code moov} or its {@code udta}, where phones store the make, model, creation date and location under keys
+ *       such as {@code com.apple.quicktime.location.ISO6709}) is read under its key names, numbers as decimal text,
+ *       after the {@code ilst} items, which take precedence for a key both hold; a write stores a key in the
+ *       boxes that held it, and a reverse-DNS key the file lacks in its first keyed metadata box or a new one,
+ *       keeping each item's data type and locale. The QuickTime user data text atoms ({@code \u00A9xyz},
+ *       {@code \u00A9mak}, ...) are read under their codes and rewritten into the {@code ilst}; the 3GPP location
+ *       information box ({@code loci}) is read as the key {@code loci}, its coordinates in ISO 6709 form
+ *       ({@code +37.3349-122.009+30/}), and rewritten keeping its place name, role, body and notes. The XMP
+ *       packet is read from the top-level {@code uuid} box of XMP Specification Part 3 or a {@code udta/XMP_} atom
+ *       and written back to where the file had it (a new one to a {@code uuid} box, or to {@code udta/XMP_} in a
+ *       QuickTime movie);</li>
  *   <li>Matroska and WebM: global {@code Tags}, {@code Chapters} (every edition that is not hidden, with
  *       its nested chapters and localized titles) and {@code Attachments} (pictures, and the other files as
  *       {@linkplain MediaTags#attachments() attachments}); edition names raise the {@code DocTypeVersion} of
@@ -49,9 +61,11 @@ import java.util.Objects;
  *       written the chapters of the default edition alone, without edition flags or names and keeping only
  *       the localized titles in ISO 639-2 languages, and gains no attachment that is not a picture, as the
  *       WebM specification allows none of them;</li>
- *   <li>WAV (RIFF, big-endian RIFX, RF64 and BW64): the {@code LIST/INFO} chunk and an {@code id3 }
- *       chunk, a RIFF file the edit takes past 4 GiB becoming an RF64 file; AIFF: the text chunks and
- *       an {@code ID3 } chunk. The descriptive chunks below are read into their keys and rewritten from them;
+ *   <li>WAV (RIFF, big-endian RIFX, RF64 and BW64): the {@code LIST/INFO} chunk, an {@code id3 }
+ *       chunk and the XMP packet of a {@code _PMX} chunk, a RIFF file the edit takes past 4 GiB becoming an RF64
+ *       file; AIFF: the text chunks, an {@code ID3 } chunk and the XMP packet of an {@code APPL} chunk of signature
+ *       {@code XMP }. A packet the file kept only in a {@code PRIV} frame of its ID3v2 chunk is read and written
+ *       back there. The descriptive chunks below are read into their keys and rewritten from them;
  *       the ID3v2 chapters take precedence over the cue points and markers;</li>
  *   <li>AVI: the {@code LIST INFO} chunk, which stores no pictures or chapters;</li>
  *   <li>MPEG-TS: track tags only (the program map table of the program {@code TsDemuxer} exposes),
@@ -110,6 +124,10 @@ import java.util.Objects;
  *
  * <p>The class is stateless and thread-safe; editing the same file from several threads at once
  * is not.
+ *
+ * <p>{@link #stripLocation(Path)} removes where the media was made, as {@link MediaTags.Builder#removeLocation()}
+ * describes, keeping everything else: the counterpart for audio and video of the photo metadata editor's location
+ * stripping.
  *
  * @apiNote The keys and values {@code Media.probe} reports for a file are the same normalized vocabulary
  * ({@link StandardTag}), so a probe and a read agree on the standard tags.
@@ -272,6 +290,68 @@ public final class TagEditor {
             TagFiles.open(source, options.limits()).plan(tags, options).writeTo(source, sink);
             return null;
         });
+    }
+
+    /**
+     * Removes the records of where a file on disk was made with {@link TagWriteOptions#defaults()}.
+     *
+     * @param file the file, rewritten in place or replaced
+     * @return how the file was changed; {@link TagWriteResult#UNCHANGED} when it recorded no location
+     * @throws MediaException.Unsupported if the container is not supported
+     * @throws MediaException.Malformed if the metadata structure is corrupt
+     * @throws MediaException.LimitExceeded if the metadata exceeds a format or resource limit
+     * @throws MediaException.Io if reading or writing fails
+     * @see #stripLocation(Path, TagWriteOptions)
+     */
+    public static TagWriteResult stripLocation(Path file) {
+        return stripLocation(file, TagWriteOptions.defaults());
+    }
+
+    /**
+     * Removes the records of where a file on disk was made.
+     *
+     * <p>The tags are read, stripped as {@link MediaTags.Builder#removeLocation()} describes (the location keys of
+     * the file and of its tracks, such as {@code com.apple.quicktime.location.ISO6709}, {@code \u00A9xyz} and
+     * {@code loci}, and the location properties of the XMP packet) and written back; nothing else changes, and a
+     * file without a location is left as it is.
+     *
+     * @param file the file, rewritten in place or replaced
+     * @param options how to write the tags
+     * @return how the file was changed; {@link TagWriteResult#UNCHANGED} when it recorded no location
+     * @throws MediaException.Unsupported if the container is not supported
+     * @throws MediaException.Malformed if the metadata structure is corrupt
+     * @throws MediaException.LimitExceeded if the metadata exceeds a format or resource limit
+     * @throws MediaException.Io if reading or writing fails
+     */
+    public static TagWriteResult stripLocation(Path file, TagWriteOptions options) {
+        Objects.requireNonNull(file, "file");
+        Objects.requireNonNull(options, "options");
+        var tags = read(file, TagReadOptions.builder().limits(options.limits()).build());
+        if (!tags.hasLocation()) {
+            return TagWriteResult.UNCHANGED;
+        }
+        return write(file, tags.toBuilder().removeLocation().build(), options);
+    }
+
+    /**
+     * Returns a copy of an in-memory file without the records of where it was made, as
+     * {@link #stripLocation(Path, TagWriteOptions)} writes it.
+     *
+     * @param file the original file
+     * @param options how to write the tags
+     * @return the edited file, or {@code file} itself when it records no location
+     * @throws MediaException.Unsupported if the container is not supported
+     * @throws MediaException.Malformed if the metadata structure is corrupt
+     * @throws MediaException.LimitExceeded if the metadata exceeds a format or resource limit
+     */
+    public static byte[] stripLocation(byte[] file, TagWriteOptions options) {
+        Objects.requireNonNull(file, "file");
+        Objects.requireNonNull(options, "options");
+        var tags = read(MediaSource.of(file), TagReadOptions.builder().limits(options.limits()).build());
+        if (!tags.hasLocation()) {
+            return file;
+        }
+        return write(file, tags.toBuilder().removeLocation().build(), options);
     }
 
     /**

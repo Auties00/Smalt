@@ -201,6 +201,10 @@ final class Id3StreamTagFile implements TagFile {
                 chapters = content.chapters();
             }
         }
+        var xmp = xmpContent();
+        if (xmp != null) {
+            builder.xmp(xmp.xmp());
+        }
         for (var tag : later) {
             var content = tag.tag().decode();
             if (tag.tag().isUpdate()) {
@@ -237,6 +241,26 @@ final class Id3StreamTagFile implements TagFile {
             addMissing(builder, keys, Id3v1Tag.parse(id3v1, 0), false);
         }
         return builder.pictures(pictures).chapters(chapters).build();
+    }
+
+    /**
+     * Returns the decoded tag whose XMP packet the file presents: that of the first leading tag, replaced by the packet
+     * of each later tag that replaces the tags before it or, as an update, holds one.
+     *
+     * @return the content holding the packet, or {@code null} when the file presents none
+     */
+    private Id3v2Tag.Content xmpContent() {
+        Id3v2Tag.Content result = null;
+        if (!tags.isEmpty() && tags.getFirst().decode().xmp() != null) {
+            result = tags.getFirst().decode();
+        }
+        for (var tag : later) {
+            var content = tag.tag().decode();
+            if (content.xmp() != null || !tag.tag().isUpdate()) {
+                result = content.xmp() != null ? content : null;
+            }
+        }
+        return result;
     }
 
     /**
@@ -285,9 +309,12 @@ final class Id3StreamTagFile implements TagFile {
                 && content.chapters().equals(newTags.chapters()) && tags.getFirst().major() == major
                 ? content.chapterFrames() : null;
         if (!MuxerTags.isGlobalEmpty(newTags) || !preserved.isEmpty()) {
-            var minimal = Id3v2Tag.framesSize(newTags, preserved, chapterFrames, major) + Id3v2Tag.HEADER_SIZE;
+            var xmp = xmpContent();
+            var xmpFrame = xmp == null ? null : xmp.xmpFrame();
+            var minimal = Id3v2Tag.framesSize(newTags, preserved, chapterFrames, xmpFrame, major)
+                    + Id3v2Tag.HEADER_SIZE;
             var exact = audioStart > 0 && minimal <= audioStart ? audioStart : 0;
-            plan.bytes(Id3v2Tag.encode(newTags, preserved, chapterFrames, major, exact, options.padding()));
+            plan.bytes(Id3v2Tag.encode(newTags, preserved, chapterFrames, xmpFrame, major, exact, options.padding()));
         }
         var position = audioStart;
         for (var tag : later) {

@@ -4,12 +4,14 @@ import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ChapterEdition;
+import com.github.auties00.smalt.internal.codec.XmpLocations;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -18,7 +20,7 @@ import java.util.Set;
 
 /**
  * Holds the descriptive metadata of an audio or video file: text tags, attached pictures such as
- * cover art, other attached files, chapters, and the names, tags and dispositions of its tracks.
+ * cover art, other attached files, chapters, an XMP packet, and the names, tags and dispositions of its tracks.
  *
  * <p>Tags are an ordered list of {@link Entry key-value entries}; a key may repeat, which is how
  * multi-valued tags (several artists, several genres) are represented. Keys are normalized when
@@ -37,6 +39,10 @@ import java.util.Set;
  * default one, and the writers of formats that store a single edition write those. Only Matroska stores
  * several editions and the {@linkplain #attachments() attachments} that are not pictures.
  *
+ * <p>The {@linkplain #xmp() XMP packet} is the file's embedded XMP metadata (XMP Specification Part 3), which
+ * {@link TagEditor} reads from and writes to MP4 and QuickTime, WAV, AIFF and ID3v2-tagged files; the other formats
+ * do not store it.
+ *
  * <p>The {@linkplain #tracks() track tags} describe single tracks of a container, each identified by
  * the {@link com.github.auties00.smalt.track.Track#id() identifier} its demuxer reports; {@link TrackTags} lists
  * what each container stores. A file of a format without track metadata has none, and its writers ignore them.
@@ -50,7 +56,17 @@ public final class MediaTags {
     /**
      * An instance with no tag, picture or chapter.
      */
-    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of(), List.of(), List.of());
+    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of(), List.of(), List.of(), null);
+
+    /**
+     * The keys that record a place, in lower case.
+     */
+    private static final Set<String> LOCATION_KEYS = Set.of("location", "recording_location", "\u00A9xyz", "loci");
+
+    /**
+     * The prefix of the QuickTime keyed metadata keys that record a place, in lower case.
+     */
+    private static final String QUICKTIME_LOCATION = "com.apple.quicktime.location.";
 
     /**
      * The separator {@link #asMap()} joins repeated values with.
@@ -88,6 +104,11 @@ public final class MediaTags {
     private final List<TrackTags> tracks;
 
     /**
+     * The XMP packet, or {@code null}.
+     */
+    private final XmpPacket xmp;
+
+    /**
      * Constructs an instance.
      *
      * @param entries the tag entries
@@ -95,9 +116,10 @@ public final class MediaTags {
      * @param attachments the attachments that are not pictures
      * @param editions the chapter editions; the top-level chapters of those that are not ordered are sorted by start
      * @param tracks the track tags, one per track identifier
+     * @param xmp the XMP packet, or {@code null}
      */
     private MediaTags(List<Entry> entries, List<AttachedPicture> pictures, List<Attachment> attachments,
-                      List<ChapterEdition> editions, List<TrackTags> tracks) {
+                      List<ChapterEdition> editions, List<TrackTags> tracks, XmpPacket xmp) {
         this.entries = List.copyOf(entries);
         this.pictures = List.copyOf(pictures);
         this.attachments = List.copyOf(attachments);
@@ -109,6 +131,7 @@ public final class MediaTags {
         var index = ChapterEdition.defaultIndex(this.editions);
         this.chapters = index < 0 ? List.of() : sorted(this.editions.get(index).chapters());
         this.tracks = List.copyOf(tracks);
+        this.xmp = xmp;
     }
 
     /**
@@ -153,6 +176,7 @@ public final class MediaTags {
         builder.attachments.addAll(attachments);
         builder.editions.addAll(editions);
         builder.tracks.addAll(tracks);
+        builder.xmp = xmp;
         return builder;
     }
 
@@ -377,31 +401,96 @@ public final class MediaTags {
     }
 
     /**
-     * Returns whether this instance holds no tag, picture, attachment, chapter edition or track tags.
+     * {@return the XMP packet, or empty when there is none}
+     */
+    public Optional<XmpPacket> xmp() {
+        return Optional.ofNullable(xmp);
+    }
+
+    /**
+     * Returns whether these tags record where the media was made.
+     *
+     * <p>A place is recorded by an entry of one of these keys, compared ignoring case, in the tags of the file or
+     * of a track:
+     * <ul>
+     *   <li>{@code location} and {@code recording_location}, the place names and coordinates of the Vorbis comment,
+     *       Matroska and {@code Media.probe} vocabularies;</li>
+     *   <li>{@code \u00A9xyz}, the ISO 6709 coordinates of the QuickTime user data atom and iTunes item;</li>
+     *   <li>{@code loci}, the coordinates of the 3GPP location information box (3GPP TS 26.244);</li>
+     *   <li>the QuickTime keyed metadata keys starting {@code com.apple.quicktime.location.}, such as
+     *       {@code com.apple.quicktime.location.ISO6709};</li>
+     * </ul>
+     * or by a property of the {@linkplain #xmp() XMP packet} that records a place: the {@code GPS} properties of
+     * the EXIF schemas and the place names of the Photoshop ({@code City}, {@code State}, {@code Country}) and
+     * IPTC ({@code Location}, {@code CountryCode}, {@code LocationCreated}, {@code LocationShown}) schemas.
+     *
+     * @return {@code true} when a place is recorded
+     * @see Builder#removeLocation()
+     */
+    public boolean hasLocation() {
+        if (hasLocation(entries) || xmp != null && xmp.properties().stream().anyMatch(XmpLocations::isLocation)) {
+            return true;
+        }
+        for (var track : tracks) {
+            if (hasLocation(track.tags().entries())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether entries hold a key that records a place.
+     *
+     * @param entries the entries to search
+     * @return {@code true} when one of them does
+     */
+    private static boolean hasLocation(List<Entry> entries) {
+        for (var entry : entries) {
+            if (isLocationKey(entry.key())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether a key records a place, as {@link #hasLocation()} lists.
+     *
+     * @param key a normalized key
+     * @return {@code true} for such a key
+     */
+    private static boolean isLocationKey(String key) {
+        var lower = key.toLowerCase(Locale.ROOT);
+        return LOCATION_KEYS.contains(lower) || lower.startsWith(QUICKTIME_LOCATION);
+    }
+
+    /**
+     * Returns whether this instance holds no tag, picture, attachment, chapter edition, XMP packet or track tags.
      *
      * @return {@code true} when empty
      */
     public boolean isEmpty() {
         return entries.isEmpty() && pictures.isEmpty() && attachments.isEmpty() && editions.isEmpty()
-                && tracks.isEmpty();
+                && tracks.isEmpty() && xmp == null;
     }
 
     @Override
     public boolean equals(Object other) {
         return other instanceof MediaTags that && entries.equals(that.entries) && pictures.equals(that.pictures)
                 && attachments.equals(that.attachments) && editions.equals(that.editions)
-                && tracks.equals(that.tracks);
+                && tracks.equals(that.tracks) && Objects.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(entries, pictures, attachments, editions, tracks);
+        return Objects.hash(entries, pictures, attachments, editions, tracks, xmp);
     }
 
     @Override
     public String toString() {
         return "MediaTags[entries=" + entries + ", pictures=" + pictures + ", attachments=" + attachments
-                + ", editions=" + editions + ", tracks=" + tracks + "]";
+                + ", editions=" + editions + ", tracks=" + tracks + ", xmp=" + xmp + "]";
     }
 
     /**
@@ -469,6 +558,11 @@ public final class MediaTags {
          * The track tags.
          */
         private final List<TrackTags> tracks = new ArrayList<>();
+
+        /**
+         * The XMP packet, or {@code null}.
+         */
+        private XmpPacket xmp;
 
         /**
          * Constructs an empty builder.
@@ -727,7 +821,56 @@ public final class MediaTags {
         }
 
         /**
-         * Removes every entry, picture, attachment, chapter edition and track tags.
+         * Sets the XMP packet; see {@link MediaTags#xmp()}.
+         *
+         * @param xmp the packet
+         * @return this builder
+         */
+        public Builder xmp(XmpPacket xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp");
+            return this;
+        }
+
+        /**
+         * Removes the XMP packet; see {@link MediaTags#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
+            return this;
+        }
+
+        /**
+         * Removes every record of where the media was made: the entries of the keys {@link MediaTags#hasLocation()}
+         * lists, from the tags of the file and of every track, and the XMP properties that record a place. An XMP
+         * packet left without properties is removed.
+         *
+         * @return this builder
+         */
+        public Builder removeLocation() {
+            entries.removeIf(entry -> isLocationKey(entry.key()));
+            for (var index = 0; index < tracks.size(); index++) {
+                var track = tracks.get(index);
+                if (hasLocation(track.tags().entries())) {
+                    var stripped = new Builder();
+                    for (var entry : track.tags().entries()) {
+                        if (!isLocationKey(entry.key())) {
+                            stripped.entries.add(entry);
+                        }
+                    }
+                    tracks.set(index, track.withTags(stripped.build()));
+                }
+            }
+            if (xmp != null) {
+                var stripped = xmp.withoutIf(XmpLocations::isLocation);
+                xmp = stripped.isEmpty() ? null : stripped;
+            }
+            return this;
+        }
+
+        /**
+         * Removes every entry, picture, attachment, chapter edition, track tags and the XMP packet.
          *
          * @return this builder
          */
@@ -737,6 +880,7 @@ public final class MediaTags {
             attachments.clear();
             editions.clear();
             tracks.clear();
+            xmp = null;
             return this;
         }
 
@@ -747,10 +891,10 @@ public final class MediaTags {
          */
         public MediaTags build() {
             if (entries.isEmpty() && pictures.isEmpty() && attachments.isEmpty() && editions.isEmpty()
-                    && tracks.isEmpty()) {
+                    && tracks.isEmpty() && xmp == null) {
                 return EMPTY;
             }
-            return new MediaTags(entries, pictures, attachments, editions, tracks);
+            return new MediaTags(entries, pictures, attachments, editions, tracks, xmp);
         }
     }
 }

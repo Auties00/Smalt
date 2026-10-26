@@ -115,12 +115,12 @@ public final class FragmentedMp4Muxer implements Muxer {
      * Describes the layout of a file indexed by a single segment index, as the DASH
      * {@code SegmentBase} addressing needs it.
      *
-     * <p>Offsets count from the first byte the muxer wrote: the initialization segment
-     * ({@code ftyp} and {@code moov}) spans {@code [0, initializationSize)}, the first
+     * <p>Offsets count from the first byte the muxer wrote: the initialization segment ({@code ftyp}, the
+     * {@code uuid} box of an XMP packet and {@code moov}) spans {@code [0, initializationSize)}, the first
      * {@code sidx} {@code [indexOffset, indexOffset + indexSize)}, and the subsegments follow it in
      * order, with the {@code sidx} boxes of a hierarchical index between them.
      *
-     * @param initializationSize the size of {@code ftyp} and {@code moov} in bytes
+     * @param initializationSize the size of the initialization segment in bytes
      * @param indexOffset the offset of the first {@code sidx}, equal to the initialization size
      * @param indexSize the size of the first {@code sidx} in bytes
      * @param subsegments the fragments the {@code sidx} references, in order
@@ -255,6 +255,11 @@ public final class FragmentedMp4Muxer implements Muxer {
      * The {@code udta} box the tags were encoded to, empty without tags.
      */
     private byte[] userData = new byte[0];
+
+    /**
+     * The top-level {@code uuid} box of the XMP packet, written after {@code ftyp}, empty without one.
+     */
+    private byte[] xmpBox = new byte[0];
 
     /**
      * The tags of {@link #setTags(MediaTags)}, whose track tags go in the {@code trak} boxes.
@@ -439,10 +444,13 @@ public final class FragmentedMp4Muxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The tags become a {@code udta} box at the end of the initialization segment's
-     * {@code moov}: an iTunes {@code ilst} with cover art in {@code covr}, and a Nero {@code chpl}
-     * box for the chapters. The iTunes integer atoms ({@code tmpo}, {@code rtng}, {@code stik} and
-     * the others {@link Mp4Muxer#setTags(MediaTags)} lists) take decimal values. The track tags go in
-     * the {@code trak} boxes and the enabled flags of their {@code tkhd}, as {@code Mp4Muxer} writes them.
+     * {@code moov}: an iTunes {@code ilst} with cover art in {@code covr}, the {@code loci} boxes and the keyed
+     * metadata of {@link Mp4Muxer#setTags(MediaTags)}, and a Nero {@code chpl} box for the chapters. The
+     * {@linkplain MediaTags#xmp() XMP packet} goes in a top-level {@code uuid} box (XMP Specification Part 3) between
+     * the {@code ftyp} and the {@code moov} of the initialization segment. The iTunes integer atoms ({@code tmpo},
+     * {@code rtng}, {@code stik} and the others {@link Mp4Muxer#setTags(MediaTags)} lists) take decimal values. The
+     * track tags go in the {@code trak} boxes and the enabled flags of their {@code tkhd}, as {@code Mp4Muxer} writes
+     * them.
      *
      * <p>A {@code timecode} tag becomes a QuickTime timecode track as {@link Mp4Muxer#setTags(MediaTags)}
      * describes, declared after the declared tracks and referenced by every video track: its one sample, the
@@ -454,7 +462,7 @@ public final class FragmentedMp4Muxer implements Muxer {
      * @throws IllegalArgumentException if the {@code timecode} tag of a file that is not a CMAF track file is not
      * a time address
      * @throws MediaException.Unsupported if the value of an iTunes integer atom is not an integer
-     * the atom holds
+     * the atom holds, or a value of the {@code loci} key is not ISO 6709 coordinates
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -469,12 +477,13 @@ public final class FragmentedMp4Muxer implements Muxer {
             Mp4Muxer.checkTimecode(timecode);
         }
         var userData = MuxerTags.mp4UserData(timecode == null ? tags
-                : tags.toBuilder().remove(Mp4Muxer.TIMECODE_TAG).build());
+                : tags.toBuilder().remove(Mp4Muxer.TIMECODE_TAG).build(), false);
         for (var track : tags.tracks()) {
             // the track boxes are written with the initialization segment, but their values are checked now
             Mp4TrackMetadata.userData(track);
         }
         this.userData = userData;
+        this.xmpBox = MuxerTags.mp4Xmp(tags);
         this.timecodeText = timecode;
         this.tags = tags;
     }
@@ -761,6 +770,7 @@ public final class FragmentedMp4Muxer implements Muxer {
         writer.u32(BoxTypes.ISOM);
         writer.u32(BoxTypes.MP41);
         writer.end();
+        writer.bytes(xmpBox);
         writer.begin(BoxTypes.MOOV);
         var timecodeId = tracks.size() + 1;
         MovieHeaderWriter.writeMovieHeader(writer, movieTimescale, 0, timecodeTrack != null ? timecodeId + 1 : timecodeId);
