@@ -10,6 +10,7 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.PageReader;
+import com.github.auties00.smalt.image.PageWriter;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -44,8 +45,10 @@ import java.util.ServiceLoader;
  * ({@link #encodes(ImageFormat)} and
  * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)}), the animation encoding
  * pair ({@link #encodesAnimation(ImageFormat)} and
- * {@link #openAnimationWriter(ImageFormat, int, int, ImageEncoderOptions, MediaSink)}), or any
- * combination of them.
+ * {@link #openAnimationWriter(ImageFormat, int, int, ImageEncoderOptions, MediaSink)}), the page
+ * encoding pair ({@link #encodesPages(ImageFormat)} and
+ * {@link #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)}), or any combination of
+ * them.
  */
 public interface ImageCodecProvider {
     /**
@@ -160,6 +163,11 @@ public interface ImageCodecProvider {
     /**
      * Encodes a picture as a complete image of a format and writes it to a sink.
      *
+     * <p>Implementations must honor the metadata of the options as {@link ImageEncoderOptions} describes:
+     * record the color profile, the EXIF block and the XMP packet where the format has a place for them,
+     * convert the pixels to sRGB when the format cannot record the profile, record the orientation, and
+     * turn the picture upright when the format records none.
+     *
      * @implSpec The default implementation throws {@link UnsupportedOperationException}; a
      * provider whose {@link #encodes(ImageFormat)} accepts a format overrides it, mapping the
      * options onto the format's own configuration and converting the picture as the format
@@ -167,8 +175,10 @@ public interface ImageCodecProvider {
      *
      * @param picture the pixels to encode
      * @param format the format to produce, one {@link #encodes(ImageFormat)} accepts
-     * @param options the lossless flag and the quality
+     * @param options the lossless flag, the quality and the metadata
      * @param sink the output, written from its position
+     * @throws IllegalArgumentException if the color profile does not describe the picture, or the EXIF
+     * block exceeds what the format stores
      * @throws MediaException.Unsupported if the format cannot honor the options (lossless JPEG)
      * @throws MediaException.Io if writing the sink fails
      */
@@ -193,6 +203,10 @@ public interface ImageCodecProvider {
     /**
      * Opens a writer that encodes an animation of a format frame by frame into a sink.
      *
+     * <p>Implementations must honor the metadata of the options as
+     * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} does, the frames being in the
+     * options' color profile, and reject an orientation the format cannot record.
+     *
      * @implSpec The default implementation throws {@link UnsupportedOperationException}; a
      * provider whose {@link #encodesAnimation(ImageFormat)} accepts a format overrides it, mapping
      * the options (lossless flag, quality and loop count) onto the format's own configuration.
@@ -200,16 +214,48 @@ public interface ImageCodecProvider {
      * @param format the format to produce, one {@link #encodesAnimation(ImageFormat)} accepts
      * @param width the canvas width, positive
      * @param height the canvas height, positive
-     * @param options the lossless flag, the quality and the loop count
+     * @param options the lossless flag, the quality, the loop count and the metadata
      * @param sink the output, written from its position; not closed
      * @return the writer, which the caller finishes and closes
-     * @throws IllegalArgumentException if a dimension is not positive or the loop count
-     * exceeds what the format stores
+     * @throws IllegalArgumentException if a dimension is not positive, the loop count
+     * exceeds what the format stores or the EXIF block exceeds what the format stores
      * @throws MediaException.LimitExceeded if a dimension exceeds what the format stores
-     * @throws MediaException.Unsupported if the format cannot honor the options
+     * @throws MediaException.Unsupported if the format cannot honor the options, an orientation
+     * it cannot record included
      */
     default AnimationWriter openAnimationWriter(ImageFormat format, int width, int height, ImageEncoderOptions options,
                                                 MediaSink sink) {
         throw new UnsupportedOperationException(getClass().getName() + " encodes no animation format");
+    }
+
+    /**
+     * Returns whether this provider encodes multi-page images of a format.
+     *
+     * @implSpec The default implementation returns {@code false}.
+     *
+     * @param format the image format of the pages
+     * @return {@code true} when {@link #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)} accepts
+     * {@code format}
+     */
+    default boolean encodesPages(ImageFormat format) {
+        return false;
+    }
+
+    /**
+     * Opens a writer that encodes the pages of a multi-image file of a format into a sink.
+     *
+     * @implSpec The default implementation throws {@link UnsupportedOperationException}; a
+     * provider whose {@link #encodesPages(ImageFormat)} accepts a format overrides it, mapping the
+     * options (lossless flag and quality) onto the format's own configuration as
+     * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} does, and honoring their
+     * metadata for every page written with {@link PageWriter#write(Picture)}.
+     *
+     * @param format the format to produce, one {@link #encodesPages(ImageFormat)} accepts
+     * @param options the lossless flag, the quality and the metadata of the pictures
+     * @param sink the output, written from its position; not closed
+     * @return the writer, which the caller finishes and closes
+     */
+    default PageWriter openPageWriter(ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        throw new UnsupportedOperationException(getClass().getName() + " encodes no multi-page format");
     }
 }

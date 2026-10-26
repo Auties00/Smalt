@@ -3,19 +3,34 @@ package com.github.auties00.smalt.aot.internal;
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
+import com.github.auties00.smalt.audio.alac.AlacDecoder;
+import com.github.auties00.smalt.audio.alac.AlacEncoder;
+import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
 import com.github.auties00.smalt.audio.flac.FlacDecoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
+import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp3EncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp3StereoMode;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.opus.OpusApplication;
+import com.github.auties00.smalt.audio.opus.OpusChannelMapping;
 import com.github.auties00.smalt.audio.opus.OpusDecoder;
 import com.github.auties00.smalt.audio.opus.OpusDecoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusEncoder;
 import com.github.auties00.smalt.audio.opus.OpusEncoderOptions;
 import com.github.auties00.smalt.audio.opus.OpusSignal;
+import com.github.auties00.smalt.audio.voice.AnalogGainControllerOptions;
+import com.github.auties00.smalt.audio.voice.ClippingPrediction;
+import com.github.auties00.smalt.audio.voice.EchoCancellation;
+import com.github.auties00.smalt.audio.voice.GainControl;
+import com.github.auties00.smalt.audio.voice.LevelControlOptions;
 import com.github.auties00.smalt.audio.voice.VoiceProcessor;
 import com.github.auties00.smalt.audio.voice.VoiceProcessorOptions;
 import com.github.auties00.smalt.audio.vorbis.VorbisDecoder;
@@ -28,6 +43,7 @@ import com.github.auties00.smalt.track.Packet;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 
@@ -36,7 +52,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
- * Vorbis, FLAC and MP3 encoding and decoding, and the voice processor, each on synthetic speech or
+ * Vorbis, FLAC, ALAC, MP3 and MP2 encoding and decoding, and the voice processor, each on synthetic speech or
  * music and keeping its codecs across rounds as a long-running application does.
  */
 final class AudioWorkloads {
@@ -53,26 +69,41 @@ final class AudioWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the ALAC decoder, which needs a stream that no Smalt encoder produces
         return List.of(
                 realtime("voice-processor", () -> voiceProcessor(6)),
+                realtime("voice-processor-layouts", () -> voiceProcessorLayouts(4)),
                 realtime("opus-rt-16000-20", () -> opusRealtime("opus-rt-16000-20", 6, 16000, 20)),
                 realtime("opus-rt-48000-20", () -> opusRealtime("opus-rt-48000-20", 6, 48000, 20)),
                 realtime("opus-rt-48000-10", () -> opusRealtime("opus-rt-48000-10", 6, 48000, 10)),
                 realtime("opus-rt-16000-10", () -> opusRealtime("opus-rt-16000-10", 6, 16000, 10)),
                 realtime("mp3-encode-rt", () -> mp3Encode("mp3-encode-rt", Mp3EncoderOptions.forRealtime(), 6)),
+                realtime("alac-encode-rt", () -> alacEncode("alac-encode-rt", AlacEncoderOptions.forSpeed(), 4)),
                 file("opus-encode-speech", () -> opusSpeech(8)),
                 file("opus-encode-music", () -> opusMusic(6)),
                 file("opus-decode", () -> opusDecode(6)),
+                file("opus-encode-surround", () -> opusSurround(3)),
+                file("opus-decode-surround", () -> opusSurroundDecode(3)),
+                file("opus-encode-projection", () -> opusProjection(2)),
+                file("opus-decode-projection", () -> opusProjectionDecode(2)),
                 file("vorbis-encode", () -> vorbisEncode(2)),
+                file("vorbis-encode-managed", () -> vorbisEncodeManaged(1)),
                 file("vorbis-decode", () -> vorbisDecode(6)),
                 file("flac-encode", () -> flacEncode("flac-encode", FlacEncoderOptions.defaults(), 44100, 6)),
                 file("flac-encode-24", () -> flacEncode("flac-encode-24", FlacEncoderOptions.ofCompressionLevel(8)
                         .toBuilder().format(48000, ChannelLayout.STEREO).bitsPerSample(24).build(), 48000, 4)),
                 file("flac-decode", () -> flacDecode(6)),
+                file("alac-encode", () -> alacEncode("alac-encode", AlacEncoderOptions.defaults(), 4)),
+                file("alac-encode-surround", () -> alacSurround(2)),
+                file("alac-decode", () -> alacDecode(6)),
+                file("flac-decode-32", () -> flacDecodeIntegers(3)),
                 file("mp3-encode", () -> mp3Encode("mp3-encode", Mp3EncoderOptions.defaults(), 6)),
                 file("mp3-encode-vbr", () -> mp3Encode("mp3-encode-vbr", Mp3EncoderOptions.ofVariableBitrate(2), 6)),
-                file("mp3-decode", AudioWorkloads::mp3Decode));
+                file("mp3-decode", AudioWorkloads::mp3Decode),
+                file("mp2-encode", () -> mp2Encode("mp2-encode", Mp2EncoderOptions.defaults(), 6)),
+                file("mp2-encode-joint", () -> mp2Encode("mp2-encode-joint", Mp2EncoderOptions.builder()
+                        .bitrate(128_000).stereoMode(Mp3StereoMode.JOINT_STEREO).crc(true).build(), 4)),
+                file("mp1-encode", () -> mp2Encode("mp1-encode", Mp2EncoderOptions.builder().layer(1).build(), 3)),
+                file("mp2-decode", AudioWorkloads::mp2Decode));
     }
 
     /**
@@ -99,6 +130,151 @@ final class AudioWorkloads {
         var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, 2).build());
         return AudioStreams.encode("opus-encode-music", SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO,
                 48000, encoder);
+    }
+
+    /**
+     * Synthesizes 5.1 content in WAVE order: music in front and back, speech in the center and the
+     * music's bass in the LFE channel.
+     *
+     * @param seconds the duration in seconds
+     * @return the six planes at 48 kHz
+     */
+    private static float[][] surround(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var speech = SyntheticAudio.speech(48000, seconds);
+        var frames = music[0].length;
+        var lfe = new float[frames];
+        var back = new float[2][frames];
+        var smooth = 0f;
+        for (var i = 0; i < frames; i++) {
+            smooth += 0.01f * (music[0][i] + music[1][i] - smooth);
+            lfe[i] = smooth;
+            var delayed = Math.max(0, i - 480);
+            back[0][i] = 0.6f * music[1][delayed];
+            back[1][i] = 0.6f * music[0][delayed];
+        }
+        return new float[][]{music[0], music[1], speech, lfe, back[0], back[1]};
+    }
+
+    /**
+     * Returns a workload that encodes 5.1 content as a 48 kHz Opus multistream at 256 kb/s, which
+     * runs the surround masking analysis and the LFE stream, one encoder across rounds.
+     *
+     * @param seconds the content encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusSurround(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, ChannelLayout.SURROUND_5_1)
+                .bitrate(256000).build());
+        return AudioStreams.encode("opus-encode-surround", surround(seconds), ChannelLayout.SURROUND_5_1, 48000,
+                encoder);
+    }
+
+    /**
+     * Returns a workload that decodes a 5.1 Opus multistream that Smalt's own encoder produced, one
+     * decoder across rounds.
+     *
+     * @param seconds the content decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusSurroundDecode(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, ChannelLayout.SURROUND_5_1)
+                .bitrate(256000).build());
+        var packets = AudioStreams.encodeAll(encoder, surround(seconds), ChannelLayout.SURROUND_5_1, 48000);
+        var track = AudioStreams.track(Codec.OPUS, 48000, ChannelLayout.SURROUND_5_1,
+                encoder.codecConfig().orElseThrow());
+        encoder.close();
+        return AudioStreams.decode("opus-decode-surround", packets, new OpusDecoder(track));
+    }
+
+    /**
+     * The layout of second-order ambisonics with a non-diegetic stereo pair: eleven channels of
+     * unknown position.
+     */
+    private static final ChannelLayout AMBISONIC_11 = new ChannelLayout(Collections.nCopies(11, Speaker.UNKNOWN));
+
+    /**
+     * Synthesizes second-order ambisonics (ACN order, SN3D) of music panned around the listener, with
+     * speech as the non-diegetic stereo pair.
+     *
+     * @param seconds the duration in seconds
+     * @return the eleven planes at 48 kHz
+     */
+    private static float[][] ambisonic(double seconds) {
+        var music = SyntheticAudio.music(48000, seconds);
+        var speech = SyntheticAudio.speech(48000, seconds);
+        var frames = music[0].length;
+        var planes = new float[11][frames];
+        for (var i = 0; i < frames; i++) {
+            var azimuth = 2 * Math.PI * i / (4.0 * 48000);
+            var source = 0.5f * (music[0][i] + music[1][i]);
+            var x = (float) StrictMath.cos(azimuth);
+            var y = (float) StrictMath.sin(azimuth);
+            planes[0][i] = source;
+            planes[1][i] = y * source;
+            planes[3][i] = x * source;
+            planes[4][i] = 0.866f * 2 * x * y * source;
+            planes[6][i] = -0.5f * source;
+            planes[8][i] = 0.866f * (x * x - y * y) * source;
+            planes[9][i] = speech[i];
+            planes[10][i] = 0.8f * speech[i];
+        }
+        return planes;
+    }
+
+    /**
+     * Returns a workload that encodes second-order ambisonics with a non-diegetic pair as an Opus
+     * projection (mapping family 3) stream at 384 kb/s, which mixes the channels with the
+     * projection matrix, one encoder across rounds.
+     *
+     * @param seconds the content encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusProjection(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, AMBISONIC_11)
+                .channelMapping(OpusChannelMapping.AMBISONIC_PROJECTION).bitrate(384000).build());
+        return AudioStreams.encode("opus-encode-projection", ambisonic(seconds), AMBISONIC_11, 48000, encoder);
+    }
+
+    /**
+     * Returns a workload that decodes an Opus projection stream that Smalt's own encoder produced:
+     * every round demixes the track to its eleven channels, mixes it down to stereo, and decodes it
+     * packet by packet into 16-bit samples, concealing every seventh packet and rebuilding every
+     * fifth from the next packet's forward error correction; the decoders last across rounds.
+     *
+     * @param seconds the content decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload opusProjectionDecode(double seconds) {
+        var encoder = new OpusEncoder(OpusEncoderOptions.builder().format(48000, AMBISONIC_11)
+                .channelMapping(OpusChannelMapping.AMBISONIC_PROJECTION).application(OpusApplication.VOIP)
+                .bitrate(192000).inbandFec(true).packetLossPercent(10).build());
+        var packets = AudioStreams.encodeAll(encoder, ambisonic(seconds), AMBISONIC_11, 48000);
+        var track = AudioStreams.track(Codec.OPUS, 48000, AMBISONIC_11, encoder.codecConfig().orElseThrow());
+        encoder.close();
+        var full = new OpusDecoder(track);
+        var stereo = new OpusDecoder(track, OpusDecoderOptions.builder().channels(2).build());
+        var perPacket = new OpusDecoder(track);
+        var pcm = new short[5760 * 11];
+        Consumer<AudioBuffer> output = AudioStreams::consume;
+        return TrainingWorkload.of("opus-decode-projection", () -> {
+            for (var i = 0; i < packets.size(); i++) {
+                var packet = packets.get(i);
+                full.decode(packet, output);
+                stereo.decode(packet, output);
+                var data = packet.data();
+                int samples;
+                if (i % 5 == 3 && i + 1 < packets.size()) {
+                    var next = packets.get(i + 1).data();
+                    samples = perPacket.recover(next, 0, next.length, pcm, 0, 960);
+                } else if (i % 7 == 5) {
+                    samples = perPacket.conceal(pcm, 0, 960);
+                } else {
+                    samples = perPacket.decode(data, 0, data.length, pcm, 0, 5760);
+                }
+                Blackhole.consume(samples + pcm[17]);
+            }
+        });
     }
 
     /**
@@ -199,6 +375,30 @@ final class AudioWorkloads {
     }
 
     /**
+     * Returns a workload that encodes stereo music as bitrate managed 44.1 kHz Vorbis, which codes
+     * every block at all its rates: an average bitrate with a maximum, and a tight maximum at a
+     * quality that truncates packets, one encoder of each across rounds.
+     *
+     * @param seconds the music encoded per round by each encoder, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload vorbisEncodeManaged(double seconds) {
+        var music = SyntheticAudio.music(44100, seconds);
+        var encoders = List.of(
+                new VorbisEncoder(VorbisEncoderOptions.ofAverageBitrate(128_000).toBuilder().maximumBitrate(160_000)
+                        .build()),
+                new VorbisEncoder(VorbisEncoderOptions.ofQuality(4).toBuilder().maximumBitrate(48_000)
+                        .reservoirBits(8_000).build()));
+        var block = new AudioBuffer(ChannelLayout.STEREO, 44100, AudioStreams.BLOCK_FRAMES);
+        Consumer<Packet> output = packet -> Blackhole.consume(packet.size());
+        return TrainingWorkload.of("vorbis-encode-managed", () -> {
+            for (var encoder : encoders) {
+                SyntheticAudio.feed(music, block, buffer -> encoder.encode(buffer, output));
+            }
+        });
+    }
+
+    /**
      * Returns a workload that decodes a stereo Vorbis track of music that Smalt's own encoder
      * produced, one decoder across rounds.
      *
@@ -243,6 +443,84 @@ final class AudioWorkloads {
     }
 
     /**
+     * Returns a workload that encodes stereo music as 44.1 kHz 16-bit ALAC, one encoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param options the encoder settings, whose format is 44.1 kHz 16-bit stereo
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload alacEncode(String name, AlacEncoderOptions options, double seconds) {
+        return AudioStreams.encode(name, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100,
+                new AlacEncoder(options));
+    }
+
+    /**
+     * Returns a workload that encodes 5.1 content as 48 kHz 24-bit ALAC, which codes single channels and
+     * channel pairs with shifted-off low bytes, one encoder across rounds.
+     *
+     * @param seconds the content encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload alacSurround(double seconds) {
+        var encoder = new AlacEncoder(AlacEncoderOptions.of(48000, ChannelLayout.SURROUND_5_1, 24));
+        return AudioStreams.encode("alac-encode-surround", surround(seconds), ChannelLayout.SURROUND_5_1, 48000,
+                encoder);
+    }
+
+    /**
+     * Returns a workload that decodes a 44.1 kHz 16-bit stereo ALAC track of music that Smalt's own
+     * encoder produced, one decoder across rounds.
+     *
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload alacDecode(double seconds) {
+        var encoder = new AlacEncoder();
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100);
+        var track = AudioStreams.track(Codec.ALAC, 44100, ChannelLayout.STEREO, encoder.codecConfig().orElseThrow());
+        encoder.close();
+        return AudioStreams.decode("alac-decode", packets, new AlacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes a 48 kHz 32-bit stereo FLAC track of music that Smalt's own
+     * encoder produced from integer blocks, through the integer output with the {@code STREAMINFO}
+     * MD5 check, one decoder per round.
+     *
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload flacDecodeIntegers(double seconds) {
+        var options = FlacEncoderOptions.defaults().toBuilder().format(48000, ChannelLayout.STEREO).bitsPerSample(32)
+                .build();
+        var music = SyntheticAudio.music(48000, seconds);
+        var planes = new int[music.length][];
+        for (var c = 0; c < music.length; c++) {
+            planes[c] = new int[music[c].length];
+            for (var i = 0; i < music[c].length; i++) {
+                planes[c][i] = (int) Math.round(Math.clamp(music[c][i], -1f, 1f) * 0x1p31 * 0.99);
+            }
+        }
+        var packets = new ArrayList<Packet>();
+        var encoder = new FlacEncoder(options);
+        encoder.encode(new IntegerAudioBuffer(ChannelLayout.STEREO, 48000, 32, planes, planes[0].length), packets::add);
+        encoder.flush(packets::add);
+        var track = AudioStreams.track(Codec.FLAC, 48000, ChannelLayout.STEREO, encoder.codecConfig().orElseThrow());
+        encoder.close();
+        var verify = AudioDecoderOptions.builder().verifyIntegrity(true).build();
+        Consumer<IntegerAudioBuffer> output = block -> Blackhole.consume(block.plane(0)[0] + block.frames());
+        return TrainingWorkload.of("flac-decode-32", () -> {
+            try (var decoder = new FlacDecoder(track, verify)) {
+                for (var packet : packets) {
+                    decoder.decodeIntegers(packet, output);
+                }
+                decoder.flushIntegers(output);
+            }
+        });
+    }
+
+    /**
      * Returns a workload that encodes stereo music as MP3, one stream across rounds.
      *
      * @param name    the name of the workload
@@ -272,6 +550,47 @@ final class AudioWorkloads {
             files.add(out.toByteArray());
         }
         return TrainingWorkload.of("mp3-decode", () -> {
+            for (var file : files) {
+                try (var reader = AudioReader.open(MediaSource.of(file))) {
+                    for (var decoded = reader.read(); decoded != null; decoded = reader.read()) {
+                        AudioStreams.consume(decoded);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes 48 kHz stereo music as MPEG audio Layer I or II, one stream across rounds.
+     *
+     * @param name    the name of the workload
+     * @param options the encoder settings, whose format is 48 kHz stereo
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload mp2Encode(String name, Mp2EncoderOptions options, double seconds) {
+        var encoder = new Mp2Encoder(options);
+        return AudioStreams.encode(name, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000, encoder);
+    }
+
+    /**
+     * Returns a workload that decodes two MPEG audio files through {@link AudioReader}: four seconds of music
+     * that Smalt's own encoder produced in Layer II joint stereo with CRC words and in Layer I.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload mp2Decode() {
+        var music = SyntheticAudio.music(48000, 4);
+        var files = new ArrayList<byte[]>();
+        for (var options : List.of(Mp2EncoderOptions.builder().bitrate(128_000).stereoMode(Mp3StereoMode.JOINT_STEREO)
+                .crc(true).build(), Mp2EncoderOptions.builder().layer(1).build())) {
+            var out = new ByteArrayOutputStream();
+            for (Packet packet : AudioStreams.encodeAll(new Mp2Encoder(options), music, ChannelLayout.STEREO, 48000)) {
+                out.writeBytes(packet.data());
+            }
+            files.add(out.toByteArray());
+        }
+        return TrainingWorkload.of("mp2-decode", () -> {
             for (var file : files) {
                 try (var reader = AudioReader.open(MediaSource.of(file))) {
                     for (var decoded = reader.read(); decoded != null; decoded = reader.read()) {
@@ -338,6 +657,88 @@ final class AudioWorkloads {
                 Blackhole.consume(Float.floatToRawIntBits(buffer[17]));
             }
         });
+    }
+
+    /**
+     * Returns a workload that runs the voice processor at the other rates and channel layouts and
+     * with every gain controller, on far-end speech and a microphone signal made of its echo and of
+     * near-end speech every third second, in 10 ms frames.
+     *
+     * <p>Every round creates a fresh processor in one of three configurations in turn, feeding the
+     * recommended microphone volume back: 48 kHz stereo with the multichannel echo canceller and
+     * the level controller with its input volume controller (band splitting into three bands, the
+     * RNN voice activity detector, the limiter); 32 kHz with the managed analog gain controller and
+     * clipping prediction (two bands, the analog controller's voice activity detector and pitch
+     * analysis); and 8 kHz with the mobile echo canceller and the adaptive digital gain controller
+     * (the resamplers).
+     *
+     * @param seconds the duration of each conversation, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload voiceProcessorLayouts(double seconds) {
+        var options = List.of(
+                VoiceProcessorOptions.forVoip().toBuilder().sampleRate(48000).captureChannels(2).renderChannels(2)
+                        .multichannelCapture(true).multichannelRender(true)
+                        .levelControl(LevelControlOptions.builder().inputVolumeController(true).build()).build(),
+                VoiceProcessorOptions.forVoip().toBuilder().sampleRate(32000).gainControl(GainControl.MANAGED_ANALOG)
+                        .analogGainController(AnalogGainControllerOptions.builder()
+                                .clippingPrediction(ClippingPrediction.CLIPPING_EVENT).build()).build(),
+                VoiceProcessorOptions.forVoip().toBuilder().sampleRate(8000).echoCancellation(EchoCancellation.MOBILE)
+                        .gainControl(GainControl.ADAPTIVE_DIGITAL).build());
+        var renders = new float[options.size()][];
+        var captures = new float[options.size()][];
+        for (var k = 0; k < options.size(); k++) {
+            var layout = options.get(k);
+            var rate = layout.sampleRate();
+            var far = SyntheticAudio.speech(rate, seconds);
+            var near = SyntheticAudio.speech(rate, seconds + 1.37);
+            var microphone = new float[far.length];
+            var delay = rate / 20;
+            for (var i = 0; i < microphone.length; i++) {
+                var echo = i >= delay ? 0.3f * far[i - delay] : 0;
+                var talk = i / rate % 3 == 2 ? 0.5f * near[near.length - 1 - i] : 0;
+                microphone[i] = echo + talk;
+            }
+            renders[k] = interleave(far, layout.renderChannels());
+            captures[k] = interleave(microphone, layout.captureChannels());
+        }
+        int[] round = {0};
+        return TrainingWorkload.of("voice-processor-layouts", () -> {
+            var k = round[0]++ % options.size();
+            var layout = options.get(k);
+            var processor = new VoiceProcessor(layout);
+            processor.setStreamDelayMs(50);
+            var renderLength = processor.frameSamples() * layout.renderChannels();
+            var captureLength = processor.frameSamples() * layout.captureChannels();
+            var buffer = new float[captureLength];
+            var level = 128;
+            for (var i = 0; i < captures[k].length / captureLength; i++) {
+                System.arraycopy(captures[k], i * captureLength, buffer, 0, captureLength);
+                processor.processRender(renders[k], i * renderLength);
+                processor.setAnalogLevel(level);
+                processor.processCapture(buffer, 0, buffer, 0);
+                level = processor.recommendedAnalogLevel();
+                Blackhole.consume(Float.floatToRawIntBits(buffer[17]));
+            }
+        });
+    }
+
+    /**
+     * Interleaves copies of a signal, each further channel 2 dB quieter.
+     *
+     * @param signal the samples
+     * @param channels the number of channels
+     * @return the interleaved samples
+     */
+    private static float[] interleave(float[] signal, int channels) {
+        var out = new float[signal.length * channels];
+        for (var c = 0; c < channels; c++) {
+            var gain = (float) StrictMath.pow(10, -2.0 * c / 20);
+            for (var i = 0; i < signal.length; i++) {
+                out[i * channels + c] = gain * signal[i];
+            }
+        }
+        return out;
     }
 
     /**
