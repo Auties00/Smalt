@@ -190,6 +190,7 @@ final class ImageWorkloads {
                 file("webp-decode", ImageWorkloads::webpDecode),
                 file("webp-animation-c2", () -> webpAnimation(2, 4)),
                 file("tiff", ImageWorkloads::tiff),
+                file("image-region-decode", ImageWorkloads::regionDecode),
                 file("jpeg2000", ImageWorkloads::jpeg2000),
                 file("htj2k", ImageWorkloads::highThroughputJpeg2000),
                 file("jpeg2000-part2", ImageWorkloads::part2Jpeg2000),
@@ -997,6 +998,38 @@ final class ImageWorkloads {
                     Blackhole.consume(pages.read(pages.pageCount() - 1).picture().width());
                 }
             }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes regions of a 1024x768 picture coded as a tiled TIFF, a tiled JPEG 2000 file,
+     * baseline JPEG with and without restart intervals, progressive JPEG and lossy and lossless WebP: a small
+     * rectangle, a band and a rectangle under a size hint, and the channels of an area of the JPEG 2000 file.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload regionDecode() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), true);
+        var opaque = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
+        var files = List.of(
+                TiffEncoder.encode(picture, TiffEncoderOptions.deflate().toBuilder().tiles(256, 256).build()),
+                Jp2Encoder.encode(opaque, Jp2EncoderOptions.lossy(20).toBuilder().tileSize(256, 256).build()),
+                JpegEncoder.encode(opaque, JpegEncoderOptions.ofQuality(90)),
+                JpegEncoder.encode(opaque, JpegEncoderOptions.ofQuality(90).toBuilder().restartInterval(16).build()),
+                JpegEncoder.encode(opaque, JpegEncoderOptions.ofProgressive(85)),
+                WebpEncoder.encode(picture, WebpEncoderOptions.lossy(80)),
+                WebpEncoder.encode(picture, WebpEncoderOptions.lossless()));
+        var regions = List.of(ImageDecoderOptions.builder().region(300, 200, 96, 64).build(),
+                ImageDecoderOptions.builder().region(0, 384, 1024, 48).build(),
+                ImageDecoderOptions.builder().region(512, 256, 400, 300).minSize(100, 75).build());
+        var area = Jp2DecoderOptions.builder().region(130, 70, 300, 200).build();
+        return TrainingWorkload.of("image-region-decode", () -> {
+            for (var file : files) {
+                for (var options : regions) {
+                    Blackhole.consume(Images.decode(MediaSource.of(file), options).picture().width());
+                }
+            }
+            Blackhole.consume(Jp2Decoder.decodeChannels(MediaSource.of(files.get(1)), area).hashCode());
         });
     }
 

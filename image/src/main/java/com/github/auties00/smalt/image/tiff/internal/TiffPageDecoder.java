@@ -562,7 +562,6 @@ public final class TiffPageDecoder {
         var labTables = lab ? new LabTables(photometric, directory.doubles(TiffTags.WHITE_POINT), directory.doubles(TiffTags.DECODE)) : null;
         converter = new SampleConverter(kind, photometric == WHITE_IS_ZERO, samples, alpha, associated, bits, format,
                 file.little(), format == 3 ? minimum : 0, format == 3 ? maximum : 1, colorMap, ycbcr, labTables);
-        LimitChecks.checkPicture(limits, width, height);
         tiled = directory.has(TiffTags.TILE_WIDTH) || directory.has(TiffTags.TILE_OFFSETS);
         if (tiled) {
             chunkWidth = positive(directory.longValue(TiffTags.TILE_WIDTH, 0), "TileWidth");
@@ -896,24 +895,84 @@ public final class TiffPageDecoder {
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
     public Picture decode(boolean highBitDepth) {
-        if (channelLayout != null) {
-            return decodeChannels(highBitDepth);
+        return decode(highBitDepth, 0, 0, width, height);
+    }
+
+    /**
+     * Decodes the pixels of a rectangle of the page, reading and decompressing only the strips or tiles that
+     * intersect it.
+     *
+     * <p>The picture equals the same rectangle of the picture {@link #decode(boolean)} returns; the limits bound the
+     * strips or tiles that cover the rectangle rather than the page.
+     *
+     * @param highBitDepth whether a 16-bit picture is wanted when the samples are wider than 8 bits
+     * @param left the left edge of the rectangle, from 0
+     * @param top the top edge of the rectangle, from 0
+     * @param right the right edge of the rectangle (exclusive), at most {@link #width()}
+     * @param bottom the bottom edge of the rectangle (exclusive), at most {@link #height()}
+     * @return the picture of the rectangle, of the types {@link #decode(boolean)} returns
+     * @throws MediaException.Malformed if the compressed data is invalid
+     * @throws MediaException.LimitExceeded if the rectangle exceeds the limits
+     */
+    public Picture decode(boolean highBitDepth, int left, int top, int right, int bottom) {
+        LimitChecks.checkPicture(limits, right - left, bottom - top);
+        var window = window(left, top, right, bottom);
+        var picture = channelLayout != null ? decodeChannels(highBitDepth, window) : decodeRgba(highBitDepth, window);
+        if (window.left() == left && window.top() == top && window.width() == right - left
+                && window.height() == bottom - top) {
+            return picture;
         }
+        return ImageOps.crop(picture, left - window.left(), top - window.top(), right - left, bottom - top);
+    }
+
+    /**
+     * Returns the window of strips or tiles that covers a rectangle: the rectangle grown out to whole strips or
+     * tiles, clipped to the page.
+     *
+     * @param left the left edge of the rectangle
+     * @param top the top edge of the rectangle
+     * @param right the right edge of the rectangle (exclusive)
+     * @param bottom the bottom edge of the rectangle (exclusive)
+     * @return the window
+     * @throws MediaException.LimitExceeded if the window exceeds the limits
+     */
+    private Window window(int left, int top, int right, int bottom) {
+        var firstColumn = left / chunkWidth;
+        var firstRow = top / chunkHeight;
+        var lastColumn = (int) ((right + (long) chunkWidth - 1) / chunkWidth);
+        var lastRow = (int) ((bottom + (long) chunkHeight - 1) / chunkHeight);
+        var x = firstColumn * chunkWidth;
+        var y = firstRow * chunkHeight;
+        var windowRight = (int) Math.min(width, (long) lastColumn * chunkWidth);
+        var windowBottom = (int) Math.min(height, (long) lastRow * chunkHeight);
+        LimitChecks.checkPicture(limits, windowRight - x, windowBottom - y);
+        return new Window(x, y, windowRight - x, windowBottom - y, firstColumn, firstRow, lastColumn, lastRow);
+    }
+
+    /**
+     * Decodes the strips or tiles of a window into packed RGBA.
+     *
+     * @param highBitDepth whether a 16-bit picture is wanted when the samples are wider than 8 bits
+     * @param window the strips or tiles to decode
+     * @return the picture of the window
+     */
+    private Picture decodeRgba(boolean highBitDepth, Window window) {
         var sixteen = highBitDepth && converter.wideOutput();
-        LimitChecks.checkAllocation(limits, (long) width * height * (sixteen ? 8 : 4));
+        var pixels = (long) window.width() * window.height();
+        LimitChecks.checkAllocation(limits, pixels * (sixteen ? 8 : 4));
         byte[] out8 = null;
         short[] out16 = null;
         Picture picture;
         if (sixteen) {
-            var wide = Rgba16Picture.allocate(width, height, converter.hasAlpha());
+            var wide = Rgba16Picture.allocate(window.width(), window.height(), converter.hasAlpha());
             out16 = wide.pixels();
             picture = wide;
         } else {
-            var narrow = RgbaPicture.allocate(width, height, converter.hasAlpha());
+            var narrow = RgbaPicture.allocate(window.width(), window.height(), converter.hasAlpha());
             out8 = narrow.pixels();
             picture = narrow;
         }
-        var target = new Target(out8, out16);
+        var target = new Target(window, out8, out16);
         if (compression == OLD_JPEG && directory.has(TiffTags.JPEG_INTERCHANGE_FORMAT) && decodeOldJpegStream(target)) {
             return finish(picture, target);
         }
@@ -921,31 +980,87 @@ public final class TiffPageDecoder {
             throw new MediaException.Unsupported("tiff old-style jpeg", "the old-style JPEG TIFF image has neither a decodable JPEG stream nor JPEG tables");
         }
         if (planar) {
-            LimitChecks.checkAllocation(limits, (long) width * height * samples * (converter.wide() ? 2 : 1));
+            LimitChecks.checkAllocation(limits, pixels * samples * (converter.wide() ? 2 : 1));
             if (converter.wide()) {
-                target.work16 = new short[width * height * samples];
+                target.work16 = new short[(int) (pixels * samples)];
             } else {
-                target.work8 = new byte[width * height * samples];
+                target.work8 = new byte[(int) (pixels * samples)];
             }
         }
-        var count = planes * across * down;
-        var bands = ParallelBands.bands(count, (long) width * height * samples);
+        decodeChunks(target, pixels * samples);
+        if (!target.incomplete && missesChunkOutside(window)) {
+            // the whole page declares the alpha of its missing strips or tiles, and so does a window of it
+            target.incomplete = true;
+        }
+        if (planar) {
+            convertPlanar(target);
+        }
+        return finish(picture, target);
+    }
+
+    /**
+     * Returns whether a strip or tile outside a window has no data, as {@link #decodeChunk} finds without reading
+     * it: no offset, a zero offset, or no bytes before the end of the file.
+     *
+     * @param window the strips or tiles decoded
+     * @return whether the page has such a strip or tile outside the window
+     */
+    private boolean missesChunkOutside(Window window) {
+        if (window.firstColumn() == 0 && window.firstRow() == 0 && window.lastColumn() == across
+                && window.lastRow() == down) {
+            return false;
+        }
+        var perPlane = across * down;
+        for (var index = 0; index < planes * perPlane; index++) {
+            var within = index % perPlane;
+            var row = within / across;
+            var column = within % across;
+            if (row >= window.firstRow() && row < window.lastRow() && column >= window.firstColumn()
+                    && column < window.lastColumn()) {
+                continue;
+            }
+            if (index >= offsets.length || offsets[index] == 0) {
+                return true;
+            }
+            var plane = index / perPlane;
+            var y0 = row * chunkHeight;
+            var rows = tiled ? chunkHeight : Math.min(chunkHeight, height - y0);
+            if (byteCount(index, chunkRowBytes(plane) * storedRows(rows, plane)) <= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Decodes the strips or tiles of the window of a target, on several threads when the work is large.
+     *
+     * @param target the destination
+     * @param work the number of samples of the window
+     */
+    private void decodeChunks(Target target, long work) {
+        var window = target.window;
+        var columns = window.lastColumn() - window.firstColumn();
+        var rows = window.lastRow() - window.firstRow();
+        var perPlane = columns * rows;
+        var count = planes * perPlane;
+        var bands = ParallelBands.bands(count, work);
         ParallelBands.run(bands, band -> {
             var context = new Context();
             try {
                 var first = ParallelBands.start(band, bands, count);
                 var last = ParallelBands.start(band + 1, bands, count);
-                for (var chunk = first; chunk < last; chunk++) {
-                    decodeChunk(chunk, context, target);
+                for (var k = first; k < last; k++) {
+                    var plane = k / perPlane;
+                    var within = k % perPlane;
+                    var row = window.firstRow() + within / columns;
+                    var column = window.firstColumn() + within % columns;
+                    decodeChunk(plane * across * down + row * across + column, context, target);
                 }
             } finally {
                 context.close();
             }
         });
-        if (planar) {
-            convertPlanar(target);
-        }
-        return finish(picture, target);
     }
 
     /**
@@ -956,12 +1071,12 @@ public final class TiffPageDecoder {
      * @throws MediaException.Malformed if the compressed data is invalid
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
-    private ChannelPicture decodeChannels(boolean highBitDepth) {
+    private ChannelPicture decodeChannels(boolean highBitDepth, Window window) {
         var floating = converter.floating();
         var wide = !floating && bits > 8;
-        var count = (long) width * height * samples;
+        var count = (long) window.width() * window.height() * samples;
         LimitChecks.checkAllocation(limits, count * (floating ? 4 : wide ? 2 : 1));
-        var target = new Target(null, null);
+        var target = new Target(window, null, null);
         target.channels = true;
         if (floating) {
             target.workF = new float[(int) count];
@@ -975,23 +1090,10 @@ public final class TiffPageDecoder {
             if (compression == OLD_JPEG && (offsets == null || !directory.has(TiffTags.JPEG_Q_TABLES))) {
                 throw new MediaException.Unsupported("tiff old-style jpeg", "the old-style JPEG TIFF image has neither a decodable JPEG stream nor JPEG tables");
             }
-            var chunks = planes * across * down;
-            var bands = ParallelBands.bands(chunks, count);
-            ParallelBands.run(bands, band -> {
-                var context = new Context();
-                try {
-                    var first = ParallelBands.start(band, bands, chunks);
-                    var last = ParallelBands.start(band + 1, bands, chunks);
-                    for (var chunk = first; chunk < last; chunk++) {
-                        decodeChunk(chunk, context, target);
-                    }
-                } finally {
-                    context.close();
-                }
-            });
+            decodeChunks(target, count);
         }
         var invert = photometric == WHITE_IS_ZERO;
-        var stride = width * samples;
+        var stride = window.width() * samples;
         if (floating) {
             var work = target.workF;
             if (invert) {
@@ -1000,7 +1102,7 @@ public final class TiffPageDecoder {
                     work[i] = range - work[i];
                 }
             }
-            return ChannelFloatPicture.of(width, height, stride, work, channelLayout);
+            return ChannelFloatPicture.of(window.width(), window.height(), stride, work, channelLayout);
         }
         if (wide) {
             var work = target.work16;
@@ -1009,7 +1111,7 @@ public final class TiffPageDecoder {
                     work[i] = (short) ~work[i];
                 }
             }
-            var picture = Channel16Picture.of(width, height, stride, work, channelLayout);
+            var picture = Channel16Picture.of(window.width(), window.height(), stride, work, channelLayout);
             return highBitDepth ? picture : ImageOps.toChannel8(picture);
         }
         var work = target.work8;
@@ -1018,7 +1120,7 @@ public final class TiffPageDecoder {
                 work[i] = (byte) ~work[i];
             }
         }
-        return Channel8Picture.of(width, height, stride, work, channelLayout);
+        return Channel8Picture.of(window.width(), window.height(), stride, work, channelLayout);
     }
 
     /**
@@ -1029,19 +1131,42 @@ public final class TiffPageDecoder {
      * @return the picture, relabeled when needed
      */
     private Picture finish(Picture picture, Target target) {
+        var w = target.window.width();
+        var h = target.window.height();
         if (target.incomplete && picture instanceof RgbaPicture narrow && !narrow.hasAlpha()) {
-            return RgbaPicture.of(width, height, width * 4, narrow.pixels(), true);
+            return RgbaPicture.of(w, h, w * 4, narrow.pixels(), true);
         }
         if (target.incomplete && picture instanceof Rgba16Picture wide && !wide.hasAlpha()) {
-            return Rgba16Picture.of(width, height, width * 4, wide.pixels(), true);
+            return Rgba16Picture.of(w, h, w * 4, wide.pixels(), true);
         }
         return picture;
+    }
+
+    /**
+     * Describes the strips or tiles a decode covers.
+     *
+     * @param left the left edge of the window on the page
+     * @param top the top edge of the window on the page
+     * @param width the width of the window, the row length of the target's buffers
+     * @param height the height of the window
+     * @param firstColumn the first column of strips or tiles
+     * @param firstRow the first row of strips or tiles
+     * @param lastColumn the column after the last one
+     * @param lastRow the row after the last one
+     */
+    private record Window(int left, int top, int width, int height, int firstColumn, int firstRow, int lastColumn,
+                          int lastRow) {
     }
 
     /**
      * Holds the destination of a decode.
      */
     private static final class Target {
+        /**
+         * The window the buffers hold.
+         */
+        private final Window window;
+
         /**
          * The 8-bit RGBA pixels, or {@code null}.
          */
@@ -1081,12 +1206,25 @@ public final class TiffPageDecoder {
         /**
          * Constructs a target.
          *
+         * @param window the window the buffers hold
          * @param out8 the 8-bit pixels, or {@code null}
          * @param out16 the 16-bit pixels, or {@code null}
          */
-        private Target(byte[] out8, short[] out16) {
+        private Target(Window window, byte[] out8, short[] out16) {
+            this.window = window;
             this.out8 = out8;
             this.out16 = out16;
+        }
+
+        /**
+         * Returns the index of a pixel of the page in the buffers, in pixels.
+         *
+         * @param x the column on the page, inside the window
+         * @param y the row on the page, inside the window
+         * @return the pixel index
+         */
+        private int offset(int x, int y) {
+            return (y - window.top()) * window.width() + (x - window.left());
         }
     }
 
@@ -1657,9 +1795,13 @@ public final class TiffPageDecoder {
         var rowBytes = decoded.width() * samples;
         var rows = Math.min(height, decoded.height());
         var columns = Math.min(width, decoded.width());
+        var window = target.window;
         var context = new Context();
-        for (var y = 0; y < rows; y++) {
-            convertRow(decoded.samples(), y * rowBytes, columns, 0, y, context, target);
+        var visible = Math.min(columns, window.left() + window.width()) - window.left();
+        var lastRow = Math.min(rows, window.top() + window.height());
+        for (var y = window.top(); y < lastRow && visible > 0; y++) {
+            convertRow(decoded.samples(), y * rowBytes + window.left() * samples, visible, window.left(), y, context,
+                    target);
         }
         if (rows < height || columns < width) {
             target.incomplete = true;
@@ -1696,7 +1838,7 @@ public final class TiffPageDecoder {
         }
         if (planar) {
             for (var row = 0; row < visibleRows; row++) {
-                var workOffset = ((y0 + row) * width + x0) * samples + plane;
+                var workOffset = target.offset(x0, y0 + row) * samples + plane;
                 if (target.workF != null) {
                     converter.unpackFloat(chunk, row * rowBytes, columns, target.workF, workOffset, samples,
                             predictedFloats);
@@ -1727,7 +1869,7 @@ public final class TiffPageDecoder {
     private void convertRow(byte[] data, int offset, int columns, int x, int y, Context context, Target target) {
         var count = columns * samples;
         if (target.channels) {
-            var at = (y * width + x) * samples;
+            var at = target.offset(x, y) * samples;
             if (target.workF != null) {
                 converter.unpackFloat(data, offset, count, target.workF, at, 1, predictedFloats);
             } else if (target.work16 != null) {
@@ -1737,7 +1879,7 @@ public final class TiffPageDecoder {
             }
             return;
         }
-        var outOffset = (y * width + x) * 4;
+        var outOffset = target.offset(x, y) * 4;
         if (converter.wide()) {
             if (context.row16.length < count) {
                 context.row16 = new short[count];
@@ -1761,16 +1903,18 @@ public final class TiffPageDecoder {
      * @param target the destination
      */
     private void convertPlanar(Target target) {
-        var bands = ParallelBands.bands(height, (long) width * height * samples);
+        var rows = target.window.height();
+        var columns = target.window.width();
+        var bands = ParallelBands.bands(rows, (long) columns * rows * samples);
         ParallelBands.run(bands, band -> {
-            var first = ParallelBands.start(band, bands, height);
-            var last = ParallelBands.start(band + 1, bands, height);
+            var first = ParallelBands.start(band, bands, rows);
+            var last = ParallelBands.start(band + 1, bands, rows);
             for (var y = first; y < last; y++) {
-                var workOffset = y * width * samples;
+                var workOffset = y * columns * samples;
                 if (target.work16 != null) {
-                    converter.toRgba16(target.work16, workOffset, width, target.out8, target.out16, y * width * 4);
+                    converter.toRgba16(target.work16, workOffset, columns, target.out8, target.out16, y * columns * 4);
                 } else {
-                    converter.toRgba8(target.work8, workOffset, width, target.out8, y * width * 4);
+                    converter.toRgba8(target.work8, workOffset, columns, target.out8, y * columns * 4);
                 }
             }
         });
@@ -1809,7 +1953,7 @@ public final class TiffPageDecoder {
                             break;
                         }
                         var luma = unitSample(chunk, rowStart, first + dy * subsampleX + dx);
-                        var o = ((y0 + y) * width + x) * 4;
+                        var o = target.offset(x, y0 + y) * 4;
                         if (eightBit) {
                             var rgb = ycbcr.toRgb(luma, cb, cr);
                             out8[o] = (byte) (rgb >>> 16);
@@ -1900,7 +2044,7 @@ public final class TiffPageDecoder {
                 if (y >= rows) {
                     break;
                 }
-                var rowOffset = ((y0 + y) * width + x0) * samples + plane;
+                var rowOffset = target.offset(x0, y0 + y) * samples + plane;
                 for (var x = 0; x < columns; x++) {
                     var at = rowOffset + x * samples;
                     if (wide) {

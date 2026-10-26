@@ -16,6 +16,7 @@ import com.github.auties00.smalt.image.png.PngDecoder;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -142,8 +143,10 @@ public final class IcoDecoder {
      * {@link ImageDecoderOptions#minHeight()} (the largest when none is).
      *
      * @param source the input, read from offset zero
-     * @param options the limits, the size hint and the bit depth choice (for PNG entries)
+     * @param options the limits, the size hint, the region (cut out of the whole entry) and the bit depth choice
+     * (for PNG entries)
      * @return the decoded entry
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file or the entry is invalid
      * @throws MediaException.Unsupported if the entry uses a feature its decoder lacks
      * @throws MediaException.LimitExceeded if the entry exceeds the limits or decoding runs out of
@@ -153,11 +156,11 @@ public final class IcoDecoder {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        return Guards.malformed(WHAT, () -> {
-            var directory = Directory.read(source, options.limits());
-            var index = choose(directory.entries(), options.minWidth(), options.minHeight());
-            return directory.decode(index, options.toBuilder().fullSize().build());
-        });
+        return ImageRegions.decode(options, () -> probe(source), whole -> Guards.malformed(WHAT, () -> {
+            var directory = Directory.read(source, whole.limits());
+            var index = choose(directory.entries(), whole.minWidth(), whole.minHeight());
+            return directory.decode(index, whole.toBuilder().fullSize().build());
+        }));
     }
 
     /**
@@ -165,10 +168,11 @@ public final class IcoDecoder {
      *
      * @param source the input, read from offset zero
      * @param index the entry index, from zero to the entry count minus one
-     * @param options the limits and the bit depth choice (for PNG entries); the size hint is
-     * ignored
+     * @param options the limits, the region (cut out of the whole entry) and the bit depth choice (for PNG
+     * entries); the size hint is ignored
      * @return the decoded entry
      * @throws IndexOutOfBoundsException if {@code index} is out of range
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file or the entry is invalid
      * @throws MediaException.Unsupported if the entry uses a feature its decoder lacks
      * @throws MediaException.LimitExceeded if the entry exceeds the limits or decoding runs out of
@@ -180,7 +184,8 @@ public final class IcoDecoder {
         Objects.requireNonNull(options, "options");
         var directory = Guards.malformed(WHAT, () -> Directory.read(source, options.limits()));
         Objects.checkIndex(index, directory.entries().size());
-        return Guards.malformed(WHAT, () -> directory.decode(index, options.toBuilder().fullSize().build()));
+        return ImageRegions.decode(options, null, whole -> Guards.malformed(WHAT,
+                () -> directory.decode(index, whole)));
     }
 
     /**
@@ -190,7 +195,9 @@ public final class IcoDecoder {
      * ignored. Page summaries report transparency as {@link #probe(MediaSource)} does.
      *
      * @param source the input, read from offset zero
-     * @param options the limits and the bit depth choice applied to every entry
+     * @param options the limits, the region (cut out of every whole entry) and the bit depth choice applied to
+     * every entry; an entry that the region does not lie inside raises {@link IllegalArgumentException} when
+     * it is read
      * @return the page reader
      * @throws MediaException.Malformed if the directory is invalid
      * @throws MediaException.LimitExceeded if the entry count exceeds the frame limit
@@ -199,6 +206,10 @@ public final class IcoDecoder {
     public static PageReader openPages(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
+        var region = options.region();
+        if (region.isPresent()) {
+            return ImageRegions.cropPages(openPages(source, options.toBuilder().wholeImage().build()), region.get());
+        }
         var directory = Guards.malformed(WHAT, () -> Directory.read(source, options.limits()));
         var full = options.toBuilder().fullSize().build();
         return new PageReader() {

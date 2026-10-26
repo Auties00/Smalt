@@ -167,6 +167,11 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.capture,
             com.github.auties00.smalt.raw;
+    exports com.github.auties00.smalt.internal.region to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.video,
+            com.github.auties00.smalt.mpeg,
+            com.github.auties00.smalt.raw;
     exports com.github.auties00.smalt.internal.tiff to
             com.github.auties00.smalt.image,
             com.github.auties00.smalt.raw;

@@ -60,6 +60,11 @@ public final class WebpCodecProvider implements ImageCodecProvider {
     }
 
     @Override
+    public boolean decodesRegions(ImageFormat format) {
+        return true;
+    }
+
+    @Override
     public Optional<AnimationReader> openAnimation(MediaSource source, ImageDecoderOptions options) {
         return Optional.of(WebpDecoder.openAnimation(source, options));
     }

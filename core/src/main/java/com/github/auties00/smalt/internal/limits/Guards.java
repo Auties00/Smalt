@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.internal.limits;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.region.RegionOutsideImageException;
 
 import java.util.function.Supplier;
 
@@ -10,7 +11,8 @@ import java.util.function.Supplier;
  *
  * <p>Decoders read untrusted input, so any failure of their body is the input's fault:
  * <ul>
- *   <li>a {@link MediaException} passes through unchanged;</li>
+ *   <li>a {@link MediaException} passes through unchanged, and so does the {@link IllegalArgumentException}
+ *       of a decoding region outside the image ({@link RegionOutsideImageException});</li>
  *   <li>an {@link OutOfMemoryError} or a {@link StackOverflowError} becomes
  *       {@link MediaException.LimitExceeded};</li>
  *   <li>any other {@link RuntimeException} becomes {@link MediaException.Malformed} with the
@@ -56,6 +58,8 @@ public final class Guards {
             throw outOfMemory(what);
         } catch (StackOverflowError error) {
             throw tooDeep(what);
+        } catch (RegionOutsideImageException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt " + what, exception);
         }

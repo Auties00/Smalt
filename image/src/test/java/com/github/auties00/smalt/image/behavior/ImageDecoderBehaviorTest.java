@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.jxl.JxlGainMap;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
 import com.github.auties00.smalt.testkit.image.RasterTesting;
+import com.github.auties00.smalt.testkit.image.RegionAsserts;
 import com.github.auties00.smalt.testkit.io.BehaviorSamples;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -166,6 +167,20 @@ class ImageDecoderBehaviorTest {
     @DisplayName("samples: identical pictures under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ImageDecoderAsserts.of(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("samples")
+    @DisplayName("samples decoded by region: identical pictures under every source behavior and clean faults")
+    void sampleRegion(String sample) throws IOException {
+        RegionAsserts.behaviors("region/" + sample, Files.readAllBytes(SAMPLES.resolve(sample)));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("resources")
+    @DisplayName("codec vectors decoded by region: identical pictures under every source behavior")
+    void resourceRegion(String file) throws IOException {
+        RegionAsserts.behaviors("region/resources/" + file, Files.readAllBytes(RESOURCES.resolve(file)));
     }
 
     @ParameterizedTest(name = "{0}")

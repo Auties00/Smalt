@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.gainmap.AppleGainMaps;
 import com.github.auties00.smalt.internal.gainmap.HeifToneMaps;
@@ -28,6 +29,7 @@ import com.github.auties00.smalt.internal.heif.HeifOverlay;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifStill;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
@@ -157,19 +159,20 @@ public final class HeicFiles {
      * @param primary the primary item
      * @param limits the bounds of every item and picture
      * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param region the region of the image after its clean aperture to decode, or {@code null} for the whole image
      * @return the image
      */
     private static HeifStill decodeShown(MediaSource source, HeifFile file, HeifItem primary, MediaLimits limits,
-                                         boolean highBitDepth) {
+                                         boolean highBitDepth, Region region) {
         var shown = shown(file, primary);
         if (shown != primary) {
             try {
-                return StillDecoder.decode(source, file, shown, limits, highBitDepth);
+                return StillDecoder.decode(source, file, shown, limits, highBitDepth, region);
             } catch (MediaException.Malformed | MediaException.Unsupported exception) {
                 // the primary item is the alternative every reader can show
             }
         }
-        return StillDecoder.decode(source, file, primary, limits, highBitDepth);
+        return StillDecoder.decode(source, file, primary, limits, highBitDepth, region);
     }
 
     /**
@@ -231,13 +234,12 @@ public final class HeicFiles {
      * @param source the file
      * @param file the parsed file
      * @param item the image item
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color conversion
      * @return the decoded image with the item's own metadata
      */
     public static DecodedImage decodeItem(MediaSource source, HeifFile file, HeifItem item,
                                           ImageDecoderOptions options) {
-        var image = decodeStill(source, file, item, options);
-        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        return finish(decodeStill(source, file, item, options), options);
     }
 
     /**
@@ -352,17 +354,46 @@ public final class HeicFiles {
         if (foreign != null) {
             return foreign.decode(source, options);
         }
-        DecodedImage image;
+        Still still;
         if (showsSequence(file)) {
             try (var reader = new SequenceReader(source, file, limits, options.highBitDepth())) {
                 var picture = reader.readFirstPicture(options.highBitDepth());
-                image = new DecodedImage(picture, ImageFormat.HEIC, reader.orientation(), picture.width(),
+                var image = new DecodedImage(picture, ImageFormat.HEIC, reader.orientation(), picture.width(),
                         picture.height(), Optional.empty(), Optional.empty(), HeifPictures.colorProfile(null, picture));
+                var region = options.region().orElse(null);
+                if (region != null) {
+                    ImageRegions.check(region, picture.width(), picture.height());
+                }
+                still = new Still(image, region);
             }
         } else {
-            image = decodeStill(source, file, primary(file), options);
+            still = decodeStill(source, file, primary(file), options);
         }
-        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        return finish(still, options);
+    }
+
+    /**
+     * Holds a decoded image whose picture still has to be cropped to the region asked for.
+     *
+     * @param image the decoded image, whose picture covers the region
+     * @param crop the rectangle of the picture to keep, or {@code null} to keep the whole picture
+     */
+    private record Still(DecodedImage image, Region crop) {
+    }
+
+    /**
+     * Converts a decoded image to sRGB when the options ask, then crops its picture to the region.
+     *
+     * @param still the decoded image and the rectangle to keep
+     * @param options the decoding options
+     * @return the image
+     */
+    private static DecodedImage finish(Still still, ImageDecoderOptions options) {
+        var image = options.convertToSrgb() ? ImageOps.toSrgb(still.image()) : still.image();
+        if (still.crop() == null) {
+            return image;
+        }
+        return ImageRegions.withPicture(image, ImageOps.crop(image.picture(), still.crop()));
     }
 
     /**
@@ -429,32 +460,48 @@ public final class HeicFiles {
     }
 
     /**
-     * Decodes a still image item, or one of its thumbnails when the reduced-size hint allows.
+     * Decodes a still image item, or one of its thumbnails when the reduced-size hint allows, or the part of either
+     * that the region of the options needs.
+     *
+     * <p>With a region, the primary item is decoded over the region grown by {@link ImageRegions#expand}, which a
+     * grid decodes from the grid images it intersects, and a thumbnail is decoded whole; the result names the
+     * rectangle of its picture that holds the region, to crop once the picture is converted.
      *
      * @param source the file
      * @param file the parsed file
      * @param primary the primary item
      * @param options the decoding options
-     * @return the decoded image
+     * @return the decoded image and the rectangle of its picture to keep
      */
-    private static DecodedImage decodeStill(MediaSource source, HeifFile file, HeifItem primary,
-                                            ImageDecoderOptions options) {
+    private static Still decodeStill(MediaSource source, HeifFile file, HeifItem primary,
+                                     ImageDecoderOptions options) {
         var limits = options.limits();
+        var region = options.region().orElse(null);
+        var hinted = ImageRegions.hinted(options);
         HeifStill result = null;
         HeifGeometry full = null;
-        if (options.minWidth() > 0 || options.minHeight() > 0) {
+        Region crop = null;
+        if (hinted || region != null) {
             try {
-                full = geometry(source, file, primary, limits);
+                full = geometry(source, file, region == null ? primary : shown(file, primary), limits);
             } catch (MediaException.Io exception) {
                 throw exception;
             } catch (MediaException exception) {
                 full = null;
             }
         }
-        if (full != null) {
-            for (var thumbnail : thumbnails(source, file, primary, full, options)) {
+        if (region != null && full != null) {
+            ImageRegions.check(region, full.width(), full.height());
+        }
+        if (full != null && hinted) {
+            var hint = region == null ? options : ImageRegions.scaledHint(options, region, full.width(), full.height());
+            for (var thumbnail : thumbnails(source, file, primary, full, hint)) {
                 try {
                     result = StillDecoder.decode(source, file, thumbnail, limits, options.highBitDepth());
+                    if (region != null) {
+                        crop = ImageRegions.map(region, full.width(), full.height(), result.picture().width(),
+                                result.picture().height());
+                    }
                     break;
                 } catch (MediaException.Malformed | MediaException.Unsupported exception) {
                     result = null;
@@ -462,18 +509,28 @@ public final class HeicFiles {
             }
         }
         if (result == null) {
-            result = decodeShown(source, file, primary, limits, options.highBitDepth());
+            Region decoded = null;
+            if (region != null && full != null) {
+                decoded = ImageRegions.expand(region, full.width(), full.height());
+                crop = ImageRegions.within(region, decoded);
+            }
+            result = decodeShown(source, file, primary, limits, options.highBitDepth(), decoded);
+            if (region != null && full == null) {
+                ImageRegions.check(region, result.geometry().width(), result.geometry().height());
+                crop = region;
+            }
             full = null;
         }
         var picture = result.picture();
-        var sourceWidth = full == null ? picture.width() : full.width();
-        var sourceHeight = full == null ? picture.height() : full.height();
+        var sourceWidth = full == null ? result.geometry().width() : full.width();
+        var sourceHeight = full == null ? result.geometry().height() : full.height();
         var orientation = full == null ? result.geometry().orientation() : full.orientation();
         var icc = icc(file, primary);
         var profile = HeifPictures.colorProfile(icc, picture);
-        return new DecodedImage(picture, ImageFormat.HEIC, orientation, sourceWidth, sourceHeight,
+        var image = new DecodedImage(picture, ImageFormat.HEIC, orientation, sourceWidth, sourceHeight,
                 Optional.ofNullable(icc == null ? null : icc.clone()), Optional.ofNullable(exif(source, file, primary, limits)),
                 Optional.ofNullable(file.xmpOf(source, primary, limits)), profile);
+        return new Still(image, crop);
     }
 
     /**
@@ -764,7 +821,7 @@ public final class HeicFiles {
             @Override
             public Picture get() {
                 if (decoded == null) {
-                    var picture = decodeShown(source, file, primary, limits, highBitDepth).picture();
+                    var picture = decodeShown(source, file, primary, limits, highBitDepth, null).picture();
                     decoded = picture instanceof Yuv16Picture || picture instanceof Rgba16Picture
                             ? ImageOps.toRgba16(picture) : ImageOps.toRgba(picture);
                 }

@@ -99,6 +99,24 @@ public interface ImageCodecProvider {
     }
 
     /**
+     * Returns whether this provider honors {@link ImageDecoderOptions#region()} for a format, in
+     * {@link #decode(MediaSource, ImageDecoderOptions)} and in the pages of
+     * {@link #openPages(MediaSource, ImageDecoderOptions)}.
+     *
+     * <p>When it does not, {@link Images} passes these methods the options without a region and crops what they
+     * return, as {@link ImageDecoderOptions#region()} specifies. When it does, they receive the options as given
+     * and must return the decoded region.
+     *
+     * @implSpec The default implementation returns {@code false}.
+     *
+     * @param format the format, one {@link #decodes(ImageFormat)} accepts
+     * @return whether the decoding methods honor the region
+     */
+    default boolean decodesRegions(ImageFormat format) {
+        return false;
+    }
+
+    /**
      * Opens an image as an animation, when its format has an animated form.
      *
      * <p>A format that can hold an animation opens every image of it, a still one included, as an

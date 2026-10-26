@@ -10,6 +10,7 @@ import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.raw.internal.RawDecoding;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -134,9 +135,13 @@ public final class RawDecoder {
      * Decodes a raw image with generic image decoder options, as the image registry does: their
      * limits, size hint and bit depth choice apply, with the default rendering otherwise.
      *
+     * <p>A {@linkplain ImageDecoderOptions#region() region} is cut out of the whole rendering, at the size the
+     * hint scaled to the image selects.
+     *
      * @param source the input
-     * @param options the limits, size hint and bit depth
+     * @param options the limits, size hint, region and bit depth
      * @return the decoded image
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file is corrupt
      * @throws MediaException.Unsupported if the input is not a recognized raw format or uses a
      * feature the decoder lacks
@@ -144,7 +149,9 @@ public final class RawDecoder {
      * @throws MediaException.Io if reading the source fails
      */
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
-        return decode(source, RawDecoderOptions.of(Objects.requireNonNull(options, "options")));
+        Objects.requireNonNull(options, "options");
+        return ImageRegions.decode(options, () -> probe(source),
+                whole -> decode(source, RawDecoderOptions.of(whole)));
     }
 
     /**

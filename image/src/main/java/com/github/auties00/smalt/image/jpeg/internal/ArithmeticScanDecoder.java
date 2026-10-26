@@ -285,7 +285,9 @@ final class ArithmeticScanDecoder {
         }
         var left = restartInterval;
         var decoded = 0L;
-        for (var mcuY = 0; mcuY < scan.mcusHigh; mcuY++) {
+        var window = pixels ? target.scanWindow(scan) : null;
+        var lastRow = window == null ? scan.mcusHigh : window[3];
+        for (var mcuY = 0; mcuY < lastRow; mcuY++) {
             for (var mcuX = 0; mcuX < scan.mcusWide; mcuX++) {
                 if (restartInterval != 0) {
                     if (left == 0) {
@@ -298,7 +300,12 @@ final class ArithmeticScanDecoder {
                     decoded++;
                 }
                 if (!progressive) {
-                    sequential(scan, mcuX, mcuY, target, quant);
+                    if (window == null) {
+                        sequential(scan, mcuX, mcuY, target, quant, true);
+                    } else {
+                        var inside = mcuY >= window[1] && mcuX >= window[0] && mcuX < window[2];
+                        sequential(scan, mcuX - window[0], mcuY - window[1], target, quant, inside);
+                    }
                 } else if (scan.ss == 0) {
                     if (scan.ah == 0) {
                         dcFirst(scan, mcuX, mcuY, target);
@@ -607,8 +614,10 @@ final class ArithmeticScanDecoder {
      * @param target where decoded blocks go
      * @param quant the natural-order dequantization table of each scan component in pixel mode,
      * or {@code null} in coefficient mode
+     * @param store whether the decoded blocks are stored; in pixel mode an MCU outside the window of the planes is
+     * decoded without being stored
      */
-    private void sequential(JpegScan scan, int mcuX, int mcuY, DecodeTarget target, int[][] quant) {
+    private void sequential(JpegScan scan, int mcuX, int mcuY, DecodeTarget target, int[][] quant, boolean store) {
         var failed = ct == -1;
         for (var b = 0; b < scan.blocksPerMcu; b++) {
             var ci = scan.blockComponent[b];
@@ -632,7 +641,7 @@ final class ArithmeticScanDecoder {
                 }
                 failed = ct == -1;
             }
-            if (quant != null) {
+            if (quant != null && store) {
                 var size = 8 >> target.scaleShift;
                 var stride = target.strides[component.index];
                 JpegReader.transformBlock(scratch, 0, quant[ci], block, target.planes[component.index],

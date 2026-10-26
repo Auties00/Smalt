@@ -45,10 +45,34 @@ public final class TransparencyMask {
      * channel picture without alpha
      */
     public static Picture apply(Picture picture, RgbaPicture mask) {
+        return apply(picture, 0, 0, picture.width(), picture.height(), mask, 0, 0, mask.width(), mask.height());
+    }
+
+    /**
+     * Applies a mask to a rectangle of the page it masks, given the rectangle of the mask that covers it.
+     *
+     * <p>The result equals the same rectangle of the picture {@link #apply(Picture, RgbaPicture)} returns for the
+     * whole page and the whole mask.
+     *
+     * @param picture the decoded rectangle of the masked page, packed RGBA or a channel picture
+     * @param left the left edge of the rectangle on the page
+     * @param top the top edge of the rectangle on the page
+     * @param pageWidth the width of the page
+     * @param pageHeight the height of the page
+     * @param mask the decoded rectangle of the mask, at least the one {@link #coverage} returns
+     * @param maskLeft the left edge of that rectangle on the mask
+     * @param maskTop the top edge of that rectangle on the mask
+     * @param maskWidth the width of the whole mask
+     * @param maskHeight the height of the whole mask
+     * @return the masked picture, with alpha; the input picture's arrays are reused unless it is a
+     * channel picture without alpha
+     */
+    public static Picture apply(Picture picture, int left, int top, int pageWidth, int pageHeight, RgbaPicture mask,
+                                int maskLeft, int maskTop, int maskWidth, int maskHeight) {
         var width = picture.width();
         var height = picture.height();
-        var columns = spans(width, mask.width());
-        var rows = spans(height, mask.height());
+        var columns = spans(pageWidth, maskWidth, left, width);
+        var rows = spans(pageHeight, maskHeight, top, height);
         var target = withAlpha(picture);
         var opaque = !picture.hasAlpha();
         var bands = ParallelBands.bands(height, (long) mask.width() * mask.height() + (long) width * height);
@@ -64,9 +88,9 @@ public final class TransparencyMask {
                 for (var x = 0; x < width; x++) {
                     var sum = 0L;
                     for (var my = rows[y * 2]; my < rows[y * 2 + 1]; my++) {
-                        var at = my * stride;
+                        var at = (my - maskTop) * stride;
                         for (var mx = columns[x * 2]; mx < columns[x * 2 + 1]; mx++) {
-                            sum += pixels[at + mx * 4] & 0xFF;
+                            sum += pixels[at + (mx - maskLeft) * 4] & 0xFF;
                         }
                     }
                     sums[x] = sum;
@@ -79,22 +103,46 @@ public final class TransparencyMask {
     }
 
     /**
-     * Computes the mask span of each picture column or row.
+     * Returns the rectangle of a mask whose values cover a rectangle of the page it masks.
      *
-     * @param size the picture size in that direction
-     * @param maskSize the mask size in that direction
-     * @return the first and the end (exclusive) mask index of each picture index, interleaved
+     * @param left the left edge of the rectangle on the page
+     * @param top the top edge of the rectangle on the page
+     * @param width the width of the rectangle, positive
+     * @param height the height of the rectangle, positive
+     * @param pageWidth the width of the page
+     * @param pageHeight the height of the page
+     * @param maskWidth the width of the mask
+     * @param maskHeight the height of the mask
+     * @return the left, top, right and bottom edges (the last two exclusive) on the mask
      */
-    private static int[] spans(int size, int maskSize) {
-        var spans = new int[size * 2];
-        for (var i = 0; i < size; i++) {
+    public static int[] coverage(int left, int top, int width, int height, int pageWidth, int pageHeight,
+                                 int maskWidth, int maskHeight) {
+        var columns = spans(pageWidth, maskWidth, left, width);
+        var rows = spans(pageHeight, maskHeight, top, height);
+        return new int[]{columns[0], rows[0], columns[columns.length - 1], rows[rows.length - 1]};
+    }
+
+    /**
+     * Computes the mask span of each picture column or row of a range.
+     *
+     * @param size the page size in that direction
+     * @param maskSize the mask size in that direction
+     * @param from the first page index of the range
+     * @param count the number of page indices of the range
+     * @return the first and the end (exclusive) mask index of each page index of the range, interleaved; both are
+     * non-decreasing along the range
+     */
+    private static int[] spans(int size, int maskSize, int from, int count) {
+        var spans = new int[count * 2];
+        for (var k = 0; k < count; k++) {
+            var i = from + k;
             if (maskSize >= size) {
-                spans[i * 2] = (int) ((long) i * maskSize / size);
-                spans[i * 2 + 1] = (int) ((long) (i + 1) * maskSize / size);
+                spans[k * 2] = (int) ((long) i * maskSize / size);
+                spans[k * 2 + 1] = (int) ((long) (i + 1) * maskSize / size);
             } else {
                 var center = (int) ((2L * i + 1) * maskSize / (2L * size));
-                spans[i * 2] = center;
-                spans[i * 2 + 1] = center + 1;
+                spans[k * 2] = center;
+                spans[k * 2 + 1] = center + 1;
             }
         }
         return spans;

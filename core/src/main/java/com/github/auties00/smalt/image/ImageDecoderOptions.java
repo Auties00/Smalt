@@ -2,10 +2,12 @@ package com.github.auties00.smalt.image;
 
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.color.ColorProfile;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 
 import java.util.Objects;
+import java.util.Optional;
 
 /**
  * Holds the settings of an image decoder, such as {@link Images#decode(com.github.auties00.smalt.io.MediaSource,
@@ -14,7 +16,7 @@ import java.util.Objects;
  */
 public final class ImageDecoderOptions {
     private static final ImageDecoderOptions DEFAULTS = new ImageDecoderOptions(MediaLimits.DEFAULT, 0, 0, false, false,
-            false, DataReferenceResolver.none());
+            false, DataReferenceResolver.none(), null);
 
     private final MediaLimits limits;
     private final int minWidth;
@@ -23,9 +25,11 @@ public final class ImageDecoderOptions {
     private final boolean convertToSrgb;
     private final boolean keepChannels;
     private final DataReferenceResolver dataReferences;
+    private final Region region;
 
     private ImageDecoderOptions(MediaLimits limits, int minWidth, int minHeight, boolean highBitDepth,
-                                boolean convertToSrgb, boolean keepChannels, DataReferenceResolver dataReferences) {
+                                boolean convertToSrgb, boolean keepChannels, DataReferenceResolver dataReferences,
+                                Region region) {
         this.limits = limits;
         this.minWidth = minWidth;
         this.minHeight = minHeight;
@@ -33,6 +37,7 @@ public final class ImageDecoderOptions {
         this.convertToSrgb = convertToSrgb;
         this.keepChannels = keepChannels;
         this.dataReferences = dataReferences;
+        this.region = region;
     }
 
     /**
@@ -183,6 +188,41 @@ public final class ImageDecoderOptions {
         return dataReferences;
     }
 
+    /**
+     * {@return the rectangle of the image to decode, or empty to decode the whole image; empty by default}
+     *
+     * <p>The rectangle is given in the stored pixels of the full-size image, the {@link DecodedImage#sourceWidth()}
+     * by {@link DecodedImage#sourceHeight()} grid before the orientation is applied, and must lie inside it. The
+     * decoded picture then equals {@link com.github.auties00.smalt.image.ops.ImageOps#crop(Picture, Region)
+     * ImageOps.crop} of the picture the same options without a region decode, sample for sample, while
+     * {@link DecodedImage#sourceWidth()}, {@link DecodedImage#sourceHeight()} and the metadata still describe the
+     * whole image.
+     *
+     * <p>A reduced-size hint ({@link #minWidth()}, {@link #minHeight()}) applies to the decoded rectangle: the
+     * decoder chooses its reduced size as for the hint scaled by the ratio of the image to the rectangle, rounded
+     * up, and returns the rectangle of that reduced picture that covers the region. For a region {@code (x, y)} of
+     * {@code w} by {@code h} pixels of an image of {@code W} by {@code H}, decoded at {@code W'} by {@code H'}:
+     * {@snippet :
+     * hintWidth  = ceil(minWidth  * W / w);         hintHeight = ceil(minHeight * H / h);
+     * left = floor(x * W' / W);  right  = ceil((x + w) * W' / W);
+     * top  = floor(y * H' / H);  bottom = ceil((y + h) * H' / H);
+     * }
+     * which is the region itself at full size.
+     *
+     * <p>The TIFF, JPEG, JPEG 2000, WebP, HEIC and AVIF decoders decode only what the region needs: the strips or
+     * tiles of a TIFF page, the tiles and code-blocks of a JPEG 2000 codestream, and the grid images of a HEIC or
+     * AVIF grid that intersect the region, reading only their data from the source; the MCUs of a JPEG image
+     * from the first row the region needs to the last, transforming only those the region covers; and the rows of
+     * a WebP image down to the last one the region covers. For these decoders the {@link #limits()} bound what
+     * the region needs, those strips, tiles, MCUs, rows or grid images, rather than the whole image, so a region
+     * of a tiled image larger than {@link MediaLimits#maxPixels()} decodes. The other decoders decode the whole
+     * image under the limits and crop it. The decoders of animations, gain maps, auxiliary images and previews
+     * ignore the region.
+     */
+    public Optional<Region> region() {
+        return Optional.ofNullable(region);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof ImageDecoderOptions that
@@ -192,19 +232,22 @@ public final class ImageDecoderOptions {
                 && highBitDepth == that.highBitDepth
                 && convertToSrgb == that.convertToSrgb
                 && keepChannels == that.keepChannels
-                && dataReferences.equals(that.dataReferences);
+                && dataReferences.equals(that.dataReferences)
+                && Objects.equals(region, that.region);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels, dataReferences);
+        return Objects.hash(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels, dataReferences,
+                region);
     }
 
     @Override
     public String toString() {
         return "ImageDecoderOptions[limits=" + limits + ", minWidth=" + minWidth + ", minHeight=" + minHeight
                 + ", highBitDepth=" + highBitDepth + ", convertToSrgb=" + convertToSrgb
-                + ", keepChannels=" + keepChannels + ", dataReferences=" + dataReferences + "]";
+                + ", keepChannels=" + keepChannels + ", dataReferences=" + dataReferences
+                + ", region=" + (region == null ? "whole" : region) + "]";
     }
 
     /**
@@ -221,6 +264,7 @@ public final class ImageDecoderOptions {
         private boolean convertToSrgb;
         private boolean keepChannels;
         private DataReferenceResolver dataReferences;
+        private Region region;
 
         private Builder(ImageDecoderOptions options) {
             this.limits = options.limits;
@@ -230,6 +274,7 @@ public final class ImageDecoderOptions {
             this.convertToSrgb = options.convertToSrgb;
             this.keepChannels = options.keepChannels;
             this.dataReferences = options.dataReferences;
+            this.region = options.region;
         }
 
         /**
@@ -326,6 +371,42 @@ public final class ImageDecoderOptions {
         }
 
         /**
+         * Sets the rectangle of the image to decode; see {@link ImageDecoderOptions#region()}.
+         *
+         * @param region the rectangle, in the stored pixels of the full-size image
+         * @return this builder
+         */
+        public Builder region(Region region) {
+            this.region = Objects.requireNonNull(region, "region");
+            return this;
+        }
+
+        /**
+         * Sets the rectangle of the image to decode from its edges and size; see
+         * {@link ImageDecoderOptions#region()}.
+         *
+         * @param x the left edge, at least 0
+         * @param y the top edge, at least 0
+         * @param width the width, positive
+         * @param height the height, positive
+         * @return this builder
+         * @throws IllegalArgumentException if an edge is negative or a dimension is not positive
+         */
+        public Builder region(int x, int y, int width, int height) {
+            return region(new Region(x, y, width, height));
+        }
+
+        /**
+         * Decodes the whole image, the default; see {@link ImageDecoderOptions#region()}.
+         *
+         * @return this builder
+         */
+        public Builder wholeImage() {
+            this.region = null;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -335,7 +416,7 @@ public final class ImageDecoderOptions {
             Checks.nonNegative("minimum width", minWidth);
             Checks.nonNegative("minimum height", minHeight);
             return new ImageDecoderOptions(limits, minWidth, minHeight, highBitDepth, convertToSrgb, keepChannels,
-                    dataReferences);
+                    dataReferences, region);
         }
     }
 }

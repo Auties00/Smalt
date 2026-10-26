@@ -22,6 +22,7 @@ import com.github.auties00.smalt.image.jxl.internal.render.FrameImage;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
@@ -154,10 +155,12 @@ public final class JxlDecoder {
      * preview, when it qualifies, or the full image is returned. The preview wins a tie.
      *
      * @param source the file
-     * @param options the limits, the bit depth choice, the channel choice, the sRGB conversion and the
-     * reduced-size hint
+     * @param options the limits, the bit depth choice, the channel choice, the sRGB conversion, the reduced-size
+     * hint and the region (cut out of the whole image, decoded at the size the hint scaled to the image
+     * selects)
      * @return the decoded image with its orientation, color profile, EXIF block and XMP packet (the
      * {@code xml } box of the container); its source size is the full size even when the picture is reduced
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported if a CMYK profile cannot be applied
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits or decoding runs
@@ -167,10 +170,23 @@ public final class JxlDecoder {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        return run(() -> {
+        var region = options.region().orElse(null);
+        if (region == null) {
+            return run(() -> {
+                var limits = options.limits();
+                return decodeImage(JxlCodestream.open(SourceBytes.readAll(source, limits, true), limits), options);
+            });
+        }
+        var image = run(() -> {
             var limits = options.limits();
-            return decodeImage(JxlCodestream.open(SourceBytes.readAll(source, limits, true), limits), options);
+            var codestream = JxlCodestream.open(SourceBytes.readAll(source, limits, true), limits);
+            var header = codestream.header();
+            ImageRegions.check(region, header.width(), header.height());
+            var whole = ImageRegions.scaledHint(options.toBuilder().wholeImage().build(), region, header.width(),
+                    header.height());
+            return decodeImage(codestream, whole);
         });
+        return ImageRegions.crop(image, region);
     }
 
     /**

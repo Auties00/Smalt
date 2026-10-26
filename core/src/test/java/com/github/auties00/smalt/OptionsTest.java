@@ -10,6 +10,7 @@ import com.github.auties00.smalt.container.mp4.RemuxOptions;
 import com.github.auties00.smalt.container.ogg.OggMuxerOptions;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
@@ -62,6 +63,19 @@ class OptionsTest {
         assertNotEquals(defaults, resolving);
         assertEquals(defaults, resolving.toBuilder().noDataReferences().build());
         assertThrows(NullPointerException.class, () -> defaults.toBuilder().dataReferences(null));
+        assertEquals(Optional.empty(), defaults.region());
+        var region = new Region(3, 4, 5, 6);
+        var cropped = defaults.toBuilder().region(region).build();
+        assertEquals(Optional.of(region), cropped.region());
+        assertEquals(cropped, defaults.toBuilder().region(3, 4, 5, 6).build());
+        assertEquals(cropped.hashCode(), defaults.toBuilder().region(3, 4, 5, 6).build().hashCode());
+        assertEquals(cropped, cropped.toBuilder().build());
+        assertNotEquals(defaults, cropped);
+        assertEquals(defaults, cropped.toBuilder().wholeImage().build());
+        assertTrue(cropped.toString().contains("region=Region[x=3, y=4, width=5, height=6]"), cropped.toString());
+        assertThrows(NullPointerException.class, () -> defaults.toBuilder().region(null));
+        assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().region(-1, 0, 1, 1));
+        assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().region(0, 0, 0, 1));
     }
 
     @Test

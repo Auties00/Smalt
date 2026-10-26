@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.jp2.Jp2ChannelType;
 import com.github.auties00.smalt.image.jp2.Jp2ColorSpace;
 import com.github.auties00.smalt.image.jp2.Jp2Channel;
 import com.github.auties00.smalt.image.jp2.Jp2Image;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
@@ -266,21 +267,198 @@ public final class Jp2Reader {
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
     public static Jp2Image decode(Headers headers, int index, int reduction, int maxLayers, MediaLimits limits) {
+        return decode(headers, index, reduction, maxLayers, limits, null);
+    }
+
+    /**
+     * Returns the rectangle of a decoded image, its channels cut to the samples the rectangle's pixels take.
+     *
+     * <p>A pixel at {@code X} of the reduced image area takes the sample {@code floor(X / d)} of a channel
+     * subsampled by {@code d}, clamped to the channel, so the result's pixels convert as the same pixels of the
+     * image do.
+     *
+     * @param image the decoded image
+     * @param area the rectangle, in pixels of the image from its top-left corner, inside it
+     * @param limits the bound on the copies
+     * @return the image of the rectangle
+     * @throws MediaException.LimitExceeded if the copies exceed the limits
+     */
+    public static Jp2Image crop(Jp2Image image, Region area, MediaLimits limits) {
+        var x0 = image.x0() + area.x();
+        var y0 = image.y0() + area.y();
+        var x1 = x0 + area.width();
+        var y1 = y0 + area.height();
+        var channels = new ArrayList<Jp2Channel>(image.channels().size());
+        for (var channel : image.channels()) {
+            if (channel.width() == 0 || channel.height() == 0) {
+                channels.add(channel);
+                continue;
+            }
+            var dx = channel.subsamplingX();
+            var dy = channel.subsamplingY();
+            var cx0 = Math.clamp(Math.floorDiv(x0, dx), channel.x0(), channel.x0() + channel.width() - 1);
+            var cy0 = Math.clamp(Math.floorDiv(y0, dy), channel.y0(), channel.y0() + channel.height() - 1);
+            var cx1 = Math.clamp(Math.floorDiv(x1 - 1, dx) + 1, cx0 + 1, channel.x0() + channel.width());
+            var cy1 = Math.clamp(Math.floorDiv(y1 - 1, dy) + 1, cy0 + 1, channel.y0() + channel.height());
+            var width = (int) (cx1 - cx0);
+            var height = (int) (cy1 - cy0);
+            LimitChecks.checkAllocation(limits, (long) width * height * (channel.wide() ? 8 : 4));
+            int[] samples = null;
+            long[] wide = null;
+            for (var row = 0; row < height; row++) {
+                var from = (int) ((cy0 - channel.y0() + row) * channel.width() + (cx0 - channel.x0()));
+                if (channel.samples() != null) {
+                    if (samples == null) {
+                        samples = new int[width * height];
+                    }
+                    System.arraycopy(channel.samples(), from, samples, row * width, width);
+                } else {
+                    if (wide == null) {
+                        wide = new long[width * height];
+                    }
+                    System.arraycopy(channel.wideSamples(), from, wide, row * width, width);
+                }
+            }
+            channels.add(new Jp2Channel(cx0, cy0, width, height, dx, dy, channel.precision(), channel.signed(),
+                    channel.type(), channel.association(), samples, wide));
+        }
+        return new Jp2Image(x0, y0, area.width(), area.height(), image.fullWidth(), image.fullHeight(),
+                image.reduction(), channels, image.colorSpace(), image.colorParameters(), image.iccProfile(),
+                image.exif(), image.xmp());
+    }
+
+    /**
+     * Returns whether a compositing layer decodes a window of its image area: a layer of one codestream whose
+     * registration, if any, maps it onto the layer grid unchanged.
+     *
+     * @param headers the file's headers
+     * @param index the compositing layer
+     * @return whether {@link #decode(Headers, int, int, int, MediaLimits, Region)} accepts a window for it
+     */
+    public static boolean windowable(Headers headers, int index) {
+        var layer = headers.boxes().layer(index);
+        return layer.codestreams().length == 1 && (layer.registration() == null || identity(layer.registration()));
+    }
+
+    /**
+     * Returns the number of resolution levels a compositing layer can discard, at most a requested number.
+     *
+     * @param headers the file's headers
+     * @param index the compositing layer
+     * @param reduction the requested number
+     * @return the number every codestream of the layer allows
+     */
+    public static int reduction(Headers headers, int index, int reduction) {
+        for (var stream : headers.boxes().layer(index).codestreams()) {
+            reduction = Math.min(reduction, maxReduction(headers.parse(stream)));
+        }
+        return reduction;
+    }
+
+    /**
+     * Returns the size of a compositing layer of one codestream at a reduced resolution.
+     *
+     * @param headers the file's headers
+     * @param index the compositing layer, one for which {@link #windowable(Headers, int)} holds
+     * @param reduction the number of resolution levels discarded, at most what the codestream allows
+     * @return the width and height
+     */
+    public static int[] reducedSize(Headers headers, int index, int reduction) {
+        var codestream = headers.parse(headers.boxes().layer(index).codestreams()[0]);
+        var depths = codestream.reductionDepths(0, reduction);
+        return new int[]{
+                (int) (TileComponent.ceilDivPow2(codestream.x1(), depths[0])
+                        - TileComponent.ceilDivPow2(codestream.x0(), depths[0])),
+                (int) (TileComponent.ceilDivPow2(codestream.y1(), depths[1])
+                        - TileComponent.ceilDivPow2(codestream.y0(), depths[1]))};
+    }
+
+    /**
+     * Returns the tiles of a codestream that hold samples of a window of its image area at a reduced resolution.
+     *
+     * @param codestream the parsed codestream
+     * @param reduction the number of resolution levels discarded, at most what the codestream allows
+     * @param window the window, in pixels of the reduced image area from its top-left corner
+     * @return whether each tile is needed
+     */
+    public static boolean[] tilesOf(Codestream codestream, int reduction, Region window) {
+        var depths = codestream.reductionDepths(0, reduction);
+        var imageX0 = TileComponent.ceilDivPow2(codestream.x0(), depths[0]);
+        var imageY0 = TileComponent.ceilDivPow2(codestream.y0(), depths[1]);
+        // one sample of slack on every side covers the rounding of subsampled components
+        var left = imageX0 + window.x() - 1;
+        var top = imageY0 + window.y() - 1;
+        var right = imageX0 + window.x() + window.width() + 1;
+        var bottom = imageY0 + window.y() + window.height() + 1;
+        var needed = new boolean[codestream.tileCount()];
+        for (var tile = 0; tile < needed.length; tile++) {
+            var bounds = codestream.tileBounds(tile);
+            needed[tile] = TileComponent.ceilDivPow2(bounds[0], depths[0]) < right
+                    && TileComponent.ceilDivPow2(bounds[2], depths[0]) > left
+                    && TileComponent.ceilDivPow2(bounds[1], depths[1]) < bottom
+                    && TileComponent.ceilDivPow2(bounds[3], depths[1]) > top;
+        }
+        return needed;
+    }
+
+    /**
+     * Checks the tiles a window decodes against the limits: each tile, at full resolution as the declared size of a
+     * whole decode counts, must fit the picture limits.
+     *
+     * @param codestream the parsed codestream
+     * @param tiles the indices of the tiles decoded
+     * @param limits the bounds on the size of every tile
+     * @throws MediaException.LimitExceeded if a tile exceeds the limits
+     */
+    private static void checkTiles(Codestream codestream, List<Integer> tiles, MediaLimits limits) {
+        for (var tile : tiles) {
+            var bounds = codestream.tileBounds(tile);
+            if (bounds[0] < bounds[2] && bounds[1] < bounds[3]) {
+                LimitChecks.checkPicture(limits, (int) Math.min(Integer.MAX_VALUE, bounds[2] - bounds[0]),
+                        (int) Math.min(Integer.MAX_VALUE, bounds[3] - bounds[1]));
+            }
+        }
+    }
+
+    /**
+     * Decodes one compositing layer, or a window of it, into channels.
+     *
+     * <p>With a window, only the tiles of the codestream that hold samples of it, and in them only the code-blocks
+     * those samples depend on, are decoded; the image area and the channels then cover the window, the channels
+     * holding the samples the whole decode holds there, and the limits bound the window and every tile decoded, at
+     * full resolution, rather than the layer.
+     *
+     * @param headers the file's headers, from {@link #headers(byte[], MediaLimits)}
+     * @param index the compositing layer, from 0 to the layer count minus one
+     * @param reduction the number of resolution levels to discard; lowered to what the codestreams allow
+     * @param maxLayers the number of quality layers to decode, or 0 for all
+     * @param limits the limits bounding every allocation
+     * @param window the window, in pixels of the reduced image area from its top-left corner, inside it, or
+     * {@code null} for the whole layer; only for a layer for which {@link #windowable(Headers, int)} holds
+     * @return the image
+     * @throws MediaException.Malformed if the file is invalid
+     * @throws MediaException.Unsupported if the file uses a feature this decoder does not implement
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    public static Jp2Image decode(Headers headers, int index, int reduction, int maxLayers, MediaLimits limits,
+                                  Region window) {
         var boxes = headers.boxes();
         var layer = boxes.layer(index);
         var streams = layer.codestreams();
         var parsed = new Codestream[streams.length];
         for (var k = 0; k < streams.length; k++) {
             parsed[k] = headers.parse(streams[k]);
-            // The declared size counts even when a reduction decodes less of it.
-            LimitChecks.checkPicture(limits, parsed[k].width(), parsed[k].height());
+            if (window == null) {
+                // The declared size counts even when a reduction decodes less of it.
+                LimitChecks.checkPicture(limits, parsed[k].width(), parsed[k].height());
+            }
             reduction = Math.min(reduction, maxReduction(parsed[k]));
         }
         var channels = new ArrayList<Jp2Channel>();
         var owners = new ArrayList<Integer>();
         Geometry geometry = null;
         for (var k = 0; k < streams.length; k++) {
-            var decoded = decodeCodestream(parsed[k], reduction, maxLayers, limits);
+            var decoded = decodeCodestream(parsed[k], reduction, maxLayers, limits, window);
             if (geometry == null) {
                 geometry = decoded.geometry();
             }
@@ -331,16 +509,22 @@ public final class Jp2Reader {
      * @param reduction the number of resolution levels to discard, at most what the codestream allows
      * @param maxLayers the number of quality layers to decode, or 0 for all
      * @param limits the limits bounding every allocation
+     * @param window the window, in pixels of the reduced image area from its top-left corner, or {@code null} for
+     * the whole image
      * @return the channels and the image area
      */
     private static Decoded decodeCodestream(Codestream codestream, int reduction, int maxLayers,
-                                            MediaLimits limits) {
+                                            MediaLimits limits, Region window) {
         var depths = codestream.reductionDepths(0, reduction);
         var imageX0 = TileComponent.ceilDivPow2(codestream.x0(), depths[0]);
         var imageY0 = TileComponent.ceilDivPow2(codestream.y0(), depths[1]);
         var width = (int) (TileComponent.ceilDivPow2(codestream.x1(), depths[0]) - imageX0);
         var height = (int) (TileComponent.ceilDivPow2(codestream.y1(), depths[1]) - imageY0);
-        LimitChecks.checkPicture(limits, width, height);
+        var areaX0 = window == null ? imageX0 : imageX0 + window.x();
+        var areaY0 = window == null ? imageY0 : imageY0 + window.y();
+        var areaWidth = window == null ? width : window.width();
+        var areaHeight = window == null ? height : window.height();
+        LimitChecks.checkPicture(limits, areaWidth, areaHeight);
         var outputs = codestream.outputs();
         var count = outputs.count();
         var planes = new int[count][];
@@ -355,6 +539,16 @@ public final class Jp2Reader {
             var cy0 = TileComponent.ceilDivPow2(Math.ceilDiv(codestream.y0(), dy), componentDepths[1]);
             var cx1 = TileComponent.ceilDivPow2(Math.ceilDiv(codestream.x1(), dx), componentDepths[0]);
             var cy1 = TileComponent.ceilDivPow2(Math.ceilDiv(codestream.y1(), dy), componentDepths[1]);
+            if (window != null) {
+                // a pixel X of the reduced image area takes the sample floor(X / d) of a component subsampled by d
+                // clamped to the component, as the pixels clamp the samples they take
+                var x0 = Math.clamp(Math.floorDiv(areaX0, dx), cx0, cx1 - 1);
+                var y0 = Math.clamp(Math.floorDiv(areaY0, dy), cy0, cy1 - 1);
+                cx1 = Math.clamp(Math.floorDiv(areaX0 + areaWidth - 1, dx) + 1, x0 + 1, cx1);
+                cy1 = Math.clamp(Math.floorDiv(areaY0 + areaHeight - 1, dy) + 1, y0 + 1, cy1);
+                cx0 = x0;
+                cy0 = y0;
+            }
             bounds[c] = new long[]{cx0, cy0, cx1 - cx0, cy1 - cy0};
             total += (cx1 - cx0) * (cy1 - cy0) * (outputs.precisions()[c] > 31 ? 2 : 1);
             LimitChecks.checkAllocation(limits, total * 4);
@@ -368,13 +562,30 @@ public final class Jp2Reader {
             }
         }
         var layers = maxLayers <= 0 ? Integer.MAX_VALUE : maxLayers;
-        var tiles = codestream.tileCount();
-        var work = (long) width * height * count * 64;
+        var selected = new ArrayList<Integer>();
+        var needed = window == null ? null : tilesOf(codestream, reduction, window);
+        for (var tile = 0; tile < codestream.tileCount(); tile++) {
+            if (needed == null || needed[tile]) {
+                selected.add(tile);
+            }
+        }
+        long[][] windows = null;
+        if (window != null) {
+            checkTiles(codestream, selected, limits);
+            windows = new long[codestream.components()][];
+            for (var c = 0; c < Math.min(count, windows.length); c++) {
+                windows[c] = new long[]{bounds[c][0], bounds[c][1], bounds[c][0] + bounds[c][2],
+                        bounds[c][1] + bounds[c][3]};
+            }
+        }
+        var tiles = selected.size();
+        var work = (long) areaWidth * areaHeight * count * 64;
         var bands = ParallelBands.bands(tiles, work);
+        var tileWindows = windows;
         ParallelBands.run(bands, band -> {
             var end = ParallelBands.start(band + 1, bands, tiles);
-            for (var tile = ParallelBands.start(band, bands, tiles); tile < end; tile++) {
-                var samples = TileDecoder.decode(codestream, tile, reduction, layers, limits);
+            for (var k = ParallelBands.start(band, bands, tiles); k < end; k++) {
+                var samples = TileDecoder.decode(codestream, selected.get(k), reduction, layers, limits, tileWindows);
                 for (var c = 0; c < count; c++) {
                     place(samples[c], planes[c], widePlanes[c], bounds[c]);
                 }
@@ -386,7 +597,7 @@ public final class Jp2Reader {
                     outputs.subsamplingX()[c], outputs.subsamplingY()[c], outputs.precisions()[c],
                     outputs.signed()[c], Jp2ChannelType.COLOR, -1, planes[c], widePlanes[c]));
         }
-        return new Decoded(channels, new Geometry(imageX0, imageY0, width, height, codestream.width(),
+        return new Decoded(channels, new Geometry(areaX0, areaY0, areaWidth, areaHeight, codestream.width(),
                 codestream.height()));
     }
 
@@ -399,22 +610,25 @@ public final class Jp2Reader {
      * @param bounds the plane's left, top, width and height on the reduced component grid
      */
     private static void place(TileDecoder.Samples samples, int[] plane, long[] widePlane, long[] bounds) {
-        var left = (int) (samples.x0() - bounds[0]);
+        var offset = samples.x0() - bounds[0];
+        var skip = (int) Math.max(0, -offset);
+        var left = (int) Math.max(0, offset);
         var top = (int) (samples.y0() - bounds[1]);
         var width = (int) bounds[2];
-        var columns = Math.min(samples.width(), width - left);
+        var columns = (int) Math.min(samples.width() - skip, width - left);
         for (var y = 0; y < samples.height(); y++) {
             var row = top + y;
-            if (row < 0 || row >= bounds[3] || left < 0 || columns <= 0) {
+            if (row < 0 || row >= bounds[3] || columns <= 0) {
                 continue;
             }
+            var from = y * samples.width() + skip;
             if (plane != null) {
-                System.arraycopy(samples.samples(), y * samples.width(), plane, row * width + left, columns);
+                System.arraycopy(samples.samples(), from, plane, row * width + left, columns);
             } else if (samples.wide() != null) {
-                System.arraycopy(samples.wide(), y * samples.width(), widePlane, row * width + left, columns);
+                System.arraycopy(samples.wide(), from, widePlane, row * width + left, columns);
             } else {
                 for (var x = 0; x < columns; x++) {
-                    widePlane[row * width + left + x] = samples.samples()[y * samples.width() + x];
+                    widePlane[row * width + left + x] = samples.samples()[from + x];
                 }
             }
         }

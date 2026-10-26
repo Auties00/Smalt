@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.container.ReaderAsserts;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
+import com.github.auties00.smalt.testkit.image.RegionAsserts;
 import com.github.auties00.smalt.testkit.io.BehaviorSamples;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -56,6 +57,14 @@ class VideoDecoderBehaviorTest {
     @DisplayName("the AVIF samples are the files pinned in tools/testdata/behavior/samples.tsv")
     void pinned() {
         BehaviorSamples.assertPinned(AVIF_SAMPLES);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"avif/derived.avif", "avif/sato.avif"})
+    @DisplayName("AVIF samples decoded by region: identical pictures under every source behavior")
+    void avifSampleRegion(String sample) throws IOException {
+        RegionAsserts.behaviors("region/" + sample,
+                Files.readAllBytes(AVIF_SAMPLES.resolve(sample)));
     }
 
     @ParameterizedTest(name = "{0}")

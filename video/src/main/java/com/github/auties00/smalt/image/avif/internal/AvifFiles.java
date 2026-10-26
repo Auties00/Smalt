@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.gainmap.HeifToneMaps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
@@ -25,6 +26,7 @@ import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifStill;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
@@ -303,37 +305,44 @@ public final class AvifFiles {
     }
 
     /**
-     * Decodes the image an AVIF file shows.
+     * Decodes the image an AVIF file shows, converted to sRGB when the options ask.
+     *
+     * <p>With a region, the shown item is decoded over the region grown by {@link ImageRegions#expand}, which a grid
+     * of coded items decodes from the grid images it intersects, a thumbnail and a sequence frame are decoded whole,
+     * and the region is cut out once the picture is converted.
      *
      * @param source the file
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color conversion
      * @return the decoded image
+     * @throws IllegalArgumentException if the region does not lie inside the image
      */
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
         var highBitDepth = options.highBitDepth();
+        var region = options.region().orElse(null);
         var file = parse(source, limits, options.dataReferences());
         var foreign = foreign(source, file, limits);
         if (foreign != null) {
             return foreign.decode(source, options);
         }
-        DecodedImage image;
         if (showsSequence(file)) {
             try (var reader = new SequenceReader(source, file, limits, highBitDepth)) {
                 var picture = reader.readFirstPicture(highBitDepth);
                 // the metadata of a sequence is that of the primary item it is shown in place of, when it has one
                 var item = file.primaryItem() == null ? null : primary(file);
                 var icc = item == null ? null : icc(file, item);
-                image = new DecodedImage(picture, ImageFormat.AVIF, reader.orientation(), picture.width(),
+                var image = new DecodedImage(picture, ImageFormat.AVIF, reader.orientation(), picture.width(),
                         picture.height(), Optional.ofNullable(icc == null ? null : icc.clone()),
                         Optional.ofNullable(item == null ? null : exif(source, file, item, limits)),
                         Optional.ofNullable(item == null ? null : file.xmpOf(source, item, limits)),
                         icc == null ? HeifPictures.colorProfile(null, picture) : HeifPictures.colorProfile(icc, null));
+                if (region != null) {
+                    ImageRegions.check(region, picture.width(), picture.height());
+                }
+                return finish(image, region, options);
             }
-        } else {
-            image = decodeStill(source, file, primary(file), options);
         }
-        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        return decodeStill(source, file, primary(file), options);
     }
 
     /**
@@ -342,47 +351,65 @@ public final class AvifFiles {
      * @param source the file
      * @param file the parsed file
      * @param item the image item
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color conversion
      * @return the decoded image with the item's own metadata
+     * @throws IllegalArgumentException if the region does not lie inside the image
      */
     public static DecodedImage decodeItem(MediaSource source, HeifFile file, HeifItem item,
                                           ImageDecoderOptions options) {
-        var image = decodeStill(source, file, item, options);
-        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        return decodeStill(source, file, item, options);
     }
 
     /**
-     * Decodes a still image item, or one of its thumbnails when the reduced-size hint allows.
+     * Decodes a still image item, or one of its thumbnails when the reduced-size hint allows, or the part of either
+     * that the region of the options needs, converted to sRGB when the options ask.
+     *
+     * <p>With a region, the shown item is decoded over the region grown by {@link ImageRegions#expand}, which a grid
+     * of coded items decodes from the grid images it intersects, a thumbnail is decoded whole, and the region is cut
+     * out once the picture is converted.
      *
      * @param source the file
      * @param file the parsed file
      * @param primary the image item, which the thumbnails reference
-     * @param options the limits, the bit depth choice and the reduced-size hint
-     * @return the decoded image, before any color conversion
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color conversion
+     * @return the decoded image
+     * @throws IllegalArgumentException if the region does not lie inside the image
      */
     private static DecodedImage decodeStill(MediaSource source, HeifFile file, HeifItem primary,
                                             ImageDecoderOptions options) {
         var limits = options.limits();
         var highBitDepth = options.highBitDepth();
+        var region = options.region().orElse(null);
         var shown = shown(source, file, primary, limits);
         var icc = icc(file, primary);
-        var embeddedProfile = icc == null ? null : ParallelBands.submit(() -> HeifPictures.colorProfile(icc, null));
+        var hinted = ImageRegions.hinted(options);
         HeifStill result = null;
         HeifGeometry full = null;
-        try {
-            if (options.minWidth() > 0 || options.minHeight() > 0) {
-                try {
-                    full = geometry(source, file, shown, limits);
-                } catch (MediaException.Io exception) {
-                    throw exception;
-                } catch (MediaException exception) {
-                    full = null;
-                }
+        Region crop = null;
+        if (hinted || region != null) {
+            try {
+                full = geometry(source, file, shown, limits);
+            } catch (MediaException.Io exception) {
+                throw exception;
+            } catch (MediaException exception) {
+                full = null;
             }
-            if (full != null) {
-                for (var thumbnail : thumbnails(source, file, primary, full, limits, options)) {
+        }
+        if (region != null && full != null) {
+            ImageRegions.check(region, full.width(), full.height());
+        }
+        var embeddedProfile = icc == null ? null : ParallelBands.submit(() -> HeifPictures.colorProfile(icc, null));
+        try {
+            if (full != null && hinted) {
+                var hint = region == null ? options
+                        : ImageRegions.scaledHint(options, region, full.width(), full.height());
+                for (var thumbnail : thumbnails(source, file, primary, full, limits, hint)) {
                     try {
                         result = Reconstruction.decode(source, file, thumbnail, limits, highBitDepth);
+                        if (region != null) {
+                            crop = ImageRegions.map(region, full.width(), full.height(), result.picture().width(),
+                                    result.picture().height());
+                        }
                         break;
                     } catch (MediaException.Malformed | MediaException.Unsupported exception) {
                         result = null;
@@ -390,8 +417,17 @@ public final class AvifFiles {
                 }
             }
             if (result == null) {
+                Region decoded = null;
+                if (region != null && full != null) {
+                    decoded = ImageRegions.expand(region, full.width(), full.height());
+                    crop = ImageRegions.within(region, decoded);
+                }
                 full = null;
-                result = decodeShown(source, file, primary, shown, limits, highBitDepth);
+                result = decodeShown(source, file, primary, shown, limits, highBitDepth, decoded);
+                if (region != null && decoded == null) {
+                    ImageRegions.check(region, result.geometry().width(), result.geometry().height());
+                    crop = region;
+                }
             }
         } catch (RuntimeException | Error failure) {
             if (embeddedProfile != null) {
@@ -400,14 +436,31 @@ public final class AvifFiles {
             throw failure;
         }
         var picture = result.picture();
-        var sourceWidth = full == null ? picture.width() : full.width();
-        var sourceHeight = full == null ? picture.height() : full.height();
+        var sourceWidth = full == null ? result.geometry().width() : full.width();
+        var sourceHeight = full == null ? result.geometry().height() : full.height();
         var orientation = full == null ? result.geometry().orientation() : full.orientation();
-        return new DecodedImage(picture, ImageFormat.AVIF, orientation, sourceWidth, sourceHeight,
+        var image = new DecodedImage(picture, ImageFormat.AVIF, orientation, sourceWidth, sourceHeight,
                 Optional.ofNullable(icc == null ? null : icc.clone()),
                 Optional.ofNullable(exif(source, file, primary, limits)),
                 Optional.ofNullable(file.xmpOf(source, primary, limits)),
                 embeddedProfile == null ? HeifPictures.colorProfile(null, picture) : embeddedProfile.join());
+        return finish(image, crop, options);
+    }
+
+    /**
+     * Converts a decoded image to sRGB when the options ask, then crops its picture.
+     *
+     * @param image the decoded image
+     * @param crop the rectangle of its picture to keep, or {@code null} for the whole picture
+     * @param options the decoding options
+     * @return the image
+     */
+    private static DecodedImage finish(DecodedImage image, Region crop, ImageDecoderOptions options) {
+        var converted = options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+        if (crop == null) {
+            return converted;
+        }
+        return ImageRegions.withPicture(converted, ImageOps.crop(converted.picture(), crop));
     }
 
     /**
@@ -420,18 +473,19 @@ public final class AvifFiles {
      * @param shown the item the file shows
      * @param limits the bounds
      * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param region the region of the image after its clean aperture to decode, or {@code null} for the whole image
      * @return the image
      */
     private static HeifStill decodeShown(MediaSource source, HeifFile file, HeifItem primary, HeifItem shown,
-                                         MediaLimits limits, boolean highBitDepth) {
+                                         MediaLimits limits, boolean highBitDepth, Region region) {
         if (shown != primary) {
             try {
-                return Reconstruction.decode(source, file, shown, limits, highBitDepth);
+                return Reconstruction.decode(source, file, shown, limits, highBitDepth, region);
             } catch (MediaException.Unsupported exception) {
                 // the primary item is the alternative every reader can show
             }
         }
-        return Reconstruction.decode(source, file, primary, limits, highBitDepth);
+        return Reconstruction.decode(source, file, primary, limits, highBitDepth, region);
     }
 
     /**
@@ -684,7 +738,7 @@ public final class AvifFiles {
             @Override
             public Picture get() {
                 if (decoded == null) {
-                    var picture = decodeShown(source, file, primary, shown, limits, highBitDepth).picture();
+                    var picture = decodeShown(source, file, primary, shown, limits, highBitDepth, null).picture();
                     decoded = picture instanceof Yuv16Picture || picture instanceof Rgba16Picture
                             ? ImageOps.toRgba16(picture) : ImageOps.toRgba(picture);
                 }

@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.heic.HeicDecoder;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.container.ReaderAsserts;
 import com.github.auties00.smalt.testkit.image.ImageDecoderAsserts;
+import com.github.auties00.smalt.testkit.image.RegionAsserts;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
@@ -92,6 +93,15 @@ class MpegDecoderBehaviorTest {
     @DisplayName("HEIC smoke vectors: identical pictures under every source behavior and clean faults")
     void heic(String name) throws IOException {
         ImageDecoderAsserts.of("vectors/" + name, Files.readAllBytes(Conformance.fetchListed(name))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"valid-avc.heic", "valid-unci-rgb3.heic", "valid-unci-v210.heic", "valid-unci-zlib.heic",
+            "valid-lhv1.heic", "valid-collection.heic"})
+    @DisplayName("HEIF items decoded by region: identical pictures under every source behavior")
+    void heifItemRegions(String name) throws IOException {
+        RegionAsserts.behaviors("region/heif-items/" + name,
+                Files.readAllBytes(HEIF_SEEDS.resolve(name)));
     }
 
     @ParameterizedTest(name = "{0}")

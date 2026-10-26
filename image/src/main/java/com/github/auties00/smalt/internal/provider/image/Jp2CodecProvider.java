@@ -52,6 +52,11 @@ public final class Jp2CodecProvider implements ImageCodecProvider {
     }
 
     @Override
+    public boolean decodesRegions(ImageFormat format) {
+        return true;
+    }
+
+    @Override
     public Optional<PageReader> openPages(MediaSource source, ImageDecoderOptions options) {
         return Optional.of(Jp2Decoder.openPages(source, options));
     }

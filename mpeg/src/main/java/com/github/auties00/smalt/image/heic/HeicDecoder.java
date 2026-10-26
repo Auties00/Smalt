@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.heic.internal.HeicFiles;
 import com.github.auties00.smalt.internal.heif.HeifPages;
+import com.github.auties00.smalt.internal.region.RegionOutsideImageException;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -191,11 +192,17 @@ public final class HeicDecoder {
      * Decodes the image a HEIC file shows: its primary image, one of its thumbnails under a
      * reduced-size hint, or the first frame of its sequence.
      *
+     * <p>With a {@linkplain ImageDecoderOptions#region() region}, a primary image that is a grid of coded images
+     * decodes only the grid images the region intersects, reading only their data, and the limits bound those
+     * rather than the whole grid; a thumbnail, a sequence frame and any other primary image decode whole and are
+     * cropped.
+     *
      * @param source the file
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color
      * conversion
      * @return the decoded image with its orientation, ICC profile, color profile, EXIF block and XMP
      * packet
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported if the file uses a feature this decoder lacks
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits
@@ -377,15 +384,16 @@ public final class HeicDecoder {
      * right view, each an image item of any kind {@link #decode} reconstructs, such as a grid or a
      * layered HEVC item ({@code lhv1}) whose layer selector names one view of a multiview stream.
      * The view decodes as {@link #decode} decodes the primary image, with the view's own
-     * orientation, thumbnails and metadata.
+     * orientation, thumbnails and metadata, and the region of the options applies to it.
      *
      * @param source the file
      * @param view 0 for the left view, 1 for the right view
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color
      * conversion
      * @return the decoded view with its orientation, ICC profile, color profile, EXIF block and XMP
      * packet, or empty when the image the file shows belongs to no stereo pair
-     * @throws IllegalArgumentException if {@code view} is neither 0 nor 1
+     * @throws IllegalArgumentException if {@code view} is neither 0 nor 1, or the region does not lie inside the
+     * view
      * @throws MediaException.Malformed if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported if the view uses a feature this decoder lacks
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits
@@ -475,8 +483,9 @@ public final class HeicDecoder {
      * time-synchronized captures ({@code tsyn}), albums ({@code albc}) and the other groups by their type.
      *
      * @param source the file
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion, applied
-     * to every page
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color
+     * conversion, applied to every page; reading a page the region does not lie inside throws
+     * {@link IllegalArgumentException}
      * @return the reader, which the caller closes; closing it does not close {@code source}
      * @throws MediaException.Malformed if the file structure is invalid or truncated
      * @throws MediaException.Unsupported if the image the file shows has a coding no artifact at hand decodes
@@ -506,6 +515,8 @@ public final class HeicDecoder {
             throw exception;
         } catch (OutOfMemoryError error) {
             throw new MediaException.LimitExceeded("out of memory while " + action);
+        } catch (RegionOutsideImageException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("malformed HEIC file", exception);
         }

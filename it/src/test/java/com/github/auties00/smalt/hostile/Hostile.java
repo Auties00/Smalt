@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 
 import java.lang.management.ManagementFactory;
 import java.time.Duration;
+import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.CRC32;
 
@@ -89,6 +90,41 @@ final class Hostile {
             fail(what + " allocated " + (allocated >> 20) + " MiB before rejecting the input: " + media.getMessage());
         }
         return media;
+    }
+
+    /**
+     * Runs a step that may either return a result or be rejected with a {@code MediaException}, without allocating
+     * more than {@link #MAX_ALLOCATION} and within ten seconds.
+     *
+     * @param <T> the result type
+     * @param what the input, for messages
+     * @param step the step
+     * @return the result, or {@code null} when the step was rejected
+     */
+    static <T> T assertBounded(String what, Callable<T> step) {
+        var thrown = new AtomicReference<Throwable>();
+        var result = new AtomicReference<T>();
+        var before = THREADS.getTotalThreadAllocatedBytes();
+        assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+            try {
+                result.set(step.call());
+            } catch (Throwable failure) {
+                thrown.set(failure);
+            }
+        }, what + " did not finish");
+        var allocated = THREADS.getTotalThreadAllocatedBytes() - before;
+        if (allocated > MAX_ALLOCATION) {
+            fail(what + " allocated " + (allocated >> 20) + " MiB");
+        }
+        var failure = thrown.get();
+        if (failure == null) {
+            return result.get();
+        }
+        if (!(failure instanceof MediaException media)) {
+            throw new AssertionError(what + " threw " + failure + " instead of a MediaException", failure);
+        }
+        assertNoHiddenFailure(what, media);
+        return null;
     }
 
     /**

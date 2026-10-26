@@ -12,6 +12,7 @@ import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.heif.HeifCanvas;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
@@ -20,6 +21,7 @@ import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifOverlay;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
+import com.github.auties00.smalt.internal.heif.HeifRegions;
 import com.github.auties00.smalt.internal.heif.HeifSampleTransform;
 import com.github.auties00.smalt.internal.heif.HeifStill;
 import com.github.auties00.smalt.internal.heif.HeifStills;
@@ -136,17 +138,42 @@ final class Reconstruction {
      */
     static HeifStill decode(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits,
                             boolean highBitDepth) {
+        return decode(source, file, item, limits, highBitDepth, null);
+    }
+
+    /**
+     * Reconstructs a region of an image item after its clean aperture.
+     *
+     * <p>The picture equals the region of the picture {@link #decode(MediaSource, HeifFile, HeifItem, MediaLimits,
+     * boolean)} returns, as {@link ImageOps#crop(Picture, Region)} crops it; a grid of coded items decodes only the
+     * grid images that intersect the region, and any other item is reconstructed whole and cropped.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the item to show
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param region the region, inside the image after the clean aperture, or {@code null} for the whole image
+     * @return the image, whose picture holds the region
+     * @throws MediaException.Malformed if an item is corrupt or the items do not fit together
+     * @throws MediaException.Unsupported if an item uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    static HeifStill decode(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits,
+                            boolean highBitDepth, Region region) {
         if (StillPlan.isCoded(file, item)) {
             var plan = StillPlan.of(source, file, item, limits);
             if (plan.hasAlpha() || !takesForeignAlpha(source, file, item, limits)) {
-                return StillDecoder.decode(source, file, plan, limits, highBitDepth);
+                return StillDecoder.decode(source, file, plan, limits, highBitDepth, region);
             }
         }
         var picture = new Reconstruction(source, file, limits).reconstruct(item, highBitDepth, 0);
         var width = picture.width();
         var height = picture.height();
         var geometry = HeifGeometry.resolve(item.properties(), width, height);
-        if (geometry.crops(width, height)) {
+        if (region != null) {
+            picture = HeifRegions.crop(picture, 0, 0, geometry, width, height, region);
+        } else if (geometry.crops(width, height)) {
             picture = HeifPictures.crop(picture, geometry.x(), geometry.y(), geometry.width(), geometry.height());
         }
         return new HeifStill(picture, width, height, geometry);

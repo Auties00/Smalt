@@ -28,6 +28,7 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.SlicedSource;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -181,9 +182,10 @@ public final class BmpDecoder {
      * ignored.
      *
      * @param source the input, read from offset zero
-     * @param options the limits, the bitmap choice, the bit depth, the channel and the sRGB conversion
-     * choices
+     * @param options the limits, the bitmap choice, the region (cut out of the whole bitmap), the bit depth, the
+     * channel and the sRGB conversion choices
      * @return the decoded image
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the headers are invalid or the pixel data is missing
      * @throws MediaException.Unsupported if the file uses an unknown compression, or is a bitmap array
      * without bitmaps
@@ -194,11 +196,11 @@ public final class BmpDecoder {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        return Guards.malformed(WHAT, () -> {
-            var entries = entries(source, options.limits());
-            var entry = entries.get(choose(entries, options.minWidth(), options.minHeight()));
-            return decodeBitmap(source, BmpHeader.read(source, entry.start()), options);
-        });
+        return ImageRegions.decode(options, () -> probe(source), whole -> Guards.malformed(WHAT, () -> {
+            var entries = entries(source, whole.limits());
+            var entry = entries.get(choose(entries, whole.minWidth(), whole.minHeight()));
+            return decodeBitmap(source, BmpHeader.read(source, entry.start()), whole);
+        }));
     }
 
     /**
@@ -210,8 +212,9 @@ public final class BmpDecoder {
      * {@link #probe(MediaSource)}.
      *
      * @param source the input, read from offset zero
-     * @param options the limits, the bit depth, the channel and the sRGB conversion choices applied to
-     * every page
+     * @param options the limits, the region (cut out of every whole bitmap), the bit depth, the channel and the
+     * sRGB conversion choices applied to every page; a page that the region does not lie inside raises
+     * {@link IllegalArgumentException} when it is read
      * @return the page reader
      * @throws MediaException.Malformed if the file or array headers are invalid
      * @throws MediaException.Unsupported if the file is a bitmap array without bitmaps
@@ -221,6 +224,10 @@ public final class BmpDecoder {
     public static PageReader openPages(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
+        var region = options.region();
+        if (region.isPresent()) {
+            return ImageRegions.cropPages(openPages(source, options.toBuilder().wholeImage().build()), region.get());
+        }
         var entries = Guards.malformed(WHAT, () -> entries(source, options.limits()));
         var full = options.toBuilder().fullSize().build();
         return new PageReader() {

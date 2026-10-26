@@ -42,9 +42,41 @@ public final class HeifPictures {
      * @return the cropped picture
      */
     public static Picture crop(Picture picture, int x, int y, int width, int height) {
+        return crop(picture, x, y, width, height, false);
+    }
+
+    /**
+     * Copies a rectangle of a decoded picture as {@link #crop(Picture, int, int, int, int)} copies one that does not
+     * start on a chroma sample boundary, whatever its position: a planar picture with subsampled chroma becomes 4:4:4,
+     * each pixel taking the chroma sample that covers it in the source.
+     *
+     * @param picture the decoded picture
+     * @param x the left edge of the rectangle, in pixels
+     * @param y the top edge of the rectangle, in pixels
+     * @param width the width of the rectangle, in pixels
+     * @param height the height of the rectangle, in pixels
+     * @return the cropped picture
+     */
+    public static Picture cropToFullChroma(Picture picture, int x, int y, int width, int height) {
+        return crop(picture, x, y, width, height, true);
+    }
+
+    /**
+     * Copies a rectangle of a decoded picture.
+     *
+     * @param picture the decoded picture
+     * @param x the left edge of the rectangle, in pixels
+     * @param y the top edge of the rectangle, in pixels
+     * @param width the width of the rectangle, in pixels
+     * @param height the height of the rectangle, in pixels
+     * @param fullChroma whether subsampled chroma becomes 4:4:4 even when the rectangle starts on a chroma sample
+     * boundary
+     * @return the cropped picture
+     */
+    private static Picture crop(Picture picture, int x, int y, int width, int height, boolean fullChroma) {
         return switch (picture) {
-            case YuvPicture yuv -> crop(yuv, x, y, width, height);
-            case Yuv16Picture yuv -> crop(yuv, x, y, width, height);
+            case YuvPicture yuv -> crop(yuv, x, y, width, height, fullChroma);
+            case Yuv16Picture yuv -> crop(yuv, x, y, width, height, fullChroma);
             default -> ImageOps.crop(picture, x, y, width, height);
         };
     }
@@ -57,11 +89,13 @@ public final class HeifPictures {
      * @param y the top edge of the rectangle, in pixels
      * @param width the width of the rectangle, in pixels
      * @param height the height of the rectangle, in pixels
+     * @param fullChroma whether subsampled chroma becomes 4:4:4 even on a chroma sample boundary
      * @return the cropped picture
      */
-    private static YuvPicture crop(YuvPicture picture, int x, int y, int width, int height) {
+    private static YuvPicture crop(YuvPicture picture, int x, int y, int width, int height, boolean fullChroma) {
         var format = picture.chromaFormat();
-        var aligned = (x & ((1 << format.shiftX()) - 1)) == 0 && (y & ((1 << format.shiftY()) - 1)) == 0;
+        var aligned = !fullChroma && (x & ((1 << format.shiftX()) - 1)) == 0
+                && (y & ((1 << format.shiftY()) - 1)) == 0;
         var outFormat = aligned ? format : ChromaFormat.YUV444;
         var luma = new byte[width * height];
         copyRows(picture.y(), x + y * picture.yStride(), picture.yStride(), luma, width, width, height);
@@ -105,11 +139,14 @@ public final class HeifPictures {
      * @param y the top edge of the rectangle, in pixels
      * @param width the width of the rectangle, in pixels
      * @param height the height of the rectangle, in pixels
+     * @param fullChroma whether subsampled chroma becomes 4:4:4 even on a chroma sample boundary
      * @return the cropped picture
      */
-    private static Yuv16Picture crop(Yuv16Picture picture, int x, int y, int width, int height) {
+    private static Yuv16Picture crop(Yuv16Picture picture, int x, int y, int width, int height,
+                                     boolean fullChroma) {
         var format = picture.chromaFormat();
-        var aligned = (x & ((1 << format.shiftX()) - 1)) == 0 && (y & ((1 << format.shiftY()) - 1)) == 0;
+        var aligned = !fullChroma && (x & ((1 << format.shiftX()) - 1)) == 0
+                && (y & ((1 << format.shiftY()) - 1)) == 0;
         var outFormat = aligned ? format : ChromaFormat.YUV444;
         var luma = new short[width * height];
         copyRows(picture.y(), x + y * picture.yStride(), picture.yStride(), luma, width, width, height);

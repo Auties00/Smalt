@@ -7,6 +7,7 @@ import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.provider.Artifacts;
 import com.github.auties00.smalt.internal.provider.Providers;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -212,18 +213,23 @@ public final class Images {
     /**
      * Decodes a still image, or the first frame of an animated one.
      *
-     * @param source  the input
-     * @param options the limits and the reduced-size hint
+     * <p>The {@linkplain ImageDecoderOptions#region() region} of the options is honored whatever the provider of
+     * the format: one that does not decode regions itself decodes the whole image, which is then cropped.
+     *
+     * @param source the input
+     * @param options the limits, the reduced-size hint, the region and the other decoding settings
      * @return the decoded image in its format's native picture representation
-     * @throws NullPointerException         if an argument is {@code null}
-     * @throws MediaException.Unsupported   if the format is unknown or not decodable
-     * @throws MediaException.Malformed     if the image is corrupt
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws IllegalArgumentException if the region does not lie inside the image
+     * @throws MediaException.Unsupported if the format is unknown or not decodable
+     * @throws MediaException.Malformed if the image is corrupt
      * @throws MediaException.LimitExceeded if the image exceeds the limits
-     * @throws MediaException.Io            if reading the source fails
+     * @throws MediaException.Io if reading the source fails
      */
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(options, "options");
-        return provider(source).decode(source, options);
+        var format = format(source);
+        return decode(decoderOf(format), format, source, options);
     }
 
     /**
@@ -245,8 +251,9 @@ public final class Images {
      * Decodes a still image file, or the first frame of an animated one.
      *
      * @param file the file, opened for the call and closed before it returns
-     * @param options the limits and the reduced-size hint
+     * @param options the limits, the reduced-size hint, the region and the other decoding settings
      * @return the decoded image in its format's native picture representation
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Unsupported if the format is unknown or not decodable
      * @throws MediaException.Malformed if the image is corrupt
      * @throws MediaException.LimitExceeded if the image exceeds the limits
@@ -285,7 +292,7 @@ public final class Images {
      * {@link ImageDecoderOptions#highBitDepth()}.
      *
      * @param source  the input
-     * @param options the limits and the bit depth choice; the reduced-size hint is ignored
+     * @param options the limits and the bit depth choice; the reduced-size hint and the region are ignored
      * @return the reader, which the caller closes
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Unsupported   if the format is unknown or not decodable
@@ -295,7 +302,7 @@ public final class Images {
      */
     public static AnimationReader openAnimation(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(options, "options");
-        var full = options.toBuilder().fullSize().build();
+        var full = options.toBuilder().fullSize().wholeImage().build();
         var provider = provider(source);
         var animation = provider.openAnimation(source, full);
         if (animation.isPresent()) {
@@ -332,9 +339,13 @@ public final class Images {
      * first frame of an animation, whose frames {@link #openAnimation(MediaSource,
      * ImageDecoderOptions)} reads).
      *
-     * @param source  the input
-     * @param options the limits, the reduced-size hint and the bit depth choice, applied to every
-     *                page
+     * <p>The {@linkplain ImageDecoderOptions#region() region} of the options applies to every page, and a page
+     * that it does not lie inside raises {@link IllegalArgumentException} when it is read. When the provider of
+     * the format does not decode regions itself, every page is decoded whole at full size and then cropped.
+     *
+     * @param source the input
+     * @param options the limits, the reduced-size hint, the region and the bit depth choice, applied to every
+     * page
      * @return the reader, which the caller closes
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Unsupported   if the format is unknown or not decodable
@@ -344,12 +355,22 @@ public final class Images {
      */
     public static PageReader openPages(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(options, "options");
-        var provider = provider(source);
-        var pages = provider.openPages(source, options);
-        if (pages.isPresent()) {
-            return pages.get();
+        var format = format(source);
+        var provider = decoderOf(format);
+        var region = options.region();
+        if (region.isPresent() && !provider.decodesRegions(format)) {
+            var whole = options.toBuilder().fullSize().wholeImage().build();
+            var pages = provider.openPages(source, whole);
+            if (pages.isPresent()) {
+                return ImageRegions.cropPages(pages.get(), region.get());
+            }
+        } else {
+            var pages = provider.openPages(source, options);
+            if (pages.isPresent()) {
+                return pages.get();
+            }
         }
-        return new SinglePageReader(provider, source, options);
+        return new SinglePageReader(provider, format, source, options);
     }
 
     /**
@@ -550,13 +571,53 @@ public final class Images {
      * @throws MediaException.Io          if reading the source fails
      */
     private static ImageCodecProvider provider(MediaSource source) {
-        var format = detect(source).orElseThrow(() ->
+        return decoderOf(format(source));
+    }
+
+    /**
+     * Recognizes the format of an image.
+     *
+     * @param source the input
+     * @return the format
+     * @throws MediaException.Unsupported if the bytes match no known image format
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static ImageFormat format(MediaSource source) {
+        return detect(source).orElseThrow(() ->
                 new MediaException.Unsupported("unknown image", "the input is not a recognized image format"));
+    }
+
+    /**
+     * Finds the provider that decodes a recognized format.
+     *
+     * @param format the recognized format
+     * @return the first provider whose {@link ImageCodecProvider#decodes(ImageFormat)} accepts {@code format}
+     * @throws MediaException.Unsupported if no provider decodes the format
+     */
+    private static ImageCodecProvider decoderOf(ImageFormat format) {
         var provider = decoder(format);
         if (provider == null) {
             throw Artifacts.unsupported(Artifacts.nameOf(format), "decodable", Artifacts.imageDecoderOf(format));
         }
         return provider;
+    }
+
+    /**
+     * Decodes an image with a provider, cropping its result to the region of the options when the provider does not
+     * decode regions itself.
+     *
+     * @param provider the provider that decodes the format
+     * @param format the recognized format
+     * @param source the input
+     * @param options the decoding options
+     * @return the decoded image
+     */
+    private static DecodedImage decode(ImageCodecProvider provider, ImageFormat format, MediaSource source,
+                                       ImageDecoderOptions options) {
+        if (options.region().isEmpty() || provider.decodesRegions(format)) {
+            return provider.decode(source, options);
+        }
+        return ImageRegions.decode(options, () -> provider.probe(source), whole -> provider.decode(source, whole));
     }
 
     /**
@@ -633,6 +694,11 @@ public final class Images {
         private final ImageCodecProvider provider;
 
         /**
+         * The recognized format.
+         */
+        private final ImageFormat format;
+
+        /**
          * The input.
          */
         private final MediaSource source;
@@ -646,11 +712,14 @@ public final class Images {
          * Constructs the reader.
          *
          * @param provider the provider decoding the image
-         * @param source   the input
-         * @param options  the decoding options
+         * @param format the recognized format
+         * @param source the input
+         * @param options the decoding options
          */
-        private SinglePageReader(ImageCodecProvider provider, MediaSource source, ImageDecoderOptions options) {
+        private SinglePageReader(ImageCodecProvider provider, ImageFormat format, MediaSource source,
+                                 ImageDecoderOptions options) {
             this.provider = provider;
+            this.format = format;
             this.source = source;
             this.options = options;
         }
@@ -671,7 +740,7 @@ public final class Images {
         @Override
         public DecodedImage read(int index) {
             Objects.checkIndex(index, 1);
-            return provider.decode(source, options);
+            return decode(provider, format, source, options);
         }
     }
 

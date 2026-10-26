@@ -13,6 +13,7 @@ import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.image.tiff.internal.TiffDirectory;
 import com.github.auties00.smalt.image.tiff.internal.TiffExif;
 import com.github.auties00.smalt.image.tiff.internal.TiffFile;
@@ -20,6 +21,7 @@ import com.github.auties00.smalt.image.tiff.internal.TiffPageDecoder;
 import com.github.auties00.smalt.image.tiff.internal.TiffTags;
 import com.github.auties00.smalt.image.tiff.internal.TransparencyMask;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 import java.util.ArrayList;
@@ -177,9 +179,15 @@ public final class TiffPages implements PageReader {
      * without alpha gains it. A mask that cannot be decoded is ignored. A mask page read by itself
      * decodes as a black-is-zero gray picture.
      *
+     * <p>With a {@linkplain ImageDecoderOptions#region() region}, only the strips or tiles that the region
+     * intersects are read and decoded, of the page or of the level the hint scaled from the region to the page
+     * selects, and the limits bound them rather than the page; a transparency mask is decoded over the same
+     * rectangle.
+     *
      * @param index the page index, from zero to {@link #pageCount()} minus one
      * @return the decoded page
      * @throws IndexOutOfBoundsException    if {@code index} is out of range
+     * @throws IllegalArgumentException     if the region of the options does not lie inside the page
      * @throws MediaException.Unsupported   if the page uses a feature the decoder lacks, or if a separated
      *                                      page of an ink set other than CMYK has no embedded ICC profile
      *                                      with one channel per ink that converts to sRGB
@@ -204,47 +212,81 @@ public final class TiffPages implements PageReader {
         try (var _ = ParallelBands.operation()) {
             var directory = file.pages().get(index);
             var full = pageDecoder(directory);
+            var region = options.region().orElse(null);
+            if (region != null) {
+                ImageRegions.check(region, full.width(), full.height());
+            }
             var profile = directory.bytes(TiffTags.ICC_PROFILE);
             var icc = Optional.ofNullable(profile != null && profile.length > 0 ? profile : null);
             var exif = Optional.ofNullable(TiffExif.extract(directory));
             var xmp = Optional.ofNullable(xmp(directory));
             var density = Optional.ofNullable(TiffPage.density(directory));
-            if (options.minWidth() > 0 || options.minHeight() > 0) {
+            if (ImageRegions.hinted(options)) {
+                var hint = region == null ? options
+                        : ImageRegions.scaledHint(options, region, full.width(), full.height());
                 for (var level : levels(index, full.width(), full.height())) {
-                    if (level.width() < options.minWidth() || level.height() < options.minHeight()) {
+                    if (level.width() < hint.minWidth() || level.height() < hint.minHeight()) {
                         continue;
                     }
                     try {
+                        var area = area(region, full, level.width(), level.height());
                         return masked(index, image(level.directory(), pageDecoder(level.directory()), full, icc,
-                                exif).withXmp(xmp)).withDensity(density);
+                                exif, area).withXmp(xmp), area, level.width(), level.height()).withDensity(density);
                     } catch (MediaException.Unsupported | MediaException.Malformed ignored) {
                         // an undecodable level gives way to the next larger one, then to the page
                     }
                 }
             }
-            return masked(index, image(directory, full, full, icc, exif).withXmp(xmp)).withDensity(density);
+            var area = area(region, full, full.width(), full.height());
+            return masked(index, image(directory, full, full, icc, exif, area).withXmp(xmp), area, full.width(),
+                    full.height()).withDensity(density);
         }
     }
 
     /**
-     * Applies the transparency mask of a page to its decoded image.
+     * Returns the rectangle of a page or of one of its levels that a decode covers.
+     *
+     * @param region the region of the options, or {@code null} for the whole page
+     * @param page the decoder of the page
+     * @param width the width of the page or level decoded
+     * @param height the height of the page or level decoded
+     * @return the rectangle, in the pixels of the page or level decoded
+     */
+    private static Region area(Region region, TiffPageDecoder page, int width, int height) {
+        if (region == null) {
+            return new Region(0, 0, width, height);
+        }
+        return ImageRegions.map(region, page.width(), page.height(), width, height);
+    }
+
+    /**
+     * Applies the transparency mask of a page to a decoded rectangle of the page or of one of its levels.
      *
      * @param index the page index
-     * @param image the decoded page or level
+     * @param image the decoded rectangle
+     * @param area the rectangle, in the pixels of the page or level decoded
+     * @param width the width of the page or level decoded
+     * @param height the height of the page or level decoded
      * @return the masked image, or {@code image} itself when no decodable mask applies
      */
-    private DecodedImage masked(int index, DecodedImage image) {
+    private DecodedImage masked(int index, DecodedImage image, Region area, int width, int height) {
         var mask = maskOf(index);
         if (mask == null) {
             return image;
         }
+        TiffPageDecoder decoder;
         RgbaPicture maskPicture;
+        int[] covered;
         try {
-            maskPicture = (RgbaPicture) TiffPageDecoder.of(mask).decode(false);
+            decoder = TiffPageDecoder.of(mask);
+            covered = TransparencyMask.coverage(area.x(), area.y(), area.width(), area.height(), width, height,
+                    decoder.width(), decoder.height());
+            maskPicture = (RgbaPicture) decoder.decode(false, covered[0], covered[1], covered[2], covered[3]);
         } catch (MediaException.Unsupported | MediaException.Malformed exception) {
             return image;
         }
-        var picture = TransparencyMask.apply(image.picture(), maskPicture);
+        var picture = TransparencyMask.apply(image.picture(), area.x(), area.y(), width, height, maskPicture,
+                covered[0], covered[1], decoder.width(), decoder.height());
         return new DecodedImage(picture, image.format(), image.orientation(), image.sourceWidth(),
                 image.sourceHeight(), image.iccProfile(), image.exif(), image.xmp(), image.colorProfile(),
                 image.density());
@@ -369,13 +411,19 @@ public final class TiffPages implements PageReader {
      * @param page the decoder of the page, which supplies the source size and orientation
      * @param icc the page's ICC profile, or empty
      * @param exif the page's EXIF block, or empty
+     * @param area the rectangle of {@code directory} to decode
      * @return the decoded image
      */
     private DecodedImage image(TiffDirectory directory, TiffPageDecoder decoder, TiffPageDecoder page,
-                               Optional<byte[]> icc, Optional<byte[]> exif) {
+                               Optional<byte[]> icc, Optional<byte[]> exif, Region area) {
         var orientation = page.orientation();
+        var left = area.x();
+        var top = area.y();
+        var right = area.x() + area.width();
+        var bottom = area.y() + area.height();
         if (decoder.channels()) {
-            var picture = (ChannelPicture) decoder.decode(options.highBitDepth() || !keepsChannels());
+            var picture = (ChannelPicture) decoder.decode(options.highBitDepth() || !keepsChannels(), left, top, right,
+                    bottom);
             var parsed = new DecodedImage(picture, ImageFormat.TIFF, orientation, page.width(), page.height(), icc,
                     exif);
             var colors = picture.layout().colorChannels();
@@ -386,22 +434,22 @@ public final class TiffPages implements PageReader {
         switch (TiffPhotometric.of(decoder.photometric())) {
             case SEPARATED -> {
                 if (options.convertToSrgb()) {
-                    var converted = cmykToSrgb(directory, icc);
+                    var converted = cmykToSrgb(directory, icc, area);
                     if (converted != null) {
                         return new DecodedImage(converted, ImageFormat.TIFF, orientation, page.width(), page.height(),
                                 Optional.empty(), exif, Optional.of(ColorProfile.srgb()));
                     }
                 }
-                return new DecodedImage(decoder.decode(options.highBitDepth()), ImageFormat.TIFF, orientation,
-                        page.width(), page.height(), icc, exif, Optional.empty());
+                return new DecodedImage(decoder.decode(options.highBitDepth(), left, top, right, bottom),
+                        ImageFormat.TIFF, orientation, page.width(), page.height(), icc, exif, Optional.empty());
             }
             case CIELAB, ICCLAB, ITULAB, LOG_L, LOG_LUV -> {
-                return new DecodedImage(decoder.decode(options.highBitDepth()), ImageFormat.TIFF, orientation,
-                        page.width(), page.height(), icc, exif, Optional.empty());
+                return new DecodedImage(decoder.decode(options.highBitDepth(), left, top, right, bottom),
+                        ImageFormat.TIFF, orientation, page.width(), page.height(), icc, exif, Optional.empty());
             }
             default -> {
-                var image = new DecodedImage(decoder.decode(options.highBitDepth()), ImageFormat.TIFF, orientation,
-                        page.width(), page.height(), icc, exif);
+                var image = new DecodedImage(decoder.decode(options.highBitDepth(), left, top, right, bottom),
+                        ImageFormat.TIFF, orientation, page.width(), page.height(), icc, exif);
                 return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
             }
         }
@@ -470,10 +518,11 @@ public final class TiffPages implements PageReader {
      *
      * @param directory the CMYK directory
      * @param icc the embedded ICC profile, or empty
-     * @return the opaque sRGB picture, or {@code null} when there is no usable CMYK profile or
+     * @param area the rectangle of the directory to convert
+     * @return the opaque sRGB picture of the rectangle, or {@code null} when there is no usable CMYK profile or
      * the image has alpha
      */
-    private static RgbaPicture cmykToSrgb(TiffDirectory directory, Optional<byte[]> icc) {
+    private static RgbaPicture cmykToSrgb(TiffDirectory directory, Optional<byte[]> icc, Region area) {
         if (icc.isEmpty()) {
             return null;
         }
@@ -491,7 +540,8 @@ public final class TiffPages implements PageReader {
         if (decoder.hasAlpha()) {
             return null;
         }
-        var raw = (RgbaPicture) decoder.decode(false);
+        var raw = (RgbaPicture) decoder.decode(false, area.x(), area.y(), area.x() + area.width(),
+                area.y() + area.height());
         var samples = raw.pixels();
         var width = raw.width();
         var height = raw.height();

@@ -186,6 +186,22 @@ class ImageBombTest {
                     () -> Images.decode(MediaSource.of(data), options));
         }
 
+        @ParameterizedTest(name = "{0} over the {1} limit")
+        @MethodSource("com.github.auties00.smalt.hostile.ImageBombTest#bombs")
+        @DisplayName("is rejected by a region decode, or gives only the region, without allocating the declared picture")
+        void region(Bomb bomb, String limit, int[] size) {
+            var data = patched(bomb, size);
+            var options = ImageDecoderOptions.builder().limits(LIMITS).region(0, 0, 16, 16).build();
+            var decoded = Hostile.assertBounded(bomb + " " + limit + " region",
+                    () -> Images.decode(MediaSource.of(data), options));
+            if (decoded != null && (decoded.picture().width() != 16 || decoded.picture().height() != 16
+                    || decoded.sourceWidth() != size[0] || decoded.sourceHeight() != size[1])) {
+                throw new AssertionError(bomb + " " + limit + " region decoded a " + decoded.picture().width() + "x"
+                        + decoded.picture().height() + " picture of a " + decoded.sourceWidth() + "x"
+                        + decoded.sourceHeight() + " image");
+            }
+        }
+
         private static byte[] patched(Bomb bomb, int[] size) {
             var base = bomb.base().get();
             if (bomb.decodable()) {

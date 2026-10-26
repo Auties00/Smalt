@@ -17,6 +17,7 @@ import com.github.auties00.smalt.image.heic.internal.StillDecoder;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.heif.HeifItem;
+import com.github.auties00.smalt.internal.region.RegionOutsideImageException;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -118,6 +119,8 @@ public final class HeicImageCodec implements HeifImageCodec {
             throw exception;
         } catch (OutOfMemoryError error) {
             throw new MediaException.LimitExceeded("out of memory while decoding a HEIC image");
+        } catch (RegionOutsideImageException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("malformed HEIC file", exception);
         }

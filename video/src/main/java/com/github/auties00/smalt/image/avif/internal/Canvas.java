@@ -175,6 +175,23 @@ final class Canvas {
     }
 
     /**
+     * Copies a rectangle of the luma plane of a decoded alpha frame into a region of the alpha plane.
+     *
+     * @param frame the decoded alpha frame, of any bit depth
+     * @param sourceX the left edge of the rectangle on the frame
+     * @param sourceY the top edge of the rectangle on the frame
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param w the region width, at most the frame width minus {@code sourceX}
+     * @param h the region height, at most the frame height minus {@code sourceY}
+     * @param limited whether the alpha frame is limited range
+     */
+    void writeAlpha(Av1Picture frame, int sourceX, int sourceY, int x, int y, int w, int h, boolean limited) {
+        writeAlpha(frame.data[0], sourceY * frame.stride[0] + sourceX, frame.stride[0], frame.bpc, x, y, w, h,
+                limited);
+    }
+
+    /**
      * Copies the top-left region of the luma plane of a planar alpha picture into a region of the
      * alpha plane.
      *

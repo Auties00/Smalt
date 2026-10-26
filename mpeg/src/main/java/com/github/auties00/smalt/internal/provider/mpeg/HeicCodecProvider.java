@@ -39,6 +39,11 @@ public final class HeicCodecProvider implements ImageCodecProvider {
     }
 
     @Override
+    public boolean decodesRegions(ImageFormat format) {
+        return true;
+    }
+
+    @Override
     public Optional<AnimationReader> openAnimation(MediaSource source, ImageDecoderOptions options) {
         return Optional.of(HeicDecoder.openAnimation(source, options));
     }

@@ -246,8 +246,9 @@ public final class TiffDecoder {
      * Use {@link #openPages(MediaSource, ImageDecoderOptions)} to read the other pages.
      *
      * @param source the input, read from offset zero
-     * @param options the limits, the size hint, the bit depth choice and the sRGB conversion
+     * @param options the limits, the size hint, the region, the bit depth choice and the sRGB conversion
      * @return the decoded page
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file is invalid
      * @throws MediaException.Unsupported if the page uses a feature listed on the class as
      * unsupported
@@ -278,7 +279,8 @@ public final class TiffDecoder {
      * Opens the pages of a TIFF file: reads its header and its chain of image file directories.
      *
      * @param source the input, read from offset zero
-     * @param options the limits and the bit depth choice applied to every page
+     * @param options the limits, the size hint, the region and the bit depth choice applied to every page; a
+     * page that the region does not lie inside raises {@link IllegalArgumentException} when it is read
      * @return the page reader
      * @throws MediaException.Malformed if the header or the first directory is invalid
      * @throws MediaException.Unsupported if a BigTIFF declares offsets other than 8 bytes

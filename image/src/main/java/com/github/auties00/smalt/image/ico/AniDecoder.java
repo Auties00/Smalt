@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.util.Objects;
@@ -165,9 +166,10 @@ public final class AniDecoder {
      * {@link #openAnimation(MediaSource, ImageDecoderOptions)} draws it.
      *
      * @param source the input, read from offset zero
-     * @param options the limits, the size hint choosing each frame's entry, and the bit depth choice
-     * (for PNG entries)
+     * @param options the limits, the size hint choosing each frame's entry, the region (cut out of the whole
+     * step) and the bit depth choice (for PNG entries)
      * @return the decoded step, a canvas-sized {@link RgbaPicture}
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file or the frame is invalid
      * @throws MediaException.Unsupported if the frames are raw data rather than icon files, or the
      * frame uses a feature its decoder lacks
@@ -178,12 +180,12 @@ public final class AniDecoder {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        return Guards.malformed(WHAT, () -> {
-            var reader = new AniAnimationReader(AniFile.read(source, options.limits()), options);
+        return ImageRegions.decode(options, () -> probe(source), whole -> Guards.malformed(WHAT, () -> {
+            var reader = new AniAnimationReader(AniFile.read(source, whole.limits()), whole);
             var picture = (RgbaPicture) reader.read().picture();
             return new DecodedImage(picture, ImageFormat.ANI, Orientation.NORMAL, picture.width(), picture.height(),
                     Optional.empty(), Optional.empty(), Optional.empty());
-        });
+        }));
     }
 
     /**

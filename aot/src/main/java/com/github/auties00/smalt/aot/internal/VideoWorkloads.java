@@ -369,8 +369,8 @@ final class VideoWorkloads {
     /**
      * Returns a workload that probes and decodes AVIF images: a lossy picture with alpha, a 10-bit
      * 4:4:4 picture at its full depth, an image overlay of an identity derivation, a 16-bit sample
-     * transform, a 10-bit animation with alpha played as 16-bit frames and sought back, and the
-     * triangle-filter resampling of 8-bit and 10-bit alpha planes that alpha images of another size
+     * transform, a 10-bit animation with alpha played as 16-bit frames and sought back, a region of a grid with
+     * alpha, and the triangle-filter resampling of 8-bit and 10-bit alpha planes that alpha images of another size
      * than their color take.
      *
      * @return the workload
@@ -378,6 +378,9 @@ final class VideoWorkloads {
     private static TrainingWorkload avifDecode() {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), true);
         var lossy = AvifEncoder.encode(picture, AvifEncoderOptions.lossy(60));
+        var grid = AvifEncoder.encode(picture, AvifEncoderOptions.lossy(60).toBuilder().speed(10).gridTileSize(64)
+                .build());
+        var region = ImageDecoderOptions.builder().region(100, 70, 120, 90).build();
         var deepOptions = AvifEncoderOptions.lossy(70).toBuilder().chromaFormat(ChromaFormat.YUV444).bitDepth(10).speed(8)
                 .build();
         var deep = AvifEncoder.encode(picture, deepOptions);
@@ -403,6 +406,7 @@ final class VideoWorkloads {
         return TrainingWorkload.of("avif-decode", () -> {
             Blackhole.consume(AvifDecoder.probe(MediaSource.of(lossy)).hashCode());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(lossy), ImageDecoderOptions.defaults()).picture().width());
+            Blackhole.consume(AvifDecoder.decode(MediaSource.of(grid), region).picture().width());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(deep), highBitDepth).picture().width());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(overlay)).picture().width());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(transform), highBitDepth).picture().width());

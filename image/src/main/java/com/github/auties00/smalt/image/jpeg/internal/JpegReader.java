@@ -3,6 +3,7 @@ package com.github.auties00.smalt.image.jpeg.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.PixelDensity;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.internal.tiff.TiffExif;
@@ -1064,34 +1065,142 @@ public final class JpegReader {
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     public JpegPlanes decodePlanes(int scaleShift) {
+        return decodePlanes(scaleShift, null);
+    }
+
+    /**
+     * Returns whether {@link #decodePlanes(int, Region)} and {@link #decodeWidePlanes(int, Region)} decode a window
+     * of the frame: a DCT frame that is not part of a hierarchical image.
+     *
+     * @return whether a window decodes
+     */
+    public boolean windowable() {
+        readHeaders();
+        return image == null && !frame.lossless();
+    }
+
+    /**
+     * Returns the MCUs of the frame that cover a rectangle of the picture decoded at a size reduction.
+     *
+     * @param scaleShift the binary logarithm of the size reduction, from 0 to 3
+     * @param rectangle the rectangle, in pixels of the reduced picture, inside it
+     * @return the left, top, right and bottom MCU column and row, the last two exclusive
+     */
+    private int[] mcuWindow(int scaleShift, Region rectangle) {
+        var mcuWidth = (8 * frame.hMax) >> scaleShift;
+        var mcuHeight = (8 * frame.vMax) >> scaleShift;
+        return new int[]{rectangle.x() / mcuWidth, rectangle.y() / mcuHeight,
+                Math.min(frame.mcusWide, JpegFrame.ceilDiv((long) rectangle.x() + rectangle.width(), mcuWidth)),
+                Math.min(frame.mcusHigh, JpegFrame.ceilDiv((long) rectangle.y() + rectangle.height(), mcuHeight))};
+    }
+
+    /**
+     * Returns the top-left corner of the window of whole MCUs that {@link #decodePlanes(int, Region)} decodes for
+     * a rectangle.
+     *
+     * @param scaleShift the binary logarithm of the size reduction, from 0 to 3
+     * @param rectangle the rectangle, in pixels of the reduced picture, inside it
+     * @return the left and top edges of the window, in pixels of the reduced picture
+     */
+    public int[] windowOrigin(int scaleShift, Region rectangle) {
+        readHeaders();
+        frame.computeLayout();
+        var mcus = mcuWindow(scaleShift, rectangle);
+        return new int[]{mcus[0] * ((8 * frame.hMax) >> scaleShift), mcus[1] * ((8 * frame.vMax) >> scaleShift)};
+    }
+
+    /**
+     * Returns the frame of a window of whole MCUs of the frame: its size and the sizes of its components.
+     *
+     * @param mcus the window, as {@link #mcuWindow} returns it
+     * @return the frame, laid out
+     */
+    private JpegFrame windowFrame(int[] mcus) {
+        var mcuWidth = 8 * frame.hMax;
+        var mcuHeight = 8 * frame.vMax;
+        var width = (int) (Math.min(frame.width, (long) mcus[2] * mcuWidth) - (long) mcus[0] * mcuWidth);
+        var height = (int) (Math.min(frame.height, (long) mcus[3] * mcuHeight) - (long) mcus[1] * mcuHeight);
+        var components = new JpegComponent[frame.components.length];
+        for (var i = 0; i < components.length; i++) {
+            var component = frame.components[i];
+            components[i] = new JpegComponent(component.id, component.h, component.v, component.quantSelector,
+                    component.index);
+        }
+        var window = new JpegFrame(frame.marker, frame.precision, width, height, components);
+        window.computeLayout();
+        return window;
+    }
+
+    /**
+     * Allocates the sample planes of every component, of the whole frame or of a window of MCUs.
+     *
+     * @param scaleShift the binary logarithm of the size reduction
+     * @param mcus the window, or {@code null} for the whole frame
+     * @param strides receives the row stride of each plane
+     * @param wide whether the planes hold 16-bit samples
+     * @return the sizes of the planes, in samples
+     */
+    private long[] planeSizes(int scaleShift, int[] mcus, int[] strides, boolean wide) {
+        var components = frame.components;
+        var size = 8 >> scaleShift;
+        var sizes = new long[components.length];
+        for (var i = 0; i < components.length; i++) {
+            var component = components[i];
+            var columns = mcus == null ? component.paddedBlocksWide
+                    : Math.min(mcus[2] * component.h, component.paddedBlocksWide) - mcus[0] * component.h;
+            var rows = mcus == null ? component.paddedBlocksHigh
+                    : Math.min(mcus[3] * component.v, component.paddedBlocksHigh) - mcus[1] * component.v;
+            strides[i] = columns * size;
+            sizes[i] = (long) strides[i] * rows * size;
+            LimitChecks.checkAllocation(limits, wide ? sizes[i] * 2 : sizes[i]);
+        }
+        return sizes;
+    }
+
+    /**
+     * Decodes every scan into 8-bit sample planes of the whole frame or of the MCUs that cover a rectangle of the
+     * picture.
+     *
+     * <p>With a rectangle, the planes and their frame describe the window of whole MCUs that covers it, from
+     * {@link #windowOrigin}, and hold the samples the whole decode holds there. A sequential scan decodes the
+     * MCUs outside the window without transforming them, stops after its last MCU row, and skips the restart
+     * intervals that hold none of its MCUs when the stream allows decoding them apart; a progressive frame
+     * transforms only the blocks of the window. The limits bound the window rather than the frame, except that
+     * a progressive or 12-bit frame, which keeps the coefficients of the whole frame, is bounded as a whole.
+     *
+     * @param scaleShift the binary logarithm of the size reduction, from 0 to 3
+     * @param rectangle the rectangle, in pixels of the reduced picture, inside it, or {@code null} for the whole
+     * frame; only when {@link #windowable()} holds
+     * @return the planes
+     * @throws MediaException.Malformed if a header is invalid or no MCU could be decoded
+     * @throws MediaException.Unsupported if the frame uses an unsupported feature or is lossless
+     * @throws MediaException.LimitExceeded if the frame, or the window, exceeds the limits
+     */
+    public JpegPlanes decodePlanes(int scaleShift, Region rectangle) {
         readHeaders();
         checkDct();
         if (image != null) {
             prepareImage();
             return hierarchy().planes(image, false);
         }
-        prepareFrame();
+        var mcus = prepareWindow(scaleShift, rectangle);
         if (frame.precision == 12) {
-            return decodeTwelveBit(scaleShift, false);
+            return decodeTwelveBit(scaleShift, false, mcus);
         }
         var components = frame.components;
-        var size = 8 >> scaleShift;
         var planes = new byte[components.length][];
         var strides = new int[components.length];
+        var sizes = planeSizes(scaleShift, mcus, strides, false);
         for (var i = 0; i < components.length; i++) {
-            var component = components[i];
-            strides[i] = component.paddedBlocksWide * size;
-            var bytes = (long) strides[i] * component.paddedBlocksHigh * size;
-            LimitChecks.checkAllocation(limits, bytes);
-            planes[i] = new byte[(int) bytes];
+            planes[i] = new byte[(int) sizes[i]];
         }
         if (frame.progressive()) {
             var coefficients = allocateCoefficients();
             var target = new DecodeTarget(components.length, null, null, coefficients, allocateMasks(), scaleShift);
             decodeScans(target);
-            transformCoefficients(target, planes, strides, scaleShift);
+            transformCoefficients(target, planes, strides, scaleShift, mcus);
         } else {
-            var target = new DecodeTarget(components.length, planes, strides, null, null, scaleShift);
+            var target = new DecodeTarget(components.length, planes, strides, null, null, scaleShift, false, mcus);
             var seen = decodeScans(target);
             for (var i = 0; i < components.length; i++) {
                 if (!seen[i]) {
@@ -1099,7 +1208,33 @@ public final class JpegReader {
                 }
             }
         }
-        return new JpegPlanes(frame, planes, strides, scaleShift);
+        return new JpegPlanes(mcus == null ? frame : windowFrame(mcus), planes, strides, scaleShift);
+    }
+
+    /**
+     * Lays the frame out and checks it, or the window of MCUs covering a rectangle, against the limits.
+     *
+     * @param scaleShift the binary logarithm of the size reduction
+     * @param rectangle the rectangle, or {@code null} for the whole frame
+     * @return the window, or {@code null} for the whole frame
+     * @throws MediaException.LimitExceeded if the frame or the window exceeds the limits
+     */
+    private int[] prepareWindow(int scaleShift, Region rectangle) {
+        if (rectangle == null) {
+            prepareFrame();
+            return null;
+        }
+        LimitChecks.checkChannels(limits, frame.components.length);
+        if (frame.progressive() || frame.precision == 12) {
+            // the coefficients of the whole frame are kept
+            LimitChecks.checkPicture(limits, frame.width, frame.height);
+        }
+        frame.computeLayout();
+        var mcus = mcuWindow(scaleShift, rectangle);
+        var window = windowFrame(mcus);
+        LimitChecks.checkPicture(limits, JpegFrame.ceilDiv(window.width, 1 << scaleShift),
+                JpegFrame.ceilDiv(window.height, 1 << scaleShift));
+        return mcus;
     }
 
     /**
@@ -1113,6 +1248,23 @@ public final class JpegReader {
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
     public JpegPlanes decodeWidePlanes(int scaleShift) {
+        return decodeWidePlanes(scaleShift, null);
+    }
+
+    /**
+     * Decodes every scan of a 12-bit frame into 12-bit sample planes of the whole frame or of the MCUs that cover a
+     * rectangle of the picture, as {@link #decodePlanes(int, Region)} describes.
+     *
+     * @param scaleShift the binary logarithm of the size reduction, from 0 to 3
+     * @param rectangle the rectangle, in pixels of the reduced picture, inside it, or {@code null} for the whole
+     * frame; only when {@link #windowable()} holds
+     * @return the {@linkplain JpegPlanes#wide() wide} planes
+     * @throws IllegalStateException if the frame is a DCT frame of 8-bit precision
+     * @throws MediaException.Malformed if a header is invalid or no MCU could be decoded
+     * @throws MediaException.Unsupported if the frame uses an unsupported feature or is lossless
+     * @throws MediaException.LimitExceeded if the frame, or the window, exceeds the limits
+     */
+    public JpegPlanes decodeWidePlanes(int scaleShift, Region rectangle) {
         readHeaders();
         checkDct();
         if (frame().precision != 12) {
@@ -1122,8 +1274,7 @@ public final class JpegReader {
             prepareImage();
             return hierarchy().planes(image, true);
         }
-        prepareFrame();
-        return decodeTwelveBit(scaleShift, true);
+        return decodeTwelveBit(scaleShift, true, prepareWindow(scaleShift, rectangle));
     }
 
     /**
@@ -1134,23 +1285,20 @@ public final class JpegReader {
      *
      * @param scaleShift the binary logarithm of the size reduction
      * @param wide whether the planes keep 12-bit samples rather than 8-bit ones
+     * @param mcus the window of MCUs the planes hold, or {@code null} for the whole frame
      * @return the planes
      */
-    private JpegPlanes decodeTwelveBit(int scaleShift, boolean wide) {
+    private JpegPlanes decodeTwelveBit(int scaleShift, boolean wide, int[] mcus) {
         var components = frame.components;
-        var size = 8 >> scaleShift;
         var strides = new int[components.length];
         var widePlanes = wide ? new short[components.length][] : null;
         var planes = wide ? null : new byte[components.length][];
+        var sizes = planeSizes(scaleShift, mcus, strides, wide);
         for (var i = 0; i < components.length; i++) {
-            var component = components[i];
-            strides[i] = component.paddedBlocksWide * size;
-            var samples = (long) strides[i] * component.paddedBlocksHigh * size;
-            LimitChecks.checkAllocation(limits, wide ? samples * 2 : samples);
             if (wide) {
-                widePlanes[i] = new short[(int) samples];
+                widePlanes[i] = new short[(int) sizes[i]];
             } else {
-                planes[i] = new byte[(int) samples];
+                planes[i] = new byte[(int) sizes[i]];
             }
         }
         var target = new DecodeTarget(components.length, null, null, allocateCoefficients(),
@@ -1163,16 +1311,36 @@ public final class JpegReader {
             var widePlane = wide ? widePlanes[i] : null;
             var plane = wide ? null : planes[i];
             var stride = strides[i];
-            var rows = Math.min(component.paddedBlocksHigh, component.blocksHigh);
-            var columns = Math.min(component.paddedBlocksWide, component.blocksWide);
+            var area = blockArea(component, mcus);
             var paddedWide = component.paddedBlocksWide;
-            var bands = ParallelBands.bands(rows, (long) rows * columns * BLOCK_WORK);
-            ParallelBands.run(bands, band -> transformRows12(coefficients, paddedWide, columns, quant, widePlane,
-                    plane, stride, scaleShift, ParallelBands.start(band, bands, rows),
-                    ParallelBands.start(band + 1, bands, rows)));
+            var rows = area[3] - area[1];
+            var bands = ParallelBands.bands(rows, (long) rows * (area[2] - area[0]) * BLOCK_WORK);
+            ParallelBands.run(bands, band -> transformRows12(coefficients, paddedWide, area, quant, widePlane,
+                    plane, stride, scaleShift, area[1] + ParallelBands.start(band, bands, rows),
+                    area[1] + ParallelBands.start(band + 1, bands, rows)));
         }
-        return wide ? new JpegPlanes(frame, widePlanes, strides, scaleShift)
-                : new JpegPlanes(frame, planes, strides, scaleShift);
+        var layout = mcus == null ? frame : windowFrame(mcus);
+        return wide ? new JpegPlanes(layout, widePlanes, strides, scaleShift)
+                : new JpegPlanes(layout, planes, strides, scaleShift);
+    }
+
+    /**
+     * Returns the blocks of a component a transform covers: the blocks of the component with data, or those of a
+     * window of MCUs.
+     *
+     * @param component the frame component
+     * @param mcus the window, or {@code null} for the whole frame
+     * @return the left, top, right and bottom block column and row (the last two exclusive), the left and top ones
+     * also the block at the origin of the plane
+     */
+    private static int[] blockArea(JpegComponent component, int[] mcus) {
+        var columns = Math.min(component.paddedBlocksWide, component.blocksWide);
+        var rows = Math.min(component.paddedBlocksHigh, component.blocksHigh);
+        if (mcus == null) {
+            return new int[]{0, 0, columns, rows};
+        }
+        return new int[]{mcus[0] * component.h, mcus[1] * component.v, Math.min(columns, mcus[2] * component.h),
+                Math.min(rows, mcus[3] * component.v)};
     }
 
     /**
@@ -1181,7 +1349,7 @@ public final class JpegReader {
      *
      * @param coefficients the component's stored coefficients, natural order
      * @param paddedWide the number of blocks per row of the coefficient buffer
-     * @param columns the number of blocks per row to transform
+     * @param area the blocks to transform, as {@link #blockArea} returns them
      * @param quant the natural-order dequantization table
      * @param widePlane the 12-bit destination plane, or {@code null}
      * @param plane the 8-bit destination plane, used when {@code widePlane} is {@code null}
@@ -1190,7 +1358,7 @@ public final class JpegReader {
      * @param first the first block row
      * @param last the block row after the last one
      */
-    private static void transformRows12(short[] coefficients, int paddedWide, int columns, int[] quant,
+    private static void transformRows12(short[] coefficients, int paddedWide, int[] area, int[] quant,
                                         short[] widePlane, byte[] plane, int stride, int scaleShift, int first,
                                         int last) {
         var block = new int[64];
@@ -1198,9 +1366,9 @@ public final class JpegReader {
         var scratch = widePlane == null ? new short[size * size] : null;
         var narrow = Idct12.EIGHT_BIT;
         for (var by = first; by < last; by++) {
-            for (var bx = 0; bx < columns; bx++) {
+            for (var bx = area[0]; bx < area[2]; bx++) {
                 var base = (by * paddedWide + bx) * 64;
-                var offset = (by * stride + bx) * size;
+                var offset = (by - area[1]) * size * stride + (bx - area[0]) * size;
                 if (widePlane != null) {
                     Idct12.transformBlock(coefficients, base, quant, block, widePlane, offset, stride, scaleShift);
                     continue;
@@ -1682,8 +1850,10 @@ public final class JpegReader {
      * @param planes the destination planes
      * @param strides the plane strides
      * @param scaleShift the binary logarithm of the size reduction
+     * @param mcus the window of MCUs the planes hold, or {@code null} for the whole frame
      */
-    private void transformCoefficients(DecodeTarget target, byte[][] planes, int[] strides, int scaleShift) {
+    private void transformCoefficients(DecodeTarget target, byte[][] planes, int[] strides, int scaleShift,
+                                       int[] mcus) {
         var components = frame.components;
         for (var i = 0; i < components.length; i++) {
             var component = components[i];
@@ -1691,12 +1861,13 @@ public final class JpegReader {
             var coefficients = target.coefficients[i];
             var plane = planes[i];
             var stride = strides[i];
-            var rows = Math.min(component.paddedBlocksHigh, component.blocksHigh);
-            var columns = Math.min(component.paddedBlocksWide, component.blocksWide);
+            var area = blockArea(component, mcus);
+            var rows = area[3] - area[1];
             var paddedWide = component.paddedBlocksWide;
-            var bands = ParallelBands.bands(rows, (long) rows * columns * BLOCK_WORK);
-            ParallelBands.run(bands, band -> transformRows(coefficients, paddedWide, columns, quant, plane, stride,
-                    scaleShift, ParallelBands.start(band, bands, rows), ParallelBands.start(band + 1, bands, rows)));
+            var bands = ParallelBands.bands(rows, (long) rows * (area[2] - area[0]) * BLOCK_WORK);
+            ParallelBands.run(bands, band -> transformRows(coefficients, paddedWide, area, quant, plane, stride,
+                    scaleShift, area[1] + ParallelBands.start(band, bands, rows),
+                    area[1] + ParallelBands.start(band + 1, bands, rows)));
         }
     }
 
@@ -1706,7 +1877,7 @@ public final class JpegReader {
      *
      * @param coefficients the component's stored coefficients, natural order
      * @param paddedWide the number of blocks per row of the coefficient buffer
-     * @param columns the number of blocks per row to transform
+     * @param area the blocks to transform, as {@link #blockArea} returns them
      * @param quant the natural-order dequantization table
      * @param plane the destination plane
      * @param stride the plane stride
@@ -1714,27 +1885,30 @@ public final class JpegReader {
      * @param first the first block row
      * @param last the block row after the last one
      */
-    private static void transformRows(short[] coefficients, int paddedWide, int columns, int[] quant, byte[] plane,
+    private static void transformRows(short[] coefficients, int paddedWide, int[] area, int[] quant, byte[] plane,
                                       int stride, int scaleShift, int first, int last) {
         var block = new int[64];
         var batch = new int[BatchIdctKernel.BATCH_LENGTH];
         var size = 8 >> scaleShift;
         var kernel = BatchIdctKernel.INSTANCE;
         var batches = scaleShift < 3 && BatchIdctKernel.batches();
+        var left = area[0];
+        var right = area[2];
         for (var by = first; by < last; by++) {
+            var row = by - area[1];
             if (!batches) {
-                for (var bx = 0; bx < columns; bx++) {
+                for (var bx = left; bx < right; bx++) {
                     transformBlock(coefficients, (by * paddedWide + bx) * 64, quant, block, plane,
-                            (by * stride + bx) * size, stride, scaleShift);
+                            (row * stride + bx - left) * size, stride, scaleShift);
                 }
                 continue;
             }
-            for (var bx = 0; bx < columns; bx += BatchIdctKernel.LANES) {
-                var count = Math.min(BatchIdctKernel.LANES, columns - bx);
+            for (var bx = left; bx < right; bx += BatchIdctKernel.LANES) {
+                var count = Math.min(BatchIdctKernel.LANES, right - bx);
                 for (var lane = 0; lane < count; lane++) {
                     dequantize(coefficients, (by * paddedWide + bx + lane) * 64, quant, batch, lane);
                 }
-                var offset = by * size * stride + bx * size;
+                var offset = row * size * stride + (bx - left) * size;
                 switch (scaleShift) {
                     case 0 -> kernel.idct8(batch, count, plane, offset, stride);
                     case 1 -> kernel.idct4(batch, count, plane, offset, stride);

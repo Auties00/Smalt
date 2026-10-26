@@ -35,9 +35,11 @@ import com.github.auties00.smalt.image.jpeg.internal.JpegReader;
 import com.github.auties00.smalt.image.jpeg.internal.LosslessOutput;
 import com.github.auties00.smalt.image.jpeg.internal.UltraHdr;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.gainmap.AppleGainMaps;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
@@ -250,9 +252,18 @@ public final class JpegDecoder {
      * taken as stored inverted when an Adobe {@code APP14} segment is present; every other image
      * with a profile is converted by {@link ImageOps#toSrgb(DecodedImage)}.
      *
+     * <p>With a {@linkplain ImageDecoderOptions#region() region}, a DCT frame is entropy-decoded from its first
+     * MCU row down to the last one the region needs, skipping the restart intervals that hold none of its MCUs,
+     * and only the MCUs that cover the region are transformed and converted, at the reduction the hint scaled
+     * from the region to the image selects; the limits bound those MCUs rather than the frame, except that a
+     * progressive or 12-bit frame, which keeps the coefficients of the whole frame, is bounded as a whole. A
+     * lossless, JPEG-LS or hierarchical image, and a frame whose height a {@code DNL} segment gives, decodes whole
+     * and is cropped.
+     *
      * @param source the input
-     * @param options the limits and the size hint
+     * @param options the limits, the size hint, the region and the other decoding settings
      * @return the decoded image
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the stream is invalid or holds no decodable data
      * @throws MediaException.Unsupported if the stream uses a coding feature listed on the class
      * @throws MediaException.LimitExceeded if the image or the input exceeds the limits
@@ -267,7 +278,14 @@ public final class JpegDecoder {
                 var reader = new JpegReader(data, 0, data.length, options.limits());
                 var frame = reader.readHeaders();
                 reader.checkSupported();
-                return decodeImage(reader, frame, options).withDensity(Optional.ofNullable(reader.density()));
+                var region = options.region().orElse(null);
+                DecodedImage image;
+                if (region == null) {
+                    image = decodeImage(reader, frame, options, null);
+                } else {
+                    image = decodeRegion(reader, frame, options, region);
+                }
+                return image.withDensity(Optional.ofNullable(reader.density()));
             });
         }
     }
@@ -414,7 +432,8 @@ public final class JpegDecoder {
      *
      * @param source the input
      * @param index the index of the image in the list of {@link #auxiliaryImages(MediaSource, MediaLimits)}
-     * @param options the limits, the size hint, the bit depth choice and the color conversion
+     * @param options the limits, the size hint, the bit depth choice and the color conversion; the region is
+     * ignored
      * @return the decoded image
      * @throws IndexOutOfBoundsException if the file lists no image of that index
      * @throws MediaException.Malformed if the file or the image is invalid
@@ -430,7 +449,8 @@ public final class JpegDecoder {
             var listed = Guards.malformed(WHAT, () -> listed(data, options.limits()));
             Objects.checkIndex(index, listed.size());
             var image = listed.get(index).image();
-            return decode(MediaSource.of(data, image.offset(), image.length()), options);
+            return decode(MediaSource.of(data, image.offset(), image.length()), options.toBuilder().wholeImage()
+                    .build());
         }
     }
 
@@ -485,27 +505,66 @@ public final class JpegDecoder {
     }
 
     /**
-     * Decodes the image of a stream whose headers are read.
+     * Decodes a region of the image of a stream whose headers are read.
+     *
+     * <p>A DCT frame decodes the MCUs covering the region grown by {@link ImageRegions#expand}, at the reduction
+     * the hint scaled to the image selects, converts them as the whole image is, and crops the region; a lossless
+     * or hierarchical image decodes whole and is cropped.
      *
      * @param reader the reader, its headers read and checked
      * @param frame the frame header
      * @param options the decoder options
-     * @return the decoded image, without its pixel density
+     * @param region the region, in pixels of the full-size image
+     * @return the decoded region, without its pixel density
+     * @throws IllegalArgumentException if the region does not lie inside the image
      */
-    private static DecodedImage decodeImage(JpegReader reader, JpegFrame frame, ImageDecoderOptions options) {
+    private static DecodedImage decodeRegion(JpegReader reader, JpegFrame frame, ImageDecoderOptions options,
+                                             Region region) {
+        var whole = options.toBuilder().wholeImage().build();
+        if (!reader.windowable() || frame.height() == 0) {
+            // the size of a hierarchical image, or of a frame whose height a DNL segment gives, is known once decoded
+            return ImageRegions.crop(decodeImage(reader, frame, whole.toBuilder().fullSize().build(), null), region);
+        }
+        ImageRegions.check(region, frame.width(), frame.height());
+        var hint = ImageRegions.scaledHint(whole, region, frame.width(), frame.height());
+        var scale = reader.chooseScale(hint.minWidth(), hint.minHeight());
+        var width = (frame.width() + (1 << scale) - 1) >> scale;
+        var height = (frame.height() + (1 << scale) - 1) >> scale;
+        var mapped = ImageRegions.map(region, frame.width(), frame.height(), width, height);
+        var rectangle = ImageRegions.expand(mapped, width, height);
+        var origin = reader.windowOrigin(scale, rectangle);
+        var image = decodeImage(reader, frame, hint, rectangle);
+        return ImageRegions.withPicture(image, ImageOps.crop(image.picture(), mapped.x() - origin[0],
+                mapped.y() - origin[1], mapped.width(), mapped.height()));
+    }
+
+    /**
+     * Decodes the image of a stream whose headers are read, or the window of whole MCUs of it that covers a
+     * rectangle.
+     *
+     * @param reader the reader, its headers read and checked
+     * @param frame the frame header
+     * @param options the decoder options; the region is ignored
+     * @param rectangle the rectangle, in pixels of the picture at the reduction the hint selects, or {@code null}
+     * for the whole image; only for a stream whose {@link JpegReader#windowable()} holds
+     * @return the decoded image, or the window, without its pixel density
+     */
+    private static DecodedImage decodeImage(JpegReader reader, JpegFrame frame, ImageDecoderOptions options,
+                                            Region rectangle) {
         var reversible = LosslessOutput.reversibleRgb(reader);
         var colorSpace = reversible ? JpegColorSpace.RGB : reader.colorSpace();
         if (colorSpace == JpegColorSpace.UNKNOWN) {
-            return decodeChannels(reader, options);
+            return decodeChannels(reader, options, rectangle);
         }
         Picture wide = null;
         JpegPlanes planes = null;
         if (!reader.lossless()) {
             var scale = reader.chooseScale(options.minWidth(), options.minHeight());
             if (options.highBitDepth() && LosslessOutput.keepsPrecision(reader, colorSpace)) {
-                wide = JpegOutput.toWidePicture(reader.decodeWidePlanes(scale), colorSpace, options.limits());
+                wide = JpegOutput.toWidePicture(reader.decodeWidePlanes(scale, rectangle), colorSpace,
+                        options.limits());
             } else {
-                planes = reader.decodePlanes(scale);
+                planes = reader.decodePlanes(scale, rectangle);
             }
         } else if (reversible) {
             wide = LosslessOutput.decodeReversibleRgb(reader, options.limits());
@@ -560,9 +619,10 @@ public final class JpegDecoder {
      *
      * @param reader the reader, its headers read
      * @param options the decoder options
+     * @param rectangle the rectangle of the reduced picture whose MCUs decode, or {@code null} for all of them
      * @return the decoded image
      */
-    private static DecodedImage decodeChannels(JpegReader reader, ImageDecoderOptions options) {
+    private static DecodedImage decodeChannels(JpegReader reader, ImageDecoderOptions options, Region rectangle) {
         var frame = reader.frame();
         var count = frame.components().size();
         var limits = options.limits();
@@ -585,8 +645,8 @@ public final class JpegDecoder {
         } else {
             var scale = reader.chooseScale(options.minWidth(), options.minHeight());
             picture = wide && frame.precision() == 12
-                    ? JpegOutput.toWideChannels(reader.decodeWidePlanes(scale), layout, limits)
-                    : JpegOutput.toChannels(reader.decodePlanes(scale), layout, limits);
+                    ? JpegOutput.toWideChannels(reader.decodeWidePlanes(scale, rectangle), layout, limits)
+                    : JpegOutput.toChannels(reader.decodePlanes(scale, rectangle), layout, limits);
         }
         if (layout.colorModel() == ColorModel.CMYK && reader.hasAdobeMarker()) {
             invertInks(picture, count);

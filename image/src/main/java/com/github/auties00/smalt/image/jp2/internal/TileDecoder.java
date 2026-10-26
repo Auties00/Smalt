@@ -84,6 +84,30 @@ final class TileDecoder {
      * @throws MediaException.LimitExceeded if the tile's structures exceed the limits
      */
     static Samples[] decode(Codestream codestream, int tile, int reduction, int maxLayers, MediaLimits limits) {
+        return decode(codestream, tile, reduction, maxLayers, limits, null);
+    }
+
+    /**
+     * Decodes a tile, the samples of each component that lie outside a window left unspecified.
+     *
+     * <p>Within the window of each component the samples equal those {@link #decode(Codestream, int, int, int,
+     * MediaLimits)} returns. In a tile of ISO/IEC 15444-1 that uses the 5-3 or the 9-7 wavelet, the code-blocks no
+     * sample of a window depends on are not decoded; their coefficients stay zero.
+     *
+     * @param codestream the parsed codestream
+     * @param tile the tile index
+     * @param reduction the number of resolution levels to discard
+     * @param maxLayers the number of quality layers to decode
+     * @param limits the limits bounding every allocation
+     * @param windows the left, top, right and bottom edges (the last two exclusive) of the window of each decoded
+     * image component on the reduced component grid, or {@code null} to decode every sample
+     * @return the samples of each decoded image component
+     * @throws MediaException.Malformed if the tile's data is invalid
+     * @throws MediaException.Unsupported if the tile uses an extension this decoder does not implement
+     * @throws MediaException.LimitExceeded if the tile's structures exceed the limits
+     */
+    static Samples[] decode(Codestream codestream, int tile, int reduction, int maxLayers, MediaLimits limits,
+                            long[][] windows) {
         var parameters = codestream.parameters(tile);
         var extensions = parameters.extensions();
         var bounds = codestream.tileBounds(tile);
@@ -112,7 +136,8 @@ final class TileDecoder {
                     maxLayers, codestream.mixedCoders(), limits);
         }
         if (extensions == null) {
-            return reconstruct(codestream, parameters, components, body, limits);
+            return reconstruct(codestream, parameters, components, body, limits,
+                    windows == null ? null : interest(components, windows));
         }
         return reconstructExtended(codestream, parameters, components, body, bounds, reduction, limits);
     }
@@ -164,10 +189,11 @@ final class TileDecoder {
      * @param components the tile-components
      * @param body the tile body, or {@code null} when the tile has no tile-part
      * @param limits the resource bounds checked before every allocation
+     * @param interest the code-blocks to decode, as {@link #interest} returns them, or {@code null} for all
      * @return the samples of each component
      */
     private static Samples[] reconstruct(Codestream codestream, TileParameters parameters, TileComponent[] components,
-                                         byte[] body, MediaLimits limits) {
+                                         byte[] body, MediaLimits limits, long[][][] interest) {
         var count = components.length;
         var integers = new int[count][];
         var floats = new float[count][];
@@ -182,7 +208,7 @@ final class TileDecoder {
             }
         }
         if (body != null) {
-            decodeBlocks(body, parameters, components, integers, null, floats, null);
+            decodeBlocks(body, parameters, components, integers, null, floats, null, interest);
         }
         for (var c = 0; c < count; c++) {
             var stride = components[c].top().width();
@@ -281,7 +307,7 @@ final class TileDecoder {
             }
         }
         if (body != null) {
-            decodeBlocks(body, parameters, components, integers, longs, floats, masks);
+            decodeBlocks(body, parameters, components, integers, longs, floats, masks, null);
         }
         for (var c = 0; c < count; c++) {
             var stride = components[c].top().width();
@@ -522,15 +548,20 @@ final class TileDecoder {
      * @param floats the buffers of the irreversible components
      * @param masks the region-of-interest scaling value of each coefficient of each component (ISO/IEC 15444-2
      * annex L), entries {@code null} for components without arbitrary regions; or {@code null}
+     * @param interest the sub-band rectangle of each resolution level of each component whose code-blocks are
+     * decoded, as {@link #interest} returns them, entries {@code null} for every code-block; or {@code null}
      */
     private static void decodeBlocks(byte[] body, TileParameters parameters, TileComponent[] components,
-                                     int[][] integers, long[][] longs, float[][] floats, byte[][] masks) {
+                                     int[][] integers, long[][] longs, float[][] floats, byte[][] masks,
+                                     long[][][] interest) {
         var jobs = new ArrayList<Job>();
         var work = 0L;
         for (var c = 0; c < components.length; c++) {
             var component = components[c];
+            var rects = interest == null ? null : interest[c];
             for (var r = 0; r < component.decodedResolutions; r++) {
                 var level = component.resolutions[r];
+                var rect = rects == null ? null : rects[r];
                 for (var band : level.bands()) {
                     if (band.empty()) {
                         continue;
@@ -541,6 +572,10 @@ final class TileDecoder {
                         }
                         for (var block : precinct.codeBlocks) {
                             if (block.chunkEntries == 0 || block.corrupted) {
+                                continue;
+                            }
+                            if (rect != null && (block.x0 >= rect[2] || block.x1 <= rect[0] || block.y0 >= rect[3]
+                                    || block.y1 <= rect[1])) {
                                 continue;
                             }
                             jobs.add(new Job(c, r, band, block));
@@ -617,6 +652,57 @@ final class TileDecoder {
                 }
             }
         });
+    }
+
+    /**
+     * Returns the sub-band rectangles of the code-blocks the samples of a window of each tile-component depend on.
+     *
+     * <p>Going down from the highest decoded resolution, the samples {@code [a, b)} of a resolution level are
+     * synthesized from the low-pass and high-pass samples {@code [floor(a / 2) - m, ceil(b / 2) + m)} of the level
+     * below, in each direction, where {@code m} covers the support of the synthesis filters: 2 for the 5-3 wavelet,
+     * 4 for the 9-7. Those rectangles bound the code-blocks of the sub-bands of each level, and the low-pass one is
+     * the window of the level below; the window of the lowest level bounds its LL sub-band.
+     *
+     * @param components the tile-components
+     * @param windows the left, top, right and bottom edges of the window of each component on its highest decoded
+     * resolution
+     * @return the rectangles (left, top, right, bottom) of each resolution level of each component, an entry
+     * {@code null} for a component whose code-blocks all decode (an arbitrary decomposition or a kernel of ISO/IEC
+     * 15444-2)
+     */
+    private static long[][][] interest(TileComponent[] components, long[][] windows) {
+        var result = new long[components.length][][];
+        for (var c = 0; c < components.length; c++) {
+            var component = components[c];
+            var top = component.top();
+            if (top.node() != null || component.kernel != null || windows[c] == null) {
+                continue;
+            }
+            var margin = component.coding.reversible() ? 2 : 4;
+            var levels = component.decodedResolutions;
+            var rects = new long[levels][];
+            var x0 = Math.max(windows[c][0], top.x0());
+            var y0 = Math.max(windows[c][1], top.y0());
+            var x1 = Math.min(windows[c][2], top.x1());
+            var y1 = Math.min(windows[c][3], top.y1());
+            for (var r = levels - 1; r >= 1; r--) {
+                if (x0 >= x1 || y0 >= y1) {
+                    rects[r] = new long[4];
+                    continue;
+                }
+                var rect = new long[]{Math.floorDiv(x0, 2) - margin, Math.floorDiv(y0, 2) - margin,
+                        Math.ceilDiv(x1, 2) + margin, Math.ceilDiv(y1, 2) + margin};
+                rects[r] = rect;
+                var lower = component.resolutions[r - 1];
+                x0 = Math.max(rect[0], lower.x0());
+                y0 = Math.max(rect[1], lower.y0());
+                x1 = Math.min(rect[2], lower.x1());
+                y1 = Math.min(rect[3], lower.y1());
+            }
+            rects[0] = x0 < x1 && y0 < y1 ? new long[]{x0, y0, x1, y1} : new long[4];
+            result[c] = rects;
+        }
+        return result;
     }
 
     /**

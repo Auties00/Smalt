@@ -323,6 +323,21 @@ H.264, HEVC, ProRes, DNxHD, AVIF, HEIC, PNG, TIFF and JPEG XL decoders keep the 
 animation readers then return `Rgba16Picture` frames for sequences deeper than 8 bits; `AnimationFrame.picture()`
 is an `RgbaPicture` otherwise.
 
+Regions: `ImageDecoderOptions.builder().region(x, y, width, height)` decodes a rectangle of the stored image, every
+decoder giving exactly the crop of its whole decode (`ImageOps.crop`) with the metadata of the whole image; with a
+size hint, the hint applies to the rectangle and the decoder returns the rectangle of its reduced picture. The TIFF,
+JPEG, JPEG 2000, WebP, HEIC and AVIF decoders decode only what the rectangle needs, and their limits bound what they
+decode rather than the image, so a region of a tiled slide or satellite image larger than `MediaLimits.maxPixels`
+decodes: the strips or tiles of a TIFF page (and of the reduced-resolution level a hint selects) that it intersects,
+read alone from the source; the tiles of a JPEG 2000 codestream that hold its samples and, in them, the code-blocks
+those samples depend on, a raw codestream or a file of one codestream reading only those tiles' data
+(`Jp2DecoderOptions.region` decodes the channels of an area, as `opj_decompress -d` does); the grid images of a HEIC
+or AVIF grid that it intersects, with their alpha images; the MCUs of a JPEG frame from its first row to the last
+row it needs, those outside it entropy-decoded without being transformed, and the restart intervals it does not
+meet skipped altogether; and the rows of a WebP image down to its last one. The other decoders decode the whole
+image and crop it, and so does `Images` for the providers of other libraries (`ImageCodecProvider.decodesRegions`).
+The ImageIO reader of `smalt-desktop` decodes the source region of a read that does not subsample.
+
 What packed RGBA and planar Y'CbCr cannot hold, CMYK and multi-ink separations, extra channels and
 floating-point samples, is converted to RGBA by default and kept on request with
 `ImageDecoderOptions.builder().keepChannels(true)`: the JPEG (CMYK, YCCK), TIFF (separated pages of any ink set,
@@ -967,6 +982,18 @@ checks a FLAC source's MD5 signature on the way.
 | Microphones and speakers | `smalt-capture` | `capture.audio` | Windows: WASAPI (shared mode with the engine's PCM converter and `IAudioClient3` short periods, exclusive mode, loopback of an output, endpoint notifications). macOS: CoreAudio HAL output unit (shared mode; no exclusive mode, no loopback). Linux: ALSA, whose `default` device reaches PulseAudio or PipeWire (shared mode; exclusive mode opens a device without software resampling; no loopback; changes found by polling). Float or 16-bit samples, any rate and channel count in the shared mode, capture and playback delays for echo cancellation. Run on the CI runners of all three systems against loopback devices. |
 
 ### Known limits
+
+- Region decoding (`ImageDecoderOptions.region`): a progressive or 12-bit JPEG frame keeps the coefficients of the
+  whole frame, since its scans refine every block, so the limits bound the whole frame, and it transforms only the
+  blocks the region needs; the limits of a JPEG 2000 region bound each tile it decodes, at full resolution, so the
+  region of an untiled codestream is bounded as the whole image is; a WebP image is decoded down to the region's last
+  row, the rows above it included; a JPEG 2000 compositing layer of several codestreams, a composition, a HEIC or AVIF
+  image that is not a grid of coded images, a thumbnail and the first frame of a sequence decode whole and are
+  cropped, as do the PNG, GIF, BMP, ICO, ANI, JPEG XL and camera raw decoders. The data below a WebP or sequential
+  JPEG region, and outside the tiles of a TIFF, JPEG 2000, HEIC or AVIF region, is not read, so damage there goes
+  undetected. The picture of a region of a lossless WebP image without the alpha hint of its header declares alpha
+  only when a pixel of the decoded rows is not opaque, where the whole decode looks at every pixel. The ImageIO reader
+  decodes the whole image for a read that subsamples a source region.
 
 - Transparent video: the alpha stream of VP8 and VP9 is coded at 8 bits in 4:2:0, so deeper alpha planes are
   rounded to 8 bits (a decode rescales them back to the frame's depth), and it has no hidden frames, so the hidden
@@ -1782,6 +1809,23 @@ try (var source = MediaSource.of(Path.of("photo.jpg"));
 
 `ImageDecoderOptions.ofMinimumSize` lets the JPEG decoder shrink while decoding, so a 48-megapixel photo never
 materializes at full size.
+
+### Decode a region of a large image
+
+```java
+// a 1024x768 window of a tiled whole-slide TIFF, at least 512 pixels wide
+var options = ImageDecoderOptions.builder()
+        .region(40_000, 25_000, 1024, 768)
+        .minSize(512, 0)
+        .build();
+try (var source = MediaSource.of(Path.of("slide.tif"))) {
+    var window = Images.decode(source, options);
+}
+```
+
+Only the tiles that the window meets are read, from the smallest pyramid level that keeps it at least 512 pixels
+wide, so the page itself can exceed the decoding limits; JPEG, JPEG 2000, WebP, HEIC and AVIF files decode regions
+the same way.
 
 ### Edit a photo
 

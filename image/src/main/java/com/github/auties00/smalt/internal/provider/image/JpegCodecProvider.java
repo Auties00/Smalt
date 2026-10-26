@@ -71,6 +71,11 @@ public final class JpegCodecProvider implements ImageCodecProvider {
     }
 
     @Override
+    public boolean decodesRegions(ImageFormat format) {
+        return true;
+    }
+
+    @Override
     public boolean encodes(ImageFormat format) {
         return format == ImageFormat.JPEG;
     }

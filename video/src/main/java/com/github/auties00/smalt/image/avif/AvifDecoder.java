@@ -14,6 +14,7 @@ import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.internal.heif.HeifPages;
+import com.github.auties00.smalt.internal.region.RegionOutsideImageException;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.image.avif.internal.AvifFiles;
@@ -186,11 +187,16 @@ public final class AvifDecoder {
      * to it), a thumbnail of it under the reduced-size hint, or the first frame of its sequence when
      * its major brand is {@code avis}.
      *
-     * @param source  the file
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color
-     *                conversion
+     * <p>With a {@linkplain ImageDecoderOptions#region() region}, a shown image that is a grid of coded images
+     * decodes only the grid images, and the alpha images, the region intersects, reading only their data, and the
+     * limits bound those rather than the whole grid; a thumbnail, a sequence frame and any other image decode
+     * whole and are cropped.
+     *
+     * @param source the file
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color conversion
      * @return the decoded image with its orientation, ICC profile, EXIF block and XMP packet
-     * @throws NullPointerException         if an argument is {@code null}
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed     if the file is invalid, corrupt or truncated
      * @throws MediaException.Unsupported   if the file uses a feature this decoder lacks
      * @throws MediaException.LimitExceeded if a declared size exceeds the limits
@@ -205,6 +211,8 @@ public final class AvifDecoder {
             throw exception;
         } catch (OutOfMemoryError error) {
             throw new MediaException.LimitExceeded("out of memory while decoding an AVIF file");
+        } catch (RegionOutsideImageException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("malformed AVIF file", exception);
         }
@@ -434,8 +442,9 @@ public final class AvifDecoder {
      * time-synchronized captures ({@code tsyn}), albums ({@code albc}) and the other groups by their type.
      *
      * @param source the file
-     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion, applied
-     * to every page
+     * @param options the limits, the bit depth choice, the reduced-size hint, the region and the color
+     * conversion, applied to every page; reading a page the region does not lie inside throws
+     * {@link IllegalArgumentException}
      * @return the reader, which the caller closes; closing it does not close {@code source}
      * @throws NullPointerException if an argument is {@code null}
      * @throws MediaException.Malformed if the file structure is invalid or truncated

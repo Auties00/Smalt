@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.testkit.fuzz;
 
 import com.github.auties00.smalt.Media;
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
@@ -13,11 +14,14 @@ import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
+import com.github.auties00.smalt.testkit.image.PictureDump;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.StandardTag;
@@ -60,7 +64,9 @@ public final class FuzzMedia {
     /**
      * Decodes an image of one format: probes it, decodes it at full size, and then decodes it at a reduced size
      * with every high-depth and channel option, reads its animation frames and reads its pages (one of these
-     * three while fuzzing, see {@link FuzzRun#sampled}).
+     * three while fuzzing, see {@link FuzzRun#sampled}). With the reduced-size decode it also decodes a region,
+     * picked by the input's last bytes, of an image that decodes whole, and checks that it equals the crop of the
+     * whole decode.
      *
      * <p>An input that {@link Images#detect} does not recognize as {@code format} is skipped, so the
      * target stays on the decoder it is named after.
@@ -85,9 +91,11 @@ public final class FuzzMedia {
                 .convertToSrgb(true)
                 .build();
         run.step("probe", () -> Images.probe(MediaSource.of(data)));
-        run.step("decode", () -> touch(run, Images.decode(MediaSource.of(data), plain).picture(), true));
+        var whole = run.value("decode", () -> Images.decode(MediaSource.of(data), plain));
+        whole.ifPresent(image -> touch(run, image.picture(), true));
         if (run.sampled(data, 0, 3)) {
             run.step("decode reduced", () -> touch(run, Images.decode(MediaSource.of(data), deep).picture(), true));
+            whole.ifPresent(image -> region(run, data, plain, image));
         }
         if (run.sampled(data, 1, 3)) {
             animation(run, data, plain);
@@ -96,6 +104,40 @@ public final class FuzzMedia {
             pages(run, data, plain);
         }
         return run;
+    }
+
+    private static void region(FuzzRun run, byte[] data, ImageDecoderOptions plain, DecodedImage whole) {
+        var width = whole.sourceWidth();
+        var height = whole.sourceHeight();
+        if (whole.picture().width() != width || whole.picture().height() != height) {
+            return;
+        }
+        var first = data.length > 1 ? data[data.length - 2] & 0xFF : 0;
+        var second = data.length > 0 ? data[data.length - 1] & 0xFF : 0;
+        var x = first * 31 % width;
+        var y = second * 17 % height;
+        var region = new Region(x, y, 1 + (first * 7 + second) % (width - x), 1 + (second * 5 + first) % (height - y));
+        run.step("decode region", () -> {
+            DecodedImage decoded;
+            try {
+                decoded = Images.decode(MediaSource.of(data), plain.toBuilder().region(region).build());
+            } catch (MediaException exception) {
+                throw new IllegalStateException("region " + region + " fails to decode where the whole image decodes",
+                        exception);
+            }
+            var expected = PictureDump.picture(ImageOps.crop(whole.picture(), region));
+            var actual = PictureDump.picture(decoded.picture());
+            if (whole.format() == ImageFormat.WEBP) {
+                // a lossless WebP picture without the alpha hint declares the alpha of the rows it decodes
+                expected = expected.replaceAll(" alpha=\\w+", "");
+                actual = actual.replaceAll(" alpha=\\w+", "");
+            }
+            if (!expected.equals(actual)) {
+                throw new IllegalStateException("region " + region + " decodes to " + actual + ", not the crop "
+                        + expected + " of the whole image");
+            }
+            run.output();
+        });
     }
 
     private static void animation(FuzzRun run, byte[] data, ImageDecoderOptions plain) {

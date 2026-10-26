@@ -16,11 +16,14 @@ import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifReader;
 import com.github.auties00.smalt.image.jp2.internal.Jp2Pictures;
 import com.github.auties00.smalt.image.jp2.internal.Jp2Reader;
+import com.github.auties00.smalt.image.jp2.internal.Jp2Sparse;
 import com.github.auties00.smalt.image.jp2.internal.JpxAnimation;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -185,12 +188,19 @@ public final class Jp2Decoder {
      * {@link DecodedImage#sourceWidth()} and {@link DecodedImage#sourceHeight()}. A composition is rendered at the
      * full size of its render area.
      *
+     * <p>With a {@linkplain ImageDecoderOptions#region() region}, a compositing layer of one codestream decodes only
+     * the tiles that hold samples the region needs, and in them only the code-blocks those samples depend on; of a
+     * raw codestream, or of a file whose one codestream lies in one codestream box, only those tiles are read from
+     * the source, and the limits bound those tiles rather than the whole image. A layer of several codestreams and a
+     * composition decode whole and are cropped.
+     *
      * @param source the input
-     * @param options the limits, the size hint, the bit depth choice and the sRGB conversion
+     * @param options the limits, the size hint, the region, the bit depth choice and the sRGB conversion
      * @return the decoded image: an {@link RgbaPicture}, or an {@link Rgba16Picture} when
      * {@link ImageDecoderOptions#highBitDepth()} is set and a channel is wider than 8 bits, or for a
      * CMYK image decoded with {@link ImageDecoderOptions#keepChannels()} a channel picture, as the
      * class description states
+     * @throws IllegalArgumentException if the region does not lie inside the image
      * @throws MediaException.Malformed if the file is invalid
      * @throws MediaException.Unsupported if the file uses a feature listed on the class as
      * unsupported
@@ -202,7 +212,12 @@ public final class Jp2Decoder {
         Objects.requireNonNull(options, "options");
         try (var _ = ParallelBands.operation()) {
             return Guards.malformed(WHAT, () -> {
-                var data = SourceBytes.readAll(source, options.limits(), true);
+                var region = options.region().orElse(null);
+                var data = region == null ? null : Jp2Sparse.read(source, options.limits(),
+                        headersOnly -> neededTiles(headersOnly, options, region));
+                if (data == null) {
+                    data = SourceBytes.readAll(source, options.limits(), true);
+                }
                 var headers = Jp2Reader.headers(data, options.limits());
                 if (frames(headers, options.limits()) > 0) {
                     var animation = animation(headers, options);
@@ -211,13 +226,67 @@ public final class Jp2Decoder {
                     var orientation = exif.isEmpty() ? Orientation.NORMAL : ExifReader.orientation(exif.get());
                     var profile = options.convertToSrgb() ? Optional.of(ColorProfile.srgb())
                             : layerProfile(headers, 0);
-                    return new DecodedImage(frame.picture(), ImageFormat.JP2, orientation, animation.width(),
+                    var image = new DecodedImage(frame.picture(), ImageFormat.JP2, orientation, animation.width(),
                             animation.height(), Optional.empty(), exif, Optional.ofNullable(headers.boxes().xmp()),
                             profile, Optional.ofNullable(headers.boxes().density()));
+                    return region == null ? image : ImageRegions.crop(image, region);
                 }
                 return layer(headers, 0, options, true);
             });
         }
+    }
+
+    /**
+     * Returns the tiles of the codestream of a file that a region decode of its first compositing layer needs.
+     *
+     * @param headersOnly the file with every tile-part body empty
+     * @param options the decoding options
+     * @param region the region of the options, in pixels of the full-size image
+     * @return whether each tile is needed, or {@code null} when the file decodes whole: a composition, or a layer
+     * of several codestreams
+     */
+    private static boolean[] neededTiles(byte[] headersOnly, ImageDecoderOptions options, Region region) {
+        var headers = Jp2Reader.headers(headersOnly, options.limits());
+        if (frames(headers, options.limits()) > 0 || !Jp2Reader.windowable(headers, 0)) {
+            return null;
+        }
+        var size = headers.size(0);
+        ImageRegions.check(region, size[0], size[1]);
+        var plan = plan(headers, 0, options, region, true);
+        return Jp2Reader.tilesOf(headers.codestream(), plan.reduction(), plan.window());
+    }
+
+    /**
+     * Describes how a region of a compositing layer of one codestream decodes.
+     *
+     * @param reduction the number of resolution levels discarded, as the codestream allows
+     * @param window the window decoded, in pixels of the reduced image area: the mapped region grown by
+     * {@link ImageRegions#expand}
+     * @param crop the mapped region, relative to the window
+     */
+    private record RegionPlan(int reduction, Region window, Region crop) {
+    }
+
+    /**
+     * Plans the decode of a region of a compositing layer of one codestream.
+     *
+     * @param headers the file's headers
+     * @param index the layer index, one for which {@link Jp2Reader#windowable} holds
+     * @param options the decoding options
+     * @param region the region, inside the layer
+     * @param sized whether the options' size hint applies
+     * @return the plan
+     */
+    private static RegionPlan plan(Jp2Reader.Headers headers, int index, ImageDecoderOptions options, Region region,
+                                   boolean sized) {
+        var size = headers.size(index);
+        var hint = ImageRegions.scaledHint(options, region, size[0], size[1]);
+        var requested = sized ? reduction(size[0], size[1], hint.minWidth(), hint.minHeight()) : 0;
+        var reduction = Jp2Reader.reduction(headers, index, requested);
+        var reduced = Jp2Reader.reducedSize(headers, index, reduction);
+        var mapped = ImageRegions.map(region, size[0], size[1], reduced[0], reduced[1]);
+        var window = ImageRegions.expand(mapped, reduced[0], reduced[1]);
+        return new RegionPlan(reduction, window, ImageRegions.within(mapped, window));
     }
 
     /**
@@ -231,9 +300,41 @@ public final class Jp2Decoder {
      */
     private static DecodedImage layer(Jp2Reader.Headers headers, int index, ImageDecoderOptions options,
                                       boolean sized) {
+        var region = options.region().orElse(null);
+        if (region == null) {
+            return layer(headers, index, options, sized, null);
+        }
         var size = headers.size(index);
-        var reduction = sized ? reduction(size[0], size[1], options.minWidth(), options.minHeight()) : 0;
-        var image = Jp2Reader.decode(headers, index, reduction, 0, options.limits());
+        ImageRegions.check(region, size[0], size[1]);
+        if (!Jp2Reader.windowable(headers, index)) {
+            var hint = ImageRegions.scaledHint(options.toBuilder().wholeImage().build(), region, size[0], size[1]);
+            return ImageRegions.crop(layer(headers, index, hint, sized, null), region);
+        }
+        var plan = plan(headers, index, options, region, sized);
+        var image = layer(headers, index, options, sized, plan);
+        return ImageRegions.withPicture(image, ImageOps.crop(image.picture(), plan.crop()));
+    }
+
+    /**
+     * Decodes one compositing layer, or a window of it, to a picture.
+     *
+     * @param headers the file's headers
+     * @param index the layer index
+     * @param options the decoding options; the region is ignored
+     * @param sized whether the options' size hint applies
+     * @param plan the window to decode, or {@code null} for the whole layer
+     * @return the decoded layer or window
+     */
+    private static DecodedImage layer(Jp2Reader.Headers headers, int index, ImageDecoderOptions options,
+                                      boolean sized, RegionPlan plan) {
+        Jp2Image image;
+        if (plan != null) {
+            image = Jp2Reader.decode(headers, index, plan.reduction(), 0, options.limits(), plan.window());
+        } else {
+            var size = headers.size(index);
+            var reduction = sized ? reduction(size[0], size[1], options.minWidth(), options.minHeight()) : 0;
+            image = Jp2Reader.decode(headers, index, reduction, 0, options.limits());
+        }
         var density = Optional.ofNullable(headers.boxes().density());
         var exif = image.exif();
         var orientation = exif.isEmpty() ? Orientation.NORMAL : ExifReader.orientation(exif.get());
@@ -304,7 +405,7 @@ public final class Jp2Decoder {
                 wide = headers.wide(i);
             }
         }
-        var layerOptions = options.toBuilder().keepChannels(false).fullSize().build();
+        var layerOptions = options.toBuilder().keepChannels(false).fullSize().wholeImage().build();
         var composition = frames(headers, options.limits()) > 0 ? boxes.composition() : null;
         return new JpxAnimation(composition, boxes.layerCount(), headers.size(0), wide,
                 index -> JpxAnimation.Layer.of(layer(headers, index, layerOptions, false).picture()),
@@ -346,12 +447,55 @@ public final class Jp2Decoder {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         try (var _ = ParallelBands.operation()) {
-            var headers = Guards.malformed(WHAT, () -> Jp2Reader.headers(
-                    SourceBytes.readAll(source, options.limits(), true), options.limits()));
-            Objects.checkIndex(options.compositingLayer(), headers.boxes().layerCount());
-            return Guards.malformed(WHAT, () -> Jp2Reader.decode(headers, options.compositingLayer(),
-                    options.reduction(), options.qualityLayers().orElse(0), options.limits()));
+            var region = options.region().orElse(null);
+            var layer = options.compositingLayer();
+            var headers = Guards.malformed(WHAT, () -> {
+                var data = region == null || layer != 0 ? null : Jp2Sparse.read(source, options.limits(),
+                        headersOnly -> neededTiles(headersOnly, options, region));
+                return Jp2Reader.headers(data != null ? data : SourceBytes.readAll(source, options.limits(), true),
+                        options.limits());
+            });
+            Objects.checkIndex(layer, headers.boxes().layerCount());
+            return Guards.malformed(WHAT, () -> {
+                var layers = options.qualityLayers().orElse(0);
+                if (region == null) {
+                    return Jp2Reader.decode(headers, layer, options.reduction(), layers, options.limits());
+                }
+                var size = headers.size(layer);
+                ImageRegions.check(region, size[0], size[1]);
+                var reduction = Jp2Reader.reduction(headers, layer, options.reduction());
+                if (!Jp2Reader.windowable(headers, layer)) {
+                    var image = Jp2Reader.decode(headers, layer, reduction, layers, options.limits());
+                    return Jp2Reader.crop(image, ImageRegions.map(region, size[0], size[1], image.width(),
+                            image.height()), options.limits());
+                }
+                var reduced = Jp2Reader.reducedSize(headers, layer, reduction);
+                return Jp2Reader.decode(headers, layer, reduction, layers, options.limits(),
+                        ImageRegions.map(region, size[0], size[1], reduced[0], reduced[1]));
+            });
         }
+    }
+
+    /**
+     * Returns the tiles of the codestream of a file that the decode of an area of its first compositing layer into
+     * channels needs.
+     *
+     * @param headersOnly the file with every tile-part body empty
+     * @param options the channel decoding options
+     * @param region the area
+     * @return whether each tile is needed, or {@code null} when the file decodes whole
+     */
+    private static boolean[] neededTiles(byte[] headersOnly, Jp2DecoderOptions options, Region region) {
+        var headers = Jp2Reader.headers(headersOnly, options.limits());
+        if (!Jp2Reader.windowable(headers, 0)) {
+            return null;
+        }
+        var size = headers.size(0);
+        ImageRegions.check(region, size[0], size[1]);
+        var reduction = Jp2Reader.reduction(headers, 0, options.reduction());
+        var reduced = Jp2Reader.reducedSize(headers, 0, reduction);
+        return Jp2Reader.tilesOf(headers.codestream(), reduction,
+                ImageRegions.map(region, size[0], size[1], reduced[0], reduced[1]));
     }
 
     /**
