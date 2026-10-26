@@ -1,5 +1,5 @@
 /**
- * The BMP decoder ({@link BmpDecoder}).
+ * The BMP decoder ({@link BmpDecoder}) and encoder ({@link BmpEncoder}, configured by {@link BmpEncoderOptions}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

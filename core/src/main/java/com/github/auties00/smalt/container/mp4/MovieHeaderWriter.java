@@ -1,7 +1,11 @@
 package com.github.auties00.smalt.container.mp4;
 
+import com.github.auties00.smalt.internal.subtitle.bitmap.VobSubHeader;
+import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
@@ -33,9 +37,14 @@ final class MovieHeaderWriter {
      * Checks that a track carries the configuration its codec needs and that the configuration
      * parses.
      *
+     * <p>An AMR track must have one channel, since the {@code samr} and {@code sawb} sample
+     * entries of 3GPP TS 26.244 carry a single channel and a multichannel track holds frame-blocks.
+     *
      * @param track the track to check
      * @throws IllegalArgumentException if an H.264, HEVC, AAC, Opus, ALAC or FLAC track has no
-     * configuration
+     * configuration, a TTML configuration is malformed, a DNxHD configuration carries bytes
+     * after its sample entry type that are not Avid sample description extensions, or an AMR track
+     * has more than one channel
      * @throws com.github.auties00.smalt.MediaException.Malformed if an AAC, Opus or FLAC
      * configuration is invalid
      */
@@ -51,12 +60,22 @@ final class MovieHeaderWriter {
             default -> {
             }
         }
-        if (codec == Codec.OPUS) {
+        if ((codec == Codec.AMR_NB || codec == Codec.AMR_WB) && track instanceof AudioTrack audio) {
+            var channels = audio.layout().map(ChannelLayout::channels).orElse(1);
+            if (channels > 1) {
+                throw new IllegalArgumentException("an AMR sample entry carries one channel, not " + channels);
+            }
+        }
+        if (codec == Codec.TTML) {
+            track.codecConfig().filter(config -> config.length > 0).ifPresent(TtmlEntries::validate);
+        } else if (codec == Codec.OPUS) {
             AudioConfigs.parseOpusHead(track.codecConfig().orElseThrow());
         } else if (codec == Codec.AAC) {
             AudioConfigs.parseAac(track.codecConfig().orElseThrow());
         } else if (codec == Codec.FLAC) {
             AudioConfigs.parseFlac(track.codecConfig().orElseThrow());
+        } else if (codec == Codec.DNXHD) {
+            track.codecConfig().filter(config -> config.length > 4).ifPresent(CodecConfigs::dnxhdExtensions);
         }
     }
 
@@ -94,9 +113,24 @@ final class MovieHeaderWriter {
      * @param duration the track duration, in movie timescale units
      */
     static void writeTrackHeader(BoxWriter writer, MuxTrack track, long duration) {
+        writeTrackHeader(writer, track, duration, true);
+    }
+
+    /**
+     * Writes the {@code tkhd} box of a track that is in the movie and in its preview, enabled or not.
+     *
+     * <p>An audio track gets full volume; a video track gets its dimensions and the matrix of its
+     * orientation.
+     *
+     * @param writer the destination
+     * @param track the track the box describes
+     * @param duration the track duration, in movie timescale units
+     * @param enabled whether the track is enabled, the track a player presents when the user expressed no preference
+     */
+    static void writeTrackHeader(BoxWriter writer, MuxTrack track, long duration, boolean enabled) {
         var audio = track.kind() == TrackKind.AUDIO;
         var wide = duration > U32_MAX;
-        writer.beginFull(BoxTypes.TKHD, wide ? 1 : 0, 3);
+        writer.beginFull(BoxTypes.TKHD, wide ? 1 : 0, enabled ? 3 : 2);
         writer.zeros(wide ? 16 : 8);
         writer.u32(track.number);
         writer.u32(0);
@@ -113,6 +147,10 @@ final class MovieHeaderWriter {
             width = video.width();
             height = video.height();
             matrix = DisplayMatrix.of(video.orientation(), width, height);
+        } else if (track.codec() == Codec.DVD_SUBTITLE) {
+            var header = VobSubHeader.parse(track.track.codecConfig().orElse(null));
+            width = header.width() > 0 ? header.width() : 720;
+            height = header.height() > 0 ? header.height() : 480;
         }
         writeMatrix(writer, matrix);
         writer.u32((long) width << 16);
@@ -121,11 +159,27 @@ final class MovieHeaderWriter {
     }
 
     /**
+     * {@return the handler type of a text track}
+     *
+     * @param codec the codec of the track
+     */
+    private static int textHandler(Codec codec) {
+        return switch (codec) {
+            case MOV_TEXT -> BoxTypes.SBTL;
+            case TTML -> BoxTypes.SUBT;
+            case DVD_SUBTITLE -> BoxTypes.SUBP;
+            case CEA_608, CEA_708 -> BoxTypes.CLCP;
+            default -> BoxTypes.TEXT;
+        };
+    }
+
+    /**
      * Writes the {@code mdia} box of a track: {@code mdhd}, {@code hdlr} and a {@code minf} box
      * holding the media information header, a self-contained {@code dinf} and the sample table.
      *
-     * <p>The handler is {@code soun} for audio, {@code sbtl} for {@link Codec#MOV_TEXT}, {@code text}
-     * for other text tracks and {@code vide} for video.
+     * <p>The handler is {@code soun} for audio, {@code sbtl} for {@link Codec#MOV_TEXT}, {@code subt}
+     * (with a {@code sthd} media header) for {@link Codec#TTML}, {@code subp} for {@link Codec#DVD_SUBTITLE},
+     * {@code clcp} for the closed caption codecs, {@code text} for other text tracks and {@code vide} for video.
      *
      * @param writer the destination
      * @param track the track the box describes
@@ -146,7 +200,7 @@ final class MovieHeaderWriter {
         writer.end();
         writer.beginFull(BoxTypes.HDLR, 0, 0);
         writer.u32(0);
-        writer.u32(audio ? BoxTypes.SOUN : text ? (track.codec() == Codec.MOV_TEXT ? BoxTypes.SBTL : BoxTypes.TEXT) : BoxTypes.VIDE);
+        writer.u32(audio ? BoxTypes.SOUN : text ? textHandler(track.codec()) : BoxTypes.VIDE);
         writer.zeros(12);
         writer.cString(audio ? "SoundHandler" : text ? "SubtitleHandler" : "VideoHandler");
         writer.end();
@@ -155,7 +209,7 @@ final class MovieHeaderWriter {
             writer.beginFull(BoxTypes.SMHD, 0, 0);
             writer.u32(0);
         } else if (text) {
-            writer.beginFull(BoxTypes.NMHD, 0, 0);
+            writer.beginFull(track.codec() == Codec.TTML ? BoxTypes.STHD : BoxTypes.NMHD, 0, 0);
         } else {
             writer.beginFull(BoxTypes.VMHD, 0, 1);
             writer.zeros(8);

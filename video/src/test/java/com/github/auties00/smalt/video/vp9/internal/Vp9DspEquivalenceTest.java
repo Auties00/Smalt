@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.video.vp9.internal;
 
-import org.junit.jupiter.api.Assumptions;
+import com.github.auties00.smalt.testkit.Skip;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -28,7 +28,7 @@ class Vp9DspEquivalenceTest {
 
     @BeforeAll
     static void vectorAvailable() {
-        Assumptions.assumeTrue(VECTOR instanceof VectorVp9Dsp, "no 256-bit vectors on this machine");
+        Skip.unless(VECTOR instanceof VectorVp9Dsp, "simd:narrow", "no 256-bit vectors on this machine");
     }
 
     static byte[] randomPlane(Random random, int size) {

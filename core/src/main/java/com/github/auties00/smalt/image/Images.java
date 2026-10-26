@@ -19,9 +19,9 @@ import java.util.Optional;
  * <p>This is the entry point for callers that do not know what a file is: it reads the leading
  * bytes, recognizes the format with {@link ImageFormat#detect(byte[], int)} (never trusting a file
  * name or declared mimetype), and dispatches to the {@link ImageCodecProvider} that decodes it.
- * The JPEG, PNG (and APNG), GIF, WebP, BMP, TIFF and ICO decoders of {@code smalt-image} are such
- * providers, and its JPEG, PNG, GIF, WebP, TIFF and ICO encoders serve {@link #encode(Picture,
- * ImageFormat, ImageEncoderOptions, MediaSink)}, and its animated WebP, GIF and APNG encoders serve
+ * The JPEG, PNG (and APNG), GIF, WebP, BMP, TIFF, ICO and ANI decoders of {@code smalt-image} are such
+ * providers, and its JPEG, PNG, GIF, WebP, BMP, TIFF, ICO and ANI encoders serve {@link #encode(Picture,
+ * ImageFormat, ImageEncoderOptions, MediaSink)}, and its animated WebP, GIF, APNG and ANI encoders serve
  * {@link #openAnimationWriter(ImageFormat, int, int, ImageEncoderOptions, MediaSink)}; the DNG and
  * camera raw decoder of {@code smalt-raw} decodes {@link ImageFormat#DNG} and
  * {@link ImageFormat#RAW} files. Formats this module recognizes but no provider handles raise
@@ -115,6 +115,18 @@ public final class Images {
      */
     public static boolean isAnimationEncodable(ImageFormat format) {
         return animationEncoder(Objects.requireNonNull(format, "format")) != null;
+    }
+
+    /**
+     * Returns whether multi-page images of a format can be encoded with the artifacts present at
+     * run time.
+     *
+     * @param format the image format to check
+     * @return {@code true} when {@link #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)} accepts it
+     * @throws NullPointerException if {@code format} is {@code null}
+     */
+    public static boolean isPageEncodable(ImageFormat format) {
+        return pageEncoder(Objects.requireNonNull(format, "format")) != null;
     }
 
     /**
@@ -231,12 +243,14 @@ public final class Images {
     /**
      * Opens an image as an animation.
      *
-     * <p>GIF, APNG and animated WebP files yield their frames; every other decodable image yields a
+     * <p>GIF, APNG, ANI and animated WebP files yield their frames; every other decodable image yields a
      * single frame, shown for zero microseconds and played once, so callers that build animations
-     * can accept still images too.
+     * can accept still images too. Frames are {@link RgbaPicture}s, except that the AVIF and HEIC
+     * readers return {@link Rgba16Picture}s for sources deeper than 8 bits under
+     * {@link ImageDecoderOptions#highBitDepth()}.
      *
      * @param source  the input
-     * @param options the limits; the reduced-size hint is ignored
+     * @param options the limits and the bit depth choice; the reduced-size hint is ignored
      * @return the reader, which the caller closes
      * @throws NullPointerException         if an argument is {@code null}
      * @throws MediaException.Unsupported   if the format is unknown or not decodable
@@ -316,13 +330,20 @@ public final class Images {
     /**
      * Encodes a picture into a format.
      *
+     * <p>The metadata of the options is recorded as
+     * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} describes.
+     *
      * @param picture the pixels to encode
      * @param format  the format to produce
-     * @param options the lossless flag and the quality
+     * @param options the lossless flag, the quality and the metadata
      * @return the complete encoded image
      * @throws NullPointerException       if an argument is {@code null}
+     * @throws IllegalArgumentException   if the color profile does not describe the picture, or the
+     *                                    EXIF block exceeds what the format stores
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG)
+     *                                    options (a lossless picture with more bits per sample than
+     *                                    the format holds, unless its samples are exactly those of an
+     *                                    8-bit picture)
      */
     public static byte[] encode(Picture picture, ImageFormat format, ImageEncoderOptions options) {
         var sink = MediaSink.memory();
@@ -334,16 +355,26 @@ public final class Images {
      * Encodes a picture into a format and writes it to a sink, from the sink's position.
      *
      * <p>A JPEG encoding of a picture with alpha drops the alpha; a PNG ignores the quality; a
-     * WebP codes the picture losslessly when {@link ImageEncoderOptions#isLossless()} and lossily
-     * otherwise.
+     * WebP and a JPEG code the picture losslessly when {@link ImageEncoderOptions#isLossless()} and
+     * lossily otherwise. The file records the color profile, EXIF block, XMP packet and orientation of
+     * the options where the format has a place for them, as {@link ImageEncoderOptions} describes; a
+     * format that cannot record the profile holds the pixels converted to sRGB, and a format that
+     * records no orientation holds the picture turned upright.
      *
+     * @apiNote {@link ImageEncoderOptions.Builder#metadataOf(DecodedImage)} carries the metadata of a
+     * decoded image over to its encoding.
      * @param picture the pixels to encode
      * @param format  the format to produce
-     * @param options the lossless flag and the quality
+     * @param options the lossless flag, the quality and the metadata
      * @param sink    the output; not closed
      * @throws NullPointerException       if an argument is {@code null}
+     * @throws IllegalArgumentException   if the color profile does not describe the picture, or the
+     *                                    EXIF block exceeds what the format stores (65527 bytes in
+     *                                    JPEG)
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
-     *                                    options (lossless JPEG)
+     *                                    options (a lossless picture with more bits per sample than
+     *                                    the format holds, unless its samples are exactly those of an
+     *                                    8-bit picture)
      * @throws MediaException.Io          if writing the sink fails
      */
     public static void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
@@ -385,20 +416,27 @@ public final class Images {
      * losslessly when {@link ImageEncoderOptions#isLossless()} and lossily otherwise; a GIF
      * animation quantizes its frames to palettes whose size follows the quality, and a PNG
      * animation (APNG) is always lossless. Every format loops
-     * {@link ImageEncoderOptions#loopCount()} times.
+     * {@link ImageEncoderOptions#loopCount()} times, except an animated cursor (ANI), which always
+     * loops forever and rejects any other loop count. The frames are in the options' color profile,
+     * which an APNG, WebP, GIF or AVIF animation records and an ANI animation converts each frame to
+     * sRGB from; the EXIF block and XMP packet are recorded as
+     * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} records them, and an
+     * orientation other than {@link Orientation#NORMAL} is accepted only by the formats that record it.
      *
      * @param format  the format to produce
      * @param width   the canvas width, positive
      * @param height  the canvas height, positive
-     * @param options the lossless flag, the quality and the loop count
+     * @param options the lossless flag, the quality, the loop count and the metadata
      * @param sink    the output, written from its position; not closed
      * @return the writer, which the caller finishes and closes
      * @throws NullPointerException         if an argument is {@code null}
-     * @throws IllegalArgumentException     if a dimension is not positive or the loop count
-     *                                      exceeds what the format stores
+     * @throws IllegalArgumentException     if a dimension is not positive, the loop count
+     *                                      exceeds what the format stores or the color profile is
+     *                                      neither RGB nor gray
      * @throws MediaException.LimitExceeded if a dimension exceeds what the format stores
      * @throws MediaException.Unsupported   if animations of the format are not encodable, or the
-     *                                      format cannot honor the options
+     *                                      format cannot honor the options (an orientation a GIF or
+     *                                      ANI animation cannot record)
      */
     public static AnimationWriter openAnimationWriter(ImageFormat format, int width, int height,
                                                       ImageEncoderOptions options, MediaSink sink) {
@@ -414,6 +452,52 @@ public final class Images {
                     Artifacts.imageAnimationEncoderOf(format));
         }
         return provider.openAnimationWriter(format, width, height, options, sink);
+    }
+
+    /**
+     * Opens a writer that encodes the pages of a multi-image file of a format into a sink at the
+     * format's default settings.
+     *
+     * @param format the format to produce
+     * @param sink the output, written from its position; not closed
+     * @return the writer, which the caller finishes and closes
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws MediaException.Unsupported if multi-page images of the format are not encodable
+     * @see #openPageWriter(ImageFormat, ImageEncoderOptions, MediaSink)
+     */
+    public static PageWriter openPageWriter(ImageFormat format, MediaSink sink) {
+        return openPageWriter(format, ImageEncoderOptions.defaults(), sink);
+    }
+
+    /**
+     * Opens a writer that encodes the pages of a multi-image file of a format into a sink.
+     *
+     * <p>Pages are written with {@link PageWriter#write(Picture)} and the file is completed with
+     * {@link PageWriter#finish()}; {@link #openPages(MediaSource, ImageDecoderOptions)} reads them
+     * back in order. A TIFF holds one page per picture, losslessly, with the page metadata of
+     * {@link PageWriter#write(DecodedImage)}; an icon holds one entry per picture, a picture larger
+     * than 256 pixels on a side being scaled into a 256-pixel square entry. The quality and the
+     * lossless flag apply as {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)}
+     * applies them to each page, and so does the metadata of the options to every page written with
+     * {@link PageWriter#write(Picture)}.
+     *
+     * @param format the format to produce
+     * @param options the lossless flag, the quality and the metadata of the pictures
+     * @param sink the output, written from its position; not closed
+     * @return the writer, which the caller finishes and closes
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws MediaException.Unsupported if multi-page images of the format are not encodable
+     */
+    public static PageWriter openPageWriter(ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        Objects.requireNonNull(format, "format");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(sink, "sink");
+        var provider = pageEncoder(format);
+        if (provider == null) {
+            throw Artifacts.unsupported(Artifacts.nameOf(format), "encodable with several pages",
+                    Artifacts.imagePageEncoderOf(format));
+        }
+        return provider.openPageWriter(format, options, sink);
     }
 
     /**
@@ -479,6 +563,22 @@ public final class Images {
     private static ImageCodecProvider animationEncoder(ImageFormat format) {
         for (var provider : Providers.image()) {
             if (provider.encodesAnimation(format)) {
+                return provider;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Finds the provider that encodes multi-page images of a format.
+     *
+     * @param format the format to encode pages in
+     * @return the first provider whose {@link ImageCodecProvider#encodesPages(ImageFormat)} accepts {@code format},
+     * or {@code null}
+     */
+    private static ImageCodecProvider pageEncoder(ImageFormat format) {
+        for (var provider : Providers.image()) {
+            if (provider.encodesPages(format)) {
                 return provider;
             }
         }
@@ -587,6 +687,27 @@ public final class Images {
             }
             consumed = true;
             return new AnimationFrame(frame, 0, 0);
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * @return {@code true}
+         */
+        @Override
+        public boolean isSeekable() {
+            return true;
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * <p>The frame is shown for zero microseconds from time zero, so a time before zero selects
+         * it and any other time is past the end.
+         */
+        @Override
+        public void seek(long micros) {
+            consumed = micros >= 0;
         }
     }
 }
