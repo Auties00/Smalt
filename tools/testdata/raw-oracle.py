@@ -4,16 +4,20 @@ PanasonicDerivationTest and RawOracleCoverageTest.
 
 The tests check that the decoder reproduces, exactly, the sensor values Adobe DNG Converter stores
 for CC0 sample files of the formats whose coding was worked out against it (ORF, RW2,
-PEF variants, Canon mRAW and sRAW, Canon CRW, interlaced Coolpix NEF, Minolta MRW), check the image
+PEF variants, Canon mRAW and sRAW, Canon CRW, Canon CR3, interlaced Coolpix NEF, Minolta MRW), check the image
 area and the rendering of the Sigma X3F samples it converts (DP1, SD14, SD15), re-derive the Olympus compression and
 Panasonic's raw format version 4 from witness samples, and compare the rendering of the
 converter's four-color DNG files with the previews it renders into them (Canon PowerShot G1, Nikon
-E5700, Sony DSC-F828). This script produces those values: it downloads Adobe DNG
+E5700, Sony DSC-F828), and render the staggered photosites of two Fujifilm SuperCCD cameras (FinePix S2Pro and
+S6500fd) against the previews the converter renders into their DNG files. This script produces those values: it downloads Adobe DNG
 Converter 18.0 for Windows and innoextract 1.9 (both pinned by SHA-256), extracts the converter
 without installing it, and runs it as a black box on each sample, writing an uncompressed DNG file
 (-u) per sample into <conformance cache>/raw-oracle, where the tests look by default
-(-Dsmalt.test.rawOracle overrides it). The sample files are fetched first when the cache lacks
-them.
+(-Dsmalt.test.rawOracle overrides it). For the samples of JXL_SAMPLES it also writes <stem>-jxl.dng, a DNG 1.7 file
+with the sensor data in lossless JPEG XL tiles stored as four interleaved subimages (RowInterleaveFactor and
+ColumnInterleaveFactor 2), JPEG XL previews and the reduced-resolution linear raw previews of fast load data
+(-losslessJXL -jxl -p2 -fl), which DngSpecOracleTest decodes against the uncompressed file. The sample files are
+fetched first when the cache lacks them.
 
 With --coverage it instead converts every ORF sample of vectors.tsv and every RW2 or RWL sample of
 raw format version 4 (about 160 files; the DNG files take about 6 GB) into
@@ -99,10 +103,63 @@ SAMPLES = [
     'rawpixls-panasonic-dmc-gh1-1-1.rw2',
     'rawpixls-panasonic-dmc-lx3-1-1.rw2',
     'rawpixls-sony-dsc-f828-4-3.srf',
+    'rawpixls-fujifilm-finepix-s2pro-3-2.raf',
+    'rawpixls-fujifilm-finepix-s6500fd-4-3.raf',
     'rawpixls-sigma-dp1-3-2-1116.x3f',
     'rawpixls-sigma-sigma-sd14-3-2-4462.x3f',
     'rawpixls-sigma-sigma-sd15-3-2-1863.x3f',
+    'rawpixls-canon-eos-1d-x-mark-iii-3-2.cr3',
+    'rawpixls-canon-eos-200d-mark-ii-3-2.cr3',
+    'rawpixls-canon-eos-250d-c-raw-3-2.cr3',
+    'rawpixls-canon-eos-250d-raw-3-2.cr3',
+    'rawpixls-canon-eos-850d-3-2.cr3',
+    'rawpixls-canon-eos-90d-3-2.cr3',
+    'rawpixls-canon-eos-kiss-m-3-2.cr3',
+    'rawpixls-canon-eos-m200-craw-3-2.cr3',
+    'rawpixls-canon-eos-m200-raw-3-2.cr3',
+    'rawpixls-canon-eos-m50-3-2.cr3',
+    'rawpixls-canon-eos-m50-craw-3-2.cr3',
+    'rawpixls-canon-eos-m50-mark-ii-3-2.cr3',
+    'rawpixls-canon-eos-m6-mark-ii-c-raw-3-2.cr3',
+    'rawpixls-canon-eos-m6-mark-ii-raw-3-2.cr3',
+    'rawpixls-canon-eos-r-3-2.cr3',
+    'rawpixls-canon-eos-r10-3-2.cr3',
+    'rawpixls-canon-eos-r100-craw-3-2.cr3',
+    'rawpixls-canon-eos-r100-raw-3-2.cr3',
+    'rawpixls-canon-eos-r3-3-2.cr3',
+    'rawpixls-canon-eos-r5-3-2.cr3',
+    'rawpixls-canon-eos-r5-mark-ii-craw-3-2.cr3',
+    'rawpixls-canon-eos-r5-mark-ii-raw-3-2.cr3',
+    'rawpixls-canon-eos-r5-raw-1.6-crop-dual-pixel-3-2.cr3',
+    'rawpixls-canon-eos-r50-craw-3-2.cr3',
+    'rawpixls-canon-eos-r50-raw-3-2.cr3',
+    'rawpixls-canon-eos-r50-v-raw-3-2.cr3',
+    'rawpixls-canon-eos-r6-3-2.cr3',
+    'rawpixls-canon-eos-r6-mark-ii-3-2.cr3',
+    'rawpixls-canon-eos-r6-mark-iii-craw-3-2.cr3',
+    'rawpixls-canon-eos-r6-mark-iii-raw-3-2.cr3',
+    'rawpixls-canon-eos-r7-3-2.cr3',
+    'rawpixls-canon-eos-r8-3-2.cr3',
+    'rawpixls-canon-eos-rebel-sl3-3-2.cr3',
+    'rawpixls-canon-eos-rp-3-2.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-1-1.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-c-raw-3-2.cr3',
+    'rawpixls-canon-powershot-g5-x-mark-ii-raw-3-2.cr3',
+    'rawpixls-canon-powershot-g7-x-mark-iii-3-2.cr3',
+    'rawpixls-canon-powershot-sx70-hs-c-raw-3-2-3-2.cr3',
+    'rawpixls-canon-powershot-sx70-hs-raw-3-2-3-2.cr3',
+    'rawpixls-canon-powershot-v1-craw-3-2.cr3',
 ]
+
+
+# converted a second time into DNG 1.7 files with JPEG XL data, previews and fast load data
+JXL_SAMPLES = [
+    'rawpixls-canon-eos-10d-raw-3-2.crw',
+    'rawpixls-canon-powershot-g1-raw-4-3.crw',
+    'rawpixls-fujifilm-finepix-s6500fd-4-3.raf',
+]
+
+JXL_FLAGS = ['-losslessJXL', '-jxl', '-p2', '-fl']
 
 
 def windows(path):
@@ -170,6 +227,15 @@ def main():
             target = os.path.join(output, os.path.splitext(name)[0] + '.dng')
             if not os.path.isfile(target):
                 sys.exit(f'Adobe DNG Converter wrote no {target}')
+            if not coverage and name in JXL_SAMPLES:
+                staging = os.path.join(work, 'jxl')
+                os.makedirs(staging, exist_ok=True)
+                subprocess.run([converter, *JXL_FLAGS, '-d', windows(staging), windows(os.path.join(directory, name))],
+                               check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                staged = os.path.join(staging, os.path.splitext(name)[0] + '.dng')
+                if not os.path.isfile(staged):
+                    sys.exit(f'Adobe DNG Converter wrote no {staged}')
+                os.replace(staged, os.path.join(output, os.path.splitext(name)[0] + '-jxl.dng'))
     print(f'wrote {len(samples)} oracle files into {output}')
 
 
