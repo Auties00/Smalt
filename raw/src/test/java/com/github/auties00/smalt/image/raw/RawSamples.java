@@ -112,6 +112,12 @@ public enum RawSamples {
             "090e01f9a7a860b2f2f0ead770b8a9ba3b17ea98dc1997835c6bda2fc0a2ae54"),
 
     /**
+     * rawpixls-apple-iphone-12-pro-8bit-4-3.dng (29195592 bytes).
+     */
+    DNG_IPHONE_12_PRO("rawpixls-apple-iphone-12-pro-8bit-4-3.dng", "https://raw.pixls.us/getfile.php/4264/nice/Apple%20-%20iPhone%2012%20Pro%20-%208bit%20%284%3A3%29.DNG",
+            "e91e77a4533ed7cce551d83330676ea5c47dd5e55fb38adda7819366afdbdfc2"),
+
+    /**
      * rawpixls-apple-iphone-7-plus-16bit-4-3.dng (10550105 bytes).
      */
     DNG_IPHONE_7_PLUS("rawpixls-apple-iphone-7-plus-16bit-4-3.dng", "https://raw.pixls.us/getfile.php/939/nice/Apple%20-%20iPhone%207%20Plus%20-%2016bit%20%284%3A3%29.DNG",
@@ -362,6 +368,18 @@ public enum RawSamples {
      */
     PEF_PENTAX_KX("rawpixls-pentax-k-x-12bit-3-2.pef", "https://raw.pixls.us/getfile.php/831/nice/Pentax%20-%20K-x%20-%2012bit%20%283%3A2%29.PEF",
             "51a3f22d702353b246684dca79f83c79cfdbdf9892702ae5ac55dd469e239bb6"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s2pro-3-2.raf (13211656 bytes).
+     */
+    RAF_S2PRO("rawpixls-fujifilm-finepix-s2pro-3-2.raf", "https://raw.pixls.us/getfile.php/3562/nice/Fujifilm%20-%20FinePix%20S2Pro%20-%203%3A2.RAF",
+            "9fe1bf1361f015d9db862228e4a26b23d69e81015ed4a032eaefb8242ae9ad42"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s6500fd-4-3.raf (13698640 bytes).
+     */
+    RAF_S6500FD("rawpixls-fujifilm-finepix-s6500fd-4-3.raf", "https://raw.pixls.us/getfile.php/3122/nice/Fujifilm%20-%20FinePix%20S6500fd%20-%204%3A3.RAF",
+            "ee2a7afc2afc9e3a85ca9e5e237c68b612dc360fb45c6fb4495ef857abbab48e"),
 
     /**
      * rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf (26160640 bytes).

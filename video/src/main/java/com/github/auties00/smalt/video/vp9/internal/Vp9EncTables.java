@@ -259,6 +259,24 @@ final class Vp9EncTables {
 
 
     /**
+     * The probabilities of the 18 extra bits of a 12-bit category 6 token, most significant first;
+     * 10-bit tokens use the last 16 ({@code vp9_cat6_prob_high12}).
+     */
+    static final int[] CAT6_PROBS_HIGH12 = {
+            255, 255, 255, 255, 254, 254, 254, 252, 249, 243, 230, 196, 177, 153, 140, 133, 130, 129
+    };
+
+    /**
+     * Returns the number of extra bits of a category 6 token.
+     *
+     * @param bitDepth the bit depth, 8, 10 or 12
+     * @return 14, 16 or 18
+     */
+    static int cat6Bits(int bitDepth) {
+        return bitDepth == 12 ? 18 : bitDepth == 10 ? 16 : 14;
+    }
+
+    /**
      * Returns the token of a quantized coefficient ({@code vp9_get_token}).
      *
      * @param v the coefficient
@@ -403,6 +421,41 @@ final class Vp9EncTables {
      */
     static int dcQuant(int qindex, int delta) {
         return Vp9QuantTables.DC_QLOOKUP[Math.clamp(qindex + delta, 0, 255)];
+    }
+
+    /**
+     * Returns the luma and chroma DC quantizer step of a quantizer index for a bit depth
+     * ({@code vp9_dc_quant}).
+     *
+     * @param qindex the quantizer index
+     * @param delta the delta added to the index
+     * @param bitDepth the bit depth, 8, 10 or 12
+     * @return the step
+     */
+    static int dcQuant(int qindex, int delta, int bitDepth) {
+        var q = Math.clamp(qindex + delta, 0, 255);
+        return switch (bitDepth) {
+            case 10 -> Vp9QuantTables.DC_QLOOKUP_10[q];
+            case 12 -> Vp9QuantTables.DC_QLOOKUP_12[q];
+            default -> Vp9QuantTables.DC_QLOOKUP[q];
+        };
+    }
+
+    /**
+     * Returns the AC quantizer step of a quantizer index for a bit depth ({@code vp9_ac_quant}).
+     *
+     * @param qindex the quantizer index
+     * @param delta the delta added to the index
+     * @param bitDepth the bit depth, 8, 10 or 12
+     * @return the step
+     */
+    static int acQuant(int qindex, int delta, int bitDepth) {
+        var q = Math.clamp(qindex + delta, 0, 255);
+        return switch (bitDepth) {
+            case 10 -> Vp9QuantTables.AC_QLOOKUP_10[q];
+            case 12 -> Vp9QuantTables.AC_QLOOKUP_12[q];
+            default -> Vp9QuantTables.AC_QLOOKUP[q];
+        };
     }
 
     /**

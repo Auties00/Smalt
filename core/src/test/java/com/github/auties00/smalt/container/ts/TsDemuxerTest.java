@@ -380,6 +380,54 @@ class TsDemuxerTest {
     }
 
     @Nested
+    @DisplayName("H.264 slice data partitions")
+    class SliceDataPartitions {
+        private static byte[] lengthPrefixed(byte[]... units) {
+            var out = new ByteArrayOutputStream();
+            for (var unit : units) {
+                out.write(0);
+                out.write(0);
+                out.write(unit.length >> 8);
+                out.write(unit.length);
+                out.writeBytes(unit);
+            }
+            return out.toByteArray();
+        }
+
+        @Test
+        @DisplayName("keeps partitions B and C in the access unit of their partition A and reads its slice type only")
+        void accessUnits() {
+            // partition A of an I slice (first_mb_in_slice 0, slice_type 7); partitions B and C of slice_id 0,
+            // whose second Exp-Golomb code would read as slice_type P; a recovery point SEI message
+            var partitionA = new byte[]{0x62, (byte) 0x88, (byte) 0x80};
+            var partitionB = new byte[]{0x63, (byte) 0xA0, (byte) 0x80};
+            var partitionC = new byte[]{0x64, (byte) 0xA0, (byte) 0x80};
+            var recovery = new byte[]{0x06, 0x06, 0x01, (byte) 0x80, (byte) 0x80};
+            var track = VideoTrack.builder().id(1).codec(Codec.H264).timeBase(Rational.timeBaseOf(90_000))
+                    .codecConfig(new byte[]{1, 0x58, 0, 0x1E, (byte) 0xFF, (byte) 0xE1, 0, 6, 0x67, 0x58, 0, 0x1E,
+                            (byte) 0xDA, 0x79, 1, 0, 4, 0x68, (byte) 0xCE, 0x3C, (byte) 0x80})
+                    .width(16).height(16).build();
+            var sink = MediaSink.memory();
+            var muxer = new TsMuxer(sink);
+            muxer.addTrack(track);
+            var recoveryPoints = List.of(true, false, false, true, false, false);
+            for (var index = 0; index < recoveryPoints.size(); index++) {
+                var data = recoveryPoints.get(index) ? lengthPrefixed(recovery, partitionA, partitionB, partitionC)
+                        : lengthPrefixed(partitionA, partitionB, partitionC);
+                muxer.writePacket(new Packet(1, data, index * 3000L, index * 3000L, 3000, index == 0));
+            }
+            muxer.finish();
+            var demuxed = TsTesting.demux(sink.toByteArray());
+            var video = demuxed.packetsOf(demuxed.tracks().getFirst());
+            assertEquals(recoveryPoints.size(), video.size(), "one packet per access unit");
+            for (var index = 0; index < video.size(); index++) {
+                assertEquals(index * 3000L, video.get(index).pts() - video.getFirst().pts(), "pts of access unit " + index);
+                assertEquals(recoveryPoints.get(index), video.get(index).keyframe(), "key flag of access unit " + index);
+            }
+        }
+    }
+
+    @Nested
     @DisplayName("damaged input")
     class Damaged {
         private byte[] input() {

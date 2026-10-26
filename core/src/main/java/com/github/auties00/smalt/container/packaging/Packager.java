@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.packaging;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.Muxer;
@@ -9,7 +10,10 @@ import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
 import com.github.auties00.smalt.container.mp4.FragmentedMp4MuxerOptions;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.ts.TsMuxerOptions;
+import com.github.auties00.smalt.internal.tags.TagCarry;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -25,6 +29,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Packages media files for adaptive streaming: HLS (RFC 8216) and DASH (ISO/IEC 23009-1) video
@@ -58,16 +63,17 @@ import java.util.Optional;
  * a {@code SegmentTemplate} with a {@code SegmentTimeline} per representation (a
  * {@code SegmentList} with media ranges under byte-range addressing, and a {@code BaseURL} with a
  * {@code SegmentBase} in the on-demand profile when {@link PackagingOptions#segmentIndex()} puts a
- * single {@code sidx} in each stream's file). Nothing is encrypted.
+ * single {@code sidx} in each stream's file). Nothing is encrypted. The rendition's tags, cover art,
+ * chapters and track tags go into the segments as {@link PackagingOptions#tagMode()} selects.
  *
  * <p>The packager is stateless; every method may be called from any thread, each call reading its
  * own sources.
  *
  * @apiNote Packaging copies the coded streams; transcode first to change codecs, sizes or key
  * frame spacing. Transport stream segments take H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3 and
- * Opus; CMAF segments take H.264, HEVC, VP9, AV1, AAC, Opus, MP3, FLAC and ALAC, although HLS
- * players support only some of them in CMAF (Apple players: H.264, HEVC, AAC, AC-3, E-AC-3,
- * FLAC, ALAC, Opus).
+ * Opus; CMAF segments take the audio and video codecs {@link FragmentedMp4Muxer#supports} lists,
+ * although HLS players support only some of them in CMAF (Apple players: H.264, HEVC, AAC, AC-3,
+ * E-AC-3, FLAC, ALAC, Opus).
  */
 public final class Packager {
     /**
@@ -202,8 +208,11 @@ public final class Packager {
                 throw new MediaException.Unsupported("packaging", "rendition " + name + " has no video or audio track "
                         + (ts ? "a transport stream" : "a CMAF segment") + " carries");
             }
-            return ts ? packTs(demuxer, name, video, audio, output, options, files)
-                    : packCmaf(demuxer, name, video, audio, output, options, files);
+            var mode = options.tagMode();
+            var tags = mode == TagMode.COPY || mode == TagMode.MERGE
+                    ? TagCarry.read(rendition.source(), demuxer, MediaLimits.DEFAULT) : null;
+            return ts ? packTs(demuxer, name, video, audio, output, options, files, tags)
+                    : packCmaf(demuxer, name, video, audio, output, options, files, tags);
         }
     }
 
@@ -217,10 +226,12 @@ public final class Packager {
      * @param output the destination of the segments
      * @param options the packaging options
      * @param files receives the names of the files written
+     * @param tags the tags of the rendition, or {@code null} when the options do not use them
      * @return the streams written
      */
     private static Manifests.RenditionStreams packTs(Demuxer demuxer, String name, VideoTrack video, AudioTrack audio,
-                                                     PackageOutput output, PackagingOptions options, List<String> files) {
+                                                     PackageOutput output, PackagingOptions options, List<String> files,
+                                                     MediaTags tags) {
         var tracks = new ArrayList<Track>();
         if (video != null) {
             tracks.add(video);
@@ -235,6 +246,7 @@ public final class Packager {
             for (var track : tracks) {
                 declare(muxer, track, name);
             }
+            setTags(muxer, tags, options, tracks);
             copy(demuxer, Map.of(trackKey(video), muxer, trackKey(audio), muxer), video, stream);
             muxer.finish();
         } finally {
@@ -253,10 +265,12 @@ public final class Packager {
      * @param output the destination of the segments
      * @param options the packaging options
      * @param files receives the names of the files written
+     * @param tags the tags of the rendition, or {@code null} when the options do not use them
      * @return the streams written
      */
     private static Manifests.RenditionStreams packCmaf(Demuxer demuxer, String name, VideoTrack video, AudioTrack audio,
-                                                       PackageOutput output, PackagingOptions options, List<String> files) {
+                                                       PackageOutput output, PackagingOptions options, List<String> files,
+                                                       MediaTags tags) {
         var fragmentOptions = (options.segmentIndex() ? FragmentedMp4MuxerOptions.dashOnDemand()
                 : FragmentedMp4MuxerOptions.cmaf()).toBuilder().fragmentMicros(options.segmentMicros()).build();
         SegmentedStream videoStream = null;
@@ -269,6 +283,7 @@ public final class Packager {
                 var stream = new SegmentedStream(name + "_video", name, List.of(video), ".m4s", options.byteRanges(), output, files);
                 var muxer = cmafMuxer(stream, fragmentOptions, indexed);
                 declare(muxer, video, name);
+                setTags(muxer, tags, options, List.of(video));
                 muxers.put(video.id(), muxer);
                 opened.add(muxer);
                 videoStream = stream;
@@ -276,7 +291,8 @@ public final class Packager {
             if (audio != null) {
                 var stream = new SegmentedStream(name + "_audio", name, List.of(audio), ".m4s", options.byteRanges(), output, files);
                 var muxer = cmafMuxer(stream, fragmentOptions, indexed);
-                declare(muxer, audio, name);
+                declare(muxer, TagCarry.withoutEmbeddedTags(audio), name);
+                setTags(muxer, tags, options, List.of(audio));
                 muxers.put(audio.id(), muxer);
                 opened.add(muxer);
                 audioStream = stream;
@@ -379,6 +395,25 @@ public final class Packager {
         } catch (IllegalArgumentException exception) {
             throw new MediaException.Unsupported("packaging", "rendition " + rendition + ": " + exception.getMessage());
         }
+    }
+
+    /**
+     * Gives a muxer the tags of the tracks it writes, as the options select.
+     *
+     * @param muxer the muxer, with its tracks declared
+     * @param tags the tags of the rendition, or {@code null} when the options do not use them
+     * @param options the packaging options
+     * @param tracks the tracks the muxer writes, under their identifiers in the rendition
+     */
+    private static void setTags(Muxer muxer, MediaTags tags, PackagingOptions options, List<Track> tracks) {
+        var ids = new HashMap<Integer, Integer>();
+        for (var track : tracks) {
+            ids.put(track.id(), track.id());
+        }
+        var given = options.tags().orElse(null);
+        var resolved = TagCarry.resolve(options.tagMode(), given, tags,
+                new TagCarry.Mapping(ids, Set.of(), false, false, 0, -1));
+        TagCarry.apply(muxer, resolved, options.tagMode(), given);
     }
 
     /**

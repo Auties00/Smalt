@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.AnimationWriter;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
+import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.webp.internal.anim.AnimationEncoderCore;
 import com.github.auties00.smalt.image.webp.internal.anim.FrameEncoder;
@@ -40,6 +41,11 @@ public final class WebpAnimationEncoder {
      * The encoding state.
      */
     private final AnimationEncoderCore core;
+
+    /**
+     * The ICC profile embedded in the file, or {@code null}.
+     */
+    private final byte[] iccProfile;
 
     /**
      * The canvas width.
@@ -123,6 +129,7 @@ public final class WebpAnimationEncoder {
         FrameEncoder.checkDimensions(canvasWidth, canvasHeight);
         this.canvasWidth = canvasWidth;
         this.canvasHeight = canvasHeight;
+        this.iccProfile = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
         this.core = new AnimationEncoderCore(canvasWidth, canvasHeight, options.loopCount(), options.isLossless(),
                 options.quality(), options.method(), options.minKeyframeDistance(), options.maxKeyframeDistance(),
                 options.allowMixed(), options.minimize());
@@ -176,8 +183,7 @@ public final class WebpAnimationEncoder {
      * @throws IllegalArgumentException if the frame size differs from the canvas size, the
      * duration is negative, or the delay exceeds 16777215 milliseconds
      * @throws IllegalStateException if {@link #finish()} was called
-     * @throws MediaException.Unsupported if the frame's color matrix cannot be converted to RGB,
-     * or frames are lossy and no VP8 encoder is available
+     * @throws MediaException.Unsupported if frames are lossy and no VP8 encoder is available
      * @throws MediaException.LimitExceeded if encoding runs out of memory
      */
     public void addFrame(Picture frame, Duration duration) {
@@ -225,7 +231,10 @@ public final class WebpAnimationEncoder {
                 throw new IllegalStateException("no frame was added");
             }
             finished = true;
-            return Guards.encoding("WebP animation", () -> core.finish(lastDuration));
+            return Guards.encoding("WebP animation", () -> {
+                var file = core.finish(lastDuration);
+                return iccProfile == null ? file : WebpContainer.withIccProfile(file, iccProfile);
+            });
         }
     }
 
