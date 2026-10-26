@@ -1,0 +1,12 @@
+# Golden decodes of the two-layer object decoder test streams (<name>.m4v and <name>-e.m4v), written by the reference decoder of ISO/IEC 14496-5; see Mpeg4ObjectConformanceTest. Columns:
+# name	scalability	width	height	frames	yuv md5	alpha md5
+obss	spatial	352	288	4	5e5e0d2df16097451a3dbec3072a6f7d	6186b4d3c3e29b061626f60fba509669
+obss-bgc	spatial	352	288	4	6dea9e575d9423226269cf4904f64def	692fc77c17ce45bfa6b73d712b2ab8f9
+obss-bgc-own	spatial	352	288	4	4d57edb6dff5d29e1b9d94562bff5465	8034172e4b57ce5864347c6e28d9c690
+obss-bgc-shaped	spatial	352	288	4	3aebd4255e0417a9edf3c66c4458564d	6186b4d3c3e29b061626f60fba509669
+obss-partial	spatial	352	288	4	30ea397165193a3200ef064e67d98182	6186b4d3c3e29b061626f60fba509669
+obss-refshape	spatial	352	288	4	20ca885d4979ee0bdf63c4514b961839	b92f23a4ba5581c2284d5dcd0561e5cd
+tps-bgc	temporal	176	144	13	ab4d1f66995e302e4ff558a5c3a8246e	-
+tps-bgc-b	temporal	176	144	13	e9d835f104357d08cc0dca556a3e2e9f	-
+tps-bgc-bbase	temporal	176	144	13	da3708a3a686f92030fba962ba8f34d8	-
+tps-partial	temporal	176	144	13	3b15cb727758a96ddec7e28c6406d253	-

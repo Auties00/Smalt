@@ -1,0 +1,12 @@
+# video decode dump of hevc/scc/scc-intra-444-8.hevc.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 80000
+seekable true
+track 1 HEVC 192x128 timebase=1/90000
+0 pts=0 dur=3600 key=true 192x128 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=2ae54b94 u=bcfeab02 v=eae6cf97
+1 pts=3600 dur=3600 key=true 192x128 yuv8 YUV444 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=8bbb9acc u=6b0e9123 v=7926b9d0
+seek 0: @0
+seek 26666: @0
+seek 53333: @1
+seek 80000: end
+seek -1000000: @0
