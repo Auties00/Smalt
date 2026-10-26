@@ -172,6 +172,59 @@ class TranscodeTrimTest {
             assertEquals(Math.round((3_210_987 - 1_234_567) * 44_100L / 1e6), MediaProbe.of(seeked).audio().decoded(), 1);
         }
 
+        @Test
+        @DisplayName("keeps every subtitle cue shown at the start, also two that appear together and one stored late")
+        void subtitlesStoredLate(@TempDir Path directory) throws Exception {
+            var script = directory.resolve("cues.ass");
+            Files.writeString(script, """
+                    [Script Info]
+                    ScriptType: v4.00+
+                    PlayResX: 384
+                    PlayResY: 288
+
+                    [V4+ Styles]
+                    Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+                    Style: Default,Arial,16,&Hffffff,&Hffffff,&H0,&H0,0,0,0,0,100,100,0,0,1,1,0,2,10,10,10,0
+
+                    [Events]
+                    Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+                    Dialogue: 0,0:00:05.00,0:01:05.00,Default,,0,0,0,,Long A
+                    Dialogue: 1,0:00:05.00,0:01:05.00,Default,,0,0,0,,Long B
+                    Dialogue: 0,0:00:29.50,0:00:31.00,Default,,0,0,0,,Edge A
+                    Dialogue: 1,0:00:29.50,0:00:32.00,Default,,0,0,0,,Edge B
+                    Dialogue: 0,0:00:40.00,0:00:41.00,Default,,0,0,0,,Late
+                    """);
+            var input = Fixtures.read(Fixtures.ffmpeg("mkv", List.of("-f", "lavfi", "-i",
+                    "testsrc2=size=64x48:rate=10:duration=70", "-i", script.toString()), List.of("-c:v", "libx264", "-g", "50",
+                    "-c:s", "copy")));
+            // ffmpeg stores the second cue of 5 s after the video of 40 s, past the reach of the
+            // subtitle scan, so only the seeked demuxer delivers it
+            try (var demuxer = com.github.auties00.smalt.container.Containers.openDemuxer(MediaSource.of(input))) {
+                var video = Long.MIN_VALUE;
+                for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                    if (packet.trackId() == 1) {
+                        video = Math.max(video, packet.pts());
+                    } else if (new String(packet.data(), java.nio.charset.StandardCharsets.UTF_8).endsWith("Long B")) {
+                        assertTrue(video >= 40_000, "the cue is stored after " + video + " ms of video");
+                    }
+                }
+            }
+            var expected = List.of("Long A", "Long B", "Edge A", "Edge B", "Late");
+            for (var container : List.of(OutputContainer.MATROSKA, OutputContainer.SRT)) {
+                var options = TranscodeOptions.of(container).toBuilder().start(30_000_000).build();
+                var seeked = MediaSink.memory();
+                Transcoder.transcode(MediaSource.of(input), seeked, options);
+                var decoded = MediaSink.memory();
+                Transcoder.transcode(MediaSource.of(input), decoded, options.toBuilder().seeking(false).build());
+                var cues = com.github.auties00.smalt.subtitle.Subtitles.read(MediaSource.of(seeked.toByteArray()),
+                        com.github.auties00.smalt.subtitle.SubtitleReaderOptions.defaults());
+                assertEquals(com.github.auties00.smalt.subtitle.Subtitles.read(MediaSource.of(decoded.toByteArray()),
+                        com.github.auties00.smalt.subtitle.SubtitleReaderOptions.defaults()), cues, container.name());
+                assertEquals(expected, cues.stream().map(cue -> cue.text()).toList(), container.name());
+                assertEquals(35_000_000, cues.get(1).endMicros(), container.name());
+            }
+        }
+
         @ParameterizedTest(name = "{0} from {2} us for at most {3} us at {4} Hz")
         @MethodSource("com.github.auties00.smalt.transcode.TranscodeTrimTest#seekableAudio")
         @DisplayName("decodes encoded audio after a seek to exactly the samples decoding from the start and dropping gives")

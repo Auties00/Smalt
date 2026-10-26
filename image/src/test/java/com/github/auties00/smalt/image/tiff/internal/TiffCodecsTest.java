@@ -302,4 +302,49 @@ class TiffCodecsTest {
     void faxTables() {
         assertDoesNotThrow(CcittFaxDecoder::new);
     }
+
+    @Nested
+    @DisplayName("sample packing of WebP, JPEG XL and JPEG 2000 strips")
+    class Packing {
+        @ParameterizedTest(name = "{0} bits")
+        @ValueSource(ints = {1, 2, 3, 4, 5, 7, 8, 9, 12, 15, 16, 17, 24, 31, 32})
+        @DisplayName("writes samples most significant bit first, whole bytes in byte order")
+        void pack(int bits) {
+            var random = new Random(bits);
+            var count = 37;
+            var values = new int[count];
+            for (var i = 0; i < count; i++) {
+                values[i] = (int) (random.nextLong() & ((1L << bits) - 1));
+            }
+            for (var little : new boolean[]{true, false}) {
+                var rowBytes = (count * bits + 7) / 8;
+                var actual = new byte[rowBytes + 2];
+                Arrays.fill(actual, (byte) 0x5A);
+                Arrays.fill(actual, 1, 1 + rowBytes, (byte) 0);
+                TiffImageCodecs.pack(values, count, actual, 1, bits, little);
+                var expected = new byte[rowBytes + 2];
+                Arrays.fill(expected, (byte) 0x5A);
+                Arrays.fill(expected, 1, 1 + rowBytes, (byte) 0);
+                if (bits == 16 || bits == 24 || bits == 32) {
+                    var bytes = bits / 8;
+                    for (var i = 0; i < count; i++) {
+                        for (var b = 0; b < bytes; b++) {
+                            var shift = little ? 8 * b : 8 * (bytes - 1 - b);
+                            expected[1 + i * bytes + b] = (byte) (values[i] >>> shift);
+                        }
+                    }
+                } else {
+                    var bit = 0;
+                    for (var i = 0; i < count; i++) {
+                        for (var b = bits - 1; b >= 0; b--, bit++) {
+                            if (((values[i] >>> b) & 1) != 0) {
+                                expected[1 + bit / 8] |= (byte) (0x80 >>> (bit % 8));
+                            }
+                        }
+                    }
+                }
+                assertArrayEquals(expected, actual, bits + " bits, little " + little);
+            }
+        }
+    }
 }
