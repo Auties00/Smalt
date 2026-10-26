@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
 
 /**
@@ -48,6 +49,12 @@ final class Sensor {
     int bitsPerSample = 16;
 
     /**
+     * Whether the reader stores integer samples of more than 16 bits as such, in
+     * {@link SensorPlane#wide}; only {@link TiffSamples} readers do.
+     */
+    boolean wide;
+
+    /**
      * Whether the samples are floating-point.
      */
     boolean floating;
@@ -57,6 +64,12 @@ final class Sensor {
      * data.
      */
     CfaPattern cfa;
+
+    /**
+     * The spatial layout of the color filter array's photosites, relative to the top-left photosite
+     * of the active area.
+     */
+    CfaLayout layout = CfaLayout.RECTANGULAR;
 
     /**
      * The color plane each CFA color code maps to ({@code CFAPlaneColor}), indexed by code; the
@@ -74,6 +87,25 @@ final class Sensor {
      * area, or {@code null} for the whole active area.
      */
     double[] defaultCrop;
+
+    /**
+     * The default user crop, as top, left, bottom and right relative to the default crop, or
+     * {@code null} for none.
+     */
+    double[] userCrop;
+
+    /**
+     * Where the active area of this image lies in the active area of the main raw image, as left,
+     * top, width and height relative to it: the whole of it, except for a reduced-resolution
+     * preview of its default crop.
+     */
+    double[] frame = {0, 0, 1, 1};
+
+    /**
+     * The factor the stored values were multiplied by relative to the main raw image
+     * ({@code RawToPreviewGain} of a linear raw preview), divided out after linearization.
+     */
+    double gain = 1;
 
     /**
      * The horizontal default scale.
@@ -168,6 +200,6 @@ final class Sensor {
      * @return {@code 2^bitsPerSample - 1}, or 1 for floating-point samples
      */
     double maximum() {
-        return floating ? 1.0 : (1L << Math.min(bitsPerSample, 16)) - 1;
+        return floating ? 1.0 : (1L << Math.min(bitsPerSample, 32)) - 1;
     }
 }
