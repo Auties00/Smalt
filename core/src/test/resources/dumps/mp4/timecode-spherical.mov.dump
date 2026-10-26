@@ -1,0 +1,36 @@
+# demux dump of mp4/timecode-spherical.mov; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 501000
+seekable true
+metadata compatible_brands="qt  "
+metadata encoder="Lavf61.7.100"
+metadata major_brand="qt  "
+metadata minor_version="512"
+timecode 01:00:00;00 fps=30
+track 1 VIDEO MJPEG timebase=1/30000 duration=15030 config=none
+  video 32x24 orientation=NORMAL rate=30000/1001 sar=1/1 interlacing=PROGRESSIVE stereo=SIDE_BY_SIDE_LEFT_FIRST
+  spherical Equirectangular[top=0, bottom=0, left=134217728, right=134217728] yaw=90.0 pitch=-45.0 roll=30.0 source="Smalt samples"
+track 2 DATA DATA timebase=1/30000 duration=15030 language=eng config=20:ff843baa
+packets 16
+0 t2 pts=0 dts=0 dur=15015 flags=KEY size=4 crc=a49e48a2
+1 t1 pts=0 dts=0 dur=1001 flags=KEY size=995 crc=0823bd5a
+2 t1 pts=1001 dts=1001 dur=1001 flags=KEY size=990 crc=bc4387a9
+3 t1 pts=2002 dts=2002 dur=1001 flags=KEY size=985 crc=a0382262
+4 t1 pts=3003 dts=3003 dur=1001 flags=KEY size=992 crc=b2e16368
+5 t1 pts=4004 dts=4004 dur=1001 flags=KEY size=993 crc=d2d06e54
+6 t1 pts=5005 dts=5005 dur=1001 flags=KEY size=989 crc=16f583ab
+7 t1 pts=6006 dts=6006 dur=1001 flags=KEY size=988 crc=d2bdd08d
+8 t1 pts=7007 dts=7007 dur=1001 flags=KEY size=990 crc=b7dfcd09
+9 t1 pts=8008 dts=8008 dur=1001 flags=KEY size=991 crc=fcd1ab36
+10 t1 pts=9009 dts=9009 dur=1001 flags=KEY size=988 crc=6eb40384
+11 t1 pts=10010 dts=10010 dur=1001 flags=KEY size=991 crc=72fa4a7b
+12 t1 pts=11011 dts=11011 dur=1001 flags=KEY size=991 crc=226fb06d
+13 t1 pts=12012 dts=12012 dur=1001 flags=KEY size=991 crc=67da2534
+14 t1 pts=13013 dts=13013 dur=1001 flags=KEY size=993 crc=387f1d2e
+15 t1 pts=14014 dts=14014 dur=1001 flags=KEY size=991 crc=2fc6f723
+seek 0: t1@0 t2@0
+seek 167000: t1@5 t2@0
+seek 334000: t1@10 t2@0
+seek 500500: end
+seek 501000: end
+seek -1000000: t1@0 t2@0

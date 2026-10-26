@@ -123,6 +123,8 @@ final class Opcodes {
                 var index = (row * plane.width + column) * plane.samplesPerPixel + p;
                 if (plane.integers != null) {
                     plane.integers[index] = (short) Math.clamp(Math.round(value), 0, 65535);
+                } else if (plane.wide != null) {
+                    plane.wide[index] = (int) Math.clamp(Math.round((double) value), 0L, 0xFFFFFFFFL);
                 } else {
                     plane.floats[index] = value;
                 }
@@ -130,7 +132,7 @@ final class Opcodes {
 
             @Override
             public float maximum() {
-                return plane.integers != null ? 65535 : Float.MAX_VALUE;
+                return plane.integers != null ? 65535 : plane.wide != null ? 4294967295f : Float.MAX_VALUE;
             }
         }, list);
     }
@@ -817,7 +819,7 @@ final class Opcodes {
             if (r < 1e-12) {
                 f = k[0];
             } else {
-                var t = Math.atan(r);
+                var t = StrictMath.atan(r);
                 var t2 = t * t;
                 f = t * (k[0] + t2 * (k[1] + t2 * (k[2] + t2 * k[3]))) / r;
             }

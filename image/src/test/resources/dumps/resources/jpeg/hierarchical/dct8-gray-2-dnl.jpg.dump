@@ -1,0 +1,13 @@
+# image dump of resources/jpeg/hierarchical/dct8-gray-2-dnl.jpg; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=41, height=29, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 41x29 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=c9971727
+  format=JPEG orientation=NORMAL source=41x29
+  icc=none exif=none xmp=none
+  profile=none
+scaled 10x7
+picture 41x29 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=c9971727
+  format=JPEG orientation=NORMAL source=41x29
+  icc=none exif=none xmp=none
+  profile=none
