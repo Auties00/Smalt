@@ -73,7 +73,7 @@ public final class Envelope {
             BAND_WINDOW[j] = new float[n];
             var total = 0.0f;
             for (var i = 0; i < n; i++) {
-                BAND_WINDOW[j][i] = (float) Math.sin((i + .5) / n * Math.PI);
+                BAND_WINDOW[j][i] = (float) StrictMath.sin((i + .5) / n * Math.PI);
                 total += BAND_WINDOW[j][i];
             }
             BAND_TOTAL[j] = (float) (1. / total);
@@ -189,7 +189,7 @@ public final class Envelope {
         this.cursor = longBlock / 2;
         var n = windowLength;
         for (var i = 0; i < n; i++) {
-            mdctWindow[i] = (float) Math.sin(i / (n - 1.) * Math.PI);
+            mdctWindow[i] = (float) StrictMath.sin(i / (n - 1.) * Math.PI);
             mdctWindow[i] *= mdctWindow[i];
         }
         var filters = 7 * channels;

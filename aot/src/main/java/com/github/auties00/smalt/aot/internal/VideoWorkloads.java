@@ -5,17 +5,23 @@ import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.ResizeFilter;
+import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
+import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.av1.Av1Decoder;
 import com.github.auties00.smalt.video.av1.Av1DecoderOptions;
 import com.github.auties00.smalt.video.av1.Av1Encoder;
 import com.github.auties00.smalt.video.av1.Av1EncoderOptions;
 import com.github.auties00.smalt.video.av1.Av1EncoderSpeed;
+import com.github.auties00.smalt.video.av1.Av1ScreenContent;
+import com.github.auties00.smalt.video.av1.Av1TimingInfo;
 import com.github.auties00.smalt.image.avif.AvifDecoder;
 import com.github.auties00.smalt.image.avif.AvifEncoder;
 import com.github.auties00.smalt.image.avif.AvifEncoderOptions;
@@ -33,6 +39,7 @@ import com.github.auties00.smalt.video.vp9.Vp9Decoder;
 import com.github.auties00.smalt.video.vp9.Vp9Encoder;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderOptions;
 import com.github.auties00.smalt.video.vp9.Vp9EncoderSpeed;
+import com.github.auties00.smalt.video.vp9.Vp9Subsampling;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -101,11 +108,17 @@ final class VideoWorkloads {
                 realtime("vp9-encode-rt-s8-t1", () -> vp9Encode(1, 8)),
                 realtime("vp9-decode-rt", () -> VideoStreams.decode("vp9-decode-rt", vp9Stream(0),
                         new Vp9Decoder(VideoStreams.track(Codec.VP9, null)))),
+                realtime("vp9-alpha-session-t1", () -> VideoStreams.session("vp9-alpha-session-t1", Codec.VP9,
+                        () -> new Vp9Encoder(WIDTH, HEIGHT, Vp9EncoderOptions.forRealtime().toBuilder()
+                                .timeBase(TIME_BASE).alpha(true).build()),
+                        track -> VideoDecoders.create(track.toBuilder().alpha(true).build()))),
                 file("vp9-decode-t2", () -> VideoStreams.decode("vp9-decode-t2", vp9Stream(1),
                         new Vp9Decoder(VideoStreams.track(Codec.VP9, null),
                                 VideoDecoderOptions.builder().threads(2).build()))),
                 file("av1-encode-quality-t2", VideoWorkloads::av1EncodeQuality),
+                file("vp9-encode-quality-t2", VideoWorkloads::vp9EncodeQuality),
                 file("av1-encode-intra", VideoWorkloads::av1EncodeIntra),
+                file("av1-encode-tools", VideoWorkloads::av1EncodeTools),
                 file("av1-decode-t2", VideoWorkloads::av1Decode),
                 file("avif-encode", VideoWorkloads::avifEncode),
                 file("avif-decode", VideoWorkloads::avifDecode),
@@ -222,6 +235,29 @@ final class VideoWorkloads {
     }
 
     /**
+     * Returns a workload that encodes twelve frames with the good-quality VP9 encoder (lookahead,
+     * hidden alternate references, temporal filtering, the rate-distortion partition and mode
+     * search, compound prediction) at a constant quality and the {@code SPEED_2} speed on two
+     * threads, as 8-bit 4:2:0 and as 10-bit 4:4:4, new encoders every round, flushed at the end.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload vp9EncodeQuality() {
+        var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 12);
+        var options = Vp9EncoderOptions.ofQuality(32).toBuilder().speed(Vp9EncoderSpeed.SPEED_2).threads(2)
+                .timeBase(TIME_BASE).build();
+        var high = options.toBuilder().pictureFormat(Vp9Subsampling.YUV444, 10).build();
+        return TrainingWorkload.of("vp9-encode-quality-t2", () -> {
+            for (var settings : List.of(options, high)) {
+                for (var packet : VideoStreams.encodeAll(new Vp9Encoder(SMALL_WIDTH, SMALL_HEIGHT, settings),
+                        pictures)) {
+                    Blackhole.consume(packet.size());
+                }
+            }
+        });
+    }
+
+    /**
      * Returns a workload that encodes twelve frames with the good-quality AV1 encoder at a constant
      * quality, the {@code FAST} speed and two threads (lookahead, alternate reference frames,
      * temporal filtering, compound prediction), a new encoder every round, flushed at the end.
@@ -258,6 +294,31 @@ final class VideoWorkloads {
                 for (var picture : pictures) {
                     encoder.encode(new VideoFrame(picture, pts[0]++, 1, true), packet -> Blackhole.consume(packet.size()));
                 }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that encodes with the coding tools of the predicted AV1 encoders beyond
+     * 8-bit 4:2:0 camera content: a real-time 10-bit stream with the screen content tools, and a
+     * good-quality stream with super-resolution and the decoder model's timing, new encoders every
+     * round, flushed at the end.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload av1EncodeTools() {
+        var pictures = SyntheticVideo.natural(SMALL_WIDTH, SMALL_HEIGHT, 8);
+        var realtime = Av1EncoderOptions.forRealtime().toBuilder().bitrate(BITRATE)
+                .pictureFormat(ChromaFormat.YUV420, 10).screenContent(Av1ScreenContent.ALWAYS).timeBase(TIME_BASE)
+                .build();
+        var good = Av1EncoderOptions.ofQuality(60).toBuilder().speed(Av1EncoderSpeed.FASTEST).lookahead(4)
+                .superResolution(12).timingInfo(Av1TimingInfo.DECODER_MODEL).timeBase(TIME_BASE).build();
+        return TrainingWorkload.of("av1-encode-tools", () -> {
+            for (var packet : VideoStreams.encodeAll(new Av1Encoder(SMALL_WIDTH, SMALL_HEIGHT, realtime), pictures)) {
+                Blackhole.consume(packet.size());
+            }
+            for (var packet : VideoStreams.encodeAll(new Av1Encoder(SMALL_WIDTH, SMALL_HEIGHT, good), pictures)) {
+                Blackhole.consume(packet.size());
             }
         });
     }
@@ -306,21 +367,58 @@ final class VideoWorkloads {
     }
 
     /**
-     * Returns a workload that probes and decodes AVIF images: a lossy picture with alpha, and a
-     * 10-bit 4:4:4 picture at its full depth.
+     * Returns a workload that probes and decodes AVIF images: a lossy picture with alpha, a 10-bit
+     * 4:4:4 picture at its full depth, an image overlay of an identity derivation, a 16-bit sample
+     * transform, a 10-bit animation with alpha played as 16-bit frames and sought back, a region of a grid with
+     * alpha, and the triangle-filter resampling of 8-bit and 10-bit alpha planes that alpha images of another size
+     * than their color take.
      *
      * @return the workload
      */
     private static TrainingWorkload avifDecode() {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(384, 256, 1).getFirst(), true);
         var lossy = AvifEncoder.encode(picture, AvifEncoderOptions.lossy(60));
-        var deep = AvifEncoder.encode(picture, AvifEncoderOptions.lossy(70).toBuilder()
-                .chromaFormat(ChromaFormat.YUV444).bitDepth(10).speed(8).build());
+        var grid = AvifEncoder.encode(picture, AvifEncoderOptions.lossy(60).toBuilder().speed(10).gridTileSize(64)
+                .build());
+        var region = ImageDecoderOptions.builder().region(100, 70, 120, 90).build();
+        var deepOptions = AvifEncoderOptions.lossy(70).toBuilder().chromaFormat(ChromaFormat.YUV444).bitDepth(10).speed(8)
+                .build();
+        var deep = AvifEncoder.encode(picture, deepOptions);
+        var frames = SyntheticVideo.natural(128, 96, 3);
+        var animation = new java.io.ByteArrayOutputStream();
+        try (var writer = AvifEncoder.openAnimationWriter(128, 96, deepOptions, MediaSink.of(animation))) {
+            for (var frame : frames) {
+                writer.write(SyntheticImages.rgba(frame, true), 40_000);
+            }
+            writer.finish();
+        }
+        var animated = animation.toByteArray();
+        var luma = SyntheticVideo.natural(96, 64, 1).getFirst();
+        var alpha8 = YuvPicture.builder().size(luma.width(), luma.height()).chromaFormat(ChromaFormat.MONOCHROME)
+                .color(luma.color()).luma(luma.y(), luma.yStride()).build();
+        var alpha10 = ImageOps.toBitDepth(alpha8, 10);
         var highBitDepth = ImageDecoderOptions.builder().highBitDepth(true).build();
+        var tiles = SyntheticVideo.natural(96, 64, 2);
+        var first = SyntheticAvif.Coded.of(AvifEncoder.encode(tiles.getFirst(), AvifEncoderOptions.lossy(70)));
+        var second = SyntheticAvif.Coded.of(AvifEncoder.encode(tiles.getLast(), AvifEncoderOptions.lossy(70)));
+        var overlay = SyntheticAvif.overlay(first, second);
+        var transform = SyntheticAvif.sampleTransform(first, second);
         return TrainingWorkload.of("avif-decode", () -> {
             Blackhole.consume(AvifDecoder.probe(MediaSource.of(lossy)).hashCode());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(lossy), ImageDecoderOptions.defaults()).picture().width());
+            Blackhole.consume(AvifDecoder.decode(MediaSource.of(grid), region).picture().width());
             Blackhole.consume(AvifDecoder.decode(MediaSource.of(deep), highBitDepth).picture().width());
+            Blackhole.consume(AvifDecoder.decode(MediaSource.of(overlay)).picture().width());
+            Blackhole.consume(AvifDecoder.decode(MediaSource.of(transform), highBitDepth).picture().width());
+            try (var reader = AvifDecoder.openAnimation(MediaSource.of(animated), highBitDepth)) {
+                for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                    Blackhole.consume(frame.picture().width());
+                }
+                reader.seek(40_000);
+                Blackhole.consume(reader.read().picture().width());
+            }
+            Blackhole.consume(ImageOps.resize(alpha8, 192, 128, ResizeFilter.BILINEAR).width());
+            Blackhole.consume(ImageOps.resize(alpha10, 48, 32, ResizeFilter.BILINEAR).width());
         });
     }
 

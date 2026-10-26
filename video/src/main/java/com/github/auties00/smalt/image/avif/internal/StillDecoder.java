@@ -6,13 +6,17 @@ import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ContentLightLevel;
 import com.github.auties00.smalt.image.MasteringDisplay;
+import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.image.ops.Region;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
+import com.github.auties00.smalt.internal.heif.HeifRegions;
 import com.github.auties00.smalt.internal.heif.HeifStill;
 import com.github.auties00.smalt.internal.heif.HeifStills;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -27,15 +31,16 @@ import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Reconstructs the primary image of an AVIF file from a {@link StillPlan}: decodes its coded
+ * Reconstructs a coded image item of an AVIF file from a {@link StillPlan}: decodes its coded
  * items, stitches the tiles of its grids, adds its alpha plane and applies its clean aperture.
  *
  * <p>The tiles of a grid decode in parallel on the module's helper threads, each helper with its
  * own AV1 decoding state and each tile written straight into its region of the picture; a single
  * coded item, and a single alpha item after it, decode with the AV1 decoder's own frame-level
- * parallelism. Neither changes the samples.
+ * parallelism. Neither changes the samples. Alpha of another size or bit depth than the color
+ * is resampled and rescaled to it.
  */
-public final class StillDecoder {
+final class StillDecoder {
     /**
      * The format name of failure messages.
      */
@@ -63,7 +68,7 @@ public final class StillDecoder {
     }
 
     /**
-     * Reconstructs the primary image.
+     * Reconstructs a coded image item and applies its clean aperture.
      *
      * @param source the file
      * @param file the parsed file
@@ -72,13 +77,73 @@ public final class StillDecoder {
      * @param highBitDepth whether a source of more than 8 bits keeps its depth
      * @return the image
      * @throws MediaException.Malformed if an item is corrupt or the items do not fit together
-     * @throws MediaException.Unsupported if the alpha plane differs from the color in size or
-     * depth
      * @throws MediaException.LimitExceeded if the image exceeds the limits
      */
-    public static HeifStill decode(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
-                                boolean highBitDepth) {
+    static HeifStill decode(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                            boolean highBitDepth) {
+        return decode(source, file, plan, limits, highBitDepth, true, null);
+    }
+
+    /**
+     * Reconstructs a region of a coded image item after its clean aperture.
+     *
+     * <p>The picture equals the region of the picture {@link #decode(MediaSource, HeifFile, StillPlan, MediaLimits,
+     * boolean)} returns, as {@link ImageOps#crop(Picture, Region)} crops it. A grid decodes only the grid images
+     * that intersect the region, and the alpha images that cover them, and the limits bound those rather than the
+     * whole grid; a single coded item decodes whole and is cropped.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param plan the reconstruction plan
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param region the region, inside the image after the clean aperture
+     * @return the image, whose picture holds the region
+     * @throws MediaException.Malformed if an item is corrupt or the items do not fit together
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    static HeifStill decode(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                            boolean highBitDepth, Region region) {
+        return decode(source, file, plan, limits, highBitDepth, true, region);
+    }
+
+    /**
+     * Reconstructs a coded image item before its transformative properties, as a derived image
+     * takes it as an input.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param plan the reconstruction plan
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @return the picture, uncropped
+     * @throws MediaException.Malformed if an item is corrupt or the items do not fit together
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    static Picture reconstruct(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                               boolean highBitDepth) {
+        return decode(source, file, plan, limits, highBitDepth, false, null).picture();
+    }
+
+    /**
+     * Reconstructs a coded image item, optionally applying its clean aperture.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param plan the reconstruction plan
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param crop whether to apply the clean aperture
+     * @param region the region to decode, inside the image after the clean aperture, or {@code null} for the whole
+     * image
+     * @return the image
+     */
+    private static HeifStill decode(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                                    boolean highBitDepth, boolean crop, Region region) {
         Canvas canvas;
+        HeifRegions.Window window = null;
+        var fullWidth = 0;
+        var fullHeight = 0;
         SequenceHeader sequence;
         MasteringDisplay mastering;
         ContentLightLevel lightLevel;
@@ -88,8 +153,9 @@ public final class StillDecoder {
             var decoder = new ItemDecoder(limits, true);
             var frame = decoder.decodeItem(plan.config(), payload, StillPlan.operatingPoint(item), StillPlan.layer(item));
             try {
+                var matrix = colorInfo(plan.item(), frame.seqHdr, null, null).matrix();
                 canvas = new Canvas(limits, frame.w, frame.h, SequenceHeader.chromaFormat(frame.layout), frame.bpc,
-                        highBitDepth && frame.bpc > 8, plan.hasAlpha());
+                        frame.bpc > 8 && (highBitDepth || Colors.reducesToRgb(matrix, frame.bpc)), plan.hasAlpha());
                 canvas.writeColor(frame, 0, 0, frame.w, frame.h, true);
                 sequence = frame.seqHdr;
             } finally {
@@ -105,7 +171,11 @@ public final class StillDecoder {
                     : ChromaFormat.YUV444;
             var width = HeifStills.checkedSize(FORMAT, grid.outputWidth());
             var height = HeifStills.checkedSize(FORMAT, grid.outputHeight());
-            LimitChecks.checkPicture(limits, width, height);
+            fullWidth = width;
+            fullHeight = height;
+            if (region == null) {
+                LimitChecks.checkPicture(limits, width, height);
+            }
             var extent = plan.colorTiles().getFirst().property(HeifProperty.SpatialExtent.class);
             if (extent == null) {
                 throw new MediaException.Malformed("avif: grid tile has no ispe property");
@@ -113,37 +183,115 @@ public final class StillDecoder {
             var tileWidth = HeifStills.checkedSize(FORMAT, extent.width());
             var tileHeight = HeifStills.checkedSize(FORMAT, extent.height());
             grid.validate(tileWidth, tileHeight, format.shiftX() > 0, format.shiftY() > 0);
-            var target = new Canvas(limits, width, height, format, config.bitDepth(), highBitDepth && config.bitDepth() > 8,
-                    plan.hasAlpha());
+            var area = region == null ? new int[]{0, 0, width, height}
+                    : HeifRegions.canvasArea(region, HeifGeometry.resolve(plan.item().properties(), width, height),
+                    width, height);
+            window = HeifRegions.window(area, width, height, tileWidth, tileHeight);
+            LimitChecks.checkPicture(limits, window.width(), window.height());
+            var depth = config.bitDepth();
+            var nclx = plan.item().property(HeifProperty.ColorNclx.class);
+            var wide = depth > 8 && (highBitDepth
+                    || nclx != null && Colors.reducesToRgb(MatrixCoefficients.of(nclx.matrix()), depth));
             var first = new SequenceHeader[1];
             var hdr = new Object[2];
-            decodeTiles(source, file, plan.colorTiles(), limits, (index, frame) -> {
-                checkTile(frame, tileWidth, tileHeight, target);
-                var x = (index % grid.columns()) * tileWidth;
-                var y = (index / grid.columns()) * tileHeight;
-                target.writeColor(frame, x, y, Math.min(tileWidth, width - x), Math.min(tileHeight, height - y), false);
-                if (index == 0) {
-                    first[0] = frame.seqHdr;
-                }
-            }, hdr);
-            canvas = target;
+            canvas = decodeGrid(source, file, plan, limits, format, width, height, tileWidth, tileHeight, wide, first,
+                    hdr, window);
+            if (!wide && nclx == null
+                    && Colors.reducesToRgb(colorInfo(plan.item(), first[0], null, null).matrix(), depth)) {
+                // without an nclx box the matrix comes from the tiles, known only once they are decoded
+                canvas = decodeGrid(source, file, plan, limits, format, width, height, tileWidth, tileHeight, true,
+                        first, hdr, window);
+            }
             sequence = first[0];
             mastering = (MasteringDisplay) hdr[0];
             lightLevel = (ContentLightLevel) hdr[1];
         }
-        if (plan.hasAlpha()) {
-            decodeAlpha(source, file, plan, limits, canvas);
+        if (window == null) {
+            fullWidth = canvas.width;
+            fullHeight = canvas.height;
         }
-        var color = colorInfo(plan.primary(), sequence, mastering, lightLevel);
+        if (plan.hasAlpha()) {
+            decodeAlpha(source, file, plan, limits, canvas, window, fullWidth, fullHeight);
+        }
+        var color = colorInfo(plan.item(), sequence, mastering, lightLevel);
         var picture = canvas.toPicture(color);
-        var geometry = HeifGeometry.resolve(plan.primary().properties(), canvas.width, canvas.height);
-        if (geometry.crops(canvas.width, canvas.height)) {
+        var geometry = HeifGeometry.resolve(plan.item().properties(), fullWidth, fullHeight);
+        if (region != null) {
+            picture = HeifRegions.crop(picture, window == null ? 0 : window.x(), window == null ? 0 : window.y(),
+                    geometry, fullWidth, fullHeight, region);
+        } else if (crop && geometry.crops(fullWidth, fullHeight)) {
             picture = HeifPictures.crop(picture, geometry.x(), geometry.y(), geometry.width(), geometry.height());
         }
         if (plan.premultiplied()) {
             picture = HeifPictures.unpremultiply(picture);
         }
-        return new HeifStill(picture, canvas.width, canvas.height, geometry);
+        if (!highBitDepth) {
+            picture = Colors.toEightBit(picture);
+        }
+        return new HeifStill(picture, fullWidth, fullHeight, geometry);
+    }
+
+    /**
+     * Decodes the color tiles of a grid into a new canvas.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param plan the reconstruction plan, with a grid
+     * @param limits the bounds of every item and picture
+     * @param format the chroma layout of the tiles
+     * @param width the output width of the grid
+     * @param height the output height of the grid
+     * @param tileWidth the width of every tile
+     * @param tileHeight the height of every tile
+     * @param wide whether the canvas keeps a source depth above 8 bits
+     * @param first receives the sequence header of the first tile
+     * @param hdr receives the mastering display and content light level of the tiles
+     * @param window the grid images to decode
+     * @return the canvas of the window
+     * @throws MediaException.Malformed if a tile is corrupt or does not match the grid
+     * @throws MediaException.LimitExceeded if the canvas exceeds the limits
+     */
+    private static Canvas decodeGrid(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                                     ChromaFormat format, int width, int height, int tileWidth, int tileHeight,
+                                     boolean wide, SequenceHeader[] first, Object[] hdr, HeifRegions.Window window) {
+        var grid = plan.grid();
+        var target = new Canvas(limits, window.width(), window.height(), format, plan.config().bitDepth(), wide,
+                plan.hasAlpha());
+        // the first grid image supplies the sequence header and the HDR metadata, so it decodes even outside
+        decodeTiles(source, file, plan.colorTiles(), indices(plan.colorTiles().size(), grid.columns(), window, true),
+                limits, (index, frame) -> {
+                    checkTile(frame, tileWidth, tileHeight, target);
+                    if (index == 0) {
+                        first[0] = frame.seqHdr;
+                    }
+                    if (!window.holds(index, grid.columns())) {
+                        return;
+                    }
+                    var x = (index % grid.columns()) * tileWidth;
+                    var y = (index / grid.columns()) * tileHeight;
+                    target.writeColor(frame, x - window.x(), y - window.y(), Math.min(tileWidth, width - x),
+                            Math.min(tileHeight, height - y), false);
+                }, hdr);
+        return target;
+    }
+
+    /**
+     * Lists the grid images of a window, in row-major order.
+     *
+     * @param count the number of grid images
+     * @param columns the number of grid columns
+     * @param window the grid images to list
+     * @param first whether the first grid image is listed whether or not the window holds it
+     * @return the indices
+     */
+    private static List<Integer> indices(int count, int columns, HeifRegions.Window window, boolean first) {
+        var indices = new ArrayList<Integer>();
+        for (var index = 0; index < count; index++) {
+            if ((first && index == 0) || window.holds(index, columns)) {
+                indices.add(index);
+            }
+        }
+        return indices;
     }
 
     /**
@@ -166,28 +314,57 @@ public final class StillDecoder {
     /**
      * Decodes the alpha items into the alpha plane of a picture.
      *
+     * <p>Alpha of another bit depth than the color is rescaled to it, and an alpha image of
+     * another size than the region it covers (the picture for one alpha item or an alpha grid, a
+     * color tile for an alpha item per tile) is resampled to that size with
+     * {@link HeifPictures#resampleAlpha}.
+     *
+     * <p>With a window of a grid, only the alpha images that cover the window decode, except that a single alpha
+     * item, and an alpha grid of another size than the color, decode whole and are resampled to the size of the
+     * color grid before the window is cut out of them.
+     *
      * @param source the file
      * @param file the parsed file
      * @param plan the reconstruction plan
      * @param limits the bounds
-     * @param canvas the picture
+     * @param canvas the picture, of the window when there is one
+     * @param window the window of the color grid the canvas holds, or {@code null} when it holds the whole image
+     * @param width the width of the whole image
+     * @param height the height of the whole image
      */
-    private static void decodeAlpha(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits, Canvas canvas) {
+    private static void decodeAlpha(MediaSource source, HeifFile file, StillPlan plan, MediaLimits limits,
+                                    Canvas canvas, HeifRegions.Window window, int width, int height) {
+        var partial = window != null && (window.width() != width || window.height() != height);
         var alphaGrid = plan.alphaGrid();
         if (alphaGrid == null) {
             var frame = decodeSingle(source, file, plan.alphaTiles().getFirst(), limits);
             try {
-                checkAlpha(frame, canvas.width, canvas.height, canvas);
-                canvas.writeAlpha(frame, 0, 0, canvas.width, canvas.height, !frame.seqHdr.colorRange);
+                if (partial) {
+                    writeAlphaWindow(canvas, frame, window, width, height, limits);
+                } else {
+                    writeAlpha(canvas, frame, 0, 0, canvas.width, canvas.height);
+                }
             } finally {
                 frame.release();
             }
             return;
         }
-        if (HeifStills.checkedSize(FORMAT, alphaGrid.outputWidth()) != canvas.width || HeifStills.checkedSize(FORMAT, alphaGrid.outputHeight()) != canvas.height) {
-            throw new MediaException.Unsupported("avif", "the alpha grid is " + alphaGrid.outputWidth() + "x"
-                    + alphaGrid.outputHeight() + ", not the " + canvas.width + "x" + canvas.height + " of the color");
+        if (plan.alphaItem() == null) {
+            var extent = plan.colorTiles().getFirst().property(HeifProperty.SpatialExtent.class);
+            var tileWidth = HeifStills.checkedSize(FORMAT, extent.width());
+            var tileHeight = HeifStills.checkedSize(FORMAT, extent.height());
+            var all = window == null ? HeifRegions.window(new int[]{0, 0, width, height}, width, height, tileWidth,
+                    tileHeight) : window;
+            decodeTiles(source, file, plan.alphaTiles(), indices(plan.alphaTiles().size(), alphaGrid.columns(), all,
+                    false), limits, (index, frame) -> {
+                var x = (index % alphaGrid.columns()) * tileWidth;
+                var y = (index / alphaGrid.columns()) * tileHeight;
+                writeAlpha(canvas, frame, x - all.x(), y - all.y(), tileWidth, tileHeight);
+            }, new Object[2]);
+            return;
         }
+        var alphaWidth = HeifStills.checkedSize(FORMAT, alphaGrid.outputWidth());
+        var alphaHeight = HeifStills.checkedSize(FORMAT, alphaGrid.outputHeight());
         var extent = plan.alphaTiles().getFirst().property(HeifProperty.SpatialExtent.class);
         if (extent == null) {
             throw new MediaException.Malformed("avif: alpha grid tile has no ispe property");
@@ -195,13 +372,121 @@ public final class StillDecoder {
         var tileWidth = HeifStills.checkedSize(FORMAT, extent.width());
         var tileHeight = HeifStills.checkedSize(FORMAT, extent.height());
         alphaGrid.validate(tileWidth, tileHeight, false, false);
-        decodeTiles(source, file, plan.alphaTiles(), limits, (index, frame) -> {
-            checkAlpha(frame, tileWidth, tileHeight, canvas);
+        if (alphaWidth == width && alphaHeight == height) {
+            var left = window == null ? 0 : window.x();
+            var top = window == null ? 0 : window.y();
+            var right = left + canvas.width;
+            var bottom = top + canvas.height;
+            var covering = HeifRegions.window(new int[]{left, top, right, bottom}, width, height, tileWidth,
+                    tileHeight);
+            decodeTiles(source, file, plan.alphaTiles(), indices(plan.alphaTiles().size(), alphaGrid.columns(),
+                    covering, false), limits, (index, frame) -> {
+                checkAlphaTile(frame, tileWidth, tileHeight);
+                var x = (index % alphaGrid.columns()) * tileWidth;
+                var y = (index / alphaGrid.columns()) * tileHeight;
+                var x0 = Math.max(x, left);
+                var y0 = Math.max(y, top);
+                var x1 = Math.min(Math.min(x + tileWidth, width), right);
+                var y1 = Math.min(Math.min(y + tileHeight, height), bottom);
+                if (x0 < x1 && y0 < y1) {
+                    canvas.writeAlpha(frame, x0 - x, y0 - y, x0 - left, y0 - top, x1 - x0, y1 - y0,
+                            !frame.seqHdr.colorRange);
+                }
+            }, new Object[2]);
+            return;
+        }
+        var config = plan.alphaTiles().getFirst().property(HeifProperty.Av1Configuration.class);
+        var depth = config.bitDepth();
+        var plane = new Canvas(limits, alphaWidth, alphaHeight, ChromaFormat.MONOCHROME, depth, depth > 8, false);
+        var limited = new boolean[1];
+        decodeTiles(source, file, plan.alphaTiles(), indices(plan.alphaTiles().size(), alphaGrid.columns(),
+                HeifRegions.window(new int[]{0, 0, alphaWidth, alphaHeight}, alphaWidth, alphaHeight, tileWidth,
+                        tileHeight), false), limits, (index, frame) -> {
+            checkAlphaTile(frame, tileWidth, tileHeight);
+            if (frame.bpc != depth) {
+                throw new MediaException.Malformed("avif: an alpha grid tile decodes at " + frame.bpc + " bits, not the "
+                        + depth + " bits of its configuration");
+            }
             var x = (index % alphaGrid.columns()) * tileWidth;
             var y = (index / alphaGrid.columns()) * tileHeight;
-            canvas.writeAlpha(frame, x, y, Math.min(tileWidth, canvas.width - x), Math.min(tileHeight, canvas.height - y),
-                    !frame.seqHdr.colorRange);
+            plane.writeColor(frame, x, y, Math.min(tileWidth, alphaWidth - x), Math.min(tileHeight, alphaHeight - y),
+                    false);
+            if (index == 0) {
+                limited[0] = !frame.seqHdr.colorRange;
+            }
         }, new Object[2]);
+        if (partial) {
+            // the alpha is resampled to the size of the whole image, which the limits then bound
+            checkResampled(limits, width, height);
+        }
+        var resampled = HeifPictures.resampleAlpha(plane.toPicture(ColorInfo.JPEG), width, height);
+        if (partial) {
+            resampled = ImageOps.crop(resampled, window.x(), window.y(), canvas.width, canvas.height);
+        }
+        canvas.writeAlpha(resampled, 0, 0, canvas.width, canvas.height, limited[0]);
+    }
+
+    /**
+     * Checks an alpha plane resampled to the size of the whole image against the limits, before a window is cut out
+     * of it.
+     *
+     * @param limits the bounds
+     * @param width the width of the whole image
+     * @param height the height of the whole image
+     * @throws MediaException.LimitExceeded if the plane exceeds the limits
+     */
+    private static void checkResampled(MediaLimits limits, int width, int height) {
+        LimitChecks.checkPicture(limits, width, height);
+        LimitChecks.checkAllocation(limits, (long) width * height * 2);
+    }
+
+    /**
+     * Writes the part of a decoded single alpha frame covering a window of the color grid, resampling the frame to
+     * the size of the whole image first when its size differs.
+     *
+     * @param canvas the picture of the window
+     * @param frame the decoded alpha frame
+     * @param window the grid images of the color the canvas holds
+     * @param width the width of the whole image
+     * @param height the height of the whole image
+     * @param limits the bounds of the resampled alpha plane
+     * @throws MediaException.LimitExceeded if the alpha plane resampled to the whole image exceeds the limits
+     */
+    private static void writeAlphaWindow(Canvas canvas, Av1Picture frame, HeifRegions.Window window, int width,
+                                         int height, MediaLimits limits) {
+        var limited = !frame.seqHdr.colorRange;
+        if (frame.w == width && frame.h == height) {
+            canvas.writeAlpha(frame, window.x(), window.y(), 0, 0, canvas.width, canvas.height, limited);
+            return;
+        }
+        checkResampled(limits, width, height);
+        var luma = HeifPictures.lumaPicture(frame.data[0], 0, frame.stride[0], frame.w, frame.h, frame.bpc);
+        var resampled = HeifPictures.resampleAlpha(luma, width, height);
+        canvas.writeAlpha(ImageOps.crop(resampled, window.x(), window.y(), canvas.width, canvas.height), 0, 0,
+                canvas.width, canvas.height, limited);
+    }
+
+    /**
+     * Writes a decoded alpha frame over a region of the picture, resampling it to the region
+     * size when its size differs.
+     *
+     * @param canvas the picture
+     * @param frame the decoded alpha frame
+     * @param x the left edge of the region
+     * @param y the top edge of the region
+     * @param width the region width before the picture edge crops it
+     * @param height the region height before the picture edge crops it
+     */
+    private static void writeAlpha(Canvas canvas, Av1Picture frame, int x, int y, int width, int height) {
+        var w = Math.min(width, canvas.width - x);
+        var h = Math.min(height, canvas.height - y);
+        var limited = !frame.seqHdr.colorRange;
+        if (frame.w == width && frame.h == height) {
+            canvas.writeAlpha(frame, x, y, w, h, limited);
+            return;
+        }
+        var luma = HeifPictures.lumaPicture(frame.data[0], 0, frame.stride[0], frame.w, frame.h, frame.bpc);
+        canvas.writeAlpha(HeifPictures.resampleAlpha(luma, width, height), x, y, w, h, limited);
     }
 
     /**
@@ -213,28 +498,24 @@ public final class StillDecoder {
      * @param limits the bounds
      * @return the decoded frame, which the caller releases
      */
-    private static Av1Picture decodeSingle(MediaSource source, HeifFile file,
-                                                                                     HeifItem item, MediaLimits limits) {
+    private static Av1Picture decodeSingle(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
         var payload = file.readItem(source, item, limits);
         return new ItemDecoder(limits, true).decodeItem(item.property(HeifProperty.Av1Configuration.class), payload,
                 StillPlan.operatingPoint(item), StillPlan.layer(item));
     }
 
     /**
-     * Checks that a decoded alpha frame has the expected size and the color's bit depth.
+     * Checks that a decoded tile of an alpha grid has the tile size its grid declares.
      *
-     * @param frame the decoded alpha frame
-     * @param width the expected width
-     * @param height the expected height
-     * @param canvas the picture
-     * @throws MediaException.Unsupported if the alpha plane would need resampling
+     * @param frame the decoded alpha tile
+     * @param width the tile width
+     * @param height the tile height
+     * @throws MediaException.Malformed if the sizes differ
      */
-    private static void checkAlpha(Av1Picture frame, int width, int height,
-                                   Canvas canvas) {
-        if (frame.w != width || frame.h != height || frame.bpc != canvas.bitDepth) {
-            // TODO: resample an alpha plane whose size differs from the color, as HEIF 6.9.1 allows
-            throw new MediaException.Unsupported("avif", "the alpha plane is " + frame.w + "x" + frame.h + " at "
-                    + frame.bpc + " bits, not " + width + "x" + height + " at " + canvas.bitDepth + " bits");
+    private static void checkAlphaTile(Av1Picture frame, int width, int height) {
+        if (frame.w != width || frame.h != height) {
+            throw new MediaException.Malformed("avif: an alpha grid tile decodes to " + frame.w + "x" + frame.h
+                    + ", not the " + width + "x" + height + " tile its grid declares");
         }
     }
 
@@ -244,21 +525,23 @@ public final class StillDecoder {
      * @param source the file
      * @param file the parsed file
      * @param tiles the coded tile items in row-major order
+     * @param indices the indices of the tiles to decode
      * @param limits the bounds
      * @param sink receives every decoded tile
      * @param hdr receives the mastering display and the light level of the metadata OBUs of the
      * first tile, at indexes 0 and 1
      */
-    private static void decodeTiles(MediaSource source, HeifFile file, List<HeifItem> tiles, MediaLimits limits,
-                                    TileSink sink, Object[] hdr) {
-        var count = tiles.size();
+    private static void decodeTiles(MediaSource source, HeifFile file, List<HeifItem> tiles, List<Integer> indices,
+                                    MediaLimits limits, TileSink sink, Object[] hdr) {
+        var count = indices.size();
         var workers = Math.min(count, ParallelBands.enabled() ? 1 + ParallelBands.available() : 1);
         var next = new AtomicInteger();
         var tasks = new ArrayList<Callable<Void>>(workers);
         for (var w = 0; w < workers; w++) {
             tasks.add(() -> {
                 var decoder = new ItemDecoder(limits, true);
-                for (var index = next.getAndIncrement(); index < count; index = next.getAndIncrement()) {
+                for (var k = next.getAndIncrement(); k < count; k = next.getAndIncrement()) {
+                    var index = (int) indices.get(k);
                     var item = tiles.get(index);
                     var payload = file.readItem(source, item, limits);
                     var frame = decoder.decodeItem(item.property(HeifProperty.Av1Configuration.class), payload,

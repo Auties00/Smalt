@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.desktop.sound;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.audio.AudioReaderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
@@ -35,7 +36,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @DisplayName("Java Sound reading")
 class JavaSoundReadTest {
@@ -207,12 +207,12 @@ class JavaSoundReadTest {
         try (var encoded = AudioSystem.getAudioInputStream(Clip.MP3.path().toFile());
              var pcm = AudioSystem.getAudioInputStream(AudioFormat.Encoding.PCM_SIGNED, encoded)) {
             var info = new DataLine.Info(SourceDataLine.class, pcm.getFormat());
-            assumeTrue(AudioSystem.isLineSupported(info), "no audio output on this machine");
+            Skip.unlessDevice(AudioSystem.isLineSupported(info), "audio-output", "no audio output on this machine");
             try (var line = (SourceDataLine) AudioSystem.getLine(info)) {
                 line.open(pcm.getFormat());
                 assertEquals(pcm.getFormat(), line.getFormat());
             } catch (LineUnavailableException | IllegalArgumentException exception) {
-                assumeTrue(false, "the audio output is unavailable: " + exception.getMessage());
+                Skip.unlessDevice(false, "audio-output", "the audio output is unavailable: " + exception.getMessage());
             }
         }
     }

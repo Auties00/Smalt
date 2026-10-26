@@ -304,6 +304,11 @@ final class MotionSearch {
     private int maxX;
 
     /**
+     * The largest horizontal vector a caller allows, in quarter samples.
+     */
+    private int limitX = Integer.MAX_VALUE;
+
+    /**
      * The smallest allowed vertical vector, in quarter samples.
      */
     private int minY;
@@ -351,6 +356,31 @@ final class MotionSearch {
      */
     void useKernels(PixelKernels pixels) {
         this.pixels = pixels;
+    }
+
+    /**
+     * Sets the largest horizontal vector of the searches of the next macroblocks.
+     *
+     * @param limit the limit in quarter samples, or {@link Integer#MAX_VALUE} for none
+     */
+    void setHorizontalLimit(int limit) {
+        this.limitX = limit;
+    }
+
+    /**
+     * Rounds a horizontal candidate vector to full samples; under a caller's horizontal limit the
+     * result is kept inside the window, rounding down past the limit, so that a candidate always
+     * yields a position the search may evaluate.
+     *
+     * @param mx the horizontal vector in quarter samples, inside the window
+     * @return the horizontal vector in full samples
+     */
+    int roundX(int mx) {
+        var rounded = (mx + 2) >> 2;
+        if (limitX != Integer.MAX_VALUE && rounded << 2 > maxX) {
+            rounded = Math.floorDiv(maxX, 4);
+        }
+        return rounded;
     }
 
     /**
@@ -422,7 +452,7 @@ final class MotionSearch {
         this.srcMacroblock = srcOffset - (blockY - mbY) * srcStride - (blockX - mbX);
         this.quadrants = caching ? quadrantMask(blockX - mbX, blockY - mbY, width, height) : 0;
         this.minX = Math.max(-2048 * 4, (-MARGIN - mbX) * 4);
-        this.maxX = Math.min(2047 * 4, (ref.width + MARGIN - 16 - mbX) * 4);
+        this.maxX = Math.min(Math.min(2047 * 4, (ref.width + MARGIN - 16 - mbX) * 4), limitX);
         this.minY = Math.max(-maxMvY, (-MARGIN - mbY) * 4);
         this.maxY = Math.min(maxMvY, (ref.height + MARGIN - 16 - mbY) * 4);
         this.bestCost = Integer.MAX_VALUE;

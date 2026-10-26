@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.video.av1.internal.encoder;
 
-import com.github.auties00.smalt.image.YuvPicture;
+import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 
 /**
@@ -126,25 +126,14 @@ final class FirstPass {
     }
 
     /**
-     * Widens a picture's luma plane to 16-bit samples.
+     * Widens a picture's luma plane to 16-bit samples at the 8-bit scale, the samples the
+     * statistics are measured on at every bit depth.
      *
-     * @param picture the 4:2:0 picture
+     * @param picture the picture, a {@code YuvPicture} or a {@code Yuv16Picture}
      * @return the plane, of stride the picture width
      */
-    static short[] luma(YuvPicture picture) {
-        var w = picture.width();
-        var h = picture.height();
-        var out = new short[w * h];
-        var y = picture.y();
-        var stride = picture.yStride();
-        for (var r = 0; r < h; r++) {
-            var s = r * stride;
-            var d = r * w;
-            for (var c = 0; c < w; c++) {
-                out[d + c] = (short) (y[s + c] & 0xFF);
-            }
-        }
-        return out;
+    static short[] luma(Picture picture) {
+        return SourcePlanes.luma8(picture);
     }
 
     /**
