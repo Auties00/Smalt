@@ -1,0 +1,19 @@
+# demux dump of rawvideo/pal8.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 400000
+seekable true
+metadata ISFT="Lavf61.7.100"
+track 1 VIDEO RAW_VIDEO timebase=1/15 duration=6 config=1040:adf80af0
+  video 33x17 orientation=NORMAL rate=15/1 sar=68/99 interlacing=PROGRESSIVE
+packets 6
+0 t1 pts=0 dts=0 dur=1 flags=KEY size=612 crc=fb5c5ffe
+1 t1 pts=1 dts=1 dur=1 flags=KEY size=612 crc=40e03075
+2 t1 pts=2 dts=2 dur=1 flags=KEY size=612 crc=f3a38239
+3 t1 pts=3 dts=3 dur=1 flags=KEY size=612 crc=ced592f8
+4 t1 pts=4 dts=4 dur=1 flags=KEY size=612 crc=8d59d9c2
+5 t1 pts=5 dts=5 dur=1 flags=KEY size=612 crc=d948e3a9
+seek 0: t1@0
+seek 133333: t1@1
+seek 266666: t1@3
+seek 400000: end
+seek -1000000: t1@0

@@ -1,7 +1,7 @@
 package com.github.auties00.smalt.audio.opus.internal.celt;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.internal.simd.Simd;
-import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -22,7 +22,7 @@ class CeltKernelsTest {
     private static final ScalarCeltKernels SCALAR = new ScalarCeltKernels();
 
     private static CeltKernels vector() {
-        Assumptions.assumeTrue(Simd.ENABLED, "Vector API not enabled");
+        Skip.unlessVector(Simd.ENABLED);
         return VectorCeltKernels.create();
     }
 
