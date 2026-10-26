@@ -687,7 +687,8 @@ public final class AacDecoder implements AudioDecoder {
      * the long term prediction history continue from the concealed signal. With spectral band replication, the high
      * band repeats the last envelope, 6 dB lower for each further block, until the core falls silent, and parametric
      * stereo keeps its last parameters; with MPEG Surround, the block is upmixed with the parameters of the last
-     * spatial frame. Before the first block, and after the channel layout changed, the span is silence. A USAC
+     * spatial frame, and so are the blocks after the loss until a spatial frame whose {@code bsIndependencyFlag} is
+     * set. Before the first block, and after the channel layout changed, the span is silence. A USAC
      * stream (object type 42) does not conceal.
      *
      * @implNote This implementation substitutes spectra in the manner of the informative error concealment of

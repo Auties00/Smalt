@@ -1169,7 +1169,8 @@ public final class FrameDecoder {
      * window, so the window sequence joins the last block's; other channels use a long window. AAC Main predictors
      * and long term prediction histories continue from the concealed signal. With spectral band replication, the
      * high band repeats the last envelope, 6 dB lower for each further block, until the core falls silent. With
-     * MPEG Surround, the block is upmixed with the parameters of the last spatial frame. Before the first block, or
+     * MPEG Surround, the block is upmixed with the parameters of the last spatial frame, as are the blocks after
+     * the loss until a spatial frame that does not depend on the lost ones. Before the first block, or
      * after a change of channel layout, the block is silent.
      *
      * @return the concealed samples, valid until the next block
@@ -1240,6 +1241,7 @@ public final class FrameDecoder {
         }
         output.setFrames(outputLength);
         if (surround != null) {
+            surround.lose();
             return upmix(output);
         }
         return output;

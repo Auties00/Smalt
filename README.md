@@ -1250,7 +1250,8 @@ checks a FLAC source's MD5 signature on the way.
   no decoder interpolates toward the packet after the loss, which would delay every output by a packet. After a
   loss, state the lost packets would have refreshed converges as the stream refreshes it: the AAC Main predictors
   and the long term prediction history, spectral band replication envelopes coded as time deltas of the lost ones,
-  the CELP memories of AMR, and the dither and noise substitution generators of AC-3 and AAC, which the lost
+  the CELP memories of AMR, the MPEG Surround parameters (the last ones stay in use until an independent spatial
+  frame), and the dither and noise substitution generators of AC-3 and AAC, which the lost
   packets no longer advance, so even a Low Complexity stream with noise substitution differs from a loss-free
   decode in those bands. The Vorbis, MP2, AC-3 and E-AC-3 encoders cannot change their bitrate while running
   (`setTargetBitrate` raises `MediaException.Unsupported`), and USAC streams do not conceal (`conceal` raises

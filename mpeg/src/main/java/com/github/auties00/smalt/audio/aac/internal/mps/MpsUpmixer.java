@@ -39,6 +39,7 @@ public final class MpsUpmixer {
     private MpsConfig config;
     private boolean reconfigured;
     private boolean framesRead;
+    private boolean resynchronizing;
     private MpsDecoder decoder;
     private final AacBitReader payloadReader = new AacBitReader(new byte[0]);
     private final AacBitReader frameReader = new AacBitReader(new byte[0]);
@@ -69,6 +70,17 @@ public final class MpsUpmixer {
     public void configure(MpsConfig config) {
         this.config = config;
         this.reconfigured = true;
+    }
+
+    /**
+     * Signals that blocks of the stream were lost, so their spatial frames never arrived.
+     *
+     * <p>The blocks that replace them are upmixed with the parameters of the last frame read, and so are the
+     * blocks after them until a frame whose {@code bsIndependencyFlag} is set arrives: the frames in between are
+     * coded as differences to the lost ones and are dropped.
+     */
+    public void lose() {
+        resynchronizing = framesRead;
     }
 
     /**
@@ -201,7 +213,8 @@ public final class MpsUpmixer {
      *
      * <p>The decoder is (re)created when the configuration changes or the block format does; a spatial frame
      * must last as long as a block. Until a frame whose {@code bsIndependencyFlag} is set arrives after the decoder
-     * is created, frames are dropped and the downmix stays the output. A configuration with a tool the decoder
+     * is created, frames are dropped and the downmix stays the output; after {@link #lose()}, frames are dropped
+     * the same way until such a frame, and the last parameters read stay in use. A configuration with a tool the decoder
      * does not support is dropped the same way.
      *
      * @param sampleRate the output sampling frequency of the core decoder
@@ -219,6 +232,7 @@ public final class MpsUpmixer {
             this.blockLength = blockLength;
             this.reconfigured = false;
             this.framesRead = false;
+            this.resynchronizing = false;
             try {
                 this.decoder = new MpsDecoder(config, sampleRate);
             } catch (MediaException.Unsupported _) {
@@ -237,10 +251,13 @@ public final class MpsUpmixer {
             frameReader.reset(frame, 0, frameLength);
             // a decoder that joins the stream, after a seek or at a later configuration, starts at the first frame
             // that does not depend on the frames before it
-            if (framesRead || decoder.independentFrame(frameReader)) {
+            if (framesRead && !resynchronizing || decoder.independentFrame(frameReader)) {
                 frameReader.reset(frame, 0, frameLength);
                 decoder.readFrame(frameReader);
                 framesRead = true;
+                resynchronizing = false;
+            } else if (framesRead) {
+                decoder.repeatFrame();
             }
         } else if (framesRead) {
             decoder.repeatFrame();
