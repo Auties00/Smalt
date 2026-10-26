@@ -16,15 +16,21 @@ package com.github.auties00.smalt.video.av1.internal.encoder;
  * proportional to the quantizer step, with one correction factor per frame class that learns from
  * the coded sizes.
  *
+ * <p>In the second pass of a two-pass encode, the bits left for the stream are shared between the
+ * groups in proportion to their frames' first-pass coded errors moved halfway to the stream's mean,
+ * and a group's leaf quantizer is solved again before each of its frames against the bits its
+ * coded frames left, so that sizes the model mispredicts are made up within the group.
+ *
  * @implNote This implementation ports libaom's constant-quality quantizer choice
  * ({@code av1/encoder/ratectrl.c}: {@code rc_pick_q_and_bounds_q_mode},
  * {@code get_active_best_quality}, {@code get_intra_q_and_bounds},
  * {@code get_kf_active_quality}, {@code get_gf_active_quality}, the
  * {@code init_minq_luts} polynomials and {@code av1_rc_bits_per_mb}) and the
- * error-based size estimate of its two-pass quantizer choice
- * ({@code av1/encoder/pass2_strategy.c}: {@code calc_correction_factor}). The variable
- * bitrate control is not libaom's two-pass allocation: it keeps the constant-quality
- * pyramid offsets and solves one leaf quantizer per group against a lookahead budget.
+ * error-based size estimate and group allocation of its two-pass rate control
+ * ({@code av1/encoder/pass2_strategy.c}: {@code calc_correction_factor},
+ * {@code calculate_modified_err}, {@code calculate_total_gf_group_bits}). The frames of a group
+ * keep the constant-quality pyramid offsets from one leaf quantizer instead of libaom's per-frame
+ * bit targets.
  */
 final class GoodRateControl {
     /**
@@ -165,6 +171,110 @@ final class GoodRateControl {
      * Creates a rate control at constant quality index 128.
      */
     GoodRateControl() {
+    }
+
+    /**
+     * The largest share of a section's bits, in average frames per frame ({@code vbrmax_section}
+     * of 2000%).
+     */
+    private static final double MAX_SECTION_RATIO = 20.0;
+
+    /**
+     * The power of the frames' complexity in their share of the bits ({@code vbrbias} of 50).
+     */
+    private static final double VBR_BIAS = 0.5;
+
+    /**
+     * The modified error of each frame of a second pass, the complexity its bits follow, or
+     * {@code null} in a single pass.
+     */
+    private double[] modifiedErrors;
+
+    /**
+     * The modified error of the frames not yet given to a group.
+     */
+    private double modifiedErrorLeft;
+
+    /**
+     * The bits the stream may still spend in a second pass.
+     */
+    private long bitsLeft;
+
+    /**
+     * The coding step of each frame of the group a second pass planned, in coding order, or
+     * {@code null} when the group was not planned from the first pass.
+     */
+    private FrameUpdateType[] planTypes;
+
+    /**
+     * The pyramid depth of each frame of {@link #planTypes}.
+     */
+    private int[] planDepths;
+
+    /**
+     * The index in {@link #planTypes} of the next frame to code.
+     */
+    private int planIndex;
+
+    /**
+     * The bits of the group a second pass planned.
+     */
+    private double planBudget;
+
+    /**
+     * The bits the planned group's coded frames took.
+     */
+    private long planSpent;
+
+    /**
+     * The boosts, picture size and last-frame flag of the planned group, for its replanning.
+     */
+    private int planGfuBoost;
+
+    /**
+     * The key frame boost of the planned group.
+     */
+    private int planKfBoost;
+
+    /**
+     * The number of 16x16 blocks of a picture of the planned group.
+     */
+    private long planBlocks;
+
+    /**
+     * The number of luma samples of a picture of the planned group.
+     */
+    private long planPixels;
+
+    /**
+     * Whether a key frame of the planned group is the stream's last frame.
+     */
+    private boolean planLastFrame;
+
+    /**
+     * Makes the rate control a second pass over first-pass coded errors: each group's share of the
+     * bits left is its share of the modified error left, the frames' coded errors moved halfway to
+     * their mean ({@code calculate_modified_err} with the default bias, minimum and maximum
+     * sections).
+     *
+     * @param codedErrors the first-pass coded error of every frame, in display order
+     * @param totalBits the bits the frames may take
+     */
+    void twoPass(double[] codedErrors, long totalBits) {
+        var mean = 0.0;
+        for (var e : codedErrors) {
+            mean += e;
+        }
+        mean /= Math.max(1, codedErrors.length);
+        var average = Math.max(mean, 1e-6);
+        modifiedErrors = new double[codedErrors.length];
+        modifiedErrorLeft = 0;
+        for (var i = 0; i < codedErrors.length; i++) {
+            var modified = average * StrictMath.pow(codedErrors[i] / average, VBR_BIAS);
+            modifiedErrors[i] = Math.clamp(modified, 0, average * MAX_SECTION_RATIO);
+            modifiedErrorLeft += modifiedErrors[i];
+        }
+        bitsLeft = totalBits;
     }
 
     /**
@@ -318,7 +428,7 @@ final class GoodRateControl {
      * @return the quantizer index
      */
     private int arf(int leaf, int gfuBoost) {
-        return arfImportance > 0 ? Math.clamp(TplModel.qindex(leaf, Math.pow(arfImportance, ARF_K)), minQindex, maxQindex)
+        return arfImportance > 0 ? Math.clamp(TplModel.qindex(leaf, StrictMath.pow(arfImportance, ARF_K)), minQindex, maxQindex)
                 : arfQindex(leaf, gfuBoost);
     }
 
@@ -405,10 +515,11 @@ final class GoodRateControl {
      * @param blocks the number of 16x16 blocks of a picture
      * @param pixels the number of luma samples of a picture
      * @param lastFrame whether a key frame of the group is the stream's last frame
+     * @param firstDisplay the display index of the group's first shown frame
      * @return the leaf quantizer index
      */
     int planGroup(FrameUpdateType[] types, int[] depths, int shown, double groupError, int gfuBoost, int kfBoost,
-                  long blocks, long pixels, boolean lastFrame) {
+                  long blocks, long pixels, boolean lastFrame, int firstDisplay) {
         if (cqQindex >= 0) {
             groupLeafQindex = Math.clamp(cqQindex, minQindex, maxQindex);
             return groupLeafQindex;
@@ -418,30 +529,41 @@ final class GoodRateControl {
         // whose alternate reference lands much finer than the previous ones still overshoot.
         groupErrorPerBlock = groupError;
         var perFrame = bitrate / frameRate;
-        var budget = perFrame * shown;
-        if (errorCount > 0 && groupError > 0) {
-            var mean = errorSum / errorCount;
-            budget *= Math.clamp(StrictMath.pow(groupError / mean, 0.3), 0.7, 1.4);
+        double budget;
+        planTypes = null;
+        if (modifiedErrors != null && firstDisplay + shown <= modifiedErrors.length) {
+            var groupModified = 0.0;
+            for (var i = firstDisplay; i < firstDisplay + shown; i++) {
+                groupModified += modifiedErrors[i];
+            }
+            budget = modifiedErrorLeft > 0 ? bitsLeft * (groupModified / modifiedErrorLeft) : perFrame * shown;
+            modifiedErrorLeft -= groupModified;
+            budget = Math.min(budget, perFrame * shown * MAX_SECTION_RATIO);
+            planTypes = types;
+            planDepths = depths;
+            planIndex = 0;
+            planBudget = budget;
+            planSpent = 0;
+            planGfuBoost = gfuBoost;
+            planKfBoost = kfBoost;
+            planBlocks = blocks;
+            planPixels = pixels;
+            planLastFrame = lastFrame;
+            groupLeafQindex = solveLeaf(types, depths, 0, budget, gfuBoost, kfBoost, blocks, pixels, lastFrame);
+            previousLeafQindex = groupLeafQindex;
+            return groupLeafQindex;
+        } else {
+            budget = perFrame * shown;
+            if (errorCount > 0 && groupError > 0) {
+                var mean = errorSum / errorCount;
+                budget *= Math.clamp(StrictMath.pow(groupError / mean, 0.3), 0.7, 1.4);
+            }
+            var debt = targetBits - actualBits;
+            var horizon = Math.max(shown, 2 * frameRate);
+            budget += debt * shown / horizon;
         }
-        var debt = targetBits - actualBits;
-        var horizon = Math.max(shown, 2 * frameRate);
-        budget += debt * shown / horizon;
         budget = Math.max(budget, perFrame * shown * 0.25);
-        var low = minQindex;
-        var high = maxQindex;
-        while (low < high) {
-            var mid = (low + high) >> 1;
-            long bits = 0;
-            for (var i = 0; i < types.length; i++) {
-                var q = qindex(types[i], depths[i], mid, gfuBoost, kfBoost, pixels, lastFrame);
-                bits += predictBits(types[i], q, blocks);
-            }
-            if (bits > budget) {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
+        var low = solveLeaf(types, depths, 0, budget, gfuBoost, kfBoost, blocks, pixels, lastFrame);
         if (previousLeafQindex >= 0) {
             low = Math.max(low, Math.max(previousLeafQindex >> 1, previousLeafQindex - MAX_LEAF_STEP));
             var anchored = false;
@@ -459,6 +581,56 @@ final class GoodRateControl {
     }
 
     /**
+     * Returns the finest leaf quantizer whose predicted size of a group's frames from a position
+     * on fits a budget.
+     *
+     * @param types the coding step of each frame of the group, in coding order
+     * @param depths the pyramid depth of each frame
+     * @param from the index of the first frame counted
+     * @param budget the bits the counted frames may take
+     * @param gfuBoost the group's boost
+     * @param kfBoost the key frame's boost
+     * @param blocks the number of 16x16 blocks of a picture
+     * @param pixels the number of luma samples of a picture
+     * @param lastFrame whether a key frame of the group is the stream's last frame
+     * @return the leaf quantizer index, {@link #maxQindex} when no quantizer fits
+     */
+    private int solveLeaf(FrameUpdateType[] types, int[] depths, int from, double budget, int gfuBoost,
+                          int kfBoost, long blocks, long pixels, boolean lastFrame) {
+        var low = minQindex;
+        var high = maxQindex;
+        while (low < high) {
+            var mid = (low + high) >> 1;
+            long bits = 0;
+            for (var i = from; i < types.length; i++) {
+                var q = qindex(types[i], depths[i], mid, gfuBoost, kfBoost, pixels, lastFrame);
+                bits += predictBits(types[i], q, blocks);
+            }
+            if (bits > budget) {
+                low = mid + 1;
+            } else {
+                high = mid;
+            }
+        }
+        return low;
+    }
+
+    /**
+     * Solves the leaf quantizer of a group a second pass planned again before its next frame,
+     * against the bits its coded frames left of its budget and the size corrections learned from
+     * them; does nothing for a group planned otherwise or once its frames are coded
+     * ({@code av1_rc_regulate_q} on the group's remaining frames).
+     */
+    void replan() {
+        if (planTypes == null || planIndex == 0 || planIndex >= planTypes.length) {
+            return;
+        }
+        groupLeafQindex = solveLeaf(planTypes, planDepths, planIndex, planBudget - planSpent, planGfuBoost,
+                planKfBoost, planBlocks, planPixels, planLastFrame);
+        previousLeafQindex = groupLeafQindex;
+    }
+
+    /**
      * Learns from a coded frame: updates its class's size correction factor and the spent bits.
      *
      * @param type the frame's coding step
@@ -468,6 +640,13 @@ final class GoodRateControl {
      */
     void update(FrameUpdateType type, int qindex, long bits, long blocks) {
         actualBits += bits;
+        bitsLeft -= bits;
+        if (planTypes != null) {
+            planSpent += bits;
+            if (type != FrameUpdateType.OVERLAY && type != FrameUpdateType.INTERNAL_OVERLAY) {
+                planIndex++;
+            }
+        }
         var predicted = predictBits(type, qindex, blocks);
         if (predicted <= 0 || bits <= 0) {
             return;

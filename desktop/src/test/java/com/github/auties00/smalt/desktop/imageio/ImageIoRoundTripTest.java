@@ -314,7 +314,7 @@ class ImageIoRoundTripTest {
             var result = new ArrayList<int[]>();
             try (var animation = Images.openAnimation(MediaSource.of(data))) {
                 for (var frame = animation.read(); frame != null; frame = animation.read()) {
-                    result.add(pixels(frame.picture()));
+                    result.add(pixels((RgbaPicture) frame.picture()));
                 }
             }
             return result;

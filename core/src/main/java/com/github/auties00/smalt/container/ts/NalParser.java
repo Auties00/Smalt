@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.TreeMap;
 
 /**
  * Splits an H.264 ({@code stream_type 0x1B}) or HEVC ({@code stream_type 0x24}) Annex B byte
@@ -41,6 +42,13 @@ import java.util.List;
  *
  * <p>The track's configuration record ({@code avcC} or {@code hvcC}) is built from the parameter
  * sets met up to the first key frame, which also give the picture size, frame rate and color.
+ * The parameter sets met later replace those of the same type and identifier; an IDR (H.264) or
+ * IRAP (HEVC) access unit at which the active sequence (and HEVC video) parameter sets differ from
+ * those of the configuration last reported carries a record of every active set, ordered by
+ * identifier, as its {@link PacketSideData#newCodecConfig() new codec configuration}, so that a
+ * stream that changes its resolution or profile (a splice, concatenated recordings) reconfigures
+ * its decoder there. A picture parameter set change alone is not reported. The parameter sets stay
+ * in the packets too.
  */
 final class NalParser extends ElementaryParser {
     /**
@@ -129,6 +137,23 @@ final class NalParser extends ElementaryParser {
     private final List<byte[]> pictureSets = new ArrayList<>();
 
     /**
+     * The latest parameter set of each type and identifier, keyed by {@code type * 256 + id}.
+     */
+    private final TreeMap<Integer, byte[]> active = new TreeMap<>();
+
+    /**
+     * The parameter sets of the configuration last reported downstream: the track's, then each
+     * new configuration a key frame carried; {@code null} until the track is configured.
+     */
+    private List<byte[]> established;
+
+    /**
+     * Whether a parameter set became active since the configuration was last compared with the
+     * reported one.
+     */
+    private boolean activated;
+
+    /**
      * Constructs a parser.
      *
      * @param entry the program map entry of the stream
@@ -199,13 +224,206 @@ final class NalParser extends ElementaryParser {
          * Whether the access unit is a random access point.
          */
         boolean key;
+
+        /**
+         * The configuration record the access unit establishes, or {@code null}.
+         */
+        byte[] newConfig;
     }
 
     @Override
     ElementaryParser fresh() {
         var parser = new NalParser(entry, limits, hevc);
         parser.track = track;
+        parser.establish(track == null ? null : track.codecConfig().orElse(null));
         return parser;
+    }
+
+    /**
+     * Makes a configuration record the one reported downstream and its parameter sets the active
+     * ones.
+     *
+     * @param config the record, or {@code null} when the track is not configured
+     */
+    private void establish(byte[] config) {
+        if (config == null) {
+            return;
+        }
+        var parsed = hevc ? NalConfigs.parseHevc(config) : NalConfigs.parseAvc(config);
+        if (parsed == null) {
+            return;
+        }
+        established = new ArrayList<>(parsed.parameterSets());
+        for (var unit : parsed.parameterSets()) {
+            activate(unit, 0, unit.length);
+        }
+    }
+
+    /**
+     * Records a parameter set as the active one of its type and identifier.
+     *
+     * @param data the bytes
+     * @param offset the index of the NAL unit header
+     * @param length the NAL unit length
+     */
+    private void activate(byte[] data, int offset, int length) {
+        if (length < 2 || length > 0xFFFF) {
+            return;
+        }
+        for (var existing : active.values()) {
+            if (Arrays.equals(existing, 0, existing.length, data, offset, offset + length)) {
+                // a repeated parameter set, which streams commonly send before every key frame
+                return;
+            }
+        }
+        var type = hevc ? (data[offset] >> 1) & 0x3F : data[offset] & 0x1F;
+        var id = parameterSetId(type, data, offset, length);
+        if (id < 0 || active.size() >= 3 * 256) {
+            return;
+        }
+        active.put(type * 256 + id, Arrays.copyOfRange(data, offset, offset + length));
+        activated = true;
+    }
+
+    /**
+     * Returns the identifier of a parameter set: {@code seq_parameter_set_id} or
+     * {@code pic_parameter_set_id} for H.264 (ITU-T H.264 clauses 7.3.2.1 and 7.3.2.2), and
+     * {@code vps_video_parameter_set_id}, {@code sps_seq_parameter_set_id} or
+     * {@code pps_pic_parameter_set_id} for HEVC (ITU-T H.265 clauses 7.3.2.1 to 7.3.2.3).
+     *
+     * @param type the NAL unit type
+     * @param data the bytes
+     * @param offset the index of the NAL unit header
+     * @param length the NAL unit length
+     * @return the identifier, or {@code -1} for a unit that is no parameter set or is truncated
+     */
+    private int parameterSetId(int type, byte[] data, int offset, int length) {
+        var header = hevc ? 2 : 1;
+        var bits = new MsbBitReader(NalUnits.unescape(data, offset + header, Math.min(length - header, 192)));
+        int id;
+        if (hevc) {
+            switch (type) {
+                case NalConfigs.HEVC_VPS -> id = bits.read(4);
+                case NalConfigs.HEVC_SPS -> {
+                    bits.skip(4);
+                    var subLayers = bits.read(3);
+                    bits.skip(1 + 96);
+                    var profiles = new boolean[subLayers];
+                    var levels = new boolean[subLayers];
+                    for (var layer = 0; layer < subLayers; layer++) {
+                        profiles[layer] = bits.readFlag();
+                        levels[layer] = bits.readFlag();
+                    }
+                    if (subLayers > 0) {
+                        bits.skip(2L * (8 - subLayers));
+                    }
+                    for (var layer = 0; layer < subLayers; layer++) {
+                        bits.skip((profiles[layer] ? 88 : 0) + (levels[layer] ? 8 : 0));
+                    }
+                    id = bits.readUe();
+                }
+                case NalConfigs.HEVC_PPS -> id = bits.readUe();
+                default -> {
+                    return -1;
+                }
+            }
+        } else {
+            switch (type) {
+                case NalConfigs.AVC_SPS -> {
+                    bits.skip(24);
+                    id = bits.readUe();
+                }
+                case NalConfigs.AVC_PPS -> id = bits.readUe();
+                default -> {
+                    return -1;
+                }
+            }
+        }
+        return bits.overrun() || id < 0 || id > 255 ? -1 : id;
+    }
+
+    /**
+     * Returns the configuration record of the active parameter sets when their sequence and video
+     * parameter sets differ from the ones last reported, and makes them the reported ones.
+     *
+     * @return the record, or {@code null} when the active sequence and video parameter sets are the
+     * reported ones or the active sets do not make a record
+     */
+    private byte[] changedConfig() {
+        if (established == null || !activated) {
+            return null;
+        }
+        var units = new ArrayList<>(active.values());
+        if (sameSets(sequenceLevel(units), sequenceLevel(established))) {
+            activated = false;
+            return null;
+        }
+        var videoUnits = new ArrayList<byte[]>();
+        var sequenceUnits = new ArrayList<byte[]>();
+        var pictureUnits = new ArrayList<byte[]>();
+        for (var entry : active.entrySet()) {
+            var type = entry.getKey() / 256;
+            if (hevc && type == NalConfigs.HEVC_VPS) {
+                videoUnits.add(entry.getValue());
+            } else if (type == (hevc ? NalConfigs.HEVC_SPS : NalConfigs.AVC_SPS)) {
+                sequenceUnits.add(entry.getValue());
+            } else {
+                pictureUnits.add(entry.getValue());
+            }
+        }
+        if (sequenceUnits.isEmpty() || pictureUnits.isEmpty()) {
+            return null;
+        }
+        var config = hevc ? NalConfigs.hevcConfig(videoUnits, sequenceUnits, pictureUnits)
+                : NalConfigs.avcConfig(sequenceUnits, pictureUnits);
+        if (config != null) {
+            established = units;
+            activated = false;
+        }
+        return config;
+    }
+
+    /**
+     * Returns the sequence and video parameter sets of a list of parameter sets.
+     *
+     * @param units whole NAL units
+     * @return the units that are sequence or video parameter sets, in order
+     */
+    private List<byte[]> sequenceLevel(List<byte[]> units) {
+        var result = new ArrayList<byte[]>();
+        for (var unit : units) {
+            var type = hevc ? (unit[0] >> 1) & 0x3F : unit[0] & 0x1F;
+            if (hevc ? type == NalConfigs.HEVC_VPS || type == NalConfigs.HEVC_SPS : type == NalConfigs.AVC_SPS) {
+                result.add(unit);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Returns whether two lists hold the same parameter sets, in any order.
+     *
+     * @param first a list of whole NAL units
+     * @param second a list of whole NAL units
+     * @return {@code true} when every unit of each list is in the other and the sizes agree
+     */
+    private static boolean sameSets(List<byte[]> first, List<byte[]> second) {
+        if (first.size() != second.size()) {
+            return false;
+        }
+        for (var unit : first) {
+            var found = false;
+            for (var other : second) {
+                if (Arrays.equals(unit, other)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                return false;
+            }
+        }
+        return true;
     }
 
     @Override
@@ -215,8 +433,8 @@ final class NalParser extends ElementaryParser {
 
     @Override
     void accept(Pes pes, TsClock clock, UnitSink sink) {
-        var dts = pes.dts() == TsClock.NONE ? TsClock.NONE : clock.ticks(pid(), pes.dts(), true);
-        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(pid(), pes.pts(), dts == TsClock.NONE);
+        var dts = pes.dts() == TsClock.NONE ? TsClock.NONE : clock.ticks(trackId(), pes.dts(), true);
+        var pts = pes.pts() == TsClock.NONE ? TsClock.NONE : clock.ticks(trackId(), pes.pts(), dts == TsClock.NONE);
         if (dts == TsClock.NONE) {
             dts = pts;
         }
@@ -346,13 +564,17 @@ final class NalParser extends ElementaryParser {
         if (track == null) {
             remember(type, data, offset, length);
         }
+        if (hevc ? type >= NalConfigs.HEVC_VPS && type <= NalConfigs.HEVC_PPS
+                : type == NalConfigs.AVC_SPS || type == NalConfigs.AVC_PPS) {
+            activate(data, offset, length);
+        }
         if (isSlice(type)) {
             current.coded = true;
             if (hevc) {
                 current.idr |= type >= 16 && type <= 23;
             } else {
                 current.idr |= type == 5;
-                if (current.intra && !isIntraSlice(data, offset, length)) {
+                if (current.intra && startsWithSliceHeader(type) && !isIntraSlice(data, offset, length)) {
                     current.intra = false;
                 }
             }
@@ -383,6 +605,18 @@ final class NalParser extends ElementaryParser {
     }
 
     /**
+     * Returns whether an H.264 VCL NAL unit type starts with a slice header: a coded slice or a
+     * slice data partition A. The slice data partitions B and C start with their
+     * {@code slice_id} and never begin an access unit (ITU-T H.264 7.3.2.9 and 7.4.1.2.4).
+     *
+     * @param type the NAL unit type
+     * @return {@code true} for NAL unit types 1, 2 and 5
+     */
+    private static boolean startsWithSliceHeader(int type) {
+        return type == 1 || type == 2 || type == 5;
+    }
+
+    /**
      * Returns whether a NAL unit starts a new access unit after a coded slice.
      *
      * @param type the NAL unit type
@@ -399,7 +633,7 @@ final class NalParser extends ElementaryParser {
             return (type >= 32 && type <= 35) || type == 39 || (type >= 41 && type <= 44) || (type >= 48 && type <= 55);
         }
         if (type >= 1 && type <= 5) {
-            return length > 1 && (data[offset + 1] & 0x80) != 0;
+            return startsWithSliceHeader(type) && length > 1 && (data[offset + 1] & 0x80) != 0;
         }
         return (type >= 6 && type <= 9) || (type >= 14 && type <= 18);
     }
@@ -537,6 +771,11 @@ final class NalParser extends ElementaryParser {
         unit.key = unit.idr || (!hevc && unit.recovery && unit.intra);
         if (track == null && unit.key) {
             configure();
+            if (track != null) {
+                established = new ArrayList<>(active.values());
+            }
+        } else if (track != null && unit.idr) {
+            unit.newConfig = changedConfig();
         }
         if (unit.dts == TsClock.NONE) {
             if (lastDts == TsClock.NONE) {
@@ -579,9 +818,10 @@ final class NalParser extends ElementaryParser {
         if (unit.corrupt) {
             flags.add(PacketFlag.CORRUPT);
         }
-        sink.accept(new Packet(pid(), Arrays.copyOf(unit.data, unit.size), unit.pts, unit.dts,
+        sink.accept(new Packet(trackId(), Arrays.copyOf(unit.data, unit.size), unit.pts, unit.dts,
                 lastDuration > 0 ? lastDuration : Packet.UNKNOWN_DURATION, flags,
-                PacketSideData.NONE), unit.fileOffset);
+                unit.newConfig == null ? PacketSideData.NONE : PacketSideData.builder().newCodecConfig(unit.newConfig).build()),
+                unit.fileOffset);
     }
 
     /**
@@ -604,7 +844,7 @@ final class NalParser extends ElementaryParser {
             info = null;
         }
         var builder = VideoTrack.builder()
-                .id(pid())
+                .id(trackId())
                 .codec(hevc ? Codec.HEVC : Codec.H264)
                 .timeBase(TIME_BASE)
                 .codecConfig(config)
@@ -612,6 +852,9 @@ final class NalParser extends ElementaryParser {
         if (info != null) {
             LimitChecks.checkPicture(limits, Math.max(1, info.width()), Math.max(1, info.height()));
             builder.width(info.width()).height(info.height()).frameRate(info.frameRate()).color(info.color());
+            if (info.sampleAspect() != null) {
+                builder.sampleAspectRatio(info.sampleAspect());
+            }
         }
         track = builder.build();
     }

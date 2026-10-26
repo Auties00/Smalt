@@ -4,6 +4,7 @@ import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
+import com.github.auties00.smalt.image.raw.RawHighlights;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.util.List;
@@ -12,7 +13,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 
 /**
  * Creates the workloads of {@link TrainingFamily#RAW}, the camera raw decoder of
- * {@code smalt-raw}, on synthetic DNG, Minolta MRW, Canon CRW and Sigma X3F files.
+ * {@code smalt-raw}, on synthetic DNG (Bayer, linear raw, and a staggered mosaic with profile
+ * tables), Minolta MRW, Canon CRW and Sigma X3F files.
  */
 final class RawWorkloads {
     /**
@@ -31,6 +33,7 @@ final class RawWorkloads {
         return List.of(
                 file("raw-decode-bayer", RawWorkloads::bayer),
                 file("raw-decode-linear", RawWorkloads::linear),
+                file("raw-decode-staggered", RawWorkloads::staggered),
                 file("raw-decode-mrw", RawWorkloads::mrw),
                 file("raw-decode-crw", RawWorkloads::crw),
                 file("raw-decode-x3f", RawWorkloads::x3f));
@@ -64,6 +67,25 @@ final class RawWorkloads {
         var file = SyntheticRaw.linearRaw(SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false));
         var options = List.of(RawDecoderOptions.defaults(), RawDecoderOptions.linear());
         return TrainingWorkload.of("raw-decode-linear", () -> {
+            for (var option : options) {
+                Blackhole.consume(RawDecoder.decode(MediaSource.of(file), option).picture().width());
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes a 640x480 staggered DNG with a gain table map and an RGB
+     * table: with color-difference and bilinear demosaicing to 8-bit sRGB, and with the automatic
+     * black subtraction and blended highlights.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload staggered() {
+        var file = SyntheticRaw.staggered(SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false));
+        var options = List.of(RawDecoderOptions.defaults(), RawDecoderOptions.fast(), RawDecoderOptions.builder()
+                .autoBlack(true).highlights(RawHighlights.BLEND).build());
+        return TrainingWorkload.of("raw-decode-staggered", () -> {
+            Blackhole.consume(RawDecoder.decodeRaw(MediaSource.of(file)).samples().length);
             for (var option : options) {
                 Blackhole.consume(RawDecoder.decode(MediaSource.of(file), option).picture().width());
             }
