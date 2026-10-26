@@ -1,13 +1,17 @@
 package com.github.auties00.smalt.metadata;
 
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.container.ChapterEdition;
+import com.github.auties00.smalt.internal.codec.XmpLocations;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -16,20 +20,32 @@ import java.util.Set;
 
 /**
  * Holds the descriptive metadata of an audio or video file: text tags, attached pictures such as
- * cover art, and chapters.
+ * cover art, other attached files, chapters, an XMP packet, and the names, tags and dispositions of its tracks.
  *
  * <p>Tags are an ordered list of {@link Entry key-value entries}; a key may repeat, which is how
  * multi-valued tags (several artists, several genres) are represented. Keys are normalized when
  * an entry is added: a name {@link StandardTag#fromName(String) recognized} by the shared
  * vocabulary becomes its {@link StandardTag#key() normalized key} ({@code "TIT2"},
  * {@code "TITLE"} and {@code "title"} all become {@code "title"}); any other key is kept as given,
- * which is how format-specific tags such as {@code "REPLAYGAIN_TRACK_GAIN"}, {@code "TBPM"} or
- * MusicBrainz identifiers stay available. Lookups by key ignore case.
+ * which is how format-specific tags such as {@code "MOOD"} or {@code "iTunNORM"} stay available.
+ * Lookups by key ignore case.
  *
  * <p>The same instance describes the tags of every format {@link TagEditor} reads and writes and
  * the muxers accept: each writer maps the standard keys to the format's native names and stores
  * other keys in the format's free-form slot (ID3v2 {@code TXXX}, a Vorbis comment field, an MP4
  * {@code ----} atom, a Matroska {@code SimpleTag}).
+ *
+ * <p>Chapters are grouped in {@linkplain #editions() editions}; {@link #chapters()} returns those of the
+ * default one, and the writers of formats that store a single edition write those. Only Matroska stores
+ * several editions and the {@linkplain #attachments() attachments} that are not pictures.
+ *
+ * <p>The {@linkplain #xmp() XMP packet} is the file's embedded XMP metadata (XMP Specification Part 3), which
+ * {@link TagEditor} reads from and writes to MP4 and QuickTime, WAV, AIFF and ID3v2-tagged files; the other formats
+ * do not store it.
+ *
+ * <p>The {@linkplain #tracks() track tags} describe single tracks of a container, each identified by
+ * the {@link com.github.auties00.smalt.track.Track#id() identifier} its demuxer reports; {@link TrackTags} lists
+ * what each container stores. A file of a format without track metadata has none, and its writers ignore them.
  *
  * <p>Instances are immutable and thread-safe; the {@link Builder} is not.
  *
@@ -40,7 +56,17 @@ public final class MediaTags {
     /**
      * An instance with no tag, picture or chapter.
      */
-    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of());
+    private static final MediaTags EMPTY = new MediaTags(List.of(), List.of(), List.of(), List.of(), List.of(), null);
+
+    /**
+     * The keys that record a place, in lower case.
+     */
+    private static final Set<String> LOCATION_KEYS = Set.of("location", "recording_location", "\u00A9xyz", "loci");
+
+    /**
+     * The prefix of the QuickTime keyed metadata keys that record a place, in lower case.
+     */
+    private static final String QUICKTIME_LOCATION = "com.apple.quicktime.location.";
 
     /**
      * The separator {@link #asMap()} joins repeated values with.
@@ -58,23 +84,66 @@ public final class MediaTags {
     private final List<AttachedPicture> pictures;
 
     /**
-     * The chapters, in start order.
+     * The attachments that are not pictures, in order.
+     */
+    private final List<Attachment> attachments;
+
+    /**
+     * The chapter editions, in order.
+     */
+    private final List<ChapterEdition> editions;
+
+    /**
+     * The chapters of the default edition, in start order.
      */
     private final List<Chapter> chapters;
+
+    /**
+     * The track tags, in order.
+     */
+    private final List<TrackTags> tracks;
+
+    /**
+     * The XMP packet, or {@code null}.
+     */
+    private final XmpPacket xmp;
 
     /**
      * Constructs an instance.
      *
      * @param entries the tag entries
      * @param pictures the attached pictures
-     * @param chapters the chapters in start order
+     * @param attachments the attachments that are not pictures
+     * @param editions the chapter editions; the top-level chapters of those that are not ordered are sorted by start
+     * @param tracks the track tags, one per track identifier
+     * @param xmp the XMP packet, or {@code null}
      */
-    private MediaTags(List<Entry> entries, List<AttachedPicture> pictures, List<Chapter> chapters) {
+    private MediaTags(List<Entry> entries, List<AttachedPicture> pictures, List<Attachment> attachments,
+                      List<ChapterEdition> editions, List<TrackTags> tracks, XmpPacket xmp) {
         this.entries = List.copyOf(entries);
         this.pictures = List.copyOf(pictures);
+        this.attachments = List.copyOf(attachments);
+        var normalized = new ArrayList<ChapterEdition>(editions.size());
+        for (var edition : editions) {
+            normalized.add(edition.ordered() ? edition : edition.withChapters(sorted(edition.chapters())));
+        }
+        this.editions = List.copyOf(normalized);
+        var index = ChapterEdition.defaultIndex(this.editions);
+        this.chapters = index < 0 ? List.of() : sorted(this.editions.get(index).chapters());
+        this.tracks = List.copyOf(tracks);
+        this.xmp = xmp;
+    }
+
+    /**
+     * Sorts chapters by start, keeping the order of those that start together.
+     *
+     * @param chapters the chapters to sort
+     * @return the sorted chapters; unmodifiable
+     */
+    private static List<Chapter> sorted(List<Chapter> chapters) {
         var sorted = new ArrayList<>(chapters);
         sorted.sort((first, second) -> Long.compare(first.startMicros(), second.startMicros()));
-        this.chapters = List.copyOf(sorted);
+        return List.copyOf(sorted);
     }
 
     /**
@@ -104,7 +173,10 @@ public final class MediaTags {
         var builder = new Builder();
         builder.entries.addAll(entries);
         builder.pictures.addAll(pictures);
-        builder.chapters.addAll(chapters);
+        builder.attachments.addAll(attachments);
+        builder.editions.addAll(editions);
+        builder.tracks.addAll(tracks);
+        builder.xmp = xmp;
         return builder;
     }
 
@@ -277,37 +349,148 @@ public final class MediaTags {
     }
 
     /**
-     * Returns the chapters in start order.
+     * Returns the attached files that are not pictures, such as fonts.
      *
-     * @return the chapters; unmodifiable
+     * @return the attachments in order; unmodifiable
+     */
+    public List<Attachment> attachments() {
+        return attachments;
+    }
+
+    /**
+     * Returns the chapters of the {@linkplain ChapterEdition#defaultIndex default edition}, in start order.
+     *
+     * @return the chapters; unmodifiable, empty without editions
      */
     public List<Chapter> chapters() {
         return chapters;
     }
 
     /**
-     * Returns whether this instance holds no tag, picture or chapter.
+     * Returns the chapter editions, in order; the top-level chapters of an edition that is not
+     * {@linkplain ChapterEdition#ordered() ordered} are in start order.
+     *
+     * @return the editions; unmodifiable
+     */
+    public List<ChapterEdition> editions() {
+        return editions;
+    }
+
+    /**
+     * Returns the tags of the tracks.
+     *
+     * @return the track tags, at most one per track identifier, in the order they were added; unmodifiable
+     */
+    public List<TrackTags> tracks() {
+        return tracks;
+    }
+
+    /**
+     * Returns the tags of one track.
+     *
+     * @param trackId the track identifier
+     * @return the track tags, or empty when this instance holds none for the track
+     */
+    public Optional<TrackTags> track(int trackId) {
+        for (var track : tracks) {
+            if (track.trackId() == trackId) {
+                return Optional.of(track);
+            }
+        }
+        return Optional.empty();
+    }
+
+    /**
+     * {@return the XMP packet, or empty when there is none}
+     */
+    public Optional<XmpPacket> xmp() {
+        return Optional.ofNullable(xmp);
+    }
+
+    /**
+     * Returns whether these tags record where the media was made.
+     *
+     * <p>A place is recorded by an entry of one of these keys, compared ignoring case, in the tags of the file or
+     * of a track:
+     * <ul>
+     *   <li>{@code location} and {@code recording_location}, the place names and coordinates of the Vorbis comment,
+     *       Matroska and {@code Media.probe} vocabularies;</li>
+     *   <li>{@code \u00A9xyz}, the ISO 6709 coordinates of the QuickTime user data atom and iTunes item;</li>
+     *   <li>{@code loci}, the coordinates of the 3GPP location information box (3GPP TS 26.244);</li>
+     *   <li>the QuickTime keyed metadata keys starting {@code com.apple.quicktime.location.}, such as
+     *       {@code com.apple.quicktime.location.ISO6709};</li>
+     * </ul>
+     * or by a property of the {@linkplain #xmp() XMP packet} that records a place: the {@code GPS} properties of
+     * the EXIF schemas and the place names of the Photoshop ({@code City}, {@code State}, {@code Country}) and
+     * IPTC ({@code Location}, {@code CountryCode}, {@code LocationCreated}, {@code LocationShown}) schemas.
+     *
+     * @return {@code true} when a place is recorded
+     * @see Builder#removeLocation()
+     */
+    public boolean hasLocation() {
+        if (hasLocation(entries) || xmp != null && xmp.properties().stream().anyMatch(XmpLocations::isLocation)) {
+            return true;
+        }
+        for (var track : tracks) {
+            if (hasLocation(track.tags().entries())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether entries hold a key that records a place.
+     *
+     * @param entries the entries to search
+     * @return {@code true} when one of them does
+     */
+    private static boolean hasLocation(List<Entry> entries) {
+        for (var entry : entries) {
+            if (isLocationKey(entry.key())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Returns whether a key records a place, as {@link #hasLocation()} lists.
+     *
+     * @param key a normalized key
+     * @return {@code true} for such a key
+     */
+    private static boolean isLocationKey(String key) {
+        var lower = key.toLowerCase(Locale.ROOT);
+        return LOCATION_KEYS.contains(lower) || lower.startsWith(QUICKTIME_LOCATION);
+    }
+
+    /**
+     * Returns whether this instance holds no tag, picture, attachment, chapter edition, XMP packet or track tags.
      *
      * @return {@code true} when empty
      */
     public boolean isEmpty() {
-        return entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty();
+        return entries.isEmpty() && pictures.isEmpty() && attachments.isEmpty() && editions.isEmpty()
+                && tracks.isEmpty() && xmp == null;
     }
 
     @Override
     public boolean equals(Object other) {
         return other instanceof MediaTags that && entries.equals(that.entries) && pictures.equals(that.pictures)
-                && chapters.equals(that.chapters);
+                && attachments.equals(that.attachments) && editions.equals(that.editions)
+                && tracks.equals(that.tracks) && Objects.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(entries, pictures, chapters);
+        return Objects.hash(entries, pictures, attachments, editions, tracks, xmp);
     }
 
     @Override
     public String toString() {
-        return "MediaTags[entries=" + entries + ", pictures=" + pictures + ", chapters=" + chapters + "]";
+        return "MediaTags[entries=" + entries + ", pictures=" + pictures + ", attachments=" + attachments
+                + ", editions=" + editions + ", tracks=" + tracks + ", xmp=" + xmp + "]";
     }
 
     /**
@@ -362,9 +545,24 @@ public final class MediaTags {
         private final List<AttachedPicture> pictures = new ArrayList<>();
 
         /**
-         * The chapters.
+         * The attachments.
          */
-        private final List<Chapter> chapters = new ArrayList<>();
+        private final List<Attachment> attachments = new ArrayList<>();
+
+        /**
+         * The chapter editions.
+         */
+        private final List<ChapterEdition> editions = new ArrayList<>();
+
+        /**
+         * The track tags.
+         */
+        private final List<TrackTags> tracks = new ArrayList<>();
+
+        /**
+         * The XMP packet, or {@code null}.
+         */
+        private XmpPacket xmp;
 
         /**
          * Constructs an empty builder.
@@ -466,7 +664,7 @@ public final class MediaTags {
         }
 
         /**
-         * Removes every tag entry, keeping pictures and chapters.
+         * Removes every tag entry, keeping pictures, attachments, chapters and track tags.
          *
          * @return this builder
          */
@@ -501,18 +699,54 @@ public final class MediaTags {
         }
 
         /**
-         * Appends a chapter.
+         * Appends an attachment.
+         *
+         * @param attachment the attachment to append
+         * @return this builder
+         */
+        public Builder addAttachment(Attachment attachment) {
+            attachments.add(Objects.requireNonNull(attachment, "attachment"));
+            return this;
+        }
+
+        /**
+         * Replaces every attachment.
+         *
+         * @param attachments the attachments, in order
+         * @return this builder
+         * @throws NullPointerException if an attachment is {@code null}
+         */
+        public Builder attachments(List<Attachment> attachments) {
+            var copy = List.copyOf(attachments);
+            this.attachments.clear();
+            this.attachments.addAll(copy);
+            return this;
+        }
+
+        /**
+         * Appends a chapter to the {@linkplain ChapterEdition#defaultIndex default edition}, creating an edition
+         * when there is none.
          *
          * @param chapter the chapter to append
          * @return this builder
          */
         public Builder addChapter(Chapter chapter) {
-            chapters.add(Objects.requireNonNull(chapter, "chapter"));
+            Objects.requireNonNull(chapter, "chapter");
+            var index = ChapterEdition.defaultIndex(editions);
+            if (index < 0) {
+                editions.add(ChapterEdition.of(List.of(chapter)));
+            } else {
+                var edition = editions.get(index);
+                var chapters = new ArrayList<>(edition.chapters());
+                chapters.add(chapter);
+                editions.set(index, edition.withChapters(chapters));
+            }
             return this;
         }
 
         /**
-         * Replaces every chapter.
+         * Replaces every chapter edition with one edition holding these chapters, or with none when the list is
+         * empty.
          *
          * @param chapters the chapters, in any order
          * @return this builder
@@ -520,20 +754,133 @@ public final class MediaTags {
          */
         public Builder chapters(List<Chapter> chapters) {
             var copy = List.copyOf(chapters);
-            this.chapters.clear();
-            this.chapters.addAll(copy);
+            this.editions.clear();
+            if (!copy.isEmpty()) {
+                this.editions.add(ChapterEdition.of(copy));
+            }
             return this;
         }
 
         /**
-         * Removes every entry, picture and chapter.
+         * Replaces every chapter edition.
+         *
+         * @param editions the editions, in order
+         * @return this builder
+         * @throws NullPointerException if an edition is {@code null}
+         */
+        public Builder editions(List<ChapterEdition> editions) {
+            var copy = List.copyOf(editions);
+            this.editions.clear();
+            this.editions.addAll(copy);
+            return this;
+        }
+
+        /**
+         * Sets the tags of one track, replacing those this builder holds for the same track identifier.
+         *
+         * @param track the track tags
+         * @return this builder
+         */
+        public Builder track(TrackTags track) {
+            Objects.requireNonNull(track, "track");
+            for (var index = 0; index < tracks.size(); index++) {
+                if (tracks.get(index).trackId() == track.trackId()) {
+                    tracks.set(index, track);
+                    return this;
+                }
+            }
+            tracks.add(track);
+            return this;
+        }
+
+        /**
+         * Removes the tags of one track.
+         *
+         * @param trackId the track identifier
+         * @return this builder
+         */
+        public Builder removeTrack(int trackId) {
+            tracks.removeIf(track -> track.trackId() == trackId);
+            return this;
+        }
+
+        /**
+         * Replaces the tags of every track.
+         *
+         * @param tracks the track tags; a later one replaces an earlier one of the same track identifier
+         * @return this builder
+         * @throws NullPointerException if an element is {@code null}
+         */
+        public Builder tracks(List<TrackTags> tracks) {
+            var copy = List.copyOf(tracks);
+            this.tracks.clear();
+            for (var track : copy) {
+                track(track);
+            }
+            return this;
+        }
+
+        /**
+         * Sets the XMP packet; see {@link MediaTags#xmp()}.
+         *
+         * @param xmp the packet
+         * @return this builder
+         */
+        public Builder xmp(XmpPacket xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp");
+            return this;
+        }
+
+        /**
+         * Removes the XMP packet; see {@link MediaTags#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
+            return this;
+        }
+
+        /**
+         * Removes every record of where the media was made: the entries of the keys {@link MediaTags#hasLocation()}
+         * lists, from the tags of the file and of every track, and the XMP properties that record a place. An XMP
+         * packet left without properties is removed.
+         *
+         * @return this builder
+         */
+        public Builder removeLocation() {
+            entries.removeIf(entry -> isLocationKey(entry.key()));
+            for (var index = 0; index < tracks.size(); index++) {
+                var track = tracks.get(index);
+                if (hasLocation(track.tags().entries())) {
+                    var stripped = new Builder();
+                    for (var entry : track.tags().entries()) {
+                        if (!isLocationKey(entry.key())) {
+                            stripped.entries.add(entry);
+                        }
+                    }
+                    tracks.set(index, track.withTags(stripped.build()));
+                }
+            }
+            if (xmp != null) {
+                var stripped = xmp.withoutIf(XmpLocations::isLocation);
+                xmp = stripped.isEmpty() ? null : stripped;
+            }
+            return this;
+        }
+
+        /**
+         * Removes every entry, picture, attachment, chapter edition, track tags and the XMP packet.
          *
          * @return this builder
          */
         public Builder clear() {
             entries.clear();
             pictures.clear();
-            chapters.clear();
+            attachments.clear();
+            editions.clear();
+            tracks.clear();
+            xmp = null;
             return this;
         }
 
@@ -543,10 +890,11 @@ public final class MediaTags {
          * @return the tags
          */
         public MediaTags build() {
-            if (entries.isEmpty() && pictures.isEmpty() && chapters.isEmpty()) {
+            if (entries.isEmpty() && pictures.isEmpty() && attachments.isEmpty() && editions.isEmpty()
+                    && tracks.isEmpty() && xmp == null) {
                 return EMPTY;
             }
-            return new MediaTags(entries, pictures, chapters);
+            return new MediaTags(entries, pictures, attachments, editions, tracks, xmp);
         }
     }
 }

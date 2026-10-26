@@ -14,7 +14,9 @@ public enum StreamMode {
      * that codec needs there), when it matches the codec the options name, if any, and when no
      * requested operation changes its content: for video no size change, crop, rotation of the
      * pixels, frame-rate conversion or pixel-format conversion, for audio no change of sampling
-     * rate, channel layout or gain. Trimming never forces encoding (see {@link #COPY}).
+     * rate, channel layout or gain. Trimming never forces encoding (see {@link #COPY}). A
+     * {@link OutputContainer#WAV} output copies coded audio only when the options name its codec, and
+     * decodes it to PCM otherwise.
      */
     AUTO,
 

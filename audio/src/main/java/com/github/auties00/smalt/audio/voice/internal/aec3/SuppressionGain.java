@@ -13,41 +13,52 @@ import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.FFT_LENGT
 import static com.github.auties00.smalt.audio.voice.internal.aec3.Aec3.FFT_LENGTH_BY_2_PLUS_1;
 
 /**
- * Computes the per-bin suppression gain that makes the residual echo inaudible under the near
- * end signal and the noise, limited in how fast it may rise and fall.
+ * Computes the gain of the residual echo suppressor: per bin of the lowest band, the lowest gain
+ * over the capture channels that makes the residual echo inaudible under the near-end signal and
+ * the noise, smoothed over time, and one gain for the upper bands. A dominant near-end detector
+ * switches to a more transparent tuning when the near end clearly dominates the echo.
  *
- * <p>The thresholds are those of the normal tuning, or of the near-end tuning while the dominant
- * near-end detector holds; the result is the square root of a power gain.
- *
- * @implNote This implementation ports {@code SuppressionGain} of WebRTC's
- * {@code modules/audio_processing/aec3/suppression_gain.cc}, with
- * {@code DominantNearendDetector} ({@code dominant_nearend_detector.cc}) and
- * {@code MovingAverage} ({@code moving_average.cc}), for one capture channel and one band with
- * the default {@code suppressor} configuration. It omits the reference's initial-state flag, which
- * changes the gain only when {@code lf_smoothing_during_initial_phase} or
- * {@code dominant_nearend_detection.use_during_initial_phase} is off.
+ * @implNote This implementation ports {@code SuppressionGain}, {@code DominantNearendDetector}
+ * and {@code MovingAverage} of WebRTC's {@code modules/audio_processing/aec3} with the default
+ * configuration and the suppressor tuning of an {@link Aec3Config}. The initial state only
+ * matters to the low-frequency smoothing and the dominant near-end detection, which the default
+ * configuration applies during the initial state too, so it is not tracked.
  */
 final class SuppressionGain {
     /**
-     * The masking thresholds of the normal tuning: transparent and suppressing echo-to-near-end
-     * ratios and transparent echo-to-masker ratio, per bin.
+     * The masking thresholds of the normal tuning.
      */
     private final float[][] normalParams = gainParameters(0.3f, 0.4f, 0.3f, 0.07f, 0.1f, 0.3f);
 
     /**
-     * The masking thresholds of the near-end tuning, laid out like {@link #normalParams}.
+     * The masking thresholds of the near-end tuning.
      */
     private final float[][] nearendParams = gainParameters(1.09f, 1.1f, 0.3f, 0.1f, 0.3f, 0.3f);
 
     /**
-     * The largest gain increase factor per block of both tunings.
+     * The largest gain increase per block of the near-end tuning.
      */
-    private static final float MAX_INC_FACTOR = 2.0f;
+    private static final float NEAREND_MAX_INC_FACTOR = 2.0f;
 
     /**
-     * The largest low-frequency gain decrease factor per block of both tunings.
+     * The largest low-frequency gain decrease per block of the near-end tuning.
      */
-    private static final float MAX_DEC_FACTOR_LF = 0.25f;
+    private static final float NEAREND_MAX_DEC_FACTOR_LF = 0.25f;
+
+    /**
+     * The band energy above which the anti-howling gain of the upper bands applies, per sample.
+     */
+    private static final float ANTI_HOWLING_ACTIVATION_THRESHOLD = 400.f;
+
+    /**
+     * The tunings.
+     */
+    private final Aec3Config config;
+
+    /**
+     * The number of capture channels.
+     */
+    private final int numChannels;
 
     /**
      * The gain of the previous block.
@@ -55,29 +66,29 @@ final class SuppressionGain {
     private final float[] lastGain = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * The smoothed near-end power of the previous block.
+     * The smoothed near-end spectrum of the previous block, per channel.
      */
-    private final float[] lastNearend = new float[FFT_LENGTH_BY_2_PLUS_1];
+    private final float[][] lastNearend;
 
     /**
-     * The weighted residual echo power of the previous block.
+     * The weighted residual echo of the previous block, per channel.
      */
-    private final float[] lastEcho = new float[FFT_LENGTH_BY_2_PLUS_1];
+    private final float[][] lastEcho;
 
     /**
-     * The smoothed render power of the low-noise render detector.
+     * The smoothed render block energy of the low-noise detector.
      */
     private float averageRenderPower = 32768.f * 32768.f;
 
     /**
-     * The past near-end powers of the moving average, three blocks.
+     * The past near-end spectra of the moving average of every channel.
      */
-    private final float[] nearendMemory = new float[(Aec3.NEAREND_AVERAGE_BLOCKS - 1) * FFT_LENGTH_BY_2_PLUS_1];
+    private final float[][] nearendMemory;
 
     /**
-     * The next slot of {@link #nearendMemory}.
+     * The slot of the oldest past near-end spectrum.
      */
-    private int nearendMemoryIndex;
+    private final int[] nearendMemoryIndex;
 
     /**
      * Whether the near end dominates.
@@ -85,59 +96,63 @@ final class SuppressionGain {
     private boolean nearendState;
 
     /**
-     * The trigger counter of the dominant near-end detector.
+     * The dominant near-end trigger counter of every channel.
      */
-    private int triggerCounter;
+    private final int[] triggerCounters;
 
     /**
-     * The hold counter of the dominant near-end detector.
+     * The dominant near-end hold counter of every channel.
      */
-    private int holdCounter;
+    private final int[] holdCounters;
 
     /**
-     * The scratch buffer of the smoothed near-end power.
+     * The scratch smoothed near-end spectrum.
      */
     private final float[] nearend = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * The scratch buffer of the weighted residual echo.
+     * The scratch weighted residual echo.
      */
     private final float[] weightedResidualEcho = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * The scratch buffer of the minimum gain.
+     * The scratch lower gain bound.
      */
     private final float[] minGain = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * The scratch buffer of the maximum gain.
+     * The scratch upper gain bound.
      */
     private final float[] maxGain = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * The scratch buffer of the unlimited gain.
+     * The scratch gain of one channel.
      */
     private final float[] g = new float[FFT_LENGTH_BY_2_PLUS_1];
 
     /**
-     * Creates a suppression gain in the initial state.
+     * The gain of the upper bands of the last block.
      */
-    SuppressionGain() {
+    private float highBandsGain = 1.f;
+
+    /**
+     * Creates a gain computer.
+     *
+     * @param config the tunings
+     * @param numChannels the number of capture channels
+     */
+    SuppressionGain(Aec3Config config, int numChannels) {
+        this.config = config;
+        this.numChannels = numChannels;
+        this.lastNearend = new float[numChannels][FFT_LENGTH_BY_2_PLUS_1];
+        this.lastEcho = new float[numChannels][FFT_LENGTH_BY_2_PLUS_1];
+        this.nearendMemory = new float[numChannels][(Aec3.NEAREND_AVERAGE_BLOCKS - 1) * FFT_LENGTH_BY_2_PLUS_1];
+        this.nearendMemoryIndex = new int[numChannels];
+        this.triggerCounters = new int[numChannels];
+        this.holdCounters = new int[numChannels];
         Arrays.fill(lastGain, 1.f);
     }
 
-    /**
-     * Computes the masking thresholds of a tuning, interpolated between the low-frequency and the
-     * high-frequency masks.
-     *
-     * @param lfEnrTransparent the low-frequency transparent echo-to-near-end ratio
-     * @param lfEnrSuppress the low-frequency suppressing echo-to-near-end ratio
-     * @param lfEmrTransparent the low-frequency transparent echo-to-masker ratio
-     * @param hfEnrTransparent the high-frequency transparent echo-to-near-end ratio
-     * @param hfEnrSuppress the high-frequency suppressing echo-to-near-end ratio
-     * @param hfEmrTransparent the high-frequency transparent echo-to-masker ratio
-     * @return the three threshold arrays: transparent ENR, suppressing ENR, transparent EMR
-     */
     private static float[][] gainParameters(float lfEnrTransparent, float lfEnrSuppress, float lfEmrTransparent,
                                             float hfEnrTransparent, float hfEnrSuppress, float hfEmrTransparent) {
         var enrTransparent = new float[FFT_LENGTH_BY_2_PLUS_1];
@@ -159,70 +174,66 @@ final class SuppressionGain {
         return new float[][]{enrTransparent, enrSuppress, emrTransparent};
     }
 
-    /**
-     * Returns whether the near end dominates.
-     *
-     * @return the dominant near-end state
-     */
     boolean isDominantNearend() {
         return nearendState;
     }
 
     /**
-     * Computes the suppression gain of a block.
-     *
-     * @param nearendSpectrum the near-end power spectrum
-     * @param residualEchoSpectrum the residual echo power spectrum
-     * @param residualEchoUnbounded the residual echo power spectrum with the unbounded ERLE
-     * @param comfortNoiseSpectrum the comfort noise power spectrum
-     * @param saturatedEcho whether the echo is saturated
-     * @param render the render block ring
-     * @param renderOffset the start of the render block aligned with the capture
-     * @param clockDrift whether clock drift is detected
-     * @param lowBandGain receives the gain
+     * {@return the gain of the upper bands computed by the last {@code getGain}}
      */
-    void getGain(float[] nearendSpectrum, float[] residualEchoSpectrum, float[] residualEchoUnbounded,
-                 float[] comfortNoiseSpectrum, boolean saturatedEcho, float[] render, int renderOffset,
+    float highBandsGain() {
+        return highBandsGain;
+    }
+
+    /**
+     * Computes the gains of a block.
+     *
+     * @param nearendSpectrum the near-end power spectra, per capture channel
+     * @param echoSpectrum the echo power spectra the upper-band gain bound looks at, per channel
+     * @param residualEchoSpectrum the residual echo power spectra, per channel
+     * @param residualEchoUnbounded the residual echo power spectra with the unbounded ERLE
+     * @param comfortNoiseSpectrum the comfort noise power spectra, per channel
+     * @param renderSignalAnalyzer the narrow-band detector
+     * @param saturatedEcho whether the echo saturates the capture signal
+     * @param renderBuffer the render buffer, whose current block is used
+     * @param clockDrift whether clock drift was detected
+     * @param lowBandGain receives the 65 gains of the lowest band
+     */
+    void getGain(float[][] nearendSpectrum, float[][] echoSpectrum, float[][] residualEchoSpectrum,
+                 float[][] residualEchoUnbounded, float[][] comfortNoiseSpectrum,
+                 RenderSignalAnalyzer renderSignalAnalyzer, boolean saturatedEcho, RenderBuffer renderBuffer,
                  boolean clockDrift, float[] lowBandGain) {
         updateDominantNearend(nearendSpectrum, residualEchoUnbounded, comfortNoiseSpectrum);
-        var lowNoiseRender = detectLowNoiseRender(render, renderOffset);
+        var lowNoiseRender = detectLowNoiseRender(renderBuffer);
         lowerBandGain(lowNoiseRender, saturatedEcho, nearendSpectrum, residualEchoSpectrum, comfortNoiseSpectrum,
                 clockDrift, lowBandGain);
+        highBandsGain = upperBandsGain(echoSpectrum, comfortNoiseSpectrum, renderSignalAnalyzer.narrowPeakBand(),
+                saturatedEcho, renderBuffer, lowBandGain);
     }
 
-    /**
-     * Updates the dominant near-end detector.
-     *
-     * @param nearendSpectrum the near-end power spectrum
-     * @param residualEchoSpectrum the residual echo power spectrum
-     * @param comfortNoiseSpectrum the comfort noise power spectrum
-     */
-    private void updateDominantNearend(float[] nearendSpectrum, float[] residualEchoSpectrum, float[] comfortNoiseSpectrum) {
+    private void updateDominantNearend(float[][] nearendSpectrum, float[][] residualEchoSpectrum,
+                                       float[][] comfortNoiseSpectrum) {
         nearendState = false;
-        var neSum = lowFrequencyEnergy(nearendSpectrum);
-        var echoSum = lowFrequencyEnergy(residualEchoSpectrum);
-        var noiseSum = lowFrequencyEnergy(comfortNoiseSpectrum);
-        if (echoSum < Aec3.DOMINANT_ENR_THRESHOLD * neSum && neSum > Aec3.DOMINANT_SNR_THRESHOLD * noiseSum) {
-            if (++triggerCounter >= Aec3.DOMINANT_TRIGGER_THRESHOLD) {
-                holdCounter = Aec3.DOMINANT_HOLD_DURATION;
-                triggerCounter = Aec3.DOMINANT_TRIGGER_THRESHOLD;
+        for (var ch = 0; ch < numChannels; ch++) {
+            var neSum = lowFrequencyEnergy(nearendSpectrum[ch]);
+            var echoSum = lowFrequencyEnergy(residualEchoSpectrum[ch]);
+            var noiseSum = lowFrequencyEnergy(comfortNoiseSpectrum[ch]);
+            if (echoSum < Aec3.DOMINANT_ENR_THRESHOLD * neSum && neSum > Aec3.DOMINANT_SNR_THRESHOLD * noiseSum) {
+                if (++triggerCounters[ch] >= Aec3.DOMINANT_TRIGGER_THRESHOLD) {
+                    holdCounters[ch] = Aec3.DOMINANT_HOLD_DURATION;
+                    triggerCounters[ch] = Aec3.DOMINANT_TRIGGER_THRESHOLD;
+                }
+            } else {
+                triggerCounters[ch] = Math.max(0, triggerCounters[ch] - 1);
             }
-        } else {
-            triggerCounter = Math.max(0, triggerCounter - 1);
+            if (echoSum > Aec3.DOMINANT_ENR_EXIT_THRESHOLD * neSum && echoSum > Aec3.DOMINANT_SNR_THRESHOLD * noiseSum) {
+                holdCounters[ch] = 0;
+            }
+            holdCounters[ch] = Math.max(0, holdCounters[ch] - 1);
+            nearendState = nearendState || holdCounters[ch] > 0;
         }
-        if (echoSum > Aec3.DOMINANT_ENR_EXIT_THRESHOLD * neSum && echoSum > Aec3.DOMINANT_SNR_THRESHOLD * noiseSum) {
-            holdCounter = 0;
-        }
-        holdCounter = Math.max(0, holdCounter - 1);
-        nearendState = holdCounter > 0;
     }
 
-    /**
-     * Returns the sum of bins 1 to 15 of a spectrum.
-     *
-     * @param spectrum the power spectrum, 65 bins
-     * @return the low-frequency energy
-     */
     private static float lowFrequencyEnergy(float[] spectrum) {
         var sum = 0.f;
         for (var k = 1; k < 16; k++) {
@@ -231,56 +242,44 @@ final class SuppressionGain {
         return sum;
     }
 
-    /**
-     * Returns whether the render block is low-level noise, and updates the render power average.
-     *
-     * @param render the render block ring
-     * @param offset the start of the block
-     * @return whether the render signal is low-level noise
-     */
-    private boolean detectLowNoiseRender(float[] render, int offset) {
+    private boolean detectLowNoiseRender(RenderBuffer renderBuffer) {
+        var blocks = renderBuffer.blocks;
         var x2Sum = 0.f;
         var x2Max = 0.f;
-        for (var i = 0; i < BLOCK_SIZE; i++) {
-            var x2 = render[offset + i] * render[offset + i];
-            x2Sum += x2;
-            x2Max = FloatMath.max(x2Max, x2);
+        for (var ch = 0; ch < renderBuffer.numChannels; ch++) {
+            var offset = renderBuffer.blockOffset(0, 0, ch);
+            for (var i = 0; i < BLOCK_SIZE; i++) {
+                var x2 = blocks[offset + i] * blocks[offset + i];
+                x2Sum += x2;
+                x2Max = FloatMath.max(x2Max, x2);
+            }
         }
-        x2Sum = x2Sum / 1;
+        x2Sum = x2Sum / renderBuffer.numChannels;
         var threshold = 50.f * 50.f * 64.f;
         var lowNoiseRender = averageRenderPower < threshold && x2Max < 3 * averageRenderPower;
         averageRenderPower = averageRenderPower * 0.9f + x2Sum * 0.1f;
         return lowNoiseRender;
     }
 
-    /**
-     * Computes the gain of the lower band.
-     *
-     * @param lowNoiseRender whether the render signal is low-level noise
-     * @param saturatedEcho whether the echo is saturated
-     * @param suppressorInput the near-end power spectrum
-     * @param residualEcho the residual echo power spectrum
-     * @param comfortNoise the comfort noise power spectrum
-     * @param clockDrift whether clock drift is detected
-     * @param gain receives the gain
-     */
-    private void lowerBandGain(boolean lowNoiseRender, boolean saturatedEcho, float[] suppressorInput,
-                               float[] residualEcho, float[] comfortNoise, boolean clockDrift, float[] gain) {
+    private void lowerBandGain(boolean lowNoiseRender, boolean saturatedEcho, float[][] suppressorInput,
+                               float[][] residualEcho, float[][] comfortNoise, boolean clockDrift, float[] gain) {
         Arrays.fill(gain, 1.f);
-        var maxIncFactor = MAX_INC_FACTOR;
+        var maxIncFactor = nearendState ? NEAREND_MAX_INC_FACTOR : config.normalMaxIncFactor();
         for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; ++k) {
             maxGain[k] = FloatMath.min(FloatMath.max(lastGain[k] * maxIncFactor, Aec3.FLOOR_FIRST_INCREASE), 1.f);
         }
-        movingAverage(suppressorInput);
-        weightEchoForAudibility(residualEcho);
-        getMinGain(lowNoiseRender, saturatedEcho);
-        gainToNoAudibleEcho(comfortNoise);
-        for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; ++k) {
-            g[k] = FloatMath.max(FloatMath.min(g[k], maxGain[k]), minGain[k]);
-            gain[k] = FloatMath.min(gain[k], g[k]);
+        for (var ch = 0; ch < numChannels; ch++) {
+            movingAverage(ch, suppressorInput[ch]);
+            weightEchoForAudibility(residualEcho[ch]);
+            getMinGain(ch, lowNoiseRender, saturatedEcho);
+            gainToNoAudibleEcho(comfortNoise[0]);
+            for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; ++k) {
+                g[k] = FloatMath.max(FloatMath.min(g[k], maxGain[k]), minGain[k]);
+                gain[k] = FloatMath.min(gain[k], g[k]);
+            }
+            System.arraycopy(nearend, 0, lastNearend[ch], 0, FFT_LENGTH_BY_2_PLUS_1);
+            System.arraycopy(weightedResidualEcho, 0, lastEcho[ch], 0, FFT_LENGTH_BY_2_PLUS_1);
         }
-        System.arraycopy(nearend, 0, lastNearend, 0, FFT_LENGTH_BY_2_PLUS_1);
-        System.arraycopy(weightedResidualEcho, 0, lastEcho, 0, FFT_LENGTH_BY_2_PLUS_1);
         gain[0] = gain[1] = FloatMath.min(gain[1], gain[2]);
         if (!nearendState || clockDrift) {
             var firstBandToLimit = (64 * 2000) / 8000;
@@ -297,30 +296,93 @@ final class SuppressionGain {
     }
 
     /**
-     * Averages the near-end power over the last four blocks into {@link #nearend}.
+     * Computes the gain of the upper bands ({@code UpperBandsGain}).
      *
-     * @param input the near-end power of the current block
+     * @param echoSpectrum the echo power spectra, per capture channel
+     * @param comfortNoiseSpectrum the comfort noise power spectra, per channel
+     * @param narrowPeakBand the bin of the strong narrow-band render peak, or {@code -1}
+     * @param saturatedEcho whether the echo saturates the capture signal
+     * @param renderBuffer the render buffer
+     * @param lowBandGain the gains of the lowest band
+     * @return the gain
      */
-    private void movingAverage(float[] input) {
+    private float upperBandsGain(float[][] echoSpectrum, float[][] comfortNoiseSpectrum, int narrowPeakBand,
+                                 boolean saturatedEcho, RenderBuffer renderBuffer, float[] lowBandGain) {
+        var numBands = renderBuffer.numBands;
+        if (numBands == 1) {
+            return 1.f;
+        }
+        var numRenderChannels = renderBuffer.numChannels;
+        if (narrowPeakBand >= 0 && narrowPeakBand > FFT_LENGTH_BY_2_PLUS_1 - 10) {
+            return 0.001f;
+        }
+        var gainBelow8Khz = lowBandGain[FFT_LENGTH_BY_2 / 2];
+        for (var k = FFT_LENGTH_BY_2 / 2 + 1; k < FFT_LENGTH_BY_2_PLUS_1; k++) {
+            if (lowBandGain[k] < gainBelow8Khz) {
+                gainBelow8Khz = lowBandGain[k];
+            }
+        }
+        if (saturatedEcho) {
+            return FloatMath.min(0.001f, gainBelow8Khz);
+        }
+        var blocks = renderBuffer.blocks;
+        var lowBandEnergy = 0.f;
+        for (var ch = 0; ch < numRenderChannels; ++ch) {
+            var channelEnergy = sumOfSquares(blocks, renderBuffer.blockOffset(0, 0, ch));
+            lowBandEnergy = FloatMath.max(lowBandEnergy, channelEnergy);
+        }
+        var highBandEnergy = 0.f;
+        for (var k = 1; k < numBands; ++k) {
+            for (var ch = 0; ch < numRenderChannels; ++ch) {
+                var energy = sumOfSquares(blocks, renderBuffer.blockOffset(0, k, ch));
+                highBandEnergy = FloatMath.max(highBandEnergy, energy);
+            }
+        }
+        float antiHowlingGain;
+        var activationThreshold = BLOCK_SIZE * ANTI_HOWLING_ACTIVATION_THRESHOLD;
+        if (highBandEnergy < FloatMath.max(lowBandEnergy, activationThreshold)) {
+            antiHowlingGain = 1.f;
+        } else {
+            antiHowlingGain = 1.f * (float) Math.sqrt(lowBandEnergy / highBandEnergy);
+        }
+        var gainBound = 1.f;
+        if (!nearendState) {
+            for (var ch = 0; ch < numChannels; ++ch) {
+                var echoSum = lowFrequencyEnergy(echoSpectrum[ch]);
+                var noiseSum = lowFrequencyEnergy(comfortNoiseSpectrum[ch]);
+                if (echoSum > 1.f * noiseSum) {
+                    gainBound = 1.f;
+                    break;
+                }
+            }
+        }
+        return FloatMath.min(FloatMath.min(gainBelow8Khz, antiHowlingGain), gainBound);
+    }
+
+    private static float sumOfSquares(float[] x, int offset) {
+        var sum = 0.f;
+        for (var i = 0; i < BLOCK_SIZE; i++) {
+            sum = sum + x[offset + i] * x[offset + i];
+        }
+        return sum;
+    }
+
+    private void movingAverage(int ch, float[] input) {
+        var memory = nearendMemory[ch];
         System.arraycopy(input, 0, nearend, 0, FFT_LENGTH_BY_2_PLUS_1);
-        for (var m = 0; m < nearendMemory.length; m += FFT_LENGTH_BY_2_PLUS_1) {
+        for (var m = 0; m < memory.length; m += FFT_LENGTH_BY_2_PLUS_1) {
             for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; k++) {
-                nearend[k] = nearendMemory[m + k] + nearend[k];
+                nearend[k] = memory[m + k] + nearend[k];
             }
         }
         var scaling = 1.0f / (float) Aec3.NEAREND_AVERAGE_BLOCKS;
         for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; k++) {
             nearend[k] *= scaling;
         }
-        System.arraycopy(input, 0, nearendMemory, nearendMemoryIndex * FFT_LENGTH_BY_2_PLUS_1, FFT_LENGTH_BY_2_PLUS_1);
-        nearendMemoryIndex = (nearendMemoryIndex + 1) % (Aec3.NEAREND_AVERAGE_BLOCKS - 1);
+        System.arraycopy(input, 0, memory, nearendMemoryIndex[ch] * FFT_LENGTH_BY_2_PLUS_1, FFT_LENGTH_BY_2_PLUS_1);
+        nearendMemoryIndex[ch] = (nearendMemoryIndex[ch] + 1) % (Aec3.NEAREND_AVERAGE_BLOCKS - 1);
     }
 
-    /**
-     * Attenuates residual echo near the audibility floor into {@link #weightedResidualEcho}.
-     *
-     * @param echo the residual echo power
-     */
     private void weightEchoForAudibility(float[] echo) {
         var threshold = Aec3.FLOOR_POWER * Aec3.AUDIBILITY_THRESHOLD;
         var normalizer = 1.f / (threshold - Aec3.FLOOR_POWER);
@@ -329,15 +391,6 @@ final class SuppressionGain {
         weigh(threshold, normalizer, 7, FFT_LENGTH_BY_2_PLUS_1, echo);
     }
 
-    /**
-     * Weighs the residual echo of a bin range.
-     *
-     * @param threshold the audibility threshold
-     * @param normalizer {@code 1 / (threshold - floor)}
-     * @param begin the first bin
-     * @param end the bin after the last
-     * @param echo the residual echo power
-     */
     private void weigh(float threshold, float normalizer, int begin, int end, float[] echo) {
         for (var k = begin; k < end; ++k) {
             if (echo[k] < threshold) {
@@ -349,22 +402,18 @@ final class SuppressionGain {
         }
     }
 
-    /**
-     * Computes the minimum gain into {@link #minGain}.
-     *
-     * @param lowNoiseRender whether the render signal is low-level noise
-     * @param saturatedEcho whether the echo is saturated
-     */
-    private void getMinGain(boolean lowNoiseRender, boolean saturatedEcho) {
+    private void getMinGain(int ch, boolean lowNoiseRender, boolean saturatedEcho) {
         if (!saturatedEcho) {
             var minEchoPower = lowNoiseRender ? Aec3.LOW_RENDER_LIMIT : Aec3.NORMAL_RENDER_LIMIT;
             for (var k = 0; k < FFT_LENGTH_BY_2_PLUS_1; ++k) {
                 minGain[k] = weightedResidualEcho[k] > 0.f ? minEchoPower / weightedResidualEcho[k] : 1.f;
                 minGain[k] = FloatMath.min(minGain[k], 1.f);
             }
-            var dec = MAX_DEC_FACTOR_LF;
+            var dec = nearendState ? NEAREND_MAX_DEC_FACTOR_LF : config.normalMaxDecFactorLf();
+            var lastNearendCh = lastNearend[ch];
+            var lastEchoCh = lastEcho[ch];
             for (var k = 0; k <= Aec3.LAST_LF_SMOOTHING_BAND; ++k) {
-                if (lastNearend[k] > lastEcho[k] || k <= Aec3.LAST_PERMANENT_LF_SMOOTHING_BAND) {
+                if (lastNearendCh[k] > lastEchoCh[k] || k <= Aec3.LAST_PERMANENT_LF_SMOOTHING_BAND) {
                     minGain[k] = FloatMath.max(minGain[k], lastGain[k] * dec);
                     minGain[k] = FloatMath.min(minGain[k], 1.f);
                 }
@@ -374,11 +423,6 @@ final class SuppressionGain {
         }
     }
 
-    /**
-     * Computes the gain that masks the residual echo into {@link #g}.
-     *
-     * @param masker the comfort noise power, which masks the echo
-     */
     private void gainToNoAudibleEcho(float[] masker) {
         var p = nearendState ? nearendParams : normalParams;
         var enrTransparent = p[0];

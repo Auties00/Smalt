@@ -103,6 +103,8 @@ public final class TiffExif {
     private static long pointer(TiffDirectory directory, int tag) {
         try {
             return directory.longValue(tag, 0);
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             return 0;
         }
@@ -124,6 +126,8 @@ public final class TiffExif {
         TiffDirectory directory;
         try {
             directory = file.readDirectory(offset);
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             return null;
         }
@@ -162,6 +166,8 @@ public final class TiffExif {
         }
         try {
             target.raw(directory.tag(index), type, directory.valueCount(index), directory.raw(index));
+        } catch (MediaException.Io exception) {
+            throw exception;
         } catch (MediaException exception) {
             // an unreadable entry is dropped
         }

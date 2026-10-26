@@ -1,0 +1,13 @@
+# image dump of resources/jpeg/jpegls/charls/palette8.jls; regenerate with -Dsmalt.test.updateDumps=true
+format JPEG
+info ImageInfo[format=JPEG, width=39, height=27, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 39x27 rgba8 alpha=false crc=cf462396
+  format=JPEG orientation=NORMAL source=39x27
+  icc=none exif=none xmp=none
+  profile=none
+scaled 9x6
+picture 39x27 rgba8 alpha=false crc=cf462396
+  format=JPEG orientation=NORMAL source=39x27
+  icc=none exif=none xmp=none
+  profile=none

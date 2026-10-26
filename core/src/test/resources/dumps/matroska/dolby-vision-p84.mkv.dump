@@ -1,0 +1,21 @@
+# demux dump of matroska/dolby-vision-p84.mkv; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 250000
+seekable true
+metadata ENCODER="Lavf61.7.100"
+track 1 VIDEO HEVC timebase=1/1000 duration=250 config=112:111ba73e
+  video 160x96 orientation=NORMAL rate=500000000/20833333
+  color ColorInfo[matrix=BT2020_NCL, range=LIMITED, primaries=BT2020, transfer=HLG, chromaSiting=LEFT, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+  dolbyVision DolbyVision[versionMajor=1, versionMinor=0, profile=8, level=1, rpuPresent=true, enhancementLayerPresent=false, baseLayerPresent=true, baseLayerCompatibility=4, metadataCompression=0]
+packets 6
+0 t1 pts=0 dts=? dur=42 flags=KEY size=3762 crc=0436e80d
+1 t1 pts=42 dts=? dur=42 flags=- size=457 crc=59f56c38
+2 t1 pts=83 dts=? dur=42 flags=- size=293 crc=0c1c09cd
+3 t1 pts=125 dts=? dur=42 flags=KEY size=3915 crc=44542600
+4 t1 pts=167 dts=? dur=42 flags=- size=372 crc=c8c692fc
+5 t1 pts=208 dts=? dur=42 flags=- size=331 crc=be98f1a0
+seek 0: t1@0
+seek 83333: t1@0
+seek 166666: t1@3
+seek 250000: end
+seek -1000000: t1@0

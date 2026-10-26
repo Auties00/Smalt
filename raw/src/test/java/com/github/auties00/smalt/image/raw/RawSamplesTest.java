@@ -55,7 +55,7 @@ class RawSamplesTest {
             "NEF_D300S_LOSSLESS_14, NEF, 4288, 2848, RGGB, 14, true, NIKON D300S, 0",
             "NEF_D5600_LOSSY_12_SPLIT, NEF, 6000, 4000, RGGB, 12, true, NIKON D5600, 12800",
             "NEF_D7000_LOSSY_14_SPLIT, NEF, 4928, 3264, RGGB, 14, true, NIKON D7000, 0",
-            "NEF_E5700, NEF, 2576, 1924, YCGM, 12, false, E5700, 0",
+            "NEF_E5700, NEF, 2576, 1924, GMYC, 12, false, E5700, 0",
             "NEF_E8400, NEF, 3280, 2454, BGGR, 12, true, E8400, 0",
             "NEF_E8800, NEF, 3280, 2454, BGGR, 12, true, E8800, 0",
             "ARW_NEX6_CRAW_12, ARW, 4912, 3264, RGGB, 14, true, NEX-6, 200",
@@ -83,7 +83,16 @@ class RawSamplesTest {
             "RAF_XA1, RAF, 4896, 3264, RGGB, 12, true, X-A1, 1000",
             "RAF_XE2, RAF, 4896, 3264, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E2, 200",
             "RAF_XT2_COMPRESSED, RAF, 0, 0, -, 0, false, X-T2, 400",
-            "CR3_250D, CR3, 0, 0, -, 0, false, Canon EOS 250D, 100",
+            "CR3_250D, CR3, 6000, 4000, RGGB, 14, true, Canon EOS 250D, 100",
+            "CR3_EOS_250D_C_RAW, CR3, 6000, 4000, RGGB, 14, true, Canon EOS 250D, 100",
+            "CR3_EOS_90D, CR3, 6960, 4640, RGGB, 14, true, Canon EOS 90D, 100",
+            "CR3_EOS_R, CR3, 4176, 2784, RGGB, 14, true, Canon EOS R, 100",
+            "CR3_EOS_RP, CR3, 3888, 2592, RGGB, 14, true, Canon EOS RP, 100",
+            "CR3_EOS_R5, CR3, 5088, 3392, RGGB, 14, true, Canon EOS R5, 100",
+            "CR3_EOS_1D_X_MARK_III, CR3, 5472, 3648, RGGB, 14, true, Canon EOS-1D X Mark III, 100",
+            "CR3_EOS_R5_RAW_1_6_CROP_DUAL_PIXEL, CR3, 5088, 3392, RGGB, 14, true, Canon EOS R5, 100",
+            "CR3_EOS_R6_MARK_III_RAW, CR3, 4320, 2880, RGGB, 14, true, Canon EOS R6 Mark III, 100",
+            "CR3_POWERSHOT_V1_CRAW, CR3, 5760, 3840, RGGB, 14, true, Canon PowerShot V1, 100",
             "MRW_ALPHA_7D, MRW, 3008, 2000, RGGB, 12, true, ALPHA-7 DIGITAL, 200",
             "MRW_ALPHA_7D_2025, MRW, 3008, 2000, RGGB, 12, true, ALPHA-7 DIGITAL, 100",
             "MRW_ALPHA_SWEET, MRW, 3008, 2000, RGGB, 12, true, ALPHA SWEET DIGITAL, 400",
@@ -108,7 +117,7 @@ class RawSamplesTest {
             "X3F_SD15, X3F, 2640, 1760, -, 12, true, SIGMA SD15, 50",
             "X3F_SD1_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA SD1 Merrill, 100",
             "X3F_DP2_MERRILL, X3F, 4704, 3136, -, 12, true, SIGMA DP2 Merrill, 100",
-            "X3F_DP2_QUATTRO, X3F, 0, 0, -, 0, false, SIGMA dp2 Quattro, 100"
+            "X3F_DP2_QUATTRO, X3F, 5424, 3616, -, 14, true, SIGMA dp2 Quattro, 100"
     })
     void sample(RawSamples sample, RawFormat format, int width, int height, String cfa, int bits, boolean decodable,
                 String model, long iso) {

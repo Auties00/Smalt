@@ -267,7 +267,7 @@ class Mp3EncoderTest {
     @DisplayName("containers")
     class Containers {
         @Test
-        @DisplayName("an .mp3 file gets an Info tag frame with the exact frame count, and decodes to the exact length")
+        @DisplayName("an .mp3 file gets an Info tag frame with the exact frame count and a LAME tag giving the input length")
         void constantBitrateFile() {
             var options = Mp3EncoderOptions.defaults();
             var length = 44100 * 2 + 5;
@@ -281,7 +281,8 @@ class Mp3EncoderTest {
             assertEquals(file.length - tag, Mp3Encoding.concatenate(packets).length);
             try (var demuxer = new MpegAudioDemuxer(MediaSource.of(file))) {
                 var track = AudioPipeline.firstAudio(demuxer);
-                assertEquals((long) packets.size() * 1152, track.duration());
+                assertEquals(length, track.duration());
+                assertEquals(Mp3Encoder.DELAY, track.skipSamples());
             }
             if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
                 Oracle.assertDecodesCleanly(save("info", file));
@@ -317,7 +318,7 @@ class Mp3EncoderTest {
             }
             try (var demuxer = new MpegAudioDemuxer(MediaSource.of(file))) {
                 var track = AudioPipeline.firstAudio(demuxer);
-                assertEquals((long) packets.size() * 1152, track.duration());
+                assertEquals(length, track.duration());
                 demuxer.seek(10_000_000);
                 var packet = demuxer.read();
                 assertTrue(Math.abs(packet.pts() - 441_000) <= 1152, "seek landed at " + packet.pts());
@@ -330,6 +331,37 @@ class Mp3EncoderTest {
                 assertTrue(matcher.find(), probe);
                 assertEquals(packets.size() * 1152.0 / 44100, Double.parseDouble(matcher.group(1)), 0.03);
             }
+        }
+
+        @ParameterizedTest(name = "{0} Hz, {1} channel(s)")
+        @org.junit.jupiter.params.provider.CsvSource({"44100, 2, 128", "48000, 1, 64", "22050, 2, 64", "8000, 1, 16"})
+        @DisplayName("an .mp3 file trims the encoder delay and padding with its LAME tag, in Smalt and in ffmpeg")
+        void lameTagGapless(int rate, int channels, int kbps) {
+            var options = cbr(rate, channels, kbps);
+            var length = rate + 777;
+            var input = Mp3Encoding.signal(Mp3Encoding.Shape.IMPULSE, channels, rate, length, 0);
+            var packets = Mp3Encoding.encode(options, input);
+            var file = Mp3Encoding.file(options, packets, length);
+            var decoded = decodeMp4(file);
+            assertEquals((long) length * channels, decoded.length);
+            assertEquals(length / 3, peak(decoded, channels), 1);
+            if (Oracle.find(Oracle.Tool.FFMPEG).isPresent()) {
+                var path = save("lame-" + rate + "-" + channels, file);
+                Oracle.assertDecodesCleanly(path);
+                var reference = Oracle.decodeAudio(path);
+                assertEquals((long) length * channels, reference.length, "ffmpeg keeps exactly the input samples");
+                assertEquals(length / 3, peak(reference, channels), 1);
+            }
+        }
+
+        private static int peak(float[] interleaved, int channels) {
+            var peak = 0;
+            for (var i = 0; i < interleaved.length / channels; i++) {
+                if (Math.abs(interleaved[channels * i]) > Math.abs(interleaved[channels * peak])) {
+                    peak = i;
+                }
+            }
+            return peak;
         }
 
         @Test
