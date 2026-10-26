@@ -10,7 +10,9 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.TreeMap;
 
 /**
@@ -82,6 +84,16 @@ public final class Codestream {
     static final int COM = 0xFF64;
 
     /**
+     * The tile-part lengths marker.
+     */
+    static final int TLM = 0xFF55;
+
+    /**
+     * The packet length, tile-part header, marker.
+     */
+    static final int PLT = 0xFF58;
+
+    /**
      * The start of tile-part marker.
      */
     static final int SOT = 0xFF90;
@@ -97,6 +109,98 @@ public final class Codestream {
     static final int EOC = 0xFFD9;
 
     /**
+     * The extended capabilities marker ({@code CAP}), whose {@code Pcap} flags the parts of ISO/IEC 15444 a
+     * codestream needs.
+     */
+    static final int CAP = 0xFF50;
+
+    /**
+     * The variable DC offset marker of ISO/IEC 15444-2.
+     */
+    static final int DCO = 0xFF70;
+
+    /**
+     * The visual masking marker of ISO/IEC 15444-2.
+     */
+    static final int VMS = 0xFF71;
+
+    /**
+     * The downsampling factor style marker of ISO/IEC 15444-2.
+     */
+    static final int DFS = 0xFF72;
+
+    /**
+     * The arbitrary decomposition style marker of ISO/IEC 15444-2.
+     */
+    static final int ADS = 0xFF73;
+
+    /**
+     * The multiple component transformation definition marker of ISO/IEC 15444-2.
+     */
+    static final int MCT = 0xFF74;
+
+    /**
+     * The multiple component collection marker of ISO/IEC 15444-2.
+     */
+    static final int MCC = 0xFF75;
+
+    /**
+     * The non-linearity point transformation marker of ISO/IEC 15444-2.
+     */
+    static final int NLT = 0xFF76;
+
+    /**
+     * The multiple component transformation ordering marker of ISO/IEC 15444-2.
+     */
+    static final int MCO = 0xFF77;
+
+    /**
+     * The component bit depth marker of ISO/IEC 15444-2.
+     */
+    static final int CBD = 0xFF78;
+
+    /**
+     * The arbitrary transformation kernel marker of ISO/IEC 15444-2.
+     */
+    static final int ATK = 0xFF79;
+
+    /**
+     * The quantization default, precinct marker of ISO/IEC 15444-2.
+     */
+    static final int QPD = 0xFF5A;
+
+    /**
+     * The quantization precinct component marker of ISO/IEC 15444-2.
+     */
+    static final int QPC = 0xFF5B;
+
+    /**
+     * The {@code Rsiz} flag of a codestream using the extensions of ISO/IEC 15444-2.
+     */
+    static final int RSIZ_PART2 = 0x8000;
+
+    /**
+     * The {@code Rsiz} flag of ISO/IEC 15444-2 single sample overlap transformations.
+     */
+    static final int RSIZ_SSO = 0x0010;
+
+    /**
+     * The {@code Rsiz} flag of ISO/IEC 15444-2 arbitrarily shaped regions of interest.
+     */
+    static final int RSIZ_ROI = 0x0400;
+
+    /**
+     * The {@code Pcap} flag of ISO/IEC 15444-15 (HTJ2K): bit 15, counted from the most significant bit as 1.
+     */
+    static final int PCAP_PART15 = 1 << (32 - 15);
+
+    /**
+     * The {@code Ccap15} bits that, both set, declare that high-throughput and legacy code-blocks may share a
+     * tile-component (ISO/IEC 15444-15 A.3.2).
+     */
+    static final int CCAP15_MIXED = 0xC000;
+
+    /**
      * The largest number of components a codestream may declare.
      */
     private static final int MAX_COMPONENTS = 16384;
@@ -107,9 +211,9 @@ public final class Codestream {
     private static final int MAX_TILES = 65535;
 
     /**
-     * The largest precision supported, in bits.
+     * The largest precision a component may declare, in bits.
      */
-    private static final int MAX_PRECISION = 31;
+    static final int MAX_PRECISION = 38;
 
     /**
      * The largest number of progressions of one header.
@@ -207,6 +311,33 @@ public final class Codestream {
     private TreeMap<Integer, byte[]> ppm;
 
     /**
+     * The {@code Ccap15} field of the {@code CAP} segment, or {@code -1} when the main header declares no
+     * ISO/IEC 15444-15 capabilities.
+     */
+    private int htCapabilities = -1;
+
+    /**
+     * The {@code Rsiz} capabilities.
+     */
+    private int capabilities;
+
+    /**
+     * The precision of each reconstructed image component the {@code CBD} segment declares, or {@code null} without
+     * one.
+     */
+    private int[] transformedPrecisions;
+
+    /**
+     * Whether each reconstructed image component the {@code CBD} segment declares is signed.
+     */
+    private boolean[] transformedSigned;
+
+    /**
+     * The geometry of the decoded image components, resolved after the main header.
+     */
+    private OutputComponents outputs;
+
+    /**
      * Constructs a parser over a codestream.
      *
      * @param data the codestream bytes
@@ -283,6 +414,7 @@ public final class Codestream {
         }
         tiles = new TileData[tilesWide * tilesHigh];
         readTileParts(position, end);
+        outputs = resolveOutputs();
     }
 
     /**
@@ -427,6 +559,11 @@ public final class Codestream {
         if (end - position < 36 || (end - position - 36) % 3 != 0) {
             throw new MediaException.Malformed("invalid JPEG 2000 SIZ segment length");
         }
+        capabilities = u16(position);
+        if ((capabilities & RSIZ_PART2) != 0 && (capabilities & RSIZ_SSO) != 0) {
+            // TODO: decode the single sample overlap transformations of ISO/IEC 15444-2 annex I
+            throw new MediaException.Unsupported("JPEG 2000", "single sample overlap transformations");
+        }
         x1 = u32(position + 2);
         y1 = u32(position + 6);
         x0 = u32(position + 10);
@@ -449,8 +586,8 @@ public final class Codestream {
         if (tileX0 > x0 || tileY0 > y0 || tileX0 + tileWidth <= x0 || tileY0 + tileHeight <= y0) {
             throw new MediaException.Malformed("invalid JPEG 2000 tile offset");
         }
-        if (x1 > Integer.MAX_VALUE || y1 > Integer.MAX_VALUE) {
-            throw new MediaException.Unsupported("JPEG 2000", "reference grid coordinates above 2^31");
+        if (x1 - x0 > Integer.MAX_VALUE || y1 - y0 > Integer.MAX_VALUE) {
+            throw new MediaException.LimitExceeded("JPEG 2000 image of " + (x1 - x0) + "x" + (y1 - y0) + " samples");
         }
         var wide = Math.ceilDiv(x1 - tileX0, tileWidth);
         var high = Math.ceilDiv(y1 - tileY0, tileHeight);
@@ -473,11 +610,8 @@ public final class Codestream {
             if (subsamplingX[i] == 0 || subsamplingY[i] == 0) {
                 throw new MediaException.Malformed("invalid JPEG 2000 component subsampling");
             }
-            if (precisions[i] > 38) {
-                throw new MediaException.Malformed("invalid JPEG 2000 precision " + precisions[i]);
-            }
             if (precisions[i] > MAX_PRECISION) {
-                throw new MediaException.Unsupported("JPEG 2000", precisions[i] + "-bit samples");
+                throw new MediaException.Malformed("invalid JPEG 2000 precision " + precisions[i]);
             }
         }
     }
@@ -499,9 +633,7 @@ public final class Codestream {
                     throw new MediaException.Malformed("truncated JPEG 2000 COD segment");
                 }
                 var flags = data[position] & 0xFF;
-                if ((flags & ~0x07) != 0) {
-                    throw new MediaException.Malformed("invalid JPEG 2000 coding style " + flags);
-                }
+                checkCodingFlags(flags);
                 var progression = data[position + 1] & 0xFF;
                 if (progression > ProgressionChange.CPRL) {
                     throw new MediaException.Malformed("invalid JPEG 2000 progression order " + progression);
@@ -511,14 +643,10 @@ public final class Codestream {
                     throw new MediaException.Malformed("invalid JPEG 2000 layer count 0");
                 }
                 var transform = data[position + 4] & 0xFF;
-                if (transform > 1) {
-                    if (transform == 2) {
-                        // TODO: decode the multiple component transforms of ISO/IEC 15444-2 (MCT, MCC, MCO segments)
-                        throw new MediaException.Unsupported("JPEG 2000", "Part 2 multiple component transforms");
-                    }
+                if (transform > 1 && transform != 2 && transform != 4 && transform != 6) {
                     throw new MediaException.Malformed("invalid JPEG 2000 component transform " + transform);
                 }
-                var coding = ComponentCoding.parse(data, position + 5, end, (flags & 1) != 0);
+                var coding = ComponentCoding.parse(data, position + 5, end, (flags & 1) != 0, extended());
                 scope.codingFlags = flags;
                 scope.progression = progression;
                 scope.layers = layers;
@@ -531,8 +659,9 @@ public final class Codestream {
                 }
                 var component = component(position, componentBytes);
                 var flags = data[position + componentBytes] & 0xFF;
+                checkCodingFlags(flags);
                 scope.componentCodings[component] = ComponentCoding.parse(data, position + componentBytes + 1, end,
-                        (flags & 1) != 0);
+                        (flags & 1) != 0, extended());
             }
             case QCD -> scope.quantization = Quantization.parse(data, position, end);
             case QCC -> {
@@ -542,17 +671,7 @@ public final class Codestream {
                 var component = component(position, componentBytes);
                 scope.componentQuantizations[component] = Quantization.parse(data, position + componentBytes, end);
             }
-            case RGN -> {
-                if (end - position < componentBytes + 2) {
-                    throw new MediaException.Malformed("truncated JPEG 2000 RGN segment");
-                }
-                var component = component(position, componentBytes);
-                var style = data[position + componentBytes] & 0xFF;
-                if (style != 0) {
-                    throw new MediaException.Unsupported("JPEG 2000", "region of interest style " + style);
-                }
-                scope.roiShifts[component] = data[position + componentBytes + 1] & 0xFF;
-            }
+            case RGN -> readRgn(position, end, scope, componentBytes);
             case POC -> readPoc(position, end, scope, componentBytes);
             case PPM -> {
                 if (!mainHeader) {
@@ -569,10 +688,321 @@ public final class Codestream {
                     throw new MediaException.Malformed("duplicate JPEG 2000 PPM segment " + index);
                 }
             }
+            case CAP -> {
+                if (mainHeader) {
+                    readCap(position, end);
+                }
+            }
+            case DCO -> scope.dcOffsets = readDco(position, end);
+            case NLT -> {
+                var parsed = NonLinearity.parse(data, position, end);
+                if (parsed.component() == 65535) {
+                    scope.defaultNonLinearity = parsed.transformation();
+                } else if (parsed.component() < MAX_COMPONENTS) {
+                    scope.nonLinearities.put(parsed.component(), parsed.transformation());
+                } else {
+                    throw new MediaException.Malformed("invalid JPEG 2000 NLT component " + parsed.component());
+                }
+            }
+            case MCT -> scope.componentTransforms.addArray(data, position, end);
+            case MCC -> scope.componentTransforms.addCollections(data, position, end);
+            case MCO -> {
+                if (end - position < 1 || end - position != 1 + (data[position] & 0xFF)) {
+                    throw new MediaException.Malformed("invalid JPEG 2000 MCO segment");
+                }
+                var stages = new int[data[position] & 0xFF];
+                for (var i = 0; i < stages.length; i++) {
+                    stages[i] = data[position + 1 + i] & 0xFF;
+                }
+                scope.stages = stages;
+            }
+            case CBD -> {
+                if (mainHeader) {
+                    readCbd(position, end);
+                }
+            }
+            case ATK -> {
+                var parsed = LiftingKernel.parse(data, position, end);
+                scope.kernels.put(parsed.index(), parsed.kernel());
+            }
+            case ADS -> readAds(position, end, scope);
+            case DFS -> {
+                if (!mainHeader) {
+                    throw new MediaException.Malformed("JPEG 2000 DFS segment in a tile-part header");
+                }
+                readDfs(position, end, scope);
+            }
+            case VMS ->
+                // TODO: apply the visual masking of ISO/IEC 15444-2 annex E (E.3) between dequantization and the
+                //  inverse wavelet transformation
+                    throw new MediaException.Unsupported("JPEG 2000", "visual masking (VMS segments)");
+            case QPD, QPC ->
+                // TODO: dequantize with the precinct-dependent quantization of ISO/IEC 15444-2 (QPD and QPC)
+                    throw new MediaException.Unsupported("JPEG 2000", "precinct-dependent quantization");
             default -> {
-                // COM, TLM, PLM, PLT, CRG, CAP, CPF and the Part 2 segments carry nothing the decoder needs
+                // COM, TLM, PLM, PLT, CRG, CPF and RLT carry nothing the decoder needs
             }
         }
+    }
+
+    /**
+     * Returns whether the codestream declares the extensions of ISO/IEC 15444-2 in its {@code Rsiz} field.
+     *
+     * @return whether it does
+     */
+    boolean extended() {
+        return (capabilities & RSIZ_PART2) != 0;
+    }
+
+    /**
+     * Checks the {@code Scod} or {@code Scoc} flags of a coding style segment.
+     *
+     * @param flags the {@code Scod} or {@code Scoc} field
+     * @throws MediaException.Malformed if a reserved flag is set
+     * @throws MediaException.Unsupported if the flags select code-block anchor points or block coder extensions
+     */
+    private void checkCodingFlags(int flags) {
+        if ((flags & ~(extended() ? 0x3F : 0x07)) != 0) {
+            throw new MediaException.Malformed("invalid JPEG 2000 coding style " + flags);
+        }
+        if ((flags & 0x18) != 0) {
+            // TODO: decode the code-block anchor points of ISO/IEC 15444-2 (Scod bits 3 and 4)
+            throw new MediaException.Unsupported("JPEG 2000", "code-block anchor points");
+        }
+        if ((flags & 0x20) != 0) {
+            // TODO: decode the block coder extensions of ISO/IEC 15444-2 annex P (SXcod)
+            throw new MediaException.Unsupported("JPEG 2000", "block coder extensions");
+        }
+    }
+
+    /**
+     * Reads an {@code RGN} segment: the maximum shift style of ISO/IEC 15444-1, or the arbitrary rectangle and
+     * ellipse styles of ISO/IEC 15444-2 A.2.5, whose component field is 16 bits wide.
+     *
+     * @param position the index of its first field ({@code Crgn})
+     * @param end the end of the segment
+     * @param scope the scope receiving the region
+     * @param componentBytes the size of a component index in an {@code RGN} segment of ISO/IEC 15444-1, 1 or 2
+     */
+    private void readRgn(int position, int end, HeaderScope scope, int componentBytes) {
+        var arbitrary = (capabilities & (RSIZ_PART2 | RSIZ_ROI)) == (RSIZ_PART2 | RSIZ_ROI);
+        var indexBytes = arbitrary ? 2 : componentBytes;
+        if (end - position < indexBytes + 2) {
+            throw new MediaException.Malformed("truncated JPEG 2000 RGN segment");
+        }
+        var component = indexBytes == 1 ? data[position] & 0xFF : u16(position);
+        var all = arbitrary && component == 65535;
+        if (!all && component >= precisions.length) {
+            throw new MediaException.Malformed("invalid JPEG 2000 component index " + component);
+        }
+        var style = data[position + indexBytes] & 0xFF;
+        var shift = data[position + indexBytes + 1] & 0xFF;
+        switch (style) {
+            case 0 -> {
+                if (all) {
+                    scope.defaultRoiShift = shift;
+                } else {
+                    scope.roiShifts[component] = shift;
+                }
+            }
+            case 1, 2 -> {
+                if (!arbitrary) {
+                    throw new MediaException.Malformed("JPEG 2000 RGN style " + style + " without the arbitrary "
+                            + "region of interest capability");
+                }
+                if (end - position < indexBytes + 2 + 16) {
+                    throw new MediaException.Malformed("truncated JPEG 2000 RGN segment");
+                }
+                var at = position + indexBytes + 2;
+                var region = new HeaderScope.RoiRegion(style == 2, shift, u32(at), u32(at + 4), u32(at + 8),
+                        u32(at + 12));
+                if (all) {
+                    scope.defaultRegions.add(region);
+                } else {
+                    scope.componentRegions.get(component).add(region);
+                }
+            }
+            default -> throw new MediaException.Malformed("invalid JPEG 2000 region of interest style " + style);
+        }
+    }
+
+    /**
+     * Reads a {@code DCO} segment (ISO/IEC 15444-2 A.3.1).
+     *
+     * @param position the index of its {@code Sdco} field
+     * @param end the end of the segment
+     * @return the offset of each component
+     * @throws MediaException.Malformed if the segment is truncated or its type is reserved
+     */
+    private double[] readDco(int position, int end) {
+        if (end - position < 1) {
+            throw new MediaException.Malformed("truncated JPEG 2000 DCO segment");
+        }
+        var type = data[position] & 0xFF;
+        if (type > 3) {
+            throw new MediaException.Malformed("invalid JPEG 2000 DCO offset type " + type);
+        }
+        var size = 1 << type;
+        var components = precisions.length;
+        if ((long) end - position - 1 < (long) size * components) {
+            throw new MediaException.Malformed("truncated JPEG 2000 DCO segment");
+        }
+        var offsets = new double[components];
+        for (var c = 0; c < components; c++) {
+            var at = position + 1 + size * c;
+            offsets[c] = switch (type) {
+                case 0 -> data[at] & 0xFF;
+                case 1 -> (short) u16(at);
+                case 2 -> Float.intBitsToFloat((int) u32(at));
+                default -> Double.longBitsToDouble(Part2Values.u64(data, at));
+            };
+            if (!Double.isFinite(offsets[c])) {
+                throw new MediaException.Malformed("invalid JPEG 2000 DC offset " + offsets[c]);
+            }
+        }
+        return offsets;
+    }
+
+    /**
+     * Reads a {@code CBD} segment (ISO/IEC 15444-2 A.3.6).
+     *
+     * @param position the index of its {@code Ncbd} field
+     * @param end the end of the segment
+     * @throws MediaException.Malformed if the segment is truncated or a bit depth is out of range
+     */
+    private void readCbd(int position, int end) {
+        if (end - position < 3) {
+            throw new MediaException.Malformed("truncated JPEG 2000 CBD segment");
+        }
+        var field = u16(position);
+        var count = field & 0x7FFF;
+        var shared = (field & 0x8000) != 0;
+        if (count == 0 || count > MAX_COMPONENTS || end - position < 2 + (shared ? 1 : count)) {
+            throw new MediaException.Malformed("invalid JPEG 2000 CBD segment");
+        }
+        transformedPrecisions = new int[count];
+        transformedSigned = new boolean[count];
+        for (var i = 0; i < count; i++) {
+            var value = data[position + 2 + (shared ? 0 : i)] & 0xFF;
+            transformedPrecisions[i] = (value & 0x7F) + 1;
+            transformedSigned[i] = (value & 0x80) != 0;
+            if (transformedPrecisions[i] > MAX_PRECISION) {
+                throw new MediaException.Malformed("invalid JPEG 2000 CBD bit depth " + transformedPrecisions[i]);
+            }
+        }
+    }
+
+    /**
+     * Reads an {@code ADS} segment (ISO/IEC 15444-2 A.3.4).
+     *
+     * @param position the index of its {@code Sads} field
+     * @param end the end of the segment
+     * @param scope the scope receiving the decomposition style
+     * @throws MediaException.Malformed if the segment is truncated or its index is 0
+     */
+    private void readAds(int position, int end, HeaderScope scope) {
+        if (end - position < 3) {
+            throw new MediaException.Malformed("truncated JPEG 2000 ADS segment");
+        }
+        var index = data[position] & 0xFF;
+        var levelCount = data[position + 1] & 0xFF;
+        var at = position + 2;
+        var levels = elements(at, end, levelCount);
+        at += (levelCount + 3) / 4;
+        if (end - at < 1) {
+            throw new MediaException.Malformed("truncated JPEG 2000 ADS segment");
+        }
+        var structureCount = data[at] & 0xFF;
+        var structure = elements(at + 1, end, structureCount);
+        if (index == 0 || index > 127) {
+            throw new MediaException.Malformed("invalid JPEG 2000 ADS index " + index);
+        }
+        scope.decompositionStyles.put(index, new HeaderScope.DecompositionStyle(levels, structure));
+    }
+
+    /**
+     * Reads a {@code DFS} segment (ISO/IEC 15444-2 A.3.3).
+     *
+     * <p>Equation A-2 gives {@code Sdfs} 8 bits, as this reader takes it, while Table A.25 gives it 16 bits; a
+     * segment whose first byte is 0, an invalid 8-bit index, and whose length is that of a 16-bit index is read
+     * with a 16-bit index.
+     *
+     * @param position the index of its {@code Sdfs} field
+     * @param end the end of the segment
+     * @param scope the scope receiving the resolution formation
+     * @throws MediaException.Malformed if the segment is truncated or its index is 0
+     */
+    private void readDfs(int position, int end, HeaderScope scope) {
+        if (end - position < 2) {
+            throw new MediaException.Malformed("truncated JPEG 2000 DFS segment");
+        }
+        var wideIndex = data[position] == 0 && end - position >= 3
+                && end - position == 3 + ((data[position + 2] & 0xFF) + 3) / 4;
+        var index = wideIndex ? u16(position) : data[position] & 0xFF;
+        var at = position + (wideIndex ? 2 : 1);
+        var count = data[at] & 0xFF;
+        if (index == 0 || index > 127 || count > ComponentCoding.MAX_RESOLUTIONS - 1) {
+            throw new MediaException.Malformed("invalid JPEG 2000 DFS segment " + index);
+        }
+        var splits = elements(at + 1, end, count);
+        for (var split : splits) {
+            if (split == 0) {
+                throw new MediaException.Malformed("invalid JPEG 2000 DFS element 0");
+            }
+        }
+        scope.downsamplingStyles.put(index, splits);
+    }
+
+    /**
+     * Reads a string of two-bit elements, packed most significant first.
+     *
+     * @param position the index of the first byte
+     * @param end the end of the segment
+     * @param count the number of elements
+     * @return the elements, from 0 to 3
+     * @throws MediaException.Malformed if the segment ends first
+     */
+    private int[] elements(int position, int end, int count) {
+        if (end - position < (count + 3) / 4) {
+            throw new MediaException.Malformed("truncated JPEG 2000 decomposition style");
+        }
+        var result = new int[count];
+        for (var i = 0; i < count; i++) {
+            result[i] = (data[position + i / 4] >> (6 - 2 * (i % 4))) & 3;
+        }
+        return result;
+    }
+
+    /**
+     * Reads a {@code CAP} segment, keeping its {@code Ccap15} field.
+     *
+     * @param position the index of its first field ({@code Pcap})
+     * @param end the end of the segment
+     * @throws MediaException.Malformed if the segment is shorter than its {@code Pcap} declares
+     */
+    private void readCap(int position, int end) {
+        if (end - position < 4) {
+            throw new MediaException.Malformed("truncated JPEG 2000 CAP segment");
+        }
+        var pcap = (int) u32(position);
+        if (end - position < 4 + 2 * Integer.bitCount(pcap)) {
+            throw new MediaException.Malformed("truncated JPEG 2000 CAP segment");
+        }
+        if ((pcap & PCAP_PART15) != 0) {
+            var index = Integer.bitCount(pcap >>> (32 - 14));
+            htCapabilities = u16(position + 4 + 2 * index);
+        }
+    }
+
+    /**
+     * Returns whether a tile-component whose code-block style allows both block coders may mix them: the
+     * {@code CAP} segment declares the MIXED set of ISO/IEC 15444-15, or there is no {@code Ccap15} field to exclude
+     * it.
+     *
+     * @return whether code-blocks may be classified individually
+     */
+    boolean mixedCoders() {
+        return htCapabilities < 0 || (htCapabilities & CCAP15_MIXED) == CCAP15_MIXED;
     }
 
     /**
@@ -703,8 +1133,8 @@ public final class Codestream {
      *
      * @return {@code XOsiz}
      */
-    public int x0() {
-        return (int) x0;
+    public long x0() {
+        return x0;
     }
 
     /**
@@ -712,8 +1142,8 @@ public final class Codestream {
      *
      * @return {@code YOsiz}
      */
-    public int y0() {
-        return (int) y0;
+    public long y0() {
+        return y0;
     }
 
     /**
@@ -721,8 +1151,8 @@ public final class Codestream {
      *
      * @return {@code Xsiz}
      */
-    public int x1() {
-        return (int) x1;
+    public long x1() {
+        return x1;
     }
 
     /**
@@ -730,8 +1160,8 @@ public final class Codestream {
      *
      * @return {@code Ysiz}
      */
-    public int y1() {
-        return (int) y1;
+    public long y1() {
+        return y1;
     }
 
     /**
@@ -758,14 +1188,13 @@ public final class Codestream {
      * @param tile the tile index
      * @return the left, top, right and bottom edges
      */
-    public int[] tileBounds(int tile) {
+    public long[] tileBounds(int tile) {
         var column = tile % tilesWide;
         var row = tile / tilesWide;
         var left = tileX0 + column * tileWidth;
         var top = tileY0 + row * tileHeight;
-        return new int[]{
-                (int) Math.max(left, x0), (int) Math.max(top, y0),
-                (int) Math.min(left + tileWidth, x1), (int) Math.min(top + tileHeight, y1)
+        return new long[]{
+                Math.max(left, x0), Math.max(top, y0), Math.min(left + tileWidth, x1), Math.min(top + tileHeight, y1)
         };
     }
 
@@ -856,6 +1285,9 @@ public final class Codestream {
         var codings = new ComponentCoding[components];
         var quantizations = new Quantization[components];
         var roiShifts = new int[components];
+        var kernels = new LiftingKernel[components];
+        var decompositions = new Decomposition[components];
+        var extended = false;
         for (var c = 0; c < components; c++) {
             ComponentCoding coding = null;
             Quantization quantization = null;
@@ -864,21 +1296,51 @@ public final class Codestream {
                 coding = scope.componentCodings[c] != null ? scope.componentCodings[c] : scope.coding;
                 quantization = scope.componentQuantizations[c] != null ? scope.componentQuantizations[c]
                         : scope.quantization;
-                roi = scope.roiShifts[c];
+                roi = scope.roiShifts[c] >= 0 ? scope.roiShifts[c] : scope.defaultRoiShift;
             }
+            var mainCoding = main.componentCodings[c] != null ? main.componentCodings[c] : main.coding;
+            int[] resolutionSplits = null;
+            if (mainCoding.decompositionStyle() != 0) {
+                resolutionSplits = main.downsamplingStyles.get(mainCoding.decompositionStyle());
+                if (resolutionSplits == null) {
+                    throw new MediaException.Malformed("missing JPEG 2000 DFS segment "
+                            + mainCoding.decompositionStyle());
+                }
+                mainCoding = mainCoding.withLevels(resolutionSplits.length);
+            }
+            Decomposition decomposition = null;
             if (coding == null) {
-                coding = main.componentCodings[c] != null ? main.componentCodings[c] : main.coding;
+                coding = mainCoding;
+                if (resolutionSplits != null) {
+                    decomposition = new Decomposition(resolutionSplits, null, null);
+                }
+            } else if (coding.decompositionStyle() != 0) {
+                var index = coding.decompositionStyle();
+                var style = scope.decompositionStyles.get(index);
+                if (style == null) {
+                    style = main.decompositionStyles.get(index);
+                }
+                if (style == null) {
+                    throw new MediaException.Malformed("missing JPEG 2000 ADS segment " + index);
+                }
+                coding = coding.withLevels(mainCoding.resolutions() - 1);
+                decomposition = new Decomposition(resolutionSplits, style.levels(), style.structure());
             }
             if (quantization == null) {
                 quantization = main.componentQuantizations[c] != null ? main.componentQuantizations[c]
                         : main.quantization;
             }
             if (roi < 0) {
-                roi = Math.max(main.roiShifts[c], 0);
+                roi = main.roiShifts[c] >= 0 ? main.roiShifts[c] : Math.max(main.defaultRoiShift, 0);
+            }
+            if (coding.transform() > 1) {
+                kernels[c] = kernel(scope, coding.transform());
             }
             codings[c] = coding;
             quantizations[c] = quantization;
             roiShifts[c] = roi;
+            decompositions[c] = decomposition;
+            extended |= kernels[c] != null || decomposition != null;
         }
         var progressions = new ArrayList<ProgressionChange>();
         if (scope != null && !scope.progressions.isEmpty()) {
@@ -886,7 +1348,275 @@ public final class Codestream {
         } else {
             progressions.addAll(main.progressions);
         }
+        var dcOffsets = scope != null && scope.dcOffsets != null ? scope.dcOffsets : main.dcOffsets;
+        List<ComponentTransforms.Collection[]> stages = List.of();
+        Map<Integer, double[]> arrays = Map.of();
+        Map<Integer, LiftingKernel> allKernels = Map.of();
+        if ((transform & 6) != 0) {
+            var order = scope != null && scope.stages != null ? scope.stages : main.stages;
+            if (order != null && order.length > 0) {
+                var collections = new HashMap<>(main.componentTransforms.collections());
+                arrays = new HashMap<>(main.componentTransforms.arrays());
+                allKernels = new HashMap<>(main.kernels);
+                if (scope != null) {
+                    collections.putAll(scope.componentTransforms.collections());
+                    arrays.putAll(scope.componentTransforms.arrays());
+                    allKernels.putAll(scope.kernels);
+                }
+                var resolved = new ArrayList<ComponentTransforms.Collection[]>();
+                for (var index : order) {
+                    var stage = collections.get(index);
+                    if (stage == null) {
+                        throw new MediaException.Malformed("missing JPEG 2000 MCC segment " + index);
+                    }
+                    resolved.add(stage);
+                }
+                stages = List.copyOf(resolved);
+            }
+        }
+        var outputCount = outputs == null ? precisions.length : outputs.count();
+        var nonLinearities = new NonLinearity[outputCount];
+        var anyNonLinearity = false;
+        for (var j = 0; j < outputCount; j++) {
+            NonLinearity nonLinearity = null;
+            if (scope != null) {
+                nonLinearity = scope.nonLinearities.get(j);
+                if (nonLinearity == null) {
+                    nonLinearity = scope.defaultNonLinearity;
+                }
+            }
+            if (nonLinearity == null) {
+                nonLinearity = main.nonLinearities.get(j);
+            }
+            if (nonLinearity == null) {
+                nonLinearity = main.defaultNonLinearity;
+            }
+            if (nonLinearity != null && nonLinearity.type() != NonLinearity.NONE) {
+                nonLinearities[j] = nonLinearity;
+                anyNonLinearity = true;
+            }
+        }
+        var regions = new ArrayList<List<HeaderScope.RoiRegion>>(components);
+        var anyRegion = false;
+        for (var c = 0; c < components; c++) {
+            List<HeaderScope.RoiRegion> list;
+            if (scope != null && !scope.componentRegions.get(c).isEmpty()) {
+                list = scope.componentRegions.get(c);
+            } else if (scope != null && !scope.defaultRegions.isEmpty()) {
+                list = scope.defaultRegions;
+            } else if (!main.componentRegions.get(c).isEmpty()) {
+                list = main.componentRegions.get(c);
+            } else {
+                list = main.defaultRegions;
+            }
+            regions.add(List.copyOf(list));
+            anyRegion |= !list.isEmpty();
+        }
+        TileParameters.Extensions extensions = null;
+        if (extended || dcOffsets != null || !stages.isEmpty() || anyNonLinearity || anyRegion
+                || transformedPrecisions != null || maxPrecision() > 31) {
+            extensions = new TileParameters.Extensions(kernels, decompositions, dcOffsets, stages, arrays,
+                    allKernels, nonLinearities, List.copyOf(regions));
+        }
         return new TileParameters(flags, progression, layers, transform, codings, quantizations, roiShifts,
-                List.copyOf(progressions));
+                List.copyOf(progressions), extensions);
+    }
+
+    /**
+     * Returns the {@code ATK} kernel of an index, from a tile's headers or else the main header.
+     *
+     * @param scope the tile's headers, or {@code null}
+     * @param index the kernel index
+     * @return the kernel
+     * @throws MediaException.Malformed if no {@code ATK} segment defines the index
+     */
+    private LiftingKernel kernel(HeaderScope scope, int index) {
+        var kernel = scope != null ? scope.kernels.get(index) : null;
+        if (kernel == null) {
+            kernel = main.kernels.get(index);
+        }
+        if (kernel == null) {
+            throw new MediaException.Malformed("missing JPEG 2000 ATK segment " + index);
+        }
+        return kernel;
+    }
+
+    /**
+     * Returns how many times a reduction halves each dimension of a decoded image component: once per discarded
+     * decomposition level for the dyadic decomposition, and once per level whose resolution formation splits that
+     * direction for the resolution splits of a {@code DFS} segment (ISO/IEC 15444-2 equation F-1).
+     *
+     * @param output the decoded image component; one beyond the codestream components takes the first component's
+     * decomposition
+     * @param reduction the number of resolution levels discarded
+     * @return the horizontal and vertical number of halvings
+     * @throws MediaException.Malformed if the component's coding style names a missing {@code DFS} segment
+     */
+    int[] reductionDepths(int output, int reduction) {
+        var component = output < precisions.length ? output : 0;
+        var coding = main.componentCodings[component] != null ? main.componentCodings[component] : main.coding;
+        if (coding.decompositionStyle() == 0) {
+            return new int[]{reduction, reduction};
+        }
+        var splits = main.downsamplingStyles.get(coding.decompositionStyle());
+        if (splits == null) {
+            throw new MediaException.Malformed("missing JPEG 2000 DFS segment " + coding.decompositionStyle());
+        }
+        var depthX = 0;
+        var depthY = 0;
+        for (var level = 0; level < reduction && splits.length > 0; level++) {
+            var split = splits[Math.min(level, splits.length - 1)];
+            depthX += split == Decomposition.VERTICAL ? 0 : 1;
+            depthY += split == Decomposition.HORIZONTAL ? 0 : 1;
+        }
+        return new int[]{depthX, depthY};
+    }
+
+    /**
+     * Returns the largest precision of a codestream component.
+     *
+     * @return the largest precision in bits
+     */
+    private int maxPrecision() {
+        var max = 0;
+        for (var precision : precisions) {
+            max = Math.max(max, precision);
+        }
+        return max;
+    }
+
+    /**
+     * Describes the decoded image components: their number, precision, signedness and subsampling, before and
+     * after the non-linear transformations of ISO/IEC 15444-2 annex K.
+     *
+     * @param count the number of decoded image components
+     * @param reconstructedPrecisions the precision of each reconstructed image component, before any non-linear
+     * transformation
+     * @param reconstructedSigned whether each reconstructed image component is signed
+     * @param precisions the precision of each decoded image component
+     * @param signed whether each decoded image component is signed
+     * @param subsamplingX the horizontal subsampling of each decoded image component
+     * @param subsamplingY the vertical subsampling of each decoded image component
+     */
+    record OutputComponents(int count, int[] reconstructedPrecisions, boolean[] reconstructedSigned,
+                            int[] precisions, boolean[] signed, int[] subsamplingX, int[] subsamplingY) {
+    }
+
+    /**
+     * Resolves the decoded image components from the {@code CBD} segment, the main header's non-linear
+     * transformations, and the multiple component transformation stages of the main header (or else of the first
+     * tile that has some).
+     *
+     * @return the decoded image components
+     * @throws MediaException.Malformed if a component collection gathers components of different subsampling
+     */
+    private OutputComponents resolveOutputs() {
+        var count = transformedPrecisions != null ? transformedPrecisions.length : precisions.length;
+        var reconstructedPrecisions = new int[count];
+        var reconstructedSigned = new boolean[count];
+        for (var j = 0; j < count; j++) {
+            if (transformedPrecisions != null) {
+                reconstructedPrecisions[j] = transformedPrecisions[j];
+                reconstructedSigned[j] = transformedSigned[j];
+            } else {
+                reconstructedPrecisions[j] = precisions[j];
+                reconstructedSigned[j] = signed[j];
+            }
+        }
+        var finalPrecisions = reconstructedPrecisions.clone();
+        var finalSigned = reconstructedSigned.clone();
+        for (var j = 0; j < count; j++) {
+            var nonLinearity = main.nonLinearities.get(j);
+            if (nonLinearity == null) {
+                nonLinearity = main.defaultNonLinearity;
+            }
+            if (nonLinearity != null && nonLinearity.type() != NonLinearity.NONE) {
+                finalPrecisions[j] = nonLinearity.precision();
+                finalSigned[j] = nonLinearity.signed();
+            }
+        }
+        var dx = new int[count];
+        var dy = new int[count];
+        for (var j = 0; j < count; j++) {
+            var source = j < precisions.length ? j : 0;
+            dx[j] = subsamplingX[source];
+            dy[j] = subsamplingY[source];
+        }
+        int[] order = null;
+        Map<Integer, ComponentTransforms.Collection[]> collections = null;
+        if ((main.transform & 6) != 0 && main.stages != null && main.stages.length > 0) {
+            order = main.stages;
+            collections = main.componentTransforms.collections();
+        } else {
+            for (var tile : tiles) {
+                if (tile != null && tile.scope.stages != null && tile.scope.stages.length > 0) {
+                    var transform = tile.scope.coding != null ? tile.scope.transform : main.transform;
+                    if ((transform & 6) != 0) {
+                        order = tile.scope.stages;
+                        collections = new HashMap<>(main.componentTransforms.collections());
+                        collections.putAll(tile.scope.componentTransforms.collections());
+                        break;
+                    }
+                }
+            }
+        }
+        if (order != null) {
+            var currentX = subsamplingX.clone();
+            var currentY = subsamplingY.clone();
+            for (var k = 0; k < order.length; k++) {
+                var stage = collections.get(order[k]);
+                if (stage == null) {
+                    throw new MediaException.Malformed("missing JPEG 2000 MCC segment " + order[k]);
+                }
+                var size = k + 1 < order.length && collections.get(order[k + 1]) != null
+                        ? ComponentTransforms.inputCount(collections.get(order[k + 1])) : count;
+                var nextX = new int[size];
+                var nextY = new int[size];
+                Arrays.fill(nextX, subsamplingX[0]);
+                Arrays.fill(nextY, subsamplingY[0]);
+                for (var collection : stage) {
+                    var gridX = -1;
+                    var gridY = -1;
+                    for (var input : collection.inputs()) {
+                        if (input < currentX.length) {
+                            if (gridX < 0) {
+                                gridX = currentX[input];
+                                gridY = currentY[input];
+                            } else if (gridX != currentX[input] || gridY != currentY[input]) {
+                                throw new MediaException.Malformed("JPEG 2000 component collection over components "
+                                        + "of different subsampling");
+                            }
+                        }
+                    }
+                    if (gridX < 0) {
+                        gridX = subsamplingX[0];
+                        gridY = subsamplingY[0];
+                    }
+                    for (var output : collection.outputs()) {
+                        if (output < size) {
+                            nextX[output] = gridX;
+                            nextY[output] = gridY;
+                        }
+                    }
+                }
+                currentX = nextX;
+                currentY = nextY;
+            }
+            for (var j = 0; j < count; j++) {
+                dx[j] = j < currentX.length ? currentX[j] : subsamplingX[0];
+                dy[j] = j < currentY.length ? currentY[j] : subsamplingY[0];
+            }
+        }
+        return new OutputComponents(count, reconstructedPrecisions, reconstructedSigned, finalPrecisions, finalSigned,
+                dx, dy);
+    }
+
+    /**
+     * Returns the decoded image components.
+     *
+     * @return the components the decoder produces, after any multiple component and non-linear transformation
+     */
+    OutputComponents outputs() {
+        return outputs;
     }
 }

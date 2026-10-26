@@ -6,8 +6,11 @@ import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.ContentLightLevel;
+import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
+import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifReader;
@@ -19,6 +22,7 @@ import com.github.auties00.smalt.internal.tiff.TiffExif;
 import com.github.auties00.smalt.internal.tiff.TiffHeader;
 import com.github.auties00.smalt.io.MediaSource;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.zip.CRC32;
 
@@ -44,8 +48,13 @@ import java.util.zip.CRC32;
  *       per PNG 3rd edition Table 7) supplies the Exif block and orientation.</li>
  *   <li>{@code cICP}, {@code sRGB}, {@code gAMA} and {@code cHRM} (each the first valid one before
  *       {@code PLTE} and {@code IDAT}) describe the color space with the iCCP profile, as
- *       {@link #colorProfile()} combines them; pixels are returned as stored.</li>
- *   <li>{@code sBIT}, {@code bKGD} and the textual chunks are ignored.</li>
+ *       {@link #colorProfile()} combines them; pixels are returned as stored. The {@code mDCV}
+ *       and {@code cLLI} chunks (also spelled {@code mDCv} and {@code cLLi}), under the same
+ *       placement rule, add their metadata to a {@code cICP} description.</li>
+ *   <li>{@code pHYs} (the first one before {@code IDAT}) supplies the {@link #density()}; one of another
+ *       length than 9 bytes, with a bad CRC, a zero value, a value above {@code 2^31 - 1} or an unknown unit
+ *       gives none.</li>
+ *   <li>{@code sBIT}, {@code bKGD} and the textual chunks other than the XMP packet are ignored.</li>
  * </ul>
  *
  * <p>Image data is served by {@link #readImageData(byte[], int, int)} from the run of consecutive
@@ -62,6 +71,11 @@ final class PngReader {
      * The largest {@code eXIf} or compressed {@code iCCP} chunk read, in bytes.
      */
     private static final int MAX_METADATA_CHUNK = 32 << 20;
+
+    /**
+     * The keyword of the {@code iTXt} chunk that carries the XMP packet, with its terminator.
+     */
+    private static final byte[] XMP_KEYWORD = "XML:com.adobe.xmp\0".getBytes(StandardCharsets.ISO_8859_1);
 
     /**
      * The mode in which no image data stream is open.
@@ -191,6 +205,11 @@ final class PngReader {
     private byte[] exif;
 
     /**
+     * The XMP packet of the first {@code iTXt} chunk with the XMP keyword, or {@code null}.
+     */
+    private byte[] xmp;
+
+    /**
      * The {@code gAMA} value (the encoding gamma times 100000), or {@code 0} when absent.
      */
     private long gamma;
@@ -213,9 +232,39 @@ final class PngReader {
     private int[] cicp;
 
     /**
+     * The mastering display of a valid {@code mDCV} chunk, or {@code null} when absent.
+     */
+    private MasteringDisplay masteringDisplay;
+
+    /**
+     * The content light level of a valid {@code cLLI} chunk, or {@code null} when absent.
+     */
+    private ContentLightLevel contentLightLevel;
+
+    /**
+     * Whether an {@code mDCV} chunk was read.
+     */
+    private boolean masteringSeen;
+
+    /**
+     * Whether a {@code cLLI} chunk was read.
+     */
+    private boolean lightLevelSeen;
+
+    /**
      * The orientation read from the Exif block.
      */
     private Orientation orientation;
+
+    /**
+     * The density of the {@code pHYs} chunk, or {@code null} when absent or invalid.
+     */
+    private PixelDensity density;
+
+    /**
+     * Whether a {@code pHYs} chunk was read.
+     */
+    private boolean densitySeen;
 
     /**
      * Whether an {@code acTL} chunk was seen.
@@ -335,6 +384,22 @@ final class PngReader {
     }
 
     /**
+     * {@return the XMP packet, the UTF-8 text of the first {@code iTXt} chunk with the keyword
+     * {@code XML:com.adobe.xmp}, or {@code null} when none was read}
+     */
+    byte[] xmp() {
+        return xmp;
+    }
+
+    /**
+     * {@return the density of the {@code pHYs} chunk, in {@link PixelDensity.Unit#DOTS_PER_METER} or as an
+     * aspect ratio, or {@code null} when absent or invalid}
+     */
+    PixelDensity density() {
+        return density;
+    }
+
+    /**
      * Returns the orientation from the Exif block.
      *
      * @return the orientation, {@link Orientation#NORMAL} when absent
@@ -431,7 +496,10 @@ final class PngReader {
                 case PngChunks.TRNS -> readTransparency();
                 case PngChunks.ICCP -> readProfile();
                 case PngChunks.GAMA, PngChunks.CHRM, PngChunks.SRGB, PngChunks.CICP -> readColorChunk();
+                case PngChunks.MDCV, PngChunks.MDCV_DRAFT, PngChunks.CLLI, PngChunks.CLLI_DRAFT -> readHdrChunk();
                 case PngChunks.EXIF -> readExif();
+                case PngChunks.PHYS -> readPhysicalDimensions();
+                case PngChunks.ITXT -> readText();
                 case PngChunks.ACTL -> readAnimationControl();
                 case PngChunks.FCTL -> readDefaultFrameControl();
                 case PngChunks.FDAT -> {
@@ -935,11 +1003,52 @@ final class PngReader {
     }
 
     /**
+     * Reads an {@code mDCV} or {@code cLLI} chunk, keeping the first valid one of each kind that
+     * precedes {@code PLTE}.
+     */
+    private void readHdrChunk() {
+        var mastering = chunkType == PngChunks.MDCV || chunkType == PngChunks.MDCV_DRAFT;
+        if ((mastering ? masteringSeen : lightLevelSeen) || paletteSeen || chunkLength != (mastering ? 24 : 8)) {
+            skipChunk();
+            return;
+        }
+        var data = readChunk(false);
+        if (data == null) {
+            return;
+        }
+        if (mastering) {
+            masteringSeen = true;
+            var points = new Chromaticity[4];
+            for (var i = 0; i < 4; i++) {
+                points[i] = new Chromaticity(ByteArrays.u16be(data, i * 4) / 50000.0,
+                        ByteArrays.u16be(data, i * 4 + 2) / 50000.0);
+            }
+            masteringDisplay = new MasteringDisplay(points[0], points[1], points[2], points[3],
+                    ByteArrays.u32be(data, 16) / 10000.0, ByteArrays.u32be(data, 20) / 10000.0);
+        } else {
+            lightLevelSeen = true;
+            contentLightLevel = new ContentLightLevel(candelas(ByteArrays.u32be(data, 0)),
+                    candelas(ByteArrays.u32be(data, 4)));
+        }
+    }
+
+    /**
+     * Converts a light level in units of 0.0001 candelas per square meter to whole candelas.
+     *
+     * @param value the stored value
+     * @return the level rounded to the nearest candela, saturating at 65535
+     */
+    private static int candelas(long value) {
+        return (int) Math.min(0xFFFF, (value + 5000) / 10000);
+    }
+
+    /**
      * Returns the color space the image declares.
      *
      * <p>The chunks are combined as the PNG specification (third edition) ranks them: a
      * {@code cICP} with RGB code points and supported primaries and transfer comes first, then a
      * valid {@code iCCP} profile, then {@code sRGB}, then {@code gAMA} and {@code cHRM}. A
+     * {@code cICP} description carries the {@code mDCV} and {@code cLLI} metadata. A
      * {@code gAMA} alone uses the BT.709 primaries and a D65 white, a {@code cHRM} alone a gamma of
      * 2.2; a pair within rounding of sRGB ({@code gAMA} {@code 45455 +- 500} and the BT.709
      * primaries within {@code 0.001}) declares sRGB itself, as almost every PNG writer means it.
@@ -951,7 +1060,8 @@ final class PngReader {
         if (cicp != null && cicp[2] == 0) {
             try {
                 var color = new ColorInfo(MatrixCoefficients.IDENTITY, cicp[3] == 1 ? ColorRange.FULL : ColorRange.LIMITED,
-                        ColorPrimaries.of(cicp[0]), TransferCharacteristics.of(cicp[1]));
+                        ColorPrimaries.of(cicp[0]), TransferCharacteristics.of(cicp[1]))
+                        .withMasteringDisplay(masteringDisplay).withContentLightLevel(contentLightLevel);
                 if (ColorPrimaries.of(cicp[0]).code() == cicp[0] && TransferCharacteristics.of(cicp[1]).code() == cicp[1]) {
                     var profile = ColorProfile.of(color);
                     return profile.isSrgb() ? null : profile;
@@ -1041,6 +1151,29 @@ final class PngReader {
     }
 
     /**
+     * Reads {@code pHYs}: two 31-bit pixel counts per unit and the unit, 0 for none and 1 for the meter.
+     */
+    private void readPhysicalDimensions() {
+        if (densitySeen || chunkLength != 9) {
+            densitySeen = true;
+            skipChunk();
+            return;
+        }
+        densitySeen = true;
+        var data = readChunk(false);
+        if (data == null) {
+            return;
+        }
+        var x = ByteArrays.u32be(data, 0);
+        var y = ByteArrays.u32be(data, 4);
+        var unit = data[8] & 0xFF;
+        if (x == 0 || y == 0 || x > Integer.MAX_VALUE || y > Integer.MAX_VALUE || unit > 1) {
+            return;
+        }
+        density = unit == 1 ? PixelDensity.ofDotsPerMeter(x, y) : PixelDensity.ofAspectRatio(x, y);
+    }
+
+    /**
      * Reads {@code eXIf} and extracts the orientation.
      */
     private void readExif() {
@@ -1058,6 +1191,71 @@ final class PngReader {
         if ((little || bigEndian) && ByteArrays.u16(tiff, 2, little) == 42) {
             exif = tiff;
             orientation = ExifReader.orientation(tiff);
+        }
+    }
+
+    /**
+     * Reads an {@code iTXt} chunk and keeps the text of the first one whose keyword is
+     * {@code XML:com.adobe.xmp} as the XMP packet; the text of a compressed chunk is inflated.
+     * A chunk that is corrupt or larger than the metadata bound is skipped.
+     */
+    private void readText() {
+        if (xmp != null || chunkLength > Math.min(MAX_METADATA_CHUNK, limits.maxBytes())) {
+            skipChunk();
+            return;
+        }
+        var data = readChunk(false);
+        if (data == null || data.length < XMP_KEYWORD.length + 2) {
+            return;
+        }
+        for (var i = 0; i < XMP_KEYWORD.length; i++) {
+            if (data[i] != XMP_KEYWORD[i]) {
+                return;
+            }
+        }
+        var at = XMP_KEYWORD.length;
+        var compressed = data[at] == 1;
+        if (data[at] > 1 || data[at + 1] != 0) {
+            return;
+        }
+        at += 2;
+        for (var field = 0; field < 2; field++) {
+            while (at < data.length && data[at] != 0) {
+                at++;
+            }
+            if (at >= data.length) {
+                return;
+            }
+            at++;
+        }
+        var bound = (int) Math.min(MAX_METADATA_CHUNK, limits.maxBytes());
+        xmp = compressed ? Zlib.inflate(data, at, data.length - at, bound) : Arrays.copyOfRange(data, at, data.length);
+    }
+
+    /**
+     * Reads the chunks after the image data of a datastream without animation frames, up to
+     * {@code IEND}, for the metadata a writer placed there; a datastream that ends early or
+     * holds a corrupt chunk there ends the scan.
+     */
+    void readTrailingMetadata() {
+        if (xmp != null || animated()) {
+            return;
+        }
+        try {
+            while (nextChunk() && chunkType != PngChunks.IEND) {
+                if (chunkType == PngChunks.ITXT) {
+                    readText();
+                    if (xmp != null) {
+                        return;
+                    }
+                } else {
+                    skipChunk();
+                }
+            }
+        } catch (MediaException.Io exception) {
+            throw exception;
+        } catch (MediaException exception) {
+            // metadata after the image data is not needed to show the image
         }
     }
 

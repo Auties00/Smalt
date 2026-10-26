@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.adts;
 
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
@@ -29,7 +30,9 @@ import java.util.Objects;
  * and ADTS demuxers produce, of at most 8184 bytes; it becomes one ADTS frame without CRC, with the
  * buffer fullness set to {@code 0x7FF} (variable bitrate). Timestamps are ignored. The output is
  * written strictly in order, so any {@link MediaSink} works, a streaming one included; the sink is
- * written from its position and is never closed by the muxer.
+ * written from its position and is never closed by the muxer. A packet that changes the
+ * {@code AudioSpecificConfig} gets, as every packet after it, the header of the new
+ * configuration.
  *
  * <p>Instances are not thread-safe.
  */
@@ -45,6 +48,11 @@ public final class AdtsMuxer implements Muxer {
      * The header fields the track's configuration implies, written before every frame.
      */
     private AdtsHeader header;
+
+    /**
+     * The configuration {@link #header} comes from.
+     */
+    private byte[] config;
 
     /**
      * The ID3v2 tag written before the first frame; empty without tags.
@@ -100,6 +108,7 @@ public final class AdtsMuxer implements Muxer {
         var config = track.codecConfig()
                 .orElseThrow(() -> new IllegalArgumentException("an ADTS track needs its AudioSpecificConfig"));
         this.header = AdtsHeader.fromAudioSpecificConfig(config);
+        this.config = config;
         this.track = track;
     }
 
@@ -127,8 +136,8 @@ public final class AdtsMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * @throws IllegalArgumentException if the packet belongs to another track or is larger than an
-     * ADTS frame can hold
+     * @throws IllegalArgumentException if the packet belongs to another track, is larger than an
+     * ADTS frame can hold, or changes to a configuration ADTS cannot express
      * @throws IllegalStateException if no track was declared or the muxer is finished
      * @throws com.github.auties00.smalt.MediaException.Io {@inheritDoc}
      */
@@ -143,6 +152,11 @@ public final class AdtsMuxer implements Muxer {
         }
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
+        }
+        var newConfig = ConfigChanges.changed(packet, config);
+        if (newConfig != null) {
+            header = AdtsHeader.fromAudioSpecificConfig(newConfig);
+            config = newConfig;
         }
         var length = AdtsHeader.SIZE + packet.size();
         if (length > AdtsHeader.MAX_FRAME_LENGTH) {
