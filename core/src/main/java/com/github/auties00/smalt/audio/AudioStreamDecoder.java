@@ -3,15 +3,21 @@ package com.github.auties00.smalt.audio;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.process.AudioFifo;
 import com.github.auties00.smalt.audio.process.ChannelMixer;
+import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
 import com.github.auties00.smalt.audio.process.Resampler;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.track.AudioTrack;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.Rational;
 
+import java.lang.reflect.Array;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Objects;
+import java.util.function.Consumer;
 
 /**
  * Turns the packets of one audio track into exactly the samples a player outputs, in a chosen
@@ -22,11 +28,31 @@ import java.util.Objects;
  * {@link #read(float[][], int, int)}. The decoder drops the leading samples the container marks
  * as encoder priming ({@link AudioTrack#skipSamples()}), drops the end padding a container marks
  * by shortening the declared duration of the track's last packet, stops after the track's
- * declared duration, mixes to the requested layout and resamples to the requested rate. Packets
+ * declared duration, mixes to the requested layout and resamples to the requested rate. A packet
+ * flagged {@link PacketFlag#DISCARD} is decoded and its output dropped; the
+ * {@link com.github.auties00.smalt.track.PacketSideData#discardStart() discard start} of a packet
+ * drops the start of its output, and a packet with a
+ * {@link com.github.auties00.smalt.track.PacketSideData#discardEnd() discard end} keeps no more
+ * output than its duration. A packet whose side data carries a
+ * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration}
+ * that differs from the one in use drains the codec and continues with a codec created from the
+ * new configuration; a change of sampling rate or channel layout is converted to the output's,
+ * which stays the one chosen at creation. Packets
  * are decoded one packet late, so the last one is known when it is decoded: the durations of
  * earlier packets can be rounded by a coarse container time base and never cut decoded audio. A
  * packet the codec rejects as corrupt is skipped, as players do; a run of
  * {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row fails.
+ *
+ * <p>The output is 32-bit floats unless {@link AudioStreamDecoderOptions#sampleFormat()} asks for
+ * another {@link SampleFormat}: {@link SampleFormat#INTEGER} outputs the codec's own integer
+ * samples bit for bit ({@link #readIntegers(int[][], int, int)}), and {@link SampleFormat#DOUBLE}
+ * 64-bit floats ({@link #readDoubles(double[][], int, int)}). Both keep the codec's rate and layout
+ * and output its samples unchanged; the trimming is the same in every format. A part of the stream
+ * that changes the rate or layout mid-way is converted as in float output, then quantized to the
+ * output's sample size (rounded to nearest, ties toward positive infinity, and clamped) or widened to
+ * doubles. Integer output keeps the sample size {@link #bitsPerSample()} reports: blocks of a
+ * narrower size are shifted left to it, which keeps their values, and blocks of a wider size are
+ * rounded to it as converted parts are.
  *
  * <p>The decoder also learns how the track's timestamps map to its output: once two packets
  * produced samples, {@link #origin()} is the difference between a packet's timestamp and the
@@ -52,9 +78,30 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private final AudioTrack track;
 
     /**
-     * The codec decoder of {@link #track}.
+     * The codec decoder of {@link #track}, replaced when a packet changes the codec configuration.
      */
-    private final AudioDecoder decoder;
+    private AudioDecoder decoder;
+
+    /**
+     * The options the codec decoders are created with.
+     */
+    private final AudioDecoderOptions decoderOptions;
+
+    /**
+     * The codec configuration of {@link #decoder}, or {@code null} when it has none.
+     */
+    private byte[] config;
+
+    /**
+     * Whether the packet being decoded is decoded only so that later packets decode, its output
+     * dropped.
+     */
+    private boolean packetDiscarded;
+
+    /**
+     * The number of decoded samples to drop from the start of the packet being decoded.
+     */
+    private long packetSkip;
 
     /**
      * The sampling rate of the output.
@@ -67,9 +114,65 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private final ChannelLayout outputLayout;
 
     /**
-     * The converted samples not yet read.
+     * The converted samples not yet read, or {@code null} unless the output is float.
      */
     private final AudioFifo fifo;
+
+    /**
+     * The representation of the output samples.
+     */
+    private final SampleFormat format;
+
+    /**
+     * The integer or double samples not yet read, or {@code null} when the output is float.
+     */
+    private final SampleFifo exact;
+
+    /**
+     * The sample size of the integer output, 0 until known or when the output is not integer.
+     */
+    private int outputBits;
+
+    /**
+     * Scratch planes holding integer samples converted to {@link #outputBits}.
+     */
+    private int[][] rescaled;
+
+    /**
+     * Scratch block holding float samples widened to doubles, for a codec without double output.
+     */
+    private DoubleAudioBuffer widened;
+
+    /**
+     * Scratch block holding an exact block scaled to floats, for a part that changes the rate or
+     * layout.
+     */
+    private AudioBuffer narrowed;
+
+    /**
+     * Scratch planes holding converted float samples quantized or widened for {@link #exact}.
+     */
+    private Object[] quantized;
+
+    /**
+     * The consumer of the codec's float blocks.
+     */
+    private final Consumer<AudioBuffer> floatSink = this::accept;
+
+    /**
+     * The consumer of the codec's integer blocks.
+     */
+    private final Consumer<IntegerAudioBuffer> integerSink = this::acceptIntegers;
+
+    /**
+     * The consumer of the codec's double blocks.
+     */
+    private final Consumer<DoubleAudioBuffer> doubleSink = this::acceptDoubles;
+
+    /**
+     * The consumer widening the codec's float blocks to doubles.
+     */
+    private final Consumer<AudioBuffer> wideningSink = this::widen;
 
     /**
      * The number of decoded samples still to drop as encoder priming.
@@ -98,6 +201,16 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * needed.
      */
     private ChannelMixer mixer;
+
+    /**
+     * The settings every {@link #mixer} is created with.
+     */
+    private final ChannelMixerOptions mixing;
+
+    /**
+     * Whether {@link #mixing} holds a caller's matrix, which applies even between equal layouts.
+     */
+    private final boolean customMatrix;
 
     /**
      * The layout {@link #mixer} converts from.
@@ -233,7 +346,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
     /**
      * The samples produced while aligning, copied, in production order.
      */
-    private final ArrayDeque<AudioBuffer> held = new ArrayDeque<>();
+    private final ArrayDeque<Object> held = new ArrayDeque<>();
 
     /**
      * The value of {@link #origin} and {@link #streamStart} when unknown.
@@ -256,14 +369,34 @@ public final class AudioStreamDecoder implements AutoCloseable {
      *
      * @param track   the track to decode
      * @param decoder the codec decoder of {@code track}, owned by this instance
-     * @param options the output rate and layout
+     * @param decoderOptions the options {@code decoder} was created with
+     * @param options the output rate, layout and sample format
+     * @throws IllegalArgumentException if an exact sample format is combined with a conversion
+     * @throws MediaException.Unsupported if the output is integer and the codec has no integer
+     * output
      */
-    private AudioStreamDecoder(AudioTrack track, AudioDecoder decoder, AudioStreamDecoderOptions options) {
+    private AudioStreamDecoder(AudioTrack track, AudioDecoder decoder, AudioDecoderOptions decoderOptions,
+                               AudioStreamDecoderOptions options) {
         this.track = track;
         this.decoder = decoder;
+        this.decoderOptions = decoderOptions;
+        this.config = track.codecConfig().orElse(null);
         this.outputRate = options.sampleRate().orElse(decoder.sampleRate());
         this.outputLayout = options.layout().orElse(decoder.layout());
-        this.fifo = new AudioFifo(outputLayout.channels());
+        this.mixing = options.mixing();
+        this.customMatrix = mixing.matrix().isPresent();
+        this.format = options.sampleFormat();
+        if (format != SampleFormat.FLOAT) {
+            if (outputRate != decoder.sampleRate() || !outputLayout.equals(decoder.layout())) {
+                throw new IllegalArgumentException(format + " output keeps the codec's " + decoder.sampleRate() + " Hz "
+                        + decoder.layout() + ", not " + outputRate + " Hz " + outputLayout);
+            }
+            requireIntegers(decoder);
+        }
+        this.fifo = format == SampleFormat.FLOAT ? new AudioFifo(outputLayout.channels()) : null;
+        this.exact = format == SampleFormat.FLOAT ? null
+                : new SampleFifo(format == SampleFormat.INTEGER ? int.class : double.class, outputLayout.channels());
+        this.outputBits = format == SampleFormat.INTEGER ? decoder.bitsPerSample() : 0;
         var decoderRate = decoder.sampleRate();
         var trackRate = track.sampleRate() > 0 ? track.sampleRate() : decoderRate;
         this.skipRemaining = Math.round((double) track.skipSamples() * decoderRate / trackRate);
@@ -271,6 +404,20 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 ? track.timeBase().rescale(track.duration(), Rational.timeBaseOf(decoderRate))
                 : Long.MAX_VALUE;
         this.packetLimit = Long.MAX_VALUE;
+    }
+
+    /**
+     * Rejects a codec decoder without integer output when the output is integer.
+     *
+     * @param codec the codec decoder
+     * @throws MediaException.Unsupported if the output is integer and the codec has no integer
+     * output
+     */
+    private void requireIntegers(AudioDecoder codec) {
+        if (format == SampleFormat.INTEGER && !codec.supportsIntegerOutput()) {
+            throw new MediaException.Unsupported(track.codec().toString(),
+                    track.codec() + " has no integer samples to output");
+        }
     }
 
     /**
@@ -290,22 +437,34 @@ public final class AudioStreamDecoder implements AutoCloseable {
     /**
      * Creates a decoder for a track.
      *
-     * @param track   the track to decode
-     * @param options the output rate and layout and the limits the codec enforces
+     * @param track the track to decode
+     * @param options the output rate, layout and sample format, the integrity check and the limits
+     * the codec enforces
      * @return the decoder, which the caller closes
-     * @throws NullPointerException       if an argument is {@code null}
-     * @throws MediaException.Unsupported if the codec is not decodable
-     * @throws MediaException.Malformed   if the track's configuration is corrupt
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws IllegalArgumentException if the sample format is not {@link SampleFormat#FLOAT} and
+     * the options ask for a rate or layout other than the codec's
+     * @throws MediaException.Unsupported if the codec is not decodable, or the sample format is
+     * {@link SampleFormat#INTEGER} and the codec has no integer output
+     * @throws MediaException.Malformed if the track's configuration is corrupt
      */
     public static AudioStreamDecoder create(AudioTrack track, AudioStreamDecoderOptions options) {
         Objects.requireNonNull(track, "track");
         Objects.requireNonNull(options, "options");
-        var decoderOptions = AudioDecoderOptions.builder().limits(options.limits());
+        var decoderOptions = AudioDecoderOptions.builder().limits(options.limits())
+                .verifyIntegrity(options.verifyIntegrity());
         var rate = options.sampleRate();
         if (rate.isPresent()) {
             decoderOptions.preferredSampleRate(rate.getAsInt());
         }
-        return new AudioStreamDecoder(track, AudioDecoders.create(track, decoderOptions.build()), options);
+        var built = decoderOptions.build();
+        var decoder = AudioDecoders.create(track, built);
+        try {
+            return new AudioStreamDecoder(track, decoder, built, options);
+        } catch (RuntimeException exception) {
+            decoder.close();
+            throw exception;
+        }
     }
 
     /**
@@ -462,12 +621,29 @@ public final class AudioStreamDecoder implements AutoCloseable {
     }
 
     /**
+     * {@return the representation of the output samples}
+     */
+    public SampleFormat sampleFormat() {
+        return format;
+    }
+
+    /**
+     * Returns the sample size of the samples {@link #readIntegers(int[][], int, int)} moves.
+     *
+     * @return the size in bits, from 1 to 32, or 0 when the output is not
+     * {@link SampleFormat#INTEGER}, or before the first sample when the stream declares no size
+     */
+    public int bitsPerSample() {
+        return outputBits;
+    }
+
+    /**
      * Returns the number of converted samples ready to be read.
      *
      * @return the number of samples per channel
      */
     public int available() {
-        return fifo.size();
+        return fifo != null ? fifo.size() : exact.size();
     }
 
     /**
@@ -476,7 +652,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @return {@code true} at the end of the output
      */
     public boolean isDrained() {
-        return finished && fifo.size() == 0;
+        return finished && available() == 0;
     }
 
     /**
@@ -653,7 +829,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * resampler; later calls do nothing.
      *
      * @throws MediaException.Malformed if {@value #MAX_CONSECUTIVE_FAILURES} consecutive packets are
-     *                                  corrupt
+     * corrupt, or the stream fails the integrity check
+     * {@link AudioStreamDecoderOptions#verifyIntegrity()} requested
      */
     public void finish() {
         if (finished) {
@@ -664,8 +841,10 @@ public final class AudioStreamDecoder implements AutoCloseable {
             decodeHeld(true);
         }
         packetLimit = Long.MAX_VALUE;
+        packetDiscarded = false;
+        packetSkip = 0;
         current = null;
-        decoder.flush(this::accept);
+        flushCodec();
         if (aligning) {
             align(heldStart);
         }
@@ -679,9 +858,118 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @param offset the index of the first sample written in every plane
      * @param frames the largest number of samples per channel to move
      * @return the number of samples per channel moved
+     * @throws IllegalStateException if the output is not {@link SampleFormat#FLOAT}
      */
     public int read(float[][] planes, int offset, int frames) {
+        if (fifo == null) {
+            throw new IllegalStateException("the output is " + format + ", not FLOAT");
+        }
         return fifo.read(planes, offset, Math.min(frames, fifo.size()));
+    }
+
+    /**
+     * Moves up to {@code frames} integer samples, of {@link #bitsPerSample()} bits, into
+     * {@code planes}.
+     *
+     * @param planes the destination planes, one per output channel
+     * @param offset the index of the first sample written in every plane
+     * @param frames the largest number of samples per channel to move, non-negative
+     * @return the number of samples per channel moved
+     * @throws NullPointerException if a plane is {@code null}
+     * @throws IllegalArgumentException if the plane count differs from the layout's channel count
+     * or {@code frames} is negative
+     * @throws IndexOutOfBoundsException if a plane cannot hold the samples moved
+     * @throws IllegalStateException if the output is not {@link SampleFormat#INTEGER}
+     */
+    public int readIntegers(int[][] planes, int offset, int frames) {
+        if (format != SampleFormat.INTEGER) {
+            throw new IllegalStateException("the output is " + format + ", not INTEGER");
+        }
+        Objects.requireNonNull(planes, "planes");
+        var count = checkRead(planes.length, frames);
+        for (var plane : planes) {
+            Objects.checkFromIndexSize(offset, count, Objects.requireNonNull(plane, "plane").length);
+        }
+        return exact.read(planes, offset, count);
+    }
+
+    /**
+     * Moves up to {@code frames} double samples into {@code planes}.
+     *
+     * @param planes the destination planes, one per output channel
+     * @param offset the index of the first sample written in every plane
+     * @param frames the largest number of samples per channel to move, non-negative
+     * @return the number of samples per channel moved
+     * @throws NullPointerException if a plane is {@code null}
+     * @throws IllegalArgumentException if the plane count differs from the layout's channel count
+     * or {@code frames} is negative
+     * @throws IndexOutOfBoundsException if a plane cannot hold the samples moved
+     * @throws IllegalStateException if the output is not {@link SampleFormat#DOUBLE}
+     */
+    public int readDoubles(double[][] planes, int offset, int frames) {
+        if (format != SampleFormat.DOUBLE) {
+            throw new IllegalStateException("the output is " + format + ", not DOUBLE");
+        }
+        Objects.requireNonNull(planes, "planes");
+        var count = checkRead(planes.length, frames);
+        for (var plane : planes) {
+            Objects.checkFromIndexSize(offset, count, Objects.requireNonNull(plane, "plane").length);
+        }
+        return exact.read(planes, offset, count);
+    }
+
+    /**
+     * Checks the arguments of an exact read.
+     *
+     * @param planes the number of planes passed
+     * @param frames the largest number of samples asked for
+     * @return the number of samples the read moves
+     * @throws IllegalArgumentException if the plane count or the frame count is invalid
+     */
+    private int checkRead(int planes, int frames) {
+        if (planes != outputLayout.channels()) {
+            throw new IllegalArgumentException("expected " + outputLayout.channels() + " planes, got " + planes);
+        }
+        if (frames < 0) {
+            throw new IllegalArgumentException("negative frame count " + frames);
+        }
+        return Math.min(frames, exact.size());
+    }
+
+    /**
+     * Decodes a packet in the codec's output form for {@link #format}.
+     *
+     * @param packet the next packet of the track
+     */
+    private void decodeCodec(Packet packet) {
+        switch (format) {
+            case FLOAT -> decoder.decode(packet, floatSink);
+            case INTEGER -> decoder.decodeIntegers(packet, integerSink);
+            case DOUBLE -> {
+                if (decoder.supportsDoubleOutput()) {
+                    decoder.decodeDoubles(packet, doubleSink);
+                } else {
+                    decoder.decode(packet, wideningSink);
+                }
+            }
+        }
+    }
+
+    /**
+     * Drains the codec in its output form for {@link #format}.
+     */
+    private void flushCodec() {
+        switch (format) {
+            case FLOAT -> decoder.flush(floatSink);
+            case INTEGER -> decoder.flushIntegers(integerSink);
+            case DOUBLE -> {
+                if (decoder.supportsDoubleOutput()) {
+                    decoder.flushDoubles(doubleSink);
+                } else {
+                    decoder.flush(wideningSink);
+                }
+            }
+        }
     }
 
     /**
@@ -692,18 +980,78 @@ public final class AudioStreamDecoder implements AutoCloseable {
     private void decodeHeld(boolean last) {
         var packet = pending;
         pending = null;
-        packetLimit = last && packet.duration() > 0
-                ? track.timeBase().rescale(packet.duration(), Rational.timeBaseOf(decoder.sampleRate()))
+        var newConfig = packet.sideData().newCodecConfig().orElse(null);
+        if (newConfig != null && !Arrays.equals(newConfig, config)) {
+            reconfigure(newConfig);
+        }
+        // TODO: fill a gap between the end of the previous packet and this one's timestamp (an MP4
+        // empty or dwell edit after the first media edit) with silence instead of joining the samples
+        var sideData = packet.sideData();
+        var codecRate = Rational.timeBaseOf(decoder.sampleRate());
+        packetLimit = (last && packet.duration() > 0) || (sideData.discardEnd() > 0 && packet.duration() >= 0)
+                ? track.timeBase().rescale(packet.duration(), codecRate)
                 : Long.MAX_VALUE;
+        packetDiscarded = packet.flags().contains(PacketFlag.DISCARD);
+        packetSkip = sideData.discardStart() > 0 ? track.timeBase().rescale(sideData.discardStart(), codecRate) : 0;
         packetProduced = 0;
         current = packet;
         currentProduced = false;
         try {
-            decoder.decode(packet, this::accept);
+            decodeCodec(packet);
             consecutiveFailures = 0;
         } catch (MediaException.Malformed exception) {
             if (++consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
                 throw new MediaException.Malformed(consecutiveFailures + " consecutive corrupt audio packets", exception);
+            }
+        }
+    }
+
+    /**
+     * Drains the codec and replaces it with one created from a new codec configuration, keeping
+     * the remaining priming and duration counts in step with a change of sampling rate.
+     *
+     * @param newConfig the configuration of the packets from the one being decoded on
+     * @throws MediaException.Unsupported if the codec cannot be created for the configuration, or
+     * has no integer output when the output is integer
+     * @throws MediaException.Malformed if the configuration is corrupt
+     */
+    private void reconfigure(byte[] newConfig) {
+        packetLimit = Long.MAX_VALUE;
+        packetDiscarded = false;
+        packetSkip = 0;
+        current = null;
+        flushCodec();
+        var builder = track.toBuilder().codecConfig(newConfig);
+        if (track.codec() == Codec.AAC) {
+            try {
+                var aac = AudioConfigs.parseAac(newConfig);
+                builder.sampleRate(aac.outputRate());
+                if (aac.layout() != null) {
+                    builder.layout(aac.layout());
+                } else if (aac.channels() > 0) {
+                    builder.layout(ChannelLayout.defaultFor(aac.channels()));
+                }
+            } catch (MediaException.Malformed ignored) {
+                // the codec rejects the configuration itself
+            }
+        }
+        var replacement = AudioDecoders.create(builder.build(), decoderOptions);
+        try {
+            requireIntegers(replacement);
+        } catch (RuntimeException exception) {
+            replacement.close();
+            throw exception;
+        }
+        var oldRate = decoder.sampleRate();
+        decoder.close();
+        decoder = replacement;
+        config = newConfig;
+        var newRate = decoder.sampleRate();
+        if (newRate != oldRate) {
+            timestampsExact = false;
+            skipRemaining = Math.round((double) skipRemaining * newRate / oldRate);
+            if (keepRemaining != Long.MAX_VALUE) {
+                keepRemaining = Math.round((double) keepRemaining * newRate / oldRate);
             }
         }
     }
@@ -718,7 +1066,62 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * @param buffer the decoded block, valid only during the call
      */
     private void accept(AudioBuffer buffer) {
-        if (current != null && !currentProduced && buffer.frames() > 0) {
+        produce(buffer.frames());
+        trim(buffer, true);
+    }
+
+    /**
+     * Receives one decoded integer block from the codec, as {@link #accept(AudioBuffer)} receives a
+     * float block.
+     *
+     * @param buffer the decoded block, valid only during the call
+     */
+    private void acceptIntegers(IntegerAudioBuffer buffer) {
+        produce(buffer.frames());
+        trim(buffer, true);
+    }
+
+    /**
+     * Receives one decoded double block from the codec, as {@link #accept(AudioBuffer)} receives a
+     * float block.
+     *
+     * @param buffer the decoded block, valid only during the call
+     */
+    private void acceptDoubles(DoubleAudioBuffer buffer) {
+        produce(buffer.frames());
+        trim(buffer, true);
+    }
+
+    /**
+     * Receives one decoded float block from a codec without double output, widened to doubles.
+     *
+     * @param buffer the decoded block, valid only during the call
+     */
+    private void widen(AudioBuffer buffer) {
+        var frames = buffer.frames();
+        if (widened == null || widened.capacity() < frames || widened.sampleRate() != buffer.sampleRate()
+                || !widened.layout().equals(buffer.layout())) {
+            widened = new DoubleAudioBuffer(buffer.layout(), buffer.sampleRate(), Math.max(frames, 1));
+        }
+        for (var channel = 0; channel < buffer.channels(); channel++) {
+            var source = buffer.plane(channel);
+            var target = widened.plane(channel);
+            for (var i = 0; i < frames; i++) {
+                target[i] = source[i];
+            }
+        }
+        widened.setFrames(frames);
+        acceptDoubles(widened);
+    }
+
+    /**
+     * Notes the first samples of each packet, for {@link #origin()} and the alignment after a seek,
+     * and counts the samples the codec produced.
+     *
+     * @param frames the number of samples per channel of a decoded block
+     */
+    private void produce(int frames) {
+        if (current != null && !currentProduced && frames > 0) {
             if (aligning && producingPackets == 0) {
                 var timestamp = timestamp(current);
                 heldStart = timestamp == Packet.NO_TIMESTAMP || origin == UNKNOWN ? alignTarget
@@ -726,41 +1129,56 @@ public final class AudioStreamDecoder implements AutoCloseable {
             }
             packetProduced();
         }
-        produced += buffer.frames();
-        trim(buffer, true);
+        produced += frames;
     }
 
     /**
      * Trims, mixes and resamples one decoded block into the queue, or holds a copy of it while
      * the output after a seek is not aligned yet.
      *
-     * @param buffer  the decoded block, valid only during the call unless held
-     * @param decoded whether the block comes straight from the codec, so that the last packet's
-     *                declared duration applies to it
+     * <p>A block straight from the codec is first cut to the part of its packet's output that the
+     * packet presents: none for a discarded packet, then after the packet's discard start and up
+     * to the packet's declared duration where that limits it.
+     *
+     * @param buffer the decoded {@link AudioBuffer}, {@link IntegerAudioBuffer} or
+     * {@link DoubleAudioBuffer}, valid only during the call unless held
+     * @param decoded whether the block comes straight from the codec, so that its packet's
+     * discards and declared duration apply to it
      */
-    private void trim(AudioBuffer buffer, boolean decoded) {
+    private void trim(Object buffer, boolean decoded) {
         var offset = 0;
-        var frames = buffer.frames();
-        if (decoded && packetLimit != Long.MAX_VALUE) {
-            var allowed = Math.max(0, packetLimit - packetProduced);
+        var frames = switch (buffer) {
+            case AudioBuffer block -> block.frames();
+            case IntegerAudioBuffer block -> block.frames();
+            case DoubleAudioBuffer block -> block.frames();
+            default -> throw new IllegalStateException("not a sample block: " + buffer);
+        };
+        if (decoded) {
+            var before = packetProduced;
             packetProduced += frames;
-            if (frames > allowed) {
-                frames = (int) allowed;
+            if (packetLimit != Long.MAX_VALUE) {
+                frames = (int) Math.min(frames, Math.max(0, packetLimit - before));
+            }
+            if (packetDiscarded) {
+                return;
+            }
+            if (packetSkip > before) {
+                var skipped = (int) Math.min(frames, packetSkip - before);
+                offset = skipped;
+                frames -= skipped;
+            }
+            if (frames <= 0) {
+                return;
             }
         }
         if (aligning) {
-            var copy = new AudioBuffer(buffer.layout(), buffer.sampleRate(), Math.max(1, frames));
-            for (var channel = 0; channel < copy.channels(); channel++) {
-                System.arraycopy(buffer.plane(channel), 0, copy.plane(channel), 0, frames);
-            }
-            copy.setFrames(frames);
-            held.add(copy);
+            held.add(slice(buffer, offset, frames));
             return;
         }
         if (skipRemaining > 0) {
             var skipped = (int) Math.min(skipRemaining, frames);
             skipRemaining -= skipped;
-            offset = skipped;
+            offset += skipped;
             frames -= skipped;
         }
         if (frames > keepRemaining) {
@@ -770,8 +1188,151 @@ public final class AudioStreamDecoder implements AutoCloseable {
             return;
         }
         keepRemaining -= frames;
-        var planes = mix(buffer, offset, frames);
-        resample(planes, buffer.sampleRate(), frames);
+        switch (buffer) {
+            case AudioBuffer block -> resample(mix(block, offset, frames), block.sampleRate(), frames);
+            case IntegerAudioBuffer block -> {
+                if (converts(block.sampleRate(), block.layout())) {
+                    convert(block.layout(), block.sampleRate(), block.planes(), block.bitsPerSample(), offset, frames);
+                } else {
+                    flushResampler();
+                    queueIntegers(block, offset, frames);
+                }
+            }
+            case DoubleAudioBuffer block -> {
+                if (converts(block.sampleRate(), block.layout())) {
+                    convert(block.layout(), block.sampleRate(), block.planes(), 0, offset, frames);
+                } else {
+                    flushResampler();
+                    exact.write(block.planes(), offset, frames);
+                }
+            }
+            default -> throw new IllegalStateException("not a sample block: " + buffer);
+        }
+    }
+
+    /**
+     * Returns whether an exact block needs the float conversion: its rate or layout differs from
+     * the output's.
+     *
+     * @param rate the block's sampling rate
+     * @param layout the block's channel layout
+     * @return {@code true} when the block is converted
+     */
+    private boolean converts(int rate, ChannelLayout layout) {
+        return rate != outputRate || !layout.equals(outputLayout);
+    }
+
+    /**
+     * Converts a slice of an exact block whose rate or layout differs from the output's through
+     * the float path, which queues it quantized.
+     *
+     * @param layout the block's layout
+     * @param rate the block's rate
+     * @param planes the block's {@code int[]} or {@code double[]} planes
+     * @param bits the sample size of integer planes, unused for doubles
+     * @param offset the index of the first sample of the slice
+     * @param frames the number of samples in the slice
+     */
+    private void convert(ChannelLayout layout, int rate, Object[] planes, int bits, int offset, int frames) {
+        if (narrowed == null || narrowed.capacity() < frames || narrowed.sampleRate() != rate
+                || !narrowed.layout().equals(layout)) {
+            narrowed = new AudioBuffer(layout, rate, Math.max(frames, 1));
+        }
+        var scale = Math.scalb(1.0, 1 - bits);
+        for (var channel = 0; channel < planes.length; channel++) {
+            var target = narrowed.plane(channel);
+            if (planes[channel] instanceof int[] source) {
+                for (var i = 0; i < frames; i++) {
+                    target[i] = (float) (source[offset + i] * scale);
+                }
+            } else {
+                var source = (double[]) planes[channel];
+                for (var i = 0; i < frames; i++) {
+                    target[i] = (float) source[offset + i];
+                }
+            }
+        }
+        narrowed.setFrames(frames);
+        resample(mix(narrowed, 0, frames), rate, frames);
+    }
+
+    /**
+     * Copies a slice of a decoded block into a new block of the same kind.
+     *
+     * @param buffer the decoded block
+     * @param offset the index of the first sample of the slice
+     * @param frames the number of samples in the slice
+     * @return the copy, whose planes hold the slice from index zero
+     */
+    private static Object slice(Object buffer, int offset, int frames) {
+        switch (buffer) {
+            case AudioBuffer block -> {
+                var copy = new AudioBuffer(block.layout(), block.sampleRate(), Math.max(1, frames));
+                for (var channel = 0; channel < copy.channels(); channel++) {
+                    System.arraycopy(block.plane(channel), offset, copy.plane(channel), 0, frames);
+                }
+                copy.setFrames(frames);
+                return copy;
+            }
+            case IntegerAudioBuffer block -> {
+                var copy = new IntegerAudioBuffer(block.layout(), block.sampleRate(), block.bitsPerSample(),
+                        Math.max(1, frames));
+                for (var channel = 0; channel < copy.channels(); channel++) {
+                    System.arraycopy(block.plane(channel), offset, copy.plane(channel), 0, frames);
+                }
+                copy.setFrames(frames);
+                return copy;
+            }
+            case DoubleAudioBuffer block -> {
+                var copy = new DoubleAudioBuffer(block.layout(), block.sampleRate(), Math.max(1, frames));
+                for (var channel = 0; channel < copy.channels(); channel++) {
+                    System.arraycopy(block.plane(channel), offset, copy.plane(channel), 0, frames);
+                }
+                copy.setFrames(frames);
+                return copy;
+            }
+            default -> throw new IllegalStateException("not a sample block: " + buffer);
+        }
+    }
+
+    /**
+     * Queues a slice of an integer block at the output's sample size.
+     *
+     * @param block the decoded block
+     * @param offset the index of the first sample of the slice
+     * @param frames the number of samples in the slice
+     */
+    private void queueIntegers(IntegerAudioBuffer block, int offset, int frames) {
+        var bits = block.bitsPerSample();
+        if (outputBits == 0) {
+            outputBits = bits;
+        }
+        if (bits == outputBits) {
+            exact.write(block.planes(), offset, frames);
+            return;
+        }
+        var channels = block.channels();
+        if (rescaled == null || rescaled[0].length < frames) {
+            rescaled = new int[channels][frames];
+        }
+        for (var channel = 0; channel < channels; channel++) {
+            var source = block.plane(channel);
+            var target = rescaled[channel];
+            if (bits < outputBits) {
+                var shift = outputBits - bits;
+                for (var i = 0; i < frames; i++) {
+                    target[i] = source[offset + i] << shift;
+                }
+            } else {
+                var shift = bits - outputBits;
+                var half = 1L << (shift - 1);
+                var max = (1L << (outputBits - 1)) - 1;
+                for (var i = 0; i < frames; i++) {
+                    target[i] = (int) Math.min((source[offset + i] + half) >> shift, max);
+                }
+            }
+        }
+        exact.write(rescaled, 0, frames);
     }
 
     /**
@@ -791,11 +1352,11 @@ public final class AudioStreamDecoder implements AutoCloseable {
             }
             input = shifted;
         }
-        if (buffer.layout().equals(outputLayout)) {
+        if (buffer.layout().equals(outputLayout) && !customMatrix) {
             return input;
         }
         if (mixer == null || !buffer.layout().equals(mixerInput)) {
-            mixer = new ChannelMixer(buffer.layout(), outputLayout);
+            mixer = new ChannelMixer(buffer.layout(), outputLayout, mixing);
             mixerInput = buffer.layout();
         }
         if (mixed == null || mixed[0].length < frames) {
@@ -842,9 +1403,43 @@ public final class AudioStreamDecoder implements AutoCloseable {
             offset = (int) Math.min(outputSkip, frames);
             outputSkip -= offset;
         }
-        if (offset < frames) {
-            fifo.write(planes, offset, frames - offset);
+        if (offset >= frames) {
+            return;
         }
+        if (fifo != null) {
+            fifo.write(planes, offset, frames - offset);
+            return;
+        }
+        var count = frames - offset;
+        if (quantized == null || Array.getLength(quantized[0]) < count) {
+            quantized = new Object[planes.length];
+            for (var channel = 0; channel < planes.length; channel++) {
+                quantized[channel] = format == SampleFormat.INTEGER ? new int[count] : new double[count];
+            }
+        }
+        if (format == SampleFormat.INTEGER) {
+            if (outputBits == 0) {
+                outputBits = 32;
+            }
+            var scale = Math.scalb(1.0, outputBits - 1);
+            var max = (1L << (outputBits - 1)) - 1;
+            for (var channel = 0; channel < planes.length; channel++) {
+                var source = planes[channel];
+                var target = (int[]) quantized[channel];
+                for (var i = 0; i < count; i++) {
+                    target[i] = (int) Math.clamp(Math.round(source[offset + i] * scale), -max - 1, max);
+                }
+            }
+        } else {
+            for (var channel = 0; channel < planes.length; channel++) {
+                var source = planes[channel];
+                var target = (double[]) quantized[channel];
+                for (var i = 0; i < count; i++) {
+                    target[i] = source[offset + i];
+                }
+            }
+        }
+        exact.write(quantized, 0, count);
     }
 
     /**
@@ -921,6 +1516,12 @@ public final class AudioStreamDecoder implements AutoCloseable {
         private final boolean exact;
 
         /**
+         * Whether the codec's state never converges after a restart, so that every restart begins at
+         * the track's first packet.
+         */
+        private final boolean restartsAtStart;
+
+        /**
          * Constructs a timing.
          *
          * @param track the track the timing describes
@@ -936,6 +1537,31 @@ public final class AudioStreamDecoder implements AutoCloseable {
             this.origin = origin;
             this.originRate = originRate;
             this.exact = exact;
+            this.restartsAtStart = predictsFromStart(track);
+        }
+
+        /**
+         * Returns whether a track's codec keeps a prediction state that a restart never reproduces:
+         * AAC Main (backward-adaptive prediction), AAC LTP, ER AAC LTP and AAC-LD (long term prediction), and
+         * AAC-ELD with low delay spectral band replication, whose SBR state no pre-roll of a few frames
+         * reproduces.
+         *
+         * @param track the track to restart, whose codec configuration names the AAC object type
+         * @return {@code true} when every restart must begin at the track's first packet
+         */
+        private static boolean predictsFromStart(AudioTrack track) {
+            var config = track.codecConfig();
+            if (track.codec() != Codec.AAC || config.isEmpty()) {
+                return false;
+            }
+            try {
+                var aac = AudioConfigs.parseAac(config.get());
+                var objectType = aac.objectType();
+                return objectType == 1 || objectType == 4 || objectType == 19 || objectType == 23
+                        || (objectType == 39 && aac.sbr());
+            } catch (MediaException exception) {
+                return false;
+            }
         }
 
         /**
@@ -1000,8 +1626,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 case VORBIS -> 2L * 8192 * 1_000_000 / rate;
                 case AAC -> 4L * 2048 * 1_000_000 / rate;
                 case MP3, MP2 -> 16L * 1152 * 1_000_000 / rate;
-                case FLAC, ALAC, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE,
-                     PCM_F64LE, PCM_F64BE, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> 0;
+                case FLAC, ALAC, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_S64LE, PCM_S64BE,
+                     PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> 0;
                 default -> 100_000;
             };
         }
@@ -1015,6 +1641,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * the timestamps are not sample-accurate ({@link #isExact()} is {@code false}), it is a
          * time before every packet, so that the decoder restarts at the track's first packet and
          * counts the samples up to {@code micros} instead of placing them by rounded timestamps.
+         * It is that time too for codecs whose prediction state reaches back to the start of the
+         * stream, so that no pre-roll reproduces it: AAC Main and AAC LTP (and ER AAC LTP and AAC-LD), and AAC-ELD
+         * with low delay spectral band replication.
          * Every track of a demuxer restarts at its own key frame at or before the target, so a
          * caller decoding several tracks seeks to the earliest target any of them needs.
          *
@@ -1022,7 +1651,7 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * @return the seek target in microseconds
          */
         public long seekMicros(long micros) {
-            if (!exact) {
+            if (!exact || restartsAtStart) {
                 // TODO: restart near the target by summing packet durations read without decoding
                 return CALIBRATION_TIME;
             }

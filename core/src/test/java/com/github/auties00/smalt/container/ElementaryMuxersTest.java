@@ -180,12 +180,73 @@ class ElementaryMuxersTest {
                 var name = new String(output, side, 4, StandardCharsets.US_ASCII);
                 var constant = mp3.order().stream().map(packet -> packet.data()[2] & 0xF0).distinct().count() == 1;
                 assertEquals(constant ? "Info" : "Xing", name);
-                assertEquals(7, ByteBuffer.wrap(output).getInt(side + 4));
+                assertEquals(15, ByteBuffer.wrap(output).getInt(side + 4));
                 assertEquals(mp3.order().size(), ByteBuffer.wrap(output).getInt(side + 8));
                 assertEquals(output.length, ByteBuffer.wrap(output).getInt(side + 12), "byte count");
                 var path = MuxSupport.save(variable ? "xing.mp3" : "info.mp3", output);
                 MuxSupport.assertFfmpegClean(variable ? "xing.mp3" : "info.mp3", output);
                 assertEquals(Oracle.decodeAudio(MuxSupport.save("plain.mp3", frames)).length, Oracle.decodeAudio(path).length);
+            }
+        }
+
+        @ParameterizedTest(name = "{0} channel(s) at {1} Hz")
+        @org.junit.jupiter.params.provider.CsvSource({"2, 44100, 128k", "1, 48000, 64k", "1, 22050, 32k", "2, 24000, 64k"})
+        @DisplayName("writes a LAME tag that keeps the gapless delay and padding of a remuxed MP3, honored by ffmpeg")
+        void lameTagRemux(int channels, int rate, String bitrate) {
+            var source = Fixtures.read(Fixtures.tone("mp3", 440, rate, channels, 1.3, List.of("-c:a", "libmp3lame",
+                    "-b:a", bitrate, "-id3v2_version", "0")));
+            var demuxed = MuxSupport.demux(source);
+            var track = (AudioTrack) demuxed.tracks().getFirst();
+            var content = Math.round(1.3 * rate);
+            assertEquals(content, track.duration());
+            var output = MuxSupport.toMemory(demuxed.tracks(), demuxed.order(), RawMuxer::new);
+            assertArrayEquals(LameTags.delayAndPadding(source), LameTags.delayAndPadding(output));
+            LameTags.assertChecksums(output);
+            var reread = (AudioTrack) MuxSupport.demux(output).tracks().getFirst();
+            assertEquals(track.skipSamples(), reread.skipSamples());
+            assertEquals(track.duration(), reread.duration());
+            var path = MuxSupport.save("lame-" + channels + "-" + rate + ".mp3", output);
+            MuxSupport.assertFfmpegClean(path.getFileName().toString(), output);
+            assertEquals(content * channels, Oracle.decodeAudio(path).length, "ffmpeg trims to the signal");
+        }
+
+        @Test
+        @DisplayName("derives the LAME padding from the packet durations when the track declares no duration")
+        void lameTagFromPackets() {
+            var tagged = Fixtures.read(Fixtures.tone("mp3", 440, 44_100, 2, 1.3, List.of("-c:a", "libmp3lame",
+                    "-b:a", "128k", "-id3v2_version", "0")));
+            var expected = LameTags.delayAndPadding(tagged);
+            var demuxed = MuxSupport.demux(Fixtures.read(Fixtures.tone("mp3", 440, 44_100, 2, 1.3, List.of("-c:a",
+                    "libmp3lame", "-b:a", "128k", "-write_xing", "0", "-id3v2_version", "0"))));
+            var skip = expected[0] + 529;
+            var content = Math.round(1.3 * 44_100);
+            var track = ((AudioTrack) demuxed.tracks().getFirst()).toBuilder().duration(-1).skipSamples(skip).build();
+            var packets = new java.util.ArrayList<>(demuxed.order());
+            var last = packets.removeLast();
+            packets.add(last.withTiming(last.pts(), last.dts(), skip + content - last.pts()));
+            var output = MuxSupport.toMemory(List.of(track), packets, RawMuxer::new);
+            assertArrayEquals(expected, LameTags.delayAndPadding(output));
+            LameTags.assertChecksums(output);
+            var reread = (AudioTrack) MuxSupport.demux(output).tracks().getFirst();
+            assertEquals(skip, reread.skipSamples());
+            assertEquals(content, reread.duration());
+            assertEquals(content * 2, Oracle.decodeAudio(MuxSupport.save("lame-packets.mp3", output)).length);
+        }
+
+        @Test
+        @DisplayName("leaves the LAME tag out when the track has no priming or the padding does not fit 12 bits")
+        void lameTagOmitted() {
+            var demuxed = MuxSupport.demux(Fixtures.read(Fixtures.tone("mp3", 440, 44_100, 2, 1.3, List.of("-c:a",
+                    "libmp3lame", "-b:a", "128k", "-write_xing", "0", "-id3v2_version", "0"))));
+            var frames = demuxed.order().size();
+            var plain = (AudioTrack) demuxed.tracks().getFirst();
+            for (var track : List.of(plain.toBuilder().skipSamples(0).duration(-1).build(),
+                    plain.toBuilder().skipSamples(1105).duration(100).build())) {
+                var output = MuxSupport.toMemory(List.of(track), demuxed.order(), RawMuxer::new);
+                assertTrue(LameTags.isAbsent(output));
+                var reread = (AudioTrack) MuxSupport.demux(output).tracks().getFirst();
+                assertEquals(0, reread.skipSamples());
+                assertEquals(frames * 1152L, reread.duration());
             }
         }
 
@@ -261,7 +322,9 @@ class ElementaryMuxersTest {
         @DisplayName("creates a muxer for every writable format and reports which codecs it carries")
         void createMuxer() {
             for (var format : ContainerFormat.values()) {
-                assertInstanceOf(Muxer.class, Containers.openMuxer(format, MediaSink.memory()));
+                if (format != ContainerFormat.VOBSUB) {
+                    assertInstanceOf(Muxer.class, Containers.openMuxer(format, MediaSink.memory()));
+                }
             }
             assertTrue(Containers.isMuxable(ContainerFormat.AVI, Codec.MPEG4_PART2));
             assertFalse(Containers.isMuxable(ContainerFormat.AVI, Codec.OPUS));
@@ -271,7 +334,8 @@ class ElementaryMuxersTest {
             assertFalse(Containers.isMuxable(ContainerFormat.WAV, Codec.PCM_S16BE));
             assertTrue(Containers.isMuxable(ContainerFormat.AIFF, Codec.PCM_S16BE));
             assertTrue(Containers.isMuxable(ContainerFormat.OGG, Codec.VORBIS));
-            assertFalse(Containers.isMuxable(ContainerFormat.OGG, Codec.FLAC));
+            assertTrue(Containers.isMuxable(ContainerFormat.OGG, Codec.FLAC));
+            assertFalse(Containers.isMuxable(ContainerFormat.OGG, Codec.AAC));
             assertFalse(Containers.isMuxable(ContainerFormat.FLAC, Codec.MP3));
             assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer(ContainerFormat.FLAC,
                     MediaSink.memory())

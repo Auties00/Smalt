@@ -18,9 +18,10 @@ import com.github.auties00.smalt.internal.simd.Simd;
  */
 abstract sealed class Vp9EncDsp permits ScalarVp9EncDsp, VectorVp9EncDsp {
     /**
-     * The implementation selected by {@link Simd#ENABLED}.
+     * The implementation selected by {@link Simd#WIDE}: the Vector API kernels, written for 256-bit
+     * vectors, or the scalar ones.
      */
-    static final Vp9EncDsp INSTANCE = Simd.ENABLED ? new VectorVp9EncDsp() : new ScalarVp9EncDsp();
+    static final Vp9EncDsp INSTANCE = Simd.WIDE ? new VectorVp9EncDsp() : new ScalarVp9EncDsp();
 
     /**
      * The taps of the bilinear filters of the sub-pixel variance, two per eighth-pixel phase
@@ -629,5 +630,41 @@ abstract sealed class Vp9EncDsp permits ScalarVp9EncDsp, VectorVp9EncDsp {
             sse += diff * diff;
         }
         return sse - ((mean * mean) >> (bwl + 2));
+    }
+
+    /**
+     * Predicts a block with the bilinear filters of the sub-pixel variance, the prediction
+     * {@link #subPixelVariance} compares ({@code var_filter_block2d_bil_first_pass} and
+     * {@code var_filter_block2d_bil_second_pass}).
+     *
+     * @param ref the reference plane
+     * @param refOff the index of the block's full-pixel position
+     * @param refStride the reference row stride
+     * @param xOffset the horizontal eighth-pixel phase
+     * @param yOffset the vertical eighth-pixel phase
+     * @param out receives the prediction, {@code w} samples per row
+     * @param w the block width
+     * @param h the block height
+     * @param scratch scratch memory of at least {@code (h + 1) * w} entries
+     */
+    static void bilinearPredict(byte[] ref, int refOff, int refStride, int xOffset, int yOffset, byte[] out, int w,
+                                int h, short[] scratch) {
+        var h0 = BILINEAR_TAPS[xOffset * 2];
+        var h1 = BILINEAR_TAPS[xOffset * 2 + 1];
+        for (var y = 0; y <= h; y++) {
+            var row = refOff + y * refStride;
+            var o = y * w;
+            for (var x = 0; x < w; x++) {
+                scratch[o + x] = (short) (((ref[row + x] & 0xFF) * h0 + (ref[row + x + 1] & 0xFF) * h1 + 64) >> 7);
+            }
+        }
+        var v0 = BILINEAR_TAPS[yOffset * 2];
+        var v1 = BILINEAR_TAPS[yOffset * 2 + 1];
+        for (var y = 0; y < h; y++) {
+            var top = y * w;
+            for (var x = 0; x < w; x++) {
+                out[top + x] = (byte) ((scratch[top + x] * v0 + scratch[top + w + x] * v1 + 64) >> 7);
+            }
+        }
     }
 }
