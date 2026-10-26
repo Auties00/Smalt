@@ -32,7 +32,8 @@ import java.util.Objects;
  *
  * <p>The {@code COMM} chunk gives the channel count, frame count, sample size and the sampling
  * rate as an 80-bit IEEE 754 extended float, rounded to the nearest integer. AIFF samples are
- * big-endian two's-complement integers, left-justified in {@code ceil(bits / 8)} bytes. AIFF-C
+ * big-endian two's-complement integers, left-justified in {@code ceil(bits / 8)} bytes, of 1 to 32 bits or of
+ * exactly 64 bits in eight bytes. AIFF-C
  * adds a compression type; {@code NONE}/{@code twos} (big-endian integers), {@code sowt}
  * (little-endian integers), {@code in24}, {@code in32}, {@code raw } (unsigned 8-bit),
  * {@code fl32}/{@code FL32}, {@code fl64}/{@code FL64}, {@code alaw}/{@code ALAW} and
@@ -304,6 +305,7 @@ public final class AiffDemuxer implements Demuxer {
                 case 2 -> Codec.PCM_S16BE;
                 case 3 -> Codec.PCM_S24BE;
                 case 4 -> Codec.PCM_S32BE;
+                case 8 -> Codec.PCM_S64BE;
                 default -> throw new MediaException.Unsupported("pcm_s" + bits + "be", bits + "-bit AIFF samples are not supported");
             };
             case 0x736F7774 -> switch ((bits + 7) / 8) {
@@ -311,6 +313,7 @@ public final class AiffDemuxer implements Demuxer {
                 case 2 -> Codec.PCM_S16LE;
                 case 3 -> Codec.PCM_S24LE;
                 case 4 -> Codec.PCM_S32LE;
+                case 8 -> Codec.PCM_S64LE;
                 default -> throw new MediaException.Unsupported("pcm_s" + bits + "le", bits + "-bit AIFF samples are not supported");
             };
             case 0x696E3234 -> Codec.PCM_S24BE;

@@ -16,14 +16,17 @@ import java.util.Objects;
 /**
  * Reads the cues of one subtitle track of a media file.
  *
- * <p>The reader opens the file's demuxer, selects the first text subtitle track (or the one
+ * <p>The reader opens the file's demuxer, selects the first text subtitle or TTML track (or the one
  * {@link SubtitleReaderOptions#trackId()} names) and returns its cues one by one through
  * {@link #read()}, in the order the container stores them, which is start order. Consecutive cues
  * with the same content that follow each other without a gap are returned as one cue, which
- * restores the cues an MP4 track split where they overlapped others; a cue whose container block
- * has no duration ends where the next one starts; packets that show nothing (empty 3GPP timed text
- * samples) are skipped. Cue text keeps the track's markup ({@link #markup()}) unless
- * {@link SubtitleReaderOptions#markup()} asks for another.
+ * restores the cues an MP4 track split where they overlapped others (and, for TTML, the cues that
+ * continue from one document to the next); a cue whose container block has no duration ends where the
+ * next one starts; packets that show nothing (empty 3GPP timed text samples) are skipped. Cue text keeps
+ * the track's markup ({@link #markup()}) unless {@link SubtitleReaderOptions#markup()} asks for another,
+ * in which case it is converted with the whole track in view
+ * ({@link SubtitleDecoder#decode(com.github.auties00.smalt.track.Packet, SubtitleMarkup)}): an ASS event
+ * gets the look of its style.
  *
  * <p>An instance is not thread-safe. The source is not closed by the reader.
  */
@@ -81,8 +84,8 @@ public final class SubtitleReader implements AutoCloseable {
     /**
      * Opens the first subtitle track of a file.
      *
-     * @param source the input: a SubRip or WebVTT file, or an MP4 or Matroska file with a subtitle
-     *               track
+     * @param source the input: a SubRip, WebVTT, SSA, ASS, TTML, SAMI, LRC or MicroDVD file, or an MP4 or
+     *               Matroska file with a subtitle track
      * @return the reader, which the caller closes
      * @throws NullPointerException       if {@code source} is {@code null}
      * @throws MediaException.Unsupported if the input is not a recognized container or has no text
@@ -98,7 +101,7 @@ public final class SubtitleReader implements AutoCloseable {
      * Opens a subtitle track of a file.
      *
      * @param source  the input
-     * @param options the track to read, the markup to convert to and the limits
+     * @param options the track to read, the markup to convert to, the text encoding and the limits
      * @return the reader, which the caller closes
      * @throws NullPointerException       if an argument is {@code null}
      * @throws MediaException.Unsupported if the input is not a recognized container or lacks the
@@ -109,11 +112,14 @@ public final class SubtitleReader implements AutoCloseable {
     public static SubtitleReader open(MediaSource source, SubtitleReaderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        var demuxer = Containers.openDemuxer(source, DemuxerOptions.builder().limits(options.limits()).build());
+        var demuxerOptions = DemuxerOptions.builder().limits(options.limits());
+        options.charset().ifPresent(demuxerOptions::charset);
+        options.subtitleFrameRate().ifPresent(demuxerOptions::subtitleFrameRate);
+        var demuxer = Containers.openDemuxer(source, demuxerOptions.build());
         try {
             Track selected = null;
             for (var track : demuxer.tracks()) {
-                if (track.codec().isSubtitle()
+                if ((track.codec().isSubtitle() || track.codec() == Codec.TTML)
                         && (options.trackId().isEmpty() || options.trackId().getAsInt() == track.id())) {
                     selected = track;
                     break;
@@ -177,9 +183,8 @@ public final class SubtitleReader implements AutoCloseable {
             if (packet.trackId() != track.id()) {
                 continue;
             }
-            var cue = decoder.decode(packet);
-            if (cue != null) {
-                merger.offer(Subtitles.convert(cue, decoder.markup(), markup));
+            for (var cue : decoder.decodeAll(packet, markup)) {
+                merger.offer(cue);
             }
         }
         return ready.pollFirst();
@@ -222,6 +227,6 @@ public final class SubtitleReader implements AutoCloseable {
         ready.clear();
         ended = false;
         decoder = new SubtitleDecoder(track);
-        merger = new CueMerger(ready::addLast);
+        merger = new CueMerger(ready::addLast, track.codec() == Codec.TTML);
     }
 }
