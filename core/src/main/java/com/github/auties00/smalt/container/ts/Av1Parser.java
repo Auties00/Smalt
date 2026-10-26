@@ -519,6 +519,9 @@ final class Av1Parser extends ElementaryParser {
             LimitChecks.checkPicture(limits, info.width(), info.height());
             builder.width(info.width()).height(info.height()).color(info.color());
         }
+        if (entry.dolbyVision() != null) {
+            builder.dolbyVision(entry.dolbyVision());
+        }
         track = builder.build();
         established = sequenceHeader;
     }

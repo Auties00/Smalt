@@ -72,9 +72,9 @@ import java.util.Set;
  * {@link #read()} then returns the samples of all tracks interleaved in file-offset order
  * (the order they are stored in), each track's samples in decoding order.
  *
- * <p>Tracks are identified from their sample descriptions: H.264 ({@code avc1}, {@code avc3}),
- * HEVC ({@code hvc1}, {@code hev1}, Dolby Vision {@code dvh1}/{@code dvhe}), VP8/VP9
- * ({@code vp08}/{@code vp09}), AV1 ({@code av01}), MPEG-4 Part 2 ({@code mp4v}), H.263
+ * <p>Tracks are identified from their sample descriptions: H.264 ({@code avc1}, {@code avc3}, Dolby Vision
+ * {@code dva1}/{@code dvav}), HEVC ({@code hvc1}, {@code hev1}, Dolby Vision {@code dvh1}/{@code dvhe}), VP8/VP9
+ * ({@code vp08}/{@code vp09}), AV1 ({@code av01}, Dolby Vision {@code dav1}), MPEG-4 Part 2 ({@code mp4v}), H.263
  * ({@code s263}), Motion JPEG and ProRes for video; AAC, MP3 and MP2 ({@code mp4a} with the
  * matching object type, {@code .mp3}), Opus, FLAC, ALAC, AMR-NB/WB, AC-3/E-AC-3 and every PCM
  * layout of the ISO and QuickTime sound descriptions for audio. The image sequence ({@code pict})
@@ -193,8 +193,9 @@ import java.util.Set;
  * up (at 30 frames per second for a drop-frame address when there is no rate). A visual
  * sample entry's Spherical Video V2 {@code st3d} and {@code sv3d} boxes give the track's
  * {@link com.github.auties00.smalt.track.VideoTrack#stereoMode() stereo mode} and
- * {@link com.github.auties00.smalt.track.VideoTrack#spherical() spherical projection}. Seeking uses the
- * sample index, as {@link #seek(long)} describes.
+ * {@link com.github.auties00.smalt.track.VideoTrack#spherical() spherical projection}, and its {@code dvcC},
+ * {@code dvvC} or {@code dvwC} box the {@link com.github.auties00.smalt.track.VideoTrack#dolbyVision() Dolby Vision
+ * configuration}. Seeking uses the sample index, as {@link #seek(long)} describes.
  *
  * <p>A source that is not in memory is read forwards as far as the layout allows: a file whose
  * {@code moov} follows its media data is read with one jump to the {@code moov} and one back to

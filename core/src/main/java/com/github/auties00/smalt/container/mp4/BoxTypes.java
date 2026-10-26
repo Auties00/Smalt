@@ -343,6 +343,36 @@ final class BoxTypes {
     static final int DVHE = 0x64766865;
 
     /**
+     * The Dolby Vision H.264 sample entry ({@code dva1}).
+     */
+    static final int DVA1 = 0x64766131;
+
+    /**
+     * The Dolby Vision H.264 sample entry with in-band parameter sets ({@code dvav}).
+     */
+    static final int DVAV = 0x64766176;
+
+    /**
+     * The Dolby Vision AV1 sample entry ({@code dav1}).
+     */
+    static final int DAV1 = 0x64617631;
+
+    /**
+     * The Dolby Vision configuration box of profiles 0 to 7 ({@code dvcC}).
+     */
+    static final int DVCC = 0x64766343;
+
+    /**
+     * The Dolby Vision configuration box of profiles 8 to 10 ({@code dvvC}).
+     */
+    static final int DVVC = 0x64767643;
+
+    /**
+     * The Dolby Vision configuration box of profiles above 10 ({@code dvwC}).
+     */
+    static final int DVWC = 0x64767743;
+
+    /**
      * The HEVC decoder configuration box ({@code hvcC}).
      */
     static final int HVCC = 0x68766343;

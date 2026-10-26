@@ -67,7 +67,13 @@ import java.util.Objects;
  * {@linkplain com.github.auties00.smalt.image.ColorInfo#contentLightLevel() content light level}
  * when it has them (chromaticities rounded to units of 0.00002, luminances to units of 0.0001
  * candelas per square meter), a declared {@link VideoTrack#sampleAspectRatio() sample aspect ratio} a
- * {@code pasp} box, and a declared {@link VideoTrack#interlacing() scan} a QuickTime {@code fiel} box.
+ * {@code pasp} box, and a declared {@link VideoTrack#interlacing() scan} a QuickTime {@code fiel} box. An H.264,
+ * HEVC or AV1 track with a {@link VideoTrack#dolbyVision() Dolby Vision configuration} gets its configuration box
+ * after the codec configuration box ({@code dvcC} up to profile 7, {@code dvvC} for profiles 8 to 10,
+ * {@code dvwC} above); one whose base layer is not
+ * {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() backward compatible} is stored
+ * in a Dolby Vision sample entry ({@code dva1}, {@code dvh1} or {@code dav1}) instead of the base codec's, so
+ * that players that do not understand Dolby Vision do not show its base layer.
  *
  * <p>A packet whose side data carries a
  * {@link com.github.auties00.smalt.track.PacketSideData#newCodecConfig() new codec configuration}

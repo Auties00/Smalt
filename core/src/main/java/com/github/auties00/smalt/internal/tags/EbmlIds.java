@@ -298,6 +298,16 @@ public final class EbmlIds {
     public static final int BLOCK_ADD_ID_TYPE = 0x41E7;
 
     /**
+     * The {@code BlockAddIDName} element.
+     */
+    public static final int BLOCK_ADD_ID_NAME = 0x41A4;
+
+    /**
+     * The {@code BlockAddIDExtraData} element, the private data of a block addition mapping.
+     */
+    public static final int BLOCK_ADD_ID_EXTRA_DATA = 0x41ED;
+
+    /**
      * The {@code CodecDelay} element.
      */
     public static final int CODEC_DELAY = 0x56AA;

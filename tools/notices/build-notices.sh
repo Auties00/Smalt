@@ -109,6 +109,7 @@ Contents
   52. lzokay
   53. Shaka Packager
   54. MPEG-4 Visual reference software (Microsoft)
+  55. dovi_tool (the dolby_vision crate)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1904,6 +1905,32 @@ Copyright:
 EOF
 license_start "License notice (sys/decoder/vopsedec.cpp and the other source files)"
 cat "$LIC/mpeg4-msref-notice.txt"
+
+section "55. dovi_tool (the dolby_vision crate)"
+cat <<'EOF2'
+Project:      dovi_tool, the dolby_vision crate 3.4.0
+              (commit 41dae646193c12de152333ff5dbc33579cb9ef4a)
+Source:       https://github.com/quietvoid/dovi_tool (dolby_vision/src/rpu:
+              dovi_rpu.rs, rpu_data_header.rs, rpu_data_mapping.rs,
+              rpu_data_nlq.rs, vdr_dm_data.rs, extension_metadata/mod.rs)
+License text: https://github.com/quietvoid/dovi_tool/blob/main/LICENSE
+License:      MIT
+
+Derived Smalt packages:
+  internal.nal (DolbyVisionRpu)
+
+Derivation: the syntax of the Dolby Vision reference processing unit (the
+header, the reshaping mapping with its polynomial and MMR pieces, the
+nonlinear quantization parameters, the display management data and its
+extension block lists, the CRC-32 and the final byte), the profile it implies
+and the test that tells a minimal enhancement layer from a full one,
+translated to Java.
+
+Copyright:
+  Copyright (c) 2026 quietvoid
+EOF2
+license_start "dovi_tool license (LICENSE)"
+cat "$LIC/dovi-tool-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

@@ -11,6 +11,7 @@ import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.nal.NalRecords;
@@ -29,10 +30,12 @@ import java.util.Arrays;
 
 /**
  * Serializes the sample description of a track the {@link Mp4Muxer} writes: a visual sample entry
- * ({@code avc1}, {@code hvc1}, {@code vp08}, {@code vp09}, {@code av01}, {@code mp4v} with its
+ * ({@code avc1}, {@code hvc1}, {@code vp08}, {@code vp09}, {@code av01}, the Dolby Vision {@code dva1},
+ * {@code dvh1} and {@code dav1} of a stream without a backward compatible base layer, {@code mp4v} with its
  * {@code esds}, {@code s263} with its {@code d263}, the QuickTime {@code h263}, {@code jpeg},
  * {@code mjpa} and {@code mjpb}, and the Motion JPEG 2000 {@code mjp2} with its {@code jp2h} box and, in a
- * Motion JPEG 2000 file, its {@code fiel}, {@code jsub} and {@code orfo} boxes) with its configuration box, an
+ * Motion JPEG 2000 file, its {@code fiel}, {@code jsub} and {@code orfo} boxes) with its configuration box and,
+ * for a Dolby Vision track, its {@code dvcC}, {@code dvvC} or {@code dvwC} box, an
  * optional {@code colr} followed by the {@code mdcv} and {@code clli} boxes of its high-dynamic-range metadata,
  * and the optional {@code pasp} and {@code fiel} boxes of a declared sample aspect ratio and scan, a QuickTime
  * visual sample entry ({@code apco} to {@code ap4x} for ProRes, {@code AVdn} and {@code AVdh} for DNxHD) with its
@@ -124,11 +127,13 @@ final class SampleEntryWriter {
         var config = index == 0 ? track.config : track.extraConfigs.get(index - 1);
         var described = index == 0 ? track.track : describe(track.track, config);
         switch (track.codec()) {
-            case H264 -> writeVisual(writer, BoxTypes.AVC1, BoxTypes.AVCC, false, (VideoTrack) described, config);
+            case H264 -> writeVisual(writer, dolbyVisionFormat(BoxTypes.AVC1, BoxTypes.DVA1, (VideoTrack) described),
+                    BoxTypes.AVCC, false, (VideoTrack) described, config);
             case HEVC -> writeHevc(writer, (VideoTrack) described, config);
             case VP8 -> writeVisual(writer, BoxTypes.VP08, BoxTypes.VPCC, true, (VideoTrack) described, config);
             case VP9 -> writeVisual(writer, BoxTypes.VP09, BoxTypes.VPCC, true, (VideoTrack) described, config);
-            case AV1 -> writeVisual(writer, BoxTypes.AV01, BoxTypes.AV1C, false, (VideoTrack) described, config);
+            case AV1 -> writeVisual(writer, dolbyVisionFormat(BoxTypes.AV01, BoxTypes.DAV1, (VideoTrack) described),
+                    BoxTypes.AV1C, false, (VideoTrack) described, config);
             case MPEG4_PART2 -> writeVisualEsds(writer, plan, MPEG4_VISUAL, (VideoTrack) described, config);
             case MJPEG -> {
                 if (track.quickTime) {
@@ -259,7 +264,41 @@ final class SampleEntryWriter {
         }
         writer.bytes(config);
         writer.end();
+        writeDolbyVision(writer, video);
         writeVisualTrailer(writer, video);
+    }
+
+    /**
+     * Returns the sample entry type of an H.264, HEVC or AV1 track: the Dolby Vision type when the track declares a
+     * Dolby Vision configuration whose base layer is not backward compatible, the base codec's otherwise.
+     *
+     * @param base the type of the base codec ({@code avc1}, {@code hvc1} or {@code av01})
+     * @param dolbyVision the Dolby Vision type ({@code dva1}, {@code dvh1} or {@code dav1})
+     * @param video the track
+     * @return the sample entry type
+     */
+    private static int dolbyVisionFormat(int base, int dolbyVision, VideoTrack video) {
+        return video.dolbyVision().map(configuration -> configuration.isBackwardCompatible() ? base : dolbyVision)
+                .orElse(base);
+    }
+
+    /**
+     * Writes the Dolby Vision configuration box of an H.264, HEVC or AV1 track that declares one: {@code dvcC},
+     * {@code dvvC} or {@code dvwC}, as the profile selects.
+     *
+     * @param writer the destination, inside the sample entry
+     * @param video the track
+     */
+    private static void writeDolbyVision(BoxWriter writer, VideoTrack video) {
+        var codec = video.codec();
+        if (codec != Codec.H264 && codec != Codec.HEVC && codec != Codec.AV1) {
+            return;
+        }
+        video.dolbyVision().ifPresent(configuration -> {
+            writer.begin(DolbyVisionConfigs.configType(configuration));
+            writer.bytes(DolbyVisionConfigs.record(configuration));
+            writer.end();
+        });
     }
 
     /**
@@ -277,7 +316,7 @@ final class SampleEntryWriter {
                     + " has no codec configuration and no key frame it can be derived from");
         }
         var records = NalRecords.splitLayeredHevc(config);
-        writeVisualHeader(writer, BoxTypes.HVC1, video, null);
+        writeVisualHeader(writer, dolbyVisionFormat(BoxTypes.HVC1, BoxTypes.DVH1, video), video, null);
         writer.begin(BoxTypes.HVCC);
         writer.bytes(records[0]);
         writer.end();
@@ -286,6 +325,7 @@ final class SampleEntryWriter {
             writer.bytes(records[1]);
             writer.end();
         }
+        writeDolbyVision(writer, video);
         writeVisualTrailer(writer, video);
     }
 

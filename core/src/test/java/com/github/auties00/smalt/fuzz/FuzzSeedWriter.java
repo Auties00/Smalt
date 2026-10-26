@@ -881,4 +881,23 @@ class FuzzSeedWriter {
                     FuzzPresentations.pack(sample.manifestBytes(), sample.others()));
         }
     }
+
+    @Test
+    @DisplayName("Dolby Vision behavior samples and the first RPU of each, unescaped, for the RPU target")
+    void dolbyVision() throws IOException {
+        var samples = Path.of("src", "test", "resources", "samples");
+        copy(DemuxerFuzzTest.class, "mp4", "valid-dolby-vision-p84.mp4", samples.resolve("mp4/dolby-vision-p84.mp4"));
+        copy(DemuxerFuzzTest.class, "mp4", "valid-dolby-vision-p5.mp4", samples.resolve("mp4/dolby-vision-p5.mp4"));
+        copy(DemuxerFuzzTest.class, "matroska", "valid-dolby-vision-p84.mkv",
+                samples.resolve("matroska/dolby-vision-p84.mkv"));
+        copy(DemuxerFuzzTest.class, "mpegTs", "valid-dolby-vision-p84.ts", samples.resolve("ts/dolby-vision-p84.ts"));
+        for (var profile : List.of("p84", "p5")) {
+            try (var demuxer = Containers.openDemuxer(MediaSource.of(samples.resolve("mp4/dolby-vision-" + profile
+                    + ".mp4")))) {
+                var nal = com.github.auties00.smalt.testkit.DolbyVisionRpus.rpuNals(demuxer.read().data()).getFirst();
+                write(DolbyVisionFuzzTest.class, "rpu", "valid-" + profile + ".bin",
+                        com.github.auties00.smalt.internal.nal.NalUnits.unescape(nal, 2, nal.length - 2));
+            }
+        }
+    }
 }

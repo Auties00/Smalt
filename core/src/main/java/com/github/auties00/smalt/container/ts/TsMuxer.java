@@ -11,6 +11,7 @@ import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.nal.NalUnits;
@@ -58,6 +59,13 @@ import java.util.PriorityQueue;
  *       prevention bytes; a key frame without a sequence header gets the one of the track's
  *       {@code av1C} record. The descriptor's {@code hdr_wcg_idc} follows the track's color
  *       description;</li>
+ *   <li>an H.264, HEVC or AV1 track with a
+ *       {@link VideoTrack#dolbyVision() Dolby Vision configuration} also gets the {@code "DOVI"} registration and
+ *       the DOVI video stream descriptor (tag {@code 0xB0}) of its configuration, as Dolby's "Dolby Vision
+ *       Streams Within the MPEG-2 Transport Stream Format" specifies; a track without a base layer names the PID
+ *       of the first track of the same codec added before it whose Dolby Vision configuration declares a base
+ *       layer, else of the first such track without a Dolby Vision configuration, or {@code 0x1FFF} when there
+ *       is none;</li>
  *   <li>MPEG-4 Part 2 ({@code 0x10}, ids from {@code 0xE0}): frames as they are, a key frame that
  *       does not start with the visual object sequence, visual object or video object layer
  *       headers getting those of the track's configuration;</li>
@@ -658,6 +666,33 @@ public final class TsMuxer implements Muxer {
             }
             default -> throw new IllegalArgumentException("transport streams written here cannot carry "
                     + track.codec().displayName());
+        }
+        if (track instanceof VideoTrack videoTrack && videoTrack.dolbyVision().isPresent()
+                && (track.codec() == Codec.H264 || track.codec() == Codec.HEVC || track.codec() == Codec.AV1)) {
+            var configuration = videoTrack.dolbyVision().get();
+            var dependency = DolbyVisionConfigs.NO_PID;
+            var plain = DolbyVisionConfigs.NO_PID;
+            for (var other : streams) {
+                if (!(other.track instanceof VideoTrack base) || base.codec() != track.codec()) {
+                    continue;
+                }
+                var declared = base.dolbyVision().orElse(null);
+                if (declared != null && declared.baseLayerPresent()) {
+                    dependency = other.pid;
+                    break;
+                }
+                if (declared == null && plain == DolbyVisionConfigs.NO_PID) {
+                    plain = other.pid;
+                }
+            }
+            if (dependency == DolbyVisionConfigs.NO_PID) {
+                dependency = plain;
+            }
+            var body = DolbyVisionConfigs.descriptor(configuration, dependency);
+            registration(descriptors, "DOVI");
+            descriptors.u8(DolbyVisionConfigs.DESCRIPTOR_TAG);
+            descriptors.u8(body.length);
+            descriptors.bytes(body);
         }
         var key = options.sampleAesKey().orElse(null);
         if (key != null) {

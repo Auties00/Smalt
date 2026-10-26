@@ -23,12 +23,14 @@ import com.github.auties00.smalt.internal.cenc.CencCipher;
 import com.github.auties00.smalt.internal.cenc.CencScheme;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.DataTrack;
+import com.github.auties00.smalt.track.DolbyVision;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.SphericalVideo;
@@ -227,6 +229,12 @@ final class MatroskaTrackEntry {
     long alphaMode;
 
     /**
+     * The Dolby Vision configuration of the first {@code BlockAdditionMapping} of a Dolby Vision type, or
+     * {@code null}.
+     */
+    DolbyVision dolbyVision;
+
+    /**
      * The {@code SamplingFrequency} in hertz.
      */
     double samplingFrequency = 8000;
@@ -328,6 +336,7 @@ final class MatroskaTrackEntry {
                 case EbmlIds.VIDEO -> track.parseVideo(body);
                 case EbmlIds.AUDIO -> track.parseAudio(body);
                 case EbmlIds.CONTENT_ENCODINGS -> track.parseEncodings(body);
+                case EbmlIds.BLOCK_ADDITION_MAPPING -> track.parseMapping(body);
                 default -> {
                 }
             }
@@ -340,6 +349,30 @@ final class MatroskaTrackEntry {
             }
         }
         return track;
+    }
+
+    /**
+     * Parses a {@code BlockAdditionMapping} element: one of type {@code dvcC}, {@code dvvC} or {@code dvwC} holds a
+     * Dolby Vision configuration record in its {@code BlockAddIDExtraData}; the other mappings describe block
+     * additions this demuxer reads by their {@code BlockAddID}.
+     *
+     * @param mapping the element data
+     */
+    private void parseMapping(EbmlCursor mapping) {
+        var type = 0L;
+        byte[] extra = null;
+        while (mapping.hasMore()) {
+            var element = mapping.next();
+            switch ((int) element.id()) {
+                case EbmlIds.BLOCK_ADD_ID_TYPE -> type = element.payload().unsigned();
+                case EbmlIds.BLOCK_ADD_ID_EXTRA_DATA -> extra = element.payload().bytes();
+                default -> {
+                }
+            }
+        }
+        if (dolbyVision == null && DolbyVisionConfigs.isConfigType(type) && extra != null) {
+            dolbyVision = DolbyVisionConfigs.parseRecord(extra);
+        }
     }
 
     /**
@@ -841,6 +874,9 @@ final class MatroskaTrackEntry {
             }
             if (stereoMode != null) {
                 builder.stereoMode(stereoMode);
+            }
+            if (dolbyVision != null && (codec == Codec.HEVC || codec == Codec.H264 || codec == Codec.AV1)) {
+                builder.dolbyVision(dolbyVision);
             }
             return builder.alpha(alphaMode == 1).build();
         }

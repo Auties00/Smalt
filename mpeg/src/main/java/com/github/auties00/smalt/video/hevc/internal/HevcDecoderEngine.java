@@ -9,6 +9,7 @@ import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.nal.DolbyVisionRpu;
 import com.github.auties00.smalt.internal.nal.NalUnits;
 import com.github.auties00.smalt.internal.sei.DisplaySei;
 import com.github.auties00.smalt.internal.sei.FilmGrainParameters;
@@ -517,6 +518,17 @@ public final class HevcDecoderEngine {
     }
 
     /**
+     * Sets whether a Dolby Vision stream of profile 5 is rejected: when set, the first NAL unit of type 62 that
+     * holds a valid reference processing unit is parsed, and from a profile 5 one of a single-layer stream on every
+     * NAL unit raises {@link MediaException.Unsupported}.
+     *
+     * @param reject whether to reject profile 5 streams
+     */
+    public void rejectDolbyVisionProfile5(boolean reject) {
+        this.dolbyVisionCheck = reject;
+    }
+
+    /**
      * Sets the source of the base layer pictures of a stream whose video parameter set says its
      * base layer is coded outside it ({@code vps_base_layer_internal_flag} clear).
      *
@@ -587,6 +599,9 @@ public final class HevcDecoderEngine {
         if (temporalIdPlus1 == 0) {
             throw new MediaException.Malformed("nuh_temporal_id_plus1 is 0");
         }
+        if (dolbyVisionCheck) {
+            checkDolbyVision(type, data, offset, length);
+        }
         if (layerId != 0 && !accepts(layerId, type)) {
             return;
         }
@@ -599,6 +614,49 @@ public final class HevcDecoderEngine {
         }
         decodeRbsp(type, layerId, temporalIdPlus1 - 1, data, offset, length);
         throwDeferred();
+    }
+
+    /**
+     * Parses the first valid reference processing unit of a stream and rejects the stream from a profile 5 one on.
+     *
+     * @param type the NAL unit type
+     * @param data the buffer holding the NAL unit
+     * @param offset the index of the NAL unit header
+     * @param length the NAL unit length in bytes
+     * @throws MediaException.Unsupported if the stream carries profile 5 reference processing units
+     */
+    private void checkDolbyVision(int type, byte[] data, int offset, int length) {
+        if (dolbyVisionProfile5) {
+            throw new MediaException.Unsupported("dolby vision reconstruction", PROFILE_5);
+        }
+        if (type != DolbyVisionRpu.HEVC_NAL_TYPE) {
+            return;
+        }
+        var rpu = DolbyVisionRpu.tryParseHevcNal(data, offset, length);
+        if (rpu == null) {
+            return;
+        }
+        dolbyVisionCheck = false;
+        if (rpu.profile() == 5 && !layered()) {
+            dolbyVisionCheck = true;
+            dolbyVisionProfile5 = true;
+            throw new MediaException.Unsupported("dolby vision reconstruction", PROFILE_5);
+        }
+    }
+
+    /**
+     * Returns whether a video parameter set of the stream declares more than one layer, as the MV-HEVC streams of
+     * Dolby Vision profile 20 do, whose RPU headers read as profile 5.
+     *
+     * @return {@code true} for a multi-layer stream
+     */
+    private boolean layered() {
+        for (var vps : vpsTable) {
+            if (vps != null && vps.maxLayers > 1) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -648,6 +706,22 @@ public final class HevcDecoderEngine {
      * processed.
      */
     private MediaException deferred;
+
+    /**
+     * The message of the failure of a Dolby Vision profile 5 stream.
+     */
+    private static final String PROFILE_5 = "Dolby Vision profile 5 has no backward compatible base layer and is not"
+            + " decodable; set dolbyVisionBaseLayer to decode its base layer as plain video";
+
+    /**
+     * Whether the reference processing units are still checked for profile 5.
+     */
+    private boolean dolbyVisionCheck;
+
+    /**
+     * Whether a profile 5 reference processing unit was found, which makes every later NAL unit fail.
+     */
+    private boolean dolbyVisionProfile5;
 
     /**
      * Decodes the payload of a NAL unit whose header was checked.

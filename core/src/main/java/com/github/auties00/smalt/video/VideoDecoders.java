@@ -23,6 +23,12 @@ import java.util.Objects;
  * artifact to add. A stream using a tool its decoder lacks raises
  * {@link MediaException.Unsupported} naming the tool.
  *
+ * <p>A Dolby Vision track is decoded as its base layer: the reference processing units its packets carry are
+ * ignored. A track whose {@linkplain VideoTrack#dolbyVision() Dolby Vision configuration} is not
+ * {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() backward compatible} (profile 5)
+ * raises {@link MediaException.Unsupported}, since its base layer shows wrong colors as plain video, unless
+ * {@link VideoDecoderOptions#dolbyVisionBaseLayer()} asks for the base layer anyway.
+ *
  * <p>A track that {@linkplain VideoTrack#hasAlpha() carries alpha} as a second coded stream, as
  * transparent VP8 and VP9 video in WebM does, is decoded with two decoders of its codec: frames come
  * out as {@link com.github.auties00.smalt.image.YuvPicture}s or
@@ -54,7 +60,8 @@ public final class VideoDecoders {
      *
      * @param track the track to decode
      * @return the decoder, which the caller closes
-     * @throws MediaException.Unsupported if the codec is not decodable
+     * @throws MediaException.Unsupported if the codec is not decodable, or the track is a Dolby Vision track without
+     * a backward compatible base layer and the options do not ask for its base layer
      * @throws MediaException.Malformed if the track's configuration is corrupt
      */
     public static VideoDecoder create(VideoTrack track) {
@@ -69,13 +76,21 @@ public final class VideoDecoders {
      * @param track the track to decode
      * @param options the limits and the thread count
      * @return the decoder, which the caller closes
-     * @throws MediaException.Unsupported if the codec is not decodable
+     * @throws MediaException.Unsupported if the codec is not decodable, or the track is a Dolby Vision track without
+     * a backward compatible base layer and the options do not ask for its base layer
      * @throws MediaException.Malformed if the track's configuration is corrupt
      */
     public static VideoDecoder create(VideoTrack track, VideoDecoderOptions options) {
         Objects.requireNonNull(track, "track");
         Objects.requireNonNull(options, "options");
         var codec = track.codec();
+        var dolbyVision = track.dolbyVision().orElse(null);
+        if (dolbyVision != null && !dolbyVision.isBackwardCompatible() && !options.dolbyVisionBaseLayer()) {
+            // TODO: reconstruct the pictures of non-backward-compatible Dolby Vision streams from their RPUs
+            throw new MediaException.Unsupported("dolby vision reconstruction", "Dolby Vision profile "
+                    + dolbyVision.profile() + " without a backward compatible base layer is not decodable; set"
+                    + " VideoDecoderOptions.dolbyVisionBaseLayer to decode its base layer as plain video");
+        }
         var provider = provider(codec);
         if (provider == null) {
             throw Artifacts.unsupported(codec.displayName(), "decodable", Artifacts.decoderOf(codec));

@@ -1,7 +1,9 @@
 package com.github.auties00.smalt.container.ts;
 
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.tags.TsDescriptors;
+import com.github.auties00.smalt.track.DolbyVision;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -130,11 +132,12 @@ final class Psi {
      * @param audioType the {@code audio_type} of the first language of the ISO 639 language descriptor, or
      * {@code -1}
      * @param name the first string of an ATSC component name descriptor (tag {@code 0xA3}), or {@code null}
+     * @param dolbyVision the configuration of a DOVI video stream descriptor (tag {@code 0xB0}), or {@code null}
      */
     record StreamEntry(int pid, int trackId, int streamType, List<Integer> registrations,
                        List<Integer> programRegistrations, String language, boolean ac3Descriptor,
                        boolean eac3Descriptor, int opusChannels, boolean id3Metadata, byte[] subtitling,
-                       byte[] teletextPages, int audioType, String name) {
+                       byte[] teletextPages, int audioType, String name, DolbyVision dolbyVision) {
         /**
          * Returns whether a DVB subtitling descriptor is present.
          *
@@ -181,7 +184,7 @@ final class Psi {
          */
         StreamEntry withTrackId(int id) {
             return new StreamEntry(pid, id, streamType, registrations, programRegistrations, language, ac3Descriptor,
-                    eac3Descriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name);
+                    eac3Descriptor, opusChannels, id3Metadata, subtitling, teletextPages, audioType, name, dolbyVision);
         }
 
         /**
@@ -197,7 +200,8 @@ final class Psi {
                     && Objects.equals(language, other.language) && ac3Descriptor == other.ac3Descriptor
                     && eac3Descriptor == other.eac3Descriptor && opusChannels == other.opusChannels
                     && id3Metadata == other.id3Metadata && Arrays.equals(subtitling, other.subtitling)
-                    && Arrays.equals(teletextPages, other.teletextPages);
+                    && Arrays.equals(teletextPages, other.teletextPages)
+                    && Objects.equals(dolbyVision, other.dolbyVision);
         }
     }
 
@@ -293,7 +297,7 @@ final class Psi {
             streams.add(new StreamEntry(pid, pid, type, List.copyOf(descriptors.registrations),
                     List.copyOf(programDescriptors.registrations), descriptors.language, descriptors.ac3,
                     descriptors.eac3, descriptors.opusChannels, descriptors.id3, descriptors.subtitles,
-                    descriptors.teletext, descriptors.audioType, descriptors.name));
+                    descriptors.teletext, descriptors.audioType, descriptors.name, descriptors.dolbyVision));
         }
         return new PmtSection(number, version, pcrPid, streams);
     }
@@ -354,6 +358,11 @@ final class Psi {
         String name;
 
         /**
+         * The configuration of the DOVI video stream descriptor, or {@code null}.
+         */
+        private DolbyVision dolbyVision;
+
+        /**
          * Reads a descriptor loop.
          *
          * @param data the section
@@ -391,6 +400,11 @@ final class Psi {
                     case 0x59 -> subtitles = Arrays.copyOfRange(data, body, body + size);
                     case 0x6A -> ac3 = true;
                     case 0x7A -> eac3 = true;
+                    case DolbyVisionConfigs.DESCRIPTOR_TAG -> {
+                        if (dolbyVision == null) {
+                            dolbyVision = DolbyVisionConfigs.parseDescriptor(data, body, size);
+                        }
+                    }
                     case 0x7F -> {
                         if (size >= 2 && (data[body] & 0xFF) == 0x80) {
                             opusChannels = data[body + 1] & 0xFF;

@@ -17,6 +17,7 @@ import com.github.auties00.smalt.container.internal.SphericalBoxes;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.heif.DataReferences;
@@ -26,6 +27,7 @@ import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.internal.subtitle.QuickTimeText;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.DolbyVision;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.SphericalVideo;
@@ -46,7 +48,10 @@ import java.util.List;
  * Visual entries follow ISO/IEC 14496-12 clause 12.1.3, audio entries clause 12.2.3 together with
  * the QuickTime sound description versions 1 and 2, and codec-specific child boxes follow their bindings (ISO/IEC
  * 14496-14 {@code esds}, 14496-15 {@code avcC}/{@code hvcC}, the Opus, FLAC, VP and AV1 ISO base
- * media encapsulations, 3GPP TS 26.244 for AMR and H.263, ISO/IEC 23003-5 for PCM).
+ * media encapsulations, 3GPP TS 26.244 for AMR and H.263, ISO/IEC 23003-5 for PCM, and Dolby's "Dolby Vision
+ * Streams Within the ISO Base Media File Format" for the {@code dvh1}, {@code dvhe}, {@code dva1}, {@code dvav}
+ * and {@code dav1} entries, which are their base codec's, and for the {@code dvcC}, {@code dvvC} and
+ * {@code dvwC} boxes any visual entry may hold).
  *
  * @param format the sample entry type
  * @param codec the identified codec
@@ -65,6 +70,8 @@ import java.util.List;
  * without a valid {@code sv3d} box
  * @param stereoMode the stereo mode of a visual entry (Spherical Video V2 {@code st3d}), or {@code null} without a
  * valid {@code st3d} box
+ * @param dolbyVision the Dolby Vision configuration of an H.264, HEVC or AV1 entry ({@code dvcC}, {@code dvvC} or
+ * {@code dvwC}), or {@code null} without a valid one
  * @param channels the channel count of an audio entry, or {@code 0}
  * @param sampleRate the sampling rate of an audio entry in hertz, or {@code 0}
  * @param layout the declared channel layout of an audio entry, or {@code null}
@@ -75,8 +82,8 @@ import java.util.List;
  */
 record SampleEntry(int format, Codec codec, byte[] config, int width, int height, ColorInfo color,
                    Rational sampleAspect, Interlacing interlacing, SphericalVideo spherical, StereoMode stereoMode,
-                   int channels, int sampleRate, ChannelLayout layout, int bitsPerSample, int frameBytes,
-                   TrackProtection protection) {
+                   DolbyVision dolbyVision, int channels, int sampleRate, ChannelLayout layout, int bitsPerSample,
+                   int frameBytes, TrackProtection protection) {
     /**
      * The size of the fields of a visual sample entry that precede its child boxes.
      */
@@ -293,7 +300,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      */
     SampleEntry withCodec(Codec replacement) {
         return new SampleEntry(format, replacement, config, width, height, color, sampleAspect, interlacing, spherical,
-                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes, protection);
+                stereoMode, dolbyVision, channels, sampleRate, layout, bitsPerSample, frameBytes, protection);
     }
 
     /**
@@ -304,7 +311,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      */
     SampleEntry withConfig(byte[] replacement) {
         return new SampleEntry(format, codec, replacement, width, height, color, sampleAspect, interlacing, spherical,
-                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes, protection);
+                stereoMode, dolbyVision, channels, sampleRate, layout, bitsPerSample, frameBytes, protection);
     }
 
     /**
@@ -358,6 +365,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         Interlacing interlacing = null;
         SphericalVideo spherical = null;
         StereoMode stereoMode = null;
+        DolbyVision dolbyVision = null;
         ByteArrayOutputStream avid = null;
         for (var box : children(payload)) {
             var body = box;
@@ -390,6 +398,12 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     }
                 }
                 case BoxTypes.SV3D -> spherical = parseSpherical(body);
+                case BoxTypes.DVCC, BoxTypes.DVVC, BoxTypes.DVWC -> {
+                    if (dolbyVision == null) {
+                        var record = body.rest();
+                        dolbyVision = DolbyVisionConfigs.parseRecord(record, 0, record.length);
+                    }
+                }
                 case BoxTypes.SINF -> sinfs.add(body);
                 default -> {
                     if (CodecConfigs.isAvidExtension(box.type())) {
@@ -420,7 +434,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         byte[] config = null;
         switch (format) {
             case BoxTypes.AVC1, BoxTypes.AVC2, BoxTypes.AVC3, BoxTypes.AVC4, BoxTypes.SVC1, BoxTypes.SVC2,
-                 BoxTypes.MVC1, BoxTypes.MVC2, BoxTypes.MVC3, BoxTypes.MVC4 -> {
+                 BoxTypes.MVC1, BoxTypes.MVC2, BoxTypes.MVC3, BoxTypes.MVC4, BoxTypes.DVA1, BoxTypes.DVAV -> {
                 codec = Codec.H264;
                 config = layerConfigs.isEmpty() ? avcC : NalRecords.mergeAvc(avcC, layerConfigs);
             }
@@ -437,7 +451,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 codec = Codec.VP9;
                 config = vpcC;
             }
-            case BoxTypes.AV01 -> {
+            case BoxTypes.AV01, BoxTypes.DAV1 -> {
                 codec = Codec.AV1;
                 config = av1C;
             }
@@ -485,7 +499,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
         }
         return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, spherical,
-                stereoMode, 0, 0, null, 0, 0, protection);
+                stereoMode, codec == Codec.HEVC || codec == Codec.H264 || codec == Codec.AV1 ? dolbyVision : null, 0,
+                0, null, 0, 0, protection);
     }
 
     /**
@@ -891,8 +906,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (frameBytes == 0 && bytesPerFrame > 0 && codec.isPcm()) {
             frameBytes = bytesPerFrame;
         }
-        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, channels, sampleRate, layout,
-                bits, frameBytes, protection);
+        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, null, channels, sampleRate,
+                layout, bits, frameBytes, protection);
     }
 
     /**
@@ -967,7 +982,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             default -> Codec.DATA;
         };
         if (codec == Codec.CEA_608 || codec == Codec.CEA_708) {
-            return new SampleEntry(format, codec, null, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0, null);
+            return new SampleEntry(format, codec, null, 0, 0, null, null, null, null, null, null, 0, 0, null, 0, 0,
+                    null);
         }
         if (payload.remaining() > 8) {
             payload.skip(8);
@@ -984,7 +1000,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 if (codec != Codec.DVD_SUBTITLE) {
                     config = null;
                 }
-                return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0, null);
+                return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, null, 0, 0, null, 0,
+                        0, null);
             }
             if (codec == Codec.WEBVTT) {
                 for (var child : children(payload)) {
@@ -1001,7 +1018,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (codec == Codec.TTML && (config == null || TtmlEntries.problem(config) != null)) {
             codec = Codec.DATA;
         }
-        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0, null);
+        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, null, 0, 0, null, 0, 0,
+                null);
     }
 
     /**

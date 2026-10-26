@@ -22,6 +22,7 @@ core/src/test/resources/samples/flac/cuesheet.flac	20925	2d20344714a889ebde9731b
 core/src/test/resources/samples/flac/flac.flac	41162	ce6a98f6c7c00d9c83f7937ff762b2397322ded955d980e2c26e02253c82db78	make-samples.sh
 core/src/test/resources/samples/ivf/av1.ivf	15789	183cdc6db1fb06753f9e9b1c1e08d33c22a6d3e450c056fb8f2ed2cf8daa761c	make-samples.sh
 core/src/test/resources/samples/ivf/vp8.ivf	26473	ce9c8209c150f896f751f82167ae8131668b8c5037ff7424776f5284a5e8e32a	make-samples.sh
+core/src/test/resources/samples/matroska/dolby-vision-p84.mkv	9941	96e0cdaebc69e962ca80cb3f806d73f48af9e115f4c5fc4d6a1627ffe72f9746	make-dolby-vision-samples.py
 core/src/test/resources/samples/matroska/editions.mkv	20004	9f1d4908991bf072a0fbdc88cc9d3e5bdf00dbf28a1bafb316edeaa3fb749b66	make-descriptive-samples.py
 core/src/test/resources/samples/matroska/flac.mka	33512	ac1975ad374f475c70b81e40f222627176b0ac58f054af62142efbaf2b8b1ed0	make-samples.sh
 core/src/test/resources/samples/matroska/h264-opus.mkv	42823	597f618dcacde3dc4964fa011395778eba2c0439c421286d3606510d5db752d2	make-samples.sh
@@ -35,6 +36,8 @@ core/src/test/resources/samples/mp3/mp2-id3v1.mp2	16256	f1ea5ce2d6d0635840ad39de
 core/src/test/resources/samples/mp3/vbr-xing.mp3	16291	a2ca147138148b6847109c3ac5a45491a4b3f4c73404c35633675884ed69b4a4	make-samples.sh
 core/src/test/resources/samples/mp4/alac.m4a	46897	c357835c07fc39aad0099889fbb94816e600f792c647e3609ea5ad7e0dd310ba	make-samples.sh
 core/src/test/resources/samples/mp4/dnxhr.mov	25367	ea7de6628b1331cef28828e4154db4e48d812c428b5f338ea685e0835245a384	make-samples.sh
+core/src/test/resources/samples/mp4/dolby-vision-p5.mp4	10129	9791ba948dc577d772ab48ec745a2f54ccf0f7beae8447f0ed2cb97057174ca9	make-dolby-vision-samples.py
+core/src/test/resources/samples/mp4/dolby-vision-p84.mp4	10129	d56e611e19ea4bbf0b0fe6c6557456102f672da667aca99d2a588ea54c0c7e5b	make-dolby-vision-samples.py
 core/src/test/resources/samples/mp4/faststart.mp4	45860	553c0d4cfe37994c3faf124b7f1de00298157d75ee8a4bf151ded99994d5f79e	make-samples.sh
 core/src/test/resources/samples/mp4/fragmented.mp4	46276	53f52714b46d7aa0851d59e6fb5286b5e4b1f6c60e1797d2bb9ee7629f79c80c	make-samples.sh
 core/src/test/resources/samples/mp4/h263-amr.3gp	24096	2df889506b194052da09c3ddd6a01a37d7d8b9cf18e2842a9a9e67ee5f33e89f	make-samples.sh
@@ -68,6 +71,7 @@ core/src/test/resources/samples/subtitle/cues.vtt	152	96b11a2f961e3aaba170d8749e
 core/src/test/resources/samples/subtitle/pgs.sup	4460	3e24e74cd5a01ecd670b84d5505d09d74aaa040c0b89831538745a37fc6fb5bd	make-bitmap-caption-samples.py
 core/src/test/resources/samples/subtitle/vobsub.sub	14336	472f6b05a7be59a35f5756f782aad1cb880cf9cfffdfa47358cd8450cc69bafd	make-bitmap-caption-samples.py
 core/src/test/resources/samples/ts/av1-scte35.ts	19740	8a3eeb3fe3cbe469c76c6e9325e0e84f8b7cb0f08e2de5fa9cf6abbf5f89366f	make-samples.sh, make-ts-samples.py
+core/src/test/resources/samples/ts/dolby-vision-p84.ts	11092	79bc4e51df73fb02ea3ebcba9e6db096d4aa70aa945522900496fdefef8d4145	make-dolby-vision-samples.py
 core/src/test/resources/samples/ts/dvb-subtitles.ts	3196	21c3536a8c4afef49fa1b563def19558dfb2dac320acc07cfc1994d1d732e396	make-bitmap-caption-samples.py
 core/src/test/resources/samples/ts/h264-aac.ts	56024	1d1be5df58c4e151117773533d98c3de47efa31ec059d491622a1be7870fefe9	make-samples.sh
 core/src/test/resources/samples/ts/h264-ac3.m2ts	73728	1ffeb7b1c6cd63f72ac245496308111bc78ff60d802ecbcc8bb167dbd9b58dc0	make-samples.sh

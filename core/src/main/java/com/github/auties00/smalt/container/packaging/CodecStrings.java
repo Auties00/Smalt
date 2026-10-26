@@ -11,8 +11,9 @@ import java.util.Locale;
 /**
  * Builds the {@code CODECS} values of HLS playlists and the {@code codecs} attributes of DASH
  * manifests (RFC 6381, ISO/IEC 14496-15 Annex E, the VP codec, AV1, Opus and AC-3 ISOBMFF
- * bindings, the sample entry types of the other codecs a CMAF segment carries, and the ISO/IEC 14496-30 text
- * tracks with the IMSC profile of a TTML track).
+ * bindings, the sample entry types of the other codecs a CMAF segment carries, the ISO/IEC 14496-30 text
+ * tracks with the IMSC profile of a TTML track, and the Dolby Vision {@code dva1}, {@code dvh1} and {@code dav1}
+ * strings with the two-digit profile and level of a track whose base layer is not backward compatible).
  */
 final class CodecStrings {
     private CodecStrings() {
@@ -30,6 +31,21 @@ final class CodecStrings {
      */
     static String of(Track track, byte[] keyFrame) {
         var config = track.codecConfig().orElse(null);
+        // TODO: the HLS SUPPLEMENTAL-CODECS of a backward compatible Dolby Vision track (dvh1.08.04/db4h)
+        if (track instanceof VideoTrack video && video.dolbyVision().isPresent()
+                && !video.dolbyVision().get().isBackwardCompatible()) {
+            var prefix = switch (track.codec()) {
+                case H264 -> "dva1";
+                case HEVC -> "dvh1";
+                case AV1 -> "dav1";
+                default -> null;
+            };
+            if (prefix != null) {
+                var configuration = video.dolbyVision().get();
+                return String.format(Locale.ROOT, "%s.%02d.%02d", prefix, configuration.profile(),
+                        configuration.level());
+            }
+        }
         return switch (track.codec()) {
             case H264 -> config != null && config.length >= 4
                     ? String.format(Locale.ROOT, "avc1.%02x%02x%02x", config[1] & 0xFF, config[2] & 0xFF, config[3] & 0xFF)

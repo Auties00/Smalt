@@ -11,6 +11,7 @@ import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -140,6 +141,12 @@ import java.util.Set;
  * live output) is still written under {@code BlockAddID} 4, but its entry declares no mapping, so a
  * reader that follows the mappings may skip it; WebM assigns {@code BlockAddID} 4 of VP9 to ITU-T
  * T.35 metadata without a mapping.
+ *
+ * <p>In a Matroska file, the track entry of an H.264, HEVC or AV1 track with a
+ * {@link VideoTrack#dolbyVision() Dolby Vision configuration} gets a {@code BlockAdditionMapping} of
+ * {@code BlockAddIDType} {@code dvcC} (up to profile 7), {@code dvvC} (profiles 8 to 10) or {@code dvwC} (above)
+ * whose {@code BlockAddIDExtraData} is the configuration record; the reference processing units stay in the
+ * packets. WebM has no Dolby Vision mapping, so a WebM file stores the base layer only.
  *
  * <p>A video track that {@linkplain VideoTrack#hasAlpha() carries alpha} declares {@code AlphaMode} 1
  * in its {@code Video} element and a {@code MaxBlockAdditionID} of at least 1, and the
@@ -2098,6 +2105,15 @@ public final class MatroskaMuxer implements Muxer {
                 out.unsigned(EbmlIds.BLOCK_ADD_ID_VALUE, HDR10_PLUS_ADD_ID);
                 out.unsigned(EbmlIds.BLOCK_ADD_ID_TYPE, ITU_T_T35_ADD_ID_TYPE);
                 out.end();
+            }
+            if (track instanceof VideoTrack video && options.docType() != MatroskaDocType.WEBM
+                    && (track.codec() == Codec.H264 || track.codec() == Codec.HEVC || track.codec() == Codec.AV1)) {
+                video.dolbyVision().ifPresent(configuration -> {
+                    out.begin(EbmlIds.BLOCK_ADDITION_MAPPING);
+                    out.unsigned(EbmlIds.BLOCK_ADD_ID_TYPE, DolbyVisionConfigs.configType(configuration));
+                    out.binary(EbmlIds.BLOCK_ADD_ID_EXTRA_DATA, DolbyVisionConfigs.record(configuration));
+                    out.end();
+                });
             }
             if (codecDelayNanos > 0) {
                 out.unsigned(EbmlIds.CODEC_DELAY, codecDelayNanos);

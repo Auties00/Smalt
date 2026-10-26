@@ -96,7 +96,9 @@ import java.util.Set;
  * {@code Projection} of a spherical type, with its {@code ProjectionPrivate} and pose, its spherical
  * projection; the roll of a rectangular {@code Projection} is its orientation
  * ({@link VideoTrack#sampleAspectRatio()}, {@link VideoTrack#interlacing()},
- * {@link VideoTrack#stereoMode()}, {@link VideoTrack#spherical()}).
+ * {@link VideoTrack#stereoMode()}, {@link VideoTrack#spherical()}). The {@code BlockAddIDExtraData} of an H.264,
+ * HEVC or AV1 track's {@code BlockAdditionMapping} of type {@code dvcC}, {@code dvvC} or {@code dvwC} is its
+ * {@link VideoTrack#dolbyVision() Dolby Vision configuration}.
  *
  * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the
  * first video track (of any track when there is no video) name the cluster holding the last key

@@ -49,12 +49,16 @@ import java.util.function.Function;
  *       built from the parameter sets met before the first key frame. IDR and IRAP pictures, and
  *       H.264 intra pictures with a recovery point SEI message, are key frames; the access units
  *       before the first key frame cannot be decoded and are dropped. A packet lasts until the
- *       next access unit's decoding time;</li>
+ *       next access unit's decoding time. The Dolby Vision reference processing units (HEVC NAL
+ *       unit type 62) stay in the packets;</li>
  *   <li>AV1 ({@code 0x06} with the {@code "AV01"} registration, AOM "Carriage of AV1 in MPEG-2
  *       TS"): one packet per temporal unit, its OBUs freed of their start codes and emulation
  *       prevention and stored with size fields, without temporal delimiters, as ISOBMFF stores
  *       them, with an {@code av1C} configuration built from the sequence header in force at the
  *       first key frame; temporal units before it are dropped;</li>
+ *   <li>the DOVI video stream descriptor (tag {@code 0xB0}, Dolby's "Dolby Vision Streams Within the MPEG-2
+ *       Transport Stream Format") of an H.264, HEVC or AV1 stream gives its track's
+ *       {@link com.github.auties00.smalt.track.VideoTrack#dolbyVision() Dolby Vision configuration};</li>
  *   <li>MPEG-4 Part 2 ({@code 0x10}): one packet per PES packet, with the visual object sequence,
  *       visual object and video object layer headers of the first key frame as the
  *       configuration, and the picture size, frame rate and sample aspect ratio of the video

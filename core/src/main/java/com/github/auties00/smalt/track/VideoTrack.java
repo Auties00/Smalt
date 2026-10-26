@@ -95,6 +95,11 @@ public final class VideoTrack implements Track {
      */
     private final boolean alpha;
 
+    /**
+     * The Dolby Vision configuration, or {@code null}.
+     */
+    private final DolbyVision dolbyVision;
+
     private VideoTrack(Builder builder) {
         this.id = builder.id;
         this.codec = builder.codec;
@@ -112,6 +117,7 @@ public final class VideoTrack implements Track {
         this.spherical = builder.spherical;
         this.stereoMode = builder.stereoMode;
         this.alpha = builder.alpha;
+        this.dolbyVision = builder.dolbyVision;
     }
 
     /**
@@ -119,8 +125,8 @@ public final class VideoTrack implements Track {
      *
      * <p>The codec and the time base must be set; every other property starts at its "unknown"
      * value: identifier {@code 0}, duration {@code -1}, no configuration, language, frame rate,
-     * color, sample aspect ratio, scan, spherical projection or stereo mode, size {@code 0x0},
-     * {@link Orientation#NORMAL} and no alpha.
+     * color, sample aspect ratio, scan, spherical projection, stereo mode or Dolby Vision configuration, size
+     * {@code 0x0}, {@link Orientation#NORMAL} and no alpha.
      *
      * @return the builder
      */
@@ -151,6 +157,7 @@ public final class VideoTrack implements Track {
         builder.spherical = spherical;
         builder.stereoMode = stereoMode;
         builder.alpha = alpha;
+        builder.dolbyVision = dolbyVision;
         return builder;
     }
 
@@ -297,6 +304,24 @@ public final class VideoTrack implements Track {
     }
 
     /**
+     * Returns the Dolby Vision configuration the container declares: an MP4 {@code dvcC}, {@code dvvC} or
+     * {@code dvwC} box, a Matroska {@code BlockAdditionMapping} of one of those types, or an MPEG-TS DOVI video
+     * stream descriptor.
+     *
+     * <p>The track's {@link #codec()} is the codec of the base layer, and its packets carry the reference
+     * processing units in band. A muxer that can store the configuration writes it again, so that a remux keeps
+     * the track a Dolby Vision track. A configuration that is not
+     * {@linkplain DolbyVision#isBackwardCompatible() backward compatible} makes
+     * {@link com.github.auties00.smalt.video.VideoDecoders} refuse the track unless
+     * {@link com.github.auties00.smalt.video.VideoDecoderOptions#dolbyVisionBaseLayer()} is set.
+     *
+     * @return the configuration, or empty when the track is not declared as Dolby Vision
+     */
+    public Optional<DolbyVision> dolbyVision() {
+        return Optional.ofNullable(dolbyVision);
+    }
+
+    /**
      * Compares two tracks property by property, the configuration by content.
      *
      * @param other the object to compare with
@@ -310,7 +335,8 @@ public final class VideoTrack implements Track {
                 && width == that.width && height == that.height && orientation == that.orientation
                 && Objects.equals(frameRate, that.frameRate) && Objects.equals(color, that.color)
                 && Objects.equals(sampleAspectRatio, that.sampleAspectRatio) && interlacing == that.interlacing
-                && Objects.equals(spherical, that.spherical) && stereoMode == that.stereoMode && alpha == that.alpha;
+                && Objects.equals(spherical, that.spherical) && stereoMode == that.stereoMode && alpha == that.alpha
+                && Objects.equals(dolbyVision, that.dolbyVision);
     }
 
     /**
@@ -321,7 +347,8 @@ public final class VideoTrack implements Track {
     @Override
     public int hashCode() {
         return Objects.hash(id, codec, timeBase, duration, Arrays.hashCode(codecConfig), language, width, height,
-                orientation, frameRate, color, sampleAspectRatio, interlacing, spherical, stereoMode, alpha);
+                orientation, frameRate, color, sampleAspectRatio, interlacing, spherical, stereoMode, alpha,
+                dolbyVision);
     }
 
     /**
@@ -337,7 +364,8 @@ public final class VideoTrack implements Track {
                 + ", language=" + language + ", width=" + width + ", height=" + height
                 + ", orientation=" + orientation + ", frameRate=" + frameRate + ", color=" + color
                 + ", sampleAspectRatio=" + sampleAspectRatio + ", interlacing=" + interlacing
-                + ", spherical=" + spherical + ", stereoMode=" + stereoMode + ", alpha=" + alpha + "]";
+                + ", spherical=" + spherical + ", stereoMode=" + stereoMode + ", alpha=" + alpha
+                + ", dolbyVision=" + dolbyVision + "]";
     }
 
     /**
@@ -425,6 +453,11 @@ public final class VideoTrack implements Track {
          * Whether the packets carry alpha frames.
          */
         private boolean alpha;
+
+        /**
+         * The Dolby Vision configuration, or {@code null}.
+         */
+        private DolbyVision dolbyVision;
 
         /**
          * Constructs a builder with every property unknown.
@@ -651,6 +684,27 @@ public final class VideoTrack implements Track {
          */
         public Builder alpha(boolean alpha) {
             this.alpha = alpha;
+            return this;
+        }
+
+        /**
+         * Sets the Dolby Vision configuration declared by the container; see {@link VideoTrack#dolbyVision()}.
+         *
+         * @param dolbyVision the configuration
+         * @return this builder
+         */
+        public Builder dolbyVision(DolbyVision dolbyVision) {
+            this.dolbyVision = Objects.requireNonNull(dolbyVision, "dolbyVision");
+            return this;
+        }
+
+        /**
+         * Removes the Dolby Vision configuration, so that the track is plain video of its codec.
+         *
+         * @return this builder
+         */
+        public Builder noDolbyVision() {
+            this.dolbyVision = null;
             return this;
         }
 

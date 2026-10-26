@@ -1018,6 +1018,9 @@ final class Mp4Track {
                 if (entry.stereoMode() != null) {
                     builder.stereoMode(entry.stereoMode());
                 }
+                if (entry.dolbyVision() != null) {
+                    builder.dolbyVision(entry.dolbyVision());
+                }
                 yield builder.build();
             }
             case AUDIO -> AudioTrack.builder().id(id).codec(entry.codec()).timeBase(timeBase).duration(duration)

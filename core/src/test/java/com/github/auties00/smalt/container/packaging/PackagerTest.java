@@ -504,6 +504,31 @@ class PackagerTest {
         }
 
         @Test
+        @DisplayName("name the Dolby Vision sample entry, profile and level of a stream without a compatible base layer")
+        void dolbyVision() {
+            var hvcc = new byte[23];
+            hvcc[0] = 1;
+            hvcc[1] = 0x02;
+            hvcc[2] = 0x20;
+            hvcc[12] = 120;
+            var hevc = VideoTrack.builder().id(1).codec(Codec.HEVC).timeBase(Rational.timeBaseOf(90_000))
+                    .codecConfig(hvcc).build();
+            var base = CodecStrings.of(hevc, null);
+            assertEquals("dvh1.05.06", CodecStrings.of(hevc.toBuilder()
+                    .dolbyVision(com.github.auties00.smalt.track.DolbyVision.of(5, 6, 0)).build(), null));
+            assertEquals(base, CodecStrings.of(hevc.toBuilder()
+                    .dolbyVision(com.github.auties00.smalt.track.DolbyVision.of(8, 6, 1)).build(), null));
+            var av1 = VideoTrack.builder().id(1).codec(Codec.AV1).timeBase(Rational.timeBaseOf(90_000))
+                    .codecConfig(new byte[]{(byte) 0x81, 0x08, 0x0C, 0})
+                    .dolbyVision(com.github.auties00.smalt.track.DolbyVision.of(10, 9, 0)).build();
+            assertEquals("dav1.10.09", CodecStrings.of(av1, null));
+            var avc = VideoTrack.builder().id(1).codec(Codec.H264).timeBase(Rational.timeBaseOf(90_000))
+                    .codecConfig(new byte[]{1, 0x64, 0x00, 0x1F, (byte) 0xFF, (byte) 0xE0, 0})
+                    .dolbyVision(com.github.auties00.smalt.track.DolbyVision.of(9, 5, 0)).build();
+            assertEquals("dva1.09.05", CodecStrings.of(avc, null));
+        }
+
+        @Test
         @DisplayName("name the sample entries of the other codecs a CMAF segment carries")
         void cmafEntries() {
             // a VP8 key frame tag (version 0), its start code and a 320x240 picture

@@ -856,6 +856,9 @@ final class NalParser extends ElementaryParser {
                 builder.sampleAspectRatio(info.sampleAspect());
             }
         }
+        if (entry.dolbyVision() != null) {
+            builder.dolbyVision(entry.dolbyVision());
+        }
         track = builder.build();
     }
 }

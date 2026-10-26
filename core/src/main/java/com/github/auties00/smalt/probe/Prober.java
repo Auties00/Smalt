@@ -349,7 +349,7 @@ final class Prober {
             }
         }
         return new VideoStreamInfo(fields, track.codec(), profile, level, width, height, track.orientation(), frameRate,
-                sar, color, bitDepth, chroma, track.interlacing().orElse(null));
+                sar, color, bitDepth, chroma, track.interlacing().orElse(null), track.dolbyVision().orElse(null));
     }
 
     /**

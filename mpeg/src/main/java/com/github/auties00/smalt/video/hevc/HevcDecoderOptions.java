@@ -35,6 +35,8 @@ public final class HevcDecoderOptions {
 
     private final boolean alpha;
 
+    private final boolean dolbyVisionBaseLayer;
+
     private HevcDecoderOptions(Builder builder) {
         this.limits = builder.limits;
         this.threads = builder.threads;
@@ -44,12 +46,14 @@ public final class HevcDecoderOptions {
         this.filmGrain = builder.filmGrain;
         this.outputLayerSet = builder.lastOutputLayerSet ? -1 : builder.outputLayerSet;
         this.alpha = builder.alpha;
+        this.dolbyVisionBaseLayer = builder.dolbyVisionBaseLayer;
     }
 
     /**
      * Returns the default options: {@link MediaLimits#defaults()}, the shared pool, 8-bit output, no
      * hash verification, output cropped by the conformance window only, film grain added, the base
-     * layer of a multi-layer stream, and its alpha attached.
+     * layer of a multi-layer stream, its alpha attached, and Dolby Vision streams without a backward compatible
+     * base layer rejected.
      *
      * @return the default options
      */
@@ -170,25 +174,43 @@ public final class HevcDecoderOptions {
         return alpha;
     }
 
+    /**
+     * {@return whether a Dolby Vision stream whose base layer is not backward compatible decodes to its base layer
+     * pictures; {@code false} by default}
+     *
+     * <p>When clear, {@link HevcDecoder} rejects a track whose
+     * {@linkplain com.github.auties00.smalt.track.VideoTrack#dolbyVision() Dolby Vision configuration} is not
+     * {@linkplain com.github.auties00.smalt.track.DolbyVision#isBackwardCompatible() backward compatible} and a
+     * single-layer stream whose first valid reference processing unit (NAL unit type 62) is of profile 5, with
+     * {@link MediaException.Unsupported}: the base layer of such a stream is coded in a Dolby Vision specific color
+     * space and shows wrong colors as plain video. When set, the base layer is decoded as plain HEVC and the
+     * reference processing units are ignored, as they are for every backward compatible stream.
+     */
+    public boolean dolbyVisionBaseLayer() {
+        return dolbyVisionBaseLayer;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof HevcDecoderOptions that && limits.equals(that.limits) && threads == that.threads
                 && highBitDepth == that.highBitDepth && hashVerification == that.hashVerification
                 && defaultDisplayWindow == that.defaultDisplayWindow && filmGrain == that.filmGrain
-                && outputLayerSet == that.outputLayerSet && alpha == that.alpha;
+                && outputLayerSet == that.outputLayerSet && alpha == that.alpha
+                && dolbyVisionBaseLayer == that.dolbyVisionBaseLayer;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(limits, threads, highBitDepth, hashVerification, defaultDisplayWindow, filmGrain,
-                outputLayerSet, alpha);
+                outputLayerSet, alpha, dolbyVisionBaseLayer);
     }
 
     @Override
     public String toString() {
         return "HevcDecoderOptions[limits=" + limits + ", threads=" + threads + ", highBitDepth=" + highBitDepth
                 + ", hashVerification=" + hashVerification + ", defaultDisplayWindow=" + defaultDisplayWindow
-                + ", filmGrain=" + filmGrain + ", outputLayerSet=" + outputLayerSet() + ", alpha=" + alpha + "]";
+                + ", filmGrain=" + filmGrain + ", outputLayerSet=" + outputLayerSet() + ", alpha=" + alpha
+                + ", dolbyVisionBaseLayer=" + dolbyVisionBaseLayer + "]";
     }
 
     /**
@@ -216,6 +238,8 @@ public final class HevcDecoderOptions {
 
         private boolean alpha;
 
+        private boolean dolbyVisionBaseLayer;
+
         private Builder() {
             this.limits = MediaLimits.DEFAULT;
             this.filmGrain = true;
@@ -232,6 +256,7 @@ public final class HevcDecoderOptions {
             this.outputLayerSet = Math.max(0, options.outputLayerSet);
             this.lastOutputLayerSet = options.outputLayerSet < 0;
             this.alpha = options.alpha;
+            this.dolbyVisionBaseLayer = options.dolbyVisionBaseLayer;
         }
 
         /**
@@ -338,6 +363,18 @@ public final class HevcDecoderOptions {
          */
         public Builder alpha(boolean alpha) {
             this.alpha = alpha;
+            return this;
+        }
+
+        /**
+         * Sets whether a Dolby Vision stream without a backward compatible base layer decodes to its base layer;
+         * see {@link HevcDecoderOptions#dolbyVisionBaseLayer()}.
+         *
+         * @param dolbyVisionBaseLayer the value
+         * @return this builder
+         */
+        public Builder dolbyVisionBaseLayer(boolean dolbyVisionBaseLayer) {
+            this.dolbyVisionBaseLayer = dolbyVisionBaseLayer;
             return this;
         }
 

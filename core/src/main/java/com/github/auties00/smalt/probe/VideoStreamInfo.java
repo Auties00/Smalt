@@ -4,6 +4,7 @@ import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.track.Codec;
+import com.github.auties00.smalt.track.DolbyVision;
 import com.github.auties00.smalt.track.Interlacing;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.TrackDisposition;
@@ -89,6 +90,11 @@ public final class VideoStreamInfo implements StreamInfo {
     private final Interlacing interlacing;
 
     /**
+     * The Dolby Vision configuration, or {@code null}.
+     */
+    private final DolbyVision dolbyVision;
+
+    /**
      * Constructs a description.
      *
      * @param fields the shared fields
@@ -104,10 +110,11 @@ public final class VideoStreamInfo implements StreamInfo {
      * @param bitDepth the luma bit depth, or {@code 0}
      * @param chromaFormat the chroma subsampling, or {@code null}
      * @param interlacing the scan, or {@code null}
+     * @param dolbyVision the Dolby Vision configuration, or {@code null}
      */
     VideoStreamInfo(StreamFields fields, Codec codec, String profile, int level, int width, int height,
                     Orientation orientation, Rational frameRate, Rational sampleAspectRatio, ColorInfo color, int bitDepth,
-                    ChromaFormat chromaFormat, Interlacing interlacing) {
+                    ChromaFormat chromaFormat, Interlacing interlacing, DolbyVision dolbyVision) {
         this.fields = fields;
         this.codec = codec;
         this.profile = profile;
@@ -121,6 +128,7 @@ public final class VideoStreamInfo implements StreamInfo {
         this.bitDepth = bitDepth;
         this.chromaFormat = chromaFormat;
         this.interlacing = interlacing;
+        this.dolbyVision = dolbyVision;
     }
 
     @Override
@@ -314,6 +322,17 @@ public final class VideoStreamInfo implements StreamInfo {
         return Optional.ofNullable(interlacing);
     }
 
+    /**
+     * Returns the Dolby Vision configuration the container declares: the profile, level and base layer
+     * compatibility of a Dolby Vision stream, whose {@link #codec()}, {@link #profile()} and {@link #level()}
+     * describe its base layer.
+     *
+     * @return the configuration, or empty when the stream is not declared as Dolby Vision
+     */
+    public Optional<DolbyVision> dolbyVision() {
+        return Optional.ofNullable(dolbyVision);
+    }
+
     @Override
     public String toString() {
         return "VideoStreamInfo[" + fields.describe() + ", codec=" + codec + (profile != null ? ", profile=" + profile : "")
@@ -322,6 +341,7 @@ public final class VideoStreamInfo implements StreamInfo {
                 + (sampleAspectRatio != null ? ", sampleAspectRatio=" + sampleAspectRatio : "")
                 + (interlacing != null ? ", interlacing=" + interlacing : "")
                 + (bitDepth > 0 ? ", bitDepth=" + bitDepth : "") + (chromaFormat != null ? ", chroma=" + chromaFormat : "")
-                + (color != null ? ", color=" + color : "") + "]";
+                + (color != null ? ", color=" + color : "")
+                + (dolbyVision != null ? ", dolbyVision=" + dolbyVision : "") + "]";
     }
 }

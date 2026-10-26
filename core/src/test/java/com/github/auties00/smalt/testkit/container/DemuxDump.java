@@ -171,6 +171,8 @@ public final class DemuxDump {
                         .append(" roll=").append(spherical.roll()).append(" source=")
                         .append(quote(spherical.metadataSource())).append('\n'));
                 video.color().ifPresent(color -> text.append("  color ").append(color).append('\n'));
+                video.dolbyVision().ifPresent(configuration -> text.append("  dolbyVision ").append(configuration)
+                        .append('\n'));
             }
             case AudioTrack audio -> {
                 text.append("  audio rate=").append(audio.sampleRate()).append(" bits=").append(audio.bitsPerSample())

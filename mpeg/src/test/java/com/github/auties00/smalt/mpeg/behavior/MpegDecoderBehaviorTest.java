@@ -38,7 +38,8 @@ class MpegDecoderBehaviorTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mp4/faststart.mp4", "mp4/fragmented.mp4", "mp4/hevc.mp4", "mp4/h264-422-10.mov",
-            "mp4/h264-444.mp4", "ts/h264-aac.ts", "avi/mpeg4-mp3.avi", "mp4/h263-amr.3gp", "mp4/quicktime.mov"})
+            "mp4/h264-444.mp4", "ts/h264-aac.ts", "avi/mpeg4-mp3.avi", "mp4/h263-amr.3gp", "mp4/quicktime.mov",
+            "mp4/dolby-vision-p84.mp4", "matroska/dolby-vision-p84.mkv", "ts/dolby-vision-p84.ts"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void video(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

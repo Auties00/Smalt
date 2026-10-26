@@ -25,6 +25,8 @@ def generator(root, relative):
         return "make-samples.sh, make-ts-samples.py"
     if relative == "amr/nb-tags.amr":
         return "make-tag-samples.py"
+    if relative.split("/")[-1].startswith("dolby-vision-"):
+        return "make-dolby-vision-samples.py"
     if relative in ("matroska/editions.mkv", "mp4/timecode-spherical.mov", "wav/bext-cue.wav", "aiff/markers.aiff",
                     "flac/cuesheet.flac"):
         return "make-descriptive-samples.py"

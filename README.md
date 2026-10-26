@@ -608,6 +608,24 @@ and audio whole. The samples, initialization vectors and subsample maps of VP9 a
 Packager's for the libvpx and libaom conformance vectors (superframes, resizing, tiles, show-existing frames,
 spatial and temporal layers, lossless and film grain frames).
 
+Dolby Vision tracks are tracks of their base codec (HEVC, H.264 or AV1) whose packets carry the reference
+processing units (RPUs) in band, with the configuration (`DolbyVision`: profile, level, the RPU, enhancement and
+base layer flags, the base layer compatibility identifier) on `VideoTrack.dolbyVision()` and
+`VideoStreamInfo.dolbyVision()`. The MP4 demuxer reads it from the `dvcC`, `dvvC` and `dvwC` boxes of any visual
+sample entry and maps the Dolby Vision entries `dvh1`, `dvhe`, `dva1`, `dvav` and `dav1` to their base codec; the
+Matroska demuxer reads the `BlockAdditionMapping` of type `dvcC`, `dvvC` or `dvwC`, and the MPEG-TS demuxer the
+DOVI video stream descriptor (tag `0xB0`). The MP4 and fragmented MP4, Matroska and MPEG-TS muxers write it back
+(the box Dolby's ISO base media file format specification selects for the profile, after the codec configuration
+box, in the base codec's entry, or in `dva1`, `dvh1` or `dav1` when the base layer is not backward compatible;
+the `BlockAdditionMapping`, not in WebM; the `"DOVI"` registration and the DOVI descriptor), and the RPUs stay in
+the packets, so a remux between any two of them keeps the stream a Dolby Vision stream; ffprobe reads the
+configuration of every file Smalt writes, and Smalt reads ffmpeg's. The decoders show the base layer: a stream
+whose base layer is backward compatible (profiles 8.1, 8.2, 8.4, 9, 10.1, 10.2, 10.4, 7's HDR10 base layer)
+decodes as plain video of its color description, while one that is not (profile 5 and 10.0, IPTPQc2) raises
+`MediaException.Unsupported` (feature `"dolby vision reconstruction"`), from its container configuration or,
+for a single-layer HEVC stream that declares none, from its first valid RPU (the RPU parser follows the
+dolby_vision crate of dovi_tool), unless `VideoDecoderOptions.dolbyVisionBaseLayer` asks for the base layer anyway.
+
 PCM is stored one frame per sample, in a timescale of the sampling rate, as QuickTime and ISO/IEC 23003-5
 readers expect; its frames follow each other from the first packet's timestamp, so a gap between packets is
 not kept. A rate above 65535 Hz leaves the 16.16 sampling rate field of an ISO entry at zero (readers then take
@@ -1499,6 +1517,14 @@ checks a FLAC source's MD5 signature on the way.
   track entry declares the HDR10+ `BlockAdditionMapping` only for a PQ track or one whose first message is
   queued when the header is written; the messages of any other track (live output of a track without PQ color)
   are written without it, which WebM readers of VP9 accept (WebM assigns `BlockAddID` 4 to ITU-T T.35).
+- Dolby Vision: the decoders show the base layer only. The pictures of a stream without a backward compatible
+  base layer (profile 5, 10.0) are not reconstructed from its RPUs (reshaping, IPTPQc2 to RGB); such a stream is
+  refused unless `VideoDecoderOptions.dolbyVisionBaseLayer` decodes its base layer with wrong colors. The
+  enhancement layer of profile 7 (in band, NAL unit type 63, or a second track or PID) is not applied, and the
+  in-band check of an undeclared profile 5 stream covers HEVC only (AV1 RPUs in ITU-T T.35 metadata OBUs are
+  not read); it skips multi-layer streams, since the RPU headers of profile 20 (MV-HEVC) read as profile 5.
+  WebM files and SAMPLE-AES transport streams carry no Dolby Vision configuration, and HLS playlists name a
+  backward compatible stream by its base codec only (no `SUPPLEMENTAL-CODECS`).
 - HDR color management converts HLG through the BT.2100 reference display of 1000 cd/m2 (system gamma 1.2),
   whatever the peak of the display the content was graded on, and transforms from or to a PQ or HLG profile
   are computed in single-precision floating point at 16 bits, not sampled like Little CMS's. The ICC form of
@@ -2606,9 +2632,11 @@ Sjon Kosse's [arw](https://github.com/Soreil/arw), Roland and Erik Karlsson's
 [lzokay](https://github.com/jackoalan/lzokay), whose LZO1X decompressor Smalt's follows,
 [Shaka Packager](https://github.com/shaka-project/shaka-packager), whose subsample rules, slice header reading
 and SAMPLE-AES details Smalt's Common Encryption follows (Chromium's encrypted test media and the MPEG file
-format conformance suite's protected files check its decryption), and the Microsoft MPEG-4 Visual reference
+format conformance suite's protected files check its decryption), the Microsoft MPEG-4 Visual reference
 software of ISO/IEC 14496-5, whose decoder of the shape, sprite, N-bit and scalability tools Smalt's
-MPEG-4 object decoder is a port of. The same
+MPEG-4 object decoder is a port of, and quietvoid's
+[dovi_tool](https://github.com/quietvoid/dovi_tool), whose dolby_vision crate Smalt's Dolby Vision RPU parser
+follows and whose test RPUs check it. The same
 thanks go to the projects whose code Smalt
 follows under licenses that ask for nothing in return: [minimp3](https://github.com/lieff/minimp3), whose
 decoder Smalt's MP3 decoder is a port of, [stb](https://github.com/nothings/stb),
@@ -2625,7 +2653,8 @@ distribution (the ISO/IEC 13818-5 reference software, whose Layer I and II encod
 follow); the [Alliance for Open Media](https://aomedia.org/)'s AV1 and AVIF specifications and its carriage of AV1 in MPEG-2 TS; the VP8
 (RFC 6386) and VP9 bitstream specifications; the IETF's Opus, Ogg and AMR payload RFCs, and its CELLAR
 working group's Matroska specifications; 3GPP's AMR and AMR-WB reference code; ATSC A/52 and ETSI TS 102 366
-for AC-3 and E-AC-3; SMPTE RDD 5 (film grain), RDD 36 (ProRes), ST 2019-1 (VC-3) and ST 302 (AES3 audio in MPEG-2 TS); ANSI/SCTE 35 (splice information); ITU-T T.82 (JBIG); RFC 8878 and the
+for AC-3 and E-AC-3; Dolby's carriage of Dolby Vision in the ISO base media file format and in MPEG-2 TS, with the
+Matroska block addition mappings; SMPTE RDD 5 (film grain), RDD 36 (ProRes), ST 2019-1 (VC-3) and ST 302 (AES3 audio in MPEG-2 TS); ANSI/SCTE 35 (splice information); ITU-T T.82 (JBIG); RFC 8878 and the
 [Zstandard](https://github.com/facebook/zstd) format documentation with its golden test files; the .xz file
 format; Adobe's TIFF and
 [DNG](https://helpx.adobe.com/camera-raw/desktop/dng-and-file-formats/digital-negative.html)

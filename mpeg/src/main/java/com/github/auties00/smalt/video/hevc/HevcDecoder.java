@@ -80,6 +80,13 @@ import java.util.function.Consumer;
  * sets carried in packets are honored in both cases. NAL units of reserved types and of layers that
  * are not decoded are ignored.
  *
+ * <p>A Dolby Vision stream is decoded as its base layer: its reference processing units (NAL unit type 62) and
+ * its enhancement layer (type 63) are ignored. A track whose {@link VideoTrack#dolbyVision() Dolby Vision
+ * configuration} is not backward compatible, or, for a track that declares none, a single-layer stream whose first
+ * valid reference processing unit is of profile 5, raises {@link MediaException.Unsupported} naming the feature
+ * {@code "dolby vision reconstruction"}, because the base layer of such a stream is coded in a Dolby Vision
+ * specific color space; {@link HevcDecoderOptions#dolbyVisionBaseLayer()} decodes it anyway.
+ *
  * <p>Frames reach the consumer in output order as {@link YuvPicture}s cropped by the sequence's
  * conformance window (and by the VUI's default display window inside it when
  * {@link HevcDecoderOptions#defaultDisplayWindow()} is set), in the stream's chroma format:
@@ -399,6 +406,8 @@ public final class HevcDecoder implements VideoDecoder {
      * @param track the track to decode
      * @throws IllegalArgumentException if the track is not an HEVC track
      * @throws MediaException.Malformed if the track's configuration record is corrupt
+     * @throws MediaException.Unsupported if the track is a Dolby Vision track without a backward compatible base
+     * layer
      */
     public HevcDecoder(VideoTrack track) {
         this(track, HevcDecoderOptions.defaults());
@@ -411,6 +420,8 @@ public final class HevcDecoder implements VideoDecoder {
      * @param options the decoder settings
      * @throws IllegalArgumentException if the track is not an HEVC track
      * @throws MediaException.Malformed if the track's configuration record is corrupt
+     * @throws MediaException.Unsupported if the track is a Dolby Vision track without a backward compatible base
+     * layer and {@link HevcDecoderOptions#dolbyVisionBaseLayer()} is clear
      */
     public HevcDecoder(VideoTrack track, HevcDecoderOptions options) {
         Objects.requireNonNull(track, "track");
@@ -418,12 +429,19 @@ public final class HevcDecoder implements VideoDecoder {
         if (track.codec() != Codec.HEVC) {
             throw new IllegalArgumentException(track.codec() + " is not an HEVC track");
         }
+        var dolbyVision = track.dolbyVision().orElse(null);
+        if (dolbyVision != null && !dolbyVision.isBackwardCompatible() && !options.dolbyVisionBaseLayer()) {
+            throw new MediaException.Unsupported("dolby vision reconstruction", "Dolby Vision profile "
+                    + dolbyVision.profile() + " has no backward compatible base layer and is not decodable; set"
+                    + " dolbyVisionBaseLayer to decode its base layer as plain video");
+        }
         this.options = options;
         // TODO: decode the tiles of a picture concurrently too; pictures and wavefront rows already
         // overlap when options.threads() allows it
         this.engine = new HevcDecoderEngine(options.limits(), options.hashVerification(),
                 options.threads() == 0 ? ParallelBands.THREADS : options.threads(),
                 options.outputLayerSet().orElse(-1), options.alpha(), this::emit);
+        engine.rejectDolbyVisionProfile5(!options.dolbyVisionBaseLayer() && dolbyVision == null);
         this.timeBase = track.timeBase();
         this.trackFrameDuration = track.frameRate()
                 .map(rate -> Math.max(0, rate.invert().rescale(1, timeBase)))
