@@ -8,7 +8,11 @@ import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
+import java.security.GeneralSecurityException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -99,6 +103,17 @@ final class SegmentedStream {
     byte[] keyFrame;
 
     /**
+     * The AES-128 key of whole-segment encryption, or {@code null} for clear segments.
+     */
+    private byte[] segmentKey;
+
+    /**
+     * The initialization vector of every encrypted segment, or {@code null} for each segment's media sequence
+     * number.
+     */
+    private byte[] segmentIv;
+
+    /**
      * The offset of the segment index of an indexed stream, in bytes.
      */
     long indexOffset;
@@ -132,12 +147,25 @@ final class SegmentedStream {
     }
 
     /**
+     * Encrypts every media segment written from now on with AES-128 in CBC mode and PKCS#7 padding, as HLS
+     * {@code METHOD=AES-128} describes; the initialization segment stays clear.
+     *
+     * @param key the 16-byte key
+     * @param iv the 16-byte initialization vector of every segment, or {@code null} for each segment's media
+     * sequence number as a 128-bit big-endian integer
+     */
+    void encryptSegments(byte[] key, byte[] iv) {
+        this.segmentKey = key.clone();
+        this.segmentIv = iv == null ? null : iv.clone();
+    }
+
+    /**
      * Opens the sink of the initialization segment.
      *
      * @return the sink, which the muxer closes
      */
     MediaSink openInit() {
-        return open(name + "_init.mp4", true, 0, 0, true);
+        return open(name + "_init.mp4", true, 0, 0, true, -1);
     }
 
     /**
@@ -151,7 +179,7 @@ final class SegmentedStream {
      */
     MediaSink openSegment(int sequence, long startMicros, long durationMicros, boolean independent) {
         return open(String.format(Locale.ROOT, "%s_%05d%s", name, sequence, extension), false, startMicros,
-                durationMicros, independent);
+                durationMicros, independent, sequence - 1);
     }
 
     /**
@@ -162,10 +190,11 @@ final class SegmentedStream {
      * @param startMicros the presentation time of the segment
      * @param durationMicros the duration of the segment
      * @param independent whether the segment starts with a key frame
+     * @param mediaSequence the media sequence number of a media segment, from zero
      * @return the sink
      */
     private MediaSink open(String fileName, boolean initialization, long startMicros, long durationMicros,
-                           boolean independent) {
+                           boolean independent, long mediaSequence) {
         MediaSink target;
         String uri;
         long offset;
@@ -181,7 +210,19 @@ final class SegmentedStream {
             uri = fileName;
             offset = 0;
         }
-        return new CountingSink(target, singleName == null, size -> {
+        var owns = singleName == null;
+        if (!initialization && segmentKey != null) {
+            var iv = segmentIv;
+            if (iv == null) {
+                iv = new byte[16];
+                for (var index = 0; index < 8; index++) {
+                    iv[15 - index] = (byte) (mediaSequence >>> (8 * index));
+                }
+            }
+            target = new EncryptingSink(target, owns, segmentKey, iv);
+            owns = true;
+        }
+        return new CountingSink(target, owns, size -> {
             if (singleName != null) {
                 singleSize += size;
             } else {
@@ -463,7 +504,120 @@ final class SegmentedStream {
             if (owns) {
                 target.close();
             }
-            completion.completed(count);
+            completion.completed(target instanceof EncryptingSink encrypting ? encrypting.written : count);
+        }
+    }
+
+    /**
+     * Encrypts what is written with AES-128 in CBC mode and PKCS#7 padding before forwarding it, the final padded
+     * block written when the sink is closed.
+     */
+    private static final class EncryptingSink implements MediaSink {
+        /**
+         * The sink written to.
+         */
+        private final MediaSink target;
+
+        /**
+         * Whether closing this sink closes the target.
+         */
+        private final boolean owns;
+
+        private final Cipher cipher;
+
+        /**
+         * The number of encrypted bytes written to the target.
+         */
+        private long written;
+
+        /**
+         * The number of clear bytes received.
+         */
+        private long received;
+
+        /**
+         * The ciphertext of the last write, reused across writes.
+         */
+        private ByteBuffer encrypted = ByteBuffer.allocate(8192);
+
+        /**
+         * Constructs an encrypting sink.
+         *
+         * @param target the sink written to
+         * @param owns whether closing this sink closes the target
+         * @param key the 16-byte key
+         * @param iv the 16-byte initialization vector
+         */
+        EncryptingSink(MediaSink target, boolean owns, byte[] key, byte[] iv) {
+            this.target = target;
+            this.owns = owns;
+            try {
+                cipher = Cipher.getInstance("AES/CBC/PKCS5Padding");
+                cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new IvParameterSpec(iv));
+            } catch (GeneralSecurityException exception) {
+                throw new IllegalStateException("AES is not available", exception);
+            }
+        }
+
+        @Override
+        public long position() {
+            return received;
+        }
+
+        /**
+         * {@inheritDoc}
+         *
+         * @throws MediaException.Unsupported if {@code position} is not the current position: an encrypted segment
+         * is written in order
+         */
+        @Override
+        public void position(long position) {
+            if (position != received) {
+                throw new MediaException.Unsupported("non-seekable output", "encrypted segments are written in order");
+            }
+        }
+
+        @Override
+        public boolean isSeekable() {
+            return false;
+        }
+
+        @Override
+        public void write(ByteBuffer data) {
+            var length = data.remaining();
+            received += length;
+            var needed = cipher.getOutputSize(length);
+            if (encrypted.capacity() < needed) {
+                encrypted = ByteBuffer.allocate(Math.max(needed, 2 * encrypted.capacity()));
+            }
+            encrypted.clear();
+            try {
+                cipher.update(data, encrypted);
+            } catch (GeneralSecurityException exception) {
+                throw new IllegalStateException(exception);
+            }
+            encrypted.flip();
+            forward(encrypted);
+        }
+
+        @Override
+        public void close() {
+            try {
+                forward(ByteBuffer.wrap(cipher.doFinal()));
+            } catch (GeneralSecurityException exception) {
+                throw new IllegalStateException(exception);
+            }
+            if (owns) {
+                target.close();
+            }
+        }
+
+        private void forward(ByteBuffer bytes) {
+            var length = bytes.remaining();
+            if (length > 0) {
+                written += length;
+                target.write(bytes);
+            }
         }
     }
 }

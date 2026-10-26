@@ -244,6 +244,18 @@ final class Layer3 {
     }
 
     /**
+     * Appends the main data of a frame that is not decoded to the reservoir, so that later frames
+     * can still reach it.
+     *
+     * @param frame the reader positioned after the side information of the frame
+     */
+    void keepMainData(BitReader frame) {
+        restoreReservoir(frame, reservoirLength);
+        bits.position = 0;
+        saveReservoir();
+    }
+
+    /**
      * Keeps the unused tail of the main data as the reservoir of the next frame.
      */
     void saveReservoir() {
