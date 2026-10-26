@@ -31,19 +31,29 @@ public final class SampleEntryCodecs {
      */
     public static String of(byte[] data, Box entry, String handler) {
         var type = entry.type();
-        return switch (type) {
+        if (type.equals("encv") || type.equals("enca")) {
+            // a protected entry has the codec of its original format
+            var frma = entry.find("sinf", "frma");
+            if (frma.isPresent() && frma.get().payloadSize() >= 4) {
+                var at = (int) frma.get().payload();
+                type = new String(new byte[]{data[at], data[at + 1], data[at + 2], data[at + 3]},
+                        java.nio.charset.StandardCharsets.ISO_8859_1);
+            }
+        }
+        var format = type;
+        return switch (format) {
             case "avc1", "avc3" -> entry.child("avcC").filter(box -> box.payloadSize() >= 4)
-                    .map(box -> String.format(Locale.ROOT, "%s.%02X%02X%02X", type, u8(data, box.payload() + 1),
-                            u8(data, box.payload() + 2), u8(data, box.payload() + 3))).orElse(type);
+                    .map(box -> String.format(Locale.ROOT, "%s.%02X%02X%02X", format, u8(data, box.payload() + 1),
+                            u8(data, box.payload() + 2), u8(data, box.payload() + 3))).orElse(format);
             case "hvc1", "hev1" -> entry.child("hvcC").filter(box -> box.payloadSize() >= 13)
-                    .map(box -> hevc(data, type, box.payload())).orElse(type);
+                    .map(box -> hevc(data, format, box.payload())).orElse(format);
             case "vp09", "vp08" -> entry.child("vpcC").filter(box -> box.payloadSize() >= 12)
-                    .map(box -> vp(data, type, box.payload() + 4)).orElse(type);
+                    .map(box -> vp(data, format, box.payload() + 4)).orElse(format);
             case "av01" -> entry.child("av1C").filter(box -> box.payloadSize() >= 4)
-                    .map(box -> av1(data, box.payload())).orElse(type);
+                    .map(box -> av1(data, box.payload())).orElse(format);
             case "mp4a" -> entry.child("esds").or(() -> entry.find("wave", "esds")).map(box -> mpeg4Audio(data, box))
-                    .orElse(type);
-            case "Opus", "fLaC", "ac-3", "ec-3", "ipcm", "fpcm", "alac", "wvtt", "mp4v" -> type;
+                    .orElse(format);
+            case "Opus", "fLaC", "ac-3", "ec-3", "ipcm", "fpcm", "alac", "wvtt", "mp4v" -> format;
             default -> "";
         };
     }

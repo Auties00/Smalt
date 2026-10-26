@@ -1,6 +1,8 @@
 package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.DecryptionKeys;
+import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.TagMode;
 
@@ -26,13 +28,13 @@ public final class RemuxOptions {
      * The options of {@link #video()}.
      */
     private static final RemuxOptions VIDEO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.MP4,
-            Selection.FIRST, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null);
+            Selection.FIRST, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null, DecryptionKeys.none());
 
     /**
      * The options of {@link #audio()}.
      */
     private static final RemuxOptions AUDIO = new RemuxOptions(MediaLimits.DEFAULT, Mp4MuxerOptions.Brand.M4A,
-            Selection.NONE, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null);
+            Selection.NONE, Selection.FIRST, Selection.NONE, null, TagMode.COPY, null, DecryptionKeys.none());
 
     private final MediaLimits limits;
     private final Mp4MuxerOptions.Brand brand;
@@ -46,9 +48,11 @@ public final class RemuxOptions {
      * The tags of {@link TagMode#REPLACE} and {@link TagMode#MERGE}, or {@code null}.
      */
     private final MediaTags tags;
+    private final DecryptionKeys decryptionKeys;
 
     private RemuxOptions(MediaLimits limits, Mp4MuxerOptions.Brand brand, Selection video, Selection audio,
-                         Selection subtitles, Path temporaryDirectory, TagMode tagMode, MediaTags tags) {
+                         Selection subtitles, Path temporaryDirectory, TagMode tagMode, MediaTags tags,
+                         DecryptionKeys decryptionKeys) {
         this.limits = limits;
         this.brand = brand;
         this.video = video;
@@ -57,6 +61,7 @@ public final class RemuxOptions {
         this.temporaryDirectory = temporaryDirectory;
         this.tagMode = tagMode;
         this.tags = tags;
+        this.decryptionKeys = decryptionKeys;
     }
 
     /**
@@ -249,6 +254,16 @@ public final class RemuxOptions {
         return subtitles;
     }
 
+    /**
+     * {@return the keys that decrypt the protected tracks of the input; {@link DecryptionKeys#none()} by default}
+     *
+     * <p>The input is demuxed with these keys as {@link DemuxerOptions#decryptionKeys()} describes, so a protected
+     * input is remuxed into a clear file.
+     */
+    public DecryptionKeys decryptionKeys() {
+        return decryptionKeys;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof RemuxOptions that
@@ -259,19 +274,20 @@ public final class RemuxOptions {
                 && subtitles.equals(that.subtitles)
                 && Objects.equals(temporaryDirectory, that.temporaryDirectory)
                 && tagMode == that.tagMode
-                && Objects.equals(tags, that.tags);
+                && Objects.equals(tags, that.tags)
+                && decryptionKeys.equals(that.decryptionKeys);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, brand, video, audio, subtitles, temporaryDirectory, tagMode, tags);
+        return Objects.hash(limits, brand, video, audio, subtitles, temporaryDirectory, tagMode, tags, decryptionKeys);
     }
 
     @Override
     public String toString() {
         return "RemuxOptions[limits=" + limits + ", brand=" + brand + ", videoTrack=" + video + ", audioTracks=" + audio
                 + ", subtitleTracks=" + subtitles + ", temporaryDirectory=" + temporaryDirectory + ", tagMode=" + tagMode
-                + (tags == null ? "" : ", tags=" + tags) + "]";
+                + (tags == null ? "" : ", tags=" + tags) + ", decryptionKeys=" + decryptionKeys + "]";
     }
 
     /**
@@ -362,6 +378,7 @@ public final class RemuxOptions {
         private Path temporaryDirectory;
         private TagMode tagMode;
         private MediaTags tags;
+        private DecryptionKeys decryptionKeys;
 
         private Builder(RemuxOptions options) {
             this.limits = options.limits;
@@ -375,6 +392,7 @@ public final class RemuxOptions {
             this.temporaryDirectory = options.temporaryDirectory;
             this.tagMode = options.tagMode;
             this.tags = options.tags;
+            this.decryptionKeys = options.decryptionKeys;
         }
 
         /**
@@ -385,6 +403,27 @@ public final class RemuxOptions {
          */
         public Builder limits(MediaLimits limits) {
             this.limits = Objects.requireNonNull(limits, "limits");
+            return this;
+        }
+
+        /**
+         * Sets the keys that decrypt protected input tracks; see {@link RemuxOptions#decryptionKeys()}.
+         *
+         * @param keys the value
+         * @return this builder
+         */
+        public Builder decryptionKeys(DecryptionKeys keys) {
+            this.decryptionKeys = Objects.requireNonNull(keys, "keys");
+            return this;
+        }
+
+        /**
+         * Decrypts nothing, the default; see {@link RemuxOptions#decryptionKeys()}.
+         *
+         * @return this builder
+         */
+        public Builder noDecryptionKeys() {
+            this.decryptionKeys = DecryptionKeys.none();
             return this;
         }
 
@@ -614,7 +653,7 @@ public final class RemuxOptions {
                 }
             }
             return new RemuxOptions(limits, brand, videoSelection, audioSelection, subtitleSelection, temporaryDirectory,
-                    tagMode, tags);
+                    tagMode, tags, decryptionKeys);
         }
 
         /**

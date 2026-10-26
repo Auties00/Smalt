@@ -76,6 +76,12 @@ final class SampleTable {
     short[] descriptions;
 
     /**
+     * The record of each sample in the track's {@link CencSamples}, {@code -1} for none, or {@code null} while no
+     * sample has one.
+     */
+    int[] crypto;
+
+    /**
      * The number of samples stored.
      */
     int count;
@@ -135,6 +141,11 @@ final class SampleTable {
         if (descriptions != null) {
             descriptions = Arrays.copyOf(descriptions, capacity);
         }
+        if (crypto != null) {
+            var grown = Arrays.copyOf(crypto, capacity);
+            Arrays.fill(grown, crypto.length, capacity, -1);
+            crypto = grown;
+        }
     }
 
     /**
@@ -175,6 +186,33 @@ final class SampleTable {
             descriptions = new short[offsets.length];
         }
         descriptions[index] = (short) description;
+    }
+
+    /**
+     * Records the Common Encryption record of a sample.
+     *
+     * @param index the sample index, below the capacity
+     * @param record the index of the record in the track's {@link CencSamples}, or {@code -1} for none
+     */
+    void setCrypto(int index, int record) {
+        if (crypto == null) {
+            if (record < 0) {
+                return;
+            }
+            crypto = new int[offsets.length];
+            Arrays.fill(crypto, -1);
+        }
+        crypto[index] = record;
+    }
+
+    /**
+     * Returns the Common Encryption record of a sample.
+     *
+     * @param index the sample index
+     * @return the index of the record in the track's {@link CencSamples}, or {@code -1} for none
+     */
+    int crypto(int index) {
+        return crypto == null ? -1 : crypto[index];
     }
 
     /**

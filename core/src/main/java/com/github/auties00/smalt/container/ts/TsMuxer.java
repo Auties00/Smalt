@@ -9,6 +9,7 @@ import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.header.AdtsHeader;
 import com.github.auties00.smalt.internal.header.Crc32Mpeg;
 import com.github.auties00.smalt.internal.io.ByteWriter;
+import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
@@ -657,6 +658,24 @@ public final class TsMuxer implements Muxer {
             default -> throw new IllegalArgumentException("transport streams written here cannot carry "
                     + track.codec().displayName());
         }
+        var key = options.sampleAesKey().orElse(null);
+        if (key != null) {
+            var encrypted = SampleAesEncryptor.streamType(track.codec());
+            if (encrypted < 0) {
+                throw new IllegalArgumentException("SAMPLE-AES transport streams carry H.264, AAC, AC-3 and E-AC-3, not "
+                        + track.codec().displayName());
+            }
+            stream.streamType = encrypted;
+            descriptors = new ByteWriter(64);
+            var setup = config;
+            if (setup == null && (track.codec() == Codec.AC3 || track.codec() == Codec.EAC3)) {
+                var audioTrack = (AudioTrack) track;
+                setup = Ac3Configs.declared(track.codec() == Codec.EAC3, audioTrack.sampleRate(),
+                        audioTrack.layout().orElse(null));
+            }
+            SampleAesEncryptor.descriptors(descriptors, track.codec(), setup);
+            stream.sampleAes = new SampleAesEncryptor(key, options.sampleAesInitializationVector().orElseThrow());
+        }
         stream.descriptors = descriptors.toByteArray();
     }
 
@@ -1192,9 +1211,20 @@ public final class TsMuxer implements Muxer {
                 var frame = new byte[length];
                 stream.adts.write(frame, 0, length);
                 System.arraycopy(data, 0, frame, AdtsHeader.SIZE, data.length);
+                if (stream.sampleAes != null) {
+                    stream.sampleAes.audio(frame, Codec.AAC, AdtsHeader.SIZE);
+                }
                 yield frame;
             }
             case OPUS -> opusFrame(stream, packet);
+            case AC3, EAC3 -> {
+                if (stream.sampleAes == null) {
+                    yield data;
+                }
+                var frame = data.clone();
+                stream.sampleAes.audio(frame, stream.track.codec(), 0);
+                yield frame;
+            }
             default -> data;
         };
     }
@@ -1563,7 +1593,13 @@ public final class TsMuxer implements Muxer {
             stream.parameterSets = NalUnits.annexBParameterSets(parsed.parameterSets());
             stream.appliedConfig = newConfig;
         }
-        return NalUnits.toAnnexB(packet.data(), stream.lengthSize, stream.hevc,
+        var data = packet.data();
+        var lengthSize = stream.lengthSize;
+        if (stream.sampleAes != null) {
+            data = stream.sampleAes.video(data, lengthSize);
+            lengthSize = 4;
+        }
+        return NalUnits.toAnnexB(data, lengthSize, stream.hevc,
                 packet.keyframe() ? stream.parameterSets : null, stream.hevc ? HEVC_DELIMITER : AVC_DELIMITER);
     }
 
@@ -2038,6 +2074,11 @@ public final class TsMuxer implements Muxer {
          * The {@code stream_type}.
          */
         int streamType;
+
+        /**
+         * The SAMPLE-AES encryptor of the stream's samples, or {@code null} for a clear stream.
+         */
+        SampleAesEncryptor sampleAes;
 
         /**
          * The PES {@code stream_id}.

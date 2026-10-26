@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.mp4;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.Chapter;
@@ -12,6 +13,8 @@ import com.github.auties00.smalt.container.internal.AacExtensions;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.container.internal.TimecodeTags;
+import com.github.auties00.smalt.internal.cenc.CencCipher;
+import com.github.auties00.smalt.internal.cenc.CencScheme;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.heif.DataReferences;
@@ -41,6 +44,7 @@ import com.github.auties00.smalt.track.TrackKind;
 
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -49,8 +53,11 @@ import java.util.Collections;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -277,6 +284,33 @@ public final class Mp4Demuxer implements Demuxer {
     private final DataReferences external;
 
     /**
+     * The keys that decrypt protected tracks.
+     */
+    private final DecryptionKeys keys;
+
+    /**
+     * The cipher of each key identifier a protected sample used, by the identity of the identifier array of its
+     * sample description or sample group.
+     */
+    private final Map<byte[], CencCipher> ciphers = new IdentityHashMap<>();
+
+    /**
+     * The cipher of each key identifier, by its bytes, shared by the identifier arrays of every sample group that
+     * names it (the groups of each fragment of a file whose keys rotate repeat the identifiers).
+     */
+    private final Map<ByteBuffer, CencCipher> ciphersById = new HashMap<>();
+
+    /**
+     * The subsample map of one key of a multi-key sample, the subsamples of the other keys made clear.
+     */
+    private int[] multiKeyPairs = new int[32];
+
+    /**
+     * The buffer protected samples are decrypted into by {@link #readSample(SampleInfo)}, allocated on first use.
+     */
+    private byte[] plain;
+
+    /**
      * Whether a track keeps samples both in the file and in a file a data reference names, so that a source read
      * once cannot be told which of its bytes are no longer needed.
      */
@@ -360,6 +394,12 @@ public final class Mp4Demuxer implements Demuxer {
      * no longer needs.
      */
     private final boolean forwardOnly;
+
+    /**
+     * The highest offset a forward-only source was told it will not be read below again; a seek
+     * that would read a sample below it is refused unless the source still holds the bytes.
+     */
+    private long released;
 
     /**
      * The offset of the next top-level box to walk for {@code moof} boxes, or {@code -1} when
@@ -484,13 +524,14 @@ public final class Mp4Demuxer implements Demuxer {
      * @throws MediaException.Io if reading the source fails
      */
     public Mp4Demuxer(MediaSource source, DemuxerOptions options) {
-        this(source, options.limits(), new DataReferences(options.dataReferences()));
+        this(source, options.limits(), new DataReferences(options.dataReferences()), options.decryptionKeys());
     }
 
-    private Mp4Demuxer(MediaSource source, MediaLimits limits, DataReferences external) {
+    private Mp4Demuxer(MediaSource source, MediaLimits limits, DataReferences external, DecryptionKeys keys) {
         this.source = Objects.requireNonNull(source, "source");
         this.limits = Objects.requireNonNull(limits, "limits");
         this.external = external;
+        this.keys = keys;
         this.backing = ArrayBacked.of(source);
         var segmentBacked = SegmentBacked.of(source);
         this.segment = segmentBacked != null ? segmentBacked.segment() : null;
@@ -513,8 +554,15 @@ public final class Mp4Demuxer implements Demuxer {
                 throw new MediaException.Malformed("no moov box");
             }
             var parser = new MovieParser(limits, external);
-            parser.parse(BoxCursor.of(moov != null ? moov : readBox(scan.moovOffset, scan.moovHeader, scan.moovSize, "moov"),
-                    BoxTypes.MOOV));
+            parser.readsProtection = !keys.equals(DecryptionKeys.none());
+            var movie = moov != null ? moov : readBox(scan.moovOffset, scan.moovHeader, scan.moovSize, "moov");
+            // the sample auxiliary information of a progressive file usually lies in its moov, already in memory
+            var moviePayload = compressedMovie ? -1 : scan.moovOffset + scan.moovHeader;
+            parser.auxSource = (offset, length) -> moviePayload >= 0 && inPayload(movie, moviePayload, offset, length)
+                    ? Arrays.copyOfRange(movie, (int) (offset - moviePayload), (int) (offset - moviePayload) + length)
+                    : readAuxiliary(offset, length);
+            parser.parse(BoxCursor.of(movie, BoxTypes.MOOV));
+            checkKeys(parser.tracks);
             var movieSamples = new int[parser.tracks.size()];
             for (var index = 0; index < movieSamples.length; index++) {
                 var track = parser.tracks.get(index);
@@ -654,6 +702,211 @@ public final class Mp4Demuxer implements Demuxer {
             }
             throw new MediaException.Malformed("corrupt ISO base media file: " + exception, exception);
         }
+    }
+
+    /**
+     * Rejects protected tracks when no key can decrypt them, and marks the tracks whose samples are decrypted.
+     *
+     * @param tracks every track of the movie
+     * @throws MediaException.Unsupported if a track is protected and the keys are {@link DecryptionKeys#none()}
+     */
+    private void checkKeys(List<Mp4Track> tracks) {
+        for (var track : tracks) {
+            var protection = track.protection();
+            if (protection == null) {
+                continue;
+            }
+            if (keys.equals(DecryptionKeys.none())) {
+                var kind = track.entry != null ? track.entry.kind() : TrackKind.DATA;
+                throw new MediaException.Unsupported("mp4 encryption", "the " + kind.name().toLowerCase(Locale.ROOT)
+                        + " track " + track.fileId + " is encrypted ('" + FourCc.printable(protection.scheme().fourCc())
+                        + "') and no decryption key was given");
+            }
+            track.encrypted = true;
+        }
+    }
+
+    /**
+     * Decrypts a protected sample in place, as its sample description and its auxiliary information describe.
+     *
+     * @param track the sample's track
+     * @param index the index of the sample in the track's samples
+     * @param data the array holding the sample
+     * @param offset the index of its first byte
+     * @param length its size in bytes
+     * @throws MediaException.Malformed if the sample's initialization vector or subsample map is missing or does
+     * not fit the sample
+     * @throws MediaException.Unsupported if the keys do not know the sample's key
+     */
+    private void decrypt(Mp4Track track, int index, byte[] data, int offset, int length) {
+        var samples = track.samples;
+        var description = samples.description(index);
+        var entry = description < track.entries.length ? track.entries[description] : null;
+        if (entry == null || entry.protection() == null) {
+            return;
+        }
+        var protection = entry.protection();
+        var cenc = track.cenc;
+        var record = samples.crypto(index);
+        var params = cenc == null ? protection.defaults() : cenc.params(record, protection.defaults());
+        if (params == null) {
+            throw new MediaException.Malformed("protected sample " + index + " of track " + track.fileId
+                    + " has neither track defaults (tenc) nor a sample encryption group (seig)");
+        }
+        if (!params.isProtected()) {
+            return;
+        }
+        if (params.multiKey()) {
+            decryptMultiKey(track, index, protection.scheme(), params, record, data, offset, length);
+            return;
+        }
+        byte[] iv;
+        int ivOffset;
+        int ivLength;
+        if (params.ivSize() > 0) {
+            if (record < 0 || !cenc.hasInfo[record] || cenc.ivLength[record] != params.ivSize()) {
+                throw new MediaException.Malformed("protected sample " + index + " of track " + track.fileId
+                        + " has no initialization vector");
+            }
+            iv = cenc.ivs;
+            ivOffset = cenc.ivOffset[record];
+            ivLength = params.ivSize();
+        } else if (params.constantIv() != null) {
+            iv = params.constantIv();
+            ivOffset = 0;
+            ivLength = iv.length;
+        } else {
+            throw new MediaException.Malformed("protected track " + track.fileId + " declares no initialization vector");
+        }
+        var hasSubsamples = record >= 0 && cenc.hasInfo[record] && cenc.subsampleCount[record] > 0;
+        cipher(params.keyId()).decrypt(protection.scheme(), data, offset, length, iv, ivOffset, ivLength,
+                hasSubsamples ? cenc.subsamples : null, hasSubsamples ? cenc.subsampleOffset[record] : 0,
+                hasSubsamples ? cenc.subsampleCount[record] : 0, params.crypt(), params.skip());
+    }
+
+    /**
+     * Decrypts a sample protected with several keys (ISO/IEC 23001-7:2023): each key decrypts the protected bytes
+     * of the subsamples that name it, as one sample whose other subsamples are clear, from its own initialization
+     * vector (the sample's vector for that key, or the key's constant one).
+     */
+    private void decryptMultiKey(Mp4Track track, int index, CencScheme scheme, CencParams params, int record,
+                                 byte[] data, int offset, int length) {
+        var cenc = track.cenc;
+        if (record < 0 || !cenc.hasInfo[record] || cenc.multiIvCount[record] < 0) {
+            throw new MediaException.Malformed("multi-key sample " + index + " of track " + track.fileId
+                    + " has no multi-key auxiliary information");
+        }
+        var keys = params.keys();
+        var pairs = cenc.subsampleCount[record];
+        var first = cenc.subsampleOffset[record];
+        if (pairs == 0) {
+            throw new MediaException.Malformed("multi-key sample " + index + " of track " + track.fileId
+                    + " has no subsample map");
+        }
+        if (multiKeyPairs.length < 2 * pairs) {
+            multiKeyPairs = new int[2 * pairs];
+        }
+        for (var key = 1; key <= keys.size(); key++) {
+            var used = false;
+            for (var pair = 0; pair < pairs; pair++) {
+                var clear = cenc.subsamples[first + 2 * pair];
+                var protectedBytes = cenc.subsamples[first + 2 * pair + 1];
+                var own = cenc.subsampleKeys[first / 2 + pair] == key;
+                used |= own && protectedBytes != 0;
+                multiKeyPairs[2 * pair] = own ? clear : clear + protectedBytes;
+                multiKeyPairs[2 * pair + 1] = own ? protectedBytes : 0;
+            }
+            if (!used) {
+                continue;
+            }
+            var description = keys.get(key - 1);
+            byte[] iv = null;
+            var ivOffset = 0;
+            var ivLength = 0;
+            var position = cenc.ivOffset[record];
+            for (var vector = 0; vector < cenc.multiIvCount[record]; vector++) {
+                var named = (cenc.ivs[position] & 0xFF) << 8 | cenc.ivs[position + 1] & 0xFF;
+                var size = keys.get(named - 1).ivSize();
+                if (named == key) {
+                    iv = cenc.ivs;
+                    ivOffset = position + 2;
+                    ivLength = size;
+                }
+                position += 2 + size;
+            }
+            if (iv == null || ivLength == 0) {
+                if (description.constantIv() == null) {
+                    throw new MediaException.Malformed("multi-key sample " + index + " of track " + track.fileId
+                            + " has no initialization vector for key " + key);
+                }
+                iv = description.constantIv();
+                ivOffset = 0;
+                ivLength = iv.length;
+            }
+            cipher(description.keyId()).decrypt(scheme, data, offset, length, iv, ivOffset, ivLength,
+                    multiKeyPairs, 0, pairs, params.crypt(), params.skip());
+        }
+    }
+
+    /**
+     * Returns the cipher of a key identifier, asking the keys for it the first time.
+     *
+     * @param keyId the key identifier
+     * @return the cipher
+     * @throws MediaException.Unsupported if the keys do not know the key
+     */
+    private CencCipher cipher(byte[] keyId) {
+        var cipher = ciphers.get(keyId);
+        if (cipher != null) {
+            return cipher;
+        }
+        var id = ByteBuffer.wrap(keyId);
+        cipher = ciphersById.get(id);
+        if (cipher == null) {
+            var key = keys.find(keyId.clone()).orElseThrow(() -> new MediaException.Unsupported("mp4 encryption",
+                    "no decryption key for key ID " + HexFormat.of().formatHex(keyId)));
+            if (key.length != 16) {
+                throw new MediaException.Unsupported("mp4 encryption", "the key of key ID "
+                        + HexFormat.of().formatHex(keyId) + " is " + key.length + " bytes, not 16");
+            }
+            cipher = new CencCipher(key);
+            ciphersById.put(id, cipher);
+        }
+        ciphers.put(keyId, cipher);
+        return cipher;
+    }
+
+    /**
+     * Returns whether a range of the file lies inside a box payload held in memory.
+     *
+     * @param payload the box payload held in memory
+     * @param payloadStart the offset of the payload in the file
+     * @param offset the offset of the range
+     * @param length the length of the range
+     * @return {@code true} when the payload holds the whole range
+     */
+    private static boolean inPayload(byte[] payload, long payloadStart, long offset, int length) {
+        return offset >= payloadStart && offset - payloadStart + length <= payload.length;
+    }
+
+    /**
+     * Reads sample auxiliary information from the source.
+     *
+     * @param offset the absolute offset
+     * @param length the number of bytes
+     * @return the bytes
+     * @throws MediaException.Malformed if they lie outside the file
+     * @throws MediaException.LimitExceeded if they exceed the allocation limit
+     */
+    private byte[] readAuxiliary(long offset, int length) {
+        LimitChecks.checkAllocation(limits, length);
+        if (offset < 0 || (sourceSize >= 0 && offset + length > sourceSize)) {
+            throw new MediaException.Malformed("sample auxiliary information at offset " + offset
+                    + " runs past the end of the file");
+        }
+        var bytes = new byte[length];
+        source.readFully(offset, bytes, 0, length);
+        return bytes;
     }
 
     /**
@@ -944,7 +1197,12 @@ public final class Mp4Demuxer implements Demuxer {
         var name = packed ? "!mof" : "moof";
         var data = payload != null ? payload : readBox(position, (int) box[1], box[2], name);
         if (!packed && compression == null) {
-            FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), position, tracks);
+            var payloadStart = position + box[1];
+            var held = data;
+            FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), position, tracks,
+                    (offset, length) -> inPayload(held, payloadStart, offset, length) ? Arrays.copyOfRange(held,
+                            (int) (offset - payloadStart), (int) (offset - payloadStart) + length)
+                            : readAuxiliary(offset, length));
             return;
         }
         if (packed) {
@@ -959,7 +1217,15 @@ public final class Mp4Demuxer implements Demuxer {
         for (var index = 0; index < counts.length; index++) {
             counts[index] = tracks.get(index).samples.count;
         }
-        FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), start, tracks);
+        var inflated = data;
+        var inflatedStart = start + CompressedBoxes.boxSize(data.length) - data.length;
+        FragmentParser.parse(BoxCursor.of(data, BoxTypes.MOOF), start, tracks, (offset, length) -> {
+            if (!inPayload(inflated, inflatedStart, offset, length)) {
+                throw new MediaException.Malformed("sample auxiliary information outside a compressed movie fragment");
+            }
+            var from = (int) (offset - inflatedStart);
+            return Arrays.copyOfRange(inflated, from, from + length);
+        });
         for (var index = 0; index < counts.length; index++) {
             var samples = tracks.get(index).samples;
             map.relocate(samples, counts[index], samples.count);
@@ -1016,7 +1282,12 @@ public final class Mp4Demuxer implements Demuxer {
         }
         var header = new byte[4];
         var from = Objects.requireNonNullElse(sourceOf(track, 0), source);
-        if (SourceBytes.readAvailable(from, track.samples.offsets[0], header, 0, header.length) < 4) {
+        if (track.encrypted) {
+            header = firstSample(track);
+            if (header == null || header.length < 4) {
+                return;
+            }
+        } else if (SourceBytes.readAvailable(from, track.samples.offsets[0], header, 0, header.length) < 4) {
             return;
         }
         var parsed = AudioConfigs.parseMpegHeader(header, 0, 4);
@@ -1041,7 +1312,17 @@ public final class Mp4Demuxer implements Demuxer {
         }
         var sample = new byte[size];
         var from = Objects.requireNonNullElse(sourceOf(track, 0), source);
-        return SourceBytes.readAvailable(from, track.samples.offsets[0], sample, 0, sample.length) < size ? null : sample;
+        if (SourceBytes.readAvailable(from, track.samples.offsets[0], sample, 0, sample.length) < size) {
+            return null;
+        }
+        if (track.encrypted) {
+            try {
+                decrypt(track, 0, sample, 0, size);
+            } catch (MediaException exception) {
+                return null;
+            }
+        }
+        return sample;
     }
 
     /**
@@ -1194,19 +1475,36 @@ public final class Mp4Demuxer implements Demuxer {
      * before {@code micros}; a track whose every sample ends at or before {@code micros} returns
      * nothing more. The samples of all tracks are then returned in file-offset order again.
      *
+     * <p>Over a source that reads its input once, a seek whose restart samples lie in bytes the
+     * source no longer holds is refused with {@link MediaException.Unsupported}, and the demuxer
+     * stays where it was.
+     *
      * @implNote This implementation seeks in the sample index built at construction, which holds
      * the samples of every movie fragment as well, so the fragment indexes {@code tfra} and
      * {@code sidx} are never needed.
      */
     @Override
     public void seek(long micros) {
-        pendingCues.clear();
         try {
             loadAllFragments();
             var starts = new int[active.length];
             for (var index = 0; index < active.length; index++) {
                 starts[index] = startSample(active[index], micros);
             }
+            if (forwardOnly && !mixedSources) {
+                var lowest = Long.MAX_VALUE;
+                for (var index = 0; index < active.length; index++) {
+                    var track = active[index];
+                    if (starts[index] < track.samples.count && sourceOf(track, starts[index]) == null) {
+                        lowest = Math.min(lowest, track.samples.offsets[starts[index]]);
+                    }
+                }
+                if (lowest < released && !isHeld(lowest)) {
+                    throw new MediaException.Unsupported("seek", "seeking to " + micros + " us needs the bytes at"
+                            + " offset " + lowest + ", which a source read once no longer holds");
+                }
+            }
+            pendingCues.clear();
             System.arraycopy(starts, 0, cursors, 0, starts.length);
             resetDescriptions();
             heapSize = 0;
@@ -1219,6 +1517,21 @@ public final class Mp4Demuxer implements Demuxer {
             throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt ISO base media file: " + exception, exception);
+        }
+    }
+
+    /**
+     * Returns whether a source read once still holds the bytes from an offset on, which it may keep after the
+     * demux let them go; the bytes it holds are contiguous up to the last one read.
+     *
+     * @param offset the offset of the first byte needed
+     * @return {@code true} when the byte at {@code offset} can be read again
+     */
+    private boolean isHeld(long offset) {
+        try {
+            return source.read(offset, new byte[1], 0, 1) == 1;
+        } catch (MediaException.Unsupported released) {
+            return false;
         }
     }
 
@@ -1310,6 +1623,9 @@ public final class Mp4Demuxer implements Demuxer {
         var elsewhere = sourceOf(track, index);
         var data = elsewhere != null ? readExternal(elsewhere, samples.offsets[index], samples.sizes[index])
                 : readSample(samples.offsets[index], samples.sizes[index]);
+        if (track.encrypted) {
+            decrypt(track, index, data, 0, data.length);
+        }
         var held = referencedSamples.get(track);
         if (held != null) {
             held.put(index, data);
@@ -1606,13 +1922,18 @@ public final class Mp4Demuxer implements Demuxer {
             return cached;
         }
         var elsewhere = sourceOf(track, index);
+        byte[] data;
         if (elsewhere != null) {
-            return readExternal(elsewhere, samples.offsets[index], samples.sizes[index]);
-        }
-        if (forwardOnly) {
+            data = readExternal(elsewhere, samples.offsets[index], samples.sizes[index]);
+        } else if (forwardOnly) {
             return null;
+        } else {
+            data = readDirectSample(samples.offsets[index], samples.sizes[index]);
         }
-        return readDirectSample(samples.offsets[index], samples.sizes[index]);
+        if (track.encrypted) {
+            decrypt(track, index, data, 0, data.length);
+        }
+        return data;
     }
 
     /**
@@ -1836,6 +2157,16 @@ public final class Mp4Demuxer implements Demuxer {
             } else {
                 locateSample(samples.offsets[index], samples.sizes[index], info);
             }
+            if (track.encrypted) {
+                var size = samples.sizes[index];
+                if (plain == null || plain.length < size) {
+                    plain = new byte[Math.max(size, plain == null ? 0 : plain.length * 2)];
+                }
+                System.arraycopy(info.data, info.dataOffset, plain, 0, size);
+                decrypt(track, index, plain, 0, size);
+                info.data = plain;
+                info.dataOffset = 0;
+            }
             releaseConsumed();
             info.newConfig = configChange(trackIndex, index);
             var decode = samples.dts[index] + track.shift;
@@ -1973,7 +2304,9 @@ public final class Mp4Demuxer implements Demuxer {
                     }
                 }
             }
-            ForwardOnlySource.release(source, fragmentScan >= 0 ? Math.min(next, fragmentScan) : next);
+            var watermark = fragmentScan >= 0 ? Math.min(next, fragmentScan) : next;
+            released = Math.max(released, watermark);
+            ForwardOnlySource.release(source, watermark);
         }
     }
 

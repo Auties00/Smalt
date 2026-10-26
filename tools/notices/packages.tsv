@@ -60,6 +60,7 @@ container.raw	core
 container.subtitle	core
 container.ts	core
 container.wav	core
+container.y4m	core
 desktop.imageio	desktop
 desktop.sound	desktop
 image	core
@@ -112,6 +113,8 @@ image.webp.internal.lossless	image
 image.webp.internal.riff	image
 internal.anim	core
 internal.bits	core
+internal.caption	core
+internal.cenc	core
 internal.check	core
 internal.codec	core
 internal.color	core
@@ -138,6 +141,7 @@ internal.resize	core
 internal.sei	mpeg
 internal.simd	core
 internal.subtitle	core
+internal.subtitle.bitmap	core
 internal.tags	core
 internal.task	core
 internal.tiff	core

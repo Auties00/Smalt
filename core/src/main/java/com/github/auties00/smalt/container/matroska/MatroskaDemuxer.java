@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.matroska;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.AttachedPicture;
 import com.github.auties00.smalt.container.Attachment;
@@ -402,10 +403,10 @@ public final class MatroskaDemuxer implements Demuxer {
      * @throws MediaException.Io if reading the source fails
      */
     public MatroskaDemuxer(MediaSource source, DemuxerOptions options) {
-        this(source, options.limits());
+        this(source, options.limits(), options.decryptionKeys());
     }
 
-    private MatroskaDemuxer(MediaSource source, MediaLimits limits) {
+    private MatroskaDemuxer(MediaSource source, MediaLimits limits, DecryptionKeys keys) {
         this.source = Objects.requireNonNull(source, "source");
         this.limits = Objects.requireNonNull(limits, "limits");
         this.reader = new SourceReader(source, READ_BUFFER);
@@ -448,6 +449,13 @@ public final class MatroskaDemuxer implements Demuxer {
             var entries = new ArrayList<>(header.trackEntries);
             entries.sort(Comparator.comparing(entry -> !entry.enabled));
             for (var entry : entries) {
+                if (entry.encrypted()) {
+                    if (keys.equals(DecryptionKeys.none())) {
+                        throw new MediaException.Unsupported("matroska encryption", "track " + entry.number
+                                + " is encrypted and no decryption key was given");
+                    }
+                    entry.keys = keys;
+                }
                 var tagged = header.trackDurations.get(entry.uid);
                 if (tagged != null) {
                     entry.taggedDuration = tagged;

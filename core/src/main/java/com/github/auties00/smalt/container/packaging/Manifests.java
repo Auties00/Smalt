@@ -5,6 +5,7 @@ import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.util.ArrayList;
+import java.util.HexFormat;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -40,9 +41,10 @@ final class Manifests {
      *
      * @param stream the segmented stream the playlist describes
      * @param version the protocol version
+     * @param keyTag the {@code EXT-X-KEY} tag of encrypted segments, without its line end, or {@code null}
      * @return the playlist text
      */
-    static String mediaPlaylist(SegmentedStream stream, int version) {
+    static String mediaPlaylist(SegmentedStream stream, int version, String keyTag) {
         var durations = durations(stream);
         var target = 1L;
         for (var duration : durations) {
@@ -63,6 +65,9 @@ final class Manifests {
                 text.append(",BYTERANGE=\"").append(stream.init.size()).append('@').append(stream.init.offset()).append('"');
             }
             text.append('\n');
+        }
+        if (keyTag != null) {
+            text.append(keyTag).append('\n');
         }
         for (var index = 0; index < stream.segments.size(); index++) {
             var segment = stream.segments.get(index);
@@ -214,9 +219,12 @@ final class Manifests {
      * @param streams the CMAF streams
      * @param durationMicros the presentation duration
      * @param minBuffer the minimum buffer time, in microseconds
+     * @param scheme the Common Encryption scheme of the segments, {@code cenc} or {@code cbcs}, or {@code null}
+     * @param keyId the 16-byte default key identifier of encrypted segments, or {@code null}
      * @return the manifest text
      */
-    static String dashManifest(List<SegmentedStream> streams, long durationMicros, long minBuffer) {
+    static String dashManifest(List<SegmentedStream> streams, long durationMicros, long minBuffer, String scheme,
+                               byte[] keyId) {
         var sets = new LinkedHashMap<String, List<SegmentedStream>>();
         for (var stream : streams) {
             var track = stream.tracks.getFirst();
@@ -230,7 +238,11 @@ final class Manifests {
                 : "urn:mpeg:dash:profile:isoff-live:2011,urn:mpeg:dash:profile:cmaf:2019";
         var text = new StringBuilder();
         text.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        text.append("<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\" profiles=\"").append(profiles)
+        text.append("<MPD xmlns=\"urn:mpeg:dash:schema:mpd:2011\"");
+        if (scheme != null) {
+            text.append(" xmlns:cenc=\"urn:mpeg:cenc:2013\"");
+        }
+        text.append(" profiles=\"").append(profiles)
                 .append("\" type=\"static\" mediaPresentationDuration=\"")
                 .append(duration(durationMicros)).append("\" minBufferTime=\"").append(duration(minBuffer)).append("\">\n");
         text.append("  <Period id=\"0\" start=\"PT0S\">\n");
@@ -245,6 +257,19 @@ final class Manifests {
                 text.append(" lang=\"").append(escape(first.language().get())).append('"');
             }
             text.append(">\n");
+            if (scheme != null) {
+                text.append("      <ContentProtection schemeIdUri=\"urn:mpeg:dash:mp4protection:2011\" value=\"")
+                        .append(scheme).append('"');
+                if (keyId != null) {
+                    var hex = HexFormat.of().formatHex(keyId);
+                    text.append(" cenc:default_KID=\"").append(hex, 0, 8).append('-').append(hex, 8, 12).append('-')
+                            .append(hex, 12, 16).append('-').append(hex, 16, 20).append('-').append(hex, 20, 32)
+                            .append('"');
+                }
+                text.append("/>\n");
+                text.append("      <ContentProtection schemeIdUri=\"urn:uuid:e2719d58-a985-b3c9-781a-b030af78d30e\""
+                        + " value=\"ClearKey1.0\"/>\n");
+            }
             for (var stream : entry.getValue()) {
                 representation(text, stream);
             }

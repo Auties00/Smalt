@@ -2,13 +2,20 @@ package com.github.auties00.smalt.fuzz;
 
 import com.code_intelligence.jazzer.junit.FuzzTest;
 import com.github.auties00.smalt.container.ContainerFormat;
+import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.testkit.fuzz.FuzzMedia;
+
+import java.util.HexFormat;
 
 /**
  * Fuzz targets of the demuxers, one per container format that Smalt reads. Each input is detected, demuxed to
  * the last packet, seeked, probed and, where the format carries tags, tag-edited (see {@link FuzzMedia#demuxer}).
  */
 class DemuxerFuzzTest {
+    // the key of the encrypted seeds, for every key identifier
+    private static final DecryptionKeys ENCRYPTED = DecryptionKeys.single(HexFormat.of()
+            .parseHex("ebdd62f16814d27b68ef122afce4ae3c"));
+
     @FuzzTest
     void mp4(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.MP4, data);
@@ -17,6 +24,16 @@ class DemuxerFuzzTest {
     @FuzzTest
     void matroska(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.MATROSKA, data);
+    }
+
+    @FuzzTest
+    void mp4Encrypted(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.MP4, data, ENCRYPTED);
+    }
+
+    @FuzzTest
+    void matroskaEncrypted(byte[] data) {
+        FuzzMedia.demuxer(ContainerFormat.MATROSKA, data, ENCRYPTED);
     }
 
     @FuzzTest

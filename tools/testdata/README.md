@@ -762,6 +762,24 @@ compared with the dump only, and the files with compressed boxes (`!mov`, `!mof`
 with ffprobe's reading of a copy whose compressed boxes are decompressed. The dumps of the smoke-tier files are in
 the smoke tier too, so that every pull request compares those files with both parsers.
 
+## Encryption fixtures
+
+The Common Encryption and SAMPLE-AES tests compare Smalt's output with Shaka Packager (BSD 3-Clause, the v3.9.3
+release binary) run as a black box, through committed golden files made by the scripts of `cenc/`:
+
+- `make-seeds.sh` writes the encrypted seeds of the demuxer fuzz targets (ffmpeg's and Shaka Packager's cenc,
+  cbc1, cens, cbcs and WebM encryption of small synthetic clips);
+- `make-sample-aes-golden.sh` encrypts a lossless sliced H.264 clip (emulation prevention bytes, short slices, a
+  last block of exactly 16 bytes) with AAC, AC-3 and E-AC-3 tracks to SAMPLE-AES transport streams and lists every
+  slice and audio frame with `sample-aes-units.py`; the input and the listing are in
+  `core/src/test/resources/.../container/ts/sample-aes` (`SampleAesEncryptionTest` pins the input's SHA-256, since
+  ffmpeg's encoders are not reproducible across versions);
+- `make-video-golden.sh` remuxes VP9 and AV1 conformance vectors of `vectors.tsv` to MP4, encrypts them clear, with
+  cenc and with cbcs, and lists every sample, initialization vector and subsample map with `cenc-samples.py` into
+  `core/src/test/resources/.../container/mp4/cenc-video` (`CencVideoGoldenTest`);
+- `make-fuzz-packets.py` writes the seeds of `EncryptionFuzzTest.encryptedMux` from small H.264, HEVC, VP9, AV1 and
+  MPEG-4 Part 2 clips.
+
 ## MPEG-4 Visual reference decoder
 
 `mpeg4-oracle/build.py` builds the Microsoft MPEG-4 Visual decoder of the ISO/IEC 14496-5 reference software

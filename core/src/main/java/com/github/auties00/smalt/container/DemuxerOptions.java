@@ -17,7 +17,7 @@ public final class DemuxerOptions {
      * The options of {@link #defaults()}.
      */
     private static final DemuxerOptions DEFAULTS = new DemuxerOptions(MediaLimits.DEFAULT, DataReferenceResolver.none(),
-            null, null);
+            null, null, DecryptionKeys.none());
 
     private final MediaLimits limits;
     private final DataReferenceResolver dataReferences;
@@ -31,13 +31,15 @@ public final class DemuxerOptions {
      * The MicroDVD frame rate, or {@code null} for the file's or the default.
      */
     private final Rational subtitleFrameRate;
+    private final DecryptionKeys decryptionKeys;
 
     private DemuxerOptions(MediaLimits limits, DataReferenceResolver dataReferences, Charset charset,
-                           Rational subtitleFrameRate) {
+                           Rational subtitleFrameRate, DecryptionKeys decryptionKeys) {
         this.limits = limits;
         this.dataReferences = dataReferences;
         this.charset = charset;
         this.subtitleFrameRate = subtitleFrameRate;
+        this.decryptionKeys = decryptionKeys;
     }
 
     /**
@@ -111,22 +113,37 @@ public final class DemuxerOptions {
         return Optional.ofNullable(subtitleFrameRate);
     }
 
+    /**
+     * {@return the keys that decrypt protected tracks; {@link DecryptionKeys#none()} by default}
+     *
+     * <p>The MP4 demuxer decrypts the samples of tracks protected with the Common Encryption schemes
+     * {@code cenc}, {@code cbc1}, {@code cens} and {@code cbcs} (ISO/IEC 23001-7), and the Matroska demuxer the
+     * frames of WebM encrypted tracks, with the key these keys give for the key identifier of each sample; their
+     * tracks and packets are then those of the clear file. With {@link DecryptionKeys#none()} a protected track
+     * raises {@link com.github.auties00.smalt.MediaException.Unsupported} when the demuxer is created, and with
+     * other keys a sample whose key is not known raises it when it is read. Other demuxers do not use them.
+     */
+    public DecryptionKeys decryptionKeys() {
+        return decryptionKeys;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof DemuxerOptions that && limits.equals(that.limits)
                 && dataReferences.equals(that.dataReferences)
-                && Objects.equals(charset, that.charset) && Objects.equals(subtitleFrameRate, that.subtitleFrameRate);
+                && Objects.equals(charset, that.charset) && Objects.equals(subtitleFrameRate, that.subtitleFrameRate)
+                && decryptionKeys.equals(that.decryptionKeys);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, dataReferences, charset, subtitleFrameRate);
+        return Objects.hash(limits, dataReferences, charset, subtitleFrameRate, decryptionKeys);
     }
 
     @Override
     public String toString() {
         return "DemuxerOptions[limits=" + limits + ", dataReferences=" + dataReferences + ", charset=" + charset()
-                + ", subtitleFrameRate=" + subtitleFrameRate() + "]";
+                + ", subtitleFrameRate=" + subtitleFrameRate() + ", decryptionKeys=" + decryptionKeys + "]";
     }
 
     /**
@@ -139,12 +156,14 @@ public final class DemuxerOptions {
         private DataReferenceResolver dataReferences;
         private Charset charset;
         private Rational subtitleFrameRate;
+        private DecryptionKeys decryptionKeys;
 
         private Builder(DemuxerOptions options) {
             this.limits = options.limits;
             this.dataReferences = options.dataReferences;
             this.charset = options.charset;
             this.subtitleFrameRate = options.subtitleFrameRate;
+            this.decryptionKeys = options.decryptionKeys;
         }
 
         /**
@@ -224,6 +243,27 @@ public final class DemuxerOptions {
         }
 
         /**
+         * Sets the keys that decrypt protected tracks; see {@link DemuxerOptions#decryptionKeys()}.
+         *
+         * @param keys the value
+         * @return this builder
+         */
+        public Builder decryptionKeys(DecryptionKeys keys) {
+            this.decryptionKeys = Objects.requireNonNull(keys, "keys");
+            return this;
+        }
+
+        /**
+         * Decrypts nothing, the default; see {@link DemuxerOptions#decryptionKeys()}.
+         *
+         * @return this builder
+         */
+        public Builder noDecryptionKeys() {
+            this.decryptionKeys = DecryptionKeys.none();
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -233,7 +273,7 @@ public final class DemuxerOptions {
             if (subtitleFrameRate != null && (subtitleFrameRate.numerator() <= 0 || subtitleFrameRate.denominator() <= 0)) {
                 throw new IllegalArgumentException("the subtitle frame rate must be positive, not " + subtitleFrameRate);
             }
-            return new DemuxerOptions(limits, dataReferences, charset, subtitleFrameRate);
+            return new DemuxerOptions(limits, dataReferences, charset, subtitleFrameRate, decryptionKeys);
         }
     }
 }

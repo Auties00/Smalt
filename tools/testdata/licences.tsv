@@ -48,3 +48,4 @@ https://www.itu.int/wftp3/Public/t/testsignal/SpeImage/T87/	ITU-T T.87 (ISO/IEC 
 https://raw.githubusercontent.com/AOMediaCodec/libavif/	libavif test data: BSD-2-Clause (the repository's LICENSE); used for testing only, never redistributed
 https://raw.githubusercontent.com/MPEGGroup/DASHSchema/	MPEG-DASH MPD schema of ISO/IEC 23009-1 (MPEGGroup/DASHSchema): use subject to the ISO/IEC Directives; used for testing only, never redistributed
 https://www.w3.org/	W3C XLink and XML schemas: W3C Document License
+https://raw.githubusercontent.com/chromium/chromium/	Chromium media test data: BSD 3-Clause (the licence of Chromium); used for testing only, never redistributed

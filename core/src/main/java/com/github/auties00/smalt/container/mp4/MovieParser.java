@@ -12,6 +12,7 @@ import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -92,6 +93,18 @@ final class MovieParser {
      * The cover pictures and Nero chapters of the movie metadata.
      */
     MetadataReader movieMetadata;
+
+    /**
+     * Reads the sample auxiliary information that the {@code saio} boxes of protected tracks locate, or
+     * {@code null} to reject such information.
+     */
+    CencSamples.AuxSource auxSource;
+
+    /**
+     * Whether the Common Encryption information of protected tracks is read; without it, which the demuxer chooses
+     * when it has no key, a protected track has no {@link Mp4Track#cenc}.
+     */
+    boolean readsProtection = true;
 
     /**
      * Constructs a parser that resolves no data reference.
@@ -556,6 +569,7 @@ final class MovieParser {
     private void parseSampleTable(BoxCursor stbl, Mp4Track track, List<DataReferences.Entry> references) {
         BoxCursor stsd = null, stts = null, ctts = null, stss = null, stps = null, sdtp = null;
         BoxCursor stsz = null, stz2 = null, stsc = null, stco = null, co64 = null, randomAccess = null;
+        BoxCursor saiz = null, saio = null, senc = null, piffSenc = null, seigGroups = null, seigSamples = null;
         while (stbl.hasBox()) {
             var box = stbl.nextBox();
             var body = box;
@@ -569,6 +583,21 @@ final class MovieParser {
                 case BoxTypes.SBGP -> {
                     if (randomAccess == null && isRandomAccessGroup(body)) {
                         randomAccess = body;
+                    } else if (seigSamples == null && isGroup(body, BoxTypes.SEIG)) {
+                        seigSamples = body;
+                    }
+                }
+                case BoxTypes.SGPD -> {
+                    if (seigGroups == null && isGroup(body, BoxTypes.SEIG)) {
+                        seigGroups = body;
+                    }
+                }
+                case BoxTypes.SAIZ -> saiz = saiz == null ? body : saiz;
+                case BoxTypes.SAIO -> saio = saio == null ? body : saio;
+                case BoxTypes.SENC -> senc = senc == null ? body : senc;
+                case BoxTypes.UUID -> {
+                    if (piffSenc == null && isPiffSampleEncryption(body)) {
+                        piffSenc = body;
                     }
                 }
                 case BoxTypes.STSZ -> stsz = body;
@@ -599,7 +628,11 @@ final class MovieParser {
         var timing = readRuns(stts, "stts");
         var composition = ctts == null ? null : readRuns(ctts, "ctts");
 
-        var pcmGrouping = track.entry.codec().isPcm() && sizes.constant > 0 && allDeltasOne(timing);
+        var protectedTrack = track.isProtected();
+        if (protectedTrack && readsProtection) {
+            track.cenc = new CencSamples(limits);
+        }
+        var pcmGrouping = track.entry.codec().isPcm() && sizes.constant > 0 && allDeltasOne(timing) && !protectedTrack;
         if (pcmGrouping) {
             track.samples = expandPcm(track, sizes, chunkOffsets, stscEntries, sampleCount);
             track.selectBaseEntry();
@@ -615,7 +648,88 @@ final class MovieParser {
             markRandomAccess(table, randomAccess, 0, filled);
         }
         table.count = filled;
+        if (track.cenc != null) {
+            var cenc = track.cenc;
+            if (seigGroups != null) {
+                cenc.movieGroups = Math.max(0, cenc.addGroups(seigGroups));
+            }
+            if (seigSamples != null) {
+                cenc.assignGroups(seigSamples, table, 0, filled, -1);
+            }
+            if (senc != null) {
+                cenc.readSampleEncryption(senc, false, track, 0, filled);
+            } else if (piffSenc != null) {
+                cenc.readSampleEncryption(piffSenc, true, track, 0, filled);
+            } else if (saiz != null && saio != null && filled > 0) {
+                if (auxSource == null) {
+                    throw new MediaException.Unsupported("mp4 encryption", "sample auxiliary information outside "
+                            + "the moov of a stream");
+                }
+                cenc.readAuxiliaryInfo(saiz, saio, track, chunkStarts(stscEntries, chunkOffsets.length, filled), 0,
+                        auxSource, track.protection().scheme());
+            }
+        }
         track.selectBaseEntry();
+    }
+
+    /**
+     * Returns whether a sample group box ({@code sbgp} or {@code sgpd}) is of a grouping type.
+     *
+     * @param box the box payload, not moved
+     * @param groupingType the grouping type
+     * @return {@code true} when the box groups by {@code groupingType}
+     */
+    static boolean isGroup(BoxCursor box, int groupingType) {
+        var cursor = box.duplicate();
+        if (cursor.remaining() < 8) {
+            return false;
+        }
+        cursor.fullBoxHeader();
+        return cursor.s32() == groupingType;
+    }
+
+    /**
+     * Returns whether a {@code uuid} box is the sample encryption box of PIFF 1.1, and moves its cursor past the
+     * user type when it is.
+     *
+     * @param box the box payload, starting with the user type
+     * @return {@code true} for the PIFF sample encryption box
+     */
+    static boolean isPiffSampleEncryption(BoxCursor box) {
+        var cursor = box.duplicate();
+        if (cursor.remaining() < 24 || cursor.u64() != TrackProtection.PIFF_SENC_HIGH
+                || cursor.u64() != TrackProtection.PIFF_SENC_LOW) {
+            return false;
+        }
+        box.skip(16);
+        return true;
+    }
+
+    /**
+     * Returns the index of the first sample of each chunk, as {@link #placeSamples} places them, followed by the
+     * number of samples.
+     *
+     * @param stsc the sample-to-chunk entries
+     * @param chunks the number of chunks
+     * @param sampleCount the number of samples placed
+     * @return the indices, ascending
+     */
+    private static int[] chunkStarts(long[] stsc, int chunks, int sampleCount) {
+        var starts = new int[Math.min(chunks, sampleCount) + 1];
+        var used = 0;
+        var entries = stsc.length / 3;
+        var index = 0L;
+        for (var entry = 0; entry < entries && index < sampleCount; entry++) {
+            var first = stsc[entry * 3] - 1;
+            var last = Math.min(entry + 1 < entries ? stsc[(entry + 1) * 3] - 1 : chunks, chunks);
+            var perChunk = stsc[entry * 3 + 1];
+            for (var chunk = first; chunk < last && index < sampleCount && used < starts.length - 1; chunk++) {
+                starts[used++] = (int) index;
+                index = Math.min(sampleCount, index + perChunk);
+            }
+        }
+        starts[used++] = sampleCount;
+        return Arrays.copyOf(starts, used);
     }
 
     /**

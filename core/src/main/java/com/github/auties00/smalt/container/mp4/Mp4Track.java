@@ -231,6 +231,16 @@ final class Mp4Track {
     SampleTable media;
 
     /**
+     * The Common Encryption auxiliary information of the samples, or {@code null} for a track without any.
+     */
+    CencSamples cenc;
+
+    /**
+     * Whether the demuxer decrypts the samples of the track.
+     */
+    boolean encrypted;
+
+    /**
      * The indices in {@link #samples}, ascending, of the audio packets of a presentation index
      * that their edit cuts; empty for every other track.
      */
@@ -340,6 +350,31 @@ final class Mp4Track {
             }
         }
         return editMediaTimes[last] < 0 || editRates[last] != 0;
+    }
+
+    /**
+     * Returns whether a sample description of the track is encrypted.
+     *
+     * @return {@code true} when a description has a {@link SampleEntry#protection()}
+     */
+    boolean isProtected() {
+        return protection() != null;
+    }
+
+    /**
+     * Returns the protection of the first encrypted sample description of the track.
+     *
+     * @return the protection, or {@code null} when no description is encrypted
+     */
+    TrackProtection protection() {
+        if (entries != null) {
+            for (var candidate : entries) {
+                if (candidate != null && candidate.protection() != null) {
+                    return candidate.protection();
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -601,6 +636,7 @@ final class Mp4Track {
                         (int) offset, source.isKeyframe(index));
                 var added = out.count - 1;
                 out.setDescription(added, source.description(index));
+                out.setCrypto(added, source.crypto(index));
                 if (discard) {
                     out.flags[added] |= SampleTable.DISCARD;
                 } else if (trimStart > 0 || trimEnd > 0) {

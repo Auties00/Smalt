@@ -20,6 +20,7 @@ import com.github.auties00.smalt.track.TrackKind;
 import com.github.auties00.smalt.track.VideoTrack;
 
 import java.nio.ByteBuffer;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -203,6 +204,11 @@ public final class FragmentedMp4Muxer implements Muxer {
      * The declared tracks, in declaration order.
      */
     private final List<FragmentTrack> tracks = new ArrayList<>();
+
+    /**
+     * The source of the random initialization vectors of encrypted tracks, created on first use.
+     */
+    private SecureRandom random;
 
     /**
      * The sample writers of the text subtitle tracks, which turn cue packets into samples.
@@ -404,8 +410,16 @@ public final class FragmentedMp4Muxer implements Muxer {
             throw new IllegalArgumentException("fragmented MP4 muxing of " + codec.displayName() + " is not supported");
         }
         MovieHeaderWriter.validateConfig(track);
-        tracks.add(new FragmentTrack(new MuxTrack(track, tracks.size() + 1),
-                options.brand() == FragmentedMp4MuxerOptions.Brand.CMAF));
+        var media = new MuxTrack(track, tracks.size() + 1);
+        var added = new FragmentTrack(media, options.brand() == FragmentedMp4MuxerOptions.Brand.CMAF);
+        var encryption = options.encryption().orElse(null);
+        if (encryption != null) {
+            if (random == null) {
+                random = new SecureRandom();
+            }
+            added.encryptor = TrackEncryptor.of(encryption, media, random);
+        }
+        tracks.add(added);
         if (TextSamples.handles(codec)) {
             textTracks.add(new TextSamples(track.id(), codec, this::acceptTextSample));
         }
@@ -480,8 +494,12 @@ public final class FragmentedMp4Muxer implements Muxer {
      * valid address at the nominal rate of the first video track, or there is no video track with a
      * frame rate and the address is not a drop-frame one
      * @throws MediaException.Unsupported if the packet changes the codec configuration, which the
-     * initialization segment fixes, or a fragment it completes is too large for its per-fragment
-     * segment index reference
+     * initialization segment fixes, a fragment it completes is too large for its per-fragment
+     * segment index reference, or, under {@link FragmentedMp4MuxerOptions#encryption()}, the
+     * packet needs more subsamples than the 255 bytes of its auxiliary information describe (more
+     * than about 40 slices, VP9 frames or AV1 tiles)
+     * @throws MediaException.Malformed if, under {@link FragmentedMp4MuxerOptions#encryption()},
+     * a NAL unit length of an H.264 or HEVC packet runs past the packet
      */
     @Override
     public void writePacket(Packet packet) {
@@ -550,6 +568,11 @@ public final class FragmentedMp4Muxer implements Muxer {
             }
         }
         var sample = track.toSample(packet);
+        if (track.encryptor != null) {
+            var encrypted = new TrackEncryptor.Encrypted();
+            sample.data = track.encryptor.encrypt(sample.data, encrypted);
+            sample.encryption = encrypted;
+        }
         var micros = track.media.toMicros(sample.dts);
         if (pendingSamples > 0 && shouldCut(track, sample, micros)) {
             flush(track, sample.pts, false);
@@ -783,6 +806,9 @@ public final class FragmentedMp4Muxer implements Muxer {
             writer.end();
         }
         writer.end();
+        if (options.encryption().isPresent()) {
+            TrackEncryptor.writeProtectionSystems(writer, options.encryption().get());
+        }
         writer.bytes(userData);
         writer.end();
         if (output != null) {
@@ -837,7 +863,7 @@ public final class FragmentedMp4Muxer implements Muxer {
             writer.end();
             writer.end();
         }
-        MovieHeaderWriter.writeMedia(writer, media, 0, table -> writeEmptySampleTable(table, media));
+        MovieHeaderWriter.writeMedia(writer, media, 0, table -> writeEmptySampleTable(table, media, track.encryptor));
         if (described != null) {
             writer.bytes(Mp4TrackMetadata.userData(described));
         }
@@ -850,12 +876,19 @@ public final class FragmentedMp4Muxer implements Muxer {
      *
      * @param writer the destination
      * @param media the track
+     * @param encryptor the encryptor of the track's samples, or {@code null} for a clear track
      */
-    private static void writeEmptySampleTable(BoxWriter writer, MuxTrack media) {
+    private static void writeEmptySampleTable(BoxWriter writer, MuxTrack media, TrackEncryptor encryptor) {
         writer.begin(BoxTypes.STBL);
         writer.beginFull(BoxTypes.STSD, 0, 0);
         writer.u32(1);
-        SampleEntryWriter.write(writer, new Mp4Muxer.TrackPlan(media));
+        if (encryptor != null) {
+            var entry = new BoxWriter(512);
+            SampleEntryWriter.write(entry, new Mp4Muxer.TrackPlan(media));
+            writer.bytes(encryptor.protectEntry(entry.toByteArray(), media.kind() == TrackKind.VIDEO));
+        } else {
+            SampleEntryWriter.write(writer, new Mp4Muxer.TrackPlan(media));
+        }
         writer.end();
         for (var table : new int[]{BoxTypes.STTS, BoxTypes.STSC, BoxTypes.STCO}) {
             writer.beginFull(table, 0, 0);
@@ -910,6 +943,13 @@ public final class FragmentedMp4Muxer implements Muxer {
                 }
             }
             moof.end();
+            if (run.track.encryptor != null) {
+                var encrypted = new TrackEncryptor.Encrypted[run.samples.length];
+                for (var sample = 0; sample < run.samples.length; sample++) {
+                    encrypted[sample] = run.samples[sample].encryption;
+                }
+                run.track.encryptor.writeSampleEncryption(moof, encrypted);
+            }
             moof.end();
         }
         var indexRun = runs.getFirst();
@@ -1440,9 +1480,14 @@ public final class FragmentedMp4Muxer implements Muxer {
      */
     private static final class Sample {
         /**
-         * The sample bytes, held by reference.
+         * The sample bytes, held by reference, or encrypted into a new array.
          */
-        final byte[] data;
+        byte[] data;
+
+        /**
+         * The encryption of the sample, or {@code null} for a sample of a clear track.
+         */
+        TrackEncryptor.Encrypted encryption;
 
         /**
          * The presentation time.
@@ -1576,6 +1621,11 @@ public final class FragmentedMp4Muxer implements Muxer {
          * The samples waiting for a fragment, in decoding order.
          */
         final List<Sample> pending = new ArrayList<>();
+
+        /**
+         * The encryptor of the track's samples, or {@code null} for a clear track.
+         */
+        TrackEncryptor encryptor;
 
         /**
          * Whether the packets carry presentation timestamps only.

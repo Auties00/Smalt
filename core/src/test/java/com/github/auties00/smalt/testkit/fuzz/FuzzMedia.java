@@ -11,6 +11,7 @@ import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -388,13 +389,26 @@ public final class FuzzMedia {
      * @return the run
      */
     public static FuzzRun demuxer(ContainerFormat format, byte[] data) {
+        return demuxer(format, data, DecryptionKeys.none());
+    }
+
+    /**
+     * Demuxes a container of one format as {@link #demuxer(ContainerFormat, byte[])} does, decrypting its protected
+     * tracks with keys; with keys other than {@link DecryptionKeys#none()}, the demuxing step is the only one.
+     *
+     * @param format the format of the target
+     * @param data the input
+     * @param keys the keys that decrypt protected tracks
+     * @return the run
+     */
+    public static FuzzRun demuxer(ContainerFormat format, byte[] data, DecryptionKeys keys) {
         var run = Fuzz.start(format.name());
         var detected = run.value("detect", () -> Containers.detect(MediaSource.of(data)).orElse(null));
         if (detected.isEmpty() || detected.get() != format) {
             run.skip("detected " + detected.map(Enum::name).orElse("nothing"));
             return run;
         }
-        var options = DemuxerOptions.builder().limits(Fuzz.LIMITS).build();
+        var options = DemuxerOptions.builder().limits(Fuzz.LIMITS).decryptionKeys(keys).build();
         run.step("demux", () -> {
             try (var demuxer = Containers.openDemuxer(MediaSource.of(data), options)) {
                 demuxer.format();
@@ -416,6 +430,10 @@ public final class FuzzMedia {
                 }
             }
         });
+        if (!keys.equals(DecryptionKeys.none())) {
+            // probing and tag editing read protected files without keys; the clear targets run them
+            return run;
+        }
         run.step("probe", () -> Media.probe(MediaSource.of(data), ProbeOptions.builder()
                 .limits(Fuzz.LIMITS)
                 .attachedPictures(true)

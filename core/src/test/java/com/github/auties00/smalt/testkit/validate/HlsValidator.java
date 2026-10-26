@@ -252,6 +252,8 @@ public final class HlsValidator {
         var lastRangeEnd = new HashMap<Path, Long>();
         var segments = new ArrayList<Segment>();
         var needs = 1;
+        Key key = null;
+        var sequence = 0L;
         for (var index = 0; index < lines.size(); index++) {
             var line = lines.get(index);
             var at = where + ":" + (index + 1);
@@ -263,7 +265,7 @@ public final class HlsValidator {
                 targetCount++;
             } else if (line.startsWith("#EXT-X-MEDIA-SEQUENCE:")) {
                 findings.require(segments.isEmpty() && duration < 0, at, "EXT-X-MEDIA-SEQUENCE after a segment");
-                number(line.substring(22), at, "EXT-X-MEDIA-SEQUENCE");
+                sequence = number(line.substring(22), at, "EXT-X-MEDIA-SEQUENCE");
             } else if (line.startsWith("#EXT-X-PLAYLIST-TYPE:")) {
                 var type = line.substring(21);
                 findings.require(type.equals("VOD") || type.equals("EVENT"), at, "EXT-X-PLAYLIST-TYPE " + type);
@@ -302,6 +304,30 @@ public final class HlsValidator {
                 if (parsed != null) {
                     range = parsed;
                 }
+            } else if (line.startsWith("#EXT-X-KEY:")) {
+                var attributes = attributes(line.substring(11), at);
+                var method = attributes.getOrDefault("METHOD", "");
+                findings.require(List.of("NONE", "AES-128", "SAMPLE-AES", "SAMPLE-AES-CTR").contains(method), at,
+                        "EXT-X-KEY METHOD " + method);
+                if (attributes.containsKey("IV")) {
+                    needs = Math.max(needs, 2);
+                    var iv = attributes.get("IV");
+                    findings.require(iv.matches("0[xX][0-9a-fA-F]{32}"), at, "EXT-X-KEY IV " + iv);
+                }
+                if (!method.equals("NONE") && !method.equals("AES-128") || attributes.containsKey("KEYFORMAT")) {
+                    needs = Math.max(needs, 5);
+                }
+                findings.require(method.equals("NONE") || attributes.containsKey("URI"), at, "EXT-X-KEY without a URI");
+                key = null;
+                if (method.equals("AES-128") && attributes.containsKey("URI")) {
+                    var file = resolve(playlist, unquote(attributes.get("URI")), at);
+                    var bytes = file == null ? null : bytes(file, null, at);
+                    findings.require(bytes == null || bytes.length == 16, at, "an AES-128 key that is not 16 bytes");
+                    if (bytes != null && bytes.length == 16) {
+                        var iv = attributes.get("IV");
+                        key = new Key(bytes, iv == null ? null : java.util.HexFormat.of().parseHex(iv.substring(2)));
+                    }
+                }
             } else if (line.startsWith("#EXT-X-STREAM-INF") || line.startsWith("#EXT-X-MEDIA:")) {
                 findings.add(at, "a master playlist tag in a media playlist");
             } else if (!line.startsWith("#")) {
@@ -322,7 +348,7 @@ public final class HlsValidator {
                     if (range != null) {
                         lastRangeEnd.put(file, range[1] + range[0]);
                     }
-                    segments.add(new Segment(file, range, duration, at, map));
+                    segments.add(new Segment(file, range, duration, at, map, key, sequence));
                     if (target >= 0) {
                         findings.require(Math.round(duration) <= target, at, "EXTINF " + duration
                                 + " rounds above EXT-X-TARGETDURATION " + target);
@@ -330,6 +356,7 @@ public final class HlsValidator {
                 }
                 duration = -1;
                 range = null;
+                sequence++;
             } else if (line.startsWith("#EXT") && !line.startsWith("#EXTM3U") && !known(line)) {
                 findings.add(at, "an unknown tag " + line);
             }
@@ -350,10 +377,35 @@ public final class HlsValidator {
      * @param duration the EXTINF duration in seconds
      * @param where the playlist line
      * @param map the initialization section, or {@code null} for transport stream segments
+     * @param key the AES-128 key that encrypts the segment, or {@code null}
+     * @param sequence the media sequence number of the segment
      */
-    private record Segment(Path file, long[] range, double duration, String where, Segment map) {
+    private record Segment(Path file, long[] range, double duration, String where, Segment map, Key key,
+                           long sequence) {
         Segment(Path file, long[] range, double duration, String where) {
-            this(file, range, duration, where, null);
+            this(file, range, duration, where, null, null, 0);
+        }
+    }
+
+    /**
+     * The AES-128 key of encrypted segments.
+     *
+     * @param key the 16-byte key
+     * @param iv the initialization vector of every segment, or {@code null} for each segment's media sequence number
+     */
+    private record Key(byte[] key, byte[] iv) {
+        byte[] decrypt(byte[] segment, long sequence) throws java.security.GeneralSecurityException {
+            var vector = iv;
+            if (vector == null) {
+                vector = new byte[16];
+                for (var index = 0; index < 8; index++) {
+                    vector[15 - index] = (byte) (sequence >>> (8 * index));
+                }
+            }
+            var cipher = javax.crypto.Cipher.getInstance("AES/CBC/PKCS5Padding");
+            cipher.init(javax.crypto.Cipher.DECRYPT_MODE, new javax.crypto.spec.SecretKeySpec(key, "AES"),
+                    new javax.crypto.spec.IvParameterSpec(vector));
+            return cipher.doFinal(segment);
         }
     }
 
@@ -368,11 +420,20 @@ public final class HlsValidator {
         var nextDecode = new HashMap<Integer, Long>();
         var firstSegment = true;
         for (var segment : segments) {
-            var bytes = bytes(segment.file(), segment.range(), segment.where());
-            if (bytes == null) {
+            var stored = bytes(segment.file(), segment.range(), segment.where());
+            if (stored == null) {
                 continue;
             }
+            var bytes = stored;
             var segmentFindings = new Findings(segment.where());
+            if (segment.key() != null) {
+                try {
+                    bytes = segment.key().decrypt(stored, segment.sequence());
+                } catch (java.security.GeneralSecurityException exception) {
+                    findings.add(segment.where(), "an AES-128 segment that does not decrypt: " + exception);
+                    continue;
+                }
+            }
             if (segment.map() != null) {
                 var key = segment.map().file() + "@" + (segment.map().range() == null ? "" : segment.map().range()[1]);
                 var tracks = initializations.get(key);
@@ -451,10 +512,10 @@ public final class HlsValidator {
             segmentFindings.problems().forEach(problem -> findings.add(segment.where() + " " + segment.file()
                     .getFileName(), problem));
             if (segment.duration() > 0) {
-                var rate = (long) Math.ceil(bytes.length * 8 / segment.duration());
+                var rate = (long) Math.ceil(stored.length * 8 / segment.duration());
                 peak = Math.max(peak, rate);
             }
-            bits += bytes.length * 8.0;
+            bits += stored.length * 8.0;
             seconds += segment.duration();
         }
         return new Media(peak, seconds > 0 ? Math.round(bits / seconds) : 0, codecs, width, height);
@@ -593,12 +654,12 @@ public final class HlsValidator {
             var codecs = new LinkedHashSet<String>();
             for (var entry : summary.streamTypes().entrySet()) {
                 var codec = switch (entry.getValue()) {
-                    case 0x1B -> avc(data, entry.getKey());
+                    case 0x1B, 0xDB -> avc(data, entry.getKey());
                     case 0x24 -> "hvc1";
-                    case 0x0F -> aac(data, entry.getKey());
+                    case 0x0F, 0xCF -> aac(data, entry.getKey());
                     case 0x03, 0x04 -> "mp4a.40.34";
-                    case 0x81 -> "ac-3";
-                    case 0x87 -> "ec-3";
+                    case 0x81, 0xC1 -> "ac-3";
+                    case 0x87, 0xC2 -> "ec-3";
                     default -> null;
                 };
                 if (codec != null) {

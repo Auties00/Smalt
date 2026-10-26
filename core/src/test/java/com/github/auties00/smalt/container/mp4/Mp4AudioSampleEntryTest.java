@@ -188,9 +188,12 @@ class Mp4AudioSampleEntryTest {
     }
 
     @Test
-    @DisplayName("rejects an encrypted entry as unsupported")
+    @DisplayName("rejects an encrypted entry without keys as unsupported")
     void encrypted() {
+        var protection = Mp4Builder.sinf("sowt", "cbcs", Mp4Builder.tenc(1, 0, 0, true, 0, new byte[16], new byte[16]));
         assertThrows(MediaException.Unsupported.class,
+                () -> new Mp4Demuxer(MediaSource.of(file(entry("enca", 2, 16, 44100, protection), 44100))).close());
+        assertThrows(MediaException.Malformed.class,
                 () -> new Mp4Demuxer(MediaSource.of(file(entry("enca", 2, 16, 44100), 44100))).close());
     }
 

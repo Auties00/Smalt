@@ -484,6 +484,66 @@ final class BoxTypes {
     static final int ENCA = 0x656E6361;
 
     /**
+     * The protection scheme information box ({@code sinf}).
+     */
+    static final int SINF = 0x73696E66;
+
+    /**
+     * The original format box ({@code frma}).
+     */
+    static final int FRMA = 0x66726D61;
+
+    /**
+     * The scheme type box ({@code schm}).
+     */
+    static final int SCHM = 0x7363686D;
+
+    /**
+     * The scheme information box ({@code schi}).
+     */
+    static final int SCHI = 0x73636869;
+
+    /**
+     * The track encryption box of ISO/IEC 23001-7 ({@code tenc}).
+     */
+    static final int TENC = 0x74656E63;
+
+    /**
+     * The sample encryption box of ISO/IEC 23001-7 ({@code senc}).
+     */
+    static final int SENC = 0x73656E63;
+
+    /**
+     * The sample auxiliary information sizes box ({@code saiz}).
+     */
+    static final int SAIZ = 0x7361697A;
+
+    /**
+     * The sample auxiliary information offsets box ({@code saio}).
+     */
+    static final int SAIO = 0x7361696F;
+
+    /**
+     * The protection system specific header box ({@code pssh}).
+     */
+    static final int PSSH = 0x70737368;
+
+    /**
+     * The sample group description box ({@code sgpd}).
+     */
+    static final int SGPD = 0x73677064;
+
+    /**
+     * The sample encryption information group type of ISO/IEC 23001-7 ({@code seig}).
+     */
+    static final int SEIG = 0x73656967;
+
+    /**
+     * The user extension box ({@code uuid}).
+     */
+    static final int UUID = 0x75756964;
+
+    /**
      * The color information box ({@code colr}).
      */
     static final int COLR = 0x636F6C72;

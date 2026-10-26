@@ -70,10 +70,13 @@ import java.util.List;
  * @param layout the declared channel layout of an audio entry, or {@code null}
  * @param bitsPerSample the sample size of a PCM entry, or {@code 0}
  * @param frameBytes the size of one PCM frame (one sample of every channel), or {@code 0}
+ * @param protection the protection of an encrypted entry ({@code encv}, {@code enca}), whose {@code format} is then
+ * the type of the clear entry, or {@code null} for a clear entry
  */
 record SampleEntry(int format, Codec codec, byte[] config, int width, int height, ColorInfo color,
                    Rational sampleAspect, Interlacing interlacing, SphericalVideo spherical, StereoMode stereoMode,
-                   int channels, int sampleRate, ChannelLayout layout, int bitsPerSample, int frameBytes) {
+                   int channels, int sampleRate, ChannelLayout layout, int bitsPerSample, int frameBytes,
+                   TrackProtection protection) {
     /**
      * The size of the fields of a visual sample entry that precede its child boxes.
      */
@@ -180,8 +183,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      * itself or for a description that failed
      * @return the descriptions, in the order of their one-based sample description index
      * @throws MediaException.Malformed if the box holds no entry or the first is truncated
-     * @throws MediaException.Unsupported if the first entry is encrypted or stored in another file that no
-     * resolver supplies
+     * @throws MediaException.Unsupported if the first entry is encrypted with a scheme other than the Common
+     * Encryption ones or stored in another file that no resolver supplies
      * @throws MediaException.LimitExceeded if the first entry's channel count exceeds the limits
      */
     static SampleEntry[] parseAll(BoxCursor stsd, int handler, MediaLimits limits,
@@ -290,7 +293,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      */
     SampleEntry withCodec(Codec replacement) {
         return new SampleEntry(format, replacement, config, width, height, color, sampleAspect, interlacing, spherical,
-                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes);
+                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes, protection);
     }
 
     /**
@@ -301,7 +304,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
      */
     SampleEntry withConfig(byte[] replacement) {
         return new SampleEntry(format, codec, replacement, width, height, color, sampleAspect, interlacing, spherical,
-                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes);
+                stereoMode, channels, sampleRate, layout, bitsPerSample, frameBytes, protection);
     }
 
     /**
@@ -344,9 +347,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         var colorTableId = payload.s16();
         var indexed = depth == 1 || depth == 2 || depth == 4 || depth == 8;
         var colorTable = colorTableId == 0 && indexed ? parseColorTable(payload) : null;
-        if (format == BoxTypes.ENCV) {
-            throw new MediaException.Unsupported("mp4 encryption", "the video track is encrypted (encv)");
-        }
+        var sinfs = new ArrayList<BoxCursor>();
         byte[] avcC = null, hvcC = null, lhvC = null, vpcC = null, av1C = null, jp2h = null;
         var layerConfigs = new ArrayList<byte[]>();
         EsDescriptor esds = null;
@@ -389,6 +390,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     }
                 }
                 case BoxTypes.SV3D -> spherical = parseSpherical(body);
+                case BoxTypes.SINF -> sinfs.add(body);
                 default -> {
                     if (CodecConfigs.isAvidExtension(box.type())) {
                         if (avid == null) {
@@ -401,6 +403,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                     }
                 }
             }
+        }
+        TrackProtection protection = null;
+        if (format == BoxTypes.ENCV) {
+            protection = TrackProtection.parse(sinfs, format);
+            format = protection.originalFormat();
         }
         if (color == null && (mastering != null || lightLevel != null)) {
             color = new ColorInfo(MatrixCoefficients.UNSPECIFIED, ColorRange.LIMITED, ColorPrimaries.UNSPECIFIED,
@@ -478,7 +485,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
         }
         return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, spherical,
-                stereoMode, 0, 0, null, 0, 0);
+                stereoMode, 0, 0, null, 0, 0, protection);
     }
 
     /**
@@ -702,9 +709,6 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (payload.remaining() < AUDIO_HEADER) {
             throw new MediaException.Malformed("audio sample entry '" + FourCc.printable(format) + "' is truncated");
         }
-        if (format == BoxTypes.ENCA) {
-            throw new MediaException.Unsupported("mp4 encryption", "the audio track is encrypted (enca)");
-        }
         payload.skip(8);
         var version = payload.u16();
         payload.skip(6);
@@ -731,6 +735,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         }
         var audio = new AudioChildren();
         audio.read(payload, 0);
+        TrackProtection protection = null;
+        if (format == BoxTypes.ENCA) {
+            protection = TrackProtection.parse(audio.sinfs, format);
+            format = protection.originalFormat();
+        }
         if (audio.sampleRate > 0) {
             sampleRate = audio.sampleRate;
         }
@@ -883,8 +892,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             frameBytes = bytesPerFrame;
         }
         return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, channels, sampleRate, layout,
-                bits,
-                frameBytes);
+                bits, frameBytes, protection);
     }
 
     /**
@@ -959,7 +967,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             default -> Codec.DATA;
         };
         if (codec == Codec.CEA_608 || codec == Codec.CEA_708) {
-            return new SampleEntry(format, codec, null, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0);
+            return new SampleEntry(format, codec, null, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0, null);
         }
         if (payload.remaining() > 8) {
             payload.skip(8);
@@ -976,7 +984,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 if (codec != Codec.DVD_SUBTITLE) {
                     config = null;
                 }
-                return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0);
+                return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0, null);
             }
             if (codec == Codec.WEBVTT) {
                 for (var child : children(payload)) {
@@ -993,7 +1001,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (codec == Codec.TTML && (config == null || TtmlEntries.problem(config) != null)) {
             codec = Codec.DATA;
         }
-        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0);
+        return new SampleEntry(format, codec, config, 0, 0, null, null, null, null, null, 0, 0, null, 0, 0, null);
     }
 
     /**
@@ -1082,6 +1090,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         private ChannelLayout layout;
 
         /**
+         * The protection scheme information boxes.
+         */
+        private final List<BoxCursor> sinfs = new ArrayList<>();
+
+        /**
          * Reads the children at the cursor position.
          *
          * @param payload the cursor
@@ -1121,6 +1134,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         }
                         case BoxTypes.CHAN -> layout = parseChan(body);
                         case BoxTypes.CHNL -> layout = parseChnl(body);
+                        case BoxTypes.SINF -> sinfs.add(body);
                         default -> {
                             if (box.type() == FourCc.of("srat")) {
                                 body.fullBoxHeader();

@@ -543,6 +543,26 @@ public final class EbmlIds {
     public static final int CONTENT_ENCRYPTION = 0x5035;
 
     /**
+     * The {@code ContentEncAlgo} element of {@code ContentEncryption}.
+     */
+    public static final int CONTENT_ENC_ALGO = 0x47E1;
+
+    /**
+     * The {@code ContentEncKeyID} element of {@code ContentEncryption}.
+     */
+    public static final int CONTENT_ENC_KEY_ID = 0x47E2;
+
+    /**
+     * The {@code ContentEncAESSettings} element of {@code ContentEncryption}.
+     */
+    public static final int CONTENT_ENC_AES_SETTINGS = 0x47E7;
+
+    /**
+     * The {@code AESSettingsCipherMode} element of {@code ContentEncAESSettings}.
+     */
+    public static final int AES_SETTINGS_CIPHER_MODE = 0x47E8;
+
+    /**
      * The {@code Projection} element of {@code Video}.
      */
     public static final int PROJECTION = 0x7670;

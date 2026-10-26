@@ -40,7 +40,7 @@ public final class PackagingOptions {
      * The options of {@link #hls()}.
      */
     private static final PackagingOptions HLS = new PackagingOptions(true, false, SegmentFormat.MPEG_TS,
-            DEFAULT_SEGMENT_MICROS, false, false, "master.m3u8", "manifest.mpd", TagMode.COPY, null);
+            DEFAULT_SEGMENT_MICROS, false, false, "master.m3u8", "manifest.mpd", TagMode.COPY, null, null);
 
     /**
      * The options of {@link #hlsCmaf()}.
@@ -78,9 +78,14 @@ public final class PackagingOptions {
      */
     private final MediaTags tags;
 
+    /**
+     * The encryption, or {@code null} for clear segments.
+     */
+    private final PackagingEncryption encryption;
+
     private PackagingOptions(boolean hls, boolean dash, SegmentFormat segmentFormat, long segmentMicros,
                              boolean byteRanges, boolean segmentIndex, String masterPlaylistName, String manifestName,
-                             TagMode tagMode, MediaTags tags) {
+                             TagMode tagMode, MediaTags tags, PackagingEncryption encryption) {
         this.hls = hls;
         this.dash = dash;
         this.segmentFormat = segmentFormat;
@@ -91,6 +96,7 @@ public final class PackagingOptions {
         this.manifestName = manifestName;
         this.tagMode = tagMode;
         this.tags = tags;
+        this.encryption = encryption;
     }
 
     /**
@@ -244,6 +250,20 @@ public final class PackagingOptions {
         return Optional.ofNullable(tags);
     }
 
+    /**
+     * {@return the encryption of the segments, or empty for clear segments; empty by default}
+     *
+     * <p>The HLS media playlists then carry an {@code EXT-X-KEY} tag after the initialization segment's
+     * {@code EXT-X-MAP} (RFC 8216 clause 4.3.2.4) with the method, the key URI, the initialization vector the method
+     * signals and the key format, and the DASH manifest of {@code cbcs} or {@code cenc} CMAF segments declares the
+     * scheme and the default key identifier in a {@code ContentProtection} element of the
+     * {@code urn:mpeg:dash:mp4protection:2011} scheme in each adaptation set, followed by the W3C Clear Key one
+     * ({@code urn:uuid:e2719d58-a985-b3c9-781a-b030af78d30e}). {@link PackagingEncryption} describes each method.
+     */
+    public Optional<PackagingEncryption> encryption() {
+        return Optional.ofNullable(encryption);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof PackagingOptions that && hls == that.hls && dash == that.dash
@@ -252,13 +272,14 @@ public final class PackagingOptions {
                 && masterPlaylistName.equals(that.masterPlaylistName)
                 && manifestName.equals(that.manifestName)
                 && tagMode == that.tagMode
-                && Objects.equals(tags, that.tags);
+                && Objects.equals(tags, that.tags)
+                && Objects.equals(encryption, that.encryption);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(hls, dash, segmentFormat, segmentMicros, byteRanges, segmentIndex, masterPlaylistName,
-                manifestName, tagMode, tags);
+                manifestName, tagMode, tags, encryption);
     }
 
     @Override
@@ -267,7 +288,7 @@ public final class PackagingOptions {
                 + ", segmentMicros=" + segmentMicros + ", byteRanges=" + byteRanges + ", segmentIndex=" + segmentIndex
                 + ", masterPlaylistName="
                 + masterPlaylistName + ", manifestName=" + manifestName + ", tagMode=" + tagMode
-                + (tags == null ? "" : ", tags=" + tags) + "]";
+                + (tags == null ? "" : ", tags=" + tags) + (encryption == null ? "" : ", encryption=" + encryption) + "]";
     }
 
     /**
@@ -287,6 +308,7 @@ public final class PackagingOptions {
         private String manifestName;
         private TagMode tagMode;
         private MediaTags tags;
+        private PackagingEncryption encryption;
 
         private Builder(PackagingOptions options) {
             this.hls = options.hls;
@@ -299,6 +321,7 @@ public final class PackagingOptions {
             this.manifestName = options.manifestName;
             this.tagMode = options.tagMode;
             this.tags = options.tags;
+            this.encryption = options.encryption;
         }
 
         /**
@@ -442,15 +465,62 @@ public final class PackagingOptions {
         }
 
         /**
+         * Sets the encryption of the segments; see {@link PackagingOptions#encryption()}.
+         *
+         * @param encryption the value
+         * @return this builder
+         */
+        public Builder encryption(PackagingEncryption encryption) {
+            this.encryption = Objects.requireNonNull(encryption, "encryption");
+            return this;
+        }
+
+        /**
+         * Writes clear segments, the default; see {@link PackagingOptions#encryption()}.
+         *
+         * @return this builder
+         */
+        public Builder noEncryption() {
+            this.encryption = null;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
          * @throws IllegalArgumentException if no manifest is requested, DASH is requested with
          * transport stream segments, a segment index is requested without byte ranges or CMAF
-         * segments, the segment duration is not positive, or a name is empty or holds a path
-         * separator
+         * segments, the segment duration is not positive, a name is empty or holds a path
+         * separator, or the encryption does not fit the other settings: HLS without a key URI,
+         * {@link PackagingEncryption.Method#AES_128} with DASH or a segment index,
+         * {@link PackagingEncryption.Method#SAMPLE_AES_CTR} with transport stream segments, a
+         * method that encrypts CMAF samples without a key identifier, or a key file named as the
+         * master playlist or the manifest
          */
         public PackagingOptions build() {
+            if (encryption != null) {
+                var method = encryption.method();
+                if (hls && encryption.keyUri().isEmpty()) {
+                    throw new IllegalArgumentException("encrypted HLS playlists need the key URI");
+                }
+                if (method == PackagingEncryption.Method.AES_128 && (dash || segmentIndex)) {
+                    throw new IllegalArgumentException("AES-128 segment encryption is HLS only and cannot be indexed "
+                            + "by a single segment index");
+                }
+                if (method == PackagingEncryption.Method.SAMPLE_AES_CTR && segmentFormat != SegmentFormat.CMAF) {
+                    throw new IllegalArgumentException("SAMPLE-AES-CTR encrypts CMAF segments only");
+                }
+                if (method != PackagingEncryption.Method.AES_128 && segmentFormat == SegmentFormat.CMAF
+                        && encryption.keyId().isEmpty()) {
+                    throw new IllegalArgumentException("Common Encryption of CMAF segments needs the key identifier");
+                }
+                var keyFile = encryption.keyFileName().orElse(null);
+                if (keyFile != null && (hls && keyFile.equals(masterPlaylistName)
+                        || dash && keyFile.equals(manifestName))) {
+                    throw new IllegalArgumentException("the key file \"" + keyFile + "\" would replace a manifest");
+                }
+            }
             if (!hls && !dash) {
                 throw new IllegalArgumentException("neither HLS nor DASH is requested");
             }
@@ -462,7 +532,7 @@ public final class PackagingOptions {
             }
             return new PackagingOptions(hls, dash, segmentFormat, Checks.positive("segment duration", segmentMicros),
                     byteRanges, segmentIndex, checkName("master playlist name", masterPlaylistName),
-                    checkName("manifest name", manifestName), tagMode, tags);
+                    checkName("manifest name", manifestName), tagMode, tags, encryption);
         }
 
         /**

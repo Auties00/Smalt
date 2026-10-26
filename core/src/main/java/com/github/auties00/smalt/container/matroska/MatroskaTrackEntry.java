@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.matroska;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.Languages;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
@@ -18,6 +19,8 @@ import com.github.auties00.smalt.image.MasteringDisplay;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.cenc.CencCipher;
+import com.github.auties00.smalt.internal.cenc.CencScheme;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
@@ -39,6 +42,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
 import java.util.EnumSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -58,6 +62,21 @@ import java.util.Set;
  * {@code BITMAPINFOHEADER} and {@code WAVEFORMATEX} structures.
  */
 final class MatroskaTrackEntry {
+    /**
+     * The signal byte bit of an encrypted WebM frame.
+     */
+    private static final int SIGNAL_ENCRYPTED = 1;
+
+    /**
+     * The signal byte bit of a partitioned WebM frame.
+     */
+    private static final int SIGNAL_PARTITIONED = 2;
+
+    /**
+     * The size of the initialization vector of an encrypted WebM frame.
+     */
+    private static final int IV_SIZE = 8;
+
     /**
      * The nanosecond time base in which Matroska expresses {@code DefaultDuration},
      * {@code CodecDelay}, {@code DiscardPadding} and the {@code DURATION} tag.
@@ -226,6 +245,16 @@ final class MatroskaTrackEntry {
      * The content encodings, in the order they must be undone.
      */
     List<ContentEncoding> encodings = List.of();
+
+    /**
+     * The keys that decrypt the frames of an encrypted track.
+     */
+    DecryptionKeys keys = DecryptionKeys.none();
+
+    /**
+     * The cipher of an encrypted track, created from {@link #keys} on its first frame.
+     */
+    private CencCipher cipher;
 
     /**
      * The track duration from a {@code DURATION} tag, in nanoseconds, or {@code -1}.
@@ -607,11 +636,110 @@ final class MatroskaTrackEntry {
     byte[] decodeFrame(byte[] data, int offset, int length, MediaLimits limits) {
         var result = Arrays.copyOfRange(data, offset, offset + length);
         for (var encoding : encodings) {
-            if (encoding.appliesToFrames()) {
+            if (encoding.encrypts()) {
+                result = decrypt(result, encoding);
+            } else if (encoding.appliesToFrames()) {
                 result = encoding.decode(result, 0, result.length, limits);
             }
         }
         return result;
+    }
+
+    /**
+     * Returns whether a content encoding of the track encrypts its frames.
+     *
+     * @return {@code true} for a WebM encrypted track
+     */
+    boolean encrypted() {
+        for (var encoding : encodings) {
+            if (encoding.encrypts()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Decrypts one frame of the WebM encryption format: a signal byte whose bit 0 marks an encrypted frame and bit 1
+     * a partitioned one, then for an encrypted frame an 8-byte initialization vector and, when partitioned, a
+     * partition count and that many 32-bit big-endian partition offsets, then the frame. The partitions alternate
+     * clear and encrypted bytes, starting with clear ones, and the encrypted ones are one AES-CTR stream whose
+     * counter block is the initialization vector followed by a 64-bit block counter starting at zero.
+     *
+     * @param frame the stored frame
+     * @param encoding the encryption
+     * @return the clear frame
+     * @throws MediaException.Malformed if the frame is truncated or its partitions are out of order
+     * @throws MediaException.Unsupported if the keys do not know the frame's key
+     */
+    private byte[] decrypt(byte[] frame, ContentEncoding encoding) {
+        if (frame.length == 0) {
+            throw new MediaException.Malformed("an encrypted track holds an empty frame");
+        }
+        var signal = frame[0] & 0xFF;
+        if ((signal & ~(SIGNAL_ENCRYPTED | SIGNAL_PARTITIONED)) != 0) {
+            throw new MediaException.Malformed("encrypted frame signal byte 0x" + Integer.toHexString(signal));
+        }
+        if ((signal & SIGNAL_ENCRYPTED) == 0) {
+            return Arrays.copyOfRange(frame, 1, frame.length);
+        }
+        var position = 1 + IV_SIZE;
+        int[] subsamples = null;
+        var pairs = 0;
+        if ((signal & SIGNAL_PARTITIONED) != 0) {
+            if (frame.length < position + 1) {
+                throw new MediaException.Malformed("encrypted frame of " + frame.length + " bytes");
+            }
+            var count = frame[position] & 0xFF;
+            var header = position + 1 + 4 * count;
+            if (frame.length < header) {
+                throw new MediaException.Malformed("encrypted frame of " + frame.length + " bytes declares " + count
+                        + " partitions");
+            }
+            var size = frame.length - header;
+            pairs = count / 2 + 1;
+            subsamples = new int[pairs * 2];
+            var previous = 0L;
+            for (var partition = 0; partition <= count; partition++) {
+                var end = partition < count ? readU32(frame, position + 1 + 4 * partition) : size;
+                if (end < previous || end > size) {
+                    throw new MediaException.Malformed("encrypted frame partition offset " + end + " out of order");
+                }
+                subsamples[partition] = (int) (end - previous);
+                previous = end;
+            }
+            position = header;
+        } else if (frame.length < position) {
+            throw new MediaException.Malformed("encrypted frame of " + frame.length + " bytes");
+        }
+        var data = Arrays.copyOfRange(frame, position, frame.length);
+        cipher(encoding).decrypt(CencScheme.CENC, data, 0, data.length, frame, 1, IV_SIZE, subsamples, 0, pairs, 0, 0);
+        return data;
+    }
+
+    /**
+     * Returns the cipher of an encryption, asking the keys for it the first time.
+     *
+     * @param encoding the encryption
+     * @return the cipher
+     * @throws MediaException.Unsupported if the keys do not know the key
+     */
+    private CencCipher cipher(ContentEncoding encoding) {
+        if (cipher == null) {
+            var key = keys.find(encoding.keyId().clone()).orElseThrow(() -> new MediaException.Unsupported(
+                    "matroska encryption", "no decryption key for key ID " + HexFormat.of().formatHex(encoding.keyId())));
+            if (key.length != 16) {
+                throw new MediaException.Unsupported("matroska encryption", "the key of key ID "
+                        + HexFormat.of().formatHex(encoding.keyId()) + " is " + key.length + " bytes, not 16");
+            }
+            cipher = new CencCipher(key);
+        }
+        return cipher;
+    }
+
+    private static long readU32(byte[] data, int position) {
+        return ((data[position] & 0xFFL) << 24) | ((data[position + 1] & 0xFF) << 16)
+                | ((data[position + 2] & 0xFF) << 8) | (data[position + 3] & 0xFF);
     }
 
     /**

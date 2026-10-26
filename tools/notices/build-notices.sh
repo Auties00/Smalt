@@ -107,6 +107,7 @@ Contents
   50. RNNoise
   51. bzip2
   52. lzokay
+  53. Shaka Packager
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1834,6 +1835,46 @@ Copyright:
 EOF
 license_start "lzokay license (LICENSE)"
 cat "$LIC/lzokay-LICENSE"
+
+section "53. Shaka Packager"
+cat <<'EOF'
+Project:      Shaka Packager v3.9.3
+Source:       https://github.com/shaka-project/shaka-packager
+              (packager/media/base/aes_encryptor.cc, aes_pattern_cryptor.cc,
+              packager/media/crypto/subsample_generator.cc,
+              encryption_handler.cc, sample_aes_ec3_cryptor.cc,
+              packager/media/codecs/h264_parser.cc, h265_parser.cc,
+              vp9_parser.cc, av1_parser.cc,
+              nal_unit_to_byte_stream_converter.cc, hls_audio_util.cc)
+License text: https://github.com/shaka-project/shaka-packager/blob/main/LICENSE
+License:      BSD 3-Clause
+
+Derived Smalt packages:
+  internal.cenc (CencCipher, SliceHeaders, Vp9Frames, Av1Tiles)
+  container.mp4 (TrackEncryptor)
+  container.ts (SampleAesEncryptor)
+
+Derivation: the AES-CTR block counter of the last eight bytes of the counter
+block and the rule that a partial pattern encrypts its whole blocks only
+(aes_encryptor.cc, aes_pattern_cryptor.cc); the subsamples of NAL-structured
+video, slice headers clear and protected ranges cut to whole blocks for every
+scheme but cbcs, and the whole-block encryption of audio in the pattern
+schemes (subsample_generator.cc, encryption_handler.cc); the parameter set and
+slice header syntax read to find where the slice data of an H.264 or HEVC
+slice starts (h264_parser.cc, h265_parser.cc); the VP9 superframe index and
+uncompressed header syntax, and the AV1 OBU, sequence header, frame header
+and tile group syntax with the reference frame state they need, read to find
+the clear headers and the protected tile data of VP9 and AV1 samples
+(vp9_parser.cc, av1_parser.cc); the E-AC-3 syncframe walk, the
+escaping of encrypted NAL units and the audio setup information of SAMPLE-AES
+transport streams (sample_aes_ec3_cryptor.cc,
+nal_unit_to_byte_stream_converter.cc, hls_audio_util.cc); rewritten in Java.
+
+Copyright:
+  Copyright 2014 Google LLC. All rights reserved.
+EOF
+license_start "Shaka Packager license (LICENSE)"
+cat "$LIC/shaka-packager-LICENSE"
 } > "$OUT"
 
 echo "wrote $OUT"

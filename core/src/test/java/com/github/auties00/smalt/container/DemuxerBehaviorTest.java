@@ -3,10 +3,13 @@ package com.github.auties00.smalt.container;
 import com.github.auties00.smalt.testkit.Conformance;
 import com.github.auties00.smalt.testkit.container.DemuxerAsserts;
 import com.github.auties00.smalt.testkit.container.DemuxerAsserts.SeekPrecision;
+import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
+import com.github.auties00.smalt.container.mp4.Mp4Demuxer;
 import com.github.auties00.smalt.testkit.io.BehaviorSamples;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.ByteArrayOutputStream;
@@ -65,6 +68,49 @@ class DemuxerBehaviorTest {
 
     static Stream<String> vectors() {
         return VECTORS.stream();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            "chromium-bear-640x360-a_frag-cenc.mp4, 30313233343536373839303132333435, ebdd62f16814d27b68ef122afce4ae3c",
+            "chromium-bear-640x360-a_frag-cbcs.mp4, 30313233343536373839303132333435, ebdd62f16814d27b68ef122afce4ae3c",
+            "chromium-bear-640x360-v_frag-cenc.mp4, 30313233343536373839303132333435, ebdd62f16814d27b68ef122afce4ae3c",
+            "chromium-bear-640x360-v_frag-cbcs.mp4, 30313233343536373839303132333435, ebdd62f16814d27b68ef122afce4ae3c",
+            "chromium-bear-opus-cenc.mp4, 30313233343536373839303132333435, ebdd62f16814d27b68ef122afce4ae3c",
+            "mpegff-video_cenc_64iv.mp4, 279926496a7f5d25da69f2b3b2799a7f, 5544694d47473326622665665a396b36",
+            "mpegff-audio_cbcs_const_iv.mp4, 279926496a7f5d25da69f2b3b2799a7f, ccc0f2b3b279926496a7f5d25da692f6",
+            "chromium-bear-320x240-av_enc-av.webm, 30313233343536373839303132333435, ebdd62f16814d27b68ef122afce4ae3c",
+            "chromium-bear-320x240-v-vp9_subsample_enc-v.webm, 30313233343536373839303132333435, ebdd62f16814d27b68ef122afce4ae3c",
+    })
+    @DisplayName("protected vectors: identical decrypted packets under every source behavior, clean faults, contract seeks")
+    void encrypted(String name, String keyId, String key) throws IOException {
+        var data = Files.readAllBytes(Conformance.fetchListed(name));
+        var options = DemuxerOptions.builder().decryptionKeys(DecryptionKeys.ofHex(Map.of(keyId, key))).build();
+        DemuxerAsserts.of("encrypted/" + name, data)
+                .factory(source -> name.endsWith(".webm") ? new MatroskaDemuxer(source, options)
+                        : new Mp4Demuxer(source, options))
+                .run();
+    }
+
+    // the encrypted seeds of the fuzz targets: ffmpeg's progressive cenc and Shaka Packager's fragmented cenc,
+    // cbc1, cens and cbcs and WebM encryption of small synthetic clips, made by tools/testdata/cenc/make-seeds.sh
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            "mp4Encrypted/valid-cenc-progressive.mp4", "mp4Encrypted/valid-cenc-video.mp4",
+            "mp4Encrypted/valid-cbc1-video.mp4", "mp4Encrypted/valid-cens-video.mp4",
+            "mp4Encrypted/valid-cbcs-video.mp4", "mp4Encrypted/valid-cbcs-audio.mp4",
+            "matroskaEncrypted/valid-webm-video.webm", "matroskaEncrypted/valid-webm-audio.webm",
+    })
+    @DisplayName("protected seeds: identical decrypted packets under every source behavior, clean faults, contract seeks")
+    void encryptedSeeds(String name) throws IOException {
+        var data = Files.readAllBytes(Path.of("src", "test", "resources", "com", "github", "auties00", "smalt", "fuzz",
+                "DemuxerFuzzTestInputs").resolve(name));
+        var options = DemuxerOptions.builder().decryptionKeys(DecryptionKeys.ofHex(Map.of(
+                "30313233343536373839303132333435", "ebdd62f16814d27b68ef122afce4ae3c"))).build();
+        DemuxerAsserts.of("encrypted/" + name.substring(name.indexOf('/') + 1), data)
+                .factory(source -> name.endsWith(".webm") ? new MatroskaDemuxer(source, options)
+                        : new Mp4Demuxer(source, options))
+                .run();
     }
 
     @Test

@@ -477,11 +477,22 @@ class Mp4EdgeCaseTest {
         }
 
         @Test
-        @DisplayName("rejects encrypted tracks as unsupported")
+        @DisplayName("rejects encrypted tracks without keys as unsupported, and without a sinf as malformed")
         void encrypted() {
-            var data = file(zeros(4), mvhd(1000, 0), trak(1, "vide", 1000, 0, Mp4Builder.visualEntry("encv", 64, 48),
+            var protection = Mp4Builder.sinf("avc1", "cenc", Mp4Builder.tenc(0, 0, 0, true, 8, new byte[16], null));
+            var data = file(zeros(4), mvhd(1000, 0), trak(1, "vide", 1000, 0,
+                    Mp4Builder.visualEntry("encv", 64, 48, protection),
                     table("stts", 0, 2), table("stsc", 0, 3), stsz(0), table("stco", 0, 1)));
             assertEquals("mp4 encryption", assertThrows(MediaException.Unsupported.class, () -> demux(data)).format());
+            var other = Mp4Builder.sinf("avc1", "adkm", Mp4Builder.tenc(0, 0, 0, true, 8, new byte[16], null));
+            var otherScheme = file(zeros(4), mvhd(1000, 0), trak(1, "vide", 1000, 0,
+                    Mp4Builder.visualEntry("encv", 64, 48, other),
+                    table("stts", 0, 2), table("stsc", 0, 3), stsz(0), table("stco", 0, 1)));
+            assertEquals("mp4 encryption", assertThrows(MediaException.Unsupported.class, () -> demux(otherScheme))
+                    .format());
+            var bare = file(zeros(4), mvhd(1000, 0), trak(1, "vide", 1000, 0, Mp4Builder.visualEntry("encv", 64, 48),
+                    table("stts", 0, 2), table("stsc", 0, 3), stsz(0), table("stco", 0, 1)));
+            assertThrows(MediaException.Malformed.class, () -> demux(bare));
         }
 
         @Test

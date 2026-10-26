@@ -191,7 +191,8 @@ public final class Mp4Remuxer {
      * @return the demuxer
      */
     private static Demuxer open(MediaSource input, ContainerFormat format, RemuxOptions options) {
-        var demuxerOptions = DemuxerOptions.builder().limits(options.limits()).build();
+        var demuxerOptions = DemuxerOptions.builder().limits(options.limits())
+                .decryptionKeys(options.decryptionKeys()).build();
         return format == ContainerFormat.MP4 ? new Mp4Demuxer(input, demuxerOptions)
                 : Containers.openDemuxer(input, demuxerOptions);
     }
