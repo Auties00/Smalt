@@ -1,0 +1,10 @@
+# image dump of vectors/rawpixls-canon-eos-90d-3-2.cr3; regenerate with -Dsmalt.test.updateDumps=true
+format RAW
+info ImageInfo[format=RAW, width=6960, height=4640, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 6960x4640 rgba8 alpha=false crc=6d45691d
+  format=RAW orientation=NORMAL source=6960x4640
+  icc=520:86132914 exif=1190:e9630da2 xmp=none
+  profile=ColorProfile[sRGB, RGB, DISPLAY, v4.3.0]
+decoder raw sensor data
+sensor 6960x4640 channels=1 cfa=RGGB neutral=[0.4920711196540125, 1.0, 0.7293447293447294] crc=053521e6

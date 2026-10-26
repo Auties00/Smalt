@@ -83,7 +83,7 @@ public final class SilenceDetectorOptions {
      * @return the magnitude, 1.0 being full scale
      */
     double thresholdAmplitude() {
-        return Math.pow(10, thresholdDb / 20);
+        return StrictMath.pow(10, thresholdDb / 20);
     }
 
     @Override
