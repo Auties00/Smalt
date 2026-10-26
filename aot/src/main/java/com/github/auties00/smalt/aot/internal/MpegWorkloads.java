@@ -87,6 +87,11 @@ final class MpegWorkloads {
                         track -> new H264Decoder(track, H264DecoderOptions.forRealtime()))),
                 realtime("ac3-encode-rt", () -> ac3Realtime(6)),
                 realtime("eac3-rt", () -> eac3("eac3-rt", Eac3EncoderOptions.forRealtime(), 6)),
+                realtime("aac-encode-retarget", () -> aacRetarget(6)),
+                realtime("aac-decode-loss", () -> aacLossyDecode("aac-decode-loss", false, 4)),
+                realtime("heaac-decode-loss", () -> aacLossyDecode("heaac-decode-loss", true, 4)),
+                realtime("amr-nb-decode-loss", () -> amrLossyDecode(2)),
+                realtime("ac3-decode-loss", () -> ac3LossyDecode(4)),
                 file("h264-encode-balanced-main-t2", () -> h264Encode(2, H264EncoderSpeed.BALANCED, H264Profile.MAIN)),
                 file("h264-encode-fast-high-t1", () -> h264Encode(1, H264EncoderSpeed.FAST, H264Profile.HIGH)),
                 file("h264-encode-fastest-baseline-t1",
@@ -378,6 +383,80 @@ final class MpegWorkloads {
         var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, rate)).sampleRate(rate)
                 .layout(layout).codecConfig(config).build();
         return AudioStreams.decode(name, packets, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that encodes 48 kHz stereo music as AAC at a constant bitrate whose target changes every
+     * second, one encoder across rounds.
+     *
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacRetarget(double seconds) {
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, ChannelLayout.STEREO, 128_000));
+        return AudioStreams.encodeRetargeted("aac-encode-retarget", SyntheticAudio.music(48000, seconds),
+                ChannelLayout.STEREO, 48000, encoder, 64_000, 160_000, 32_000, 128_000);
+    }
+
+    /**
+     * Returns a workload that decodes the packets of {@link #aacDecode}, concealing every seventh as a lost one,
+     * one decoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param sbr whether the configuration announces spectral band replication
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacLossyDecode(String name, boolean sbr, double seconds) {
+        var rate = sbr ? 22050 : 44100;
+        var encoder = new AacEncoder(AacEncoderOptions.of(rate, ChannelLayout.STEREO, sbr ? 48000 : 128000));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(rate, seconds), ChannelLayout.STEREO, rate);
+        var config = sbr ? new byte[]{0x2B, (byte) 0x92, 0x08, 0x00} : encoder.codecConfig().orElseThrow();
+        var track = AudioTrack.builder().id(1).codec(Codec.AAC).timeBase(new Rational(1, rate)).sampleRate(rate)
+                .layout(ChannelLayout.STEREO).codecConfig(config).build();
+        var lossy = new ArrayList<Packet>();
+        for (var packet : packets) {
+            lossy.add(packet.withTiming(packet.pts(), packet.dts(), sbr ? 2 * packet.duration() : packet.duration()));
+        }
+        return AudioStreams.decodeLossy(name, lossy, new AacDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes AMR-NB speech in every mode, concealing every seventh frame as a lost one,
+     * one decoder across rounds.
+     *
+     * @param seconds the speech coded per mode, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload amrLossyDecode(double seconds) {
+        var speech = SyntheticAudio.speech(8000, seconds);
+        var block = new AudioBuffer(ChannelLayout.MONO, 8000, 160);
+        var encoder = new AmrEncoder(AmrEncoderOptions.narrowband());
+        var packets = new ArrayList<Packet>();
+        for (var mode : Arrays.stream(AmrMode.values()).filter(mode -> mode.codec() == Codec.AMR_NB).toList()) {
+            encoder.setMode(mode);
+            SyntheticAudio.feed(new float[][]{speech}, block, buffer -> encoder.encode(buffer, packets::add));
+        }
+        encoder.flush(packets::add);
+        var track = AudioTrack.builder().id(1).codec(Codec.AMR_NB).timeBase(new Rational(1, 8000)).sampleRate(8000)
+                .layout(ChannelLayout.MONO).build();
+        return AudioStreams.decodeLossy("amr-nb-decode-loss", packets, new AmrDecoder(track));
+    }
+
+    /**
+     * Returns a workload that decodes 48 kHz stereo AC-3, concealing every seventh access unit as a lost one, one
+     * decoder across rounds.
+     *
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload ac3LossyDecode(double seconds) {
+        var encoder = new Ac3Encoder(Ac3EncoderOptions.of(48000, ChannelLayout.STEREO));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(48000, seconds), ChannelLayout.STEREO, 48000);
+        encoder.close();
+        var track = AudioTrack.builder().id(1).codec(Codec.AC3).timeBase(new Rational(1, 48000)).sampleRate(48000)
+                .layout(ChannelLayout.STEREO).build();
+        return AudioStreams.decodeLossy("ac3-decode-loss", packets, new Ac3Decoder(track));
     }
 
     /**

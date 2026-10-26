@@ -7,6 +7,7 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -41,7 +42,8 @@ import java.util.function.Consumer;
  * packets, so packets must be fed in stream order. A frame whose reservoir bytes are missing (the
  * first frames after starting mid-stream) and a frame whose side information or allocation is
  * inconsistent decode to silence of the full frame length, which keeps the output aligned with
- * the packet timestamps; an inconsistent frame also resets the decoder state. A change of
+ * the packet timestamps; an inconsistent frame also resets the decoder state. A frame whose
+ * reservoir bytes were in frames lost through {@link #conceal(int, Consumer)} is concealed instead. A change of
  * version, layer or sample rate between frames resets the filterbank and reservoir, as does
  * starting a new stream.
  *
@@ -237,6 +239,12 @@ public final class Mp3Decoder implements AudioDecoder {
     private long concealedFrames;
 
     /**
+     * Whether frames were lost since the last decoded frame, so a Layer III frame whose main data begins in them
+     * is concealed rather than silent.
+     */
+    private boolean afterLoss;
+
+    /**
      * The header of the previous frame, or {@code 0} before the first.
      */
     private int previousHeader;
@@ -378,6 +386,75 @@ public final class Mp3Decoder implements AudioDecoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is the frame length of the last decoded frame (1152 samples per channel for Layers
+     * II and III of MPEG-1, 576 for Layer III of MPEG-2 and MPEG-2.5, 384 for Layer I), or 1152 before the first
+     * frame. Every lost frame is concealed as a frame failing its CRC is (see the class description), so the run of
+     * concealed frames, which fades to silence, continues across the lost frames and the damaged ones around them.
+     * A Layer III frame after the loss whose main data begins in a lost frame is concealed too, instead of decoding
+     * to silence.
+     *
+     * @throws IllegalArgumentException {@inheritDoc}
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        var header = previousHeader;
+        var unit = header == 0 ? MAX_FRAME_SAMPLES : MpegAudioHeader.samplesPerFrame(header);
+        var frames = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
+        layer3.dropReservoir();
+        afterLoss = true;
+        ConsumerFailure.<AudioBuffer>run("MPEG audio concealment", output, emit -> {
+            for (var frame = 0; frame < frames; frame++) {
+                concealFrame(header, emit);
+            }
+        });
+        return frames * unit;
+    }
+
+    /**
+     * Conceals one lost frame and hands it to {@code output}.
+     *
+     * @param header the header of the last decoded frame, or {@code 0} before the first, which conceals with
+     * silence in the track's format (44.1 kHz when the track declares no rate)
+     * @param output receives the frame's buffer
+     */
+    private void concealFrame(int header, Consumer<AudioBuffer> output) {
+        if (header == 0) {
+            var out = outputBuffer(layout, sampleRate > 0 ? sampleRate : 44100);
+            for (var plane = 0; plane < out.channels(); plane++) {
+                Arrays.fill(out.plane(plane), 0, MAX_FRAME_SAMPLES, 0);
+            }
+            out.setFrames(MAX_FRAME_SAMPLES);
+            output.accept(out);
+            return;
+        }
+        var channels = MpegAudioHeader.channels(header);
+        var rate = MpegAudioHeader.sampleRate(header);
+        var multichannelFrame = multichannel && MpegAudioHeader.layer(header) == 2 && MpegAudioHeader.isMpeg1(header);
+        var out = multichannelFrame && extensionEstablished ? outputBuffer(extensionLayout, rate)
+                : outputBuffer(channels, rate);
+        conceal(header, channels, out.plane(0), out.plane(channels - 1));
+        if (out.channels() > channels) {
+            silenceExtension(out);
+        }
+        out.setFrames(MpegAudioHeader.samplesPerFrame(header));
+        output.accept(out);
+    }
+
+    /**
      * {@return the number of frames concealed since the decoder was created}
      */
     long concealedFrames() {
@@ -496,6 +573,7 @@ public final class Mp3Decoder implements AudioDecoder {
             }
         } else {
             concealedRun = 0;
+            afterLoss = false;
             if (status == SILENT) {
                 for (var plane = 0; plane < out.channels(); plane++) {
                     Arrays.fill(out.plane(plane), 0, samples, 0);
@@ -566,7 +644,7 @@ public final class Mp3Decoder implements AudioDecoder {
             }
         }
         layer3.saveReservoir();
-        return complete ? DECODED : SILENT;
+        return complete ? DECODED : afterLoss ? CONCEAL : SILENT;
     }
 
     /**

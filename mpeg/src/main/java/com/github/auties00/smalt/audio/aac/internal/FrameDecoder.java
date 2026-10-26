@@ -61,6 +61,21 @@ public final class FrameDecoder {
     private static final int NOISE_SEED = 0x1F2E3D4C;
 
     /**
+     * The number of concealed blocks in a row that are heard; later ones are silent.
+     */
+    private static final int AUDIBLE_CONCEALMENT = 4;
+
+    /**
+     * The seed of the generator of the signs of concealed spectra.
+     */
+    private static final int CONCEALMENT_SEED = 0x6C078965;
+
+    /**
+     * The amplitude ratio of a long-window line to a short-window line of the same signal.
+     */
+    private static final float SHORT_TO_LONG = (float) Math.sqrt(8);
+
+    /**
      * The extension type of a fill element holding spectral band replication data.
      */
     private static final int EXT_SBR_DATA = 13;
@@ -383,6 +398,52 @@ public final class FrameDecoder {
      * The window shape of the previous frame of each coded channel.
      */
     private int[] previousShapes = new int[0];
+
+    /**
+     * The spectrum each coded channel synthesized last, which concealment repeats; a concealed block of short
+     * windows leaves its lines interleaved into a long window here.
+     */
+    private float[][] lastSpectra = new float[0][];
+
+    /**
+     * The window sequence each coded channel synthesized last.
+     */
+    private int[] lastSequences = new int[0];
+
+    /**
+     * Whether a block was decoded with the current mapping, so a lost block can be concealed from it.
+     */
+    private boolean concealable;
+
+    /**
+     * The number of blocks concealed since the last decoded one.
+     */
+    private int concealedRun;
+
+    /**
+     * The state of the generator of the signs of concealed spectra.
+     */
+    private int concealmentNoise = CONCEALMENT_SEED;
+
+    /**
+     * The number of channel elements of the last decoded block.
+     */
+    private int lastElementCount;
+
+    /**
+     * The type of each channel element of the last decoded block.
+     */
+    private int[] lastElementTypes = new int[8];
+
+    /**
+     * The instance tag of each channel element of the last decoded block.
+     */
+    private int[] lastElementTags = new int[8];
+
+    /**
+     * The first coded channel of each channel element of the last decoded block.
+     */
+    private int[] lastElementChannels = new int[8];
 
     /**
      * The output buffer.
@@ -1039,16 +1100,10 @@ public final class FrameDecoder {
             if (dynamicRange != null && !sbr) {
                 dynamicRange.applySpectrum(channel, stream.spectrum());
             }
+            System.arraycopy(stream.spectrum(), 0, lastSpectra[channel], 0, frameLength);
+            lastSequences[channel] = stream.windowSequence();
             var plane = sbr ? coreSamples[channel] : output.plane(mapping.outputIndex(channel));
-            if (ssrSynthesis != null) {
-                ssrSynthesis.synthesize(stream, ssrStates[channel], plane, 0);
-            } else if (lowDelayFilterbank != null) {
-                lowDelayFilterbank.synthesize(stream.spectrum(), lowDelayStates[channel], plane, 0);
-            } else {
-                synthesis.synthesize(stream.spectrum(), stream.windowSequence(), previousShapes[channel],
-                        stream.windowShape(), overlaps[channel], plane, 0);
-            }
-            previousShapes[channel] = stream.windowShape();
+            synthesizeChannel(channel, stream, plane);
             if (couplingCount != 0) {
                 coupleTime(stream, plane);
             }
@@ -1058,6 +1113,129 @@ public final class FrameDecoder {
         }
         subbandsValid = false;
         if (sbr) {
+            applySbr();
+        }
+        keepElements();
+        output.setFrames(outputLength);
+        if (surround != null) {
+            return upmix(output);
+        }
+        return output;
+    }
+
+    /**
+     * Runs the synthesis filterbank of the object type over a channel's spectrum.
+     *
+     * @param channel the coded channel
+     * @param stream the channel's stream
+     * @param plane receives the channel's core samples
+     */
+    private void synthesizeChannel(int channel, ChannelStream stream, float[] plane) {
+        if (ssrSynthesis != null) {
+            ssrSynthesis.synthesize(stream, ssrStates[channel], plane, 0);
+        } else if (lowDelayFilterbank != null) {
+            lowDelayFilterbank.synthesize(stream.spectrum(), lowDelayStates[channel], plane, 0);
+        } else {
+            synthesis.synthesize(stream.spectrum(), stream.windowSequence(), previousShapes[channel],
+                    stream.windowShape(), overlaps[channel], plane, 0);
+        }
+        previousShapes[channel] = stream.windowShape();
+    }
+
+    /**
+     * Keeps the channel elements of the block just decoded for concealing the blocks after it.
+     */
+    private void keepElements() {
+        if (lastElementTypes.length < elementCount) {
+            lastElementTypes = new int[elementTypes.length];
+            lastElementTags = new int[elementTypes.length];
+            lastElementChannels = new int[elementTypes.length];
+        }
+        System.arraycopy(elementTypes, 0, lastElementTypes, 0, elementCount);
+        System.arraycopy(elementTags, 0, lastElementTags, 0, elementCount);
+        System.arraycopy(elementChannels, 0, lastElementChannels, 0, elementCount);
+        lastElementCount = elementCount;
+        concealable = true;
+        concealedRun = 0;
+    }
+
+    /**
+     * Conceals one lost block from the blocks decoded before it.
+     *
+     * <p>Each coded channel repeats the spectrum it synthesized last with random signs: at full amplitude for the
+     * first block lost in a row, halved for each further one, and silent from the fifth on. A channel whose last
+     * block had eight short windows is concealed with a long stop window whose lines interleave the short windows'
+     * lines, scaled to the long transform, and a channel whose last block had a long start window with a long stop
+     * window, so the window sequence joins the last block's; other channels use a long window. AAC Main predictors
+     * and long term prediction histories continue from the concealed signal. With spectral band replication, the
+     * high band repeats the last envelope, 6 dB lower for each further block, until the core falls silent. With
+     * MPEG Surround, the block is upmixed with the parameters of the last spatial frame. Before the first block, or
+     * after a change of channel layout, the block is silent.
+     *
+     * @return the concealed samples, valid until the next block
+     */
+    public AudioBuffer conceal() {
+        if (!concealable) {
+            return silence();
+        }
+        concealedRun = Math.min(concealedRun + 1, AUDIBLE_CONCEALMENT + 1);
+        var gain = concealedRun <= AUDIBLE_CONCEALMENT ? 1.0f / (1 << (concealedRun - 1)) : 0;
+        streamCount = 0;
+        couplingCount = 0;
+        sbrInBlock = false;
+        elementCount = lastElementCount;
+        System.arraycopy(lastElementTypes, 0, elementTypes, 0, elementCount);
+        System.arraycopy(lastElementTags, 0, elementTags, 0, elementCount);
+        System.arraycopy(lastElementChannels, 0, elementChannels, 0, elementCount);
+        var state = concealmentNoise;
+        for (var channel = 0; channel < channelStreams.length; channel++) {
+            var stream = channelStreams[channel];
+            var source = lastSpectra[channel];
+            var target = stream.spectrum();
+            var previous = lastSequences[channel];
+            int sequence;
+            if (previous == ChannelStream.EIGHT_SHORT_SEQUENCE && ssrSynthesis == null) {
+                var windowLength = frameLength / 8;
+                for (var k = 0; k < frameLength; k++) {
+                    target[k] = SHORT_TO_LONG * source[(k & 7) * windowLength + (k >> 3)];
+                }
+                System.arraycopy(target, 0, source, 0, frameLength);
+                sequence = ChannelStream.LONG_STOP_SEQUENCE;
+            } else {
+                sequence = previous == ChannelStream.EIGHT_SHORT_SEQUENCE ? previous
+                        : previous == ChannelStream.LONG_START_SEQUENCE ? ChannelStream.LONG_STOP_SEQUENCE
+                        : ChannelStream.ONLY_LONG_SEQUENCE;
+            }
+            for (var k = 0; k < frameLength; k++) {
+                state = state * 1664525 + 1013904223;
+                var value = gain * source[k];
+                target[k] = state < 0 ? -value : value;
+            }
+            stream.prepareConcealment(sequence, previousShapes[channel]);
+            lastSequences[channel] = sequence;
+        }
+        concealmentNoise = state;
+        for (var element = 0; element < elementCount; element++) {
+            var type = elementTypes[element];
+            var first = elementChannels[element];
+            predict(channelStreams[first], type, elementTags[element], 0);
+            if (type == ElementId.CPE) {
+                predict(channelStreams[first + 1], type, elementTags[element], 1);
+            }
+        }
+        var sbr = sbrActive();
+        for (var channel = 0; channel < channelStreams.length; channel++) {
+            var plane = sbr ? coreSamples[channel] : output.plane(mapping.outputIndex(channel));
+            synthesizeChannel(channel, channelStreams[channel], plane);
+            if (longTermPrediction) {
+                longTermPredictors[channel].update(plane, 0);
+            }
+        }
+        subbandsValid = false;
+        if (sbr) {
+            for (var element = 0; element < elementCount; element++) {
+                sbrElement(element, elementTypes[element]).conceal(gain != 0, concealedRun > 1);
+            }
             applySbr();
         }
         output.setFrames(outputLength);
@@ -1333,6 +1511,9 @@ public final class FrameDecoder {
             LimitChecks.checkAllocation(limits, (long) channels * (frameLength * 8L + outputLength * 4L + predictionBytes));
             overlaps = new float[channels][frameLength];
             previousShapes = new int[channels];
+            lastSpectra = new float[channels][frameLength];
+            lastSequences = new int[channels];
+            concealable = false;
             if (longTermPrediction) {
                 longTermPredictors = new LongTermPredictor[channels];
                 for (var channel = 0; channel < channels; channel++) {

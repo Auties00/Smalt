@@ -389,6 +389,23 @@ final class SbrChannel {
     }
 
     /**
+     * {@return the frequency resolution of the last envelope of the last resolved frame}
+     */
+    int previousResolution() {
+        return previousResolution;
+    }
+
+    /**
+     * Returns a scalefactor of the last envelope of the last resolved frame.
+     *
+     * @param band the band, in {@link #previousResolution()}
+     * @return the resolved scalefactor
+     */
+    int previousEnvelope(int band) {
+        return previousEnvelope[band];
+    }
+
+    /**
      * Resolves the delta-coded scalefactors of a frame against the previous ones and checks
      * their range.
      *

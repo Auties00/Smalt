@@ -650,6 +650,23 @@ public final class OpusEncoder implements AudioEncoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * <p>This is {@link #setBitrate(int)} for a target that fits an {@code int}, with its clamping; the next packet
+     * is coded at the new target in every bitrate mode, and constant bitrate packets take its size at once.
+     *
+     * @throws IllegalArgumentException if {@code bitsPerSecond} is not positive or exceeds
+     * {@link Integer#MAX_VALUE}
+     */
+    @Override
+    public void setTargetBitrate(long bitsPerSecond) {
+        if (bitsPerSecond <= 0 || bitsPerSecond > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("invalid bitrate " + bitsPerSecond);
+        }
+        setBitrate((int) bitsPerSecond);
+    }
+
+    /**
      * Selects the bitrate the encoder derives from the sampling rate, the channel count and the
      * frame duration.
      */

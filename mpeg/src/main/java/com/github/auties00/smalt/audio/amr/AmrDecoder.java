@@ -6,6 +6,7 @@ import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.amr.internal.AmrFrameDecoder;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -57,6 +58,11 @@ public final class AmrDecoder implements AudioDecoder {
      * The frame type of an empty ("no data") frame.
      */
     private static final int NO_DATA = 15;
+
+    /**
+     * The payload of a frame that carries no data.
+     */
+    private static final byte[] NO_PAYLOAD = new byte[0];
 
     /**
      * The scale from 16-bit samples to the {@code [-1, 1]} range.
@@ -249,6 +255,43 @@ public final class AmrDecoder implements AudioDecoder {
                 return;
             }
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is one frame, {@link #frameSize()} samples. Every lost frame is decoded as an empty
+     * ("no data") frame of every channel: concealed from the preceding frames by the bad frame handling of TS 26.091
+     * and TS 26.191 during speech, and continued as comfort noise during discontinuous transmission.
+     *
+     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalStateException if the decoder is closed
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        if (closed) {
+            throw new IllegalStateException("the decoder is closed");
+        }
+        var frames = Math.min(Math.max(1, (samples + frameSamples / 2) / frameSamples), Integer.MAX_VALUE / frameSamples);
+        for (var frame = 0; frame < frames; frame++) {
+            for (var channel = 0; channel < channels; channel++) {
+                decodeFrame(channel, NO_DATA, false, NO_PAYLOAD, 0, 0);
+            }
+            emit(output);
+        }
+        return frames * frameSamples;
     }
 
     /**

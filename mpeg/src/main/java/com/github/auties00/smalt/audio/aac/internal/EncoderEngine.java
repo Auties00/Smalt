@@ -71,7 +71,12 @@ public final class EncoderEngine {
     /**
      * The bitrate in bits per second.
      */
-    private final int bitrate;
+    private int bitrate;
+
+    /**
+     * The number of frames encoded when {@link #bitrate} took effect.
+     */
+    private long rateOrigin;
 
     /**
      * Whether the encoder codes at constant quality.
@@ -167,7 +172,7 @@ public final class EncoderEngine {
     /**
      * The bit reservoir capacity in bits.
      */
-    private final int reservoirSize;
+    private int reservoirSize;
 
     /**
      * The smallest perceptual entropy of the bit reservoir control's interpolation range.
@@ -182,7 +187,7 @@ public final class EncoderEngine {
     /**
      * The constant threshold parameter of variable bitrate mode.
      */
-    private final float vbrParameter;
+    private float vbrParameter;
 
     /**
      * The threshold parameter the rate control chose for the previous frame.
@@ -225,8 +230,7 @@ public final class EncoderEngine {
             }
             default -> throw new IllegalArgumentException("unsupported channel count " + channels);
         }
-        var fullBitrate = channels == 6 ? bitrate * 5 / 5.2 : bitrate;
-        var perChannel = (int) (fullBitrate / (channels == 6 ? 5 : channels));
+        var perChannel = channelBitrate(bitrate);
         coded = new EncoderChannel[channels];
         for (var i = 0; i < channels; i++) {
             var lfe = channels == 6 && i == 5;
@@ -485,13 +489,51 @@ public final class EncoderEngine {
     }
 
     /**
+     * Returns the bitrate of each full-band channel at a total bitrate, the LFE of 5.1 taking a fifth of one.
+     *
+     * @param total the bitrate of all channels in bits per second
+     * @return the bitrate per full-band channel
+     */
+    private int channelBitrate(int total) {
+        var fullBitrate = channels == 6 ? total * 5 / 5.2 : total;
+        return (int) (fullBitrate / (channels == 6 ? 5 : channels));
+    }
+
+    /**
+     * Changes the bitrate and the bandwidth of the frames encoded from now on.
+     *
+     * <p>The mean frame size restarts its exact rounding at the next frame, the bit reservoir keeps its fullness up
+     * to the capacity of the new rate, and every channel retunes its bands and psychoacoustic model.
+     *
+     * @param newBitrate the bitrate in bits per second
+     * @param bandwidth the audio bandwidth in hertz
+     */
+    public void retarget(int newBitrate, int bandwidth) {
+        this.bitrate = newBitrate;
+        this.rateOrigin = frames;
+        reservoirSize = Math.max(0, (CHANNEL_BITS * channels - meanFrameBits()) & ~7);
+        reservoir = Math.min(reservoir, reservoirSize);
+        var meanPe = 10.0f * FRAME * Math.min(bandwidth, sampleRate / 2) / (sampleRate / 2.0f) * channels;
+        peMin = 0.8f * meanPe;
+        peMax = 1.2f * meanPe;
+        vbrParameter = vbrParameter(newBitrate / (channels == 6 ? 5.2 : channels));
+        var perChannel = channelBitrate(newBitrate);
+        for (var i = 0; i < channels; i++) {
+            var lfe = channels == 6 && i == 5;
+            coded[i].retune(sampleRate, lfe ? Math.min(bandwidth, 240) : bandwidth,
+                    lfe ? Math.max(perChannel / 5, 1000) : perChannel);
+        }
+    }
+
+    /**
      * Returns the mean number of bits of the next frame at the configured bitrate.
      *
-     * @return the bits, the exact long-term average rounded frame by frame
+     * @return the bits, the exact long-term average since the bitrate took effect, rounded frame by frame
      */
     private int meanFrameBits() {
-        var before = frames * FRAME * (long) bitrate / sampleRate;
-        var after = (frames + 1) * FRAME * (long) bitrate / sampleRate;
+        var elapsed = frames - rateOrigin;
+        var before = elapsed * FRAME * (long) bitrate / sampleRate;
+        var after = (elapsed + 1) * FRAME * (long) bitrate / sampleRate;
         return (int) (after - before);
     }
 

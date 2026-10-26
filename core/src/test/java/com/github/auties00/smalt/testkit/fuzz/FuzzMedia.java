@@ -390,7 +390,52 @@ public final class FuzzMedia {
                 exact.close();
             }
         }
+        if (run.sampled(data, 0, 2)) {
+            conceal(run, input, () -> AudioDecoders.create(built, options.build()));
+        }
         return run;
+    }
+
+    /**
+     * Decodes the packets again with every third one lost, concealing a span derived from the packet in its place,
+     * and checks that every concealment hands over the samples it reports, in consistent blocks.
+     *
+     * @param run the run
+     * @param input the parsed input
+     * @param open creates the decoder
+     */
+    private static void conceal(FuzzRun run, FuzzPackets input, java.util.function.Supplier<AudioDecoder> open) {
+        var decoder = run.value("open concealing", open);
+        if (decoder.isEmpty()) {
+            return;
+        }
+        try (var opened = decoder.get()) {
+            if (!opened.supportsConcealment()) {
+                return;
+            }
+            var handed = new long[1];
+            Consumer<AudioBuffer> sink = buffer -> {
+                touch(run, buffer);
+                handed[0] += buffer.frames();
+            };
+            for (var index = 0; index <= input.packets().size(); index++) {
+                var last = index == input.packets().size();
+                var packet = last ? null : packet(input.packets().get(index), index);
+                if (last || index % 3 == 1) {
+                    var span = 1 + Math.floorMod((packet == null ? 0 : packet.size()) * 37 + index * 101, 4096);
+                    run.step("conceal " + index, () -> {
+                        handed[0] = 0;
+                        var produced = opened.conceal(span, sink);
+                        if (produced < 0 || produced != handed[0]) {
+                            throw new IllegalStateException("concealment of " + span + " samples reported " + produced
+                                    + " and handed over " + handed[0]);
+                        }
+                    });
+                } else {
+                    run.step("decode " + index, () -> opened.decode(packet, sink));
+                }
+            }
+        }
     }
 
     /**

@@ -11,6 +11,7 @@ import com.github.auties00.smalt.audio.aac.internal.SamplingTables;
 import com.github.auties00.smalt.audio.aac.internal.mps.MpsConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacConfig;
 import com.github.auties00.smalt.audio.aac.internal.usac.UsacDecoder;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -662,6 +663,56 @@ public final class AacDecoder implements AudioDecoder {
             decoder.addSurroundFrame(spatial, 0, spatial.length);
             decoder.decode(core, 0, core.length, emit);
         });
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}, except for a USAC stream (object type 42), which does not conceal
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return usac == null;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is {@link #frameLength()}. Each unit is a block whose spectrum repeats, channel by
+     * channel, the last one synthesized with random signs: at full amplitude for the first block lost in a row,
+     * halved for each further one, and silent from the fifth on, the overlap of the transform smoothing every
+     * join. A channel whose last block had eight short windows (outside AAC SSR) is concealed with a long stop window
+     * whose lines interleave the short windows' lines, and one whose last block had a long start window with a long
+     * stop window, so the window sequence stays valid; the others use a long window. The predictors of AAC Main and
+     * the long term prediction history continue from the concealed signal. With spectral band replication, the high
+     * band repeats the last envelope, 6 dB lower for each further block, until the core falls silent, and parametric
+     * stereo keeps its last parameters; with MPEG Surround, the block is upmixed with the parameters of the last
+     * spatial frame. Before the first block, and after the channel layout changed, the span is silence. A USAC
+     * stream (object type 42) does not conceal.
+     *
+     * @implNote This implementation substitutes spectra in the manner of the informative error concealment of
+     * ISO/IEC 14496-3 but without its interpolation toward the next good block, which would delay the output by a
+     * block.
+     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws MediaException.Unsupported if the stream is USAC ({@code "usac concealment"})
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        if (usac != null) {
+            // TODO: USAC needs concealment of its own (FD spectra, LPD excitation, eSBR, MPS212 and DRC state); its
+            //  decoder keeps no history of the last good frame yet.
+            throw new MediaException.Unsupported("usac concealment", "USAC streams cannot conceal lost packets");
+        }
+        var unit = frameLength();
+        var units = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
+        ConsumerFailure.<AudioBuffer>run("AAC concealment", output, emit -> {
+            for (var i = 0; i < units; i++) {
+                emit.accept(decoder.conceal());
+            }
+        });
+        return units * unit;
     }
 
     /**

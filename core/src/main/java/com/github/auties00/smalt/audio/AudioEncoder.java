@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio;
 
+import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 
@@ -142,6 +143,26 @@ public interface AudioEncoder extends AutoCloseable {
      * @param output receives zero or more packets
      */
     void flush(Consumer<Packet> output);
+
+    /**
+     * Changes the target bitrate of the frames coded from now on, without restarting the stream.
+     *
+     * <p>The new target governs every frame the encoder codes after the call, including frames of samples already
+     * passed to {@link #encode(AudioBuffer, Consumer)} and still buffered. How quickly the coded rate follows it
+     * depends on the codec's rate control; a codec of fixed bitrate steps takes the step each encoder documents.
+     *
+     * @implSpec The default implementation throws {@link MediaException.Unsupported}; an implementation that can
+     * retarget a running stream overrides it.
+     * @param bitsPerSecond the new target, in bits per second; positive
+     * @throws IllegalArgumentException if {@code bitsPerSecond} is not positive or the codec cannot reach it
+     * @throws IllegalStateException if the encoder runs without a target bitrate, for example in a constant-quality
+     * mode
+     * @throws MediaException.Unsupported if the encoder cannot change its bitrate while running
+     */
+    default void setTargetBitrate(long bitsPerSecond) {
+        throw new MediaException.Unsupported("bitrate change",
+                codec().displayName() + " encoder cannot change its bitrate while running");
+    }
 
     /**
      * Releases the encoder's resources.

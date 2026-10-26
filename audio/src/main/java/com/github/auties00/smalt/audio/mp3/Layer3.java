@@ -126,6 +126,13 @@ final class Layer3 {
     private final float[] shortScratch = new float[18];
 
     /**
+     * Forgets the reservoir, whose continuation was lost, and keeps the IMDCT overlap.
+     */
+    void dropReservoir() {
+        reservoirLength = 0;
+    }
+
+    /**
      * Forgets the reservoir and the IMDCT overlap, as after a discontinuity.
      */
     void reset() {

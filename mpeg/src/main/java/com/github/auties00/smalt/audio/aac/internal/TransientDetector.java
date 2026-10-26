@@ -41,7 +41,7 @@ public final class TransientDetector {
     /**
      * The inverse attack ratio.
      */
-    private final float inverseRatio;
+    private float inverseRatio;
 
     /**
      * The previous input sample of the high-pass filter.
@@ -89,6 +89,15 @@ public final class TransientDetector {
      * @param channelBitrate the bitrate per channel in bits per second
      */
     public TransientDetector(int channelBitrate) {
+        retune(channelBitrate);
+    }
+
+    /**
+     * Adapts the attack threshold to a new bitrate, keeping the filter and energy history.
+     *
+     * @param channelBitrate the bitrate per channel in bits per second
+     */
+    public void retune(int channelBitrate) {
         this.inverseRatio = channelBitrate > 24000 ? 0.1f : 0.056f;
     }
 

@@ -162,6 +162,44 @@ public interface AudioDecoder extends AutoCloseable {
     }
 
     /**
+     * Returns whether the decoder can stand in for lost packets through {@link #conceal(int, Consumer)}.
+     *
+     * @implSpec The default implementation returns {@code false}.
+     * @return {@code true} for decoders that synthesize a replacement for a span of lost packets
+     */
+    default boolean supportsConcealment() {
+        return false;
+    }
+
+    /**
+     * Conceals a span of lost packets and hands the samples that replace it to {@code output}.
+     *
+     * <p>A receiver that never got part of the stream, for example the packets of an RTP timestamp gap, calls this
+     * method in place of {@link #decode(Packet, Consumer)} for that span, then goes on decoding the packets that
+     * follow it. The decoder synthesizes the span from the signal decoded before it, fades a long span to silence,
+     * and leaves its state so that the next packet continues without a discontinuity; packets that refer to the
+     * lost ones (prediction, a bit reservoir) decode as well as the missing data allows. Before the first packet
+     * the replacement is silence.
+     *
+     * <p>The span is produced in whole concealment units of the codec, the nearest whole number of them and at
+     * least one: the frame length for codecs of fixed frame length, 2.5 ms for Opus, half the last block for
+     * Vorbis and one sample for uncompressed and lossless codecs; each decoder documents its unit. The blocks have
+     * the format of the last decoded block, or {@link #sampleRate()} and {@link #layout()} before the first. The
+     * output is deterministic: it depends only on the packets decoded before and on {@code samples}.
+     *
+     * @implSpec The default implementation throws {@link MediaException.Unsupported}.
+     * @param samples the duration of the lost span in samples per channel at the output rate, positive
+     * @param output receives one or more blocks, each valid only during the call
+     * @return the number of samples per channel handed to {@code output}
+     * @throws IllegalArgumentException if {@code samples} is not positive
+     * @throws MediaException.Unsupported if {@link #supportsConcealment()} is {@code false}
+     */
+    default int conceal(int samples, Consumer<AudioBuffer> output) {
+        throw new MediaException.Unsupported("packet loss concealment",
+                getClass().getSimpleName() + " cannot conceal lost packets");
+    }
+
+    /**
      * Releases the decoder's resources.
      *
      * <p>The default implementation holds none and does nothing.

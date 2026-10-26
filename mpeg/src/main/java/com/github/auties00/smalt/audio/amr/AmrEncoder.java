@@ -168,6 +168,36 @@ public final class AmrEncoder implements AudioEncoder {
     /**
      * {@inheritDoc}
      *
+     * <p>The frames take the mode of the encoder's codec with the highest bitrate not above the target, or its
+     * lowest mode when the target is below every one, from the next frame on, as {@link #setMode(AmrMode)} sets
+     * it.
+     *
+     * @throws IllegalArgumentException if {@code bitsPerSecond} is not positive
+     */
+    @Override
+    public void setTargetBitrate(long bitsPerSecond) {
+        if (bitsPerSecond <= 0) {
+            throw new IllegalArgumentException("invalid bitrate " + bitsPerSecond);
+        }
+        AmrMode chosen = null;
+        AmrMode lowest = null;
+        for (var candidate : AmrMode.values()) {
+            if (candidate.isWideband() != mode.isWideband()) {
+                continue;
+            }
+            if (lowest == null || candidate.bitrate() < lowest.bitrate()) {
+                lowest = candidate;
+            }
+            if (candidate.bitrate() <= bitsPerSecond && (chosen == null || candidate.bitrate() > chosen.bitrate())) {
+                chosen = candidate;
+            }
+        }
+        setMode(chosen != null ? chosen : lowest);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
      * @return {@link Codec#AMR_NB} or {@link Codec#AMR_WB}
      */
     @Override

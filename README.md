@@ -526,6 +526,11 @@ them, so files exchanged with ffmpeg differ in these known ways:
 | PCM (integer and float, any layout) | yes; integer formats up to 32 bits and G.711 also as their integers bit for bit, every format as doubles (64-bit floats unchanged) | 8 to 64-bit, integer and float, either byte order, G.711 A-law and mu-law, through the containers that carry it, from float, integer or double samples; triangular, high-pass triangular or noise-shaped dither for 8, 16 and 24-bit output (`PcmEncoderOptions.dither`) | `smalt-core` | `audio.pcm` | spec; Lipshitz, Vanderkooy and Wannamaker (dither, E-weighted noise shaping) | none |
 | AMR-NB, AMR-WB | yes, bit-exact with the 3GPP fixed-point decoders (TS 26.073, TS 26.173): every mode, mode changes on any frame, comfort noise (SID) and DTX, bad and lost frame concealment, homing; storage-format frames from `.amr`, MP4/3GP `samr`/`sawb` and Matroska (`A_AMR/NB`, `A_AMR/WB`, `A_MS/ACM`), and the frame-blocks of multichannel `.amr` files (one decoder state per channel); the TS 26.074 sequences pass in linear PCM and through G.711 A-law and mu-law | yes, bit-exact with the 3GPP encoders: AMR-NB in every mode with DTX and VAD option 1 or 2, AMR-WB in every mode with VAD and DTX; mode changes on any frame | `smalt-mpeg` | `audio.amr` | AMR-NB decoder and encoder and AMR-WB decoder: opencore-amr (PacketVideo, Apache-2.0); AMR-WB encoder: vo-amrwbenc (VisualOn, Apache-2.0), its arithmetic aligned with TS 26.173 (passes TS 26.174, so its frames differ from `libvo_amrwbenc` on loud or unusual input); both derived from the 3GPP reference code | **patent pool** (VoiceAge, AMR-WB); AMR-NB patents are held by its developers; not covered by the MIT license |
 
+Every decoder in the table also stands in for lost packets through the codec-neutral
+`AudioDecoder.conceal(samples, output)`, and the Opus, AAC, MP3 (constant and average bitrate) and AMR encoders
+change their bitrate while running through `AudioEncoder.setTargetBitrate` (see [Code any audio codec in real
+time](#code-any-audio-codec-in-real-time)).
+
 Where the AC-3 and E-AC-3 specifications leave room or disagree, the decoder follows what Dolby's encoders
 write and Dolby's own decoder (the Dolby Digital Plus decoder of Windows Media Foundation, driven as a black
 box) reads:
@@ -1241,6 +1246,15 @@ checks a FLAC source's MD5 signature on the way.
   harmonic transposer, not with the DFT based one the reference decoder offers as an alternative. AAC Main
   prediction matches the ISO/IEC 14496-26 reference waveforms, which evaluate the predictor in double
   precision, so it drifts from decoders that use single precision, ffmpeg among them, by up to about -70 dB.
+- Audio packet loss concealment (`AudioDecoder.conceal`) extrapolates from the signal decoded before the loss only:
+  no decoder interpolates toward the packet after the loss, which would delay every output by a packet. After a
+  loss, state the lost packets would have refreshed converges as the stream refreshes it: the AAC Main predictors
+  and the long term prediction history, spectral band replication envelopes coded as time deltas of the lost ones,
+  the CELP memories of AMR, and the dither and noise substitution generators of AC-3 and AAC, which the lost
+  packets no longer advance, so even a Low Complexity stream with noise substitution differs from a loss-free
+  decode in those bands. The Vorbis, MP2, AC-3 and E-AC-3 encoders cannot change their bitrate while running
+  (`setTargetBitrate` raises `MediaException.Unsupported`), and USAC streams do not conceal (`conceal` raises
+  `MediaException.Unsupported`).
 - Encoders signal no sample aspect ratio of their own (the H.264 encoder's VUI says square unless
   `H264EncoderOptions.sampleAspectRatio` sets one, which transcodes do not), so a transcode
   that keeps non-square samples records the ratio in the container only, and a later copy into MPEG-TS or IVF,
@@ -2439,6 +2453,43 @@ stream; `channelMapping(OpusChannelMapping.DISCRETE)`, `AMBISONIC` or `AMBISONIC
 mapping family), and the same `OpusDecoder` decodes an Opus track, mixing it down to stereo or mono when its
 options ask for `channels(2)` or `channels(1)`. `OpusPackets` inspects, merges and splits packets without
 decoding them.
+
+### Code any audio codec in real time
+
+```java
+var decoder = AudioDecoders.create(track);                              // Opus, AAC, MP3, AMR, G.711...
+decoder.decode(packet, block -> play(block));
+decoder.conceal(gapSamples, block -> play(block));                      // the RTP timestamp gap of lost packets
+var encoder = AudioEncoders.create(Codec.AAC, AudioEncoderOptions.builder()
+        .format(48_000, ChannelLayout.STEREO).bitrate(96_000).build());
+encoder.setTargetBitrate(48_000);                                       // follow the congestion controller
+```
+
+`conceal` takes the span of the stream that never arrived, in samples at the output rate, and hands the samples
+that replace it to the consumer, so the output keeps its length and the next packet continues smoothly; it
+returns the samples it produced, the span rounded to whole concealment units. Before the first packet the span is
+silence. `supportsConcealment()` tells whether a decoder implements it (every decoder of the table below does, except
+for USAC streams);
+`setTargetBitrate` mirrors `VideoEncoder.setTargetBitrate` and throws `MediaException.Unsupported` where the codec
+has no live bitrate (FLAC, ALAC, PCM, Vorbis, MP2, AC-3, E-AC-3), and `IllegalStateException` in a
+constant-quality mode (MP3 variable bitrate).
+
+| Codec | Concealment unit | What replaces a lost packet |
+|---|---|---|
+| Opus | 2.5 ms | the libopus pitch-based and noise-based concealment, identical to zero-length packets |
+| AAC (every object type except USAC), HE-AAC, HE-AAC v2, MPEG Surround | one block (`frameLength()`) | the last spectrum with random signs, falling 6 dB per block and silent from the fifth; the high band repeats its last envelope; MPEG Surround upmixes with the last spatial parameters |
+| MP3, MP2 | one frame | the last subband samples at half amplitude, halved again per frame and silent from the fifth, as for a frame failing its CRC |
+| Vorbis | half the last block | a block of the last size with the last spectrum under random signs, halved per block and silent from the fifth |
+| AC-3, E-AC-3 | one access unit | the last good coefficients of each channel with a fade, dependent substreams included |
+| AMR-NB, AMR-WB | one 20 ms frame | the bad frame handling of TS 26.091 and TS 26.191, or comfort noise during DTX |
+| PCM, G.711, FLAC, ALAC | one sample | the last pitch periods repeated and faded to silence over 60 ms, then overlapped with the next packet (ITU-T G.711 Appendix I) |
+
+| Encoder | `setTargetBitrate` |
+|---|---|
+| Opus | the explicit bitrate of `setBitrate`, from the next packet, in every bitrate mode |
+| AAC | constant bitrate: the exact average from the next frame, the bit reservoir kept; variable bitrate: the nominal bitrate of the quality; the automatic bandwidth follows |
+| MP3 | constant bitrate: the version's bitrate at or below the target; average bitrate: the new target, steered from the next frame by the bitrate of the last quarter second; the automatic bandwidth follows |
+| AMR | the mode at or below the target, from the next frame |
 
 ### Code video in real time
 

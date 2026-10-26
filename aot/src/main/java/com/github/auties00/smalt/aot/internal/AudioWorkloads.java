@@ -15,6 +15,7 @@ import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
+import com.github.auties00.smalt.audio.mp3.Mp3Decoder;
 import com.github.auties00.smalt.audio.mp3.Mp3Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp3EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3StereoMode;
@@ -37,8 +38,10 @@ import com.github.auties00.smalt.audio.vorbis.VorbisDecoder;
 import com.github.auties00.smalt.audio.vorbis.VorbisEncoder;
 import com.github.auties00.smalt.audio.vorbis.VorbisEncoderOptions;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
+import com.github.auties00.smalt.track.Rational;
 
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
@@ -78,6 +81,10 @@ final class AudioWorkloads {
                 realtime("opus-rt-16000-10", () -> opusRealtime("opus-rt-16000-10", 6, 16000, 10)),
                 realtime("mp3-encode-rt", () -> mp3Encode("mp3-encode-rt", Mp3EncoderOptions.forRealtime(), 6)),
                 realtime("alac-encode-rt", () -> alacEncode("alac-encode-rt", AlacEncoderOptions.forSpeed(), 4)),
+                realtime("mp3-encode-retarget", () -> mp3Retarget(6)),
+                realtime("mp3-decode-loss", () -> lossyDecode("mp3-decode-loss", Codec.MP3, 4)),
+                realtime("vorbis-decode-loss", () -> lossyDecode("vorbis-decode-loss", Codec.VORBIS, 4)),
+                realtime("flac-decode-loss", () -> lossyDecode("flac-decode-loss", Codec.FLAC, 4)),
                 file("opus-encode-speech", () -> opusSpeech(8)),
                 file("opus-encode-music", () -> opusMusic(6)),
                 file("opus-decode", () -> opusDecode(6)),
@@ -104,6 +111,49 @@ final class AudioWorkloads {
                         .bitrate(128_000).stereoMode(Mp3StereoMode.JOINT_STEREO).crc(true).build(), 4)),
                 file("mp1-encode", () -> mp2Encode("mp1-encode", Mp2EncoderOptions.builder().layer(1).build(), 3)),
                 file("mp2-decode", AudioWorkloads::mp2Decode));
+    }
+
+    /**
+     * Returns a workload that encodes 44.1 kHz stereo music as MP3 at an average bitrate whose target changes every
+     * second, one encoder across rounds.
+     *
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload mp3Retarget(double seconds) {
+        var encoder = new Mp3Encoder(Mp3EncoderOptions.builder().format(44100, ChannelLayout.STEREO).abr(128_000)
+                .build());
+        return AudioStreams.encodeRetargeted("mp3-encode-retarget", SyntheticAudio.music(44100, seconds),
+                ChannelLayout.STEREO, 44100, encoder, 96_000, 160_000, 64_000, 128_000);
+    }
+
+    /**
+     * Returns a workload that decodes 44.1 kHz stereo music that Smalt's own encoder produced, concealing every
+     * seventh packet as a lost one, one decoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param codec the codec: MP3, Vorbis or FLAC
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload lossyDecode(String name, Codec codec, double seconds) {
+        var encoder = switch (codec) {
+            case MP3 -> new Mp3Encoder();
+            case VORBIS -> new VorbisEncoder(VorbisEncoderOptions.of(44100, ChannelLayout.STEREO));
+            case FLAC -> new FlacEncoder(FlacEncoderOptions.defaults());
+            default -> throw new IllegalArgumentException(codec.toString());
+        };
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100);
+        var config = encoder.codecConfig();
+        var track = config.isPresent() ? AudioStreams.track(codec, 44100, ChannelLayout.STEREO, config.get())
+                : AudioTrack.builder().id(1).codec(codec).timeBase(Rational.timeBaseOf(44100)).sampleRate(44100)
+                        .layout(ChannelLayout.STEREO).build();
+        encoder.close();
+        return AudioStreams.decodeLossy(name, packets, switch (codec) {
+            case MP3 -> new Mp3Decoder(track);
+            case VORBIS -> new VorbisDecoder(track);
+            default -> new FlacDecoder(track);
+        });
     }
 
     /**

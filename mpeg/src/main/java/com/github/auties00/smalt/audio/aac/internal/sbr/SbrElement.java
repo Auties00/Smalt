@@ -99,6 +99,11 @@ public final class SbrElement {
     private boolean frameData;
 
     /**
+     * Whether the last decoded frame generated a high band.
+     */
+    private boolean lastActive;
+
+    /**
      * Whether any frame carried extension data.
      */
     private boolean seen;
@@ -432,6 +437,26 @@ public final class SbrElement {
     }
 
     /**
+     * Prepares the next frame to conceal a lost one: when {@code audible} is set and the last frame had a high
+     * band, the frame repeats the last envelope, 6 dB lower when {@code attenuate} is set, with the last noise
+     * floors and inverse filtering; otherwise the frame has no high band.
+     *
+     * @param audible whether the concealed frame is heard
+     * @param attenuate whether the envelope falls by 6 dB
+     */
+    public void conceal(boolean audible, boolean attenuate) {
+        frameData = false;
+        if (!audible || !headerReceived || !tablesValid || !lastActive) {
+            return;
+        }
+        var coupled = channels.length == 2 && data[1].balance;
+        for (var c = 0; c < channels.length; c++) {
+            data[c].conceal(channels[c], tables, timeSlots, coupled && c == 1, attenuate);
+        }
+        frameData = true;
+    }
+
+    /**
      * Decodes one frame of the element.
      *
      * @param core the core samples of each of the element's channels
@@ -493,6 +518,7 @@ public final class SbrElement {
         for (var channel : channels) {
             channel.finish(active, tables.kx, tables.kx + tables.m);
         }
+        lastActive = active;
         frameData = false;
     }
 

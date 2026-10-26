@@ -5,6 +5,8 @@ package com.github.auties00.smalt.audio.aac.internal.sbr;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.aac.internal.AacBitReader;
 
+import java.util.Arrays;
+
 /**
  * Holds the spectral band replication data of one channel for one frame: the time grid, the
  * coding directions, the inverse filtering modes, the envelope and noise floor scalefactors and
@@ -339,6 +341,40 @@ final class SbrFrameData {
             noiseEnvelopes = 1;
             noiseBorders[1] = timeSlots;
         }
+    }
+
+    /**
+     * Fills the data of a frame that conceals a lost one: a single envelope over the whole frame, coded as time
+     * deltas from the last envelope of {@code channel}, keeping the amplitude resolution, the noise floors and the
+     * inverse filtering of the last frame and adding no sinusoid.
+     *
+     * @param channel the channel whose last envelope the deltas refer to
+     * @param tables the frequency tables
+     * @param timeSlots the number of time slots of the frame
+     * @param balanceChannel whether this channel carries the balance of a coupled pair, whose deltas are zero
+     * @param attenuate whether the envelope is 6 dB below the last one rather than equal to it
+     */
+    void conceal(SbrChannel channel, SbrFrequencies tables, int timeSlots, boolean balanceChannel, boolean attenuate) {
+        frameClass = FIXFIX;
+        envelopes = 1;
+        borders[0] = 0;
+        borders[1] = timeSlots;
+        resolution[0] = channel.previousResolution();
+        transientEnvelope = -1;
+        noiseEnvelopes = 1;
+        noiseBorders[0] = 0;
+        noiseBorders[1] = timeSlots;
+        envelopeTime[0] = true;
+        noiseTime[0] = true;
+        // 6 dB is four steps of 1.5 dB or two of 3 dB
+        var step = attenuate && !balanceChannel ? (ampResolution == 0 ? 4 : 2) : 0;
+        var bands = tables.bands(resolution[0]);
+        for (var k = 0; k < bands; k++) {
+            envelope[0][k] = -Math.min(step, channel.previousEnvelope(k));
+        }
+        Arrays.fill(noise[0], 0);
+        harmonics = false;
+        Arrays.fill(harmonic, false);
     }
 
     /**

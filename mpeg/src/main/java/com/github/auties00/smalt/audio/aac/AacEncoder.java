@@ -42,9 +42,10 @@ public final class AacEncoder implements AudioEncoder {
     private static final int FRAME = 1024;
 
     /**
-     * The options the encoder was created with.
+     * The options in use: those the encoder was created with, with the bitrate of the last
+     * {@link #setTargetBitrate(long)}.
      */
-    private final AacEncoderOptions options;
+    private AacEncoderOptions options;
 
     /**
      * The encoding engine.
@@ -88,10 +89,35 @@ public final class AacEncoder implements AudioEncoder {
     }
 
     /**
-     * {@return the options the encoder was created with}
+     * {@return the options in use: those the encoder was created with, with the bitrate of the last
+     * {@link #setTargetBitrate(long)} when one was set}
      */
     public AacEncoderOptions options() {
         return options;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The target must fit the format as {@link AacEncoderOptions#bitrate()} requires. In constant bitrate mode
+     * the frames coded from now on average exactly the new bitrate, the bit reservoir keeping its fullness up to the
+     * capacity of the new rate; in variable bitrate mode the new bitrate is the nominal one the coding quality is
+     * derived from. An automatic bandwidth follows the new bitrate, and {@link #options()} reports it.
+     *
+     * @throws IllegalArgumentException if {@code bitsPerSecond} is outside the range of bitrates the format allows
+     * @throws IllegalStateException if the encoder was flushed
+     */
+    @Override
+    public void setTargetBitrate(long bitsPerSecond) {
+        if (flushed) {
+            throw new IllegalStateException("the encoder was flushed");
+        }
+        if (bitsPerSecond <= 0 || bitsPerSecond > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("invalid bitrate " + bitsPerSecond);
+        }
+        var retargeted = options.toBuilder().bitrate((int) bitsPerSecond).build();
+        options = retargeted;
+        engine.retarget(retargeted.bitrate(), retargeted.effectiveBandwidth());
     }
 
     @Override

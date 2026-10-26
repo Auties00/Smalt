@@ -1257,6 +1257,29 @@ public final class ChannelStream {
     }
 
     /**
+     * Turns the stream into a block that carries only a spectrum, for concealing a lost block: sets the window
+     * sequence and shape and clears every coded band and tool, so that prediction, TNS and gain control leave the
+     * spectrum the caller writes into {@link #spectrum()} unchanged.
+     *
+     * @param sequence the window sequence
+     * @param shape the window shape
+     */
+    public void prepareConcealment(int sequence, int shape) {
+        windowSequence = sequence;
+        windowShape = shape;
+        maxBands = 0;
+        windowCount = sequence == EIGHT_SHORT_SEQUENCE ? 8 : 1;
+        groupCount = 1;
+        groupLengths[0] = windowCount;
+        predictorPresent = false;
+        predictorResetGroup = 0;
+        ltpPresent = false;
+        gainBands = 0;
+        pulseCount = 0;
+        tnsPresent = false;
+    }
+
+    /**
      * Applies the TNS synthesis filters to the spectrum, if the frame carries TNS data.
      */
     public void applyTns() {

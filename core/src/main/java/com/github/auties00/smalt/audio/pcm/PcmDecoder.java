@@ -6,6 +6,8 @@ import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.DoubleAudioBuffer;
 import com.github.auties00.smalt.audio.IntegerAudioBuffer;
+import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.codec.WaveformConcealer;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -39,6 +41,13 @@ import java.util.function.Consumer;
  *
  * <p>The track must declare its sample rate and channel layout (or at least a channel count
  * through its layout), because raw PCM carries neither.
+ *
+ * <p>A lost span ({@link #conceal(int, Consumer)}) is produced exactly, its concealment unit being one sample: it
+ * repeats the last pitch period of the decoded signal, from 10 ms on the last two and from 20 ms the last three,
+ * fading linearly to silence between 10 and 60 ms, and the blocks that follow it are overlapped with the
+ * repetition over 4 to 10 ms, as ITU-T G.711 Appendix I conceals G.711 frames. Concealment continues the float
+ * output of {@link #decode(Packet, Consumer)} only: a decoder driven through its integer or double output keeps no
+ * history, so it conceals with silence and does not overlap the blocks after the loss.
  *
  * <p>Instances are not thread-safe.
  */
@@ -124,6 +133,11 @@ public final class PcmDecoder implements AudioDecoder {
     private DoubleAudioBuffer doubles;
 
     /**
+     * The concealment of lost spans, fed with every float block.
+     */
+    private final WaveformConcealer concealer;
+
+    /**
      * Constructs a decoder for a PCM track.
      *
      * @param track the track to decode
@@ -144,6 +158,7 @@ public final class PcmDecoder implements AudioDecoder {
         this.bytesPerSample = bytesPerSample(codec);
         this.frameSize = bytesPerSample * layout.channels();
         this.buffer = new AudioBuffer(layout, sampleRate, 0);
+        this.concealer = new WaveformConcealer(layout.channels(), sampleRate);
         this.integerBits = switch (codec) {
             case PCM_U8, PCM_S8 -> 8;
             case PCM_ALAW, PCM_MULAW, PCM_S16LE, PCM_S16BE -> 16;
@@ -226,8 +241,45 @@ public final class PcmDecoder implements AudioDecoder {
         for (var c = 0; c < channels; c++) {
             convert(data, c * bytesPerSample, frameSize, planes[c], frames);
         }
+        concealer.recover(planes, frames);
+        concealer.record(planes, frames);
         buffer.setFrames(frames);
         output.accept(buffer);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code samples}, the span being produced exactly
+     * @throws IllegalArgumentException {@inheritDoc}
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        var chunk = Math.max(buffer.capacity(), Math.max(1, sampleRate / 50));
+        if (buffer.capacity() < chunk) {
+            buffer = new AudioBuffer(layout, sampleRate, chunk);
+        }
+        var planes = buffer.planes();
+        for (var remaining = samples; remaining > 0; ) {
+            var frames = Math.min(remaining, chunk);
+            concealer.synthesize(planes, 0, frames);
+            buffer.setFrames(frames);
+            output.accept(buffer);
+            remaining -= frames;
+        }
+        return samples;
     }
 
     /**

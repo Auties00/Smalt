@@ -10,6 +10,7 @@ import com.github.auties00.smalt.audio.opus.internal.OpusDefines;
 import com.github.auties00.smalt.audio.opus.internal.OpusMultistreamDecoder;
 import com.github.auties00.smalt.audio.opus.internal.OpusStreamDecoder;
 import com.github.auties00.smalt.audio.opus.internal.celt.MathOps;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -392,6 +393,18 @@ public final class OpusDecoder implements AudioDecoder {
             throw new MediaException.Malformed("invalid Opus packet: " + OpusDefines.strerror(decoded));
         }
         lastDuration = decoded;
+        emit(decoded, output);
+    }
+
+    /**
+     * Hands the samples of {@link #buffer} left after the pre-skip to {@code output}.
+     *
+     * @param decoded the number of samples per channel in {@link #buffer}
+     * @param output receives the block, when samples are left
+     * @return the number of samples per channel handed to {@code output}
+     */
+    private int emit(int decoded, Consumer<AudioBuffer> output) {
+        var planes = buffer.planes();
         var start = 0;
         if (skipRemaining > 0) {
             start = (int) Math.min(skipRemaining, decoded);
@@ -399,7 +412,7 @@ public final class OpusDecoder implements AudioDecoder {
         }
         var frames = decoded - start;
         if (frames <= 0) {
-            return;
+            return 0;
         }
         if (start > 0) {
             for (var plane : planes) {
@@ -408,6 +421,7 @@ public final class OpusDecoder implements AudioDecoder {
         }
         buffer.setFrames(frames);
         output.accept(buffer);
+        return frames;
     }
 
     /**
@@ -469,6 +483,51 @@ public final class OpusDecoder implements AudioDecoder {
                 out[i] += c * x[i];
             }
         }
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is 2.5 ms; a span longer than 120 ms is concealed in several blocks of at most
+     * 120 ms. The samples equal those of zero-length packets of the same durations: the pitch-based and noise-based
+     * concealment of libopus 1.5.2 ({@code opus_decode} without a packet). Pre-skip samples not yet dropped are
+     * dropped from them as from decoded packets.
+     *
+     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalStateException if the decoder was closed
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        checkOpen();
+        var step = sampleRate / 400;
+        var units = Math.min(Math.max(1, (samples + step / 2) / step), Integer.MAX_VALUE / step);
+        var total = units * step;
+        var produced = new int[1];
+        ConsumerFailure.<AudioBuffer>run("Opus concealment", output, sink -> {
+            var largest = decoder.maxFrameSize();
+            for (var remaining = total; remaining > 0; ) {
+                var span = Math.min(remaining, largest);
+                var decoded = decodePlanar(null, 0, 0, buffer.planes(), span, false, false);
+                if (decoded < 0) {
+                    throw new IllegalStateException("Opus concealment failed: " + OpusDefines.strerror(decoded));
+                }
+                produced[0] += emit(decoded, sink);
+                remaining -= span;
+            }
+        });
+        return produced[0];
     }
 
     /**

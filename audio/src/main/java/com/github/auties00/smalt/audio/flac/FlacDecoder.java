@@ -10,6 +10,8 @@ import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.DoubleAudioBuffer;
 import com.github.auties00.smalt.audio.IntegerAudioBuffer;
+import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.codec.WaveformConcealer;
 import com.github.auties00.smalt.internal.header.Crc16;
 import com.github.auties00.smalt.internal.header.FlacFrameHeader;
 import com.github.auties00.smalt.internal.header.FlacStreamInfo;
@@ -63,6 +65,13 @@ import java.util.function.Consumer;
  * CRC-16 are ignored: when the CRC-16 does not match at the end of the packet, the frame's own end
  * (the byte-aligned end of its subframes plus the CRC) is checked instead, so junk that trails the
  * last frame of a file does not reject it.
+ *
+ * <p>A lost span ({@link #conceal(int, Consumer)}) is produced exactly, its concealment unit being one sample: it
+ * repeats the last pitch period of the decoded signal, from 10 ms on the last two and from 20 ms the last three,
+ * fading linearly to silence between 10 and 60 ms, and the blocks that follow it are overlapped with the
+ * repetition over 4 to 10 ms, as ITU-T G.711 Appendix I conceals G.711 frames. Concealment continues the float
+ * output of {@link #decode(Packet, Consumer)} only: a decoder driven through its integer or double output keeps no
+ * history, so it conceals with silence and does not overlap the blocks after the loss.
  *
  * <p>Instances are not thread-safe.
  *
@@ -211,6 +220,21 @@ public final class FlacDecoder implements AudioDecoder {
      * The output block handed to consumers, recreated when the format changes.
      */
     private AudioBuffer buffer;
+
+    /**
+     * The concealment of lost spans, fed with every float block, or {@code null} before the first.
+     */
+    private WaveformConcealer concealer;
+
+    /**
+     * The channel count {@link #concealer} was created for.
+     */
+    private int concealerChannels;
+
+    /**
+     * The sampling rate {@link #concealer} was created for.
+     */
+    private int concealerRate;
 
     /**
      * Whether a frame has been decoded.
@@ -363,8 +387,69 @@ public final class FlacDecoder implements AudioDecoder {
         for (var channel = 0; channel < lastChannels; channel++) {
             KERNEL.toFloat(samples[channel], block.plane(channel), blockSize, scale);
         }
+        var waveform = concealer(lastChannels, lastRate);
+        waveform.recover(block.planes(), blockSize);
+        waveform.record(block.planes(), blockSize);
         block.setFrames(blockSize);
         output.accept(block);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code samples}, the span being produced exactly
+     * @throws IllegalArgumentException {@inheritDoc}
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        var silent = concealer == null;
+        var channels = silent ? layout().channels() : lastChannels;
+        var rate = silent ? (sampleRate() > 0 ? sampleRate() : 44100) : lastRate;
+        var chunk = Math.max(Math.max(1, lastBlockSize), rate / 50);
+        var block = outputBuffer(channels, rate, chunk);
+        chunk = block.capacity();
+        for (var remaining = samples; remaining > 0; ) {
+            var frames = Math.min(remaining, chunk);
+            if (silent) {
+                for (var plane : block.planes()) {
+                    Arrays.fill(plane, 0, frames, 0);
+                }
+            } else {
+                concealer.synthesize(block.planes(), 0, frames);
+            }
+            block.setFrames(frames);
+            output.accept(block);
+            remaining -= frames;
+        }
+        return samples;
+    }
+
+    /**
+     * Returns the concealment of lost spans of the current block format, creating it when the format changes.
+     *
+     * @param channels the channel count
+     * @param rate the sampling rate
+     * @return the concealer
+     */
+    private WaveformConcealer concealer(int channels, int rate) {
+        if (concealer == null || concealerChannels != channels || concealerRate != rate) {
+            concealer = new WaveformConcealer(channels, rate);
+            concealerChannels = channels;
+            concealerRate = rate;
+        }
+        return concealer;
     }
 
     /**
