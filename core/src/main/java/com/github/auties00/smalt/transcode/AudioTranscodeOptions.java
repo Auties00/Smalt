@@ -2,6 +2,7 @@ package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.loudness.LoudnessNormalization;
+import com.github.auties00.smalt.audio.process.ChannelMixerOptions;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.TrackKind;
@@ -16,12 +17,18 @@ import java.util.OptionalInt;
  * thread-safe; create them with {@link #builder()} or a preset such as {@link #defaults()}.
  *
  * <p>An encoded stream is decoded to exactly the samples a player outputs (encoder priming and end
- * padding removed), mixed to {@link #layout()} or down to {@link #maxChannels()}, resampled to
+ * padding removed), mixed to {@link #layout()} or down to {@link #maxChannels()} as {@link #mixing()}
+ * says, resampled to
  * {@link #sampleRate()}, scaled by {@link #gainDb()}, and encoded by the encoder
  * {@link com.github.auties00.smalt.audio.AudioEncoders} finds for {@link #codec()}, configured through
  * {@link com.github.auties00.smalt.audio.AudioEncoderOptions} with {@link #bitrate()}. The output
  * sample format is the codec's: the samples are processed as 32-bit floats and a PCM codec
- * ({@link Codec#PCM_S16LE}, {@link Codec#PCM_F32LE} and the others) picks the stored format.
+ * ({@link Codec#PCM_S16LE}, {@link Codec#PCM_F32LE} and the others) picks the stored format. A stream
+ * whose samples the options leave unchanged (same rate and layout, no gain, no loudness
+ * normalization), decoded from a codec of integer samples (FLAC, ALAC, integer PCM) and encoded to
+ * one (FLAC, PCM), skips the floats: its integers reach the encoder bit for bit, so a FLAC or ALAC
+ * source of any sample size up to 32 bits re-encodes to FLAC losslessly. Such a stream encoded to
+ * PCM from another source travels as 64-bit floats, so 64-bit float PCM re-encodes exactly.
  */
 public final class AudioTranscodeOptions {
     /**
@@ -70,6 +77,10 @@ public final class AudioTranscodeOptions {
      */
     private final LoudnessNormalization loudnessNormalization;
 
+    private final boolean singlePassNormalization;
+    private final ChannelMixerOptions mixing;
+    private final boolean verifyIntegrity;
+
     private AudioTranscodeOptions(Builder builder, int trackId, int bitrate, int sampleRate, int maxChannels) {
         this.mode = builder.mode;
         this.trackId = trackId;
@@ -81,6 +92,9 @@ public final class AudioTranscodeOptions {
         this.maxChannels = maxChannels;
         this.gainDb = builder.gainDb;
         this.loudnessNormalization = builder.loudnessNormalization;
+        this.singlePassNormalization = builder.singlePassNormalization;
+        this.mixing = builder.mixing;
+        this.verifyIntegrity = builder.verifyIntegrity;
     }
 
     /**
@@ -237,6 +251,51 @@ public final class AudioTranscodeOptions {
     }
 
     /**
+     * {@return whether {@link #loudnessNormalization()} runs in a single pass, without measuring the stream
+     * first; {@code false} by default}
+     *
+     * <p>When set, the samples go through a {@link com.github.auties00.smalt.audio.loudness.LoudnessNormalizer}
+     * on their way to the encoder instead: the gain follows the loudness of the stream as it is encoded,
+     * the true peak is limited, and the input is read once. Without a loudness normalization the setting
+     * has no effect.
+     *
+     * <p>In the two-pass mode a normalization with
+     * {@link LoudnessNormalization#peakLimiting()} sends the samples through a
+     * {@link com.github.auties00.smalt.audio.loudness.TruePeakLimiter} after the gain.
+     */
+    public boolean singlePassNormalization() {
+        return singlePassNormalization;
+    }
+
+    /**
+     * {@return how the channels are mixed to the output layout; {@link ChannelMixerOptions#defaults()} by
+     * default}
+     *
+     * <p>A caller's matrix ({@link ChannelMixerOptions#matrix()}) is applied even when the layouts are
+     * equal, so it makes every selected stream encoded; its dimensions must match the output layout
+     * ({@link #layout()}, which should then be set) and each source layout, or the transcode fails with
+     * {@link IllegalArgumentException}.
+     */
+    public ChannelMixerOptions mixing() {
+        return mixing;
+    }
+
+    /**
+     * {@return whether an encoded stream's decoder checks the whole-stream checksum the source
+     * carries; {@code false} by default}
+     *
+     * <p>The check is that of
+     * {@link com.github.auties00.smalt.audio.AudioDecoderOptions#verifyIntegrity()}, the MD5 signature
+     * of a FLAC source: a stream decoded from its first sample to its end that fails it fails the
+     * transcode with {@link com.github.auties00.smalt.MediaException.Malformed}. A stream cut at its
+     * end, or started by seeking past its first frame, is not checked; copied streams are not
+     * decoded, so not checked.
+     */
+    public boolean verifyIntegrity() {
+        return verifyIntegrity;
+    }
+
+    /**
      * Returns the output layout for a source layout under these options.
      *
      * @param source the source layout
@@ -260,7 +319,8 @@ public final class AudioTranscodeOptions {
      * @return {@code true} when the stream has to be decoded
      */
     boolean changesSamples(int sourceRate, ChannelLayout sourceLayout) {
-        if (gainDb != 0 || loudnessNormalization != null || (sampleRate != 0 && sampleRate != sourceRate)) {
+        if (gainDb != 0 || loudnessNormalization != null || (sampleRate != 0 && sampleRate != sourceRate)
+                || mixing.matrix().isPresent()) {
             return true;
         }
         if (sourceLayout == null) {
@@ -276,7 +336,7 @@ public final class AudioTranscodeOptions {
      */
     private Object[] state() {
         return new Object[]{mode, trackId, allTracks, codec, bitrate, sampleRate, layout, maxChannels, gainDb,
-                loudnessNormalization};
+                loudnessNormalization, singlePassNormalization, mixing, verifyIntegrity};
     }
 
     @Override
@@ -294,7 +354,8 @@ public final class AudioTranscodeOptions {
         return "AudioTranscodeOptions[mode=" + mode + ", trackId=" + trackId() + ", allTracks=" + allTracks + ", codec="
                 + codec() + ", bitrate=" + bitrate() + ", sampleRate=" + sampleRate() + ", layout=" + layout()
                 + ", maxChannels=" + maxChannels() + ", gainDb=" + gainDb + ", loudnessNormalization="
-                + loudnessNormalization() + "]";
+                + loudnessNormalization() + ", singlePassNormalization=" + singlePassNormalization + ", mixing="
+                + mixing + ", verifyIntegrity=" + verifyIntegrity + "]";
     }
 
     /**
@@ -340,6 +401,9 @@ public final class AudioTranscodeOptions {
 
         private double gainDb;
         private LoudnessNormalization loudnessNormalization;
+        private boolean singlePassNormalization;
+        private ChannelMixerOptions mixing = ChannelMixerOptions.defaults();
+        private boolean verifyIntegrity;
 
         private Builder() {
         }
@@ -359,6 +423,9 @@ public final class AudioTranscodeOptions {
             this.channelsLimited = options.maxChannels != 0;
             this.gainDb = options.gainDb;
             this.loudnessNormalization = options.loudnessNormalization;
+            this.singlePassNormalization = options.singlePassNormalization;
+            this.mixing = options.mixing;
+            this.verifyIntegrity = options.verifyIntegrity;
         }
 
         /**
@@ -544,6 +611,41 @@ public final class AudioTranscodeOptions {
          */
         public Builder noLoudnessNormalization() {
             this.loudnessNormalization = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the loudness normalization runs in a single pass; see
+         * {@link AudioTranscodeOptions#singlePassNormalization()}.
+         *
+         * @param singlePass the value
+         * @return this builder
+         */
+        public Builder singlePassNormalization(boolean singlePass) {
+            this.singlePassNormalization = singlePass;
+            return this;
+        }
+
+        /**
+         * Sets how the channels are mixed; see {@link AudioTranscodeOptions#mixing()}.
+         *
+         * @param mixing the value
+         * @return this builder
+         */
+        public Builder mixing(ChannelMixerOptions mixing) {
+            this.mixing = Objects.requireNonNull(mixing, "mixing");
+            return this;
+        }
+
+        /**
+         * Sets whether the source's whole-stream checksum is checked; see
+         * {@link AudioTranscodeOptions#verifyIntegrity()}.
+         *
+         * @param verify the value
+         * @return this builder
+         */
+        public Builder verifyIntegrity(boolean verify) {
+            this.verifyIntegrity = verify;
             return this;
         }
 

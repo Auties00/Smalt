@@ -213,6 +213,36 @@ public final class EbmlIds {
     public static final int FLAG_DEFAULT = 0x88;
 
     /**
+     * The {@code FlagForced} element.
+     */
+    public static final int FLAG_FORCED = 0x55AA;
+
+    /**
+     * The {@code FlagHearingImpaired} element.
+     */
+    public static final int FLAG_HEARING_IMPAIRED = 0x55AB;
+
+    /**
+     * The {@code FlagVisualImpaired} element.
+     */
+    public static final int FLAG_VISUAL_IMPAIRED = 0x55AC;
+
+    /**
+     * The {@code FlagTextDescriptions} element.
+     */
+    public static final int FLAG_TEXT_DESCRIPTIONS = 0x55AD;
+
+    /**
+     * The {@code FlagOriginal} element.
+     */
+    public static final int FLAG_ORIGINAL = 0x55AE;
+
+    /**
+     * The {@code FlagCommentary} element.
+     */
+    public static final int FLAG_COMMENTARY = 0x55AF;
+
+    /**
      * The {@code FlagLacing} element.
      */
     public static final int FLAG_LACING = 0x9C;
@@ -248,6 +278,26 @@ public final class EbmlIds {
     public static final int CODEC_PRIVATE = 0x63A2;
 
     /**
+     * The {@code MaxBlockAdditionID} element, the largest {@code BlockAddID} of a track.
+     */
+    public static final int MAX_BLOCK_ADDITION_ID = 0x55EE;
+
+    /**
+     * The {@code BlockAdditionMapping} element.
+     */
+    public static final int BLOCK_ADDITION_MAPPING = 0x41E4;
+
+    /**
+     * The {@code BlockAddIDValue} element.
+     */
+    public static final int BLOCK_ADD_ID_VALUE = 0x41F0;
+
+    /**
+     * The {@code BlockAddIDType} element.
+     */
+    public static final int BLOCK_ADD_ID_TYPE = 0x41E7;
+
+    /**
      * The {@code CodecDelay} element.
      */
     public static final int CODEC_DELAY = 0x56AA;
@@ -271,6 +321,56 @@ public final class EbmlIds {
      * The {@code PixelHeight} element.
      */
     public static final int PIXEL_HEIGHT = 0xBA;
+
+    /**
+     * The {@code FlagInterlaced} element.
+     */
+    public static final int FLAG_INTERLACED = 0x9A;
+
+    /**
+     * The {@code FieldOrder} element.
+     */
+    public static final int FIELD_ORDER = 0x9D;
+
+    /**
+     * The FourCC of the pixel layout of uncompressed video ({@code ColourSpace}).
+     */
+    public static final int COLOUR_SPACE = 0x2EB524;
+
+    /**
+     * The {@code PixelCropBottom} element.
+     */
+    public static final int PIXEL_CROP_BOTTOM = 0x54AA;
+
+    /**
+     * The {@code PixelCropTop} element.
+     */
+    public static final int PIXEL_CROP_TOP = 0x54BB;
+
+    /**
+     * The {@code PixelCropLeft} element.
+     */
+    public static final int PIXEL_CROP_LEFT = 0x54CC;
+
+    /**
+     * The {@code PixelCropRight} element.
+     */
+    public static final int PIXEL_CROP_RIGHT = 0x54DD;
+
+    /**
+     * The {@code DisplayWidth} element.
+     */
+    public static final int DISPLAY_WIDTH = 0x54B0;
+
+    /**
+     * The {@code DisplayHeight} element.
+     */
+    public static final int DISPLAY_HEIGHT = 0x54BA;
+
+    /**
+     * The {@code DisplayUnit} element.
+     */
+    public static final int DISPLAY_UNIT = 0x54B2;
 
     /**
      * The {@code Color} element.
@@ -454,6 +554,31 @@ public final class EbmlIds {
     public static final int PROJECTION_POSE_ROLL = 0x7675;
 
     /**
+     * The {@code ProjectionType} element of {@code Projection}.
+     */
+    public static final int PROJECTION_TYPE = 0x7671;
+
+    /**
+     * The {@code ProjectionPrivate} element of {@code Projection}.
+     */
+    public static final int PROJECTION_PRIVATE = 0x7672;
+
+    /**
+     * The {@code ProjectionPoseYaw} element of {@code Projection}, in degrees.
+     */
+    public static final int PROJECTION_POSE_YAW = 0x7673;
+
+    /**
+     * The {@code ProjectionPosePitch} element of {@code Projection}, in degrees.
+     */
+    public static final int PROJECTION_POSE_PITCH = 0x7674;
+
+    /**
+     * The {@code StereoMode} element of {@code Video}.
+     */
+    public static final int STEREO_MODE = 0x53B8;
+
+    /**
      * The {@code Cues} element.
      */
     public static final int CUES = 0x1C53BB6B;
@@ -544,6 +669,36 @@ public final class EbmlIds {
     public static final int CHAP_LANGUAGE = 0x437C;
 
     /**
+     * The {@code ChapLanguageBCP47} element of {@code ChapterDisplay}.
+     */
+    public static final int CHAP_LANGUAGE_BCP47 = 0x437D;
+
+    /**
+     * The {@code EditionFlagHidden} element of {@code EditionEntry}.
+     */
+    public static final int EDITION_FLAG_HIDDEN = 0x45BD;
+
+    /**
+     * The {@code EditionFlagOrdered} element of {@code EditionEntry}.
+     */
+    public static final int EDITION_FLAG_ORDERED = 0x45DD;
+
+    /**
+     * The {@code EditionDisplay} element of {@code EditionEntry}.
+     */
+    public static final int EDITION_DISPLAY = 0x4520;
+
+    /**
+     * The {@code EditionString} element of {@code EditionDisplay}.
+     */
+    public static final int EDITION_STRING = 0x4521;
+
+    /**
+     * The {@code EditionLanguageIETF} element of {@code EditionDisplay}.
+     */
+    public static final int EDITION_LANGUAGE_IETF = 0x45E4;
+
+    /**
      * The {@code Attachments} element.
      */
     public static final int ATTACHMENTS = 0x1941A469;
@@ -597,6 +752,11 @@ public final class EbmlIds {
      * The {@code TargetTypeValue} element.
      */
     public static final int TARGET_TYPE_VALUE = 0x68CA;
+
+    /**
+     * The {@code TargetType} element.
+     */
+    public static final int TARGET_TYPE = 0x63CA;
 
     /**
      * The {@code TagTrackUID} element.

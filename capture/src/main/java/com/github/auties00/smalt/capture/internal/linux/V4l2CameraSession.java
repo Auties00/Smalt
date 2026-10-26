@@ -2,10 +2,11 @@ package com.github.auties00.smalt.capture.internal.linux;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.capture.CameraCaptureSession;
+import com.github.auties00.smalt.capture.CameraControls;
 import com.github.auties00.smalt.capture.CaptureDevice;
 import com.github.auties00.smalt.capture.CaptureMode;
 import com.github.auties00.smalt.capture.internal.convert.ConversionKernel;
-import com.github.auties00.smalt.capture.VideoCaptureSession;
 
 import java.io.IOException;
 import java.lang.foreign.Arena;
@@ -42,7 +43,7 @@ import static java.lang.foreign.ValueLayout.JAVA_SHORT;
  * then stops streaming, unmaps the buffers and closes the descriptors, so the camera can be
  * reopened as soon as it returns.
  */
-final class V4l2CameraSession implements VideoCaptureSession {
+final class V4l2CameraSession implements CameraCaptureSession {
     /**
      * The number of driver buffers requested.
      */
@@ -104,6 +105,11 @@ final class V4l2CameraSession implements VideoCaptureSession {
     private final FrameConverter converter;
 
     /**
+     * The controls of the camera, closed before the device.
+     */
+    private final V4l2Controls controls;
+
+    /**
      * The hand-off of frames from the capture thread to the reader.
      */
     private final RawFrameExchange exchange;
@@ -149,7 +155,7 @@ final class V4l2CameraSession implements VideoCaptureSession {
      * @param originMicros the monotonic time streaming started, in microseconds
      */
     private V4l2CameraSession(CaptureDevice.Camera camera, Posix posix, int fd, int wakeup, MemorySegment[] buffers,
-                              FrameConverter converter, long originMicros) {
+                              FrameConverter converter, long originMicros, V4l2Controls controls) {
         this.camera = camera;
         this.posix = posix;
         this.fd = fd;
@@ -157,6 +163,7 @@ final class V4l2CameraSession implements VideoCaptureSession {
         this.buffers = buffers;
         this.converter = converter;
         this.originMicros = originMicros;
+        this.controls = controls;
         var capacity = 0L;
         for (var buffer : buffers) {
             capacity = Math.max(capacity, buffer.byteSize());
@@ -219,7 +226,7 @@ final class V4l2CameraSession implements VideoCaptureSession {
             if (error != 0) {
                 throw V4l2Formats.failure("VIDIOC_STREAMON", error);
             }
-            return new V4l2CameraSession(camera, posix, fd, wakeup, buffers, converter, origin);
+            return new V4l2CameraSession(camera, posix, fd, wakeup, buffers, converter, origin, V4l2Controls.query(device));
         } catch (RuntimeException | Error failure) {
             release(posix, fd, wakeup, buffers);
             throw failure;
@@ -336,7 +343,7 @@ final class V4l2CameraSession implements VideoCaptureSession {
     }
 
     @Override
-    public CaptureDevice device() {
+    public CaptureDevice.Camera device() {
         return camera;
     }
 
@@ -375,11 +382,17 @@ final class V4l2CameraSession implements VideoCaptureSession {
     }
 
     @Override
+    public CameraControls controls() {
+        return controls;
+    }
+
+    @Override
     public void close() {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
         exchange.close();
+        controls.close();
         var control = new Posix();
         control.signal(wakeup);
         var interrupted = false;
