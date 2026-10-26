@@ -6,6 +6,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
 import com.github.auties00.smalt.image.Images;
+import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
 import com.github.auties00.smalt.image.heic.HeicDecoder;
@@ -40,5 +41,10 @@ public final class HeicCodecProvider implements ImageCodecProvider {
     @Override
     public Optional<AnimationReader> openAnimation(MediaSource source, ImageDecoderOptions options) {
         return Optional.of(HeicDecoder.openAnimation(source, options));
+    }
+
+    @Override
+    public Optional<PageReader> openPages(MediaSource source, ImageDecoderOptions options) {
+        return Optional.of(HeicDecoder.openPages(source, options));
     }
 }

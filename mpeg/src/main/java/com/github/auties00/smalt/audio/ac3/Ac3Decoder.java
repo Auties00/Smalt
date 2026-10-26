@@ -12,6 +12,7 @@ import com.github.auties00.smalt.audio.ac3.internal.Downmix;
 import com.github.auties00.smalt.audio.ac3.internal.FrameDecoder;
 import com.github.auties00.smalt.audio.ac3.internal.FrameHeader;
 import com.github.auties00.smalt.internal.bits.MsbBitReader;
+import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -185,6 +186,27 @@ public final class Ac3Decoder implements AudioDecoder {
     private boolean closed;
 
     /**
+     * Whether an access unit was decoded since the last one whose header could not be read, so a lost one can be
+     * concealed from it.
+     */
+    private boolean concealable;
+
+    /**
+     * The substream identifiers of the dependent substreams of the last decoded access unit.
+     */
+    private final int[] lastDependentIds = new int[8];
+
+    /**
+     * The number of entries of {@link #lastDependentIds}.
+     */
+    private int lastDependentCount;
+
+    /**
+     * The entries {@link #pendingDependents} takes while a lost access unit is concealed.
+     */
+    private final int[][] dependentSlots = new int[8][3];
+
+    /**
      * Constructs a decoder for a track under {@link Ac3DecoderOptions#defaults()}.
      *
      * @param track the AC-3 or E-AC-3 track
@@ -354,6 +376,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var checkCrc = options.crcCheck();
         if (!independent.parse(unitData, offset, unitLength, unitCorrupt, checkCrc)) {
             pendingDependents.clear();
+            concealable = false;
             return;
         }
         var header = independent.header();
@@ -382,17 +405,14 @@ public final class Ac3Decoder implements AudioDecoder {
             }
         }
         independent.reconstruct();
-        var blocks = header.blocks;
-        var samples = 256 * blocks;
-        computeGains(header, lastDependent);
-        var scale = options.dialogueNormalization()
-                ? (float) Math.pow(10, (normalizedDialnorm(header.dialogueNormalization[0]) - 31) / 20.0) : 1.0f;
-        AudioBuffer buffer;
-        if (options.downmix() == Ac3Downmix.NONE) {
-            buffer = nativeOutput(header, samples, scale, dependentCount > 0);
-        } else {
-            buffer = downmixOutput(header, samples, scale);
+        var buffer = render(header, lastDependent, dependentCount > 0);
+        lastDependentCount = 0;
+        for (var frame : pendingDependents) {
+            if (frame[2] >= 0) {
+                lastDependentIds[lastDependentCount++] = frame[2];
+            }
         }
+        concealable = true;
         sampleRate = header.sampleRate;
         layout = buffer.layout();
         started = true;
@@ -407,6 +427,95 @@ public final class Ac3Decoder implements AudioDecoder {
         objectAudio = objects;
         pendingDependents.clear();
         output.accept(buffer);
+    }
+
+    /**
+     * Synthesizes the access unit whose substreams were parsed, or marked lost, into the output format.
+     *
+     * @param header the independent frame header
+     * @param lastDependent the last dependent substream of the unit, or {@code null}
+     * @param extensions whether dependent substreams take part
+     * @return the buffer
+     */
+    private AudioBuffer render(FrameHeader header, FrameDecoder lastDependent, boolean extensions) {
+        var samples = 256 * header.blocks;
+        computeGains(header, lastDependent);
+        var scale = options.dialogueNormalization()
+                ? (float) StrictMath.pow(10, (normalizedDialnorm(header.dialogueNormalization[0]) - 31) / 20.0) : 1.0f;
+        if (options.downmix() == Ac3Downmix.NONE) {
+            return nativeOutput(header, samples, scale, extensions);
+        }
+        return downmixOutput(header, samples, scale);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The concealment unit is the access unit length of the last decoded frame, 256 samples per audio block
+     * (1536 for AC-3 and six-block E-AC-3), or 1536 before the first frame. Every lost access unit is concealed as a
+     * damaged frame is, with the configuration of the last decoded one: each block repeats the last good
+     * coefficients of its channel with a falling gain, dependent substreams included, so the output keeps its
+     * layout.
+     *
+     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalStateException if the decoder is closed
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        if (closed) {
+            throw new IllegalStateException("the decoder is closed");
+        }
+        var unit = concealable ? 256 * independent.header().blocks : 1536;
+        var units = Math.min(Math.max(1, (samples + unit / 2) / unit), Integer.MAX_VALUE / unit);
+        ConsumerFailure.<AudioBuffer>run("AC-3 concealment", output, emit -> {
+            for (var i = 0; i < units; i++) {
+                emit.accept(concealUnit());
+            }
+        });
+        return units * unit;
+    }
+
+    /**
+     * Conceals one lost access unit with the substreams of the last decoded one, or with silence in the reported
+     * format before the first.
+     *
+     * @return the buffer
+     */
+    private AudioBuffer concealUnit() {
+        if (!concealable) {
+            var silent = buffer(layout, sampleRate, 1536);
+            for (var plane : silent.planes()) {
+                Arrays.fill(plane, 0, 1536, 0);
+            }
+            silent.setFrames(1536);
+            return silent;
+        }
+        independent.markLost();
+        pendingDependents.clear();
+        FrameDecoder lastDependent = null;
+        for (var i = 0; i < lastDependentCount; i++) {
+            var id = lastDependentIds[i];
+            lastDependent = dependents[id];
+            lastDependent.markLost();
+            var slot = dependentSlots[i];
+            slot[2] = id;
+            pendingDependents.add(slot);
+        }
+        var buffer = render(independent.header(), lastDependent, lastDependentCount > 0);
+        pendingDependents.clear();
+        return buffer;
     }
 
     /**
@@ -459,7 +568,7 @@ public final class Ac3Decoder implements AudioDecoder {
         var mantissa = word & 0x1F;
         var gain = Math.scalb((32 + mantissa) / 64.0, exponent + 1);
         var scale = gain > 1 ? options.boostScale() : options.cutScale();
-        return (float) (scale == 1 ? gain : Math.pow(gain, scale));
+        return (float) (scale == 1 ? gain : StrictMath.pow(gain, scale));
     }
 
     /**

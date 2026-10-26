@@ -8,7 +8,11 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.DoubleAudioBuffer;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.audio.Speaker;
+import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.codec.WaveformConcealer;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -42,12 +46,22 @@ import java.util.function.Consumer;
  * center; five are 5.0 with back surrounds; six are 5.1; seven are 6.1 with a back center; eight
  * are 7.1 with front left and right of center. Samples are scaled to floats by
  * {@code 2^-(bitsPerSample - 1)}, so full scale maps to {@code [-1, 1)}; samples of up to 24 bits
- * are represented exactly, and wider samples are rounded to the nearest float.
+ * are represented exactly, and wider samples are rounded to the nearest float. The decoded integers
+ * themselves, bit for bit at every sample size, are the blocks of
+ * {@link #decodeIntegers(Packet, Consumer)}, and {@link #decodeDoubles(Packet, Consumer)} scales them
+ * to doubles exactly.
  *
  * <p>A packet with a reserved element, a nonzero reserved header field, a frame longer than the
  * configuration's frame length or residuals that run past the packet raises
  * {@link MediaException.Malformed}. Channels a packet does not code are output as silence. An
  * exception thrown by the output consumer reaches the caller unchanged.
+ *
+ * <p>A lost span ({@link #conceal(int, Consumer)}) is produced exactly, its concealment unit being one sample: it
+ * repeats the last pitch period of the decoded signal, from 10 ms on the last two and from 20 ms the last three,
+ * fading linearly to silence between 10 and 60 ms, and the blocks that follow it are overlapped with the
+ * repetition over 4 to 10 ms, as ITU-T G.711 Appendix I conceals G.711 frames. Concealment continues the float
+ * output of {@link #decode(Packet, Consumer)} only: a decoder driven through its integer or double output keeps no
+ * history, so it conceals with silence and does not overlap the blocks after the loss.
  *
  * <p>Instances are not thread-safe.
  *
@@ -110,9 +124,9 @@ public final class AlacDecoder implements AudioDecoder {
 
     /**
      * The speakers of each channel count in ALAC's bitstream order, after Apple's
-     * {@code ALACMagicCookieDescription.txt}.
+     * {@code ALACMagicCookieDescription.txt}; {@link AlacEncoder} codes the same arrangements.
      */
-    private static final Speaker[][] BITSTREAM_ORDER = {
+    static final Speaker[][] BITSTREAM_ORDER = {
             {Speaker.FRONT_CENTER},
             {Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT},
             {Speaker.FRONT_CENTER, Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT},
@@ -215,6 +229,21 @@ public final class AlacDecoder implements AudioDecoder {
      * The output block.
      */
     private final AudioBuffer buffer;
+
+    /**
+     * The concealment of lost spans, fed with every float block.
+     */
+    private final WaveformConcealer concealer;
+
+    /**
+     * The integer output block, over {@link #samples}.
+     */
+    private final IntegerAudioBuffer integers;
+
+    /**
+     * The double output block, or {@code null} before the first double decode.
+     */
+    private DoubleAudioBuffer doubles;
 
     /**
      * The number of samples per channel of the last packet.
@@ -327,6 +356,8 @@ public final class AlacDecoder implements AudioDecoder {
         this.coefficientsV = new short[MAX_COEFFICIENTS];
         this.samples = new int[channels][frameLength];
         this.buffer = new AudioBuffer(layout, Math.max(sampleRate, 1), frameLength);
+        this.concealer = new WaveformConcealer(layout.channels(), Math.max(sampleRate, 1));
+        this.integers = new IntegerAudioBuffer(layout, Math.max(sampleRate, 1), bitDepth, samples, 0);
     }
 
     /**
@@ -372,13 +403,7 @@ public final class AlacDecoder implements AudioDecoder {
     public void decode(Packet packet, Consumer<AudioBuffer> output) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(output, "output");
-        try {
-            decodeFrame(packet.data());
-        } catch (MediaException exception) {
-            throw exception;
-        } catch (RuntimeException exception) {
-            throw new MediaException.Malformed("corrupt ALAC packet", exception);
-        }
+        decodePacket(packet);
         var scale = Math.scalb(1f, 1 - bitDepth);
         var frames = lastFrames;
         for (var c = 0; c < channels; c++) {
@@ -388,8 +413,41 @@ public final class AlacDecoder implements AudioDecoder {
                 plane[i] = source[i] * scale;
             }
         }
+        concealer.recover(buffer.planes(), frames);
+        concealer.record(buffer.planes(), frames);
         buffer.setFrames(frames);
         output.accept(buffer);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsConcealment() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code samples}, the span being produced exactly
+     * @throws IllegalArgumentException {@inheritDoc}
+     */
+    @Override
+    public int conceal(int samples, Consumer<AudioBuffer> output) {
+        Checks.positive("samples", samples);
+        Objects.requireNonNull(output, "output");
+        var chunk = buffer.capacity();
+        for (var remaining = samples; remaining > 0; ) {
+            var frames = Math.min(remaining, chunk);
+            concealer.synthesize(buffer.planes(), 0, frames);
+            buffer.setFrames(frames);
+            output.accept(buffer);
+            remaining -= frames;
+        }
+        return samples;
     }
 
     /**
@@ -403,6 +461,103 @@ public final class AlacDecoder implements AudioDecoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsIntegerOutput() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the sample size of the configuration, from 4 to 32
+     */
+    @Override
+    public int bitsPerSample() {
+        return bitDepth;
+    }
+
+    @Override
+    public void decodeIntegers(Packet packet, Consumer<IntegerAudioBuffer> output) {
+        Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(output, "output");
+        decodePacket(packet);
+        integers.setFrames(lastFrames);
+        output.accept(integers);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Does nothing: an ALAC decoder buffers no samples between packets.
+     */
+    @Override
+    public void flushIntegers(Consumer<IntegerAudioBuffer> output) {
+        Objects.requireNonNull(output, "output");
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsDoubleOutput() {
+        return true;
+    }
+
+    @Override
+    public void decodeDoubles(Packet packet, Consumer<DoubleAudioBuffer> output) {
+        Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(output, "output");
+        decodePacket(packet);
+        if (doubles == null) {
+            doubles = new DoubleAudioBuffer(layout, Math.max(sampleRate, 1), frameLength);
+        }
+        var scale = Math.scalb(1.0, 1 - bitDepth);
+        var frames = lastFrames;
+        for (var c = 0; c < channels; c++) {
+            var source = samples[c];
+            var plane = doubles.plane(c);
+            for (var i = 0; i < frames; i++) {
+                plane[i] = source[i] * scale;
+            }
+        }
+        doubles.setFrames(frames);
+        output.accept(doubles);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Does nothing: an ALAC decoder buffers no samples between packets.
+     */
+    @Override
+    public void flushDoubles(Consumer<DoubleAudioBuffer> output) {
+        Objects.requireNonNull(output, "output");
+    }
+
+    /**
+     * Decodes one packet into {@link #samples}, wrapping unchecked failures.
+     *
+     * @param packet the packet to decode, one frame
+     * @throws MediaException.Malformed if the packet is corrupt
+     * @throws MediaException.Unsupported if it holds a 33-bit channel pair
+     */
+    private void decodePacket(Packet packet) {
+        try {
+            decodeFrame(packet.data());
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("corrupt ALAC packet", exception);
+        }
+    }
+
+    /**
      * Returns the integer samples of the last decoded packet, one array per output channel; a test
      * hook for checks defined over integer samples.
      *
@@ -412,15 +567,6 @@ public final class AlacDecoder implements AudioDecoder {
      */
     int[][] lastSamples() {
         return samples;
-    }
-
-    /**
-     * Returns the sample size of the stream; a test hook.
-     *
-     * @return the size in bits, as the configuration declares it
-     */
-    int bitsPerSample() {
-        return bitDepth;
     }
 
     /**

@@ -200,9 +200,9 @@ class SubtitleTextTest {
     class Markups {
         @ParameterizedTest(name = "{0} -> {1}: {2}")
         @CsvSource(delimiter = '|', value = {
-                "SUBRIP | WEBVTT | <b>bold</b> & <i>it</i> <font color=\"red\">red</font> 1 < 2 | <b>bold</b> &amp; <i>it</i> red 1 &lt; 2",
+                "SUBRIP | WEBVTT | <b>bold</b> & <i>it</i> <font color=\"red\">red</font> 1 < 2 | <b>bold</b> &amp; <i>it</i> <c.red>red</c> 1 &lt; 2",
                 "WEBVTT | SUBRIP | <c.loud><b>Hi</b></c> &amp; <v Bob>bye</v> &lt;3 &#x263A; | <b>Hi</b> & bye <3 \u263A",
-                "SUBRIP | ASS | <i>a</i> {\\an8}b | {\\i1}a{\\i0} b",
+                "SUBRIP | ASS | <i>a</i> {\\an8}b | {\\an8}{\\i1}a{\\i0} b",
                 "WEBVTT | WEBVTT | <v A>same</v> | <v A>same</v>"
         })
         @DisplayName("converts between formats")
@@ -215,7 +215,8 @@ class SubtitleTextTest {
         void ass() {
             var b = (char) 92;
             var text = "{" + b + "b1" + b + "fs20}x{" + b + "b0}" + b + "Ny" + b + "hz{" + b + "u1}w";
-            assertEquals("<b>x</b>" + (char) 10 + "y" + (char) 0xA0 + "z<u>w</u>", Markup.convert(text, SubtitleMarkup.ASS, SubtitleMarkup.SUBRIP));
+            assertEquals("<font size=\"20\"><b>x</b>" + (char) 10 + "y" + (char) 0xA0 + "z<u>w</u></font>",
+                    Markup.convert(text, SubtitleMarkup.ASS, SubtitleMarkup.SUBRIP));
         }
 
         @Test
