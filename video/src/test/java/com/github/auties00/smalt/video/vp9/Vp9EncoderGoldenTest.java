@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.vp9;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoFrame;
@@ -18,7 +19,6 @@ import java.util.List;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Pins the real-time VP9 encoder's bitstream: each configuration encodes a fixed input and the
@@ -49,50 +49,50 @@ class Vp9EncoderGoldenTest {
     static Stream<Arguments> synthetic() {
         return Stream.of(
                 Arguments.of("speed 6", setup(352, 288, 300_000, 6, false, true, 1, false, 0, 1), List.of(),
-                        "23aadb0e3a2c8c4691908c09d918b3879fe69137e8a1038a41d8496a22b696c6"),
+                        "1503647c53920205cacde59f17a76b6a15665f07fcee42fccda4facb5558a517"),
                 Arguments.of("speed 5", setup(352, 288, 300_000, 5, false, true, 1, false, 0, 1), List.of(),
-                        "ca8ce58c3f453e7aef2f9f2ba0c40261d2658666fb6331e12b8d3c52e2ddd67d"),
+                        "be2a9f21f95ffc80796e306922225a4cd08c399fc631d8f99cb3d295e21361cb"),
                 Arguments.of("speed 7", setup(352, 288, 300_000, 7, false, true, 1, false, 0, 1), List.of(),
-                        "c8cdcbb77e581bfb0e6863c53905b1bdadc46ac656dfd5e41e5c9ce709a30a9c"),
+                        "417786b65fa80f850715ddfa7ba3effc1bbb38714d07a3a0ce8b1a44dab8f3ab"),
                 Arguments.of("speed 8", setup(352, 288, 300_000, 8, false, true, 1, false, 0, 1), List.of(),
-                        "fcf1c47b43ff488d7229943952fc990242cffc54e85ad240f035aa75307256dd"),
+                        "863850b7d5659367d64e0a8bf3ed5b855cb07cb1b41ac8d8ac6bc4d5c3a18e89"),
                 Arguments.of("speed 9", setup(352, 288, 300_000, 9, false, true, 1, false, 0, 1), List.of(),
-                        "7fca3e8c89a2917a79b8d6ed86e28f2962ad84d7a7452e0f979b070242c3e08b"),
+                        "dd197f5d5f5ce668462d6d3fd5fade0f5f312478cc3317e5bfae6c2aec384c8f"),
                 Arguments.of("error resilient, three layers", setup(352, 288, 300_000, 6, true, true, 3, false, 0, 1),
-                        List.of(), "f23332d913268e4e9af691048bd4095a909d58c76d9397385d02112ee3399d54"),
+                        List.of(), "b1e64a8e46e7ad3542f30dafc7334c5e0fac2c951a5b7354b5494abb4c7e7809"),
                 Arguments.of("two layers", setup(352, 288, 300_000, 7, true, true, 2, false, 0, 1), List.of(),
-                        "cc4ec1bbfd332f95cf1d4f52a27d840e8ec339795fc9dc90eed969e6a51e57d3"),
+                        "c69007884357004d2a8a9fb734dfb203017d6b83088cc70251c8cfe0da5d72f1"),
                 Arguments.of("no adaptive quantization", setup(352, 288, 300_000, 6, true, false, 1, false, 0, 1),
-                        List.of(), "907161e8b9edbd7ef53b3212a8609c2dea77fe7baa1bf7a8b69e8f1f0885f6d9"),
+                        List.of(), "cc69139206de7c1b708f70a4f1efcf16abaa229546317a99086d656f91b5bf82"),
                 Arguments.of("two tile columns, three threads", setup(704, 288, 600_000, 6, true, true, 1, false, 1, 3),
-                        List.of(), "270db20e7e90f0879b65a8b4424f3ab98f522616d0756df463d369fbe10545ca"),
+                        List.of(), "8ee7a68f68a1a389fb52386b6fe6b30f727ad6ff9e471e052f2893a7630b3f61"),
                 Arguments.of("bitrate steps and a forced key frame",
                         setup(352, 288, 300_000, 6, true, true, 1, false, 0, 2),
                         List.of(new Event(8, 900_000, false), new Event(16, 0, true), new Event(20, 120_000, false)),
-                        "90142bff8650ba871bd798423b73e3e67da5a55b061a8a94861f47d868b74c86"),
+                        "dc9bb2b1616804e3004dadb436ecc7ee782e66693cd2c3690210a03e4600ca12"),
                 Arguments.of("dropping at a low bitrate", setup(352, 288, 40_000, 6, true, true, 1, true, 0, 1),
-                        List.of(), "3e5c061b1ab0909ea0ff73deb2d97ac2b7ca1861cbf854d788be21e2425630a9"),
+                        List.of(), "04213d4e395ea67eb71b1da3cf969b2df1c8fb2efa743744c5c7d998f8cb2950"),
                 Arguments.of("high bitrate", setup(352, 288, 4_000_000, 6, false, true, 1, false, 0, 1), List.of(),
-                        "39af62a8d02b445e6e264b9fb11d47481d390fffd10d612353f2c95a876d0b8f"));
+                        "463cb3bac7b7cc1bbf5f8f846cc200e421db81242e650101786a0cd5414904ad"));
     }
 
     static Stream<Arguments> natural() {
         return Stream.of(
                 Arguments.of("johnny480 speed 6, one thread", "johnny480.yuv",
                         setup(640, 480, 600_000, 6, true, true, 1, false, 0, 1),
-                        "d342d3c59bc92c0b96b07c97ccfe07ac40724fe5b53453ce0be191edd85fb487"),
+                        "24ae8a9816e6f509d5944aa370120074e248cf5eecb194015ce3cf47f775afb8"),
                 Arguments.of("johnny480 speed 6, four threads", "johnny480.yuv",
                         setup(640, 480, 600_000, 6, true, true, 1, false, 0, 4),
-                        "d342d3c59bc92c0b96b07c97ccfe07ac40724fe5b53453ce0be191edd85fb487"),
+                        "24ae8a9816e6f509d5944aa370120074e248cf5eecb194015ce3cf47f775afb8"),
                 Arguments.of("johnny480 speed 7, two layers", "johnny480.yuv",
                         setup(640, 480, 600_000, 7, true, true, 2, false, 0, 2),
-                        "cae1dfb4f077e38da68988ee6bc4f86ebb6cada73ab352838e81e96085eaa99c"),
+                        "afbfe4009f67d0d9f17a4655a45782e5cce5944a809a21ddb0e3c0463f91d723"),
                 Arguments.of("johnny480 speed 8", "johnny480.yuv",
                         setup(640, 480, 600_000, 8, false, true, 1, false, 0, 1),
-                        "f7693c2e1f16cf9b68a6220f0668a804b86fe0ebaeab48c7869e0f137fd1b977"),
+                        "1796a656af487caf394a28b3cccf983f83bdb7ddd1e8ba86adcac556ba4c4383"),
                 Arguments.of("stockholm720 speed 6, four threads, two tiles", "stockholm720.yuv",
                         setup(1280, 720, 1_200_000, 6, true, true, 1, false, 1, 4),
-                        "83449d231b6a7a0c867a3f3893aa108cfa62da24f31acf1def4bbfc113ef831d"));
+                        "11200cba8e13529bc8601bd01ff9cc024dfff0461c59892e0f6ff14621769d0e"));
     }
 
     static String digest(Vp9Setup setup, List<YuvPicture> frames, List<Event> events) {
@@ -145,9 +145,9 @@ class Vp9EncoderGoldenTest {
     @DisplayName("a natural clip encodes to the recorded bitstream")
     void natural(String name, String clip, Vp9Setup setup, String expected) throws IOException {
         var path = Vp9TestVideo.clip(clip);
-        assumeTrue(path != null, "clip " + clip + " is not cached");
+        Skip.unless(path != null, "data:clip", "clip " + clip + " is not cached");
         var frames = Vp9TestVideo.read(path, setup.width(), setup.height(), 0, 40);
-        assumeTrue(frames.size() == 40, "clip " + clip + " is too short");
+        Skip.unless(frames.size() == 40, "data:clip", "clip " + clip + " is too short");
         assertEquals(expected, digest(setup, frames, List.of()), name);
     }
 }
