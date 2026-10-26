@@ -16,14 +16,24 @@ import java.util.function.Consumer;
 /**
  * Encodes planar float samples into MPEG-4 AAC Low Complexity packets.
  *
- * <p>Each packet is one {@code raw_data_block} of 1024 samples per channel (without an ADTS
- * header), and {@link #codecConfig()} is the two-byte {@code AudioSpecificConfig} a container
- * stores. Packet timestamps count samples from the first input sample; decoders output
- * {@link #delay()} = 1024 priming samples (the first half of the first transform window) before
- * the first input sample, which the container signals, for example with an MP4 edit list. The
- * encoder buffers input of any length and emits a packet whenever a frame and its 512-sample
- * look-ahead are complete; {@link #flush(Consumer)} pads the input with silence and emits
- * packets until every input sample is covered.
+ * <p>Each packet is one {@code raw_data_block} of {@link AacEncoderOptions#frameLength()} samples
+ * per channel, 1024 or 960 (without an ADTS header), and {@link #codecConfig()} is the
+ * {@code AudioSpecificConfig} a container stores. Packet timestamps count samples from the first
+ * input sample; decoders output {@link #delay()} priming samples, one frame (the first half of the
+ * first transform window), before the first input sample, which the container signals, for example
+ * with an MP4 edit list. The encoder buffers input of any length and emits a packet whenever a
+ * frame and its look-ahead of half a frame are complete; {@link #flush(Consumer)} pads the input
+ * with silence and emits packets until every input sample is covered.
+ *
+ * <p>The layout is coded as channel configuration {@link AacEncoderOptions#channelConfiguration()}:
+ * the configuration's channel elements in their ISO/IEC 14496-3 order or, for configuration 0, the
+ * elements of a program config element that the {@code AudioSpecificConfig} carries. Each input
+ * channel is coded on the element that feeds its loudspeaker, so a decoder outputs the same
+ * channels in WAVE order
+ * ({@link com.github.auties00.smalt.audio.Speaker} declaration order). LFE channels are coded with
+ * long windows only, band-limited to 240 Hz. ADTS headers carry only channel configurations 1 to 7
+ * and 1024-sample frames; the other streams need a container that stores the
+ * {@code AudioSpecificConfig}, such as MP4 or Matroska.
  *
  * <p>Coding tools: window switching between long and eight short windows (grouped) driven by a
  * transient detector, sine and Kaiser-Bessel-derived windows, a psychoacoustic model with
@@ -37,14 +47,14 @@ import java.util.function.Consumer;
  */
 public final class AacEncoder implements AudioEncoder {
     /**
-     * The number of samples per channel of one frame.
-     */
-    private static final int FRAME = 1024;
-
-    /**
      * The options the encoder was created with.
      */
     private final AacEncoderOptions options;
+
+    /**
+     * The number of samples per channel of one frame.
+     */
+    private final int frameLength;
 
     /**
      * The encoding engine.
@@ -81,10 +91,12 @@ public final class AacEncoder implements AudioEncoder {
      */
     public AacEncoder(AacEncoderOptions options) {
         this.options = Objects.requireNonNull(options, "options");
-        var channels = options.layout().channels();
-        this.engine = new EncoderEngine(options.sampleRate(), channels, options.bitrate(),
+        this.frameLength = options.frameLength();
+        var layout = options.coding();
+        this.engine = new EncoderEngine(options.sampleRate(), frameLength, layout, options.bitrate(),
                 options.bitrateMode() == AacBitrateMode.VBR, options.effectiveBandwidth(), AacKernels.INSTANCE);
-        this.audioSpecificConfig = AudioSpecificConfig.lowComplexity(options.sampleRate(), channels);
+        this.audioSpecificConfig = AudioSpecificConfig.lowComplexity(options.sampleRate(),
+                layout.channelConfiguration(), frameLength, layout.programConfig());
     }
 
     /**
@@ -112,28 +124,29 @@ public final class AacEncoder implements AudioEncoder {
     /**
      * {@inheritDoc}
      *
-     * @return 1024
+     * @return {@link AacEncoderOptions#frameLength()}, 1024 or 960
      */
     @Override
     public int frameSize() {
-        return FRAME;
+        return frameLength;
     }
 
     /**
      * {@inheritDoc}
      *
-     * @implNote This implementation's delay is exactly one frame, 1024 samples: the first
-     * packet's window starts one frame before the first input sample.
+     * @implNote This implementation's delay is exactly one frame, {@link #frameSize()} samples: the
+     * first packet's window starts one frame before the first input sample.
      */
     @Override
     public int delay() {
-        return FRAME;
+        return frameLength;
     }
 
     /**
      * {@inheritDoc}
      *
-     * @return the two-byte {@code AudioSpecificConfig} of AAC Low Complexity
+     * @return the {@code AudioSpecificConfig} of AAC Low Complexity: two bytes, followed by the
+     * program config element when {@link AacEncoderOptions#channelConfiguration()} is 0
      */
     @Override
     public Optional<byte[]> codecConfig() {
@@ -184,7 +197,7 @@ public final class AacEncoder implements AudioEncoder {
         if (received == 0) {
             return;
         }
-        var needed = (received + FRAME - 1) / FRAME + 1;
+        var needed = (received + frameLength - 1) / frameLength + 1;
         while (engine.frames() < needed) {
             if (!engine.frameReady()) {
                 engine.pad(engine.capacity());
@@ -210,8 +223,8 @@ public final class AacEncoder implements AudioEncoder {
      * @param output receives the packet
      */
     private void emit(Consumer<Packet> output) {
-        var timestamp = engine.frames() * FRAME;
+        var timestamp = engine.frames() * frameLength;
         var block = engine.encodeFrame();
-        output.accept(new Packet(0, block, timestamp, timestamp, FRAME, true));
+        output.accept(new Packet(0, block, timestamp, timestamp, frameLength, true));
     }
 }
