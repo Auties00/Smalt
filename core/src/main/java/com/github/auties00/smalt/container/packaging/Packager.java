@@ -1,15 +1,20 @@
 package com.github.auties00.smalt.container.packaging;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.container.Segment;
 import com.github.auties00.smalt.container.mp4.FragmentedMp4Muxer;
+import com.github.auties00.smalt.container.mp4.CommonEncryption;
 import com.github.auties00.smalt.container.mp4.FragmentedMp4MuxerOptions;
 import com.github.auties00.smalt.container.ts.TsMuxer;
 import com.github.auties00.smalt.container.ts.TsMuxerOptions;
+import com.github.auties00.smalt.internal.tags.TagCarry;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.metadata.TagMode;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -18,6 +23,8 @@ import com.github.auties00.smalt.track.VideoTrack;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.security.SecureRandom;
+import java.util.HexFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -25,6 +32,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Packages media files for adaptive streaming: HLS (RFC 8216) and DASH (ISO/IEC 23009-1) video
@@ -58,16 +66,18 @@ import java.util.Optional;
  * a {@code SegmentTemplate} with a {@code SegmentTimeline} per representation (a
  * {@code SegmentList} with media ranges under byte-range addressing, and a {@code BaseURL} with a
  * {@code SegmentBase} in the on-demand profile when {@link PackagingOptions#segmentIndex()} puts a
- * single {@code sidx} in each stream's file). Nothing is encrypted.
+ * single {@code sidx} in each stream's file). {@link PackagingOptions#encryption()} encrypts the segments; a key
+ * file is written only when {@link PackagingEncryption#keyFileName()} names one. The rendition's tags, cover art,
+ * chapters and track tags go into the segments as {@link PackagingOptions#tagMode()} selects.
  *
  * <p>The packager is stateless; every method may be called from any thread, each call reading its
  * own sources.
  *
  * @apiNote Packaging copies the coded streams; transcode first to change codecs, sizes or key
  * frame spacing. Transport stream segments take H.264, HEVC, AAC, MP3, MP2, AC-3, E-AC-3 and
- * Opus; CMAF segments take H.264, HEVC, VP9, AV1, AAC, Opus, MP3, FLAC and ALAC, although HLS
- * players support only some of them in CMAF (Apple players: H.264, HEVC, AAC, AC-3, E-AC-3,
- * FLAC, ALAC, Opus).
+ * Opus; CMAF segments take the audio and video codecs {@link FragmentedMp4Muxer#supports} lists,
+ * although HLS players support only some of them in CMAF (Apple players: H.264, HEVC, AAC, AC-3,
+ * E-AC-3, FLAC, ALAC, Opus).
  */
 public final class Packager {
     /**
@@ -131,8 +141,19 @@ public final class Packager {
         var files = new ArrayList<String>();
         var grouped = new ArrayList<Manifests.RenditionStreams>();
         var all = new ArrayList<SegmentedStream>();
+        var keys = Keys.of(options);
+        if (keys != null && keys.settings.keyFileName().isPresent()) {
+            var keyFile = keys.settings.keyFileName().get();
+            var sink = output.open(keyFile);
+            try {
+                sink.write(ByteBuffer.wrap(keys.settings.key()));
+            } finally {
+                sink.close();
+            }
+            files.add(keyFile);
+        }
         for (var index = 0; index < renditions.size(); index++) {
-            var streams = packRendition(renditions.get(index), names.get(index), output, options, files);
+            var streams = packRendition(renditions.get(index), names.get(index), output, options, files, keys);
             grouped.add(streams);
             for (var stream : new SegmentedStream[]{streams.video(), streams.audio(), streams.muxed()}) {
                 if (stream != null) {
@@ -148,8 +169,12 @@ public final class Packager {
         String master = null;
         if (options.hlsEnabled()) {
             var version = Manifests.hlsVersion(cmaf, options.byteRanges());
+            var keyTag = keys == null ? null : keys.playlistTag();
+            if (keys != null) {
+                version = Math.max(version, keys.hlsVersion());
+            }
             for (var stream : all) {
-                write(output, Manifests.playlistName(stream), Manifests.mediaPlaylist(stream, version), files);
+                write(output, Manifests.playlistName(stream), Manifests.mediaPlaylist(stream, version, keyTag), files);
             }
             master = options.masterPlaylistName();
             write(output, master, Manifests.masterPlaylist(grouped, version), files);
@@ -157,7 +182,9 @@ public final class Packager {
         String manifest = null;
         if (options.dashEnabled()) {
             manifest = options.manifestName();
-            write(output, manifest, Manifests.dashManifest(all, duration, MIN_BUFFER_MICROS), files);
+            write(output, manifest, Manifests.dashManifest(all, duration, MIN_BUFFER_MICROS,
+                    keys == null ? null : keys.dashScheme(), keys == null ? null : keys.settings.keyId().orElse(null)),
+                    files);
         }
         var described = new ArrayList<PackagedStream>();
         for (var stream : all) {
@@ -179,10 +206,11 @@ public final class Packager {
      * @param output the destination of the segments
      * @param options the packaging options
      * @param files receives the names of the files written
+     * @param keys the encryption, or {@code null} for clear segments
      * @return the streams written
      */
     private static Manifests.RenditionStreams packRendition(Rendition rendition, String name, PackageOutput output,
-                                                            PackagingOptions options, List<String> files) {
+                                                            PackagingOptions options, List<String> files, Keys keys) {
         try (var demuxer = Containers.openDemuxer(rendition.source())) {
             var ts = options.segmentFormat() == PackagingOptions.SegmentFormat.MPEG_TS;
             VideoTrack video = null;
@@ -202,8 +230,11 @@ public final class Packager {
                 throw new MediaException.Unsupported("packaging", "rendition " + name + " has no video or audio track "
                         + (ts ? "a transport stream" : "a CMAF segment") + " carries");
             }
-            return ts ? packTs(demuxer, name, video, audio, output, options, files)
-                    : packCmaf(demuxer, name, video, audio, output, options, files);
+            var mode = options.tagMode();
+            var tags = mode == TagMode.COPY || mode == TagMode.MERGE
+                    ? TagCarry.read(rendition.source(), demuxer, MediaLimits.DEFAULT) : null;
+            return ts ? packTs(demuxer, name, video, audio, output, options, files, tags, keys)
+                    : packCmaf(demuxer, name, video, audio, output, options, files, tags, keys);
         }
     }
 
@@ -217,10 +248,13 @@ public final class Packager {
      * @param output the destination of the segments
      * @param options the packaging options
      * @param files receives the names of the files written
+     * @param tags the tags of the rendition, or {@code null} when the options do not use them
+     * @param keys the encryption, or {@code null} for clear segments
      * @return the streams written
      */
     private static Manifests.RenditionStreams packTs(Demuxer demuxer, String name, VideoTrack video, AudioTrack audio,
-                                                     PackageOutput output, PackagingOptions options, List<String> files) {
+                                                     PackageOutput output, PackagingOptions options, List<String> files,
+                                                     MediaTags tags, Keys keys) {
         var tracks = new ArrayList<Track>();
         if (video != null) {
             tracks.add(video);
@@ -229,12 +263,19 @@ public final class Packager {
             tracks.add(audio);
         }
         var stream = new SegmentedStream(name, name, tracks, ".ts", options.byteRanges(), output, files);
-        var muxerOptions = TsMuxerOptions.builder().segmentMicros(options.segmentMicros()).build();
+        var muxerBuilder = TsMuxerOptions.builder().segmentMicros(options.segmentMicros());
+        if (keys != null && keys.settings.method() == PackagingEncryption.Method.SAMPLE_AES) {
+            muxerBuilder.sampleAes(keys.settings.key(), keys.iv);
+        } else if (keys != null) {
+            stream.encryptSegments(keys.settings.key(), keys.iv);
+        }
+        var muxerOptions = muxerBuilder.build();
         try (var muxer = new TsMuxer(segment -> stream.openSegment(segment.sequenceNumber(), segment.startMicros(),
                 segment.durationMicros(), segment.independent()), muxerOptions)) {
             for (var track : tracks) {
                 declare(muxer, track, name);
             }
+            setTags(muxer, tags, options, tracks);
             copy(demuxer, Map.of(trackKey(video), muxer, trackKey(audio), muxer), video, stream);
             muxer.finish();
         } finally {
@@ -253,12 +294,19 @@ public final class Packager {
      * @param output the destination of the segments
      * @param options the packaging options
      * @param files receives the names of the files written
+     * @param tags the tags of the rendition, or {@code null} when the options do not use them
+     * @param keys the encryption, or {@code null} for clear segments
      * @return the streams written
      */
     private static Manifests.RenditionStreams packCmaf(Demuxer demuxer, String name, VideoTrack video, AudioTrack audio,
-                                                       PackageOutput output, PackagingOptions options, List<String> files) {
-        var fragmentOptions = (options.segmentIndex() ? FragmentedMp4MuxerOptions.dashOnDemand()
-                : FragmentedMp4MuxerOptions.cmaf()).toBuilder().fragmentMicros(options.segmentMicros()).build();
+                                                       PackageOutput output, PackagingOptions options, List<String> files,
+                                                       MediaTags tags, Keys keys) {
+        var fragmentBuilder = (options.segmentIndex() ? FragmentedMp4MuxerOptions.dashOnDemand()
+                : FragmentedMp4MuxerOptions.cmaf()).toBuilder().fragmentMicros(options.segmentMicros());
+        if (keys != null && keys.settings.method() != PackagingEncryption.Method.AES_128) {
+            fragmentBuilder.encryption(keys.commonEncryption());
+        }
+        var fragmentOptions = fragmentBuilder.build();
         SegmentedStream videoStream = null;
         SegmentedStream audioStream = null;
         var muxers = new HashMap<Integer, Muxer>();
@@ -267,16 +315,24 @@ public final class Packager {
         try {
             if (video != null) {
                 var stream = new SegmentedStream(name + "_video", name, List.of(video), ".m4s", options.byteRanges(), output, files);
+                if (keys != null && keys.settings.method() == PackagingEncryption.Method.AES_128) {
+                    stream.encryptSegments(keys.settings.key(), keys.iv);
+                }
                 var muxer = cmafMuxer(stream, fragmentOptions, indexed);
                 declare(muxer, video, name);
+                setTags(muxer, tags, options, List.of(video));
                 muxers.put(video.id(), muxer);
                 opened.add(muxer);
                 videoStream = stream;
             }
             if (audio != null) {
                 var stream = new SegmentedStream(name + "_audio", name, List.of(audio), ".m4s", options.byteRanges(), output, files);
+                if (keys != null && keys.settings.method() == PackagingEncryption.Method.AES_128) {
+                    stream.encryptSegments(keys.settings.key(), keys.iv);
+                }
                 var muxer = cmafMuxer(stream, fragmentOptions, indexed);
-                declare(muxer, audio, name);
+                declare(muxer, TagCarry.withoutEmbeddedTags(audio), name);
+                setTags(muxer, tags, options, List.of(audio));
                 muxers.put(audio.id(), muxer);
                 opened.add(muxer);
                 audioStream = stream;
@@ -378,6 +434,106 @@ public final class Packager {
             muxer.addTrack(track);
         } catch (IllegalArgumentException exception) {
             throw new MediaException.Unsupported("packaging", "rendition " + rendition + ": " + exception.getMessage());
+        }
+    }
+
+    /**
+     * Gives a muxer the tags of the tracks it writes, as the options select.
+     *
+     * @param muxer the muxer, with its tracks declared
+     * @param tags the tags of the rendition, or {@code null} when the options do not use them
+     * @param options the packaging options
+     * @param tracks the tracks the muxer writes, under their identifiers in the rendition
+     */
+    private static void setTags(Muxer muxer, MediaTags tags, PackagingOptions options, List<Track> tracks) {
+        var ids = new HashMap<Integer, Integer>();
+        for (var track : tracks) {
+            ids.put(track.id(), track.id());
+        }
+        var given = options.tags().orElse(null);
+        var resolved = TagCarry.resolve(options.tagMode(), given, tags,
+                new TagCarry.Mapping(ids, Set.of(), false, false, 0, -1));
+        TagCarry.apply(muxer, resolved, options.tagMode(), given);
+    }
+
+    /**
+     * The encryption of one packaging: the settings and the initialization vector its segments use.
+     *
+     * @param settings the encryption settings
+     * @param iv the initialization vector: the one of every AES-128 segment or {@code null} for their media sequence
+     * numbers, the SAMPLE-AES one of transport stream samples and the constant {@code cbcs} one of CMAF samples, or
+     * the first {@code cenc} one, or {@code null} for random ones
+     */
+    private record Keys(PackagingEncryption settings, byte[] iv) {
+        /**
+         * Returns the encryption of a packaging, drawing the initialization vector it needs.
+         *
+         * @param options the packaging options
+         * @return the encryption, or {@code null} for clear segments
+         */
+        static Keys of(PackagingOptions options) {
+            var settings = options.encryption().orElse(null);
+            if (settings == null) {
+                return null;
+            }
+            var iv = settings.initializationVector().orElse(null);
+            if (iv == null && settings.method() == PackagingEncryption.Method.SAMPLE_AES) {
+                iv = new byte[16];
+                new SecureRandom().nextBytes(iv);
+            }
+            return new Keys(settings, iv);
+        }
+
+        /**
+         * {@return the Common Encryption of CMAF segments}
+         */
+        CommonEncryption commonEncryption() {
+            var builder = CommonEncryption.builder()
+                    .scheme(settings.method() == PackagingEncryption.Method.SAMPLE_AES ? CommonEncryption.Scheme.CBCS
+                            : CommonEncryption.Scheme.CENC)
+                    .keyId(settings.keyId().orElseThrow()).key(settings.key());
+            if (iv != null) {
+                builder.initializationVector(iv);
+            }
+            return builder.build();
+        }
+
+        /**
+         * {@return the scheme DASH manifests declare, or {@code null} when they declare none}
+         */
+        String dashScheme() {
+            return switch (settings.method()) {
+                case SAMPLE_AES -> "cbcs";
+                case SAMPLE_AES_CTR -> "cenc";
+                case AES_128 -> null;
+            };
+        }
+
+        /**
+         * {@return the lowest HLS protocol version the key tag needs (RFC 8216 clause 7)}
+         */
+        int hlsVersion() {
+            if (settings.method() != PackagingEncryption.Method.AES_128 || settings.keyFormat().isPresent()) {
+                return 5;
+            }
+            return iv != null ? 2 : 1;
+        }
+
+        /**
+         * {@return the {@code EXT-X-KEY} tag of the media playlists}
+         */
+        String playlistTag() {
+            var tag = new StringBuilder("#EXT-X-KEY:METHOD=").append(switch (settings.method()) {
+                case AES_128 -> "AES-128";
+                case SAMPLE_AES -> "SAMPLE-AES";
+                case SAMPLE_AES_CTR -> "SAMPLE-AES-CTR";
+            });
+            tag.append(",URI=\"").append(settings.keyUri().orElseThrow()).append('"');
+            if (iv != null && iv.length == 16 && settings.method() != PackagingEncryption.Method.SAMPLE_AES_CTR) {
+                tag.append(",IV=0x").append(HexFormat.of().formatHex(iv));
+            }
+            settings.keyFormat().ifPresent(format -> tag.append(",KEYFORMAT=\"").append(format).append('"'));
+            return tag.toString();
         }
     }
 

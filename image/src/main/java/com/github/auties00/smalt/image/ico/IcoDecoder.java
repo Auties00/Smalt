@@ -11,10 +11,12 @@ import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.bmp.BmpDecoder;
 import com.github.auties00.smalt.image.bmp.internal.BmpHeader;
+import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.png.PngDecoder;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.region.ImageRegions;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -152,11 +154,11 @@ public final class IcoDecoder {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
-        return Guards.malformed(WHAT, () -> {
-            var directory = Directory.read(source, options.limits());
-            var index = choose(directory.entries(), options.minWidth(), options.minHeight());
-            return directory.decode(index, options.toBuilder().fullSize().build());
-        });
+        return ImageRegions.decode(options, () -> probe(source), whole -> Guards.malformed(WHAT, () -> {
+            var directory = Directory.read(source, whole.limits());
+            var index = choose(directory.entries(), whole.minWidth(), whole.minHeight());
+            return directory.decode(index, whole.toBuilder().fullSize().build());
+        }));
     }
 
     /**
@@ -179,7 +181,8 @@ public final class IcoDecoder {
         Objects.requireNonNull(options, "options");
         var directory = Guards.malformed(WHAT, () -> Directory.read(source, options.limits()));
         Objects.checkIndex(index, directory.entries().size());
-        return Guards.malformed(WHAT, () -> directory.decode(index, options.toBuilder().fullSize().build()));
+        return ImageRegions.decode(options, null, whole -> Guards.malformed(WHAT,
+                () -> directory.decode(index, whole)));
     }
 
     /**
@@ -198,6 +201,10 @@ public final class IcoDecoder {
     public static PageReader openPages(MediaSource source, ImageDecoderOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
+        var region = options.region();
+        if (region.isPresent()) {
+            return ImageRegions.cropPages(openPages(source, options.toBuilder().wholeImage().build()), region.get());
+        }
         var directory = Guards.malformed(WHAT, () -> Directory.read(source, options.limits()));
         var full = options.toBuilder().fullSize().build();
         return new PageReader() {
@@ -246,7 +253,7 @@ public final class IcoDecoder {
      * fewest pixels; otherwise, or when no entry is acceptable, the entry with the most
      * pixels; ties go to the most bits per pixel, then to the first entry
      */
-    private static int choose(List<IcoEntry> entries, int minWidth, int minHeight) {
+    static int choose(List<IcoEntry> entries, int minWidth, int minHeight) {
         var best = -1;
         if (minWidth > 0 || minHeight > 0) {
             for (var i = 0; i < entries.size(); i++) {
@@ -309,7 +316,7 @@ public final class IcoDecoder {
      * @param offsets the file offset of each entry's image
      * @param sizes the size of each entry's image in bytes, clipped to the file
      */
-    private record Directory(MediaSource source, MediaLimits limits, List<IcoEntry> entries, long[] offsets, long[] sizes) {
+    record Directory(MediaSource source, MediaLimits limits, List<IcoEntry> entries, long[] offsets, long[] sizes) {
         /**
          * Reads the directory.
          *
@@ -453,7 +460,7 @@ public final class IcoDecoder {
             }
             var header = BmpHeader.read(MediaSource.of(file));
             var decoded = BmpDecoder.decode(MediaSource.of(file), options);
-            var picture = (RgbaPicture) decoded.picture();
+            var picture = decoded.picture() instanceof RgbaPicture rgba ? rgba : ImageOps.toRgba(decoded.picture());
             var uncompressed = header.compression() == BmpHeader.RGB || header.compression() == BmpHeader.BITFIELDS;
             if (masked && uncompressed && !picture.hasAlpha()) {
                 var maskStart = header.dataOffset() - FILE_HEADER + header.rowStride() * height;

@@ -3,9 +3,10 @@ package com.github.auties00.smalt.image.color;
 /**
  * Identifies the device class of a {@link ColorProfile} (ICC.1:2022 section 7.2.5).
  *
- * <p>Only input, display, output and color space profiles convert between device values and the
- * connection space, so only they can be the source or the target of a {@link ColorTransform}.
- * Constants may be added in minor releases; a {@code switch} over them needs a default.
+ * <p>Input, display, output and color space profiles convert between device values and the
+ * connection space. Device links, abstract and named color profiles take part in a
+ * {@link ColorTransform} chain as its documentation describes. This enum may gain constants in
+ * later releases; a {@code switch} over it needs a {@code default} branch.
  */
 public enum ProfileClass {
     /**

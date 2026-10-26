@@ -33,6 +33,11 @@ public final class Mp4MuxerOptions {
             DEFAULT_INTERLEAVE_MICROS);
 
     /**
+     * The options of {@link #mj2()}.
+     */
+    private static final Mp4MuxerOptions MJ2 = new Mp4MuxerOptions(Brand.MJ2, true, null, DEFAULT_INTERLEAVE_MICROS);
+
+    /**
      * Enumerates the file types the muxer can declare in its {@code ftyp} box.
      *
      * <p>This enum may gain constants in later releases; a {@code switch} over it needs a
@@ -47,7 +52,7 @@ public final class Mp4MuxerOptions {
 
         /**
          * An iTunes-style audio file: major brand {@code M4A }, compatible with {@code M4A },
-         * {@code isom}, {@code iso2} and {@code mp42}; carries audio only.
+         * {@code isom}, {@code iso2} and {@code mp42}; carries compressed audio only, no PCM.
          */
         M4A,
 
@@ -56,7 +61,15 @@ public final class Mp4MuxerOptions {
          * video and the professional codecs of QuickTime, ProRes and DNxHD, whose sample entries
          * get the QuickTime {@code colr} ({@code nclc}), {@code fiel} and {@code pasp} boxes.
          */
-        QUICKTIME
+        QUICKTIME,
+
+        /**
+         * A Motion JPEG 2000 file (ISO/IEC 15444-3, {@code .mj2}): the JPEG 2000 signature box, then major
+         * brand {@code mjp2}, compatible with {@code mjp2} and {@code mj2s}; carries Motion JPEG 2000 video and the
+         * compressed audio of every brand, each video sample stored as the Contiguous Codestream boxes of its
+         * frame.
+         */
+        MJ2
     }
 
     private final Brand brand;
@@ -103,6 +116,15 @@ public final class Mp4MuxerOptions {
      */
     public static Mp4MuxerOptions quickTime() {
         return QUICKTIME;
+    }
+
+    /**
+     * Returns the options for a fast-start Motion JPEG 2000 file ({@code .mj2}) with the default interleaving.
+     *
+     * @return the options
+     */
+    public static Mp4MuxerOptions mj2() {
+        return MJ2;
     }
 
     /**

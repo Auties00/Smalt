@@ -1,5 +1,6 @@
 /**
- * The Apple Lossless (ALAC) decoder ({@link AlacDecoder}).
+ * The Apple Lossless (ALAC) decoder ({@link AlacDecoder}) and encoder ({@link AlacEncoder}, configured by
+ * {@link AlacEncoderOptions}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

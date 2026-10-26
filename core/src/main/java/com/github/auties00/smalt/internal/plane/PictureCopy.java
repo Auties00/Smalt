@@ -1,5 +1,9 @@
 package com.github.auties00.smalt.internal.plane;
 
+import com.github.auties00.smalt.image.Channel16Picture;
+import com.github.auties00.smalt.image.Channel8Picture;
+import com.github.auties00.smalt.image.ChannelFloatPicture;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -25,8 +29,9 @@ public final class PictureCopy {
      * Copies a picture, into a recycled picture of the same shape when one is given.
      *
      * <p>{@code recycle} is overwritten when it has the same type, size, alpha and, for planar
-     * pictures, the same chroma format, bit depth and color description as {@code source};
-     * otherwise a new picture is allocated. Every plane is copied, alpha included.
+     * pictures, the same chroma format, bit depth and color description as {@code source}, or for
+     * channel pictures the same layout; otherwise a new picture is allocated. Every plane is copied,
+     * alpha included.
      *
      * @param source the picture to copy
      * @param recycle a picture to overwrite, or {@code null}
@@ -45,7 +50,44 @@ public final class PictureCopy {
             case Rgba16Picture rgba -> copyRgba16(rgba, recycle instanceof Rgba16Picture target
                     && target.width() == rgba.width() && target.height() == rgba.height()
                     && target.hasAlpha() == rgba.hasAlpha() ? target : null);
+            case ChannelPicture channels -> copyChannels(channels, recycle instanceof ChannelPicture target
+                    && target.getClass() == channels.getClass() && target.width() == channels.width()
+                    && target.height() == channels.height() && target.layout().equals(channels.layout())
+                    ? target : null);
         };
+    }
+
+    /**
+     * Copies a channel picture.
+     *
+     * @param source the picture to copy
+     * @param target a picture of the same type, size and layout to overwrite, or {@code null}
+     * @return the copy
+     */
+    private static ChannelPicture copyChannels(ChannelPicture source, ChannelPicture target) {
+        var width = source.width();
+        var height = source.height();
+        var layout = source.layout();
+        var out = target != null ? target : switch (source) {
+            case Channel8Picture _ -> Channel8Picture.allocate(width, height, layout);
+            case Channel16Picture _ -> Channel16Picture.allocate(width, height, layout);
+            case ChannelFloatPicture _ -> ChannelFloatPicture.allocate(width, height, layout);
+        };
+        Object src = switch (source) {
+            case Channel8Picture eight -> eight.pixels();
+            case Channel16Picture sixteen -> sixteen.pixels();
+            case ChannelFloatPicture floating -> floating.pixels();
+        };
+        Object dst = switch (out) {
+            case Channel8Picture eight -> eight.pixels();
+            case Channel16Picture sixteen -> sixteen.pixels();
+            case ChannelFloatPicture floating -> floating.pixels();
+        };
+        var row = width * source.channelCount();
+        for (var y = 0; y < height; y++) {
+            System.arraycopy(src, y * source.stride(), dst, y * out.stride(), row);
+        }
+        return out;
     }
 
     /**

@@ -55,9 +55,12 @@ class Vp8KeyframeRequestTest {
             while (System.nanoTime() < deadline && failure.get() == null) {
                 var before = started.get();
                 encoder.requestKeyframe();
+                // the frame in progress once the request is made: a requester preempted around the call (other
+                // test JVMs on the same cores) sees frames go by that started before the request
+                var after = started.get();
                 requests++;
                 while (lastKey.get() < before && failure.get() == null) {
-                    if (started.get() > before + 2 && lastKey.get() < before) {
+                    if (started.get() > after + 2 && lastKey.get() < before) {
                         lost++;
                         break;
                     }
