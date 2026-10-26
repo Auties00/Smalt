@@ -52,6 +52,9 @@ import java.util.List;
  * signals) and the {@link VideoColor} conversion, the constant-rate conversion ({@link RateStep}),
  * the overlays ({@link OverlayStep}) and telecine ({@link TelecineStep}). The scan of a frame is the
  * field order its decoder reports, else the one the options assume, else the one the track declares.
+ * When the stage may keep transparency and the first kept picture has an alpha plane, the pictures are
+ * not flattened, the encoder codes the alpha planes as a second stream and the output track carries
+ * alpha.
  * The encoder is created on the first output frame, when the output size and color are known, and
  * the output track is declared with its configuration.
  *
@@ -126,6 +129,11 @@ final class VideoEncodeStage implements Stage {
      * The constant output rate, or {@code null} to keep the input timing.
      */
     private final Rational frameRate;
+
+    /**
+     * Whether transparency is kept, as a second coded stream, rather than flattened.
+     */
+    private final boolean keepAlpha;
 
     private final int outputId;
 
@@ -245,6 +253,8 @@ final class VideoEncodeStage implements Stage {
      * @param applyAspect whether non-square samples are resampled to square ones rather than their
      * ratio kept
      * @param frameRate the constant output rate, or {@code null} to keep the input timing
+     * @param keepAlpha whether transparency is kept: the codec codes alpha, the file stores it and the
+     * options do not flatten
      * @param outputId the output track identifier
      * @param output the muxer receiving the packets
      * @param startMicros the start of the kept range, in microseconds
@@ -258,8 +268,8 @@ final class VideoEncodeStage implements Stage {
      */
     VideoEncodeStage(VideoTrack source, VideoDecoder decoder, VideoDecoderOptions decoderOptions, Codec codec,
                      VideoTranscodeOptions options, boolean applyOrientation, boolean applyAspect, Rational frameRate,
-                     int outputId, OutputMuxer output, long startMicros, long endMicros, Cancellation cancellation,
-                     List<SubtitleCue> burnCues, SubtitleMarkup burnMarkup, Track burnTrack) {
+                     boolean keepAlpha, int outputId, OutputMuxer output, long startMicros, long endMicros,
+                     Cancellation cancellation, List<SubtitleCue> burnCues, SubtitleMarkup burnMarkup, Track burnTrack) {
         this.source = source;
         this.decoder = decoder;
         this.decoderOptions = decoderOptions;
@@ -269,6 +279,7 @@ final class VideoEncodeStage implements Stage {
         this.applyOrientation = applyOrientation;
         this.applyAspect = applyAspect;
         this.frameRate = frameRate;
+        this.keepAlpha = keepAlpha;
         this.outputId = outputId;
         this.output = output;
         this.cancellation = cancellation;
@@ -590,7 +601,8 @@ final class VideoEncodeStage implements Stage {
             if (ops == null) {
                 var aspect = VideoConfigs.sampleAspect(source);
                 ops = PictureOps.plan(picture.width(), picture.height(), source.orientation(), applyOrientation,
-                        options.crop().orElse(null), options::sizePlan, options.filter(), options.background(),
+                        options.crop().orElse(null), options::sizePlan, options.filter(),
+                        keepAlpha && picture.hasAlpha() ? -1 : options.background(),
                         null, null, aspect, applyAspect);
                 if (applyAspect && aspect != null && aspect.numerator() != aspect.denominator()) {
                     LimitChecks.checkPicture(decoderOptions != null ? decoderOptions.limits() : MediaLimits.DEFAULT,
@@ -649,9 +661,11 @@ final class VideoEncodeStage implements Stage {
                 depth = yuv.bitDepth();
             }
             var bitrate = options.bitrate().orElseGet(() -> defaultBitrate(width, height, outputRate));
+            var alpha = keepAlpha && picture.hasAlpha();
             var encoderBuilder = VideoEncoderOptions.of(width, height, outputRate, bitrate).toBuilder()
                     .threads(options.threads())
-                    .bitDepth(depth);
+                    .bitDepth(depth)
+                    .alpha(alpha);
             if (pictureColor != null) {
                 encoderBuilder.color(pictureColor);
             }
@@ -675,6 +689,7 @@ final class VideoEncodeStage implements Stage {
                     .orientation(pictureStep.ops.outputOrientation())
                     .frameRate(outputRate)
                     .color(declaredColor)
+                    .alpha(alpha)
                     .duration(duration);
             if (outputScan != null) {
                 builder.interlacing(outputScan);

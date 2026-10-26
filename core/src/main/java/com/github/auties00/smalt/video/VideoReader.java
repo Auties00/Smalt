@@ -33,7 +33,8 @@ import java.util.Objects;
  * that differs from the one in use drains the decoder and continues with a decoder created from
  * the new configuration, so frames may change size. A packet the decoder rejects as corrupt is
  * skipped, as players do; a run of {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row
- * fails the read. The
+ * fails the read. A track that {@linkplain VideoTrack#hasAlpha() carries alpha} as a second coded
+ * stream decodes to pictures with an alpha plane, as {@link VideoDecoders} describes. The
  * track's {@link VideoTrack#orientation()} is reported but not applied: frames are returned as
  * coded. {@link #seek(long)} follows the contract shared by every Smalt reader: the next
  * {@link #read()} returns the frame displayed at the requested time.

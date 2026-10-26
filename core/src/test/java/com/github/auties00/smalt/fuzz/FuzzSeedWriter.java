@@ -139,6 +139,9 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "matroska", "valid-vp8-vorbis.webm", ffmpeg("webm", args(video(32, 32, 2),
                 tone(8000, 0.2)), "-c:v", "libvpx", "-deadline", "realtime", "-b:v", "50k", "-c:a", "libvorbis",
                 "-ac", "1"));
+        copy(DemuxerFuzzTest.class, "matroska", "valid-vp8-alpha.webm", ffmpeg("webm", video(32, 32, 2), "-c:v",
+                "libvpx", "-pix_fmt", "yuva420p", "-auto-alt-ref", "0", "-deadline", "realtime", "-b:v", "50k", "-vf",
+                "format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='8*X'"));
         copy(DemuxerFuzzTest.class, "matroska", "valid-h264-ac3.mkv", ffmpeg("mkv", args(video(32, 32, 2),
                 tone(48000, 0.1)), "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "ac3", "-b:a", "64k"));
 

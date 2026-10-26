@@ -117,6 +117,10 @@ public final class Vp8EncoderOptions {
 
     private final MediaLimits limits;
 
+    private final boolean alpha;
+
+    private final int alphaQuality;
+
     private Vp8EncoderOptions(Builder builder) {
         this.usage = builder.usage;
         this.rateControl = builder.rateControl;
@@ -146,6 +150,8 @@ public final class Vp8EncoderOptions {
         this.overshootPercent = builder.overshootPercent;
         this.maxKeyframeBitratePercent = builder.maxKeyframeBitratePercent;
         this.limits = builder.limits;
+        this.alpha = builder.alpha;
+        this.alphaQuality = builder.alphaQuality;
     }
 
     /**
@@ -577,6 +583,35 @@ public final class Vp8EncoderOptions {
         return limits;
     }
 
+    /**
+     * {@return whether the encoder codes the alpha planes of the pictures as a second VP8 stream;
+     * {@code false} by default}
+     *
+     * <p>Each packet of a shown frame then carries, in
+     * {@link com.github.auties00.smalt.track.PacketSideData#alphaFrame()}, a VP8 frame whose luma
+     * plane is the picture's straight alpha plane at 8 bits and whose chroma is neutral, as WebM stores
+     * transparent VP8 video: the track holding the packets declares
+     * {@link com.github.auties00.smalt.track.VideoTrack#hasAlpha()}. A picture without alpha is coded
+     * opaque. The alpha stream codes every shown frame, at the constant quality of
+     * {@link #alphaQuality()}, without hidden frames, and has a key frame wherever the main stream
+     * has one, so that both decode from every key frame; it adds its own key frames at scene cuts of
+     * the alpha planes. It runs in the same usage, at the same speed, time base and threads as the main
+     * stream; hidden frames of the main stream carry no alpha frame.
+     */
+    public boolean alpha() {
+        return alpha;
+    }
+
+    /**
+     * {@return the quantizer of the alpha stream, from 0 to 63, on the scale of
+     * {@link #minQuantizer()}; 10 by default}
+     *
+     * <p>Lower values are finer. It applies only with {@link #alpha()}.
+     */
+    public int alphaQuality() {
+        return alphaQuality;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof Vp8EncoderOptions that && usage == that.usage && rateControl == that.rateControl
@@ -592,7 +627,8 @@ public final class Vp8EncoderOptions {
                 && optimalBufferLevel.equals(that.optimalBufferLevel) && tokenPartitions == that.tokenPartitions
                 && threads == that.threads && encodeBreakout == that.encodeBreakout
                 && undershootPercent == that.undershootPercent && overshootPercent == that.overshootPercent
-                && maxKeyframeBitratePercent.equals(that.maxKeyframeBitratePercent) && limits.equals(that.limits);
+                && maxKeyframeBitratePercent.equals(that.maxKeyframeBitratePercent) && limits.equals(that.limits)
+                && alpha == that.alpha && alphaQuality == that.alphaQuality;
     }
 
     @Override
@@ -602,7 +638,7 @@ public final class Vp8EncoderOptions {
                 keyframeInterval, speed,
                 errorResilient, temporalLayers, dropFrames, bufferSize, initialBufferLevel, optimalBufferLevel,
                 tokenPartitions, threads, encodeBreakout, undershootPercent, overshootPercent,
-                maxKeyframeBitratePercent, limits);
+                maxKeyframeBitratePercent, limits, alpha, alphaQuality);
     }
 
     @Override
@@ -617,7 +653,8 @@ public final class Vp8EncoderOptions {
                 + optimalBufferLevel.toMillis() + "/" + bufferSize.toMillis() + "ms, tokenPartitions="
                 + tokenPartitions + ", threads=" + threads + ", encodeBreakout=" + encodeBreakout
                 + ", rateTolerance=" + undershootPercent + "/" + overshootPercent + ", maxKeyframeBitratePercent="
-                + maxKeyframeBitratePercent + ", limits=" + limits + "]";
+                + maxKeyframeBitratePercent + ", limits=" + limits + ", alpha="
+                + alpha + ", alphaQuality=" + alphaQuality + "]";
     }
 
     /**
@@ -683,6 +720,10 @@ public final class Vp8EncoderOptions {
 
         private MediaLimits limits = MediaLimits.DEFAULT;
 
+        private boolean alpha;
+
+        private int alphaQuality = 10;
+
         private Builder() {
         }
 
@@ -715,6 +756,8 @@ public final class Vp8EncoderOptions {
             overshootPercent = from.overshootPercent;
             maxKeyframeBitratePercent = from.maxKeyframeBitratePercent;
             limits = from.limits;
+            alpha = from.alpha;
+            alphaQuality = from.alphaQuality;
         }
 
         /**
@@ -1041,6 +1084,29 @@ public final class Vp8EncoderOptions {
         }
 
         /**
+         * Sets whether the encoder codes the alpha planes as a second stream; see
+         * {@link Vp8EncoderOptions#alpha()}.
+         *
+         * @param alpha the value
+         * @return this builder
+         */
+        public Builder alpha(boolean alpha) {
+            this.alpha = alpha;
+            return this;
+        }
+
+        /**
+         * Sets the quantizer of the alpha stream; see {@link Vp8EncoderOptions#alphaQuality()}.
+         *
+         * @param quantizer the value
+         * @return this builder
+         */
+        public Builder alphaQuality(int quantizer) {
+            this.alphaQuality = quantizer;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -1048,9 +1114,9 @@ public final class Vp8EncoderOptions {
          * is not positive, the bitrate is not in [1, {@link Integer#MAX_VALUE}], the smallest
          * quantizer is not in [0, 63], the largest is not in [smallest, 63], the quality level is
          * not in [0, 63] or, with a quality rate control, not in [smallest, largest], the lookahead
-         * is not in [0, 25], the temporal filter strength is not in [0, 6] or its frames not in
-         * [0, 15], the key frame interval
-         * is not positive, the temporal layers are not in [1, 3], the buffer size is not in [1,
+         * is not in [0, 25], the alpha quantizer is not in [0, 63], the temporal filter strength is
+         * not in [0, 6] or its frames not in [0, 15], the key frame interval is not positive, the
+         * temporal layers are not in [1, 3], the buffer size is not in [1,
          * {@link Integer#MAX_VALUE}] milliseconds, the initial level is not in [0, size], the optimal
          * level is not in [1, size] milliseconds, the token partitions are not 1, 2, 4 or 8, the
          * thread count is negative, the encode breakout is not in [0, {@code 2^24}], the undershoot
@@ -1076,6 +1142,7 @@ public final class Vp8EncoderOptions {
                         + minQuantizer + ".." + maxQuantizer);
             }
             Checks.inRange("lookahead", lookahead, 0, MAX_LOOKAHEAD);
+            Checks.inRange("alpha quantizer", alphaQuality, 0, 63);
             Checks.inRange("temporal filter strength", temporalFilterStrength, 0, 6);
             Checks.inRange("temporal filter frames", temporalFilterFrames, 0, 15);
             if (keyframeInterval.isPresent()) {

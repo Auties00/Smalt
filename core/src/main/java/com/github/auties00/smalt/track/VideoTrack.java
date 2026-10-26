@@ -90,6 +90,11 @@ public final class VideoTrack implements Track {
      */
     private final StereoMode stereoMode;
 
+    /**
+     * Whether the packets carry the alpha plane as a second coded stream.
+     */
+    private final boolean alpha;
+
     private VideoTrack(Builder builder) {
         this.id = builder.id;
         this.codec = builder.codec;
@@ -106,6 +111,7 @@ public final class VideoTrack implements Track {
         this.interlacing = builder.interlacing;
         this.spherical = builder.spherical;
         this.stereoMode = builder.stereoMode;
+        this.alpha = builder.alpha;
     }
 
     /**
@@ -113,8 +119,8 @@ public final class VideoTrack implements Track {
      *
      * <p>The codec and the time base must be set; every other property starts at its "unknown"
      * value: identifier {@code 0}, duration {@code -1}, no configuration, language, frame rate,
-     * color, sample aspect ratio, scan, spherical projection or stereo mode, size {@code 0x0} and
-     * {@link Orientation#NORMAL}.
+     * color, sample aspect ratio, scan, spherical projection or stereo mode, size {@code 0x0},
+     * {@link Orientation#NORMAL} and no alpha.
      *
      * @return the builder
      */
@@ -144,6 +150,7 @@ public final class VideoTrack implements Track {
         builder.interlacing = interlacing;
         builder.spherical = spherical;
         builder.stereoMode = stereoMode;
+        builder.alpha = alpha;
         return builder;
     }
 
@@ -274,6 +281,22 @@ public final class VideoTrack implements Track {
     }
 
     /**
+     * Returns whether the track carries transparency as a second coded stream, as the container
+     * declares it (the Matroska and WebM {@code AlphaMode} 1).
+     *
+     * <p>Each packet of such a track may carry, in {@link PacketSideData#alphaFrame()}, a frame of
+     * the track's codec whose luma plane is the alpha plane of the packet's frame, with straight
+     * (non-premultiplied) semantics; {@link com.github.auties00.smalt.video.VideoDecoders} decodes
+     * both streams into pictures with an alpha plane. A packet without an alpha frame shows an opaque
+     * frame.
+     *
+     * @return {@code true} when the packets carry alpha frames
+     */
+    public boolean hasAlpha() {
+        return alpha;
+    }
+
+    /**
      * Compares two tracks property by property, the configuration by content.
      *
      * @param other the object to compare with
@@ -287,7 +310,7 @@ public final class VideoTrack implements Track {
                 && width == that.width && height == that.height && orientation == that.orientation
                 && Objects.equals(frameRate, that.frameRate) && Objects.equals(color, that.color)
                 && Objects.equals(sampleAspectRatio, that.sampleAspectRatio) && interlacing == that.interlacing
-                && Objects.equals(spherical, that.spherical) && stereoMode == that.stereoMode;
+                && Objects.equals(spherical, that.spherical) && stereoMode == that.stereoMode && alpha == that.alpha;
     }
 
     /**
@@ -298,7 +321,7 @@ public final class VideoTrack implements Track {
     @Override
     public int hashCode() {
         return Objects.hash(id, codec, timeBase, duration, Arrays.hashCode(codecConfig), language, width, height,
-                orientation, frameRate, color, sampleAspectRatio, interlacing, spherical, stereoMode);
+                orientation, frameRate, color, sampleAspectRatio, interlacing, spherical, stereoMode, alpha);
     }
 
     /**
@@ -314,7 +337,7 @@ public final class VideoTrack implements Track {
                 + ", language=" + language + ", width=" + width + ", height=" + height
                 + ", orientation=" + orientation + ", frameRate=" + frameRate + ", color=" + color
                 + ", sampleAspectRatio=" + sampleAspectRatio + ", interlacing=" + interlacing
-                + ", spherical=" + spherical + ", stereoMode=" + stereoMode + "]";
+                + ", spherical=" + spherical + ", stereoMode=" + stereoMode + ", alpha=" + alpha + "]";
     }
 
     /**
@@ -397,6 +420,11 @@ public final class VideoTrack implements Track {
          * The stereoscopic packing, or {@code null}.
          */
         private StereoMode stereoMode;
+
+        /**
+         * Whether the packets carry alpha frames.
+         */
+        private boolean alpha;
 
         /**
          * Constructs a builder with every property unknown.
@@ -611,6 +639,18 @@ public final class VideoTrack implements Track {
          */
         public Builder noStereoMode() {
             this.stereoMode = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the packets carry the alpha plane as a second coded stream; see
+         * {@link VideoTrack#hasAlpha()}.
+         *
+         * @param alpha whether the packets carry alpha frames
+         * @return this builder
+         */
+        public Builder alpha(boolean alpha) {
+            this.alpha = alpha;
             return this;
         }
 

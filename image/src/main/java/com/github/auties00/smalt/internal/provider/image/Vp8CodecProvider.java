@@ -34,7 +34,9 @@ import com.github.auties00.smalt.video.vp8.Vp8EncoderSpeed;
  *                 no periodic key frames: {@link Vp8EncoderOptions.Builder#noPeriodicKeyframes()},
  *                 in place of the preset's;</li>
  *             <li>a thread count above one: {@link Vp8EncoderOptions.Builder#threads(int)}, which
- *                 caps it at 64; {@code 0} and {@code 1} keep the single thread of the presets.</li>
+ *                 caps it at 64; {@code 0} and {@code 1} keep the single thread of the presets;</li>
+ *             <li>alpha: {@link Vp8EncoderOptions.Builder#alpha(boolean)}, at the default alpha
+ *                 quantizer.</li>
  *           </ul>
  */
 public final class Vp8CodecProvider implements VideoCodecProvider {
@@ -60,6 +62,11 @@ public final class Vp8CodecProvider implements VideoCodecProvider {
     }
 
     @Override
+    public boolean encodesAlpha(Codec codec) {
+        return codec == Codec.VP8;
+    }
+
+    @Override
     public VideoEncoder createEncoder(Codec codec, VideoEncoderOptions options) {
         var frameRate = options.frameRate();
         var builder = options.realtime()
@@ -75,6 +82,7 @@ public final class Vp8CodecProvider implements VideoCodecProvider {
         if (options.threads() > 1) {
             builder.threads(options.threads());
         }
+        builder.alpha(options.alpha());
         return new Vp8Encoder(options.width(), options.height(), builder.build());
     }
 }

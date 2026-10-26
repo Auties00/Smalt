@@ -43,7 +43,8 @@ DRIVER = 'com.code_intelligence.jazzer.Jazzer'
 JVM_FLAGS = ['-XX:+EnableDynamicAgentLoading', '--add-modules', 'jdk.incubator.vector',
              '--enable-native-access=ALL-UNNAMED', '-XX:+UseSerialGC']
 INSTRUMENT = '--instrumentation_includes=com.github.auties00.smalt.**'
-MARKER_DICTIONARY = '"FUZZ-TAG"\n'
+# FUZZ-TAG separates the packets of a FuzzPackets input, FUZZ-ALP the color and alpha frames of a packet.
+MARKER_DICTIONARY = '"FUZZ-TAG"\n"FUZZ-ALP"\n'
 # libFuzzer's artifact prefixes; a slow-unit- artifact records an input slower than -report_slow_units, which is
 # reported but is not a finding.
 FINDING_PREFIXES = ('crash-', 'timeout-', 'oom-', 'leak-')
@@ -153,7 +154,8 @@ def discover():
             package = re.search(r'^package\s+([\w.]+);', text, re.M).group(1)
             for match in re.finditer(r'@FuzzTest[^\n]*\n\s*(?:public\s+)?void\s+(\w+)\s*\(byte\[\]\s+\w+\)\s*\{', text):
                 body = text[match.end():text.find('\n    }', match.end())]
-                framed = 'FuzzMedia.video(' in body or 'FuzzMedia.audio(' in body or 'FuzzPackets' in body
+                framed = ('FuzzMedia.video(' in body or 'FuzzMedia.videoAlpha(' in body or 'FuzzMedia.audio(' in body
+                          or 'FuzzPackets' in body)
                 found.append(Target(module, package, source.stem, match.group(1), framed))
     return found
 

@@ -570,6 +570,9 @@ class FuzzSeedWriter {
         var vp8Alpha = ffmpeg("webm", video(32, 32, 3), "-c:v", "libvpx", "-deadline", "realtime", "-b:v", "50k",
                 "-auto-alt-ref", "1", "-lag-in-frames", "3", "-error-resilient", "1");
         write(ImageVideoFuzzTest.class, "vp8", "valid-altref.bin", FuzzSeeds.packets(vp8Alpha, Codec.VP8, 0, 3));
+        // the transparent behavior sample of core, made by tools/testdata/behavior/make-samples.sh
+        write(ImageVideoFuzzTest.class, "vp8Alpha", "valid-webm-alpha.bin", FuzzSeeds.alphaPackets(Path.of("..",
+                "core", "src", "test", "resources", "samples", "matroska", "vp8-alpha.webm"), 4));
     }
 
     @Test

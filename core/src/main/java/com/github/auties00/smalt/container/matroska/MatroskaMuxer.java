@@ -141,6 +141,13 @@ import java.util.Set;
  * reader that follows the mappings may skip it; WebM assigns {@code BlockAddID} 4 of VP9 to ITU-T
  * T.35 metadata without a mapping.
  *
+ * <p>A video track that {@linkplain VideoTrack#hasAlpha() carries alpha} declares {@code AlphaMode} 1
+ * in its {@code Video} element and a {@code MaxBlockAdditionID} of at least 1, and the
+ * {@linkplain com.github.auties00.smalt.track.PacketSideData#alphaFrame() alpha frame} of each of its
+ * packets is written as the {@code BlockAdditional} of {@code BlockAddID} 1 in the
+ * {@code BlockAdditions} of the packet's {@code BlockGroup}, as transparent VP8 and VP9 video is
+ * stored in WebM. The alpha frame of a packet on any other track is not written.
+ *
  * <p>Packets of every track are interleaved by decoding time: a packet is written once every
  * track has a later one queued. An audio or video track without a queued packet holds the others
  * back until its next packet arrives, so an encoder that holds frames back (a lookahead) still gets
@@ -154,7 +161,7 @@ import java.util.Set;
  * {@code BlockGroup} with the difference as {@code DiscardPadding}; an AAC track declares its
  * frame duration as {@code DefaultDuration}, which a reader needs to apply the padding. When the
  * first packets reaching the output have negative timestamps, every timestamp is shifted so the
- * earliest is zero. A video packet with an HDR10+ message also gets a {@code BlockGroup}, with a
+ * earliest is zero. A video packet with an HDR10+ message or an alpha frame also gets a {@code BlockGroup}, with a
  * {@code ReferenceBlock} pointing at the track's previous block when it is not a key frame. Every
  * other packet becomes a {@code SimpleBlock}, flagged as a key frame when it is one (audio packets
  * always are), without lacing. A packet flagged {@link PacketFlag#DISCARD} gets the invisible flag,
@@ -272,6 +279,11 @@ public final class MatroskaMuxer implements Muxer {
      * The {@code BlockAddID} of the HDR10+ ITU-T T.35 messages of a video track.
      */
     private static final int HDR10_PLUS_ADD_ID = 4;
+
+    /**
+     * The {@code BlockAddID} of the alpha frames of a video track whose {@code AlphaMode} is 1.
+     */
+    private static final int ALPHA_ADD_ID = 1;
 
     /**
      * The {@code BlockAddIDType} of ITU-T T.35 metadata.
@@ -636,6 +648,16 @@ public final class MatroskaMuxer implements Muxer {
      */
     @Override
     public boolean supportsTags() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsAlpha() {
         return true;
     }
 
@@ -1214,7 +1236,8 @@ public final class MatroskaMuxer implements Muxer {
         var relative = ticks - clusterTicks;
         var padding = state.discardPadding(packet);
         var hdr10Plus = state.video ? packet.sideData().hdr10Plus().orElse(null) : null;
-        var trailer = groupTrailer(key, previousTicks - ticks, padding, hdr10Plus);
+        var alpha = state.alpha ? packet.sideData().alphaFrame().orElse(null) : null;
+        var trailer = groupTrailer(key, previousTicks - ticks, padding, hdr10Plus, alpha);
         var trackNumberLength = Ebml.sizeLength(state.number);
         var payload = trackNumberLength + 3L + packet.size();
         var header = blockHeader;
@@ -1261,17 +1284,18 @@ public final class MatroskaMuxer implements Muxer {
     /**
      * Serializes the elements that follow the {@code Block} of a {@code BlockGroup}: a
      * {@code ReferenceBlock} for a frame that is not a key frame, the {@code DiscardPadding} and the
-     * {@code BlockAdditions} holding an HDR10+ message.
+     * {@code BlockAdditions} holding an alpha frame and an HDR10+ message.
      *
      * @param key whether the frame is a key frame
      * @param reference the timestamp of the track's previous block relative to this one, in segment ticks
      * @param padding the {@code DiscardPadding} in nanoseconds, or {@code 0} for none
      * @param hdr10Plus the HDR10+ ITU-T T.35 message, or {@code null} for none
+     * @param alpha the coded alpha frame, or {@code null} for none
      * @return the elements, in a scratch buffer that the next block reuses, or {@code null} when the
      *         frame needs no {@code BlockGroup}
      */
-    private EbmlOutput groupTrailer(boolean key, long reference, long padding, byte[] hdr10Plus) {
-        if (padding <= 0 && hdr10Plus == null) {
+    private EbmlOutput groupTrailer(boolean key, long reference, long padding, byte[] hdr10Plus, byte[] alpha) {
+        if (padding <= 0 && hdr10Plus == null && alpha == null) {
             return null;
         }
         var trailer = blockTrailer;
@@ -1283,12 +1307,20 @@ public final class MatroskaMuxer implements Muxer {
         if (padding > 0) {
             trailer.signed(EbmlIds.DISCARD_PADDING, padding);
         }
-        if (hdr10Plus != null) {
+        if (hdr10Plus != null || alpha != null) {
             trailer.begin(EbmlIds.BLOCK_ADDITIONS);
-            trailer.begin(EbmlIds.BLOCK_MORE);
-            trailer.unsigned(EbmlIds.BLOCK_ADD_ID, HDR10_PLUS_ADD_ID);
-            trailer.binary(EbmlIds.BLOCK_ADDITIONAL, hdr10Plus);
-            trailer.end();
+            if (alpha != null) {
+                trailer.begin(EbmlIds.BLOCK_MORE);
+                trailer.unsigned(EbmlIds.BLOCK_ADD_ID, ALPHA_ADD_ID);
+                trailer.binary(EbmlIds.BLOCK_ADDITIONAL, alpha);
+                trailer.end();
+            }
+            if (hdr10Plus != null) {
+                trailer.begin(EbmlIds.BLOCK_MORE);
+                trailer.unsigned(EbmlIds.BLOCK_ADD_ID, HDR10_PLUS_ADD_ID);
+                trailer.binary(EbmlIds.BLOCK_ADDITIONAL, hdr10Plus);
+                trailer.end();
+            }
             trailer.end();
         }
         return trailer;
@@ -1461,6 +1493,11 @@ public final class MatroskaMuxer implements Muxer {
         final boolean video;
 
         /**
+         * Whether the track is video that carries alpha frames.
+         */
+        final boolean alpha;
+
+        /**
          * Whether the track is a text subtitle or data track, whose packets are sparse and written
          * as {@code BlockGroup}s.
          */
@@ -1600,6 +1637,7 @@ public final class MatroskaMuxer implements Muxer {
             this.number = number;
             this.flags = flags;
             this.video = track.kind() == TrackKind.VIDEO;
+            this.alpha = track instanceof VideoTrack videoTrack && videoTrack.hasAlpha();
             this.sparse = track.kind() == TrackKind.DATA;
             this.codecId = track.codec() == Codec.ASS && track.codecConfig()
                     .map(bytes -> AssScript.parse(TextFiles.decode(bytes)).isSsa()).orElse(false)
@@ -2051,6 +2089,9 @@ public final class MatroskaMuxer implements Muxer {
             } else if (codecPrivate != null) {
                 out.binary(EbmlIds.CODEC_PRIVATE, codecPrivate);
             }
+            if (alpha && !hdr10PlusMapping) {
+                out.unsigned(EbmlIds.MAX_BLOCK_ADDITION_ID, ALPHA_ADD_ID);
+            }
             if (hdr10PlusMapping) {
                 out.unsigned(EbmlIds.MAX_BLOCK_ADDITION_ID, HDR10_PLUS_ADD_ID);
                 out.begin(EbmlIds.BLOCK_ADDITION_MAPPING);
@@ -2080,6 +2121,9 @@ public final class MatroskaMuxer implements Muxer {
                 });
                 videoTrack.stereoMode().filter(mode -> options.docType() != MatroskaDocType.WEBM || webmStereo(mode))
                         .ifPresent(mode -> out.unsigned(EbmlIds.STEREO_MODE, mode.code()));
+                if (alpha) {
+                    out.unsigned(EbmlIds.ALPHA_MODE, 1);
+                }
                 out.unsigned(EbmlIds.PIXEL_WIDTH, videoTrack.width());
                 out.unsigned(EbmlIds.PIXEL_HEIGHT, videoTrack.height());
                 videoTrack.sampleAspectRatio().ifPresent(aspect -> writeDisplaySize(out, videoTrack, aspect));

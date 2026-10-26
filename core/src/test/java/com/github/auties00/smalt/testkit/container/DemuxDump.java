@@ -162,6 +162,9 @@ public final class DemuxDump {
                 video.sampleAspectRatio().ifPresent(sar -> text.append(" sar=").append(rational(sar)));
                 video.interlacing().ifPresent(interlacing -> text.append(" interlacing=").append(interlacing));
                 video.stereoMode().ifPresent(mode -> text.append(" stereo=").append(mode));
+                if (video.hasAlpha()) {
+                    text.append(" alpha");
+                }
                 text.append('\n');
                 video.spherical().ifPresent(spherical -> text.append("  spherical ").append(spherical.projection())
                         .append(" yaw=").append(spherical.yaw()).append(" pitch=").append(spherical.pitch())
@@ -213,6 +216,8 @@ public final class DemuxDump {
                 .append(Dumps.crc32(config)));
         side.hdr10Plus().ifPresent(hdr -> separate(text).append("hdr10plus=").append(hdr.length).append(':')
                 .append(Dumps.crc32(hdr)));
+        side.alphaFrame().ifPresent(alpha -> separate(text).append("alpha=").append(alpha.length).append(':')
+                .append(Dumps.crc32(alpha)));
         for (var entry : new TreeMap<>(side.extra()).entrySet()) {
             separate(text).append(entry.getKey()).append('=').append(entry.getValue().length).append(':')
                     .append(Dumps.crc32(entry.getValue()));

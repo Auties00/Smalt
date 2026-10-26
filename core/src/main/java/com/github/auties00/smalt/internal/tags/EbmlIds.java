@@ -599,6 +599,11 @@ public final class EbmlIds {
     public static final int STEREO_MODE = 0x53B8;
 
     /**
+     * The {@code AlphaMode} element of {@code Video}: 1 when {@code BlockAddID} 1 holds alpha frames.
+     */
+    public static final int ALPHA_MODE = 0x53C0;
+
+    /**
      * The {@code Cues} element.
      */
     public static final int CUES = 0x1C53BB6B;

@@ -92,6 +92,7 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
+import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.vp8.Vp8Decoder;
 import com.github.auties00.smalt.video.vp8.Vp8Encoder;
@@ -156,6 +157,10 @@ final class ImageWorkloads {
                         () -> new Vp8Encoder(WIDTH, HEIGHT, Vp8EncoderOptions.forRealtime().toBuilder()
                                 .timeBase(TIME_BASE).bitrate(VP8_BITRATE).threads(2).build()),
                         Vp8Decoder::new)),
+                realtime("vp8-alpha-session-t1", () -> VideoStreams.session("vp8-alpha-session-t1", Codec.VP8,
+                        () -> new Vp8Encoder(WIDTH, HEIGHT, Vp8EncoderOptions.forRealtime().toBuilder()
+                                .timeBase(TIME_BASE).bitrate(VP8_BITRATE).alpha(true).build()),
+                        track -> VideoDecoders.create(track.toBuilder().alpha(true).build()))),
                 file("vp8-encode-file-t2", () -> VideoStreams.encode("vp8-encode-file-t2",
                         new Vp8Encoder(WIDTH, HEIGHT, Vp8EncoderOptions.builder().timeBase(TIME_BASE)
                                 .bitrate(VP8_BITRATE).threads(2).build()))),

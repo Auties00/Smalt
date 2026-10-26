@@ -13,6 +13,7 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.video.VideoDecoderOptions;
+import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.av1.Av1Decoder;
 import com.github.auties00.smalt.video.av1.Av1DecoderOptions;
@@ -107,6 +108,10 @@ final class VideoWorkloads {
                 realtime("vp9-encode-rt-s8-t1", () -> vp9Encode(1, 8)),
                 realtime("vp9-decode-rt", () -> VideoStreams.decode("vp9-decode-rt", vp9Stream(0),
                         new Vp9Decoder(VideoStreams.track(Codec.VP9, null)))),
+                realtime("vp9-alpha-session-t1", () -> VideoStreams.session("vp9-alpha-session-t1", Codec.VP9,
+                        () -> new Vp9Encoder(WIDTH, HEIGHT, Vp9EncoderOptions.forRealtime().toBuilder()
+                                .timeBase(TIME_BASE).alpha(true).build()),
+                        track -> VideoDecoders.create(track.toBuilder().alpha(true).build()))),
                 file("vp9-decode-t2", () -> VideoStreams.decode("vp9-decode-t2", vp9Stream(1),
                         new Vp9Decoder(VideoStreams.track(Codec.VP9, null),
                                 VideoDecoderOptions.builder().threads(2).build()))),

@@ -214,6 +214,35 @@ public final class FuzzSeeds {
     }
 
     /**
+     * Converts the first video track of a transparent media file to the input of
+     * {@link FuzzMedia#videoAlpha(Codec, byte[])}: each packet's payload followed by
+     * {@link FuzzMedia#ALPHA_MARKER} and its alpha frame, when it has one.
+     *
+     * @param file the media file, whose first video track carries alpha
+     * @param maxPackets the most packets to keep, from the start of the track
+     * @return the input
+     */
+    public static byte[] alphaPackets(Path file, int maxPackets) {
+        try (var source = MediaSource.of(file); var demuxer = Containers.openDemuxer(source)) {
+            var track = demuxer.tracks().stream().filter(VideoTrack.class::isInstance).findFirst().orElseThrow();
+            var parts = new ArrayList<FuzzPackets.Part>();
+            for (var packet = demuxer.read(); packet != null && parts.size() < maxPackets; packet = demuxer.read()) {
+                if (packet.trackId() != track.id()) {
+                    continue;
+                }
+                var payload = new java.io.ByteArrayOutputStream();
+                payload.writeBytes(packet.data());
+                packet.sideData().alphaFrame().ifPresent(alpha -> {
+                    payload.writeBytes(FuzzMedia.ALPHA_MARKER);
+                    payload.writeBytes(alpha);
+                });
+                parts.add(new FuzzPackets.Part(payload.toByteArray(), packet.keyframe()));
+            }
+            return packets(track, 0, parts);
+        }
+    }
+
+    /**
      * Converts a track and its packets to the {@link FuzzPackets} format.
      *
      * @param track the track, which gives the header fields and the codec configuration

@@ -176,6 +176,64 @@ public final class FuzzMedia {
     }
 
     /**
+     * The separator between the color frame and the alpha frame of a packet of {@link #videoAlpha(Codec, byte[])}.
+     */
+    public static final byte[] ALPHA_MARKER = "FUZZ-ALP".getBytes(java.nio.charset.StandardCharsets.US_ASCII);
+
+    /**
+     * Decodes a transparent video stream in the {@link FuzzPackets} format, as {@link #video(Codec, byte[])} does,
+     * through a track that {@linkplain VideoTrack#hasAlpha() carries alpha}: each packet's payload is its color frame,
+     * then {@link #ALPHA_MARKER} and its alpha frame, or only a color frame when the marker is absent.
+     *
+     * @param codec the codec of the target
+     * @param data the input
+     * @return the run
+     */
+    public static FuzzRun videoAlpha(Codec codec, byte[] data) {
+        var run = Fuzz.start(codec.name() + "-alpha");
+        var input = FuzzPackets.parse(data, FuzzPackets.VIDEO_FIELDS);
+        var header = input.header();
+        var track = VideoTrack.builder().id(1).codec(codec).timeBase(TIME_BASE).width(header.unsigned(1, 2))
+                .height(header.unsigned(3, 2)).alpha(true);
+        header.config().ifPresent(track::codecConfig);
+        var packets = new ArrayList<Packet>(input.packets().size());
+        for (var index = 0; index < input.packets().size(); index++) {
+            var part = input.packets().get(index);
+            var payload = part.data();
+            var split = indexOf(payload, ALPHA_MARKER);
+            var color = split < 0 ? payload : java.util.Arrays.copyOfRange(payload, 0, split);
+            var packet = packet(new FuzzPackets.Part(color, part.keyframe()), index);
+            if (split >= 0) {
+                packet = packet.withSideData(com.github.auties00.smalt.track.PacketSideData.builder()
+                        .alphaFrame(java.util.Arrays.copyOfRange(payload, split + ALPHA_MARKER.length, payload.length))
+                        .build());
+            }
+            packets.add(packet);
+        }
+        decode(run, track.build(), (header.options() & 1) != 0, packets);
+        return run;
+    }
+
+    /**
+     * {@return the index of the first occurrence of a pattern in data, or -1}
+     *
+     * @param data the data to search
+     * @param pattern the pattern
+     */
+    private static int indexOf(byte[] data, byte[] pattern) {
+        outer:
+        for (var start = 0; start + pattern.length <= data.length; start++) {
+            for (var index = 0; index < pattern.length; index++) {
+                if (data[start + index] != pattern[index]) {
+                    continue outer;
+                }
+            }
+            return start;
+        }
+        return -1;
+    }
+
+    /**
      * Decodes the packets of a video track on the calling thread, as {@link #video(Codec, byte[])} does: a packet
      * the decoder rejects is skipped and decoding goes on with the next one.
      *

@@ -42,6 +42,21 @@ public interface Muxer extends AutoCloseable {
     }
 
     /**
+     * Returns whether the muxer stores transparent video as a second coded stream: the
+     * {@linkplain com.github.auties00.smalt.track.PacketSideData#alphaFrame() alpha frames} of a
+     * track that {@linkplain com.github.auties00.smalt.track.VideoTrack#hasAlpha() carries alpha}.
+     *
+     * <p>A muxer that returns {@code false} drops the alpha frames of the packets it writes.
+     *
+     * @implSpec The default implementation returns {@code false}.
+     *
+     * @return {@code true} when the container stores the alpha frames
+     */
+    default boolean supportsAlpha() {
+        return false;
+    }
+
+    /**
      * Sets the tags, attached pictures (cover art) and chapters the output carries.
      *
      * <p>The tags are written in the container's own form: an iTunes {@code ilst} and a Nero

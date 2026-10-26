@@ -27,6 +27,8 @@ core/src/test/resources/samples/matroska/flac.mka	33512	ac1975ad374f475c70b81e40
 core/src/test/resources/samples/matroska/h264-opus.mkv	42823	597f618dcacde3dc4964fa011395778eba2c0439c421286d3606510d5db752d2	make-samples.sh
 core/src/test/resources/samples/matroska/pgs.mkv	4842	9e52367bb683df887f5d4c905b3471706ed1d12775a5345d0cd244d185c48334	make-samples.sh, make-bitmap-caption-samples.py
 core/src/test/resources/samples/matroska/vobsub.mkv	6354	3850b30dc5e15183e99298cefcfe691e218060b41ee97ce14a3fd2bb5d3b19d8	make-samples.sh, make-bitmap-caption-samples.py
+core/src/test/resources/samples/matroska/vp8-alpha.webm	6304	fc3aeedca0862f0cabff7587539cfe4906172f6aabc7d820c569886365a4bb9c	make-samples.sh
+core/src/test/resources/samples/matroska/vp9-alpha.webm	5569	c88fd93110a7f5024561bace71431031e9964aaa3f809afe727d3ab3c0e58318	make-samples.sh
 core/src/test/resources/samples/matroska/vp9-vorbis.webm	49662	b3180818268eaebab00b86b5108356f8303eec3cd45bff0664873b14820b0205	make-samples.sh
 core/src/test/resources/samples/mp3/cbr.mp3	16320	31d01dbcaaca53513b3cbca0e8013017ae692cefe488005eed0432d17be2a219	make-samples.sh
 core/src/test/resources/samples/mp3/mp2-id3v1.mp2	16256	f1ea5ce2d6d0635840ad39de502fa10ca5498cc5c87bd63da2e1d2b0b0617dd1	make-samples.sh

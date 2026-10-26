@@ -1070,7 +1070,7 @@ final class AvTranscode {
         var decoder = VideoDecoders.create(plan.track(), decoderOptions);
         return new VideoEncodeStage(plan.track(), decoder, decoderOptions, plan.codec(), options.video(),
                 plan.applyOrientation(), plan.applyAspect(),
-                plan.frameRate(), outputId, muxer, start, end, cancellation, cues, markup, burnTrack);
+                plan.frameRate(), keepsAlpha(plan.codec()), outputId, muxer, start, end, cancellation, cues, markup, burnTrack);
     }
 
     /**
@@ -1255,7 +1255,8 @@ final class AvTranscode {
                 if (burnIn != null && burnIn.cues().isEmpty()) {
                     throw new IllegalArgumentException("an animated image has no subtitle track to burn in");
                 }
-                var stage = new VideoEncodeStage(track, null, null, codec, video, true, true, frameRate, muxer.reserve(),
+                var stage = new VideoEncodeStage(track, null, null, codec, video, true, true, frameRate,
+                        keepsAlpha(codec), muxer.reserve(),
                         muxer, start, end, cancellation, burnIn == null ? null : new ArrayList<>(burnIn.cues().get()),
                         burnIn == null ? SubtitleMarkup.SUBRIP : burnIn.markup(), null);
                 try (stage) {
@@ -1276,6 +1277,16 @@ final class AvTranscode {
                 }
             }
         }
+    }
+
+    /**
+     * {@return whether an encoded video stream keeps its transparency: the options do not flatten it, the
+     * file stores alpha and the codec codes it}
+     *
+     * @param codec the codec of the encoded stream
+     */
+    private boolean keepsAlpha(Codec codec) {
+        return !options.video().flatten() && options.container().storesAlpha() && VideoEncoders.encodesAlpha(codec);
     }
 
     /**

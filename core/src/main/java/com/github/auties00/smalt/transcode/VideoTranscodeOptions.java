@@ -41,7 +41,9 @@ import java.util.OptionalInt;
  *       set, resampled with {@link #filter()};</li>
  *   <li>pixel-format and color conversion ({@link #chromaFormat()}, {@link #bitDepth()},
  *       {@link #color()}, {@link #colorConversion()}), tone mapping and gamut conversion included;
- *       pictures with transparency (animated images) are first flattened on
+ *       pictures with transparency (animated images, or video that
+ *       {@linkplain com.github.auties00.smalt.track.VideoTrack#hasAlpha() carries alpha}) keep it when
+ *       the codec and the file can store it ({@link #flatten()}) and are otherwise first flattened on
  *       {@link #background()};</li>
  *   <li>frame-rate conversion ({@link #frameRate()}, {@link #maxFrameRate()}) by dropping and
  *       repeating or by blending frames ({@link #frameRateConversion()});</li>
@@ -122,6 +124,11 @@ public final class VideoTranscodeOptions {
      */
     private final int background;
 
+    /**
+     * Whether transparency is flattened even when the output could keep it.
+     */
+    private final boolean flatten;
+
     private final ColorTransformOptions colorConversion;
 
     /**
@@ -175,6 +182,7 @@ public final class VideoTranscodeOptions {
         this.chromaFormat = builder.chromaFormat;
         this.color = builder.color;
         this.background = builder.background;
+        this.flatten = builder.flatten;
         this.colorConversion = builder.colorConversion;
         this.bitDepth = builder.bitDepthSet ? builder.bitDepth : 0;
         this.deinterlacer = builder.deinterlacer;
@@ -564,6 +572,21 @@ public final class VideoTranscodeOptions {
     }
 
     /**
+     * {@return whether transparency is flattened on {@link #background()} even when the output could keep
+     * it, so that the output is always opaque; {@code false} by default}
+     *
+     * <p>When {@code false}, an encoded stream whose first picture has an alpha plane keeps the
+     * transparency of its pictures as a second coded stream when the codec codes one
+     * ({@link com.github.auties00.smalt.video.VideoEncoders#encodesAlpha(com.github.auties00.smalt.track.Codec)},
+     * VP8 and VP9) and the file stores it ({@link OutputContainer#storesAlpha()}, Matroska and WebM); the
+     * output track then {@linkplain com.github.auties00.smalt.track.VideoTrack#hasAlpha() carries alpha}.
+     * Any other output is flattened.
+     */
+    public boolean flatten() {
+        return flatten;
+    }
+
+    /**
      * Returns whether the options change the picture size, crop it, or resample its timing, which
      * a copy cannot do, for a source of a displayed size and frame rate. Rounding to even
      * dimensions, which only matters to an encoder, does not count.
@@ -640,7 +663,7 @@ public final class VideoTranscodeOptions {
     private Object[] state() {
         return new Object[]{mode, trackId, codec, bitrate, threads, keyframeInterval, periodicKeyframes, resize,
                 evenDimensions, orientation, sampleAspect, frameRate, maxFrameRate, chromaFormat, color, background,
-                colorConversion, bitDepth, deinterlacer, fieldRate, fieldOrder, frameRateConversion, pulldown,
+                flatten, colorConversion, bitDepth, deinterlacer, fieldRate, fieldOrder, frameRateConversion, pulldown,
                 subtitleBurnIn, watermark, watermarkOptions};
     }
 
@@ -662,7 +685,8 @@ public final class VideoTranscodeOptions {
                 + ", filter=" + resize.filter() + ", crop=" + crop() + ", orientation=" + orientation
                 + ", sampleAspect=" + sampleAspect
                 + ", frameRate=" + frameRate() + ", maxFrameRate=" + maxFrameRate() + ", chromaFormat=" + chromaFormat()
-                + ", color=" + color() + ", background=0x" + Integer.toHexString(background) + ", colorConversion="
+                + ", color=" + color() + ", background=0x" + Integer.toHexString(background) + ", flatten=" + flatten
+                + ", colorConversion="
                 + colorConversion + ", bitDepth=" + bitDepth() + ", deinterlacer=" + deinterlacer() + ", fieldRate="
                 + fieldRate + ", fieldOrder=" + fieldOrder() + ", frameRateConversion=" + frameRateConversion
                 + ", pulldown=" + pulldown + ", subtitleBurnIn=" + subtitleBurnIn() + ", watermark="
@@ -729,6 +753,7 @@ public final class VideoTranscodeOptions {
         private ChromaFormat chromaFormat;
         private ColorInfo color;
         private int background = 0xFFFFFF;
+        private boolean flatten;
         private ColorTransformOptions colorConversion = ColorTransformOptions.defaults();
         private int bitDepth;
 
@@ -779,6 +804,7 @@ public final class VideoTranscodeOptions {
             this.chromaFormat = options.chromaFormat;
             this.color = options.color;
             this.background = options.background;
+            this.flatten = options.flatten;
             this.colorConversion = options.colorConversion;
             this.bitDepth = options.bitDepth;
             this.bitDepthSet = options.bitDepth != 0;
@@ -1163,6 +1189,18 @@ public final class VideoTranscodeOptions {
          */
         public Builder background(int rgb) {
             this.background = rgb & 0xFFFFFF;
+            return this;
+        }
+
+        /**
+         * Sets whether transparency is flattened even when the output could keep it; see
+         * {@link VideoTranscodeOptions#flatten()}.
+         *
+         * @param flatten the value
+         * @return this builder
+         */
+        public Builder flatten(boolean flatten) {
+            this.flatten = flatten;
             return this;
         }
 

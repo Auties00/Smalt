@@ -383,6 +383,17 @@ public enum OutputContainer {
     }
 
     /**
+     * Returns whether the file stores transparent video as a second coded stream, the alpha frames a
+     * track that {@linkplain com.github.auties00.smalt.track.VideoTrack#hasAlpha() carries alpha}
+     * attaches to its packets, as transparent VP8 and VP9 video in WebM.
+     *
+     * @return {@code true} for Matroska and WebM
+     */
+    public boolean storesAlpha() {
+        return format == ContainerFormat.MATROSKA;
+    }
+
+    /**
      * Returns whether the file stores edit lists, so that a copied stream that starts before the
      * requested start (at a key frame, or with decoder pre-roll) is still presented from exactly
      * that start.

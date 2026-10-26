@@ -68,7 +68,9 @@ import java.util.Set;
  * negative one as its {@link PacketSideData#discardStart()}. The {@code SimpleBlock} discardable
  * flag and the invisible flag become {@link PacketFlag#DISCARDABLE} and {@link PacketFlag#DISCARD};
  * {@code BlockAdditions} become side data of the block's frames: an ITU-T T.35 HDR10+ message
- * under {@code BlockAddID} 4 as {@link PacketSideData#hdr10Plus()}, anything else under the
+ * under {@code BlockAddID} 4 as {@link PacketSideData#hdr10Plus()}, the alpha frame under
+ * {@code BlockAddID} 1 of a video track whose {@code AlphaMode} is 1 (reported as
+ * {@link VideoTrack#hasAlpha()}) as {@link PacketSideData#alphaFrame()}, anything else under the
  * {@link PacketSideData#extra()} key {@code "matroska:BlockAdditional:<id>"}. Text subtitle
  * tracks are {@link Codec#SUBRIP} ({@code S_TEXT/UTF8}), {@link Codec#ASS}
  * ({@code S_TEXT/ASS}, {@code S_TEXT/SSA}) and {@link Codec#WEBVTT} ({@code S_TEXT/WEBVTT} and
@@ -145,6 +147,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * The block flag marking a frame that is decoded but not shown.
      */
     private static final int INVISIBLE = 0x08;
+
+    /**
+     * The extra side data key of the {@code BlockAdditional} of {@code BlockAddID} 1.
+     */
+    private static final String ALPHA_ADDITION = "matroska:BlockAdditional:1";
 
     /**
      * The size of the buffer of the underlying reader.
@@ -1767,8 +1774,10 @@ public final class MatroskaDemuxer implements Demuxer {
             readBlock(block, false, referenced, duration);
             if (queue.size() > queued) {
                 if (!additions.isEmpty()) {
+                    var entry = byNumber.get((long) queue.get(queued).trackId());
+                    var sideData = entry != null && entry.alphaMode == 1 ? alphaAdditions(additions) : additions;
                     for (var index = queued; index < queue.size(); index++) {
-                        queue.set(index, queue.get(index).withSideData(additions));
+                        queue.set(index, queue.get(index).withSideData(sideData));
                     }
                 }
                 if (padding > 0) {
@@ -1820,6 +1829,21 @@ public final class MatroskaDemuxer implements Demuxer {
             }
         }
         return builder.build();
+    }
+
+    /**
+     * Moves the {@code BlockAdditional} of {@code BlockAddID} 1, the alpha frame of a track whose
+     * {@code AlphaMode} is 1, from the extra payloads to {@link PacketSideData#alphaFrame()}.
+     *
+     * @param additions the side data of the block's {@code BlockAdditions}
+     * @return the side data with the alpha frame typed, or {@code additions} when it has none
+     */
+    private static PacketSideData alphaAdditions(PacketSideData additions) {
+        var alpha = additions.extra(ALPHA_ADDITION).orElse(null);
+        if (alpha == null) {
+            return additions;
+        }
+        return additions.toBuilder().extra(ALPHA_ADDITION, null).alphaFrame(alpha).build();
     }
 
     /**

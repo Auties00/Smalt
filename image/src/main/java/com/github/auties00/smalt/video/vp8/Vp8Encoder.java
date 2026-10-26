@@ -8,6 +8,7 @@ import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.ops.YuvConverter;
+import com.github.auties00.smalt.internal.codec.AlphaStreamEncoder;
 import com.github.auties00.smalt.internal.codec.RealtimeEncoderClock;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
@@ -62,6 +63,11 @@ import java.util.function.Consumer;
  * increase; a frame whose timestamp is {@link Packet#NO_TIMESTAMP} is placed one nominal frame
  * after the previous one, and a frame without a duration lasts one nominal frame. The rate
  * control measures the frame rate from the timestamps.
+ *
+ * <p>With {@link Vp8EncoderOptions#alpha()}, the alpha plane of each picture is coded as a second
+ * VP8 stream, at the constant quantizer of {@link Vp8EncoderOptions#alphaQuality()}, and each packet
+ * of a shown frame carries its alpha frame in {@link PacketSideData#alphaFrame()}, as WebM stores
+ * transparent video; the alpha stream has a key frame wherever the main stream has one.
  *
  * <p>With {@link Vp8EncoderOptions#threads()} 0 or above 1, the macroblock rows of a frame are
  * coded on threads of the library's shared pool together with the calling thread (see
@@ -125,6 +131,11 @@ public final class Vp8Encoder implements VideoEncoder {
      */
     private final YuvConverter converter = YuvConverter.create(ChromaFormat.YUV420, ColorInfo.BT601_LIMITED);
 
+    /**
+     * The coder of the alpha planes, or {@code null} without {@link Vp8EncoderOptions#alpha()}.
+     */
+    private final AlphaStreamEncoder alpha;
+
     private boolean closed;
 
     /**
@@ -176,6 +187,29 @@ public final class Vp8Encoder implements VideoEncoder {
             this.encoder = new RtEncoder(width, height, options);
             encoder.configure(options);
         }
+        this.alpha = options.alpha()
+                ? new AlphaStreamEncoder(new Vp8Encoder(width, height, alphaOptions(options)), ColorInfo.BT601_LIMITED)
+                : null;
+    }
+
+    /**
+     * Returns the settings of the alpha stream of an encoder: its usage, speed, time base, threads and
+     * limits, a fixed quantizer, no lookahead, no hidden frames, no dropped frames and no periodic key
+     * frames, so that every picture gives one shown frame at once.
+     *
+     * @param options the settings of the main stream
+     * @return the settings of the alpha stream
+     */
+    private static Vp8EncoderOptions alphaOptions(Vp8EncoderOptions options) {
+        var quantizer = options.alphaQuality();
+        var builder = options.toBuilder().alpha(false).noFirstPassStats().noPeriodicKeyframes()
+                .quantizers(quantizer, quantizer).cqLevel(quantizer);
+        if (options.usage() == Vp8EncoderUsage.REALTIME) {
+            builder.dropFrames(false).temporalLayers(1);
+        } else {
+            builder.rateControl(Vp8RateControl.CONSTANT_QUALITY).lookahead(0).alternateReferences(false);
+        }
+        return builder.build();
     }
 
     /**
@@ -278,6 +312,9 @@ public final class Vp8Encoder implements VideoEncoder {
             var timing = frames.resolve(frame);
             var ticks = frames.endTicks(timing, TICKS) - frames.startTicks(timing, TICKS);
             var key = clock.takeKeyframe(false);
+            if (alpha != null) {
+                alpha.push(picture, timing.pts(), timing.duration());
+            }
             good.encode(toYuv420(picture), timing.pts(), timing.duration(), ticks, key,
                     packet -> output.accept(packet(packet)));
             frames.commit(timing.pts());
@@ -295,7 +332,9 @@ public final class Vp8Encoder implements VideoEncoder {
             hiddenBytes += packet.data().length;
             return new Packet(0, packet.data(), packet.pts(), packet.pts(), 0, HIDDEN, PacketSideData.NONE);
         }
-        return clock.delivered(packet.data(), new FrameClock.Timing(packet.pts(), packet.duration()), packet.key());
+        var delivered = clock.delivered(packet.data(), new FrameClock.Timing(packet.pts(), packet.duration()),
+                packet.key());
+        return alpha != null ? alpha.attach(delivered) : delivered;
     }
 
     /**
@@ -331,13 +370,17 @@ public final class Vp8Encoder implements VideoEncoder {
             }
             var frames = clock.clock();
             var timing = frames.resolve(frame);
+            if (alpha != null) {
+                alpha.push(picture, timing.pts(), timing.duration());
+            }
             var data = encoder.encode(toYuv420(picture), frames.startTicks(timing, TICKS),
                     frames.endTicks(timing, TICKS), clock.takeKeyframe(false));
             if (data == null) {
                 clock.dropped(timing);
                 return Optional.empty();
             }
-            return Optional.of(clock.coded(data, timing, encoder.lastKeyFrame()));
+            var coded = clock.coded(data, timing, encoder.lastKeyFrame());
+            return Optional.of(alpha != null ? alpha.attach(coded) : coded);
         }
     }
 
@@ -413,8 +456,9 @@ public final class Vp8Encoder implements VideoEncoder {
      *
      * @param options the new options
      * @throws IllegalArgumentException if the new options change the usage, the time base, the
-     * temporal layers, the token partitions, the threads, error resilience or the limits, or, in
-     * the good-quality usage, anything but the bitrate, the quantizer window and the quality level
+     * temporal layers, the token partitions, the threads, error resilience, the limits or the alpha
+     * stream, or, in the good-quality usage, anything but the bitrate, the quantizer window and the
+     * quality level
      * @throws IllegalStateException if the encoder is closed
      */
     public void reconfigure(Vp8EncoderOptions options) {
@@ -426,9 +470,10 @@ public final class Vp8Encoder implements VideoEncoder {
         if (options.usage() != current.usage() || !options.timeBase().equals(current.timeBase())
                 || options.temporalLayers() != current.temporalLayers()
                 || options.tokenPartitions() != current.tokenPartitions() || options.threads() != current.threads()
-                || options.errorResilient() != current.errorResilient() || !options.limits().equals(current.limits())) {
+                || options.errorResilient() != current.errorResilient() || !options.limits().equals(current.limits())
+                || options.alpha() != current.alpha() || options.alphaQuality() != current.alphaQuality()) {
             throw new IllegalArgumentException("the usage, time base, temporal layers, token partitions, threads, "
-                    + "error resilience and limits of a running vp8 encoder cannot change");
+                    + "error resilience, limits and alpha stream of a running vp8 encoder cannot change");
         }
         if (good != null) {
             var retargeted = options.toBuilder().bitrate(current.bitrate())
@@ -482,5 +527,8 @@ public final class Vp8Encoder implements VideoEncoder {
     @Override
     public void close() {
         closed = true;
+        if (alpha != null) {
+            alpha.close();
+        }
     }
 }

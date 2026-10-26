@@ -35,6 +35,7 @@ demuxer	dash	DASH manifests read back by ffmpeg (libxml2)
 pixfmt	libx264:yuv420p10le	10-bit H.264 fixtures
 pixfmt	libx265:yuv420p10le	HEVC Main 10 fixtures
 pixfmt	libx265:yuv444p12le	12-bit HEVC range extension fixtures
+pixfmt	libvpx-vp9:yuva420p	transparent VP9 WebM fixtures (alpha stream)
 pixfmt	libvpx-vp9:yuv420p10le	VP9 profile 2 fixtures
 pixfmt	libvpx-vp9:yuv444p12le	VP9 profile 3 fixtures
 pixfmt	libaom-av1:yuv444p12le	12-bit AV1 fixtures

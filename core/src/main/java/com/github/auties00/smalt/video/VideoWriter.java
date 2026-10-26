@@ -169,6 +169,9 @@ public final class VideoWriter implements AutoCloseable {
         this.codec = codec;
         this.options = options;
         this.interval = options.frameRate().invert();
+        if (options.alpha() && !VideoEncoders.encodesAlpha(codec)) {
+            throw new MediaException.Unsupported("alpha", codec.displayName() + " cannot code alpha as a second stream");
+        }
         WriterSupport.requireTags(muxer, options.tags());
         if (options.width().isPresent()) {
             start(options.width().getAsInt(), options.height().getAsInt());
@@ -204,16 +207,19 @@ public final class VideoWriter implements AutoCloseable {
      * @param options the codec, size, frame rate and coding settings
      * @return the writer, which the caller finishes and closes
      * @throws IllegalArgumentException if the profile cannot carry the codec or carries no video,
-     * the orientation is not {@link Orientation#NORMAL} and the profile stores none, or the codec
-     * cannot code the size, rate or bitrate
-     * @throws MediaException.Unsupported if no encoder is available for the codec, or the tags are not
-     * empty and the profile cannot store tags
+     * the orientation is not {@link Orientation#NORMAL} and the profile stores none, the options ask
+     * for alpha and the profile stores none, or the codec cannot code the size, rate or bitrate
+     * @throws MediaException.Unsupported if no encoder is available for the codec, the options ask for
+     * alpha and the codec cannot code it, or the tags are not empty and the profile cannot store tags
      * @throws MediaException.Io if writing the sink fails
      */
     public static VideoWriter open(MediaSink output, OutputContainer container, VideoWriterOptions options) {
         Objects.requireNonNull(output, "output");
         Objects.requireNonNull(container, "container");
         Objects.requireNonNull(options, "options");
+        if (options.alpha() && !container.storesAlpha()) {
+            throw new IllegalArgumentException(container + " files store no alpha stream");
+        }
         var codec = WriterSupport.codec(options.codec(), container, container.videoCodecs(), VideoEncoders::isSupported,
                 "video");
         if (options.orientation() != Orientation.NORMAL && !container.storesOrientation()) {
@@ -240,14 +246,18 @@ public final class VideoWriter implements AutoCloseable {
      * @param options the codec, size, frame rate and coding settings; the codec is required
      * @return the writer, which the caller finishes and closes
      * @throws IllegalArgumentException if the options name no codec, or the muxer cannot carry the
-     * codec, or the codec cannot code the size, rate or bitrate
+     * codec, the options ask for alpha and the muxer stores none ({@link Muxer#supportsAlpha()}), or
+     * the codec cannot code the size, rate or bitrate
      * @throws IllegalStateException if a packet was already written to the muxer
-     * @throws MediaException.Unsupported if no encoder is available for the codec, or the tags are not
-     * empty and the muxer cannot store tags
+     * @throws MediaException.Unsupported if no encoder is available for the codec, the options ask for
+     * alpha and the codec cannot code it, or the tags are not empty and the muxer cannot store tags
      */
     public static VideoWriter open(Muxer muxer, VideoWriterOptions options) {
         Objects.requireNonNull(muxer, "muxer");
         Objects.requireNonNull(options, "options");
+        if (options.alpha() && !muxer.supportsAlpha()) {
+            throw new IllegalArgumentException(muxer.getClass().getSimpleName() + " stores no alpha stream");
+        }
         return new VideoWriter(muxer, WriterSupport.codec(options.codec(), VideoEncoders::isSupported), options);
     }
 
@@ -264,7 +274,8 @@ public final class VideoWriter implements AutoCloseable {
                 MIN_DEFAULT_BITRATE, MAX_DEFAULT_BITRATE));
         var builder = VideoEncoderOptions.of(width, height, rate, bitrate).toBuilder()
                 .realtime(options.realtime())
-                .threads(options.threads());
+                .threads(options.threads())
+                .alpha(options.alpha());
         if (!options.periodicKeyframes()) {
             builder.noPeriodicKeyframes();
         } else {
@@ -284,6 +295,7 @@ public final class VideoWriter implements AutoCloseable {
                     .orientation(options.orientation())
                     .color(options.color().orElse(null))
                     .language(options.language().orElse(null))
+                    .alpha(options.alpha())
                     .build();
             muxer.addTrack(declared);
             WriterSupport.writeTags(muxer, options.tags());

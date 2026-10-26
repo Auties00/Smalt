@@ -39,6 +39,9 @@ class FuzzSeedWriter {
                 "-deadline", "realtime", "-b:v", "50k", "-pix_fmt", "yuv420p10le"));
         seed("vp9", "valid-profile1-444-tiles.bin", Codec.VP9, 0, ffmpeg("ivf", video(320, 16, 2), "-c:v",
                 "libvpx-vp9", "-deadline", "realtime", "-b:v", "50k", "-pix_fmt", "yuv444p", "-tile-columns", "1"));
+        // the transparent behavior sample of core, made by tools/testdata/behavior/make-samples.sh
+        write(VideoFuzzTest.class, "vp9Alpha", "valid-webm-alpha.bin", FuzzSeeds.alphaPackets(Path.of("..", "core",
+                "src", "test", "resources", "samples", "matroska", "vp9-alpha.webm"), 4));
         seed("av1", "valid-8bit.bin", Codec.AV1, 0, ffmpeg("ivf", video(32, 32, 3), "-c:v", "libaom-av1",
                 "-cpu-used", "8", "-b:v", "50k"));
         seed("av1", "valid-10bit-444.bin", Codec.AV1, 1, ffmpeg("ivf", video(32, 32, 2), "-c:v", "libaom-av1",

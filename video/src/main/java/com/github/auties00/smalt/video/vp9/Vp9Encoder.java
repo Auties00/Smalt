@@ -4,8 +4,10 @@ package com.github.auties00.smalt.video.vp9;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaRuntime;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Yuv16Picture;
+import com.github.auties00.smalt.internal.codec.AlphaStreamEncoder;
 import com.github.auties00.smalt.internal.codec.FrameClock;
 import com.github.auties00.smalt.internal.codec.RealtimeEncoderClock;
 import com.github.auties00.smalt.internal.task.ParallelBands;
@@ -48,6 +50,12 @@ import java.util.function.Consumer;
  * {@link #requestKeyframe()} and, when configured, periodic ones; good-quality coding adds key
  * frames at scene cuts. {@link #reconfigure(Vp9EncoderOptions)} changes the rate control of a
  * running stream, and {@link #setTargetBitrate(long)} its bitrate alone.
+ *
+ * <p>With {@link Vp9EncoderOptions#alpha()}, the alpha plane of each picture is coded as a second
+ * 8-bit 4:2:0 VP9 stream, at the constant quantizer of {@link Vp9EncoderOptions#alphaQuality()}, and
+ * each packet carries its alpha frame in
+ * {@link com.github.auties00.smalt.track.PacketSideData#alphaFrame()}, as WebM stores transparent
+ * video; the alpha stream has a key frame wherever the main stream has one.
  *
  * <p>Packet timestamps are the frames' timestamps in the time base of the options; a frame without
  * a timestamp follows the previous one by the nominal frame duration. The stream does not depend
@@ -109,6 +117,11 @@ public final class Vp9Encoder implements VideoEncoder {
      */
     private final Vp9Pictures pictures;
 
+    /**
+     * The coder of the alpha planes, or {@code null} without {@link Vp9EncoderOptions#alpha()}.
+     */
+    private final AlphaStreamEncoder alpha;
+
     private boolean closed;
 
     /**
@@ -153,6 +166,31 @@ public final class Vp9Encoder implements VideoEncoder {
         }
         this.state = new RealtimeEncoderClock(options.frameRate(), options.timeBase());
         this.pictures = new Vp9Pictures(options);
+        this.alpha = options.alpha()
+                ? new AlphaStreamEncoder(new Vp9Encoder(width, height, alphaOptions(options)), ColorInfo.BT601_LIMITED)
+                : null;
+    }
+
+    /**
+     * Returns the settings of the alpha stream of an encoder: its usage, speed, time base, tile columns,
+     * threads and limits, 8-bit limited-range BT.601 4:2:0, a fixed quantizer, no lookahead, no hidden
+     * frames, no dropped frames and no periodic key frames, so that every picture gives one shown frame at
+     * once.
+     *
+     * @param options the settings of the main stream
+     * @return the settings of the alpha stream
+     */
+    private static Vp9EncoderOptions alphaOptions(Vp9EncoderOptions options) {
+        var quantizer = options.alphaQuality();
+        var builder = options.toBuilder().alpha(false).noFirstPassStats().noPeriodicKeyframes()
+                .quantizers(quantizer, quantizer).cqLevel(quantizer)
+                .pictureFormat(Vp9Subsampling.YUV420, 8).color(ColorInfo.BT601_LIMITED);
+        if (options.usage() == Vp9EncoderUsage.REALTIME) {
+            builder.dropFrames(false).temporalLayers(1).adaptiveQuantization(false);
+        } else {
+            builder.rateControl(Vp9RateControl.CONSTANT_QUALITY).lookahead(0).alternateReferences(false);
+        }
+        return builder.build();
     }
 
     /**
@@ -270,6 +308,9 @@ public final class Vp9Encoder implements VideoEncoder {
             var ticks = clock.endTicks(timing, TICKS) - clock.startTicks(timing, TICKS);
             var key = state.takeKeyframe(false);
             var picture = frame.picture();
+            if (alpha != null) {
+                alpha.push(picture, timing.pts(), timing.duration());
+            }
             Consumer<Vp9GoodEncoder.Packet> sink = packet -> output.accept(packet(packet));
             if (pictures.high() && pictures.toCodedHigh(picture) instanceof Yuv16Picture high) {
                 good.encode(high, timing.pts(), timing.duration(), ticks, key, sink);
@@ -287,7 +328,9 @@ public final class Vp9Encoder implements VideoEncoder {
      * @return the packet
      */
     private Packet packet(Vp9GoodEncoder.Packet packet) {
-        return state.delivered(packet.data(), new FrameClock.Timing(packet.pts(), packet.duration()), packet.key());
+        var delivered = state.delivered(packet.data(), new FrameClock.Timing(packet.pts(), packet.duration()),
+                packet.key());
+        return alpha != null ? alpha.attach(delivered) : delivered;
     }
 
     /**
@@ -320,6 +363,9 @@ public final class Vp9Encoder implements VideoEncoder {
             var start = clock.startTicks(timing, TICKS);
             var end = clock.endTicks(timing, TICKS);
             var key = state.takeKeyframe(false);
+            if (alpha != null) {
+                alpha.push(picture, timing.pts(), timing.duration());
+            }
             var data = pictures.high() && pictures.toCodedHigh(picture) instanceof Yuv16Picture high
                     ? encoder.encode(high, start, end, key)
                     : encoder.encode(pictures.toCoded(picture), start, end, key);
@@ -327,7 +373,8 @@ public final class Vp9Encoder implements VideoEncoder {
                 state.dropped(timing);
                 return Optional.empty();
             }
-            return Optional.of(state.coded(data, timing, encoder.lastKeyFrame()));
+            var coded = state.coded(data, timing, encoder.lastKeyFrame());
+            return Optional.of(alpha != null ? alpha.attach(coded) : coded);
         }
     }
 
@@ -400,7 +447,7 @@ public final class Vp9Encoder implements VideoEncoder {
      * @param options the new options
      * @throws IllegalArgumentException if a setting the usage cannot change differs from the
      * current options: in both usages the usage, time base, tile columns, threads, picture format,
-     * color and limits, in the real-time usage the temporal layers and error resilience, in the
+     * color, limits and alpha stream, in the real-time usage the temporal layers and error resilience, in the
      * good-quality usage everything but the bitrate, the quantizer window and the quality level
      * @throws IllegalStateException if the encoder is closed
      */
@@ -411,9 +458,10 @@ public final class Vp9Encoder implements VideoEncoder {
         if (options.usage() != current.usage() || !options.timeBase().equals(current.timeBase())
                 || options.tileColumnsLog2() != current.tileColumnsLog2() || options.threads() != current.threads()
                 || options.subsampling() != current.subsampling() || options.bitDepth() != current.bitDepth()
-                || !options.color().equals(current.color()) || !options.limits().equals(current.limits())) {
-            throw new IllegalArgumentException("the usage, time base, tile columns, threads, picture format, color "
-                    + "and limits of a running vp9 encoder cannot change");
+                || !options.color().equals(current.color()) || !options.limits().equals(current.limits())
+                || options.alpha() != current.alpha() || options.alphaQuality() != current.alphaQuality()) {
+            throw new IllegalArgumentException("the usage, time base, tile columns, threads, picture format, color, "
+                    + "limits and alpha stream of a running vp9 encoder cannot change");
         }
         if (good != null) {
             var retargeted = options.toBuilder().bitrate(current.bitrate())
@@ -471,5 +519,8 @@ public final class Vp9Encoder implements VideoEncoder {
     @Override
     public void close() {
         closed = true;
+        if (alpha != null) {
+            alpha.close();
+        }
     }
 }

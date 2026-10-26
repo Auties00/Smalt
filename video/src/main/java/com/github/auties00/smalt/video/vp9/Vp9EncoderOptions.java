@@ -125,6 +125,10 @@ public final class Vp9EncoderOptions {
 
     private final MediaLimits limits;
 
+    private final boolean alpha;
+
+    private final int alphaQuality;
+
     private Vp9EncoderOptions(Builder builder) {
         this.usage = builder.usage;
         this.rateControl = builder.rateControl;
@@ -154,6 +158,8 @@ public final class Vp9EncoderOptions {
         this.bitDepth = builder.bitDepth;
         this.color = builder.color;
         this.limits = builder.limits;
+        this.alpha = builder.alpha;
+        this.alphaQuality = builder.alphaQuality;
     }
 
     /**
@@ -574,6 +580,35 @@ public final class Vp9EncoderOptions {
     }
 
     /**
+     * {@return whether the encoder codes the alpha planes of the pictures as a second VP9 stream;
+     * {@code false} by default}
+     *
+     * <p>Each packet of a shown frame then carries, in
+     * {@link com.github.auties00.smalt.track.PacketSideData#alphaFrame()}, a VP9 frame whose luma
+     * plane is the picture's straight alpha plane at 8 bits and whose chroma is neutral, as WebM stores
+     * transparent VP9 video: the track holding the packets declares
+     * {@link com.github.auties00.smalt.track.VideoTrack#hasAlpha()}. A picture without alpha is coded
+     * opaque. The alpha stream codes every shown frame, at the constant quality of
+     * {@link #alphaQuality()}, without hidden frames, and has a key frame wherever the main stream
+     * has one, so that both decode from every key frame; it adds its own key frames at scene cuts of
+     * the alpha planes. It runs in the same usage, at the same speed, time base and threads as the main
+     * stream; hidden frames of the main stream carry no alpha frame.
+     */
+    public boolean alpha() {
+        return alpha;
+    }
+
+    /**
+     * {@return the quantizer of the alpha stream, from 0 to 63, on the scale of
+     * {@link #minQuantizer()}; 10 by default}
+     *
+     * <p>Lower values are finer. It applies only with {@link #alpha()}.
+     */
+    public int alphaQuality() {
+        return alphaQuality;
+    }
+
+    /**
      * Returns the {@code color_space} code of a matrix.
      *
      * @param matrix the matrix coefficients
@@ -606,7 +641,8 @@ public final class Vp9EncoderOptions {
                 && bufferSize.equals(that.bufferSize) && initialBufferLevel.equals(that.initialBufferLevel)
                 && optimalBufferLevel.equals(that.optimalBufferLevel) && tileColumnsLog2 == that.tileColumnsLog2
                 && threads == that.threads && subsampling == that.subsampling && bitDepth == that.bitDepth
-                && color.equals(that.color) && limits.equals(that.limits);
+                && color.equals(that.color) && limits.equals(that.limits)
+                && alpha == that.alpha && alphaQuality == that.alphaQuality;
     }
 
     @Override
@@ -615,7 +651,7 @@ public final class Vp9EncoderOptions {
                 lookahead, alternateReferences, temporalFilterStrength, temporalFilterFrames, firstPassStats,
                 keyframeInterval, speed, errorResilient, adaptiveQuantization, temporalLayers, dropFrames, bufferSize,
                 initialBufferLevel, optimalBufferLevel, tileColumnsLog2, threads, subsampling, bitDepth, color,
-                limits);
+                limits, alpha, alphaQuality);
     }
 
     @Override
@@ -629,7 +665,8 @@ public final class Vp9EncoderOptions {
                 + ", temporalLayers=" + temporalLayers + ", dropFrames=" + dropFrames + ", buffer="
                 + initialBufferLevel.toMillis() + "/" + optimalBufferLevel.toMillis() + "/" + bufferSize.toMillis()
                 + "ms, tileColumnsLog2=" + tileColumnsLog2 + ", threads=" + threads + ", subsampling=" + subsampling
-                + ", bitDepth=" + bitDepth + ", color=" + color + ", limits=" + limits + "]";
+                + ", bitDepth=" + bitDepth + ", color=" + color + ", limits=" + limits + ", alpha="
+                + alpha + ", alphaQuality=" + alphaQuality + "]";
     }
 
     /**
@@ -695,6 +732,10 @@ public final class Vp9EncoderOptions {
 
         private MediaLimits limits = MediaLimits.DEFAULT;
 
+        private boolean alpha;
+
+        private int alphaQuality = 10;
+
         private Builder() {
         }
 
@@ -727,6 +768,8 @@ public final class Vp9EncoderOptions {
             bitDepth = from.bitDepth;
             color = from.color;
             limits = from.limits;
+            alpha = from.alpha;
+            alphaQuality = from.alphaQuality;
         }
 
         /**
@@ -1044,6 +1087,29 @@ public final class Vp9EncoderOptions {
         }
 
         /**
+         * Sets whether the encoder codes the alpha planes as a second stream; see
+         * {@link Vp9EncoderOptions#alpha()}.
+         *
+         * @param alpha the value
+         * @return this builder
+         */
+        public Builder alpha(boolean alpha) {
+            this.alpha = alpha;
+            return this;
+        }
+
+        /**
+         * Sets the quantizer of the alpha stream; see {@link Vp9EncoderOptions#alphaQuality()}.
+         *
+         * @param quantizer the value
+         * @return this builder
+         */
+        public Builder alphaQuality(int quantizer) {
+            this.alphaQuality = quantizer;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -1051,8 +1117,8 @@ public final class Vp9EncoderOptions {
          * is not positive, the bitrate is not in [1, {@link Integer#MAX_VALUE}], the smallest
          * quantizer is not in [0, 63], the largest is not in [smallest, 63], the quality level is
          * not in [0, 63] or, with a quality rate control, not in [smallest, largest], the
-         * lookahead is not in [0, 25], the temporal filter strength is not in [0, 6] or its frames
-         * not in [0, 15], the key frame interval is not positive, the
+         * lookahead is not in [0, 25], the alpha quantizer is not in [0, 63], the temporal filter
+         * strength is not in [0, 6] or its frames not in [0, 15], the key frame interval is not positive, the
          * temporal layers are not in [1, 3], the buffer size is not in [1,
          * {@link Integer#MAX_VALUE}] milliseconds, the initial level is not in [0, size], the
          * optimal level is not in [1, size] milliseconds, the tile column logarithm is not in [0,
@@ -1077,6 +1143,7 @@ public final class Vp9EncoderOptions {
                         + minQuantizer + ".." + maxQuantizer);
             }
             Checks.inRange("lookahead", lookahead, 0, MAX_LOOKAHEAD);
+            Checks.inRange("alpha quantizer", alphaQuality, 0, 63);
             Checks.inRange("temporal filter strength", temporalFilterStrength, 0, 6);
             Checks.inRange("temporal filter frames", temporalFilterFrames, 0, 15);
             if (keyframeInterval.isPresent()) {

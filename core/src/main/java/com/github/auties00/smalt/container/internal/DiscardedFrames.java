@@ -11,7 +11,10 @@ import java.util.Arrays;
  * packets and possibly later, are recognized and dropped.
  *
  * <p>A timestamp is remembered once per discarded packet and forgotten by the first frame that
- * carries it. Instances are not thread-safe.
+ * carries it, or by a later packet with the same timestamp that is not discarded: a hidden frame
+ * that only serves as a reference (a VP8 alternate reference in a packet of its own) decodes to no
+ * frame and carries the timestamp of the frame shown after it, which must not be dropped in its
+ * place. Instances are not thread-safe.
  */
 public final class DiscardedFrames {
     /**
@@ -25,12 +28,19 @@ public final class DiscardedFrames {
     private int count;
 
     /**
-     * Remembers the timestamp of a packet when it is flagged {@link PacketFlag#DISCARD}.
+     * Remembers the timestamp of a packet when it is flagged {@link PacketFlag#DISCARD}, and
+     * forgets one remembered occurrence of it when the packet is not.
      *
      * @param packet the packet about to be decoded
      */
     public void note(Packet packet) {
-        if (!packet.flags().contains(PacketFlag.DISCARD) || packet.pts() == Packet.NO_TIMESTAMP) {
+        if (packet.pts() == Packet.NO_TIMESTAMP) {
+            return;
+        }
+        if (!packet.flags().contains(PacketFlag.DISCARD)) {
+            if (count > 0) {
+                drop(packet.pts());
+            }
             return;
         }
         if (count == times.length) {

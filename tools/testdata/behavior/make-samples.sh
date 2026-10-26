@@ -48,6 +48,12 @@ ff -f lavfi -i "$video" -f lavfi -i "$tone" "${x264[@]}" -c:a libopus -b:a 32k -
 ff -f lavfi -i "$video" -f lavfi -i "$noise" -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -b:v 100k -g 10 \
     -threads 1 -c:a libvorbis -q:a 0 -ac 1 -shortest "$out/matroska/vp9-vorbis.webm"
 ff -f lavfi -i "$short" -c:a flac -ac 2 "$out/matroska/flac.mka"
+# transparent WebM: AlphaMode 1, the alpha frames in BlockAdditional 1
+alpha="testsrc2=size=64x48:rate=10:duration=1,format=yuva420p,geq=lum='lum(X,Y)':cb='cb(X,Y)':cr='cr(X,Y)':a='clip(4*X+40*sin(N+Y/8),0,255)'"
+ff -f lavfi -i "$alpha" -c:v libvpx -pix_fmt yuva420p -deadline realtime -cpu-used 8 -b:v 200k -g 5 -auto-alt-ref 0 \
+    -threads 1 "$out/matroska/vp8-alpha.webm"
+ff -f lavfi -i "$alpha" -c:v libvpx-vp9 -pix_fmt yuva420p -deadline realtime -cpu-used 8 -b:v 200k -g 5 -threads 1 \
+    "$out/matroska/vp9-alpha.webm"
 
 ff -f lavfi -i "$noise" -c:a libvorbis -q:a 0 -ac 2 "$out/ogg/vorbis.ogg"
 ff -f lavfi -i "$tone" -c:a libopus -b:a 32k -ac 2 "$out/ogg/opus.opus"

@@ -36,6 +36,8 @@ public final class VideoEncoderOptions {
 
     private final int bitDepth;
 
+    private final boolean alpha;
+
     private VideoEncoderOptions(Builder builder) {
         this.width = builder.width;
         this.height = builder.height;
@@ -47,6 +49,7 @@ public final class VideoEncoderOptions {
         this.periodicKeyframes = builder.periodicKeyframes;
         this.color = builder.color;
         this.bitDepth = builder.bitDepth;
+        this.alpha = builder.alpha;
     }
 
     /**
@@ -199,6 +202,23 @@ public final class VideoEncoderOptions {
         return bitDepth;
     }
 
+    /**
+     * {@return whether the encoder codes the alpha planes of the pictures as a second stream of the
+     * same codec; {@code false} by default}
+     *
+     * <p>Each packet of a shown frame then carries the coded alpha frame in
+     * {@link com.github.auties00.smalt.track.PacketSideData#alphaFrame()}, a frame whose luma plane is
+     * the straight alpha plane of the picture, as WebM stores transparent VP8 and VP9 video; a picture
+     * without alpha is coded opaque. The track the packets are written to declares
+     * {@link com.github.auties00.smalt.track.VideoTrack#hasAlpha()}. {@link VideoEncoders} rejects the
+     * setting for a codec that cannot code alpha this way
+     * ({@link VideoEncoders#encodesAlpha(com.github.auties00.smalt.track.Codec)}); the Smalt artifacts
+     * code it for VP8 and VP9.
+     */
+    public boolean alpha() {
+        return alpha;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof VideoEncoderOptions that
@@ -211,13 +231,14 @@ public final class VideoEncoderOptions {
                 && keyframeInterval.equals(that.keyframeInterval)
                 && periodicKeyframes == that.periodicKeyframes
                 && Objects.equals(color, that.color)
-                && bitDepth == that.bitDepth;
+                && bitDepth == that.bitDepth
+                && alpha == that.alpha;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(width, height, frameRate, bitrate, realtime, threads, keyframeInterval, periodicKeyframes,
-                color, bitDepth);
+                color, bitDepth, alpha);
     }
 
     @Override
@@ -225,7 +246,7 @@ public final class VideoEncoderOptions {
         return "VideoEncoderOptions[width=" + width + ", height=" + height + ", frameRate=" + frameRate
                 + ", bitrate=" + bitrate + ", realtime=" + realtime + ", threads=" + threads + ", keyframeInterval="
                 + keyframeInterval + ", periodicKeyframes=" + periodicKeyframes + ", color=" + color() + ", bitDepth="
-                + bitDepth + "]";
+                + bitDepth + ", alpha=" + alpha + "]";
     }
 
     /**
@@ -247,6 +268,7 @@ public final class VideoEncoderOptions {
         private boolean periodicKeyframes = true;
         private ColorInfo color;
         private int bitDepth = 8;
+        private boolean alpha;
         private boolean sizeSet;
         private boolean bitrateSet;
 
@@ -264,6 +286,7 @@ public final class VideoEncoderOptions {
             this.periodicKeyframes = options.periodicKeyframes;
             this.color = options.color;
             this.bitDepth = options.bitDepth;
+            this.alpha = options.alpha;
             this.sizeSet = true;
             this.bitrateSet = true;
         }
@@ -395,6 +418,18 @@ public final class VideoEncoderOptions {
          */
         public Builder bitDepth(int bitDepth) {
             this.bitDepth = bitDepth;
+            return this;
+        }
+
+        /**
+         * Sets whether the encoder codes the alpha planes as a second stream; see
+         * {@link VideoEncoderOptions#alpha()}.
+         *
+         * @param alpha the value
+         * @return this builder
+         */
+        public Builder alpha(boolean alpha) {
+            this.alpha = alpha;
             return this;
         }
 

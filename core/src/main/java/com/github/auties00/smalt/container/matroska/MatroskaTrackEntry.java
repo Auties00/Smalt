@@ -222,6 +222,11 @@ final class MatroskaTrackEntry {
     StereoMode stereoMode;
 
     /**
+     * The {@code AlphaMode}, 0 unless declared.
+     */
+    long alphaMode;
+
+    /**
      * The {@code SamplingFrequency} in hertz.
      */
     double samplingFrequency = 8000;
@@ -365,6 +370,7 @@ final class MatroskaTrackEntry {
                     var mode = body.unsigned();
                     stereoMode = mode >= 0 && mode <= 14 ? StereoMode.ofCode(mode) : null;
                 }
+                case EbmlIds.ALPHA_MODE -> alphaMode = body.unsigned();
                 default -> {
                 }
             }
@@ -836,7 +842,7 @@ final class MatroskaTrackEntry {
             if (stereoMode != null) {
                 builder.stereoMode(stereoMode);
             }
-            return builder.build();
+            return builder.alpha(alphaMode == 1).build();
         }
         if (type == TYPE_AUDIO || codecId.startsWith("A_")) {
             var config = codecPrivate;

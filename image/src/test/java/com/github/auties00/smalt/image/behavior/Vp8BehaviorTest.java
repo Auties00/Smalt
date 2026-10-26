@@ -20,7 +20,7 @@ class Vp8BehaviorTest {
     private static final Path SAMPLES = Path.of("..", "core", "src", "test", "resources", "samples");
 
     @ParameterizedTest(name = "{0}")
-    @ValueSource(strings = {"ivf/vp8.ivf", "avi/mjpeg-pcm.avi", "mp4/jpeg2000.mov", "mp4/motion.mj2"})
+    @ValueSource(strings = {"ivf/vp8.ivf", "matroska/vp8-alpha.webm", "avi/mjpeg-pcm.avi", "mp4/jpeg2000.mov", "mp4/motion.mj2"})
     @DisplayName("samples: identical frames under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

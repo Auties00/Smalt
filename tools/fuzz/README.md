@@ -49,7 +49,9 @@ silently rejects everything fails the build.
 
 Packet decoder targets read the `FuzzPackets` format: a header (an options byte, the stream fields, the codec
 configuration) followed by packets, the parts separated by the marker `FUZZ-TAG`, so that a mutation of one
-packet leaves the others intact. `fuzz.py` hands libFuzzer a dictionary holding the marker for these targets.
+packet leaves the others intact. The transparent video targets (`vp8Alpha`, `vp9Alpha`) also split each packet into
+its color frame and its alpha frame at the marker `FUZZ-ALP`. `fuzz.py` hands libFuzzer a dictionary holding both
+markers for these targets.
 
 ## Running the fuzzers
 

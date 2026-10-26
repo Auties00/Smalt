@@ -23,4 +23,9 @@ class ImageVideoFuzzTest {
     void vp8(byte[] data) {
         FuzzMedia.video(Codec.VP8, data);
     }
+
+    @FuzzTest
+    void vp8Alpha(byte[] data) {
+        FuzzMedia.videoAlpha(Codec.VP8, data);
+    }
 }

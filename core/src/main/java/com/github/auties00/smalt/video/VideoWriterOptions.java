@@ -26,7 +26,7 @@ public final class VideoWriterOptions {
     public static final Rational DEFAULT_FRAME_RATE = new Rational(30, 1);
 
     private static final VideoWriterOptions DEFAULTS = new VideoWriterOptions(null, 0, 0, DEFAULT_FRAME_RATE, null, 0,
-            false, 0, OptionalInt.empty(), true, Orientation.NORMAL, null, null, MediaTags.empty());
+            false, 0, OptionalInt.empty(), true, Orientation.NORMAL, null, null, MediaTags.empty(), false);
 
     private final Codec codec;
     private final int width;
@@ -42,11 +42,13 @@ public final class VideoWriterOptions {
     private final ColorInfo color;
     private final String language;
     private final MediaTags tags;
+    private final boolean alpha;
 
     private VideoWriterOptions(Codec codec, int width, int height, Rational frameRate, Rational timeBase, long bitrate,
                                boolean realtime,
                                int threads, OptionalInt keyframeInterval, boolean periodicKeyframes,
-                               Orientation orientation, ColorInfo color, String language, MediaTags tags) {
+                               Orientation orientation, ColorInfo color, String language, MediaTags tags,
+                               boolean alpha) {
         this.codec = codec;
         this.width = width;
         this.height = height;
@@ -61,6 +63,7 @@ public final class VideoWriterOptions {
         this.color = color;
         this.language = language;
         this.tags = tags;
+        this.alpha = alpha;
     }
 
     /**
@@ -244,6 +247,22 @@ public final class VideoWriterOptions {
         return tags;
     }
 
+    /**
+     * {@return whether the track carries the alpha planes of the pictures as a second coded stream;
+     * {@code false} by default}
+     *
+     * <p>The track then declares {@link com.github.auties00.smalt.track.VideoTrack#hasAlpha()}, as a
+     * transparent WebM file does, and pictures without alpha are written opaque. It needs a codec that
+     * codes alpha this way ({@link VideoEncoders#encodesAlpha(Codec)}, VP8 and VP9) and a file that
+     * stores it ({@link com.github.auties00.smalt.transcode.OutputContainer#storesAlpha()}, or
+     * {@link com.github.auties00.smalt.container.Muxer#supportsAlpha()} for a caller's muxer).
+     *
+     * @see VideoEncoderOptions#alpha()
+     */
+    public boolean alpha() {
+        return alpha;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof VideoWriterOptions that
@@ -260,13 +279,14 @@ public final class VideoWriterOptions {
                 && orientation == that.orientation
                 && Objects.equals(color, that.color)
                 && Objects.equals(language, that.language)
-                && tags.equals(that.tags);
+                && tags.equals(that.tags)
+                && alpha == that.alpha;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(codec, width, height, frameRate, timeBase, bitrate, realtime, threads, keyframeInterval,
-                periodicKeyframes, orientation, color, language, tags);
+                periodicKeyframes, orientation, color, language, tags, alpha);
     }
 
     @Override
@@ -275,7 +295,7 @@ public final class VideoWriterOptions {
                 + frameRate + ", timeBase=" + timeBase + ", bitrate=" + bitrate + ", realtime=" + realtime + ", threads=" + threads
                 + ", keyframeInterval=" + keyframeInterval + ", periodicKeyframes=" + periodicKeyframes
                 + ", orientation=" + orientation + ", color=" + color + ", language=" + language + ", tags=" + tags
-                + "]";
+                + ", alpha=" + alpha + "]";
     }
 
     /**
@@ -300,6 +320,7 @@ public final class VideoWriterOptions {
         private ColorInfo color;
         private String language;
         private MediaTags tags;
+        private boolean alpha;
 
         private Builder(VideoWriterOptions options) {
             this.codec = options.codec;
@@ -317,6 +338,7 @@ public final class VideoWriterOptions {
             this.color = options.color;
             this.language = options.language;
             this.tags = options.tags;
+            this.alpha = options.alpha;
         }
 
         /**
@@ -551,6 +573,18 @@ public final class VideoWriterOptions {
         }
 
         /**
+         * Sets whether the track carries the alpha planes as a second coded stream; see
+         * {@link VideoWriterOptions#alpha()}.
+         *
+         * @param alpha the value
+         * @return this builder
+         */
+        public Builder alpha(boolean alpha) {
+            this.alpha = alpha;
+            return this;
+        }
+
+        /**
          * Returns options holding the settings of this builder.
          *
          * @return the options
@@ -577,7 +611,8 @@ public final class VideoWriterOptions {
                 Checks.positive("key frame interval", keyframeInterval.getAsInt());
             }
             return new VideoWriterOptions(codec, width, height, frameRate, timeBase, bitrate, realtime, threads,
-                    keyframeInterval, periodicKeyframes, orientation, color, WriterSupport.language(language), tags);
+                    keyframeInterval, periodicKeyframes, orientation, color, WriterSupport.language(language), tags,
+                    alpha);
         }
     }
 }

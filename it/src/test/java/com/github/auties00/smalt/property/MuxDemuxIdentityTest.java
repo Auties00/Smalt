@@ -95,6 +95,54 @@ class MuxDemuxIdentityTest {
         assertRoundTrip(container, List.of(Catalog.stream(video), Catalog.stream(audio)));
     }
 
+    static Stream<Arguments> alphaTracks() {
+        return Stream.of(OutputContainer.MATROSKA, OutputContainer.WEBM)
+                .flatMap(container -> Stream.of(Codec.VP8, Codec.VP9).map(codec -> Arguments.of(container, codec)));
+    }
+
+    @ParameterizedTest(name = "{0} carrying transparent {1}")
+    @MethodSource("alphaTracks")
+    @DisplayName("returns the alpha frames of a transparent track unchanged")
+    void alpha(OutputContainer container, Codec codec) {
+        var rate = new com.github.auties00.smalt.track.Rational(10, 1);
+        var options = com.github.auties00.smalt.video.VideoEncoderOptions.of(48, 32, rate, 400_000).toBuilder()
+                .alpha(true).build();
+        var packets = new ArrayList<Packet>();
+        VideoTrack track;
+        try (var encoder = com.github.auties00.smalt.video.VideoEncoders.create(codec, options)) {
+            for (var index = 0; index < 12; index++) {
+                encoder.encode(new com.github.auties00.smalt.video.VideoFrame(
+                        com.github.auties00.smalt.testkit.image.AlphaClips.frame(index, 48, 32),
+                        Packet.NO_TIMESTAMP, Packet.UNKNOWN_DURATION, false),
+                        packet -> packets.add(packet.withTrackId(1)));
+            }
+            encoder.flush(packet -> packets.add(packet.withTrackId(1)));
+            track = VideoTrack.builder().id(1).codec(codec).timeBase(encoder.timeBase()).width(48).height(32)
+                    .frameRate(rate).alpha(true).build();
+        }
+        var sink = MediaSink.memory();
+        try (var muxer = Containers.openMuxer(container, sink)) {
+            muxer.addTrack(track);
+            packets.forEach(muxer::writePacket);
+            muxer.finish();
+        }
+        var data = sink.toByteArray();
+        Validators.assertValid("identity-alpha-" + container.extension() + "-" + codec.name().toLowerCase(java.util.Locale.ROOT)
+                + "." + container.extension(), data);
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(data))) {
+            var demuxed = (VideoTrack) demuxer.tracks().getFirst();
+            assertEquals(true, demuxed.hasAlpha(), container + " " + codec);
+            var index = 0;
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read(), index++) {
+                var original = packets.get(index);
+                assertArrayEquals(original.data(), packet.data(), container + " " + codec + " packet " + index);
+                assertEquals(original.sideData().alphaFrame().map(Arrays::toString),
+                        packet.sideData().alphaFrame().map(Arrays::toString), container + " " + codec + " alpha " + index);
+            }
+            assertEquals(packets.size(), index, container + " " + codec + " packet count");
+        }
+    }
+
     static void assertRoundTrip(OutputContainer container, List<Streams.Encoded> streams) {
         var sink = MediaSink.memory();
         try (var muxer = Containers.openMuxer(container, sink)) {

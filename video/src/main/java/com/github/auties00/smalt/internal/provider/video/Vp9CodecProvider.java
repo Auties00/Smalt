@@ -32,7 +32,8 @@ import com.github.auties00.smalt.video.vp9.Vp9Subsampling;
  *   <li>a thread count above one: {@link Vp9EncoderOptions#threads()}, which caps it at 64;
  *       {@code 0} and {@code 1} keep the single thread of the presets;</li>
  *   <li>a color description: {@link Vp9EncoderOptions.Builder#color}, and a bit depth: 4:2:0 at 8, 10
- *       or 12 bits, the depth rounded up ({@link Vp9EncoderOptions.Builder#pictureFormat}).</li>
+ *       or 12 bits, the depth rounded up ({@link Vp9EncoderOptions.Builder#pictureFormat});</li>
+ *   <li>alpha: {@link Vp9EncoderOptions.Builder#alpha(boolean)}, at the default alpha quantizer.</li>
  * </ul>
  */
 public final class Vp9CodecProvider implements VideoCodecProvider {
@@ -58,6 +59,11 @@ public final class Vp9CodecProvider implements VideoCodecProvider {
     }
 
     @Override
+    public boolean encodesAlpha(Codec codec) {
+        return codec == Codec.VP9;
+    }
+
+    @Override
     public VideoEncoder createEncoder(Codec codec, VideoEncoderOptions options) {
         var builder = (options.realtime() ? Vp9EncoderOptions.forRealtime().toBuilder()
                 : Vp9EncoderOptions.ofBitrate(options.bitrate()).toBuilder().speed(Vp9EncoderSpeed.SPEED_4))
@@ -73,6 +79,7 @@ public final class Vp9CodecProvider implements VideoCodecProvider {
         }
         options.color().ifPresent(builder::color);
         builder.pictureFormat(Vp9Subsampling.YUV420, options.bitDepth() <= 8 ? 8 : options.bitDepth() <= 10 ? 10 : 12);
+        builder.alpha(options.alpha());
         return new Vp9Encoder(options.width(), options.height(), builder.build());
     }
 }

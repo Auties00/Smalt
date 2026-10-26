@@ -454,6 +454,11 @@ public final class Containers {
             return raw.supportsTags();
         }
 
+        @Override
+        public boolean supportsAlpha() {
+            return raw.supportsAlpha();
+        }
+
         /**
          * @throws MediaException.Unsupported {@inheritDoc}
          */

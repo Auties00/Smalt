@@ -57,6 +57,11 @@ class VideoFuzzTest {
     }
 
     @FuzzTest
+    void vp9Alpha(byte[] data) {
+        FuzzMedia.videoAlpha(Codec.VP9, data);
+    }
+
+    @FuzzTest
     void av1(byte[] data) {
         FuzzMedia.video(Codec.AV1, data);
     }
