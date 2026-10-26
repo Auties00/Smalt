@@ -351,7 +351,7 @@ final class HighDepth {
         var swap = orientation.swapsDimensions();
         var format = picture.chromaFormat();
         var source = picture;
-        if (swap && format == ChromaFormat.YUV422) {
+        if (swap && format.shiftX() != format.shiftY()) {
             source = widenChroma(picture);
             format = ChromaFormat.YUV444;
         }
@@ -389,23 +389,25 @@ final class HighDepth {
     }
 
     /**
-     * Converts a 4:2:2 picture to 4:4:4 by replicating every chroma sample over the two columns
-     * it covers; the luma and alpha planes are shared, not copied.
+     * Converts a 4:2:2 or 4:4:0 picture to 4:4:4 by replicating every chroma sample over the two
+     * columns or rows it covers; the luma and alpha planes are shared, not copied.
      *
-     * @param picture the 4:2:2 picture
+     * @param picture the 4:2:2 or 4:4:0 picture
      * @return the 4:4:4 picture
      */
     private static Yuv16Picture widenChroma(Yuv16Picture picture) {
         var width = picture.width();
         var height = picture.height();
+        var shiftX = picture.chromaFormat().shiftX();
+        var shiftY = picture.chromaFormat().shiftY();
         var u = new short[width * height];
         var v = new short[width * height];
         for (var row = 0; row < height; row++) {
-            var in = row * picture.uvStride();
+            var in = (row >> shiftY) * picture.uvStride();
             var out = row * width;
             for (var x = 0; x < width; x++) {
-                u[out + x] = picture.u()[in + (x >> 1)];
-                v[out + x] = picture.v()[in + (x >> 1)];
+                u[out + x] = picture.u()[in + (x >> shiftX)];
+                v[out + x] = picture.v()[in + (x >> shiftX)];
             }
         }
         return picture.toBuilder()

@@ -7,9 +7,9 @@ import com.github.auties00.smalt.internal.simd.Simd;
  * variances, sub-sample variances, block averages, Hadamard transforms and their quantization
  * estimates.
  *
- * <p>Samples are 8-bit values held in {@code short} planes. Every kernel has a bit-identical
- * scalar implementation, {@link ScalarEncDsp}, and a Vector API implementation,
- * {@link VectorEncDsp}.
+ * <p>Samples are held in {@code short} planes. The 8-bit kernels have a bit-identical scalar
+ * implementation, {@link ScalarEncDsp}, and a Vector API implementation, {@link VectorEncDsp};
+ * 10-bit and 12-bit samples take {@link HighBitDepthEncDsp} ({@link #select(int)}).
  *
  * @implNote This implementation follows libaom's {@code aom_dsp} C references ({@code sad.c},
  * {@code variance.c}, {@code avg.c}) and {@code av1_quantize_lp_c} ({@code av1/encoder/av1_quantize.c}).
@@ -26,10 +26,10 @@ abstract class EncDsp {
     static final EncDsp SCALAR = new ScalarEncDsp();
 
     /**
-     * The kernels every frame is analyzed with: {@link VectorEncDsp} when {@link Simd#ENABLED},
-     * {@link #SCALAR} otherwise.
+     * The kernels every frame is analyzed with: {@link VectorEncDsp}, written for 256-bit vectors,
+     * when {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final EncDsp FIXED = Simd.ENABLED ? new VectorEncDsp() : SCALAR;
+    private static final EncDsp FIXED = Simd.WIDE ? new VectorEncDsp() : SCALAR;
 
     /**
      * Creates a kernel set.
@@ -47,6 +47,27 @@ abstract class EncDsp {
      */
     static EncDsp select() {
         return FIXED;
+    }
+
+    /**
+     * The kernels of 10-bit samples.
+     */
+    private static final EncDsp TEN_BIT = new HighBitDepthEncDsp(10);
+
+    /**
+     * The kernels of 12-bit samples.
+     */
+    private static final EncDsp TWELVE_BIT = new HighBitDepthEncDsp(12);
+
+    /**
+     * Returns the kernels a frame of a bit depth is analyzed with: those of {@link #select()} at
+     * 8 bits, a {@link HighBitDepthEncDsp}, whose measurements are at the 8-bit scale, above.
+     *
+     * @param bitDepth the bit depth, 8, 10 or 12
+     * @return the kernels
+     */
+    static EncDsp select(int bitDepth) {
+        return bitDepth == 8 ? FIXED : bitDepth == 10 ? TEN_BIT : TWELVE_BIT;
     }
 
     /**
@@ -177,15 +198,17 @@ abstract class EncDsp {
     }
 
     /**
-     * Returns the variance of a packed {@link #sseSum} result, {@code sse - sum^2 / n}.
+     * Returns the variance of a packed {@link #sseSum} result, {@code sse - sum^2 / n}, or 0
+     * when the square term exceeds the sum of squares, which the separately rounded sums of the
+     * high bit depth kernels allow.
      *
      * @param packed the packed sums
      * @param log2n the base-2 logarithm of the number of samples
-     * @return the variance times the number of samples
+     * @return the variance times the number of samples, an unsigned 32-bit value
      */
     static int variance(long packed, int log2n) {
         var sum = (long) sum(packed);
-        return (int) ((packed >>> 32) - ((sum * sum) >>> log2n));
+        return (int) Math.max(0, (packed >>> 32) - ((sum * sum) >>> log2n));
     }
 
     /**

@@ -616,7 +616,7 @@ public final class VarDctFrame {
         var blocks = meta.blocks();
         var stride = meta.blockWidth();
         var oim = image.opsinInverse();
-        var qmScale = new float[]{(float) Math.pow(0.8, frame.xQmScale - 2), 1.0f, (float) Math.pow(0.8, frame.bQmScale - 2)};
+        var qmScale = new float[]{(float) StrictMath.pow(0.8, frame.xQmScale - 2), 1.0f, (float) StrictMath.pow(0.8, frame.bQmScale - 2)};
         var quantBiasNumerator = oim.quantBiasNumerator();
         for (var c = 0; c < 3; c++) {
             var rect = rects[c];
@@ -819,6 +819,26 @@ public final class VarDctFrame {
      */
     public float[][] planes() {
         return planes;
+    }
+
+    /**
+     * Returns an LF plane, after chroma from luma and adaptive smoothing.
+     *
+     * @param c the channel, 0 for X, 1 for Y and 2 for B
+     * @return the plane, one sample per 8x8 block, {@link #lfWidth(int)} wide
+     */
+    public float[] lfPlane(int c) {
+        return lf[c];
+    }
+
+    /**
+     * Returns the width of an LF plane.
+     *
+     * @param c the channel
+     * @return the width in samples
+     */
+    public int lfWidth(int c) {
+        return lfWidth[c];
     }
 
     /**

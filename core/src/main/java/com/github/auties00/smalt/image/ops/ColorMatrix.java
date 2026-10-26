@@ -35,10 +35,9 @@ import com.github.auties00.smalt.internal.color.LumaWeights;
  * exact coefficients by at most one unit in the sixteenth fractional bit.
  *
  * <p>A matrix is resolved with {@link MatrixCoefficients#effective()}, so
- * {@link MatrixCoefficients#UNSPECIFIED} is converted as {@link MatrixCoefficients#BT601}. The
- * matrices that need the transfer function or the primaries ({@link MatrixCoefficients#BT2020_CL},
- * {@link MatrixCoefficients#SMPTE2085}, {@link MatrixCoefficients#CHROMA_DERIVED_NCL},
- * {@link MatrixCoefficients#CHROMA_DERIVED_CL}, {@link MatrixCoefficients#ICTCP}) are unsupported.
+ * {@link MatrixCoefficients#UNSPECIFIED} is converted as {@link MatrixCoefficients#BT601}. Only the
+ * matrices defined by two fixed luma weights, YCgCo and the identity have coefficients; the others, which
+ * {@link CicpColor#handles}, convert in {@link CicpColor}.
  *
  * @implNote This implementation derives YCgCo and identity (GBR) samples from the linear formula with a single
  * rounding. ITU-T H.273 first quantizes R, G and B to the sample range and then applies the integer YCgCo transform,
@@ -205,7 +204,7 @@ final class ColorMatrix {
      *
      * @param color the color description
      * @return the coefficients
-     * @throws MediaException.Unsupported if the matrix needs the transfer function or the primaries
+     * @throws MediaException.Unsupported if {@link CicpColor#handles} the matrix
      */
     static ColorMatrix of(ColorInfo color) {
         return of(color.matrix(), color.range());
@@ -217,7 +216,7 @@ final class ColorMatrix {
      * @param matrix the matrix coefficients, resolved with {@link MatrixCoefficients#effective()}
      * @param range the quantization range
      * @return the coefficients
-     * @throws MediaException.Unsupported if the matrix needs the transfer function or the primaries
+     * @throws MediaException.Unsupported if {@link CicpColor#handles} the matrix
      */
     static ColorMatrix of(MatrixCoefficients matrix, ColorRange range) {
         var index = matrix.ordinal() * RANGES + range.ordinal();
@@ -235,7 +234,7 @@ final class ColorMatrix {
      * @param matrix the matrix coefficients, resolved with {@link MatrixCoefficients#effective()}
      * @param range the quantization range
      * @return the coefficients
-     * @throws MediaException.Unsupported if the matrix needs the transfer function or the primaries
+     * @throws MediaException.Unsupported if {@link CicpColor#handles} the matrix
      */
     private static ColorMatrix build(MatrixCoefficients matrix, ColorRange range) {
         var resolved = matrix.effective();
@@ -259,7 +258,7 @@ final class ColorMatrix {
                     {lumaScale, 0, 0}
             }, new int[]{lumaOffset, lumaOffset, lumaOffset}, new double[]{255 * lumaScale, 255 * lumaScale, 255 * lumaScale});
             default -> throw new MediaException.Unsupported("matrix " + matrix.name().toLowerCase(),
-                    "the " + matrix + " matrix coefficients are not supported");
+                    "the " + matrix + " matrix coefficients have no fixed-point coefficients");
         };
     }
 

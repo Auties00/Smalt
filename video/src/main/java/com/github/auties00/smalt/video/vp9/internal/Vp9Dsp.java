@@ -19,9 +19,10 @@ import com.github.auties00.smalt.internal.simd.Simd;
  */
 abstract sealed class Vp9Dsp permits ScalarVp9Dsp, VectorVp9Dsp {
     /**
-     * The implementation selected by {@link Simd#ENABLED}.
+     * The implementation selected by {@link Simd#WIDE}: the Vector API kernels, written for 256-bit
+     * vectors, or the scalar ones.
      */
-    public static final Vp9Dsp INSTANCE = Simd.ENABLED ? VectorVp9Dsp.create() : new ScalarVp9Dsp();
+    public static final Vp9Dsp INSTANCE = Simd.WIDE ? VectorVp9Dsp.create() : new ScalarVp9Dsp();
 
     /**
      * The minimum size of the {@code int} scratch array of {@link #inverseTransformAdd}: an

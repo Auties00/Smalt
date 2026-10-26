@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
@@ -23,8 +24,8 @@ import java.util.Objects;
  * PCM track.
  *
  * <p>The track must be an {@link AudioTrack} that declares its sample rate and channel layout,
- * with one of the codecs {@link #supports(Codec)} accepts: unsigned 8-bit, signed 16, 24 and
- * 32-bit little-endian integers, 32 and 64-bit little-endian floats ({@code WAVE_FORMAT_IEEE_FLOAT}),
+ * with one of the codecs {@link #supports(Codec)} accepts: unsigned 8-bit, signed 16, 24, 32 and
+ * 64-bit little-endian integers, 32 and 64-bit little-endian floats ({@code WAVE_FORMAT_IEEE_FLOAT}),
  * A-law and mu-law. The {@code fmt } chunk uses {@code WAVE_FORMAT_EXTENSIBLE} when the plain
  * format cannot describe the stream: integer samples wider than 16 bits, more than two channels,
  * or a layout other than mono or stereo; its channel mask has one bit per {@link Speaker} of the
@@ -106,9 +107,9 @@ public final class WavMuxer implements Muxer {
     private long dataSize;
 
     /**
-     * The metadata chunks the tags were encoded to, written before {@code data}.
+     * The tags of {@link #setTags(MediaTags)}, encoded into chunks before {@code data} when the header is written.
      */
-    private List<byte[]> metadata = List.of();
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether the header was written.
@@ -166,12 +167,12 @@ public final class WavMuxer implements Muxer {
      *
      * @param codec the codec of the track to write
      * @return {@code true} for {@link Codec#PCM_U8}, {@link Codec#PCM_S16LE}, {@link Codec#PCM_S24LE},
-     * {@link Codec#PCM_S32LE}, {@link Codec#PCM_F32LE}, {@link Codec#PCM_F64LE}, {@link Codec#PCM_ALAW} and
-     * {@link Codec#PCM_MULAW}
+     * {@link Codec#PCM_S32LE}, {@link Codec#PCM_S64LE}, {@link Codec#PCM_F32LE}, {@link Codec#PCM_F64LE},
+     * {@link Codec#PCM_ALAW} and {@link Codec#PCM_MULAW}
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case PCM_U8, PCM_S16LE, PCM_S24LE, PCM_S32LE, PCM_F32LE, PCM_F64LE, PCM_ALAW, PCM_MULAW -> true;
+            case PCM_U8, PCM_S16LE, PCM_S24LE, PCM_S32LE, PCM_S64LE, PCM_F32LE, PCM_F64LE, PCM_ALAW, PCM_MULAW -> true;
             default -> false;
         };
     }
@@ -219,9 +220,16 @@ public final class WavMuxer implements Muxer {
     /**
      * {@inheritDoc}
      *
-     * <p>The tags become a {@code LIST/INFO} chunk for the values it can hold and, when pictures,
-     * chapters or other keys need it, an {@code id3 } chunk with every tag, both before
-     * {@code data}.
+     * <p>The tags become a {@code LIST/INFO} chunk for the values it can hold and, when pictures
+     * or other keys need it, an {@code id3 } chunk with every tag, and the Broadcast Wave,
+     * {@code iXML}, {@code axml}, {@code chna} and {@code smpl} keys their own chunks, the XMP packet a {@code _PMX}
+     * chunk, as
+     * {@link com.github.auties00.smalt.metadata.TagEditor} writes them. The chapters become cue points:
+     * a {@code cue } chunk and a {@code LIST adtl} chunk holding a {@code labl} title and an {@code ltxt}
+     * length per chapter. Every chunk is written before {@code data}.
+     *
+     * @throws IllegalArgumentException if the value of a {@code chna}, {@code smpl}, {@code umid}, loudness or
+     * {@code time_reference} key is malformed
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -229,7 +237,8 @@ public final class WavMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        this.metadata = MuxerTags.riffChunks(tags, false);
+        MuxerTags.riffChunks(tags, false, 0);
+        this.tags = tags;
     }
 
     /**
@@ -238,6 +247,7 @@ public final class WavMuxer implements Muxer {
      * @throws IllegalArgumentException if the packet belongs to another track or does not hold whole frames
      * @throws IllegalStateException if no track was declared, the muxer is finished, or the
      * {@link WavMuxerOptions.Rf64#NEVER} policy forbids the size the packet would reach
+     * @throws MediaException.Unsupported if the packet changes the codec configuration
      */
     @Override
     public void writePacket(Packet packet) {
@@ -251,6 +261,7 @@ public final class WavMuxer implements Muxer {
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        ConfigChanges.reject(packet, track.codecConfig().orElse(null), "WAV");
         if (packet.size() % blockAlign != 0) {
             throw new IllegalArgumentException("a packet of " + packet.size() + " bytes does not hold whole frames of "
                     + blockAlign + " bytes");
@@ -366,7 +377,7 @@ public final class WavMuxer implements Muxer {
             factOffset = header.size();
             header.u32le(0);
         }
-        for (var chunk : metadata) {
+        for (var chunk : MuxerTags.riffChunks(tags, false, track.sampleRate())) {
             header.bytes(chunk);
         }
         header.fourCc("data");
@@ -396,7 +407,8 @@ public final class WavMuxer implements Muxer {
         var extensible = tag != WaveFormat.ALAW && tag != WaveFormat.MULAW
                 && (channels > 2 || !standardLayout || tag == WaveFormat.PCM && bits > 16);
         var format = new WaveFormat(tag, channels, track.sampleRate(), (long) track.sampleRate() * blockAlign, blockAlign,
-                bits, bits, extensible ? WaveFormat.channelMask(layout) : 0, extensible, true, new byte[0]);
+                bits, bits, extensible ? WaveFormat.channelMask(layout) : 0,
+                extensible ? WaveFormat.SubFormat.STANDARD : WaveFormat.SubFormat.NONE, new byte[0]);
         header.fourCc("fmt ");
         header.u32le(format.size(tag != WaveFormat.PCM));
         format.write(header, tag != WaveFormat.PCM);
