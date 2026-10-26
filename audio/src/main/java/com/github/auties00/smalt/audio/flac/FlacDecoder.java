@@ -8,6 +8,8 @@ import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.DoubleAudioBuffer;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.internal.header.Crc16;
 import com.github.auties00.smalt.internal.header.FlacFrameHeader;
 import com.github.auties00.smalt.internal.header.FlacStreamInfo;
@@ -17,6 +19,7 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 
 import java.util.Arrays;
+import java.util.HexFormat;
 import java.util.Objects;
 import java.util.function.Consumer;
 
@@ -41,7 +44,18 @@ import java.util.function.Consumer;
  * and the change is reported through the {@link AudioBuffer#sampleRate()} and
  * {@link AudioBuffer#layout()} of each block. Samples are scaled to floats by
  * {@code 2^-(bitsPerSample - 1)}, so full scale maps to {@code [-1, 1)}; samples of up to 24 bits
- * are represented exactly, and wider samples are rounded to the nearest float.
+ * are represented exactly, and wider samples are rounded to the nearest float. The decoded integers
+ * themselves, bit for bit at every sample size, are the blocks of
+ * {@link #decodeIntegers(Packet, Consumer)}, and {@link #decodeDoubles(Packet, Consumer)} scales them
+ * to doubles exactly.
+ *
+ * <p>With {@link AudioDecoderOptions#verifyIntegrity()}, the decoder computes the MD5 signature of
+ * the decoded samples as {@code STREAMINFO} defines it and checks it when flushed, if
+ * {@code STREAMINFO} carries one and the first frame decoded starts the stream: the flush raises
+ * {@link MediaException.Malformed} when the signature differs, when a frame is missing or repeated
+ * between the first and the last, or when fewer or more samples than {@code STREAMINFO} declares
+ * were decoded. Each frame is hashed in its own channel count and sample size, so a stream that
+ * changes format is checked too. {@link #md5Verified()} tells whether a check passed.
  *
  * <p>A frame whose header CRC-8 or frame CRC-16 is wrong, whose subframes use a reserved code or
  * run past the frame, or which has the declared format but a block size above the
@@ -80,6 +94,75 @@ public final class FlacDecoder implements AudioDecoder {
     private final MediaLimits limits;
 
     /**
+     * The signature of the decoded samples, or {@code null} when the signature is not checked.
+     */
+    private final FlacMd5 md5;
+
+    /**
+     * The state of the signature check, one of the {@code CHECK_} constants.
+     */
+    private int check;
+
+    /**
+     * The frame number (fixed blocking) or sample number (variable blocking) the next frame must
+     * carry for the decoded samples to stay contiguous.
+     */
+    private long expectedNumber;
+
+    /**
+     * Whether the frames checked so far use variable blocking.
+     */
+    private boolean variableBlocking;
+
+    /**
+     * The number of samples per channel added to {@link #md5}.
+     */
+    private long hashedSamples;
+
+    /**
+     * Whether a flush checked the signature and found it equal.
+     */
+    private boolean verified;
+
+    /**
+     * The integer output block, recreated when the format or the sample arrays change, or
+     * {@code null} before the first integer decode.
+     */
+    private IntegerAudioBuffer integers;
+
+    /**
+     * The double output block, recreated when the format or the needed capacity changes, or
+     * {@code null} before the first double decode.
+     */
+    private DoubleAudioBuffer doubles;
+
+    /**
+     * The sampling rate of the last decoded frame.
+     */
+    private int lastRate;
+
+    /**
+     * The check state before the first frame.
+     */
+    private static final int CHECK_WAITING = 0;
+
+    /**
+     * The check state while the frames decoded start the stream and follow each other.
+     */
+    private static final int CHECK_CONTIGUOUS = 1;
+
+    /**
+     * The check state after a frame was missing or repeated.
+     */
+    private static final int CHECK_GAP = 2;
+
+    /**
+     * The check state of a decode that cannot be checked: no signature, a first frame after the
+     * start, or a check already done.
+     */
+    private static final int CHECK_NONE = 3;
+
+    /**
      * The stream parameters from the codec configuration, or {@code null} when absent.
      */
     private final FlacStreamInfo streamInfo;
@@ -93,6 +176,11 @@ public final class FlacDecoder implements AudioDecoder {
      * The channel layout reported before the first block, or {@code null} when unknown.
      */
     private final ChannelLayout declaredLayout;
+
+    /**
+     * The sample size the track declares, 0 when it declares none.
+     */
+    private final int declaredBits;
 
     /**
      * The reusable frame header parser.
@@ -170,21 +258,23 @@ public final class FlacDecoder implements AudioDecoder {
     /**
      * Constructs a decoder for a FLAC track under the limits of codec-independent options.
      *
-     * <p>Only {@link AudioDecoderOptions#limits()} applies: the decoder always outputs the
-     * stream's own sampling rate, whatever {@link AudioDecoderOptions#preferredSampleRate()}
-     * asks for. The channel count of {@code STREAMINFO} and of every frame is checked against
+     * <p>{@link AudioDecoderOptions#limits()} and {@link AudioDecoderOptions#verifyIntegrity()}
+     * apply: the decoder always outputs the stream's own sampling rate, whatever
+     * {@link AudioDecoderOptions#preferredSampleRate()} asks for. The channel count of
+     * {@code STREAMINFO} and of every frame is checked against
      * {@link MediaLimits#maxChannels()}, and the sample buffers for the largest block against
      * {@link MediaLimits#maxBytes()}, before allocating.
      *
      * @param track the track to decode; its codec is {@link Codec#FLAC}
-     * @param options the codec-independent options, of which only the limits apply
+     * @param options the codec-independent options, of which the limits and the integrity check
+     * apply
      * @throws IllegalArgumentException if the track's codec is not FLAC
      * @throws MediaException.Malformed if the codec configuration is present but is not a valid
      * {@code STREAMINFO}
      * @throws MediaException.LimitExceeded if {@code STREAMINFO} exceeds the options' limits
      */
     public FlacDecoder(AudioTrack track, AudioDecoderOptions options) {
-        this(track, options.limits());
+        this(track, options.limits(), options.verifyIntegrity());
     }
 
     /**
@@ -192,8 +282,9 @@ public final class FlacDecoder implements AudioDecoder {
      *
      * @param track the track to decode
      * @param limits the resource limits
+     * @param verify whether to check the {@code STREAMINFO} signature
      */
-    private FlacDecoder(AudioTrack track, MediaLimits limits) {
+    private FlacDecoder(AudioTrack track, MediaLimits limits, boolean verify) {
         Objects.requireNonNull(track, "track");
         this.limits = limits;
         if (track.codec() != Codec.FLAC) {
@@ -209,6 +300,7 @@ public final class FlacDecoder implements AudioDecoder {
             layout = ChannelLayout.defaultFor(streamInfo.channels());
         }
         this.declaredLayout = layout;
+        this.declaredBits = track.bitsPerSample() >= 4 && track.bitsPerSample() <= 32 ? track.bitsPerSample() : 0;
         this.header = new FlacFrameHeader();
         this.reader = new FlacBitReader();
         this.coefficients = new int[MAX_LPC_ORDER];
@@ -216,6 +308,9 @@ public final class FlacDecoder implements AudioDecoder {
         LimitChecks.checkAllocation(limits, (long) MAX_CHANNELS * capacity * Integer.BYTES);
         this.samples = new int[MAX_CHANNELS][capacity];
         this.wide = new long[0];
+        var checked = verify && streamInfo != null && streamInfo.hasMd5();
+        this.md5 = checked ? new FlacMd5(capacity * streamInfo.channels() * ((streamInfo.bitsPerSample() + 7) / 8)) : null;
+        this.check = checked ? CHECK_WAITING : CHECK_NONE;
     }
 
     /**
@@ -261,25 +356,263 @@ public final class FlacDecoder implements AudioDecoder {
     public void decode(Packet packet, Consumer<AudioBuffer> output) {
         Objects.requireNonNull(packet, "packet");
         Objects.requireNonNull(output, "output");
-        AudioBuffer block;
-        try {
-            block = decodeFrame(packet.data());
-        } catch (MediaException exception) {
-            throw exception;
-        } catch (RuntimeException exception) {
-            throw new MediaException.Malformed("corrupt FLAC frame", exception);
+        decodePacket(packet);
+        var blockSize = lastBlockSize;
+        var block = outputBuffer(lastChannels, lastRate, blockSize);
+        var scale = Math.scalb(1f, 1 - lastBitsPerSample);
+        for (var channel = 0; channel < lastChannels; channel++) {
+            KERNEL.toFloat(samples[channel], block.plane(channel), blockSize, scale);
         }
+        block.setFrames(blockSize);
         output.accept(block);
     }
 
     /**
      * {@inheritDoc}
      *
-     * <p>Does nothing: a FLAC decoder buffers no samples between packets.
+     * <p>A FLAC decoder buffers no samples between packets, so no block is output; the flush only
+     * checks the {@code STREAMINFO} signature when requested.
      */
     @Override
     public void flush(Consumer<AudioBuffer> output) {
         Objects.requireNonNull(output, "output");
+        checkSignature();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsIntegerOutput() {
+        return true;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return the sample size of {@code STREAMINFO}, or of the track when the codec configuration is
+     * absent, or 0 when neither declares one
+     */
+    @Override
+    public int bitsPerSample() {
+        if (streamInfo != null) {
+            return streamInfo.bitsPerSample();
+        }
+        return declaredBits;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Every sample fits the frame's sample size: a frame of fewer than 32 bits whose prediction or
+     * stereo restoration leaves its range, which no valid stream does, raises
+     * {@link MediaException.Malformed}. A 32-bit frame keeps the low 32 bits of such a sample, as
+     * its float output does.
+     *
+     * @throws MediaException.Malformed if the packet is corrupt
+     * @throws MediaException.Unsupported if the packet uses a coding tool this decoder lacks
+     */
+    @Override
+    public void decodeIntegers(Packet packet, Consumer<IntegerAudioBuffer> output) {
+        Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(output, "output");
+        decodePacket(packet);
+        checkRange();
+        var block = integers;
+        if (block == null || block.channels() != lastChannels || block.sampleRate() != lastRate
+                || block.bitsPerSample() != lastBitsPerSample || block.plane(0) != samples[0]) {
+            block = new IntegerAudioBuffer(layoutFor(lastChannels), lastRate, lastBitsPerSample,
+                    Arrays.copyOf(samples, lastChannels), 0);
+            integers = block;
+        }
+        block.setFrames(lastBlockSize);
+        output.accept(block);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A FLAC decoder buffers no samples between packets, so no block is output; the flush only
+     * checks the {@code STREAMINFO} signature when requested.
+     */
+    @Override
+    public void flushIntegers(Consumer<IntegerAudioBuffer> output) {
+        Objects.requireNonNull(output, "output");
+        checkSignature();
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsDoubleOutput() {
+        return true;
+    }
+
+    @Override
+    public void decodeDoubles(Packet packet, Consumer<DoubleAudioBuffer> output) {
+        Objects.requireNonNull(packet, "packet");
+        Objects.requireNonNull(output, "output");
+        decodePacket(packet);
+        var blockSize = lastBlockSize;
+        var block = doubles;
+        if (block == null || block.channels() != lastChannels || block.sampleRate() != lastRate
+                || block.capacity() < blockSize) {
+            var capacity = Math.max(blockSize, streamInfo != null ? streamInfo.maxBlockSize() : 0);
+            block = new DoubleAudioBuffer(layoutFor(lastChannels), lastRate, capacity);
+            doubles = block;
+        }
+        var scale = Math.scalb(1.0, 1 - lastBitsPerSample);
+        for (var channel = 0; channel < lastChannels; channel++) {
+            var source = samples[channel];
+            var target = block.plane(channel);
+            for (var i = 0; i < blockSize; i++) {
+                target[i] = source[i] * scale;
+            }
+        }
+        block.setFrames(blockSize);
+        output.accept(block);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>A FLAC decoder buffers no samples between packets, so no block is output; the flush only
+     * checks the {@code STREAMINFO} signature when requested.
+     */
+    @Override
+    public void flushDoubles(Consumer<DoubleAudioBuffer> output) {
+        Objects.requireNonNull(output, "output");
+        checkSignature();
+    }
+
+    /**
+     * Returns whether a flush compared the {@code STREAMINFO} MD5 signature with the decoded samples
+     * and found them equal.
+     *
+     * <p>It is {@code false} before the flush, without {@link AudioDecoderOptions#verifyIntegrity()},
+     * and when the decode could not be checked: {@code STREAMINFO} absent or without a signature, or
+     * a first frame after the start of the stream.
+     *
+     * @return {@code true} once the signature was checked and matched
+     */
+    public boolean md5Verified() {
+        return verified;
+    }
+
+    /**
+     * Rejects a frame whose samples do not fit its sample size.
+     *
+     * @throws MediaException.Malformed if a sample of the last frame is out of range
+     */
+    private void checkRange() {
+        var bits = lastBitsPerSample;
+        if (bits == 32) {
+            return;
+        }
+        var min = -(1 << (bits - 1));
+        var max = (1 << (bits - 1)) - 1;
+        for (var channel = 0; channel < lastChannels; channel++) {
+            var plane = samples[channel];
+            var low = 0;
+            var high = 0;
+            for (var i = 0; i < lastBlockSize; i++) {
+                low = Math.min(low, plane[i]);
+                high = Math.max(high, plane[i]);
+            }
+            if (low < min || high > max) {
+                throw new MediaException.Malformed("FLAC frame decodes to a sample of more than " + bits + " bits");
+            }
+        }
+    }
+
+    /**
+     * Decodes one packet into {@link #samples}, wrapping unchecked failures.
+     *
+     * @param packet the packet to decode, one frame
+     * @throws MediaException.Malformed if the frame is corrupt
+     */
+    private void decodePacket(Packet packet) {
+        try {
+            decodeFrame(packet.data());
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("corrupt FLAC frame", exception);
+        }
+    }
+
+    /**
+     * Ends the signature check of a decode that started the stream, as a flush does.
+     *
+     * @throws MediaException.Malformed if frames are missing, the sample count differs from
+     * {@code STREAMINFO}'s, or the signature differs
+     */
+    private void checkSignature() {
+        var state = check;
+        if (state == CHECK_WAITING || state == CHECK_NONE) {
+            return;
+        }
+        check = CHECK_NONE;
+        if (state == CHECK_GAP) {
+            throw new MediaException.Malformed("FLAC frames are missing or repeated, so the MD5 signature cannot match");
+        }
+        var total = streamInfo.totalSamples();
+        if (total != 0 && hashedSamples != total) {
+            throw new MediaException.Malformed("FLAC stream of " + total + " samples ends after " + hashedSamples);
+        }
+        var digest = md5.digest();
+        if (!Arrays.equals(digest, streamInfo.md5())) {
+            throw new MediaException.Malformed("FLAC MD5 signature mismatch: STREAMINFO "
+                    + HexFormat.of().formatHex(streamInfo.md5()) + ", decoded " + HexFormat.of().formatHex(digest));
+        }
+        verified = true;
+    }
+
+    /**
+     * Adds the last decoded frame to the signature check, in the frame's own channel count and
+     * sample size.
+     *
+     * @param channels the frame's channel count
+     * @param bitsPerSample the frame's sample size
+     * @param blockSize the frame's samples per channel
+     */
+    private void track(int channels, int bitsPerSample, int blockSize) {
+        var number = header.number();
+        if (check == CHECK_WAITING) {
+            if (number != 0) {
+                check = CHECK_NONE;
+                return;
+            }
+            check = CHECK_CONTIGUOUS;
+            variableBlocking = codesSampleNumber();
+        } else if (check == CHECK_CONTIGUOUS
+                && (codesSampleNumber() != variableBlocking || number != expectedNumber)) {
+            check = CHECK_GAP;
+        }
+        if (check != CHECK_CONTIGUOUS) {
+            return;
+        }
+        expectedNumber = variableBlocking ? number + blockSize : number + 1;
+        md5.update(samples, channels, blockSize, bitsPerSample);
+        hashedSamples += blockSize;
+    }
+
+    /**
+     * Returns whether the last frame header codes the number of its first sample rather than its
+     * frame number: when it declares variable blocking, and in streams written before the blocking
+     * strategy bit existed, whose {@code STREAMINFO} gives different minimum and maximum block sizes
+     * (as libFLAC reads them).
+     *
+     * @return {@code true} when the coded number counts samples
+     */
+    private boolean codesSampleNumber() {
+        return header.variableBlocking()
+                || streamInfo != null && streamInfo.minBlockSize() != streamInfo.maxBlockSize();
     }
 
     /**
@@ -323,15 +656,14 @@ public final class FlacDecoder implements AudioDecoder {
     }
 
     /**
-     * Decodes one frame.
+     * Decodes one frame into {@link #samples}, recording its format in the {@code last} fields.
      *
      * @param data the frame bytes
-     * @return the decoded block
      * @throws MediaException.Malformed if the frame is corrupt or disagrees with
      * {@code STREAMINFO}
      * @throws MediaException.LimitExceeded if the frame exceeds the limits
      */
-    private AudioBuffer decodeFrame(byte[] data) {
+    private void decodeFrame(byte[] data) {
         var length = data.length;
         if (!header.parse(data, 0, length)) {
             throw new MediaException.Malformed("invalid FLAC frame header");
@@ -390,21 +722,31 @@ public final class FlacDecoder implements AudioDecoder {
         } else if (reader.overrun()) {
             throw new MediaException.Malformed("FLAC subframes run past the end of the frame");
         }
-        var block = outputBuffer(channels, rate, blockSize);
-        var scale = Math.scalb(1f, 1 - bitsPerSample);
-        for (var channel = 0; channel < channels; channel++) {
-            KERNEL.toFloat(samples[channel], block.plane(channel), blockSize, scale);
-        }
-        block.setFrames(blockSize);
         if (!started) {
             started = true;
             firstRate = rate;
-            firstLayout = block.layout();
+            firstLayout = layoutFor(channels);
         }
         lastBlockSize = blockSize;
         lastBitsPerSample = bitsPerSample;
         lastChannels = channels;
-        return block;
+        lastRate = rate;
+        if (check < CHECK_GAP) {
+            track(channels, bitsPerSample, blockSize);
+        }
+    }
+
+    /**
+     * Returns the layout of the frames of a channel count: the track's when it has that many
+     * channels, the default layout otherwise.
+     *
+     * @param channels the channel count
+     * @return the layout
+     */
+    private ChannelLayout layoutFor(int channels) {
+        return declaredLayout != null && declaredLayout.channels() == channels
+                ? declaredLayout
+                : ChannelLayout.defaultFor(channels);
     }
 
     /**
@@ -448,11 +790,8 @@ public final class FlacDecoder implements AudioDecoder {
      */
     private AudioBuffer outputBuffer(int channels, int rate, int blockSize) {
         if (buffer == null || buffer.channels() != channels || buffer.sampleRate() != rate || buffer.capacity() < blockSize) {
-            var layout = declaredLayout != null && declaredLayout.channels() == channels
-                    ? declaredLayout
-                    : ChannelLayout.defaultFor(channels);
             var capacity = Math.max(blockSize, streamInfo != null ? streamInfo.maxBlockSize() : 0);
-            buffer = new AudioBuffer(layout, rate, capacity);
+            buffer = new AudioBuffer(layoutFor(channels), rate, capacity);
         }
         return buffer;
     }

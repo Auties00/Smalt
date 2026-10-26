@@ -145,6 +145,17 @@ final class PictureContext {
     final boolean[] forcePcm;
 
     /**
+     * The first macroblock column of the intra refresh band of a P picture, which is also the number
+     * of columns the reference picture refreshed; 0 without intra refresh.
+     */
+    int refreshStart;
+
+    /**
+     * The column after the intra refresh band of a P picture; 0 without intra refresh.
+     */
+    int refreshEnd;
+
+    /**
      * Constructs a context.
      *
      * @param settings the stream settings

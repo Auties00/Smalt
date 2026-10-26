@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.capture.internal.macos;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.VideoDevices;
 import com.github.auties00.smalt.capture.CaptureDevice;
@@ -25,8 +26,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTimeoutPreemptively;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Runs the macOS backend against the real frameworks. Skipped on other systems. Enumeration always
@@ -39,11 +38,12 @@ class MacCaptureLiveTest {
     @BeforeAll
     static void requireMac() {
         var os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        assumeTrue(os.startsWith("mac"), "the macOS backend runs only on macOS");
+        Skip.unless(os.startsWith("mac"), "platform:macos", "the macOS backend runs only on macOS");
     }
 
     private static void requireLive() {
-        assumeTrue(Boolean.getBoolean("smalt.capture.live"), "set -Dsmalt.capture.live=true to open devices");
+        Skip.unless(Boolean.parseBoolean(Skip.setting("smalt.capture.live", "SMALT_CAPTURE_LIVE")), "opt-in:capture-live",
+                "set -Dsmalt.capture.live=true (or SMALT_CAPTURE_LIVE=true) to open devices");
     }
 
     @Test
@@ -111,12 +111,12 @@ class MacCaptureLiveTest {
     void captureScreen() {
         requireLive();
         var screen = VideoDevices.primaryScreen();
-        assumeTrue(screen.isPresent(), "no screen");
+        Skip.unlessDevice(screen.isPresent(), "screen", "no screen");
         assertTimeoutPreemptively(Duration.ofSeconds(60), () -> {
             try (var session = VideoDevices.openCapture(screen.get(), 10)) {
                 assertFrames(session, 15);
             } catch (MediaException.Io permission) {
-                assumeFalse(permission.getMessage().contains("Screen Recording"), permission.getMessage());
+                Skip.unlessDevice(!permission.getMessage().contains("Screen Recording"), "screen-permission", permission.getMessage());
                 throw permission;
             }
         });
@@ -127,7 +127,7 @@ class MacCaptureLiveTest {
     void captureCamera() {
         requireLive();
         var camera = VideoDevices.defaultCamera();
-        assumeTrue(camera.isPresent(), "no camera");
+        Skip.unlessDevice(camera.isPresent(), "camera", "no camera");
         assertTimeoutPreemptively(Duration.ofSeconds(180), () -> {
             try (var session = VideoDevices.openCapture(camera.get())) {
                 assertFrames(session, 10);
@@ -153,7 +153,7 @@ class MacCaptureLiveTest {
                 assertNull(last.get());
                 assertNull(session.read());
             } catch (MediaException.Io denied) {
-                assumeFalse(denied.getMessage().contains("camera access"), denied.getMessage());
+                Skip.unlessDevice(!denied.getMessage().contains("camera access"), "camera-permission", denied.getMessage());
                 throw denied;
             }
         });
