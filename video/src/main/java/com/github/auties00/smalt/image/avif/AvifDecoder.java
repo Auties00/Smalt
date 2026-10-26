@@ -6,12 +6,14 @@ import com.github.auties00.smalt.image.AnimationReader;
 import com.github.auties00.smalt.image.AuxiliaryImage;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
+import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
+import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.Yuv16Picture;
 import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.gainmap.GainMap;
-import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.internal.heif.HeifPages;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.image.avif.internal.AvifFiles;
@@ -97,7 +99,16 @@ import java.util.function.Supplier;
  * to the frame shown then, which is the frame a decode from the start shows. {@link #decode}
  * returns the first frame of a sequence when the file's major brand is {@code avis}, with the ICC
  * profile, EXIF block and XMP packet of the primary item when the file has one, and the primary image
- * otherwise.
+ * otherwise. {@link #openPages} reads every master image of a collection.
+ *
+ * <p>Every image decodes with the artifact that implements its coding, whatever the brands of its
+ * file: a file with only the generic HEIF brands ({@code mif1}, {@code miaf}, {@code msf1}) decodes here
+ * when its image is AV1-coded, and a file whose primary image (or whose sequence, without a primary
+ * image) is coded with HEVC, AVC, JPEG, JPEG 2000 or as uncompressed samples decodes exactly as
+ * {@code com.github.auties00.smalt.image.heic.HeicDecoder} of the {@code smalt-mpeg} artifact decodes
+ * it, and reports {@link ImageFormat#HEIC}. Without that artifact such a file raises
+ * {@link MediaException.Unsupported} naming it. An alpha auxiliary image coded with one of those
+ * codings is attached through the same artifact, and ignored without it.
  *
  * <p>Every size the file declares is checked against the {@link MediaLimits} of the options
  * before the corresponding allocation: the {@code meta} and {@code moov} boxes and every item
@@ -105,7 +116,7 @@ import java.util.function.Supplier;
  * the sample counts against {@link MediaLimits#maxFrames()}. Malformed input raises
  * {@link MediaException.Malformed}, never an unchecked runtime exception; a valid file using a
  * feature this decoder lacks (an essential property it does not know, a primary item coded with
- * another codec) raises {@link MediaException.Unsupported}.
+ * a codec no Smalt artifact decodes) raises {@link MediaException.Unsupported}.
  *
  * <p>Under the reduced-size hint of {@link ImageDecoderOptions}, a still image decodes to the
  * smallest of its thumbnail items ({@code thmb} reference) that is at least that large and shows
@@ -189,8 +200,7 @@ public final class AvifDecoder {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         try (var _ = ParallelBands.operation()) {
-            var image = AvifFiles.decode(source, options);
-            return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+            return AvifFiles.decode(source, options);
         } catch (MediaException exception) {
             throw exception;
         } catch (OutOfMemoryError error) {
@@ -378,11 +388,70 @@ public final class AvifDecoder {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         try (var _ = ParallelBands.operation()) {
-            return AvifFiles.openAnimation(source, options.limits(), options.highBitDepth());
+            return AvifFiles.openAnimation(source, options);
         } catch (MediaException exception) {
             throw exception;
         } catch (OutOfMemoryError error) {
             throw new MediaException.LimitExceeded("out of memory while opening an AVIF animation");
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("malformed AVIF file", exception);
+        }
+    }
+
+    /**
+     * Opens the pages of a HEIF file under the {@link ImageDecoderOptions#defaults()}.
+     *
+     * @param source the file
+     * @return the reader, which the caller closes; closing it does not close {@code source}
+     * @throws NullPointerException if {@code source} is {@code null}
+     * @throws MediaException.Malformed if the file structure is invalid or truncated
+     * @throws MediaException.Unsupported if the image the file shows has a coding no artifact at hand decodes
+     * @throws MediaException.LimitExceeded if a declared size or the page count exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     * @see #openPages(MediaSource, ImageDecoderOptions)
+     */
+    public static PageReader openPages(MediaSource source) {
+        return openPages(source, ImageDecoderOptions.defaults());
+    }
+
+    /**
+     * Opens the pages of a HEIF file: its master images, such as the images of a collection, of a burst or of a
+     * stereo pair.
+     *
+     * <p>Page 0 is the image {@link #decode(MediaSource, ImageDecoderOptions)} returns. The other pages are the
+     * master images of the file (ISO/IEC 23008-12) in item order: every image item that is not hidden, not a
+     * thumbnail, not an auxiliary image (alpha planes, depth maps, gain maps), not an input of a grid, an identity
+     * derivation, an overlay or a sample transform, not a tone map, and not the image page 0 shows. The items of an
+     * alternatives group ({@code altr}) are versions of one image and make a single page: the first of them that
+     * can be reconstructed, the group of the primary item being page 0. Each page decodes as {@link #decode}
+     * decodes the primary image, with its own orientation, thumbnails and metadata; a page coded with HEVC, AVC,
+     * JPEG, JPEG 2000 or as uncompressed samples decodes with the HEIC decoder of the {@code smalt-mpeg}
+     * artifact, and raises {@link MediaException.Unsupported} naming that artifact when it is not present. The
+     * image sequence of a file is not a page, unless page 0 is its first frame.
+     *
+     * <p>{@link PageReader#groups()} reports the other entity groups of the file with the pages of their entities
+     * in group order: a stereo pair ({@code ster}) as the left view then the right view, a burst ({@code brst}),
+     * time-synchronized captures ({@code tsyn}), albums ({@code albc}) and the other groups by their type.
+     *
+     * @param source the file
+     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion, applied
+     * to every page
+     * @return the reader, which the caller closes; closing it does not close {@code source}
+     * @throws NullPointerException if an argument is {@code null}
+     * @throws MediaException.Malformed if the file structure is invalid or truncated
+     * @throws MediaException.Unsupported if the image the file shows has a coding no artifact at hand decodes
+     * @throws MediaException.LimitExceeded if a declared size or the page count exceeds the limits
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static PageReader openPages(MediaSource source, ImageDecoderOptions options) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(options, "options");
+        try (var _ = ParallelBands.operation()) {
+            return HeifPages.open(source, options, ImageFormat.AVIF);
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (OutOfMemoryError error) {
+            throw new MediaException.LimitExceeded("out of memory while opening the pages of an AVIF file");
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("malformed AVIF file", exception);
         }

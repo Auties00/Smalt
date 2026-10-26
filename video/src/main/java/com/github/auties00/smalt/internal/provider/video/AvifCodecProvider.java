@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.ImageInfo;
+import com.github.auties00.smalt.image.PageReader;
 import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.io.MediaSink;
@@ -52,6 +53,11 @@ public final class AvifCodecProvider implements ImageCodecProvider {
     @Override
     public Optional<AnimationReader> openAnimation(MediaSource source, ImageDecoderOptions options) {
         return Optional.of(AvifDecoder.openAnimation(source, options));
+    }
+
+    @Override
+    public Optional<PageReader> openPages(MediaSource source, ImageDecoderOptions options) {
+        return Optional.of(AvifDecoder.openPages(source, options));
     }
 
     @Override

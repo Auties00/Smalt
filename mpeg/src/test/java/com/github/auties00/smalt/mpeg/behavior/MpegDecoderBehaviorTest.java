@@ -75,7 +75,7 @@ class MpegDecoderBehaviorTest {
 
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"valid-avc.heic", "valid-unci-rgb3.heic", "valid-unci-v210.heic", "valid-unci-zlib.heic",
-            "valid-lhv1.heic"})
+            "valid-lhv1.heic", "valid-collection.heic"})
     @DisplayName("HEIF items of other codecs (the HEIC fuzz seeds): identical pictures under every source behavior")
     void heifItems(String name) throws IOException {
         ImageDecoderAsserts.of("heif-items/" + name, Files.readAllBytes(HEIF_SEEDS.resolve(name))).run();

@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -15,6 +16,7 @@ import com.github.auties00.smalt.internal.heif.HeifCanvas;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
+import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifOverlay;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
@@ -72,7 +74,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>Derived images nest at most {@value #MAX_DEPTH} deep, and the coded pictures decoded for one
  * image total at most four times the pixel limit; a file that goes beyond either is rejected, so a
- * small file cannot make the decoder loop or decode the same picture without end.
+ * small file cannot make the decoder loop or decode the same picture without end. An AV1-coded input
+ * of a derived image is reconstructed by the AVIF {@link HeifImageCodec}, its nesting counted on from
+ * the derived image, and raises {@link MediaException.Unsupported} when no artifact provides it.
  */
 public final class StillDecoder {
     /**
@@ -180,6 +184,26 @@ public final class StillDecoder {
     }
 
     /**
+     * Reconstructs a coded item as the input of a derived image of an AVIF file: its image before its own
+     * transformative properties.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the coded item
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param depth the number of derived images reconstructed on the way to the item
+     * @return the picture
+     * @throws MediaException.Malformed if the item is corrupt or nested deeper than {@value #MAX_DEPTH}
+     * @throws MediaException.Unsupported if the item uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    public static Picture reconstructInput(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits,
+                                           boolean highBitDepth, int depth) {
+        return new StillDecoder(source, file, limits).reconstruct(item, highBitDepth, depth);
+    }
+
+    /**
      * Rejects an item with an essential property this decoder does not implement.
      *
      * @param item the item to check
@@ -262,12 +286,16 @@ public final class StillDecoder {
     /**
      * Returns the alpha auxiliary image of an item.
      *
+     * @param source the file
      * @param file the parsed file
      * @param item the item whose alpha is wanted
+     * @param limits the bounds of the data read
      * @return the first auxiliary item with the alpha URN that is coded, a grid or an identity
-     * derivation and has only supported essential properties, or {@code null}
+     * derivation and has only supported essential properties, or else the first one coded with AV1
+     * that the AVIF {@link HeifImageCodec} at hand reconstructs, or {@code null}
+     * @throws MediaException.Io if reading the source fails
      */
-    static HeifItem alphaOf(HeifFile file, HeifItem item) {
+    static HeifItem alphaOf(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
         for (var candidate : HeifStills.alphaCandidates(file, item, SUPPORTED_PROPERTIES)) {
             if (candidate.type().equals("iden")) {
                 return candidate;
@@ -277,7 +305,7 @@ public final class StillDecoder {
                 return candidate;
             }
         }
-        return null;
+        return HeifImageCodec.foreignAlpha(source, file, item, limits, ImageFormat.HEIC);
     }
 
     /**
@@ -320,6 +348,12 @@ public final class StillDecoder {
             throw new MediaException.Malformed("heic: item " + item.id() + " is derived from itself");
         }
         try {
+            if (HeifImageCodec.formatOf(item.type()) == ImageFormat.AVIF) {
+                var picture = HeifImageCodec.require(ImageFormat.AVIF).reconstructInput(source, file, item, limits,
+                        wide, depth + 1);
+                charge((long) picture.width() * picture.height());
+                return picture;
+            }
             requireDecodable(item);
             return switch (item.type()) {
                 case "grid" -> grid(item, wide, depth);
@@ -359,7 +393,7 @@ public final class StillDecoder {
      * @return the picture
      */
     private Picture coded(HeifItem item, boolean wide, int depth) {
-        var alpha = alphaOf(file, item);
+        var alpha = alphaOf(source, file, item, limits);
         var frame = decodeCoded(decoders, item);
         var own = frame.alpha();
         var canvas = frame.canvas(limits, frame.width(), frame.height(), wide, alpha != null || own != null);
@@ -618,7 +652,7 @@ public final class StillDecoder {
             plain &= isPlainCoded(tile) && tile.references("pred").length == 0 && !premultiplied(tile);
             tiles.add(tile);
         }
-        var alpha = alphaOf(file, item);
+        var alpha = alphaOf(source, file, item, limits);
         Picture picture;
         if (plain) {
             picture = codedGrid(item, grid, tiles, alpha, width, height, wide, depth);
@@ -657,8 +691,8 @@ public final class StillDecoder {
         if (alpha == null) {
             var found = new ArrayList<HeifItem>(tiles.size());
             for (var tile : tiles) {
-                var tileAlpha = alphaOf(file, tile);
-                if (!isPlainCoded(tileAlpha)) {
+                var tileAlpha = alphaOf(source, file, tile, limits);
+                if (tileAlpha == null) {
                     found = null;
                     break;
                 }
@@ -698,7 +732,7 @@ public final class StillDecoder {
             } else if (fillOpaque) {
                 canvas.fillAlpha(x, y, w, h);
             }
-            if (perTileAlpha != null) {
+            if (perTileAlpha != null && isPlainCoded(perTileAlpha.get(index))) {
                 var tileAlpha = perTileAlpha.get(index);
                 var alphaFrame = decodeCoded(tileDecoders, tileAlpha);
                 var limited = alphaFrame.limitedAlpha(tileAlpha.property(HeifProperty.ColorNclx.class));
@@ -713,6 +747,21 @@ public final class StillDecoder {
         var canvas = state.canvas;
         if (alpha != null) {
             attachAlpha(canvas, alpha, depth);
+        }
+        if (perTileAlpha != null) {
+            for (var index = 0; index < tiles.size(); index++) {
+                var tileAlpha = perTileAlpha.get(index);
+                if (isPlainCoded(tileAlpha)) {
+                    continue;
+                }
+                var x = (index % grid.columns()) * tileWidth;
+                var y = (index / grid.columns()) * tileHeight;
+                var picture = output(tileAlpha, true, depth + 2);
+                var limited = !HeifPictures.isPacked(picture)
+                        && HeifPictures.colorOf(picture).range() == ColorRange.LIMITED;
+                canvas.writeAlpha(HeifPictures.resampleAlpha(picture, tileWidth, tileHeight), x, y,
+                        Math.min(tileWidth, width - x), Math.min(tileHeight, height - y), limited);
+            }
         }
         return canvas.toPicture(Colors.override(state.color, item));
     }
@@ -944,7 +993,7 @@ public final class StillDecoder {
      * @param item the coded item or grid
      */
     private boolean premultiplied(HeifItem item) {
-        var alpha = alphaOf(file, item);
+        var alpha = alphaOf(source, file, item, limits);
         if (alpha != null) {
             return item.references("prem", alpha.id());
         }

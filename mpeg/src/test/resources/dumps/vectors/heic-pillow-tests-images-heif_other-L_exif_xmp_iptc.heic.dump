@@ -11,3 +11,9 @@ picture 64x64 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=c71c0011
   format=HEIC orientation=NORMAL source=64x64
   icc=none exif=40950:ce02bace xmp=15306:6f55251f
   profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=64, height=64, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 64x64 yuv8 MONOCHROME color=BT601/FULL/BT709/SRGB y=c71c0011
+  format=HEIC orientation=NORMAL source=64x64
+  icc=none exif=40950:ce02bace xmp=15306:6f55251f
+  profile=none

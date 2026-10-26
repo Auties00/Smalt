@@ -1,7 +1,10 @@
 package com.github.auties00.smalt.image;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ops.ImageOps;
+import com.github.auties00.smalt.internal.heif.HeifFile;
+import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.provider.Artifacts;
 import com.github.auties00.smalt.internal.provider.Providers;
 import com.github.auties00.smalt.io.MediaSink;
@@ -16,9 +19,10 @@ import java.util.Optional;
  * Decodes an image of any supported format, recognized from its content, and encodes pictures
  * into the supported formats.
  *
- * <p>This is the entry point for callers that do not know what a file is: it reads the leading
- * bytes, recognizes the format with {@link ImageFormat#detect(byte[], int)} (never trusting a file
- * name or declared mimetype), and dispatches to the {@link ImageCodecProvider} that decodes it.
+ * <p>This is the entry point for callers that do not know what a file is: it recognizes the format
+ * with {@link #detect(MediaSource)}, from the leading bytes and, for TIFF and HEIF files, the
+ * structure they hold (never trusting a file name or declared mimetype), and dispatches to the
+ * {@link ImageCodecProvider} that decodes it.
  * The JPEG, PNG (and APNG), GIF, WebP, BMP, TIFF, ICO and ANI decoders of {@code smalt-image} are such
  * providers, and its JPEG, PNG, GIF, WebP, BMP, TIFF, ICO and ANI encoders serve {@link #encode(Picture,
  * ImageFormat, ImageEncoderOptions, MediaSink)}, and its animated WebP, GIF, APNG and ANI encoders serve
@@ -44,7 +48,13 @@ public final class Images {
      * <p>A file that starts with a TIFF signature is told apart further by its directories, which
      * this method follows through the source: a camera raw file is recognized as
      * {@link ImageFormat#DNG} or {@link ImageFormat#RAW} wherever its directories lie, rather than
-     * as {@link ImageFormat#TIFF}.
+     * as {@link ImageFormat#TIFF}. A HEIF file is told apart by the coding of the image it shows,
+     * whatever its brands say: this method reads its {@code meta} box (and, for a file that shows its image
+     * sequence, its {@code moov} box) and recognizes a file whose primary image, or whose sequence without a
+     * primary image, is AV1-coded as {@link ImageFormat#AVIF}, and one coded with HEVC, AVC, JPEG, JPEG 2000 or as
+     * uncompressed samples as {@link ImageFormat#HEIC}; when the structure cannot be read within the
+     * {@linkplain com.github.auties00.smalt.MediaLimits#DEFAULT default limits}, or the coding is another one,
+     * the brands decide as for {@link ImageFormat#detect(byte[], int)}.
      *
      * @param source the input
      * @return the recognized format, or empty when the bytes match no known image format
@@ -65,7 +75,32 @@ public final class Images {
         if (format.isPresent() && format.get() == ImageFormat.TIFF) {
             return Optional.of(RawDetection.classifyTiff(RawDetection.over(source)));
         }
+        if (format.isPresent() && (format.get() == ImageFormat.HEIC || format.get() == ImageFormat.AVIF)) {
+            return Optional.of(heifFamily(source, format.get()));
+        }
         return format;
+    }
+
+    /**
+     * Recognizes a HEIF file by the coding of the image it shows.
+     *
+     * @param source the file
+     * @param brands the format its brands give
+     * @return the format of the coding of the image it shows, or {@code brands} when that is unknown or the
+     * structure cannot be read
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static ImageFormat heifFamily(MediaSource source, ImageFormat brands) {
+        try {
+            var file = HeifFile.parse(source, MediaLimits.DEFAULT, false);
+            var family = HeifImageCodec.formatOf(source, file, MediaLimits.DEFAULT);
+            return family == null ? brands : family;
+        } catch (MediaException.Io exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            // the decoder the brands name reports the defect when it reads the file
+            return brands;
+        }
     }
 
     /**
@@ -289,7 +324,10 @@ public final class Images {
      * Opens the pages of an image, the independent images a multi-image file holds.
      *
      * <p>A multi-page TIFF yields one page per image file directory of its main chain, and an icon
-     * or cursor one page per entry; every other decodable image, an animated one included, yields
+     * or cursor one page per entry. A HEIF file (HEIC or AVIF) yields one page per master image, the
+     * image {@link #decode(MediaSource, ImageDecoderOptions)} returns first, each page decoded by the
+     * artifact that implements its coding, and reports its stereo pairs, bursts and other entity groups
+     * through {@link PageReader#groups()}. Every other decodable image, an animated one included, yields
      * a single page holding what {@link #decode(MediaSource, ImageDecoderOptions)} returns (the
      * first frame of an animation, whose frames {@link #openAnimation(MediaSource,
      * ImageDecoderOptions)} reads).

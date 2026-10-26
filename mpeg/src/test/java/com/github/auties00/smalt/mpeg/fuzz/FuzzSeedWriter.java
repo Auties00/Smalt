@@ -273,6 +273,8 @@ class FuzzSeedWriter {
                 "log-level=0")));
         write(MpegFuzzTest.class, "heic", "valid-avc.heic", avcStill(ffmpeg("mp4", video(32, 32, 1), "-frames:v",
                 "1", "-c:v", "libx264", "-preset", "ultrafast", "-profile:v", "baseline")));
+        write(MpegFuzzTest.class, "heic", "valid-collection.heic", collection(ffmpeg("mp4", video(32, 32, 1),
+                "-frames:v", "1", "-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=0")));
         var random = new java.util.Random(7);
         var rgb = new byte[8 * 8 * 3];
         random.nextBytes(rgb);
@@ -298,6 +300,28 @@ class FuzzSeedWriter {
         write(MpegFuzzTest.class, "heic", "valid-unci-zlib.heic", unci(Arrays.copyOf(compressed, size), 16, 8,
                 uncC(new int[]{0}, 8, 0, 0, 0, 0, 0), cmpd(0),
                 HeifBuilder.fullBox("cmpC", 0, 0, new byte[]{'z', 'l', 'i', 'b', 0})));
+    }
+
+    /**
+     * Builds a collection around one HEVC picture: three master images, a hidden one and an alternatives group, a
+     * stereo pair and a burst, for the page reader.
+     */
+    private static byte[] collection(Path mp4) {
+        try (var source = MediaSource.of(mp4); var demuxer = Containers.openDemuxer(source)) {
+            var track = (VideoTrack) demuxer.tracks().getFirst();
+            var data = demuxer.read().data();
+            var builder = new HeifBuilder().brands("mif1", "mif1", "heic", "miaf");
+            var ids = new int[6];
+            for (var i = 0; i < ids.length; i++) {
+                ids[i] = builder.item("hvc1", data, HeifBuilder.plain(HeifBuilder.ispe(track.width(), track.height())),
+                        HeifBuilder.essential(HeifBuilder.box("hvcC", track.codecConfig().orElseThrow())));
+            }
+            builder.hidden(ids[3]);
+            builder.metaBox(HeifBuilder.grpl(HeifBuilder.entityGroup("altr", 100, ids[4], ids[5]),
+                    HeifBuilder.entityGroup("ster", 101, ids[1], ids[2]),
+                    HeifBuilder.entityGroup("brst", 102, ids[0], ids[1], ids[2])));
+            return builder.primary(ids[0]).build();
+        }
     }
 
     private static byte[] avcStill(Path mp4) {

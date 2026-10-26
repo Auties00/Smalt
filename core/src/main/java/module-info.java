@@ -199,6 +199,8 @@ module com.github.auties00.smalt {
     uses com.github.auties00.smalt.spi.VideoCodecProvider;
     // The HEIF item codecs of other artifacts, for the HEIF decoders of the artifacts that do not depend on them
     uses com.github.auties00.smalt.internal.heif.HeifComponentCodec;
+    // The HEIF decoders of the artifacts, each handing the images of the other's codings to it
+    uses com.github.auties00.smalt.internal.heif.HeifImageCodec;
 
     // The codecs of this module
     provides com.github.auties00.smalt.spi.AudioCodecProvider with

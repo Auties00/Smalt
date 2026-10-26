@@ -530,6 +530,18 @@ class HeifFileTest {
         }
 
         @Test
+        @DisplayName("counts an entity two alternatives groups list in the first of them only")
+        void overlappingAlternatives() {
+            var overlapping = lenient(grouped(HeifBuilder.entityGroup("altr", 8, 3, 2),
+                    HeifBuilder.entityGroup("altr", 9, 2, 1)));
+            assertEquals(List.of(), overlapping.preferredAlternatives(1));
+            assertEquals(List.of(3), overlapping.preferredAlternatives(2).stream().map(HeifItem::id).toList());
+            var disjoint = lenient(grouped(HeifBuilder.entityGroup("altr", 8, 3),
+                    HeifBuilder.entityGroup("altr", 9, 2, 1)));
+            assertEquals(List.of(2), preferred(disjoint));
+        }
+
+        @Test
         @DisplayName("skips the group-specific fields after the entity identifiers")
         void groupFields() {
             var group = HeifBuilder.entityGroup("altr", 1, 2, 1);

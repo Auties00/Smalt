@@ -11,6 +11,12 @@ picture 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=f754d6dd u=040f1e7b 
   format=HEIC orientation=NORMAL source=128x96
   icc=none exif=104:ee188206 xmp=none
   profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=128, height=96, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 128x96 yuv8 YUV420 color=BT601/LIMITED/BT709/SRGB y=f754d6dd u=040f1e7b v=85619d6e
+  format=HEIC orientation=NORMAL source=128x96
+  icc=none exif=104:ee188206 xmp=none
+  profile=none
 decoder gain map
 picture 32x24 channels16 depth=16 PixelLayout[channels=[Channel[type=GRAY, name=]]] crc=e4aa139c
 decoder auxiliary images

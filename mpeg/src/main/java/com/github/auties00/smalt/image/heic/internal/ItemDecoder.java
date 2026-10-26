@@ -36,6 +36,12 @@ abstract sealed class ItemDecoder permits HevcItemDecoder, AvcItemDecoder {
     int lengthSize = 4;
 
     /**
+     * Whether an item rather than the samples of a sequence is being decoded: the first picture of
+     * an item may be an intra picture that is not a random access point.
+     */
+    boolean decodingItem;
+
+    /**
      * The last picture the item decode produced.
      */
     private CodedFrame last;
@@ -67,7 +73,8 @@ abstract sealed class ItemDecoder permits HevcItemDecoder, AvcItemDecoder {
      * Decodes a coded item, after the items it is predicted from.
      *
      * <p>The returned picture is the last one the engine outputs, cropped to its visible area. It
-     * stays valid until the next call on this decoder.
+     * stays valid until the next call on this decoder. The first payload may hold a picture that is
+     * not a random access point, such as an intra-coded trailing picture of an HEVC stream.
      *
      * @param configurations the configuration record of each payload
      * @param payloads the payloads in decoding order, the item's own payload last
@@ -78,6 +85,7 @@ abstract sealed class ItemDecoder permits HevcItemDecoder, AvcItemDecoder {
      */
     CodedFrame decodeItem(List<byte[]> configurations, List<byte[]> payloads) {
         last = null;
+        decodingItem = true;
         open(frame -> last = frame);
         try {
             for (var i = 0; i < payloads.size(); i++) {
@@ -87,6 +95,7 @@ abstract sealed class ItemDecoder permits HevcItemDecoder, AvcItemDecoder {
             flush();
         } finally {
             close();
+            decodingItem = false;
         }
         if (last == null) {
             throw new MediaException.Malformed("heic: the item shows no picture");

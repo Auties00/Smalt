@@ -19,6 +19,7 @@ import com.github.auties00.smalt.internal.anim.SeekableAnimationReader;
 import com.github.auties00.smalt.internal.gainmap.HeifToneMaps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
+import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
@@ -41,9 +42,14 @@ import java.util.function.Supplier;
  * asks for a reduced size, and summarizes, decodes or plays the image chosen.
  *
  * <p>A file whose major brand is {@code avis} shows its sequence; a file whose major brand is
- * {@code avif} shows its primary image; any other file shows its sequence when it has one. An
+ * {@code avif} shows its primary image; any other file shows its sequence when it has one and
+ * either has an AVIF brand or has no primary image. An
  * animation is opened over the sequence whenever the file has one, and over the shown still image
- * as a single frame otherwise.
+ * as a single frame otherwise. The brands do not decide whether a file is AVIF: a HEIF file with only
+ * the generic brands ({@code mif1}, {@code miaf}, {@code msf1}) decodes here when its image is AV1-coded,
+ * and a file whose image has another coding
+ * ({@link HeifImageCodec#formatOf(MediaSource, HeifFile, MediaLimits)}) is handed to the HEIC
+ * {@link HeifImageCodec}, so that it decodes exactly as the HEIC decoder decodes it.
  *
  * <p>The still image shown is the primary item, or the first sample transform item ({@code sato})
  * the alternatives group ({@code altr}) of the primary item lists before it that has data, is not a
@@ -70,8 +76,6 @@ public final class AvifFiles {
      * @param source the file
      * @param limits the bounds
      * @return the parsed file
-     * @throws MediaException.Unsupported if the file has neither the {@code avif} nor the
-     * {@code avis} brand
      */
     private static HeifFile parse(MediaSource source, MediaLimits limits) {
         return parse(source, limits, DataReferenceResolver.none());
@@ -83,16 +87,40 @@ public final class AvifFiles {
      * @param source the file
      * @param limits the bounds
      * @param resolver the resolver of the files the data references name
-     * @return the parsed file
-     * @throws MediaException.Unsupported if the file has neither the {@code avif} nor the
-     * {@code avis} brand
+     * @return the parsed file: read strictly, or leniently, as the HEIC decoder reads it, when the strict reading
+     * fails and the image the file shows has a coding of that family
+     * @throws MediaException.Malformed if the file breaks a rule of the AVIF container
      */
     private static HeifFile parse(MediaSource source, MediaLimits limits, DataReferenceResolver resolver) {
-        var file = HeifFile.parse(source, limits, true, resolver);
-        if (!file.hasBrand("avif") && !file.hasBrand("avis")) {
-            throw new MediaException.Unsupported("avif", "the file has neither the avif nor the avis brand");
+        try {
+            return HeifFile.parse(source, limits, true, resolver);
+        } catch (MediaException.Malformed exception) {
+            HeifFile lenient;
+            try {
+                lenient = HeifFile.parse(source, limits, false, resolver);
+            } catch (MediaException.Malformed other) {
+                throw exception;
+            }
+            if (HeifImageCodec.formatOf(source, lenient, limits) == ImageFormat.HEIC) {
+                return lenient;
+            }
+            throw exception;
         }
-        return file;
+    }
+
+    /**
+     * Returns the codec of another family that shows a file.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param limits the bounds of the sequence structure
+     * @return the HEIC codec when the image the file shows has a coding of that family, or {@code null} to decode
+     * the file here
+     * @throws MediaException.Unsupported if the image has such a coding and the HEIC decoder is not at hand
+     */
+    private static HeifImageCodec foreign(MediaSource source, HeifFile file, MediaLimits limits) {
+        return HeifImageCodec.formatOf(source, file, limits) == ImageFormat.HEIC
+                ? HeifImageCodec.require(ImageFormat.HEIC) : null;
     }
 
     /**
@@ -101,14 +129,15 @@ public final class AvifFiles {
      * @param file the parsed file
      * @return {@code true} to show the sequence
      */
-    private static boolean showsSequence(HeifFile file) {
+    public static boolean showsSequence(HeifFile file) {
         if (!file.hasMovie()) {
             return false;
         }
         return switch (file.majorBrand()) {
             case "avis" -> true;
             case "avif" -> file.primaryItem() == null;
-            default -> true;
+            // a file without the AVIF brands shows its primary image, as HEIF intends
+            default -> file.primaryItem() == null || file.hasBrand("avis") || file.hasBrand("avif");
         };
     }
 
@@ -165,6 +194,10 @@ public final class AvifFiles {
      */
     public static ImageInfo probe(MediaSource source, MediaLimits limits) {
         var file = parse(source, limits);
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.probe(source, limits);
+        }
         if (showsSequence(file)) {
             var movie = HeifMovie.parse(source, file, limits);
             var color = SequenceReader.colorTrack(movie);
@@ -186,6 +219,54 @@ public final class AvifFiles {
         }
         var primary = primary(file);
         return stillInfo(source, file, shown(source, file, primary, limits), limits);
+    }
+
+    /**
+     * Summarizes an image item as {@link #probe(MediaSource, MediaLimits)} summarizes the primary item: the
+     * sample transform its alternatives group prefers when this decoder reconstructs it, or the item.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param limits the bounds
+     * @return the summary
+     * @throws MediaException.Malformed if the item declares no valid size or is inconsistent
+     * @throws MediaException.Unsupported if the item cannot be reconstructed
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     */
+    public static ImageInfo probeItem(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        return stillInfo(source, file, shown(source, file, item, limits), limits);
+    }
+
+    /**
+     * Checks, without decoding pixels, that this decoder reconstructs an image item.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param limits the bounds of the payloads read
+     * @throws MediaException.Malformed if an item is missing or inconsistent
+     * @throws MediaException.Unsupported if an item uses a feature this decoder lacks
+     */
+    public static void requireDecodable(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        Reconstruction.requireDecodable(source, file, item, limits);
+    }
+
+    /**
+     * Reconstructs an item as the input of a derived image of a HEIC file: its image before its own
+     * transformative properties.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param depth the number of derived images reconstructed on the way to the item
+     * @return the picture
+     */
+    public static Picture reconstructInput(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits,
+                                           boolean highBitDepth, int depth) {
+        return Reconstruction.reconstructInput(source, file, item, limits, highBitDepth, depth);
     }
 
     /**
@@ -225,27 +306,64 @@ public final class AvifFiles {
      * Decodes the image an AVIF file shows.
      *
      * @param source the file
-     * @param options the limits, the bit depth choice and the reduced-size hint
+     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion
      * @return the decoded image
      */
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
         var highBitDepth = options.highBitDepth();
         var file = parse(source, limits, options.dataReferences());
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.decode(source, options);
+        }
+        DecodedImage image;
         if (showsSequence(file)) {
             try (var reader = new SequenceReader(source, file, limits, highBitDepth)) {
                 var picture = reader.readFirstPicture(highBitDepth);
                 // the metadata of a sequence is that of the primary item it is shown in place of, when it has one
                 var item = file.primaryItem() == null ? null : primary(file);
                 var icc = item == null ? null : icc(file, item);
-                return new DecodedImage(picture, ImageFormat.AVIF, reader.orientation(), picture.width(),
+                image = new DecodedImage(picture, ImageFormat.AVIF, reader.orientation(), picture.width(),
                         picture.height(), Optional.ofNullable(icc == null ? null : icc.clone()),
                         Optional.ofNullable(item == null ? null : exif(source, file, item, limits)),
                         Optional.ofNullable(item == null ? null : file.xmpOf(source, item, limits)),
                         icc == null ? HeifPictures.colorProfile(null, picture) : HeifPictures.colorProfile(icc, null));
             }
+        } else {
+            image = decodeStill(source, file, primary(file), options);
         }
-        var primary = primary(file);
+        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+    }
+
+    /**
+     * Decodes an image item as {@link #decode(MediaSource, ImageDecoderOptions)} decodes the primary item.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion
+     * @return the decoded image with the item's own metadata
+     */
+    public static DecodedImage decodeItem(MediaSource source, HeifFile file, HeifItem item,
+                                          ImageDecoderOptions options) {
+        var image = decodeStill(source, file, item, options);
+        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+    }
+
+    /**
+     * Decodes a still image item, or one of its thumbnails when the reduced-size hint allows.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param primary the image item, which the thumbnails reference
+     * @param options the limits, the bit depth choice and the reduced-size hint
+     * @return the decoded image, before any color conversion
+     */
+    private static DecodedImage decodeStill(MediaSource source, HeifFile file, HeifItem primary,
+                                            ImageDecoderOptions options) {
+        var limits = options.limits();
+        var highBitDepth = options.highBitDepth();
         var shown = shown(source, file, primary, limits);
         var icc = icc(file, primary);
         var embeddedProfile = icc == null ? null : ParallelBands.submit(() -> HeifPictures.colorProfile(icc, null));
@@ -431,6 +549,10 @@ public final class AvifFiles {
     public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
         var file = parse(source, limits, options.dataReferences());
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.decodeGainMap(source, options);
+        }
         if (showsSequence(file) || file.primaryItem() == null) {
             return Optional.empty();
         }
@@ -451,7 +573,12 @@ public final class AvifFiles {
      * @return the images, empty for a file that shows a sequence
      */
     public static List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
-        return listed(source, parse(source, limits), limits).stream().map(Listed::description).toList();
+        var file = parse(source, limits);
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.auxiliaryImages(source, limits);
+        }
+        return listed(source, file, limits).stream().map(Listed::description).toList();
     }
 
     /**
@@ -466,6 +593,14 @@ public final class AvifFiles {
     public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
         var limits = options.limits();
         var file = parse(source, limits, options.dataReferences());
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            try {
+                return foreign.decodeAuxiliaryImage(source, index, options);
+            } catch (IndexOutOfBoundsException exception) {
+                return null;
+            }
+        }
         var listed = listed(source, file, limits);
         if (index < 0 || index >= listed.size()) {
             return null;
@@ -525,13 +660,18 @@ public final class AvifFiles {
      * Opens an AVIF file as an animation.
      *
      * @param source the file
-     * @param limits the bounds
-     * @param highBitDepth whether frames of a source deeper than 8 bits are 16-bit RGBA
+     * @param options the limits and the bit depth choice
      * @return the reader: the sequence when the file has one, otherwise the shown still image as
      * one frame shown for zero microseconds and played once; both can seek
      */
-    public static AnimationReader openAnimation(MediaSource source, MediaLimits limits, boolean highBitDepth) {
+    public static AnimationReader openAnimation(MediaSource source, ImageDecoderOptions options) {
+        var limits = options.limits();
+        var highBitDepth = options.highBitDepth();
         var file = parse(source, limits);
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.openAnimation(source, options);
+        }
         if (file.hasMovie() && (showsSequence(file) || hasColorTrack(source, file, limits))) {
             return new SequenceReader(source, file, limits, highBitDepth);
         }

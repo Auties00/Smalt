@@ -35,7 +35,8 @@ import java.util.function.Supplier;
  * decode with {@link ImageDecoderOptions#ofMinimumSize(int, int)} (a quarter of each dimension, which
  * selects the scaled decoding paths of the formats that have them), every frame of
  * {@link Images#openAnimation(MediaSource, ImageDecoderOptions)} for an animated image, every page of
- * {@link Images#openPages(MediaSource, ImageDecoderOptions)} for a multi-image format, and every extra
+ * {@link Images#openPages(MediaSource, ImageDecoderOptions)} and its page groups for a multi-image format
+ * (TIFF, ICO, HEIC and AVIF), and every extra
  * decode added with {@link Builder#decoder(String, Function)} (for example a region decoder). The
  * flow's text, made by {@link PictureDump}, names every picture by the CRC of its samples.
  *
@@ -406,9 +407,13 @@ public final class ImageDecoderAsserts {
                 }
             }
             if (pages && !info.animated() && (info.format() == ImageFormat.TIFF || info.format() == ImageFormat.ICO
+                    || info.format() == ImageFormat.HEIC || info.format() == ImageFormat.AVIF
                     || info.frameCount() > 1)) {
                 try (var reader = Images.openPages(next.get(), options)) {
                     text.append("pages ").append(reader.pageCount()).append('\n');
+                    for (var group : reader.groups()) {
+                        text.append("group ").append(group.type()).append(' ').append(group.pages()).append('\n');
+                    }
                     for (var page = 0; page < reader.pageCount(); page++) {
                         text.append("page ").append(page).append(' ').append(reader.probe(page)).append('\n')
                                 .append(PictureDump.image(reader.read(page)));

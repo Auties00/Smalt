@@ -248,6 +248,12 @@ public final class HevcDecoderEngine {
     private ExternalBaseLayer externalBase;
 
     /**
+     * Whether decoding may start at any picture, as if each picture without a recovery point carried one with a
+     * {@code recovery_poc_cnt} of 0.
+     */
+    private boolean startAnywhere;
+
+    /**
      * The picture being decoded, or {@code null} between pictures.
      */
     private HevcFrame current;
@@ -518,6 +524,17 @@ public final class HevcDecoderEngine {
      */
     public void externalBaseLayer(ExternalBaseLayer source) {
         this.externalBase = source;
+    }
+
+    /**
+     * Lets decoding start at a picture that is neither an IRAP picture nor carries a recovery point, such as a
+     * HEIF image item coded as an intra trailing picture, as if it carried a recovery point SEI message with a
+     * {@code recovery_poc_cnt} of 0: the picture is output and the references it names are generated (8.3.3.2).
+     *
+     * @param enabled whether decoding may start anywhere; {@code false} by default
+     */
+    public void startAnywhere(boolean enabled) {
+        this.startAnywhere = enabled;
     }
 
     /**
@@ -1114,15 +1131,16 @@ public final class HevcDecoderEngine {
         if (irap) {
             noRaslOutput = HevcNal.isIdr(type) || HevcNal.isBla(type) || state.firstPicture || state.afterEndOfSequence;
         }
-        var recoveryCount = sei.recoveryPocCount;
         var halfPocLsb = 1 << (sps.log2MaxPocLsb - 1);
-        var recoveryPoint = sei.recoveryPoint && recoveryCount >= -halfPocLsb && recoveryCount < halfPocLsb;
-        var exactMatch = sei.recoveryExactMatch;
+        var recoveryPoint = sei.recoveryPoint && sei.recoveryPocCount >= -halfPocLsb
+                && sei.recoveryPocCount < halfPocLsb;
+        var recoveryCount = recoveryPoint ? sei.recoveryPocCount : 0;
+        var exactMatch = recoveryPoint && sei.recoveryExactMatch;
         var messages = takeMessages(sei);
         skipping = false;
         var recoveryStart = false;
         if (!state.started && !irap) {
-            if (!recoveryPoint || HevcNal.isRasl(type)) {
+            if (!recoveryPoint && !startAnywhere || HevcNal.isRasl(type)) {
                 skipping = true;
                 return;
             }
@@ -1398,16 +1416,18 @@ public final class HevcDecoderEngine {
                 noRaslOutput = !state.started && referencesStarted(directRefs);
             }
         }
-        var recoveryCount = sei.recoveryPocCount;
         var halfPocLsb = 1 << (sps.log2MaxPocLsb - 1);
-        var recoveryPoint = sei.recoveryPoint && recoveryCount >= -halfPocLsb && recoveryCount < halfPocLsb;
-        var exactMatch = sei.recoveryExactMatch;
+        var recoveryPoint = sei.recoveryPoint && sei.recoveryPocCount >= -halfPocLsb
+                && sei.recoveryPocCount < halfPocLsb;
+        var recoveryCount = recoveryPoint ? sei.recoveryPocCount : 0;
+        var exactMatch = recoveryPoint && sei.recoveryExactMatch;
         var messages = takeMessages(sei);
         var recoveryStart = false;
         if (irap && noRaslOutput && (layerId == 0 || !state.started && (directRefs.length == 0
                 || referencesStarted(directRefs)))) {
             state.started = true;
-        } else if (!state.started && !irap && layerId == 0 && recoveryPoint && !HevcNal.isRasl(type)) {
+        } else if (!state.started && !irap && layerId == 0 && (recoveryPoint || startAnywhere)
+                && !HevcNal.isRasl(type)) {
             recoveryStart = true;
             state.started = true;
         }

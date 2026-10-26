@@ -66,6 +66,14 @@ class VideoDecoderBehaviorTest {
     }
 
     @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"valid-generic-brand.avif"})
+    @DisplayName("AVIF fuzz seeds with only the generic HEIF brands: identical pictures under every source behavior")
+    void avifSeed(String name) throws IOException {
+        ImageDecoderAsserts.of("avif/" + name, Files.readAllBytes(Path.of("src", "test", "resources", "com", "github",
+                "auties00", "smalt", "video", "fuzz", "VideoFuzzTestInputs", "avif").resolve(name))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"libavif-seine_sdr_gainmap_srgb.avif", "libavif-color_grid_alpha_grid_gainmap_nogrid.avif",
             "valid-tmap-multichannel.avif"})
     @DisplayName("AVIF gain maps: identical pictures, gain maps and auxiliary images under every source behavior")

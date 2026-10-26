@@ -93,6 +93,7 @@ final class HevcItemDecoder extends ItemDecoder {
         close();
         if (outputLayerSet < 0) {
             engine = new HevcDecoderEngine(limits, false, threads, frame -> sink.accept(new HevcTile(frame)));
+            engine.startAnywhere(decodingItem);
         } else {
             var layer = selectedLayer;
             engine = new HevcDecoderEngine(limits, false, threads, outputLayerSet, false, frame -> {
@@ -101,6 +102,7 @@ final class HevcItemDecoder extends ItemDecoder {
                 }
             });
             engine.externalBaseLayer(externalBase);
+            engine.startAnywhere(decodingItem);
         }
         configuration = null;
         lengthSize = 4;

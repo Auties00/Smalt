@@ -600,7 +600,8 @@ public final class HeifFile {
             if (!FourCc.toString(infe.type()).equals("infe")) {
                 throw new MediaException.Malformed("heif: the iinf box holds a '" + FourCc.toString(infe.type()) + "' box");
             }
-            var infeVersion = infe.fullBoxHeader() >>> 24;
+            var header = infe.fullBoxHeader();
+            var infeVersion = header >>> 24;
             if (infeVersion < 2) {
                 continue;
             }
@@ -616,7 +617,8 @@ public final class HeifFile {
             if (items.containsKey(id)) {
                 throw new MediaException.Malformed("heif: duplicate item " + id);
             }
-            items.put(id, new HeifItem(id, type, contentType, contentEncoding));
+            // flag 1 of the infe box marks a hidden image item (ISO/IEC 23008-12)
+            items.put(id, new HeifItem(id, type, contentType, contentEncoding, (header & 1) != 0));
         }
     }
 
@@ -886,14 +888,17 @@ public final class HeifFile {
      * Returns the items the file prefers to an item: the items listed before it in the alternatives
      * group ({@code altr}) that holds it, most preferred first (ISO/IEC 14496-12 clause 8.18.3.3).
      *
-     * <p>Only the first {@code altr} group that lists the item counts, since an entity belongs to
-     * one such group at most.
+     * <p>An entity belongs to one such group at most, so an entity of a nonconforming file that
+     * several {@code altr} groups list belongs to the first of them: only the first group that lists
+     * the item counts, and the entities a later group shares with an earlier one are not preferred to
+     * it.
      *
      * @param id the item identifier
      * @return the preferred items, empty when the item is in no alternatives group or is listed
      * first
      */
     public List<HeifItem> preferredAlternatives(int id) {
+        var claimed = new HashSet<Integer>();
         for (var group : groups) {
             if (!group.type().equals("altr")) {
                 continue;
@@ -904,9 +909,12 @@ public final class HeifFile {
                     return List.copyOf(preferred);
                 }
                 var item = items.get(entity);
-                if (item != null) {
+                if (item != null && !claimed.contains(entity)) {
                     preferred.add(item);
                 }
+            }
+            for (var entity : group.entities()) {
+                claimed.add(entity);
             }
         }
         return List.of();

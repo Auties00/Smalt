@@ -38,4 +38,7 @@ module com.github.auties00.smalt.video {
             com.github.auties00.smalt.internal.provider.video.DnxhdCodecProvider;
     provides com.github.auties00.smalt.spi.ImageCodecProvider with
             com.github.auties00.smalt.internal.provider.video.AvifCodecProvider;
+    // The AVIF decoder, for the HEIF decoders of the artifacts that do not depend on this one
+    provides com.github.auties00.smalt.internal.heif.HeifImageCodec with
+            com.github.auties00.smalt.internal.provider.video.AvifImageCodec;
 }

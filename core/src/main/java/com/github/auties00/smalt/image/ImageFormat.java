@@ -54,12 +54,19 @@ public enum ImageFormat {
      * {@code miaf}) and no AVIF brand is taken as HEIC too, the codec HEIF files use most, and so is
      * HEIF with AVC, JPEG or JPEG 2000 images (brands {@code avci}, {@code avcs}, {@code jpeg},
      * {@code jpgs}, {@code j2ki} and {@code j2is}), which the same decoder reads.
+     *
+     * <p>{@link #detect(byte[], int)} reads only the brands;
+     * {@link Images#detect(com.github.auties00.smalt.io.MediaSource)} reads the items and tells a HEIF file by the
+     * coding of the image it shows, so that a file with only the generic brands whose image is AV1-coded is
+     * recognized as {@link #AVIF}.
      */
     HEIC("image/heic"),
 
     /**
      * HEIF with an AV1-coded primary image (AVIF), an ISO-BMFF file whose {@code ftyp} brands
-     * include {@code avif} or {@code avis}.
+     * include {@code avif} or {@code avis}, or, as
+     * {@link Images#detect(com.github.auties00.smalt.io.MediaSource)} recognizes it, any HEIF file whose primary
+     * image, or whose image sequence without a primary image, is AV1-coded.
      */
     AVIF("image/avif"),
 

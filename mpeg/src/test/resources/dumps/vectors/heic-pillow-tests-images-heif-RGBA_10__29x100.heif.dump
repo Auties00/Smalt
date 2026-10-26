@@ -11,3 +11,9 @@ picture 29x100 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=11b6ff04 u=7e9b1b10 v=a
   format=HEIC orientation=NORMAL source=29x100
   icc=none exif=none xmp=none
   profile=none
+pages 1
+page 0 ImageInfo[format=HEIC, width=29, height=100, hasAlpha=true, animated=false, frameCount=1, orientation=NORMAL]
+picture 29x100 yuv8 YUV420 color=BT601/FULL/BT709/SRGB y=11b6ff04 u=7e9b1b10 v=a2f1132c a=7b5acc33
+  format=HEIC orientation=NORMAL source=29x100
+  icc=none exif=none xmp=none
+  profile=none

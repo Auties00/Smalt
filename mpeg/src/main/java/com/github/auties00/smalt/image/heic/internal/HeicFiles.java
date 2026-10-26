@@ -21,6 +21,7 @@ import com.github.auties00.smalt.internal.gainmap.HeifToneMaps;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
+import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifMovie;
 import com.github.auties00.smalt.internal.heif.HeifOverlay;
@@ -50,6 +51,10 @@ import java.util.function.Supplier;
  * primary item is shown after all. An
  * animation is opened over the sequence whenever the file has an HEVC or AVC color track, and over the
  * primary image as a single frame otherwise.
+ *
+ * <p>A file whose image is AV1-coded ({@link HeifImageCodec#formatOf(MediaSource, HeifFile, MediaLimits)}) is
+ * handed to the AVIF {@link HeifImageCodec}, and so is each AV1-coded stereo view, so that it decodes exactly as the
+ * AVIF decoder decodes it.
  */
 public final class HeicFiles {
     /**
@@ -71,8 +76,22 @@ public final class HeicFiles {
      * @param file the parsed file
      * @return {@code true} when the file has a sequence and no primary item
      */
-    private static boolean showsSequence(HeifFile file) {
+    public static boolean showsSequence(HeifFile file) {
         return file.hasMovie() && file.primaryItem() == null;
+    }
+
+    /**
+     * Returns the codec of another family that shows a file.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param limits the bounds of the sequence structure
+     * @return the AVIF codec when the image the file shows is AV1-coded, or {@code null} to decode the file here
+     * @throws MediaException.Unsupported if the image is AV1-coded and the AVIF decoder is not at hand
+     */
+    private static HeifImageCodec foreign(MediaSource source, HeifFile file, MediaLimits limits) {
+        return HeifImageCodec.formatOf(source, file, limits) == ImageFormat.AVIF
+                ? HeifImageCodec.require(ImageFormat.AVIF) : null;
     }
 
     /**
@@ -166,6 +185,10 @@ public final class HeicFiles {
      */
     public static ImageInfo probe(MediaSource source, MediaLimits limits) {
         var file = HeifFile.parse(source, limits, false);
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.probe(source, limits);
+        }
         if (showsSequence(file)) {
             var movie = HeifMovie.parse(source, file, limits);
             var color = SequenceReader.requireColorTrack(movie);
@@ -186,6 +209,49 @@ public final class HeicFiles {
     }
 
     /**
+     * Summarizes an image item as {@link #probe(MediaSource, MediaLimits)} summarizes the primary item: the
+     * alternative its alternatives group prefers when this decoder reconstructs it, or the item.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param limits the bounds
+     * @return the summary
+     * @throws MediaException.Malformed if the item declares no valid size
+     * @throws MediaException.Unsupported if the item cannot be reconstructed
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     */
+    public static ImageInfo probeItem(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        return stillInfo(source, file, shown(file, item), limits);
+    }
+
+    /**
+     * Decodes an image item as {@link #decode(MediaSource, ImageDecoderOptions)} decodes the primary item.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param options the limits, the bit depth choice, the reduced-size hint and the color conversion
+     * @return the decoded image with the item's own metadata
+     */
+    public static DecodedImage decodeItem(MediaSource source, HeifFile file, HeifItem item,
+                                          ImageDecoderOptions options) {
+        var image = decodeStill(source, file, item, options);
+        return options.convertToSrgb() ? ImageOps.toSrgb(image) : image;
+    }
+
+    /**
+     * Rejects an item this decoder cannot reconstruct, as {@link StillDecoder} checks it.
+     *
+     * @param item the image item
+     * @throws MediaException.Unsupported if the item is of another coding or has an essential property this
+     * decoder does not implement
+     */
+    public static void requireDecodable(HeifItem item) {
+        StillDecoder.requireDecodable(item);
+    }
+
+    /**
      * Summarizes a still image item.
      *
      * @param source the file
@@ -199,21 +265,24 @@ public final class HeicFiles {
     private static ImageInfo stillInfo(MediaSource source, HeifFile file, HeifItem primary, MediaLimits limits) {
         StillDecoder.requireDecodable(primary);
         var geometry = geometry(source, file, primary, limits);
-        return new ImageInfo(ImageFormat.HEIC, geometry.width(), geometry.height(), hasAlpha(file, primary), false, 1,
-                geometry.orientation());
+        return new ImageInfo(ImageFormat.HEIC, geometry.width(), geometry.height(),
+                hasAlpha(source, file, primary, limits), false, 1, geometry.orientation());
     }
 
     /**
      * Returns whether an image item has an alpha plane or is composed from images that may have
      * one.
      *
+     * @param source the file
      * @param file the parsed file
      * @param item the image item
+     * @param limits the bounds of the data read
      * @return {@code true} when the item or a grid tile carries alpha of its own, an alpha auxiliary
      * image is found for the item or for every tile of a grid, or for an overlay
      */
-    private static boolean hasAlpha(HeifFile file, HeifItem item) {
-        if (StillDecoder.alphaOf(file, item) != null || StillDecoder.hasOwnAlpha(item) || item.type().equals("iovl")) {
+    private static boolean hasAlpha(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        if (StillDecoder.alphaOf(source, file, item, limits) != null || StillDecoder.hasOwnAlpha(item)
+                || item.type().equals("iovl")) {
             return true;
         }
         if (item.type().equals("grid")) {
@@ -227,7 +296,7 @@ public final class HeicFiles {
                 if (tile != null && StillDecoder.hasOwnAlpha(tile)) {
                     return true;
                 }
-                every &= tile != null && StillDecoder.alphaOf(file, tile) != null;
+                every &= tile != null && StillDecoder.alphaOf(source, file, tile, limits) != null;
             }
             return every;
         }
@@ -279,6 +348,10 @@ public final class HeicFiles {
     public static DecodedImage decode(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
         var file = HeifFile.parse(source, limits, false, options.dataReferences());
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.decode(source, options);
+        }
         DecodedImage image;
         if (showsSequence(file)) {
             try (var reader = new SequenceReader(source, file, limits, options.highBitDepth())) {
@@ -299,7 +372,8 @@ public final class HeicFiles {
      * entities that holds the primary item or the item the file shows in its place; its first
      * entity is the left view and its second the right view. The view decodes as
      * {@link #decode} decodes the primary item: the item its alternatives group prefers when that
-     * one can be reconstructed, a thumbnail under a reduced-size hint, and its own metadata.
+     * one can be reconstructed, a thumbnail under a reduced-size hint, and its own metadata; an
+     * AV1-coded view decodes with the AVIF {@link HeifImageCodec}.
      *
      * @param source the file
      * @param view 0 for the left view, 1 for the right view
@@ -318,7 +392,7 @@ public final class HeicFiles {
         if (primary == null) {
             return Optional.empty();
         }
-        var shown = shown(file, primary);
+        var shown = HeifImageCodec.formatOf(file, primary) == ImageFormat.AVIF ? primary : shown(file, primary);
         for (var group : file.entityGroups()) {
             var entities = group.entities();
             if (!group.type().equals("ster") || entities.length != 2
@@ -330,8 +404,10 @@ public final class HeicFiles {
                 throw new MediaException.Malformed("heic: the stereo pair " + group.id() + " names the missing item "
                         + entities[view]);
             }
-            var image = decodeStill(source, file, item, options);
-            return Optional.of(options.convertToSrgb() ? ImageOps.toSrgb(image) : image);
+            if (HeifImageCodec.formatOf(file, item) == ImageFormat.AVIF) {
+                return Optional.of(HeifImageCodec.require(ImageFormat.AVIF).decode(source, file, item, options));
+            }
+            return Optional.of(decodeItem(source, file, item, options));
         }
         return Optional.empty();
     }
@@ -530,6 +606,10 @@ public final class HeicFiles {
     public static Optional<GainMap> decodeGainMap(MediaSource source, ImageDecoderOptions options) {
         var limits = options.limits();
         var file = HeifFile.parse(source, limits, false, options.dataReferences());
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.decodeGainMap(source, options);
+        }
         if (showsSequence(file) || file.primaryItem() == null) {
             return Optional.empty();
         }
@@ -576,8 +656,12 @@ public final class HeicFiles {
      * @return the images, empty for a file that shows a sequence
      */
     public static List<AuxiliaryImage> auxiliaryImages(MediaSource source, MediaLimits limits) {
-        return listed(source, HeifFile.parse(source, limits, false), limits).stream().map(Listed::description)
-                .toList();
+        var file = HeifFile.parse(source, limits, false);
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.auxiliaryImages(source, limits);
+        }
+        return listed(source, file, limits).stream().map(Listed::description).toList();
     }
 
     /**
@@ -592,6 +676,14 @@ public final class HeicFiles {
     public static DecodedImage decodeAuxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
         var limits = options.limits();
         var file = HeifFile.parse(source, limits, false, options.dataReferences());
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            try {
+                return foreign.decodeAuxiliaryImage(source, index, options);
+            } catch (IndexOutOfBoundsException exception) {
+                return null;
+            }
+        }
         var listed = listed(source, file, limits);
         if (index < 0 || index >= listed.size()) {
             return null;
@@ -649,13 +741,18 @@ public final class HeicFiles {
      * Opens a HEIC file as an animation.
      *
      * @param source the file
-     * @param limits the bounds
-     * @param highBitDepth whether frames of a source deeper than 8 bits are 16-bit RGBA
+     * @param options the limits and the bit depth choice
      * @return the reader: the sequence when the file has an HEVC or AVC color track, otherwise the
      * shown still image as one frame shown for zero microseconds and played once; both can seek
      */
-    public static AnimationReader openAnimation(MediaSource source, MediaLimits limits, boolean highBitDepth) {
+    public static AnimationReader openAnimation(MediaSource source, ImageDecoderOptions options) {
+        var limits = options.limits();
+        var highBitDepth = options.highBitDepth();
         var file = HeifFile.parse(source, limits, false);
+        var foreign = foreign(source, file, limits);
+        if (foreign != null) {
+            return foreign.openAnimation(source, options);
+        }
         if (file.hasMovie() && hasColorTrack(source, file, limits)) {
             return new SequenceReader(source, file, limits, highBitDepth);
         }

@@ -11,3 +11,9 @@ picture 48x32 yuv8 MONOCHROME color=UNSPECIFIED/FULL/UNSPECIFIED/UNSPECIFIED y=7
   format=AVIF orientation=NORMAL source=48x32
   icc=none exif=none xmp=none
   profile=none
+pages 1
+page 0 ImageInfo[format=AVIF, width=48, height=32, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+picture 48x32 yuv8 MONOCHROME color=UNSPECIFIED/FULL/UNSPECIFIED/UNSPECIFIED y=7fdab908
+  format=AVIF orientation=NORMAL source=48x32
+  icc=none exif=none xmp=none
+  profile=none

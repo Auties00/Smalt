@@ -2,8 +2,10 @@ package com.github.auties00.smalt.image.avif.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGrid;
+import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifProperty;
 import com.github.auties00.smalt.internal.heif.HeifStills;
@@ -54,12 +56,14 @@ record StillPlan(HeifItem item, HeifGrid grid, List<HeifItem> colorTiles, HeifPr
 
     /**
      * Returns whether an item is a coded image this plan describes: a coded {@code av01} item, or
-     * a {@code grid} none of whose inputs is a derived image.
+     * a {@code grid} none of whose inputs is a derived image or an image coded with HEVC, AVC, JPEG,
+     * JPEG 2000 or as uncompressed samples.
      *
      * @param file the parsed file
      * @param item the image item
      * @return {@code true} for a coded item or a grid of coded items; {@code false} for a derived
-     * image of another type or a grid with a derived input
+     * image of another type or a grid with a derived input or an input of the HEIC family, which
+     * the {@link HeifImageCodec} of that family reconstructs
      */
     static boolean isCoded(HeifFile file, HeifItem item) {
         return switch (item.type()) {
@@ -67,7 +71,8 @@ record StillPlan(HeifItem item, HeifGrid grid, List<HeifItem> colorTiles, HeifPr
             case "grid" -> {
                 for (var id : item.references("dimg")) {
                     var input = file.item(id);
-                    if (input != null && (DERIVED_TYPES.contains(input.type()) || input.type().equals("grid"))) {
+                    if (input != null && (DERIVED_TYPES.contains(input.type()) || input.type().equals("grid")
+                            || HeifImageCodec.formatOf(input.type()) == ImageFormat.HEIC)) {
                         yield false;
                     }
                 }

@@ -22,7 +22,7 @@ import java.util.ServiceLoader;
  * Decodes and encodes the images of one or more formats on behalf of {@link Images}.
  *
  * <p>{@link Images} recognizes the format of its input from the content, with
- * {@link ImageFormat#detect(byte[], int)}, and hands the input to the first provider whose
+ * {@link Images#detect(MediaSource)}, and hands the input to the first provider whose
  * {@link #decodes(ImageFormat)} accepts that format; it hands a picture to encode to the first
  * provider whose {@link #encodes(ImageFormat)} accepts the requested format. A format no provider
  * accepts raises {@link MediaException.Unsupported}. Providers are found once, the first time
@@ -124,9 +124,9 @@ public interface ImageCodecProvider {
     /**
      * Opens the pages of an image, when its format can hold several independent images.
      *
-     * <p>A format that can hold several images (the directories of a TIFF, the entries of an icon)
-     * opens every image of it, a single-image one included, as a {@link PageReader}. A format that
-     * holds one image returns an empty {@link Optional}, and
+     * <p>A format that can hold several images (the directories of a TIFF, the entries of an icon, the master
+     * images of a HEIF file) opens every image of it, a single-image one included, as a {@link PageReader}. A
+     * format that holds one image returns an empty {@link Optional}, and
      * {@link Images#openPages(MediaSource, ImageDecoderOptions)} then presents the image of
      * {@link #decode(MediaSource, ImageDecoderOptions)} as a single page.
      *

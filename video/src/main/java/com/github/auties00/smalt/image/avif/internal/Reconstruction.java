@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorRange;
+import com.github.auties00.smalt.image.ImageFormat;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -14,6 +15,7 @@ import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.internal.heif.HeifCanvas;
 import com.github.auties00.smalt.internal.heif.HeifFile;
 import com.github.auties00.smalt.internal.heif.HeifGeometry;
+import com.github.auties00.smalt.internal.heif.HeifImageCodec;
 import com.github.auties00.smalt.internal.heif.HeifItem;
 import com.github.auties00.smalt.internal.heif.HeifOverlay;
 import com.github.auties00.smalt.internal.heif.HeifPictures;
@@ -58,7 +60,10 @@ import java.util.Set;
  *
  * <p>Derived images nest at most {@value #MAX_DEPTH} deep, and the pictures decoded and composed
  * for one image total at most four times the pixel limit; a file that goes beyond either is
- * rejected, so a small file cannot make the decoder loop or decode the same picture without end.
+ * rejected, so a small file cannot make the decoder loop or decode the same picture without end. An
+ * input coded with HEVC, AVC, JPEG, JPEG 2000 or as uncompressed samples is reconstructed by the HEIC
+ * {@link HeifImageCodec}, its nesting counted on from the derived image, and raises
+ * {@link MediaException.Unsupported} when no artifact provides it.
  * Instances are not thread-safe; each reconstructs one image.
  */
 final class Reconstruction {
@@ -132,7 +137,10 @@ final class Reconstruction {
     static HeifStill decode(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits,
                             boolean highBitDepth) {
         if (StillPlan.isCoded(file, item)) {
-            return StillDecoder.decode(source, file, StillPlan.of(source, file, item, limits), limits, highBitDepth);
+            var plan = StillPlan.of(source, file, item, limits);
+            if (plan.hasAlpha() || !takesForeignAlpha(source, file, item, limits)) {
+                return StillDecoder.decode(source, file, plan, limits, highBitDepth);
+            }
         }
         var picture = new Reconstruction(source, file, limits).reconstruct(item, highBitDepth, 0);
         var width = picture.width();
@@ -142,6 +150,26 @@ final class Reconstruction {
             picture = HeifPictures.crop(picture, geometry.x(), geometry.y(), geometry.width(), geometry.height());
         }
         return new HeifStill(picture, width, height, geometry);
+    }
+
+    /**
+     * Reconstructs an item as the input of a derived image of a HEIC file: its image before its own transformative
+     * properties.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the image item
+     * @param limits the bounds of every item and picture
+     * @param highBitDepth whether a source of more than 8 bits keeps its depth
+     * @param depth the number of derived images reconstructed on the way to the item
+     * @return the picture
+     * @throws MediaException.Malformed if an item is corrupt or nested deeper than {@value #MAX_DEPTH}
+     * @throws MediaException.Unsupported if an item uses a feature this decoder lacks
+     * @throws MediaException.LimitExceeded if the image exceeds the limits
+     */
+    static Picture reconstructInput(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits,
+                                    boolean highBitDepth, int depth) {
+        return new Reconstruction(source, file, limits).reconstruct(item, highBitDepth, depth);
     }
 
     /**
@@ -182,7 +210,9 @@ final class Reconstruction {
             throw new MediaException.Malformed("avif: item " + item.id() + " is derived from itself");
         }
         if (checked.add(item.id())) {
-            if (StillPlan.isCoded(file, item)) {
+            if (HeifImageCodec.formatOf(item.type()) == ImageFormat.HEIC) {
+                HeifImageCodec.require(ImageFormat.HEIC).requireDecodable(source, file, item, limits);
+            } else if (StillPlan.isCoded(file, item)) {
                 StillPlan.of(source, file, item, limits);
             } else {
                 StillPlan.requireSupported(item);
@@ -290,14 +320,15 @@ final class Reconstruction {
         boolean result;
         var inputs = item.references("dimg");
         if (StillPlan.isCoded(file, item)) {
-            result = StillPlan.of(source, file, item, limits).hasAlpha();
+            result = StillPlan.of(source, file, item, limits).hasAlpha()
+                    || takesForeignAlpha(source, file, item, limits);
         } else {
             result = switch (item.type()) {
                 case "iovl" -> true;
                 case "iden", "sato" -> inputs.length > 0
                         && hasAlpha(source, file, file.item(inputs[0]), limits, depth + 1, known);
                 case "grid" -> {
-                    if (alphaOf(file, item) != null) {
+                    if (alphaOf(source, file, item, limits) != null) {
                         yield true;
                     }
                     for (var id : inputs) {
@@ -331,9 +362,15 @@ final class Reconstruction {
             throw new MediaException.Malformed("avif: item " + item.id() + " is derived from itself");
         }
         try {
+            if (HeifImageCodec.formatOf(item.type()) == ImageFormat.HEIC) {
+                var picture = HeifImageCodec.require(ImageFormat.HEIC).reconstructInput(source, file, item, limits,
+                        wide, depth + 1);
+                charge((long) picture.width() * picture.height());
+                return picture;
+            }
             StillPlan.requireSupported(item);
             if (StillPlan.isCoded(file, item)) {
-                return coded(item, wide);
+                return coded(item, wide, depth);
             }
             return switch (item.type()) {
                 case "grid" -> grid(item, wide, depth);
@@ -396,28 +433,114 @@ final class Reconstruction {
     }
 
     /**
-     * Reconstructs a coded item or a grid of coded items.
+     * Reconstructs a coded item or a grid of coded items, with the alpha plane of its AV1 alpha
+     * images or, without them, of its alpha images of the other family.
      *
      * @param item the image item reconstructed
      * @param wide whether a source of more than 8 bits keeps its depth
+     * @param depth the nesting depth of the item
      * @return the picture
      */
-    private Picture coded(HeifItem item, boolean wide) {
+    private Picture coded(HeifItem item, boolean wide, int depth) {
         var plan = StillPlan.of(source, file, item, limits);
         var picture = StillDecoder.reconstruct(source, file, plan, limits, wide);
         charge((long) picture.width() * picture.height() * (plan.hasAlpha() ? 2 : 1));
-        return picture;
+        if (plan.hasAlpha()) {
+            return picture;
+        }
+        var alpha = HeifImageCodec.foreignAlpha(source, file, item, limits, ImageFormat.AVIF);
+        var tileAlphas = alpha == null && plan.grid() != null ? foreignTileAlphas(source, file, item, limits) : null;
+        if (alpha == null && tileAlphas == null) {
+            return picture;
+        }
+        var format = switch (picture) {
+            case YuvPicture yuv -> yuv.chromaFormat();
+            case Yuv16Picture yuv -> yuv.chromaFormat();
+            default -> throw new MediaException.Malformed("avif: item " + item.id() + " reconstructs packed");
+        };
+        var canvas = new HeifCanvas(FORMAT, limits, picture.width(), picture.height(), format, picture.bitDepth(),
+                picture instanceof Yuv16Picture, true);
+        canvas.writeColor(picture, 0, 0, picture.width(), picture.height());
+        if (alpha != null) {
+            attachAlpha(canvas, alpha, depth);
+        } else {
+            var extent = plan.colorTiles().getFirst().property(HeifProperty.SpatialExtent.class);
+            if (extent == null) {
+                throw new MediaException.Malformed("avif: grid tile " + plan.colorTiles().getFirst().id()
+                        + " has no ispe property");
+            }
+            var tileWidth = HeifStills.checkedSize(FORMAT, extent.width());
+            var tileHeight = HeifStills.checkedSize(FORMAT, extent.height());
+            for (var index = 0; index < tileAlphas.size(); index++) {
+                var x = (index % plan.grid().columns()) * tileWidth;
+                var y = (index / plan.grid().columns()) * tileHeight;
+                var tile = output(tileAlphas.get(index), true, depth + 2);
+                var limited = !HeifPictures.isPacked(tile) && HeifPictures.colorOf(tile).range() == ColorRange.LIMITED;
+                canvas.writeAlpha(HeifPictures.resampleAlpha(tile, tileWidth, tileHeight), x, y,
+                        Math.min(tileWidth, picture.width() - x), Math.min(tileHeight, picture.height() - y), limited);
+            }
+        }
+        var result = canvas.toPicture(HeifPictures.colorOf(picture));
+        return alpha != null && item.references("prem", alpha.id()) ? HeifPictures.unpremultiply(result) : result;
+    }
+
+    /**
+     * Returns whether a coded image without an AV1 alpha plane takes its alpha from images of the other family: an
+     * alpha auxiliary image of its own, or for a grid, one for every tile, that the HEIC {@link HeifImageCodec} at
+     * hand reconstructs.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the coded item or grid of coded items
+     * @param limits the bounds of the data read
+     * @return {@code true} when such alpha images are found
+     */
+    private static boolean takesForeignAlpha(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
+        return HeifImageCodec.foreignAlpha(source, file, item, limits, ImageFormat.AVIF) != null
+                || item.type().equals("grid") && foreignTileAlphas(source, file, item, limits) != null;
+    }
+
+    /**
+     * Returns the alpha auxiliary images of the other family of the tiles of a grid.
+     *
+     * @param source the file
+     * @param file the parsed file
+     * @param item the grid item
+     * @param limits the bounds of the data read
+     * @return the alpha item of every tile in tile order, or {@code null} when a tile has none or the grid has no
+     * tile
+     */
+    private static List<HeifItem> foreignTileAlphas(MediaSource source, HeifFile file, HeifItem item,
+                                                    MediaLimits limits) {
+        var ids = item.references("dimg");
+        if (ids.length == 0) {
+            return null;
+        }
+        var found = new ArrayList<HeifItem>(ids.length);
+        for (var id : ids) {
+            var tile = file.item(id);
+            var alpha = tile == null ? null : HeifImageCodec.foreignAlpha(source, file, tile, limits, ImageFormat.AVIF);
+            if (alpha == null) {
+                return null;
+            }
+            found.add(alpha);
+        }
+        return found;
     }
 
     /**
      * Returns the alpha auxiliary image of a derived grid.
      *
+     * @param source the file
      * @param file the parsed file
      * @param item the grid item
+     * @param limits the bounds of the data read
      * @return the first alpha auxiliary item that is coded, a grid or an identity derivation, has
-     * data when coded and only supported essential properties, or {@code null}
+     * data when coded and only supported essential properties, or else the first one of the other
+     * family that the HEIC {@link HeifImageCodec} at hand reconstructs, or {@code null}
+     * @throws MediaException.Io if reading the source fails
      */
-    private static HeifItem alphaOf(HeifFile file, HeifItem item) {
+    private static HeifItem alphaOf(MediaSource source, HeifFile file, HeifItem item, MediaLimits limits) {
         for (var candidate : HeifStills.alphaCandidates(file, item, StillPlan.SUPPORTED_PROPERTIES)) {
             switch (candidate.type()) {
                 case "av01", "grid" -> {
@@ -432,7 +555,7 @@ final class Reconstruction {
                 }
             }
         }
-        return null;
+        return HeifImageCodec.foreignAlpha(source, file, item, limits, ImageFormat.AVIF);
     }
 
     /**
@@ -468,7 +591,7 @@ final class Reconstruction {
         var height = HeifStills.checkedSize(FORMAT, grid.outputHeight());
         LimitChecks.checkPicture(limits, width, height);
         charge((long) width * height);
-        var alpha = alphaOf(file, item);
+        var alpha = alphaOf(source, file, item, limits);
         var pictures = new ArrayList<Picture>(ids.length);
         var packed = false;
         for (var index = 0; index < ids.length; index++) {

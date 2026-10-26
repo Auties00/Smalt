@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.video.fuzz;
 
+import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
 import com.github.auties00.smalt.track.Codec;
@@ -30,6 +31,21 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
         disabledReason = "[opt-in:fuzz-seeds] runs only with -Dsmalt.fuzz.writeSeeds=true")
 class FuzzSeedWriter {
+    /**
+     * Rewrites every brand of the leading {@code ftyp} box of a file as {@code mif1}, the generic HEIF brand, so that
+     * only the coding of its items tells it is AVIF.
+     */
+    private static byte[] genericBrands(byte[] data) {
+        var copy = data.clone();
+        var size = ((copy[0] & 0xFF) << 24) | ((copy[1] & 0xFF) << 16) | ((copy[2] & 0xFF) << 8) | (copy[3] & 0xFF);
+        for (var offset = 8; offset + 4 <= size; offset += 4) {
+            if (offset != 12) {
+                System.arraycopy(new byte[]{'m', 'i', 'f', '1'}, 0, copy, offset, 4);
+            }
+        }
+        return copy;
+    }
+
     @Test
     @DisplayName("writes the seeds of the video decoder targets")
     void seeds() {
@@ -54,8 +70,10 @@ class FuzzSeedWriter {
                 "-profile:v", "4", "-pix_fmt", "yuva444p10le", "-q:v", "31"));
         seed("dnxhd", "valid-dnxhr-lb.bin", Codec.DNXHD, 0, ffmpeg("mov", video(256, 120, 1), "-c:v", "dnxhd",
                 "-profile:v", "dnxhr_lb", "-pix_fmt", "yuv422p"));
-        copy(VideoFuzzTest.class, "avif", "valid-still.avif", ffmpeg("avif", video(32, 32, 1), "-frames:v", "1",
-                "-c:v", "libaom-av1", "-cpu-used", "8", "-still-picture", "1"));
+        var still = ffmpeg("avif", video(32, 32, 1), "-frames:v", "1", "-c:v", "libaom-av1", "-cpu-used", "8",
+                "-still-picture", "1");
+        copy(VideoFuzzTest.class, "avif", "valid-still.avif", still);
+        write(VideoFuzzTest.class, "avif", "valid-generic-brand.avif", genericBrands(Fixtures.read(still)));
         copy(VideoFuzzTest.class, "avif", "valid-10bit-444.avif", ffmpeg("avif", video(16, 16, 1), "-frames:v",
                 "1", "-c:v", "libaom-av1", "-cpu-used", "8", "-still-picture", "1", "-pix_fmt", "yuv444p10le"));
         copy(VideoFuzzTest.class, "avif", "valid-sequence.avifs", ffmpeg("avif", args(video(16, 16, 3)),

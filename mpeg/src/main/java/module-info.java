@@ -53,4 +53,7 @@ module com.github.auties00.smalt.mpeg {
             com.github.auties00.smalt.internal.provider.mpeg.H263CodecProvider;
     provides com.github.auties00.smalt.spi.ImageCodecProvider with
             com.github.auties00.smalt.internal.provider.mpeg.HeicCodecProvider;
+    // The HEIC decoder, for the HEIF decoders of the artifacts that do not depend on this one
+    provides com.github.auties00.smalt.internal.heif.HeifImageCodec with
+            com.github.auties00.smalt.internal.provider.mpeg.HeicImageCodec;
 }
