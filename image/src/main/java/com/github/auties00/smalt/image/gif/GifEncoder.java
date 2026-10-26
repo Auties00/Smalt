@@ -24,7 +24,8 @@ import java.util.Objects;
  * GIF has no partial transparency. The palette is the global color table, and the image data
  * is LZW-compressed exactly as giflib compresses it. The ICC profile of
  * {@link GifEncoderOptions#colorProfile()} is embedded in an {@code ICCRGBG1} application
- * extension. Animations are encoded with {@link GifAnimationEncoder}.
+ * extension and {@link GifEncoderOptions#xmp()} in an {@code XMP DataXMP} one. Animations are encoded with
+ * {@link GifAnimationEncoder}.
  *
  * <p>This class is thread-safe.
  */

@@ -15,6 +15,7 @@ import com.github.auties00.smalt.image.ico.AniEncoder;
 import com.github.auties00.smalt.image.ico.AniEncoderOptions;
 import com.github.auties00.smalt.image.ico.IcoEncoderOptions;
 import com.github.auties00.smalt.internal.check.LosslessDepth;
+import com.github.auties00.smalt.internal.codec.EncodeMetadata;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -69,6 +70,8 @@ public final class AniCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        picture = EncodeMetadata.upright(EncodeMetadata.color(picture, options, (profile, coded) -> false).picture(),
+                options);
         if (options.isLossless()) {
             picture = LosslessDepth.fit(picture, 8, "ani");
         }
@@ -87,7 +90,9 @@ public final class AniCodecProvider implements ImageCodecProvider {
             throw new MediaException.Unsupported("ani", "an animated cursor always plays forever, not "
                     + options.loopCount() + " times");
         }
-        return AniEncoder.openAnimationWriter(width, height, settings(width, height), sink);
+        EncodeMetadata.requireUpright(options, "ani");
+        var color = EncodeMetadata.animationColor(options, false);
+        return color.wrap(AniEncoder.openAnimationWriter(width, height, settings(width, height), sink));
     }
 
     /**

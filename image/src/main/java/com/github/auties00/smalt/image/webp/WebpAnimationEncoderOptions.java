@@ -2,7 +2,9 @@ package com.github.auties00.smalt.image.webp;
 
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -69,6 +71,10 @@ public final class WebpAnimationEncoderOptions {
 
     private final ColorProfile colorProfile;
 
+    private final byte[] exif;
+
+    private final byte[] xmp;
+
     private WebpAnimationEncoderOptions(Builder builder) {
         this.loopCount = builder.loopCount;
         this.lossless = builder.lossless;
@@ -80,6 +86,8 @@ public final class WebpAnimationEncoderOptions {
         this.allowMixed = builder.allowMixed;
         this.minimize = builder.minimize;
         this.colorProfile = builder.colorProfile;
+        this.exif = builder.exif;
+        this.xmp = builder.xmp;
     }
 
     /**
@@ -227,6 +235,22 @@ public final class WebpAnimationEncoderOptions {
     }
 
     /**
+     * {@return a copy of the EXIF block written as an {@code EXIF} chunk after the frames, a TIFF structure
+     * starting with its byte-order mark, or empty for none; empty by default}
+     */
+    public Optional<byte[]> exif() {
+        return Optional.ofNullable(exif).map(byte[]::clone);
+    }
+
+    /**
+     * {@return a copy of the XMP packet written as an {@code XMP } chunk, the last of the file, in UTF-8, or empty
+     * for none; empty by default}
+     */
+    public Optional<byte[]> xmp() {
+        return Optional.ofNullable(xmp).map(byte[]::clone);
+    }
+
+    /**
      * {@inheritDoc}
      *
      * <p>Options whose key frame distances follow the coding mode differ from options with the same
@@ -244,13 +268,15 @@ public final class WebpAnimationEncoderOptions {
                 && maxKeyframeDistance == that.maxKeyframeDistance
                 && allowMixed == that.allowMixed
                 && minimize == that.minimize
-                && Objects.equals(colorProfile, that.colorProfile);
+                && Objects.equals(colorProfile, that.colorProfile)
+                && Arrays.equals(exif, that.exif)
+                && Arrays.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(loopCount, lossless, quality, method, keyframesSet, minKeyframeDistance,
-                maxKeyframeDistance, allowMixed, minimize, colorProfile);
+                maxKeyframeDistance, allowMixed, minimize, colorProfile, Arrays.hashCode(exif), Arrays.hashCode(xmp));
     }
 
     @Override
@@ -258,7 +284,9 @@ public final class WebpAnimationEncoderOptions {
         return "WebpAnimationEncoderOptions[loopCount=" + loopCount + ", lossless=" + lossless + ", quality=" + quality
                 + ", method=" + method + ", keyframes=" + (keyframesSet ? "" : "automatic ") + minKeyframeDistance()
                 + ".." + maxKeyframeDistance() + ", allowMixed=" + allowMixed + ", minimize=" + minimize
-                + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed")) + "]";
+                + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed"))
+                + (exif == null ? "" : ", exif=" + exif.length + " bytes")
+                + (xmp == null ? "" : ", xmp=" + xmp.length + " bytes") + "]";
     }
 
     /**
@@ -288,6 +316,10 @@ public final class WebpAnimationEncoderOptions {
 
         private ColorProfile colorProfile;
 
+        private byte[] exif;
+
+        private byte[] xmp;
+
         private Builder() {
         }
 
@@ -302,6 +334,8 @@ public final class WebpAnimationEncoderOptions {
             this.allowMixed = options.allowMixed;
             this.minimize = options.minimize;
             this.colorProfile = options.colorProfile;
+            this.exif = options.exif;
+            this.xmp = options.xmp;
         }
 
         /**
@@ -433,6 +467,49 @@ public final class WebpAnimationEncoderOptions {
          */
         public Builder noColorProfile() {
             this.colorProfile = null;
+            return this;
+        }
+
+        /**
+         * Sets the EXIF block; see {@link WebpAnimationEncoderOptions#exif()}.
+         *
+         * @param exif the value, with or without the {@code "Exif\0\0"} identifier JPEG puts in front of it,
+         * which is removed; copied
+         * @return this builder
+         */
+        public Builder exif(byte[] exif) {
+            this.exif = TiffExif.stripExifPrefix(Objects.requireNonNull(exif, "exif")).clone();
+            return this;
+        }
+
+        /**
+         * Writes no EXIF block; see {@link WebpAnimationEncoderOptions#exif()}.
+         *
+         * @return this builder
+         */
+        public Builder noExif() {
+            this.exif = null;
+            return this;
+        }
+
+        /**
+         * Sets the XMP packet; see {@link WebpAnimationEncoderOptions#xmp()}.
+         *
+         * @param xmp the value; copied
+         * @return this builder
+         */
+        public Builder xmp(byte[] xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp").clone();
+            return this;
+        }
+
+        /**
+         * Writes no XMP packet; see {@link WebpAnimationEncoderOptions#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
             return this;
         }
 

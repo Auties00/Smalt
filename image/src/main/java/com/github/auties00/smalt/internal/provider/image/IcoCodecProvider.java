@@ -13,6 +13,7 @@ import com.github.auties00.smalt.image.ico.IcoDecoder;
 import com.github.auties00.smalt.image.ico.IcoEncoder;
 import com.github.auties00.smalt.image.ico.IcoEncoderOptions;
 import com.github.auties00.smalt.internal.check.LosslessDepth;
+import com.github.auties00.smalt.internal.codec.EncodeMetadata;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -61,6 +62,8 @@ public final class IcoCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        picture = EncodeMetadata.upright(EncodeMetadata.color(picture, options, (profile, coded) -> false).picture(),
+                options);
         if (options.isLossless()) {
             picture = LosslessDepth.fit(picture, 8, "ico");
         }
@@ -77,6 +80,6 @@ public final class IcoCodecProvider implements ImageCodecProvider {
 
     @Override
     public PageWriter openPageWriter(ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
-        return new IcoPageWriter(sink, options.isLossless());
+        return new IcoPageWriter(sink, options);
     }
 }

@@ -575,9 +575,11 @@ public final class ApngEncoder {
                     ByteArrays.put32le(picture.pixels(), y * picture.stride() + x * 4, current[y * width + x]);
                 }
             }
-            return PngEncoder.encode(picture, PngEncoderOptions.builder()
-                    .compressionLevel(options.compressionLevel()).filter(options.filter())
-                    .colorProfile(options.colorProfile().orElse(null)).build());
+            var still = PngEncoderOptions.builder().compressionLevel(options.compressionLevel())
+                    .filter(options.filter()).colorProfile(options.colorProfile().orElse(null));
+            options.exif().ifPresent(still::exif);
+            options.xmp().ifPresent(still::xmp);
+            return PngEncoder.encode(picture, still.build());
         }
         int type;
         int[] blends;
@@ -767,6 +769,7 @@ public final class ApngEncoder {
                 size + (hidden == null ? 0 : hidden.data.length)));
         out.header(width, height, 8, type, false);
         out.colorSpace(options.colorProfile().orElse(null), null, null, null);
+        out.metadata(options.exif().orElse(null), options.xmp().orElse(null));
         if (type == INDEXED) {
             out.palette(colors);
         }

@@ -4,7 +4,9 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -26,11 +28,17 @@ public final class ApngEncoderOptions {
 
     private final ColorProfile colorProfile;
 
+    private final byte[] exif;
+
+    private final byte[] xmp;
+
     private ApngEncoderOptions(Builder builder) {
         this.compressionLevel = builder.compressionLevel;
         this.filter = builder.filter;
         this.loopCount = builder.loopCount;
         this.colorProfile = builder.colorProfile;
+        this.exif = builder.exif;
+        this.xmp = builder.xmp;
     }
 
     /**
@@ -101,24 +109,45 @@ public final class ApngEncoderOptions {
         return Optional.ofNullable(colorProfile);
     }
 
+    /**
+     * {@return a copy of the EXIF block written as an {@code eXIf} chunk, as {@link PngEncoderOptions#exif()}
+     * describes, or empty for none; empty by default}
+     */
+    public Optional<byte[]> exif() {
+        return Optional.ofNullable(exif).map(byte[]::clone);
+    }
+
+    /**
+     * {@return a copy of the XMP packet written as an {@code iTXt} chunk, as {@link PngEncoderOptions#xmp()}
+     * describes, or empty for none; empty by default}
+     */
+    public Optional<byte[]> xmp() {
+        return Optional.ofNullable(xmp).map(byte[]::clone);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof ApngEncoderOptions that
                 && compressionLevel == that.compressionLevel
                 && filter == that.filter
                 && loopCount == that.loopCount
-                && Objects.equals(colorProfile, that.colorProfile);
+                && Objects.equals(colorProfile, that.colorProfile)
+                && Arrays.equals(exif, that.exif)
+                && Arrays.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(compressionLevel, filter, loopCount, colorProfile);
+        return Objects.hash(compressionLevel, filter, loopCount, colorProfile, Arrays.hashCode(exif),
+                Arrays.hashCode(xmp));
     }
 
     @Override
     public String toString() {
         return "ApngEncoderOptions[compressionLevel=" + compressionLevel + ", filter=" + filter + ", loopCount="
                 + loopCount + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed"))
+                + (exif == null ? "" : ", exif=" + exif.length + " bytes")
+                + (xmp == null ? "" : ", xmp=" + xmp.length + " bytes")
                 + "]";
     }
 
@@ -137,6 +166,10 @@ public final class ApngEncoderOptions {
 
         private ColorProfile colorProfile;
 
+        private byte[] exif;
+
+        private byte[] xmp;
+
         private Builder() {
         }
 
@@ -145,6 +178,8 @@ public final class ApngEncoderOptions {
             this.filter = options.filter;
             this.loopCount = options.loopCount;
             this.colorProfile = options.colorProfile;
+            this.exif = options.exif;
+            this.xmp = options.xmp;
         }
 
         /**
@@ -198,6 +233,49 @@ public final class ApngEncoderOptions {
          */
         public Builder noColorProfile() {
             this.colorProfile = null;
+            return this;
+        }
+
+        /**
+         * Sets the EXIF block; see {@link ApngEncoderOptions#exif()}.
+         *
+         * @param exif the value, with or without the {@code "Exif\0\0"} identifier JPEG puts in front of it,
+         * which is removed; copied
+         * @return this builder
+         */
+        public Builder exif(byte[] exif) {
+            this.exif = TiffExif.stripExifPrefix(Objects.requireNonNull(exif, "exif")).clone();
+            return this;
+        }
+
+        /**
+         * Writes no {@code eXIf} chunk; see {@link ApngEncoderOptions#exif()}.
+         *
+         * @return this builder
+         */
+        public Builder noExif() {
+            this.exif = null;
+            return this;
+        }
+
+        /**
+         * Sets the XMP packet; see {@link ApngEncoderOptions#xmp()}.
+         *
+         * @param xmp the value; copied
+         * @return this builder
+         */
+        public Builder xmp(byte[] xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp").clone();
+            return this;
+        }
+
+        /**
+         * Writes no XMP {@code iTXt} chunk; see {@link ApngEncoderOptions#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
             return this;
         }
 

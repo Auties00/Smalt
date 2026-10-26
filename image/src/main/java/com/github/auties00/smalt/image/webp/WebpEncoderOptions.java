@@ -2,7 +2,9 @@ package com.github.auties00.smalt.image.webp;
 
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -74,6 +76,10 @@ public final class WebpEncoderOptions {
 
     private final ColorProfile colorProfile;
 
+    private final byte[] exif;
+
+    private final byte[] xmp;
+
     private WebpEncoderOptions(Builder builder) {
         this.lossless = builder.lossless;
         this.quality = builder.quality;
@@ -96,6 +102,8 @@ public final class WebpEncoderOptions {
         this.tokenPartitions = builder.tokenPartitions;
         this.extendedFormat = builder.extendedFormat;
         this.colorProfile = builder.colorProfile;
+        this.exif = builder.exif;
+        this.xmp = builder.xmp;
     }
 
     /**
@@ -403,6 +411,27 @@ public final class WebpEncoderOptions {
         return Optional.ofNullable(colorProfile);
     }
 
+    /**
+     * {@return a copy of the EXIF block written as an {@code EXIF} chunk, a TIFF structure starting with its
+     * byte-order mark, or empty for none; empty by default}
+     *
+     * <p>The chunk follows the image data and needs the extended format, as the class documentation of
+     * {@link WebpEncoder} describes.
+     */
+    public Optional<byte[]> exif() {
+        return Optional.ofNullable(exif).map(byte[]::clone);
+    }
+
+    /**
+     * {@return a copy of the XMP packet written as an {@code XMP } chunk, in UTF-8, or empty for none; empty by
+     * default}
+     *
+     * <p>The chunk is the last of the file and needs the extended format.
+     */
+    public Optional<byte[]> xmp() {
+        return Optional.ofNullable(xmp).map(byte[]::clone);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof WebpEncoderOptions that
@@ -426,14 +455,16 @@ public final class WebpEncoderOptions {
                 && segments == that.segments
                 && tokenPartitions == that.tokenPartitions
                 && extendedFormat == that.extendedFormat
-                && Objects.equals(colorProfile, that.colorProfile);
+                && Objects.equals(colorProfile, that.colorProfile)
+                && Arrays.equals(exif, that.exif)
+                && Arrays.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(lossless, quality, method, alphaQuality, alphaFilter, exact, targetSize, targetPsnr, passes,
                 nearLossless, sharpYuv, dithering, snsStrength, filterStrength, filterSharpness, simpleFilter,
-                autoFilter, segments, tokenPartitions, extendedFormat, colorProfile);
+                autoFilter, segments, tokenPartitions, extendedFormat, colorProfile, Arrays.hashCode(exif), Arrays.hashCode(xmp));
     }
 
     @Override
@@ -447,6 +478,8 @@ public final class WebpEncoderOptions {
                 + ", autoFilter=" + autoFilter + ", segments=" + segments + ", tokenPartitions=" + tokenPartitions
                 + ", extendedFormat=" + extendedFormat
                 + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed"))
+                + (exif == null ? "" : ", exif=" + exif.length + " bytes")
+                + (xmp == null ? "" : ", xmp=" + xmp.length + " bytes")
                 + "]";
     }
 
@@ -566,6 +599,10 @@ public final class WebpEncoderOptions {
 
         private ColorProfile colorProfile;
 
+        private byte[] exif;
+
+        private byte[] xmp;
+
         private Builder() {
         }
 
@@ -594,6 +631,8 @@ public final class WebpEncoderOptions {
             this.tokenPartitions = options.tokenPartitions;
             this.extendedFormat = options.extendedFormat;
             this.colorProfile = options.colorProfile;
+            this.exif = options.exif;
+            this.xmp = options.xmp;
         }
 
         /**
@@ -873,6 +912,49 @@ public final class WebpEncoderOptions {
          */
         public Builder colorProfile(ColorProfile colorProfile) {
             this.colorProfile = colorProfile;
+            return this;
+        }
+
+        /**
+         * Sets the EXIF block; see {@link WebpEncoderOptions#exif()}.
+         *
+         * @param exif the value, with or without the {@code "Exif\0\0"} identifier JPEG puts in front of it,
+         * which is removed; copied
+         * @return this builder
+         */
+        public Builder exif(byte[] exif) {
+            this.exif = TiffExif.stripExifPrefix(Objects.requireNonNull(exif, "exif")).clone();
+            return this;
+        }
+
+        /**
+         * Writes no EXIF block; see {@link WebpEncoderOptions#exif()}.
+         *
+         * @return this builder
+         */
+        public Builder noExif() {
+            this.exif = null;
+            return this;
+        }
+
+        /**
+         * Sets the XMP packet; see {@link WebpEncoderOptions#xmp()}.
+         *
+         * @param xmp the value; copied
+         * @return this builder
+         */
+        public Builder xmp(byte[] xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp").clone();
+            return this;
+        }
+
+        /**
+         * Writes no XMP packet; see {@link WebpEncoderOptions#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
             return this;
         }
 

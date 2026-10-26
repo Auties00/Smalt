@@ -41,11 +41,12 @@ import java.util.concurrent.Callable;
  * codes any transparency as a separate alpha plane. The simple container (a single
  * {@code VP8 } or {@code VP8L} chunk) is written unless the options ask for the extended one, a
  * lossy image has transparency, which needs {@code VP8X} and {@code ALPH}, or the options embed a
- * color profile, which needs {@code VP8X} and {@code ICCP}.
+ * color profile, which needs {@code VP8X} and {@code ICCP}, or EXIF or XMP metadata, which need {@code VP8X}
+ * and an {@code EXIF} or {@code XMP } chunk after the image data.
  *
  * <p>With a target size, lossy encoding first tries the requested quality and, when the file is
  * too large, bisects the quality down to 0 and returns the best-quality result that fits, color
- * profile included; when not even quality 0 fits, it returns the smallest file it produced and
+ * profile and metadata included; when not even quality 0 fits, it returns the smallest file it produced and
  * the caller decides. Lossless encoding ignores the target size. With a
  * {@linkplain WebpEncoderOptions#targetPsnr() target PSNR} the quality is searched inside the VP8
  * encoder, over its entropy-analysis passes, instead.
@@ -176,7 +177,7 @@ public final class WebpEncoder {
         }
         var image = FrameEncoder.encodeLossless(argb, width, height, options.quality(), options.method(), options.exact(),
                 options.nearLossless());
-        return assemble(image, width, height, options.extendedFormat(), icc);
+        return assemble(image, width, height, options, icc);
     }
 
     /**
@@ -216,7 +217,7 @@ public final class WebpEncoder {
                 () -> FrameEncoder.encodeVp8(yuv, vp8Settings(options, options.quality()))));
         var alph = first.get(0);
         var file = assemble(new FrameEncoder.EncodedImage(first.get(1), false, alph, alph != null), width, height,
-                options.extendedFormat(), icc);
+                options, icc);
         var target = options.targetSize().orElse(0);
         if (target <= 0 || file.length <= target) {
             return file;
@@ -297,7 +298,7 @@ public final class WebpEncoder {
                                     byte[] icc) {
         var vp8 = FrameEncoder.encodeVp8(yuv, vp8Settings(options, quality));
         var image = new FrameEncoder.EncodedImage(vp8, false, alph, alph != null);
-        return assemble(image, yuv.width(), yuv.height(), options.extendedFormat(), icc);
+        return assemble(image, yuv.width(), yuv.height(), options, icc);
     }
 
     /**
@@ -383,20 +384,30 @@ public final class WebpEncoder {
      * @param image the encoded image
      * @param width the image width in pixels
      * @param height the image height in pixels
-     * @param extended whether the extended container is requested
+     * @param options the settings, which ask for the extended container and hold the EXIF and XMP metadata
+     * @param icc the ICC profile, or {@code null}
      * @return the file
      */
-    private static byte[] assemble(FrameEncoder.EncodedImage image, int width, int height, boolean extended,
+    private static byte[] assemble(FrameEncoder.EncodedImage image, int width, int height, WebpEncoderOptions options,
                                    byte[] icc) {
+        var exif = options.exif().orElse(null);
+        var xmp = options.xmp().orElse(null);
         var chunks = new ArrayList<byte[]>();
-        if (extended || image.alph() != null || icc != null) {
-            var flags = (image.hasAlpha() ? WebpParser.FLAG_ALPHA : 0) | (icc != null ? WebpParser.FLAG_ICCP : 0);
+        if (options.extendedFormat() || image.alph() != null || icc != null || exif != null || xmp != null) {
+            var flags = (image.hasAlpha() ? WebpParser.FLAG_ALPHA : 0) | (icc != null ? WebpParser.FLAG_ICCP : 0)
+                    | (exif != null ? WebpParser.FLAG_EXIF : 0) | (xmp != null ? WebpParser.FLAG_XMP : 0);
             chunks.add(WebpWriter.vp8x(flags, width, height));
         }
         if (icc != null) {
             chunks.add(WebpWriter.chunk(FourCc.ICCP, icc));
         }
         chunks.addAll(image.chunks());
+        if (exif != null) {
+            chunks.add(WebpWriter.chunk(FourCc.EXIF, exif));
+        }
+        if (xmp != null) {
+            chunks.add(WebpWriter.chunk(FourCc.XMP, xmp));
+        }
         return WebpWriter.riff(chunks);
     }
 }

@@ -32,6 +32,11 @@ final class PngChunkWriter {
     private static final byte[] ICC_NAME = "ICC profile".getBytes(StandardCharsets.ISO_8859_1);
 
     /**
+     * The keyword of the {@code iTXt} chunk that holds an XMP packet (XMP specification part 3).
+     */
+    private static final byte[] XMP_KEYWORD = "XML:com.adobe.xmp".getBytes(StandardCharsets.ISO_8859_1);
+
+    /**
      * The image gamma of the {@code gAMA} chunk that accompanies {@code sRGB}, stored as 45455.
      */
     private static final Double SRGB_GAMMA = 0.45455;
@@ -318,6 +323,28 @@ final class PngChunkWriter {
             }
         } while (offset < data.length);
         return sequence;
+    }
+
+    /**
+     * Writes the metadata chunks: an {@code eXIf} chunk holding an EXIF block, then an {@code iTXt} chunk
+     * holding an XMP packet uncompressed under the keyword {@code XML:com.adobe.xmp}.
+     *
+     * @param exif the EXIF block, or {@code null} for none
+     * @param xmp the XMP packet in UTF-8, or {@code null} for none
+     * @throws MediaException.LimitExceeded if the datastream would exceed the size limit
+     */
+    void metadata(byte[] exif, byte[] xmp) {
+        if (exif != null) {
+            chunk(PngChunks.EXIF, exif, 0, exif.length);
+        }
+        if (xmp != null) {
+            var data = new byte[XMP_KEYWORD.length + 5 + xmp.length];
+            System.arraycopy(XMP_KEYWORD, 0, data, 0, XMP_KEYWORD.length);
+            // keyword terminator, compression flag, compression method, and the empty language tag and
+            // translated keyword, each ended by a null
+            System.arraycopy(xmp, 0, data, XMP_KEYWORD.length + 5, xmp.length);
+            chunk(PngChunks.ITXT, data, 0, data.length);
+        }
     }
 
     /**

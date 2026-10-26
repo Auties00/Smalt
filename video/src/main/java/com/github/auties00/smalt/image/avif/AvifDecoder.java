@@ -95,8 +95,9 @@ import java.util.function.Supplier;
  * the loop count of the edit list (a track without an edit list loops forever). The reader seeks:
  * it restarts the decoding at the last sync sample at or before the requested time and decodes up
  * to the frame shown then, which is the frame a decode from the start shows. {@link #decode}
- * returns the first frame of a sequence when the file's major brand is {@code avis}, and the
- * primary image otherwise.
+ * returns the first frame of a sequence when the file's major brand is {@code avis}, with the ICC
+ * profile, EXIF block and XMP packet of the primary item when the file has one, and the primary image
+ * otherwise.
  *
  * <p>Every size the file declares is checked against the {@link MediaLimits} of the options
  * before the corresponding allocation: the {@code meta} and {@code moov} boxes and every item

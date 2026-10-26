@@ -257,9 +257,11 @@ The high-dynamic-range color tests of `smalt-core` (`HdrColorTest`) read two pro
 <file>`, with the creation date cleared so that the output depends only on the Little CMS version), and
 `icc-hdr/profiles.sha256` pins them. The same program is the oracle of the test that has Little CMS read Smalt's
 PQ and HLG profiles (`info`: version, color space and `cicp` tag as Little CMS reads them; `gray`: a gray ramp
-transformed to Little CMS's sRGB). Build it with `bash tools/testdata/icc-hdr/build.sh <lcms2 source directory>
+transformed to Little CMS's sRGB), and of the image transcode test of `it` (`ImageTranscodeMetadataTest`) that
+compares Smalt's conversion of Display P3, Adobe RGB and CMYK pixels with Little CMS's (`pixels`: gray, RGB or CMYK
+pixels read from standard input, transformed to Little CMS's sRGB with the perceptual intent at 16 or 8 bits). Build it with `bash tools/testdata/icc-hdr/build.sh <lcms2 source directory>
 <directory>` against the Little CMS 2.16 or later sources (MIT; checked with the 2.17 release tarball) and put the
-directory on `PATH`; without it that test is skipped.
+directory on `PATH`; without it these tests are skipped.
 
 ## Advanced ICC profiles
 

@@ -27,11 +27,13 @@ import java.util.Objects;
  * {@link JpegEncoderOptions#density() density} and no thumbnail for YCbCr and gray, or an Adobe {@code APP14}
  * segment (transform 0 for RGB and CMYK, 2 for YCCK) for the other color spaces and transform 1 for a lossless
  * 9-bit YCbCr frame whose three components are all sampled 1x1 (a shape readers take for the RGB samples of a
- * reversible color transform when it has a JFIF header), the {@code APP2 ICC_PROFILE}
- * segments of {@link JpegEncoderOptions#colorProfile()}, the DQT segments, the SOF segment, and for each scan
+ * reversible color transform when it has a JFIF header), the {@code APP1 Exif} segment of
+ * {@link JpegEncoderOptions#exif()}, the {@code APP1} XMP segment (and Extended XMP segments) of
+ * {@link JpegEncoderOptions#xmp()}, the {@code APP2 ICC_PROFILE} segments of
+ * {@link JpegEncoderOptions#colorProfile()}, the DQT segments, the SOF segment, and for each scan
  * its DHT segments (or a DAC segment with the default conditioning when arithmetic coded), a DRI segment when
  * the restart interval differs from the previous scan's, SOS and the entropy-coded data, then EOI. Other
- * metadata such as EXIF must be added by the caller if wanted. The SOF marker follows from the options:
+ * metadata such as IPTC must be added by the caller if wanted. The SOF marker follows from the options:
  * {@code SOF0} (baseline) for 8-bit sequential Huffman coding with quantizers up to 255, {@code SOF1} for
  * other sequential Huffman coding, {@code SOF2} progressive, {@code SOF3} lossless, and {@code SOF9},
  * {@code SOF10} and {@code SOF11} for their arithmetic-coded forms.
@@ -171,8 +173,9 @@ public final class JpegEncoder {
      * @param gainMapOptions the settings of the gain map image
      * @return the JPEG file
      * @throws IllegalArgumentException if a picture is wider or taller than 65535 pixels, the settings do not
-     * fit a picture as {@link #encode(Picture, JpegEncoderOptions)} describes, or a metadata value is too large
-     * for a 32-bit fraction
+     * fit a picture as {@link #encode(Picture, JpegEncoderOptions)} describes, a metadata value is too large
+     * for a 32-bit fraction, or either options carry an XMP packet, which would compete with the packets of
+     * the Ultra HDR file
      * @throws MediaException.LimitExceeded if a color profile needs more than 255 {@code APP2} segments
      */
     public static byte[] encode(Picture picture, GainMap gainMap, JpegEncoderOptions options,
@@ -181,6 +184,10 @@ public final class JpegEncoder {
         Objects.requireNonNull(gainMap, "gainMap");
         Objects.requireNonNull(options, "options");
         Objects.requireNonNull(gainMapOptions, "gainMapOptions");
+        // TODO: merge a caller's XMP packet into the container packet of the Ultra HDR primary image
+        if (options.xmp().isPresent() || gainMapOptions.xmp().isPresent()) {
+            throw new IllegalArgumentException("an Ultra HDR file carries its own XMP packets");
+        }
         try (var _ = ParallelBands.operation()) {
             var image = gainMap.image();
             var gray = switch (image) {
@@ -208,10 +215,10 @@ public final class JpegEncoder {
      * @throws IllegalArgumentException if the picture is wider or taller than 65535 pixels, the
      * JPEG limit, or the settings do not fit the picture: a point transform not below the automatic
      * precision, sampling factors that do not divide the largest ones or put more than 10 data units in an
-     * MCU, a progressive bit position beyond the limit of the precision, or a lossless restart interval
-     * that is not a whole number of MCU rows
+     * MCU, a progressive bit position beyond the limit of the precision, a lossless restart interval
+     * that is not a whole number of MCU rows, or an XMP packet too large for one segment that does not parse
      * @throws MediaException.LimitExceeded if the color profile needs more than 255
-     * {@code APP2} segments
+     * {@code APP2} segments, or the XMP packet cannot be split into Extended XMP segments
      */
     public static byte[] encode(Picture picture, JpegEncoderOptions options) {
         Objects.requireNonNull(picture, "picture");

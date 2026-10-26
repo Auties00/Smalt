@@ -73,7 +73,8 @@ import java.util.Optional;
  * scaled to 8 bits, or to 16 bits when {@link ImageDecoderOptions#highBitDepth()} is set and a channel is wider than 8
  * bits. A file whose composition box shows a compositing layer decodes to the first frame of its composition, and any
  * other file to its first compositing layer. An enumerated color space, or an ICC profile, is reported through
- * {@link DecodedImage#colorProfile()} and applied when {@link ImageDecoderOptions#convertToSrgb()} is set. With
+ * {@link DecodedImage#colorProfile()} and applied when {@link ImageDecoderOptions#convertToSrgb()} is set, a CMYK
+ * image with a four-channel ICC profile being converted from its inks through that profile. With
  * {@link ImageDecoderOptions#keepChannels()} set (and {@code convertToSrgb} not set), a CMYK image decodes to a
  * {@link com.github.auties00.smalt.image.ChannelPicture ChannelPicture} of the
  * {@link com.github.auties00.smalt.image.PixelLayout#CMYK CMYK} layout instead, followed by an alpha channel (straight
@@ -236,12 +237,18 @@ public final class Jp2Decoder {
         var density = Optional.ofNullable(headers.boxes().density());
         var exif = image.exif();
         var orientation = exif.isEmpty() ? Orientation.NORMAL : ExifReader.orientation(exif.get());
-        if (options.keepChannels() && !options.convertToSrgb()) {
+        if (options.keepChannels() || options.convertToSrgb()) {
             var channels = Jp2Pictures.toChannels(image, options.highBitDepth(), options.limits());
             if (channels != null) {
-                return new DecodedImage(channels, ImageFormat.JP2, orientation, image.fullWidth(),
+                var inks = new DecodedImage(channels, ImageFormat.JP2, orientation, image.fullWidth(),
                         image.fullHeight(), image.iccProfile(), exif, image.xmp(),
                         profile(image).filter(profile -> profile.channels() == 4), density);
+                if (!options.convertToSrgb()) {
+                    return inks;
+                }
+                if (inks.colorProfile().isPresent()) {
+                    return ImageOps.toSrgb(inks);
+                }
             }
         }
         var picture = Jp2Pictures.toPicture(image, options.highBitDepth(), options.limits());

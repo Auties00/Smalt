@@ -674,6 +674,7 @@ public final class GifEncoderCore {
             out.write(0);
         }
         options.colorProfile().ifPresent(profile -> GifIccExtension.write(out, profile.toByteArray()));
+        options.xmp().ifPresent(xmp -> GifXmpExtension.write(out, xmp));
     }
 
     /**

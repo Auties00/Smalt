@@ -155,6 +155,12 @@ public final class JpegWriter {
     private final JpegBitWriter out;
 
     /**
+     * The complete {@code APP1} segments written after the JFIF segment, before the ICC segments, possibly
+     * none.
+     */
+    private final List<byte[]> metadataSegments;
+
+    /**
      * The {@code APP2 ICC_PROFILE} segments written after the JFIF segment, possibly none.
      */
     private final List<byte[]> iccSegments;
@@ -206,6 +212,7 @@ public final class JpegWriter {
      * @param chromaTable the chrominance quantization table, natural order, each value from 1 to 255
      * @param format the target subsampling
      * @param restartInterval the restart interval in MCUs, or zero
+     * @param metadataSegments the complete {@code APP1} segments written before the ICC segments
      * @param iccProfile the ICC profile to embed, or {@code null}
      * @param app0 the payload of the {@code APP0} segment after SOI, or {@code null} for none
      * @param quantTables whether the DQT segments are written
@@ -215,7 +222,8 @@ public final class JpegWriter {
      * @throws MediaException.LimitExceeded if the profile needs more than 255 segments
      */
     private JpegWriter(Picture picture, int[] lumaTable, int[] chromaTable, ChromaFormat format, int restartInterval,
-                       byte[] iccProfile, byte[] app0, boolean quantTables, boolean huffmanTables, int threads) {
+                       List<byte[]> metadataSegments, byte[] iccProfile, byte[] app0, boolean quantTables,
+                       boolean huffmanTables, int threads) {
         this.width = picture.width();
         this.height = picture.height();
         if (width > MAX_DIMENSION || height > MAX_DIMENSION) {
@@ -227,6 +235,7 @@ public final class JpegWriter {
         this.quantTables = quantTables;
         this.huffmanTables = huffmanTables;
         this.threads = threads;
+        this.metadataSegments = metadataSegments;
         this.iccSegments = iccProfile == null ? List.of() : JpegIcc.segments(iccProfile);
         this.batched = Simd.ENABLED;
         this.fdct = batched ? VectorKernels.batchFdct() : null;
@@ -325,8 +334,31 @@ public final class JpegWriter {
      */
     static byte[] encode(Picture picture, int[] lumaTable, int[] chromaTable, ChromaFormat format, boolean optimize,
                          int restartInterval, byte[] iccProfile, byte[] app0) {
-        return new JpegWriter(picture, lumaTable, chromaTable, format, restartInterval, iccProfile, app0, true, true, 0)
-                .encode(optimize);
+        return encode(picture, lumaTable, chromaTable, format, optimize, restartInterval, List.of(), iccProfile, app0);
+    }
+
+    /**
+     * Encodes a picture with given quantization tables, file header and {@code APP1} segments: the output of
+     * {@link #encode(Picture, int[], int[], ChromaFormat, boolean, int, byte[], byte[])} with the segments
+     * between the {@code APP0} segment and the ICC segments.
+     *
+     * @param picture the picture; the alpha channel is ignored
+     * @param lumaTable the luminance quantization table, natural order, each value from 1 to 255
+     * @param chromaTable the chrominance quantization table, natural order, each value from 1 to 255
+     * @param format the target subsampling
+     * @param optimize whether to build optimal Huffman tables in a first pass
+     * @param restartInterval the restart interval in MCUs, or zero
+     * @param metadataSegments the complete {@code APP1} segments, marker and length included
+     * @param iccProfile the ICC profile, or {@code null} for none
+     * @param app0 the payload of the {@code APP0} segment after SOI
+     * @return the JPEG file
+     * @throws IllegalArgumentException if the picture exceeds 65535 pixels per side
+     * @throws MediaException.LimitExceeded if the profile needs more than 255 segments
+     */
+    static byte[] encode(Picture picture, int[] lumaTable, int[] chromaTable, ChromaFormat format, boolean optimize,
+                         int restartInterval, List<byte[]> metadataSegments, byte[] iccProfile, byte[] app0) {
+        return new JpegWriter(picture, lumaTable, chromaTable, format, restartInterval, metadataSegments, iccProfile,
+                app0, true, true, 0).encode(optimize);
     }
 
     /**
@@ -352,8 +384,8 @@ public final class JpegWriter {
     public static byte[] encodeMotion(Picture picture, int quality, ChromaFormat format, boolean optimize,
                                       int restartInterval, byte[] app0, boolean huffmanTables, int threads) {
         return new JpegWriter(picture, scaledTable(JpegTables.STD_LUMINANCE_QUANT, quality),
-                scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), format, restartInterval, null,
-                app0 == null ? JFIF : app0, true, huffmanTables, threads).encode(optimize);
+                scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), format, restartInterval, List.of(),
+                null, app0 == null ? JFIF : app0, true, huffmanTables, threads).encode(optimize);
     }
 
     /**
@@ -373,8 +405,8 @@ public final class JpegWriter {
     public static byte[] encodeAbbreviated(Picture picture, int quality, ChromaFormat format, boolean optimize,
                                            int restartInterval) {
         return new JpegWriter(picture, scaledTable(JpegTables.STD_LUMINANCE_QUANT, quality),
-                scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), format, restartInterval, null, null, false,
-                optimize, 0).encode(optimize);
+                scaledTable(JpegTables.STD_CHROMINANCE_QUANT, quality), format, restartInterval, List.of(), null, null,
+                false, optimize, 0).encode(optimize);
     }
 
     /**
@@ -709,6 +741,9 @@ public final class JpegWriter {
             for (var b : app0) {
                 out.writeByte(b);
             }
+        }
+        for (var segment : metadataSegments) {
+            out.writeBytes(segment);
         }
         for (var segment : iccSegments) {
             out.writeBytes(segment);

@@ -14,7 +14,9 @@ import com.github.auties00.smalt.image.internal.density.DensityTerms;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions.ColorSpace;
+import com.github.auties00.smalt.metadata.XmpPacket;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -36,6 +38,11 @@ public final class JpegEncoding {
      * The most data units an interleaved MCU may hold (T.81 B.2.3).
      */
     private static final int MAX_UNITS_IN_MCU = 10;
+
+    /**
+     * The identifier at the start of the {@code APP1 Exif} payload.
+     */
+    private static final byte[] EXIF_ID = "Exif\0\0".getBytes(StandardCharsets.ISO_8859_1);
 
     /**
      * Prevents instantiation.
@@ -85,16 +92,30 @@ public final class JpegEncoding {
         var layout = layout(width, height, precision, options);
         var scans = scans(layout, options);
         var icc = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
+        var metadata = metadataPayloads(options);
         var quantTables = lossless ? null : quantTables(layout, options);
         if (baselineWriter && isBaseline(layout, options, scans, quantTables)) {
             var lumaTable = quantTables[0];
             var chromaTable = quantTables.length > 1 && quantTables[1] != null ? quantTables[1] : quantTables[0];
             var format = layout.count == 1 ? ChromaFormat.MONOCHROME
                     : layout.h[0] == 1 ? ChromaFormat.YUV444 : layout.v[0] == 1 ? ChromaFormat.YUV422 : ChromaFormat.YUV420;
+            var segments = new ArrayList<byte[]>(metadata.size());
+            for (var payload : metadata) {
+                var segment = new byte[4 + payload.length];
+                segment[0] = (byte) 0xFF;
+                segment[1] = (byte) 0xE1;
+                segment[2] = (byte) ((payload.length + 2) >>> 8);
+                segment[3] = (byte) (payload.length + 2);
+                System.arraycopy(payload, 0, segment, 4, payload.length);
+                segments.add(segment);
+            }
             return JpegWriter.encode(picture, lumaTable, chromaTable, format, options.optimizeHuffman(),
-                    options.restartInterval(), icc, jfifPayload(options.density()));
+                    options.restartInterval(), segments, icc, jfifPayload(options.density()));
         }
         var markers = new ArrayList<MarkerSegment>();
+        for (var payload : metadata) {
+            markers.add(new MarkerSegment(0xE1, payload));
+        }
         if (icc != null) {
             for (var segment : JpegIcc.segments(icc)) {
                 markers.add(new MarkerSegment(0xE2, Arrays.copyOfRange(segment, 4, segment.length)));
@@ -117,6 +138,42 @@ public final class JpegEncoding {
         var writer = new CoefficientWriter(width, height, components, quantTables, options.restartInterval(), precision);
         return writer.write(header, markers, scans, options.progressive(), options.arithmetic(),
                 options.optimizeHuffman());
+    }
+
+    /**
+     * Returns the payloads of the {@code APP1} segments that carry the EXIF block and the XMP packet of the
+     * options, identifiers included: the EXIF segment first, then the main XMP segment and its Extended XMP
+     * segments.
+     *
+     * @param options the settings
+     * @return the payloads, in order, possibly none
+     * @throws IllegalArgumentException if the XMP packet is too large for one segment and does not parse
+     * @throws MediaException.LimitExceeded if the XMP packet cannot be split to fit
+     */
+    static List<byte[]> metadataPayloads(JpegEncoderOptions options) {
+        var payloads = new ArrayList<byte[]>();
+        options.exif().ifPresent(exif -> {
+            var payload = Arrays.copyOf(EXIF_ID, EXIF_ID.length + exif.length);
+            System.arraycopy(exif, 0, payload, EXIF_ID.length, exif.length);
+            payloads.add(payload);
+        });
+        options.xmp().ifPresent(xmp -> {
+            if (xmp.length <= JpegXmp.MAX_MAIN) {
+                var payload = Arrays.copyOf(JpegXmp.XMP_ID, JpegXmp.XMP_ID.length + xmp.length);
+                System.arraycopy(xmp, 0, payload, JpegXmp.XMP_ID.length, xmp.length);
+                payloads.add(payload);
+                return;
+            }
+            XmpPacket packet;
+            try {
+                packet = XmpPacket.parse(xmp);
+            } catch (MediaException.Malformed exception) {
+                throw new IllegalArgumentException("an XMP packet of " + xmp.length + " bytes needs Extended XMP"
+                        + " segments, but it does not parse: " + exception.getMessage(), exception);
+            }
+            payloads.addAll(JpegXmp.payloads(packet));
+        });
+        return payloads;
     }
 
     /**

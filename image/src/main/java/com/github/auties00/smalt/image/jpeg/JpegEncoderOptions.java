@@ -5,6 +5,7 @@ import com.github.auties00.smalt.image.PixelDensity;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.jpeg.internal.JpegEncoding;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
 import java.util.Arrays;
 import java.util.List;
@@ -26,6 +27,12 @@ public final class JpegEncoderOptions {
      * The options of {@link #defaults()}.
      */
     private static final JpegEncoderOptions DEFAULTS = new Builder().build();
+
+    /**
+     * The largest EXIF block, the payload of an {@code APP1} segment after the {@code "Exif\0\0"}
+     * identifier.
+     */
+    public static final int MAX_EXIF = 65533 - 6;
 
     private final int quality;
 
@@ -65,6 +72,10 @@ public final class JpegEncoderOptions {
 
     private final PixelDensity density;
 
+    private final byte[] exif;
+
+    private final byte[] xmp;
+
     private JpegEncoderOptions(Builder builder) {
         this.quality = builder.quality;
         this.chromaQuality = builder.chromaQuality.orElse(-1);
@@ -85,6 +96,8 @@ public final class JpegEncoderOptions {
         this.baselineQuantization = builder.baselineQuantization;
         this.scanScript = List.copyOf(builder.scanScript);
         this.density = builder.density;
+        this.exif = builder.exif;
+        this.xmp = builder.xmp;
     }
 
     /**
@@ -388,6 +401,30 @@ public final class JpegEncoderOptions {
         return density;
     }
 
+    /**
+     * {@return a copy of the EXIF block written in an {@code APP1 Exif} segment, a TIFF structure starting
+     * with its byte-order mark, or empty for none; empty by default}
+     *
+     * <p>The block is written byte for byte, after the JFIF or Adobe header and before the XMP and ICC
+     * segments; it holds at most {@value #MAX_EXIF} bytes, what one segment holds after its identifier.
+     */
+    public Optional<byte[]> exif() {
+        return Optional.ofNullable(exif).map(byte[]::clone);
+    }
+
+    /**
+     * {@return a copy of the XMP packet written in an {@code APP1} XMP segment, in UTF-8, or empty for none;
+     * empty by default}
+     *
+     * <p>A packet of at most 65504 bytes is written as given in one segment after the EXIF segment. A
+     * larger one is parsed and split into a main packet that names an Extended XMP packet, written in
+     * further {@code APP1} segments (XMP specification part 3, 1.1.3.1); the largest properties move to the
+     * extended packet.
+     */
+    public Optional<byte[]> xmp() {
+        return Optional.ofNullable(xmp).map(byte[]::clone);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof JpegEncoderOptions that
@@ -409,14 +446,17 @@ public final class JpegEncoderOptions {
                 && quantizationSlots.equals(that.quantizationSlots)
                 && baselineQuantization == that.baselineQuantization
                 && scanScript.equals(that.scanScript)
-                && density.equals(that.density);
+                && density.equals(that.density)
+                && Arrays.equals(exif, that.exif)
+                && Arrays.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(quality, chromaQuality, chromaFormat, optimizeHuffman, restartInterval, colorProfile,
                 colorSpace, progressive, arithmetic, lossless, predictor, pointTransform, precision, samplingFactors,
-                quantizationTables, quantizationSlots, baselineQuantization, scanScript, density);
+                quantizationTables, quantizationSlots, baselineQuantization, scanScript, density, Arrays.hashCode(exif),
+                Arrays.hashCode(xmp));
     }
 
     @Override
@@ -461,6 +501,12 @@ public final class JpegEncoderOptions {
         }
         if (!density.equals(DEFAULT_DENSITY)) {
             text.append(", density=").append(density);
+        }
+        if (exif != null) {
+            text.append(", exif=").append(exif.length).append(" bytes");
+        }
+        if (xmp != null) {
+            text.append(", xmp=").append(xmp.length).append(" bytes");
         }
         return text.append(']').toString();
     }
@@ -710,6 +756,10 @@ public final class JpegEncoderOptions {
 
         private PixelDensity density = DEFAULT_DENSITY;
 
+        private byte[] exif;
+
+        private byte[] xmp;
+
         private Builder() {
         }
 
@@ -733,6 +783,8 @@ public final class JpegEncoderOptions {
             this.baselineQuantization = options.baselineQuantization;
             this.scanScript = options.scanScript;
             this.density = options.density;
+            this.exif = options.exif;
+            this.xmp = options.xmp;
         }
 
         /**
@@ -1060,6 +1112,49 @@ public final class JpegEncoderOptions {
         }
 
         /**
+         * Sets the EXIF block; see {@link JpegEncoderOptions#exif()}.
+         *
+         * @param exif the value, with or without the {@code "Exif\0\0"} identifier, which is written once
+         * either way; copied
+         * @return this builder
+         */
+        public Builder exif(byte[] exif) {
+            this.exif = TiffExif.stripExifPrefix(Objects.requireNonNull(exif, "exif")).clone();
+            return this;
+        }
+
+        /**
+         * Writes no EXIF block; see {@link JpegEncoderOptions#exif()}.
+         *
+         * @return this builder
+         */
+        public Builder noExif() {
+            this.exif = null;
+            return this;
+        }
+
+        /**
+         * Sets the XMP packet; see {@link JpegEncoderOptions#xmp()}.
+         *
+         * @param xmp the value; copied
+         * @return this builder
+         */
+        public Builder xmp(byte[] xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp").clone();
+            return this;
+        }
+
+        /**
+         * Writes no XMP packet; see {@link JpegEncoderOptions#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -1071,10 +1166,15 @@ public final class JpegEncoderOptions {
          * more than four quantization tables, a slot outside [0, 3] or one with no table, a scan script
          * that does not suit the process as {@link JpegEncoderOptions#scanScript()} describes, or a density that
          * the JFIF header cannot hold as {@link JpegEncoderOptions#density()} describes (a physical value that
-         * rounds to 0 or above 65535, or an aspect ratio above 65535 or below 1/65535)
+         * rounds to 0 or above 65535, or an aspect ratio above 65535 or below 1/65535), or an EXIF block longer
+         * than {@value JpegEncoderOptions#MAX_EXIF} bytes
          */
         public JpegEncoderOptions build() {
             JpegEncoding.jfifDensity(density);
+            if (exif != null && exif.length > MAX_EXIF) {
+                throw new IllegalArgumentException("an EXIF block of " + exif.length + " bytes exceeds the " + MAX_EXIF
+                        + " bytes of a JPEG APP1 segment");
+            }
             Checks.inRange("quality", quality, 0, 100);
             if (chromaQuality.isPresent()) {
                 Checks.inRange("chroma quality", chromaQuality.getAsInt(), 0, 100);

@@ -535,6 +535,12 @@ public final class AvifAnimationWriter implements AnimationWriter {
             var c = first.color();
             AvifWriter.nclx(out, c.primaries().code(), c.transfer().code(), c.matrix().code(),
                     c.range() == ColorRange.FULL);
+            options.colorProfile().ifPresent(profile -> {
+                out.begin(FourCc.of("colr"));
+                out.fourCc("prof");
+                out.bytes(profile.toByteArray());
+                out.end();
+            });
         }
         out.end();
         out.end();

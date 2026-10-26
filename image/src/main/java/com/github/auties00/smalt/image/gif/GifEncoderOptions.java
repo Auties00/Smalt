@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.ops.Dithering;
 import com.github.auties00.smalt.image.ops.QuantizeMethod;
 import com.github.auties00.smalt.internal.check.Checks;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -56,6 +57,8 @@ public final class GifEncoderOptions {
 
     private final ColorProfile colorProfile;
 
+    private final byte[] xmp;
+
     private GifEncoderOptions(Builder builder) {
         this.method = builder.method;
         this.sampleFactor = builder.sampleFactor;
@@ -67,6 +70,7 @@ public final class GifEncoderOptions {
         this.loopCount = builder.loopCount;
         this.lossless = builder.lossless;
         this.colorProfile = builder.colorProfile;
+        this.xmp = builder.xmp;
     }
 
     /**
@@ -206,6 +210,18 @@ public final class GifEncoderOptions {
         return Optional.ofNullable(colorProfile);
     }
 
+    /**
+     * {@return a copy of the XMP packet written in an {@code XMP DataXMP} application extension, in UTF-8, or
+     * empty for none; empty by default}
+     *
+     * <p>The extension follows the logical screen descriptor and any {@code ICCRGBG1} extension, before the
+     * first image; it holds the packet as raw data sub-blocks followed by the 258-byte magic trailer of XMP
+     * specification part 3, so that GIF readers that do not know it skip it. A GIF holds no EXIF block.
+     */
+    public Optional<byte[]> xmp() {
+        return Optional.ofNullable(xmp).map(byte[]::clone);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof GifEncoderOptions that
@@ -218,13 +234,14 @@ public final class GifEncoderOptions {
                 && interlaced == that.interlaced
                 && loopCount == that.loopCount
                 && lossless == that.lossless
-                && Objects.equals(colorProfile, that.colorProfile);
+                && Objects.equals(colorProfile, that.colorProfile)
+                && Arrays.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(method, sampleFactor, maxColors, dithering, alphaThreshold, paletteMode, interlaced,
-                loopCount, lossless, colorProfile);
+                loopCount, lossless, colorProfile, Arrays.hashCode(xmp));
     }
 
     @Override
@@ -233,7 +250,8 @@ public final class GifEncoderOptions {
                 + ", maxColors=" + maxColors + ", dithering=" + dithering + ", alphaThreshold=" + alphaThreshold
                 + ", paletteMode=" + paletteMode + ", interlaced=" + interlaced + ", loopCount=" + loopCount
                 + ", lossless=" + lossless
-                + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed")) + "]";
+                + (colorProfile == null ? "" : ", colorProfile=" + colorProfile.description().orElse("unnamed"))
+                + (xmp == null ? "" : ", xmp=" + xmp.length + " bytes") + "]";
     }
 
     /**
@@ -263,6 +281,8 @@ public final class GifEncoderOptions {
 
         private ColorProfile colorProfile;
 
+        private byte[] xmp;
+
         private Builder() {
         }
 
@@ -277,6 +297,7 @@ public final class GifEncoderOptions {
             this.loopCount = options.loopCount;
             this.lossless = options.lossless;
             this.colorProfile = options.colorProfile;
+            this.xmp = options.xmp;
         }
 
         /**
@@ -401,16 +422,45 @@ public final class GifEncoderOptions {
         }
 
         /**
+         * Sets the XMP packet; see {@link GifEncoderOptions#xmp()}.
+         *
+         * @param xmp the value; copied
+         * @return this builder
+         */
+        public Builder xmp(byte[] xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp").clone();
+            return this;
+        }
+
+        /**
+         * Writes no XMP packet; see {@link GifEncoderOptions#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
          * @throws IllegalArgumentException if the sample factor is not in [1, 30], the palette size is
-         * not in [2, 256], the alpha threshold is not in [0, 255] or the loop count is not in [0,
-         * {@link GifEncoderOptions#MAX_LOOP_COUNT}]
+         * not in [2, 256], the alpha threshold is not in [0, 255], the loop count is not in [0,
+         * {@link GifEncoderOptions#MAX_LOOP_COUNT}] or the XMP packet holds a zero byte, which the extension
+         * cannot carry (a UTF-16 or UTF-32 packet)
          * @throws MediaException.Unsupported if the color profile does not describe an RGB color space
          */
         public GifEncoderOptions build() {
             Checks.inRange("sample factor", sampleFactor, 1, 30);
+            if (xmp != null) {
+                for (var value : xmp) {
+                    if (value == 0) {
+                        throw new IllegalArgumentException("a GIF XMP packet cannot hold a zero byte");
+                    }
+                }
+            }
             Checks.inRange("palette size", maxColors, 2, 256);
             Checks.inRange("alpha threshold", alphaThreshold, 0, 255);
             Checks.inRange("loop count", loopCount, 0, MAX_LOOP_COUNT);

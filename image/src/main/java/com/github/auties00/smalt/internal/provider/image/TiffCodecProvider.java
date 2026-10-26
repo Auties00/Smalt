@@ -12,6 +12,7 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.tiff.TiffDecoder;
 import com.github.auties00.smalt.image.tiff.TiffEncoder;
 import com.github.auties00.smalt.image.tiff.TiffEncoderOptions;
+import com.github.auties00.smalt.internal.codec.EncodeMetadata;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -59,7 +60,9 @@ public final class TiffCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
-        TiffEncoder.encode(picture, TiffEncoderOptions.defaults(), sink);
+        var prepared = EncodeMetadata.color(picture, options, EncoderMetadata::recordsCoded);
+        TiffEncoder.encode(prepared.picture(), EncoderMetadata.tiff(TiffEncoderOptions.defaults(), options, prepared),
+                sink);
     }
 
     @Override
@@ -69,6 +72,6 @@ public final class TiffCodecProvider implements ImageCodecProvider {
 
     @Override
     public PageWriter openPageWriter(ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
-        return new TiffPageWriter(sink);
+        return new TiffPageWriter(sink, options);
     }
 }

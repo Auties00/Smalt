@@ -6,7 +6,9 @@ import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ProfileColorSpace;
 import com.github.auties00.smalt.image.color.RenderingIntent;
 import com.github.auties00.smalt.internal.check.Checks;
+import com.github.auties00.smalt.internal.tiff.TiffExif;
 
+import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalDouble;
@@ -40,6 +42,10 @@ public final class PngEncoderOptions {
 
     private final PixelDensity density;
 
+    private final byte[] exif;
+
+    private final byte[] xmp;
+
     private PngEncoderOptions(Builder builder) {
         this.compressionLevel = builder.compressionLevel;
         this.filter = builder.filter;
@@ -50,6 +56,8 @@ public final class PngEncoderOptions {
         this.gamma = builder.gamma;
         this.chromaticities = builder.chromaticities;
         this.density = builder.density;
+        this.exif = builder.exif;
+        this.xmp = builder.xmp;
     }
 
     /**
@@ -183,6 +191,27 @@ public final class PngEncoderOptions {
         return Optional.ofNullable(density);
     }
 
+    /**
+     * {@return a copy of the EXIF block written as an {@code eXIf} chunk, a TIFF structure starting with its
+     * byte-order mark, or empty for none; empty by default}
+     *
+     * <p>The chunk holds the block byte for byte and precedes the image data.
+     */
+    public Optional<byte[]> exif() {
+        return Optional.ofNullable(exif).map(byte[]::clone);
+    }
+
+    /**
+     * {@return a copy of the XMP packet written as an {@code iTXt} chunk with the keyword
+     * {@code XML:com.adobe.xmp}, in UTF-8, or empty for none; empty by default}
+     *
+     * <p>The chunk holds the packet uncompressed, with empty language and translated keyword fields, as XMP
+     * specification part 3 asks, and precedes the image data.
+     */
+    public Optional<byte[]> xmp() {
+        return Optional.ofNullable(xmp).map(byte[]::clone);
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof PngEncoderOptions that
@@ -194,13 +223,15 @@ public final class PngEncoderOptions {
                 && srgbIntent == that.srgbIntent
                 && Objects.equals(gamma, that.gamma)
                 && Objects.equals(chromaticities, that.chromaticities)
-                && Objects.equals(density, that.density);
+                && Objects.equals(density, that.density)
+                && Arrays.equals(exif, that.exif)
+                && Arrays.equals(xmp, that.xmp);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(compressionLevel, filter, colorProfile, interlaced, significantBits, srgbIntent, gamma,
-                chromaticities, density);
+                chromaticities, density, Arrays.hashCode(exif), Arrays.hashCode(xmp));
     }
 
     @Override
@@ -213,6 +244,8 @@ public final class PngEncoderOptions {
                 + (gamma == null ? "" : ", gamma=" + gamma)
                 + (chromaticities == null ? "" : ", chromaticities=" + chromaticities)
                 + (density == null ? "" : ", density=" + density)
+                + (exif == null ? "" : ", exif=" + exif.length + " bytes")
+                + (xmp == null ? "" : ", xmp=" + xmp.length + " bytes")
                 + "]";
     }
 
@@ -256,6 +289,10 @@ public final class PngEncoderOptions {
 
         private PixelDensity density;
 
+        private byte[] exif;
+
+        private byte[] xmp;
+
         private Builder() {
         }
 
@@ -269,6 +306,8 @@ public final class PngEncoderOptions {
             this.gamma = options.gamma;
             this.chromaticities = options.chromaticities;
             this.density = options.density;
+            this.exif = options.exif;
+            this.xmp = options.xmp;
         }
 
         /**
@@ -428,6 +467,49 @@ public final class PngEncoderOptions {
          */
         public Builder noDensity() {
             this.density = null;
+            return this;
+        }
+
+        /**
+         * Sets the EXIF block; see {@link PngEncoderOptions#exif()}.
+         *
+         * @param exif the value, with or without the {@code "Exif\0\0"} identifier JPEG puts in front of it,
+         * which is removed; copied
+         * @return this builder
+         */
+        public Builder exif(byte[] exif) {
+            this.exif = TiffExif.stripExifPrefix(Objects.requireNonNull(exif, "exif")).clone();
+            return this;
+        }
+
+        /**
+         * Writes no {@code eXIf} chunk; see {@link PngEncoderOptions#exif()}.
+         *
+         * @return this builder
+         */
+        public Builder noExif() {
+            this.exif = null;
+            return this;
+        }
+
+        /**
+         * Sets the XMP packet; see {@link PngEncoderOptions#xmp()}.
+         *
+         * @param xmp the value; copied
+         * @return this builder
+         */
+        public Builder xmp(byte[] xmp) {
+            this.xmp = Objects.requireNonNull(xmp, "xmp").clone();
+            return this;
+        }
+
+        /**
+         * Writes no XMP {@code iTXt} chunk; see {@link PngEncoderOptions#xmp()}.
+         *
+         * @return this builder
+         */
+        public Builder noXmp() {
+            this.xmp = null;
             return this;
         }
 

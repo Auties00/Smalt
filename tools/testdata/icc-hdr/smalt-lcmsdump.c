@@ -13,6 +13,10 @@
  *   smalt-lcmsdump write <pq|hlg> <out>    writes a version 4.4 RGB profile with the BT.2020 primaries, a D65 white,
  *                                          tone curves of 1024 entries holding the PQ EOTF over 10000 cd/m2 or the
  *                                          HLG inverse OETF, and a cicp tag (9, 16 or 18, 0, 1)
+ *   smalt-lcmsdump pixels <profile> [8]    reads pixels of the profile's color space (gray, RGB or CMYK, the inks
+ *                                          0 for none), one per line as 16-bit values (8-bit ones with "8"), from
+ *                                          standard input and prints "r g b" per line: the sRGB of Little CMS's
+ *                                          built-in profile at the same depth, perceptual intent, default flags
  */
 #include <math.h>
 #include <stdio.h>
@@ -164,6 +168,66 @@ static int lab(void) {
     return 0;
 }
 
+static int pixels(const char *path, int eight) {
+    cmsHPROFILE profile = cmsOpenProfileFromFile(path, "r");
+    cmsHPROFILE srgb = cmsCreate_sRGBProfile();
+    cmsHTRANSFORM transform;
+    cmsUInt32Number format;
+    cmsUInt16Number in[4], out[3];
+    cmsUInt8Number in8[4], out8[3];
+    unsigned int value;
+    int channels, i;
+    if (profile == NULL) {
+        fprintf(stderr, "cannot open %s\n", path);
+        return 1;
+    }
+    switch (cmsGetColorSpace(profile)) {
+        case cmsSigGrayData:
+            format = eight ? TYPE_GRAY_8 : TYPE_GRAY_16;
+            channels = 1;
+            break;
+        case cmsSigRgbData:
+            format = eight ? TYPE_RGB_8 : TYPE_RGB_16;
+            channels = 3;
+            break;
+        case cmsSigCmykData:
+            format = eight ? TYPE_CMYK_8 : TYPE_CMYK_16;
+            channels = 4;
+            break;
+        default:
+            fprintf(stderr, "unsupported color space in %s\n", path);
+            return 1;
+    }
+    transform = cmsCreateTransform(profile, format, srgb, eight ? TYPE_RGB_8 : TYPE_RGB_16, INTENT_PERCEPTUAL, 0);
+    if (transform == NULL) {
+        fprintf(stderr, "cannot link %s\n", path);
+        return 1;
+    }
+    for (;;) {
+        for (i = 0; i < channels; i++) {
+            if (scanf("%u", &value) != 1) {
+                break;
+            }
+            in[i] = (cmsUInt16Number) value;
+            in8[i] = (cmsUInt8Number) value;
+        }
+        if (i < channels) {
+            break;
+        }
+        if (eight) {
+            cmsDoTransform(transform, in8, out8, 1);
+            printf("%u %u %u\n", out8[0], out8[1], out8[2]);
+        } else {
+            cmsDoTransform(transform, in, out, 1);
+            printf("%u %u %u\n", out[0], out[1], out[2]);
+        }
+    }
+    cmsDeleteTransform(transform);
+    cmsCloseProfile(srgb);
+    cmsCloseProfile(profile);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc == 2 && strcmp(argv[1], "lab") == 0) {
         return lab();
@@ -177,6 +241,9 @@ int main(int argc, char **argv) {
     if (argc == 4 && strcmp(argv[1], "write") == 0) {
         return write_profile(argv[2], argv[3]);
     }
-    fprintf(stderr, "usage: smalt-lcmsdump info|gray <profile> | lab | write pq|hlg <out>\n");
+    if ((argc == 3 || (argc == 4 && strcmp(argv[3], "8") == 0)) && strcmp(argv[1], "pixels") == 0) {
+        return pixels(argv[2], argc == 4);
+    }
+    fprintf(stderr, "usage: smalt-lcmsdump info|gray <profile> | pixels <profile> [8] | lab | write pq|hlg <out>\n");
     return 2;
 }

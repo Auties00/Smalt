@@ -49,7 +49,9 @@ import java.util.zip.Adler32;
  * format ask for them: the color space chunks of {@link PngEncoderOptions#colorProfile()}
  * ({@code cICP}, {@code mDCV} and {@code cLLI} for a high-dynamic-range profile, then {@code iCCP}),
  * {@link PngEncoderOptions#srgbIntent()}, {@link PngEncoderOptions#gamma()} and
- * {@link PngEncoderOptions#chromaticities()}; {@code sBIT}; {@code pHYs}; {@code PLTE} and
+ * {@link PngEncoderOptions#chromaticities()}; {@code sBIT}; {@code pHYs}; the {@code eXIf} chunk of
+ * {@link PngEncoderOptions#exif()} and the XMP {@code iTXt} chunk of {@link PngEncoderOptions#xmp()};
+ * {@code PLTE} and
  * {@code tRNS}; then the {@code IDAT} chunks and {@code IEND}. The scanlines are stored in the
  * Adam7 order when {@link PngEncoderOptions#isInterlaced()} is set, filtered as
  * {@link PngEncoderOptions#filter()} selects and compressed into one zlib stream at
@@ -186,6 +188,7 @@ public final class PngEncoder {
             out.significantBits(layout.significantBits(options.significantBits().getAsInt()));
         }
         options.density().ifPresent(out::physicalDimensions);
+        out.metadata(options.exif().orElse(null), options.xmp().orElse(null));
         if (layout.palette() != null) {
             out.palette(layout.palette());
         } else if (layout.key() != null) {

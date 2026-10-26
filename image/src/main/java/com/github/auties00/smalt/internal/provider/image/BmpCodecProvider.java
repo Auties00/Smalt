@@ -12,6 +12,7 @@ import com.github.auties00.smalt.image.bmp.BmpDecoder;
 import com.github.auties00.smalt.image.bmp.BmpEncoder;
 import com.github.auties00.smalt.image.bmp.BmpEncoderOptions;
 import com.github.auties00.smalt.internal.check.LosslessDepth;
+import com.github.auties00.smalt.internal.codec.EncodeMetadata;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.spi.ImageCodecProvider;
@@ -60,9 +61,15 @@ public final class BmpCodecProvider implements ImageCodecProvider {
 
     @Override
     public void encode(Picture picture, ImageFormat format, ImageEncoderOptions options, MediaSink sink) {
+        var prepared = EncodeMetadata.color(picture, options, EncodeMetadata::rgbOnly);
+        picture = EncodeMetadata.upright(prepared.picture(), options);
         if (options.isLossless()) {
             picture = LosslessDepth.fit(picture, 8, "bmp");
         }
-        BmpEncoder.encode(picture, BmpEncoderOptions.defaults(), sink);
+        var builder = BmpEncoderOptions.builder();
+        if (prepared.profile() != null) {
+            builder.colorProfile(prepared.profile());
+        }
+        BmpEncoder.encode(picture, builder.build(), sink);
     }
 }

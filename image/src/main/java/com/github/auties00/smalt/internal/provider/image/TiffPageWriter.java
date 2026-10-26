@@ -2,12 +2,14 @@ package com.github.auties00.smalt.internal.provider.image;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.image.DecodedImage;
+import com.github.auties00.smalt.image.ImageEncoderOptions;
 import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.PageWriter;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.tiff.TiffEncoder;
 import com.github.auties00.smalt.image.tiff.TiffEncoderOptions;
+import com.github.auties00.smalt.internal.codec.EncodeMetadata;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
@@ -16,6 +18,9 @@ import java.util.Objects;
 /**
  * Writes the pages of a multi-page TIFF through a {@link TiffEncoder}, one directory per page, with
  * {@link TiffEncoderOptions#defaults()}.
+ *
+ * <p>A picture page records the color profile, EXIF metadata, XMP packet and orientation of the writer's
+ * options, as {@link TiffCodecProvider} records them for a single image.
  *
  * <p>A decoded page keeps its orientation, color profile, pixel density, EXIF metadata and XMP packet; the
  * orientation written is the decoded one, whatever the EXIF metadata says, a density that is only the
@@ -29,17 +34,26 @@ final class TiffPageWriter implements PageWriter {
     private final TiffEncoder encoder;
 
     /**
+     * The options of the writer, whose metadata the picture pages record.
+     */
+    private final ImageEncoderOptions options;
+
+    /**
      * Constructs a writer.
      *
      * @param sink the output, written from its position; not closed
+     * @param options the options whose metadata the picture pages record
      */
-    TiffPageWriter(MediaSink sink) {
+    TiffPageWriter(MediaSink sink, ImageEncoderOptions options) {
         this.encoder = new TiffEncoder(TiffEncoderOptions.defaults(), sink);
+        this.options = options;
     }
 
     @Override
     public void write(Picture picture) {
-        encoder.addPage(Objects.requireNonNull(picture, "picture"));
+        Objects.requireNonNull(picture, "picture");
+        var prepared = EncodeMetadata.color(picture, options, EncoderMetadata::recordsCoded);
+        encoder.addPage(prepared.picture(), EncoderMetadata.tiff(TiffEncoderOptions.defaults(), options, prepared));
     }
 
     @Override

@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.Orientation;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifReader;
+import com.github.auties00.smalt.internal.codec.XmpLocations;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
@@ -314,7 +315,7 @@ public final class ImageMetadata {
         }
         if (xmp != null) {
             for (var property : xmp.properties()) {
-                if (Locations.isLocation(property)) {
+                if (XmpLocations.isLocation(property)) {
                     return true;
                 }
             }

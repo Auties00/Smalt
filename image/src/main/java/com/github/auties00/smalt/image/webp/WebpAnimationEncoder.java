@@ -48,6 +48,16 @@ public final class WebpAnimationEncoder {
     private final byte[] iccProfile;
 
     /**
+     * The EXIF block written after the frames, or {@code null}.
+     */
+    private final byte[] exif;
+
+    /**
+     * The XMP packet written last, or {@code null}.
+     */
+    private final byte[] xmp;
+
+    /**
      * The canvas width.
      */
     private final int canvasWidth;
@@ -130,6 +140,8 @@ public final class WebpAnimationEncoder {
         this.canvasWidth = canvasWidth;
         this.canvasHeight = canvasHeight;
         this.iccProfile = options.colorProfile().map(ColorProfile::toByteArray).orElse(null);
+        this.exif = options.exif().orElse(null);
+        this.xmp = options.xmp().orElse(null);
         this.core = new AnimationEncoderCore(canvasWidth, canvasHeight, options.loopCount(), options.isLossless(),
                 options.quality(), options.method(), options.minKeyframeDistance(), options.maxKeyframeDistance(),
                 options.allowMixed(), options.minimize());
@@ -233,7 +245,11 @@ public final class WebpAnimationEncoder {
             finished = true;
             return Guards.encoding("WebP animation", () -> {
                 var file = core.finish(lastDuration);
-                return iccProfile == null ? file : WebpContainer.withIccProfile(file, iccProfile);
+                if (iccProfile == null && exif == null && xmp == null) {
+                    return file;
+                }
+                return WebpContainer.rebuild(file, exif != null, exif, iccProfile != null, iccProfile, xmp != null,
+                        xmp);
             });
         }
     }

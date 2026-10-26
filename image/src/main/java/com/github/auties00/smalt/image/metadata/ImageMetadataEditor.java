@@ -7,6 +7,7 @@ import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.exif.ExifData;
 import com.github.auties00.smalt.image.exif.ExifWriter;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit.Change;
+import com.github.auties00.smalt.internal.codec.XmpLocations;
 import com.github.auties00.smalt.internal.edit.FileEdits;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
@@ -288,7 +289,7 @@ public final class ImageMetadataEditor {
         }
         var target = base;
         if (edit.removesLocation()) {
-            target = target.withoutIf(Locations::isLocation);
+            target = target.withoutIf(XmpLocations::isLocation);
         }
         if (edit.orientation().isPresent() && target.get(XmpPacket.TIFF, ORIENTATION).isPresent()) {
             target = target.with(XmpPacket.TIFF, ORIENTATION, XmpValue.text(Integer.toString(edit.orientation().get().exifCode())));

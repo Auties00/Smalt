@@ -6,14 +6,22 @@ import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.metadata.XmpPacket;
 
+import com.github.auties00.smalt.metadata.XmpProperty;
+
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 
 /**
- * Recognizes the XMP {@code APP1} segments of a JPEG stream and merges a main packet with its
- * Extended XMP packet, as XMP specification part 3 section 1.1.3.1 describes.
+ * Recognizes the XMP {@code APP1} segments of a JPEG stream, merges a main packet with its Extended XMP
+ * packet and splits a packet too large for one segment into both, as XMP specification part 3 section
+ * 1.1.3.1 describes.
  *
  * <p>The main packet names the extended one by the MD5 digest of its serialization, as 32
  * upper-case hexadecimal digits, in its {@code xmpNote:HasExtendedXMP} property. The extended
@@ -42,6 +50,21 @@ public final class JpegXmp {
      * The property that names the extended packet.
      */
     public static final String HAS_EXTENDED = "HasExtendedXMP";
+
+    /**
+     * The largest payload of a JPEG segment, after its length field.
+     */
+    public static final int MAX_PAYLOAD = 65533;
+
+    /**
+     * The largest main packet, the payload of a segment after the XMP identifier.
+     */
+    public static final int MAX_MAIN = MAX_PAYLOAD - XMP_ID.length;
+
+    /**
+     * The largest data of an Extended XMP chunk.
+     */
+    private static final int MAX_CHUNK = MAX_PAYLOAD - EXTENDED_XMP_ID.length - CHUNK_HEADER;
 
     /**
      * Prevents instantiation.
@@ -191,5 +214,139 @@ public final class JpegXmp {
             reach = Math.max(reach, range[1]);
         }
         return reach >= length;
+    }
+
+    /**
+     * Serializes a packet into the payloads of JPEG {@code APP1} segments, identifiers included, splitting
+     * it when it exceeds one segment.
+     *
+     * <p>The largest properties move to the extended packet, the fewest that make the main packet,
+     * which then names the extended one, fit a segment.
+     *
+     * @param packet the XMP packet
+     * @return the payloads, the main one first
+     * @throws MediaException.LimitExceeded if the packet cannot be split to fit
+     */
+    public static List<byte[]> payloads(XmpPacket packet) {
+        var cleaned = packet.without(XmpPacket.XMP_NOTE, HAS_EXTENDED);
+        var full = cleaned.toBytes();
+        if (full.length <= MAX_MAIN) {
+            return List.of(concat(XMP_ID, full, 0, full.length));
+        }
+        var properties = new ArrayList<Sized>();
+        for (var property : cleaned.properties()) {
+            properties.add(new Sized(property, size(property)));
+        }
+        properties.sort(Comparator.comparingInt(Sized::size).reversed());
+        var low = Math.min(1, properties.size());
+        var high = properties.size();
+        while (low < high) {
+            var middle = (low + high) >>> 1;
+            if (fits(withoutLargest(cleaned, properties, middle))) {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        var main = withoutLargest(cleaned, properties, low);
+        var extended = XmpPacket.empty();
+        for (var i = 0; i < low; i++) {
+            var property = properties.get(i).property();
+            extended = extended.with(property.namespace(), property.name(), property.value());
+        }
+        var extendedBytes = extended.toBytes();
+        var guid = md5(extendedBytes);
+        var mainBytes = main.with(XmpPacket.XMP_NOTE, HAS_EXTENDED, guid).toBytes();
+        if (mainBytes.length > MAX_MAIN) {
+            throw new MediaException.LimitExceeded("XMP packet cannot be split to fit a JPEG segment");
+        }
+        var result = new ArrayList<byte[]>();
+        result.add(concat(XMP_ID, mainBytes, 0, mainBytes.length));
+        for (var offset = 0; offset < extendedBytes.length; offset += MAX_CHUNK) {
+            var length = Math.min(MAX_CHUNK, extendedBytes.length - offset);
+            var prefix = new byte[EXTENDED_XMP_ID.length + CHUNK_HEADER];
+            System.arraycopy(EXTENDED_XMP_ID, 0, prefix, 0, EXTENDED_XMP_ID.length);
+            var at = EXTENDED_XMP_ID.length;
+            System.arraycopy(guid.getBytes(StandardCharsets.ISO_8859_1), 0, prefix, at, 32);
+            ByteArrays.put32be(prefix, at + 32, extendedBytes.length);
+            ByteArrays.put32be(prefix, at + 36, offset);
+            result.add(concat(prefix, extendedBytes, offset, length));
+        }
+        return result;
+    }
+
+    /**
+     * {@return a prefix followed by a range of bytes}
+     *
+     * @param prefix the bytes written first
+     * @param data the array holding the range
+     * @param offset the index of the range
+     * @param length the length of the range
+     */
+    private static byte[] concat(byte[] prefix, byte[] data, int offset, int length) {
+        var result = new byte[prefix.length + length];
+        System.arraycopy(prefix, 0, result, 0, prefix.length);
+        System.arraycopy(data, offset, result, prefix.length, length);
+        return result;
+    }
+
+    /**
+     * Returns whether a main packet, once it names an extended packet, fits a segment.
+     *
+     * @param main the main packet
+     * @return whether its serialization fits
+     */
+    private static boolean fits(XmpPacket main) {
+        return main.with(XmpPacket.XMP_NOTE, HAS_EXTENDED, "00000000000000000000000000000000").toBytes().length
+                <= MAX_MAIN;
+    }
+
+    /**
+     * Removes the largest properties from a packet.
+     *
+     * @param packet the XMP packet
+     * @param properties its properties, largest first
+     * @param count the number of properties to remove
+     * @return the packet without the first {@code count} properties
+     */
+    private static XmpPacket withoutLargest(XmpPacket packet, List<Sized> properties, int count) {
+        var removed = new HashSet<XmpProperty>();
+        for (var i = 0; i < count; i++) {
+            removed.add(properties.get(i).property());
+        }
+        return packet.withoutIf(removed::contains);
+    }
+
+    /**
+     * Holds a property with the size it serializes to alone.
+     *
+     * @param property the XMP property
+     * @param size the size of a packet holding only it
+     */
+    private record Sized(XmpProperty property, int size) {
+    }
+
+    /**
+     * Estimates the serialized size of a property.
+     *
+     * @param property the XMP property
+     * @return the size of a packet holding only it
+     */
+    private static int size(XmpProperty property) {
+        return XmpPacket.empty().with(property.namespace(), property.name(), property.value()).toBytes().length;
+    }
+
+    /**
+     * Computes the MD5 digest of bytes as 32 upper-case hexadecimal digits.
+     *
+     * @param data the bytes
+     * @return the digest
+     */
+    private static String md5(byte[] data) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("MD5").digest(data)).toUpperCase(Locale.ROOT);
+        } catch (NoSuchAlgorithmException exception) {
+            throw new IllegalStateException("MD5 is a required algorithm", exception);
+        }
     }
 }

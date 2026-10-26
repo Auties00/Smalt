@@ -330,11 +330,16 @@ public final class Images {
     /**
      * Encodes a picture into a format.
      *
+     * <p>The metadata of the options is recorded as
+     * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} describes.
+     *
      * @param picture the pixels to encode
      * @param format  the format to produce
-     * @param options the lossless flag and the quality
+     * @param options the lossless flag, the quality and the metadata
      * @return the complete encoded image
      * @throws NullPointerException       if an argument is {@code null}
+     * @throws IllegalArgumentException   if the color profile does not describe the picture, or the
+     *                                    EXIF block exceeds what the format stores
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
      *                                    options (a lossless picture with more bits per sample than
      *                                    the format holds, unless its samples are exactly those of an
@@ -351,13 +356,21 @@ public final class Images {
      *
      * <p>A JPEG encoding of a picture with alpha drops the alpha; a PNG ignores the quality; a
      * WebP and a JPEG code the picture losslessly when {@link ImageEncoderOptions#isLossless()} and
-     * lossily otherwise.
+     * lossily otherwise. The file records the color profile, EXIF block, XMP packet and orientation of
+     * the options where the format has a place for them, as {@link ImageEncoderOptions} describes; a
+     * format that cannot record the profile holds the pixels converted to sRGB, and a format that
+     * records no orientation holds the picture turned upright.
      *
+     * @apiNote {@link ImageEncoderOptions.Builder#metadataOf(DecodedImage)} carries the metadata of a
+     * decoded image over to its encoding.
      * @param picture the pixels to encode
      * @param format  the format to produce
-     * @param options the lossless flag and the quality
+     * @param options the lossless flag, the quality and the metadata
      * @param sink    the output; not closed
      * @throws NullPointerException       if an argument is {@code null}
+     * @throws IllegalArgumentException   if the color profile does not describe the picture, or the
+     *                                    EXIF block exceeds what the format stores (65527 bytes in
+     *                                    JPEG)
      * @throws MediaException.Unsupported if the format is not encodable, or cannot honor the
      *                                    options (a lossless picture with more bits per sample than
      *                                    the format holds, unless its samples are exactly those of an
@@ -404,20 +417,26 @@ public final class Images {
      * animation quantizes its frames to palettes whose size follows the quality, and a PNG
      * animation (APNG) is always lossless. Every format loops
      * {@link ImageEncoderOptions#loopCount()} times, except an animated cursor (ANI), which always
-     * loops forever and rejects any other loop count.
+     * loops forever and rejects any other loop count. The frames are in the options' color profile,
+     * which an APNG, WebP, GIF or AVIF animation records and an ANI animation converts each frame to
+     * sRGB from; the EXIF block and XMP packet are recorded as
+     * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} records them, and an
+     * orientation other than {@link Orientation#NORMAL} is accepted only by the formats that record it.
      *
      * @param format  the format to produce
      * @param width   the canvas width, positive
      * @param height  the canvas height, positive
-     * @param options the lossless flag, the quality and the loop count
+     * @param options the lossless flag, the quality, the loop count and the metadata
      * @param sink    the output, written from its position; not closed
      * @return the writer, which the caller finishes and closes
      * @throws NullPointerException         if an argument is {@code null}
-     * @throws IllegalArgumentException     if a dimension is not positive or the loop count
-     *                                      exceeds what the format stores
+     * @throws IllegalArgumentException     if a dimension is not positive, the loop count
+     *                                      exceeds what the format stores or the color profile is
+     *                                      neither RGB nor gray
      * @throws MediaException.LimitExceeded if a dimension exceeds what the format stores
      * @throws MediaException.Unsupported   if animations of the format are not encodable, or the
-     *                                      format cannot honor the options
+     *                                      format cannot honor the options (an orientation a GIF or
+     *                                      ANI animation cannot record)
      */
     public static AnimationWriter openAnimationWriter(ImageFormat format, int width, int height,
                                                       ImageEncoderOptions options, MediaSink sink) {
@@ -459,10 +478,11 @@ public final class Images {
      * {@link PageWriter#write(DecodedImage)}; an icon holds one entry per picture, a picture larger
      * than 256 pixels on a side being scaled into a 256-pixel square entry. The quality and the
      * lossless flag apply as {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)}
-     * applies them to each page.
+     * applies them to each page, and so does the metadata of the options to every page written with
+     * {@link PageWriter#write(Picture)}.
      *
      * @param format the format to produce
-     * @param options the lossless flag and the quality
+     * @param options the lossless flag, the quality and the metadata of the pictures
      * @param sink the output, written from its position; not closed
      * @return the writer, which the caller finishes and closes
      * @throws NullPointerException if an argument is {@code null}

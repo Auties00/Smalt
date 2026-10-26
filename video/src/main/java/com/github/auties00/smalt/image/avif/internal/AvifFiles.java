@@ -235,8 +235,14 @@ public final class AvifFiles {
         if (showsSequence(file)) {
             try (var reader = new SequenceReader(source, file, limits, highBitDepth)) {
                 var picture = reader.readFirstPicture(highBitDepth);
+                // the metadata of a sequence is that of the primary item it is shown in place of, when it has one
+                var item = file.primaryItem() == null ? null : primary(file);
+                var icc = item == null ? null : icc(file, item);
                 return new DecodedImage(picture, ImageFormat.AVIF, reader.orientation(), picture.width(),
-                        picture.height(), Optional.empty(), Optional.empty(), HeifPictures.colorProfile(null, picture));
+                        picture.height(), Optional.ofNullable(icc == null ? null : icc.clone()),
+                        Optional.ofNullable(item == null ? null : exif(source, file, item, limits)),
+                        Optional.ofNullable(item == null ? null : file.xmpOf(source, item, limits)),
+                        icc == null ? HeifPictures.colorProfile(null, picture) : HeifPictures.colorProfile(icc, null));
             }
         }
         var primary = primary(file);
