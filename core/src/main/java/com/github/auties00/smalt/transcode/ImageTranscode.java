@@ -10,9 +10,14 @@ import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.Region;
+import com.github.auties00.smalt.internal.plane.PictureCopy;
 import com.github.auties00.smalt.internal.provider.Artifacts;
+import com.github.auties00.smalt.internal.resize.SizePlan;
+import com.github.auties00.smalt.io.ByteArrayMediaSink;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
+
+import java.nio.ByteBuffer;
 
 /**
  * Runs one image transcode.
@@ -23,9 +28,15 @@ import com.github.auties00.smalt.io.MediaSource;
  * {@link PictureOps} and encoded, stepping quality and size down until it fits the byte budget. An
  * animated output streams the frames of an
  * {@link com.github.auties00.smalt.image.AnimationReader} through the same operations into an
- * {@link com.github.auties00.smalt.image.AnimationWriter}, one frame in memory at a time.
+ * {@link com.github.auties00.smalt.image.AnimationWriter}, one frame in memory at a time; under a
+ * byte budget it is encoded into memory, again at a lower quality, then at a smaller size, then
+ * with fewer frames, until it fits.
  *
  * <p>An instance runs once and is not thread-safe.
+ *
+ * @implNote This implementation stops an animation attempt as soon as its output passes the
+ * budget, so that an attempt that cannot fit costs at most the decoding of the frames that
+ * produced the budget's worth of output.
  */
 final class ImageTranscode {
     /**
@@ -124,7 +135,8 @@ final class ImageTranscode {
         PictureOps.SizePlanner sizing = (width, height) -> plan;
         var background = !hasAlpha(format) || options.flatten() ? options.background() : -1;
         if (animated) {
-            return animate(format, crop, sizing, background);
+            return options.maxBytes().isPresent() ? animateWithinBudget(format, crop, plan, background)
+                    : animate(format, crop, sizing, background);
         }
         var minWidth = (int) Math.ceil((double) plan.scaledWidth() * displayWidth / croppedWidth);
         var minHeight = (int) Math.ceil((double) plan.scaledHeight() * displayHeight / croppedHeight);
@@ -238,9 +250,227 @@ final class ImageTranscode {
                 }
                 writer.finish();
             }
-            // TODO: apply the byte budget to animations by encoding again at lower quality or size.
             return new ImageTranscodeResult(format, ops.outputWidth(), ops.outputHeight(), frames, false,
                     output.position() - start);
+        }
+    }
+
+    /**
+     * Transcodes an animation into memory until an encoding fits the byte budget, then writes it.
+     *
+     * <p>Attempts go from the most to the least faithful: every frame at the planned size, at the
+     * starting quality and then (for formats that honor it) at each lower quality step; then the
+     * same at sizes a quarter smaller each time, down to a long edge of {@value #MIN_EDGE} pixels;
+     * then the whole ladder again keeping every second frame, every fourth, and so on, each kept
+     * frame shown for the time of the frames it replaces, down to a single frame.
+     *
+     * @param format the output format
+     * @param crop the displayed region kept, or {@code null} for the whole picture
+     * @param plan the planned scaling
+     * @param background the flattening background as {@code 0xRRGGBB}, or {@code -1} to keep alpha
+     * @return what was written
+     * @throws MediaException.LimitExceeded if no attempt fits the budget
+     */
+    private ImageTranscodeResult animateWithinBudget(ImageFormat format, Region crop, SizePlan plan, int background) {
+        var encoderOptions = options.encoderOptions();
+        var budget = options.maxBytes().getAsLong();
+        var lossy = honorsQuality(format) && !encoderOptions.isLossless();
+        var startQuality = encoderOptions.quality().orElse(DEFAULT_QUALITY);
+        var frames = -1;
+        for (var stride = 1; ; stride *= 2) {
+            for (var factor = 1.0; ; factor *= SHRINK_FACTOR) {
+                var scaled = shrink(plan, factor);
+                var attempt = encodeAnimation(format, crop, scaled, background, encoderOptions, stride, budget);
+                for (var quality = startQuality - QUALITY_STEP; attempt.data() == null && lossy && quality >= MIN_QUALITY;
+                     quality -= QUALITY_STEP) {
+                    attempt = encodeAnimation(format, crop, scaled, background,
+                            encoderOptions.toBuilder().quality(quality).build(), stride, budget);
+                }
+                if (attempt.data() != null) {
+                    output.write(attempt.data());
+                    return new ImageTranscodeResult(format, attempt.width(), attempt.height(), attempt.frames(), false,
+                            attempt.data().length);
+                }
+                if (Math.max(attempt.width(), attempt.height()) <= MIN_EDGE) {
+                    break;
+                }
+            }
+            if (frames < 0) {
+                frames = countFrames();
+            }
+            if (stride >= frames) {
+                break;
+            }
+        }
+        throw new MediaException.LimitExceeded("no " + format + " encoding of the animation fits within " + budget
+                + " bytes");
+    }
+
+    /**
+     * Holds one encoding of an animation.
+     *
+     * @param data the encoded bytes, or {@code null} when they passed the budget
+     * @param width the canvas width
+     * @param height the canvas height
+     * @param frames the number of frames written
+     */
+    private record AnimationAttempt(byte[] data, int width, int height, int frames) {
+    }
+
+    /**
+     * Encodes an animation into memory, stopping once the output passes the budget.
+     *
+     * @param format the output format
+     * @param crop the displayed region kept, or {@code null} for the whole picture
+     * @param plan the scaling
+     * @param background the flattening background as {@code 0xRRGGBB}, or {@code -1} to keep alpha
+     * @param encoderOptions the encoder settings
+     * @param stride the distance between two kept frames, 1 to keep every frame
+     * @param budget the largest output in bytes
+     * @return the encoding
+     */
+    private AnimationAttempt encodeAnimation(ImageFormat format, Region crop, SizePlan plan, int background,
+                                             ImageEncoderOptions encoderOptions, int stride, long budget) {
+        try (var reader = Images.openAnimation(input, ImageDecoderOptions.builder().limits(options.limits()).build())) {
+            var ops = PictureOps.plan(reader.width(), reader.height(), Orientation.NORMAL, true, crop, (width, height) -> plan,
+                    options.filter(), background, null, null);
+            var sink = new BudgetSink(budget);
+            var read = 0;
+            var written = 0;
+            try (var writer = writers.open(format, ops.outputWidth(), ops.outputHeight(), encoderOptions, sink)) {
+                RgbaPicture held = null;
+                RgbaPicture spare = null;
+                var heldDuration = 0L;
+                for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                    if (read++ % stride != 0) {
+                        heldDuration += frame.durationMicros();
+                        continue;
+                    }
+                    if (held != null) {
+                        writer.write(held, heldDuration);
+                        written++;
+                    }
+                    var processed = ImageOps.toRgba(ops.apply(frame.picture()));
+                    // a kept frame outlives the next read, which may reuse the reader's picture; the
+                    // writer copies what it keeps, so one copy is recycled for every kept frame
+                    if (stride > 1 && processed == frame.picture()) {
+                        spare = (RgbaPicture) PictureCopy.copy(processed, spare);
+                        held = spare;
+                    } else {
+                        held = processed;
+                    }
+                    heldDuration = frame.durationMicros();
+                    if (stride == 1) {
+                        writer.write(held, heldDuration);
+                        written++;
+                        held = null;
+                    }
+                }
+                if (held != null) {
+                    writer.write(held, heldDuration);
+                    written++;
+                }
+                writer.finish();
+            } catch (RuntimeException failure) {
+                if (sink.exceeded) {
+                    return new AnimationAttempt(null, ops.outputWidth(), ops.outputHeight(), written);
+                }
+                throw failure;
+            }
+            return new AnimationAttempt(sink.memory.toByteArray(), ops.outputWidth(), ops.outputHeight(), written);
+        }
+    }
+
+    /**
+     * {@return the number of frames of the input animation}
+     */
+    private int countFrames() {
+        try (var reader = Images.openAnimation(input, ImageDecoderOptions.builder().limits(options.limits()).build())) {
+            if (reader.frameCount() > 0) {
+                return reader.frameCount();
+            }
+            var count = 0;
+            while (reader.read() != null) {
+                count++;
+            }
+            return count;
+        }
+    }
+
+    /**
+     * Scales a size plan down by a factor, keeping a centered crop centered.
+     *
+     * @param plan the planned scaling of the full-size output
+     * @param factor the factor, at most 1
+     * @return the scaled plan, every dimension at least 1
+     */
+    private static SizePlan shrink(SizePlan plan, double factor) {
+        if (factor == 1.0) {
+            return plan;
+        }
+        var outputWidth = Math.max(1, (int) Math.round(plan.outputWidth() * factor));
+        var outputHeight = Math.max(1, (int) Math.round(plan.outputHeight() * factor));
+        var scaledWidth = Math.max(outputWidth, (int) Math.round(plan.scaledWidth() * factor));
+        var scaledHeight = Math.max(outputHeight, (int) Math.round(plan.scaledHeight() * factor));
+        return new SizePlan(scaledWidth, scaledHeight, (scaledWidth - outputWidth) / 2, (scaledHeight - outputHeight) / 2,
+                outputWidth, outputHeight);
+    }
+
+    /**
+     * Collects an encoding in memory and fails the write that takes it past a byte budget.
+     */
+    private static final class BudgetSink implements MediaSink {
+        /**
+         * Signals that an encoding passed the budget; it carries no stack trace.
+         */
+        private static final class OverBudget extends RuntimeException {
+            private OverBudget() {
+                super("the encoding passed the byte budget", null, false, false);
+            }
+        }
+
+        private final ByteArrayMediaSink memory = MediaSink.memory();
+
+        /**
+         * The largest size in bytes.
+         */
+        private final long budget;
+
+        /**
+         * Whether a write passed the budget.
+         */
+        private boolean exceeded;
+
+        private BudgetSink(long budget) {
+            this.budget = budget;
+        }
+
+        @Override
+        public long position() {
+            return memory.position();
+        }
+
+        @Override
+        public void position(long position) {
+            memory.position(position);
+        }
+
+        @Override
+        public boolean isSeekable() {
+            return true;
+        }
+
+        @Override
+        public void write(ByteBuffer data) {
+            if (exceeded || memory.position() + data.remaining() > budget) {
+                exceeded = true;
+                throw new OverBudget();
+            }
+            memory.write(data);
+        }
+
+        @Override
+        public void close() {
         }
     }
 
@@ -261,14 +491,14 @@ final class ImageTranscode {
     }
 
     /**
-     * {@return whether the encoder of a format keeps transparency: PNG, WebP, GIF, AVIF, TIFF, ICO
-     * and JPEG 2000}
+     * {@return whether the encoder of a format keeps transparency: PNG, WebP, GIF, AVIF, TIFF, ICO,
+     * ANI and JPEG 2000}
      *
      * @param format an output image format
      */
     private static boolean hasAlpha(ImageFormat format) {
         return switch (format) {
-            case PNG, WEBP, GIF, AVIF, TIFF, ICO, JP2 -> true;
+            case PNG, WEBP, GIF, AVIF, TIFF, ICO, ANI, JP2 -> true;
             default -> false;
         };
     }

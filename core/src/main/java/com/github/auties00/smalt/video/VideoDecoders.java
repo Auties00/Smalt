@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.video;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.codec.AlphaVideoDecoder;
 import com.github.auties00.smalt.internal.provider.Artifacts;
 import com.github.auties00.smalt.internal.provider.Providers;
 import com.github.auties00.smalt.spi.VideoCodecProvider;
@@ -13,12 +14,22 @@ import java.util.Objects;
  * Creates the decoder for a video track.
  *
  * <p>The decoder comes from the first {@link VideoCodecProvider} that decodes the track's codec.
- * The Smalt artifacts decode H.264 (progressive 8-bit 4:2:0 and 4:0:0, Baseline through High,
- * {@code smalt-mpeg}), VP8 ({@code smalt-image}), VP9 (every profile) and AV1 (8-, 10- and 12-bit
- * 4:2:0, 4:2:2, 4:4:4 and monochrome, {@code smalt-video}); a codec no provider decodes raises
+ * The Smalt artifacts decode H.264 (progressive and interlaced 4:2:0, 4:2:2, 4:4:4 and 4:0:0 of 8 to
+ * 14 bits, lossless included, Baseline through High 4:4:4 Predictive, {@code smalt-mpeg}), VP8
+ * ({@code smalt-image}), VP9 (every profile, 4:4:0 included)
+ * and AV1 (8-, 10- and 12-bit 4:2:0, 4:2:2, 4:4:4 and monochrome, {@code smalt-video}); a codec
+ * no provider decodes raises
  * {@link MediaException.Unsupported} naming it and, when a Smalt artifact decodes it, the
  * artifact to add. A stream using a tool its decoder lacks raises
  * {@link MediaException.Unsupported} naming the tool.
+ *
+ * <p>A track that {@linkplain VideoTrack#hasAlpha() carries alpha} as a second coded stream, as
+ * transparent VP8 and VP9 video in WebM does, is decoded with two decoders of its codec: frames come
+ * out as {@link com.github.auties00.smalt.image.YuvPicture}s or
+ * {@link com.github.auties00.smalt.image.Yuv16Picture}s whose alpha plane is the luma plane of the
+ * {@linkplain com.github.auties00.smalt.track.PacketSideData#alphaFrame() alpha frame} their packet
+ * carries, rescaled to the frame's bit depth when the two differ. A frame whose packet carries no alpha
+ * frame, or one the second decoder rejects as corrupt or decodes to another size, is opaque.
  */
 public final class VideoDecoders {
     /**
@@ -69,7 +80,17 @@ public final class VideoDecoders {
         if (provider == null) {
             throw Artifacts.unsupported(codec.displayName(), "decodable", Artifacts.decoderOf(codec));
         }
-        return provider.createDecoder(track, options);
+        var decoder = provider.createDecoder(track, options);
+        if (!track.hasAlpha()) {
+            return decoder;
+        }
+        try {
+            return new AlphaVideoDecoder(decoder, provider.createDecoder(track.toBuilder().alpha(false).color(null).build(),
+                    options));
+        } catch (RuntimeException exception) {
+            decoder.close();
+            throw exception;
+        }
     }
 
     /**
