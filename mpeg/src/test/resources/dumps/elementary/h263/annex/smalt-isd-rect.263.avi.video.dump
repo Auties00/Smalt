@@ -1,0 +1,16 @@
+# video decode dump of elementary/h263/annex/smalt-isd-rect.263.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 200000
+seekable true
+track 1 H263 176x144 timebase=1/30
+0 pts=0 dur=1 key=true 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=9fb7d370 u=659d2b94 v=7d392aec
+1 pts=1 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=ba332884 u=aac1be9f v=1df0172e
+2 pts=2 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=3058c46e u=21228dcb v=45851d7f
+3 pts=3 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7a0694dc u=559684e1 v=48081e61
+4 pts=4 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=864d1210 u=885d1fd4 v=99780c21
+5 pts=5 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=605db5c4 u=39870ac4 v=46cb852c
+seek 0: @0
+seek 66666: @1
+seek 133333: @3
+seek 200000: end
+seek -1000000: @0

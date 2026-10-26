@@ -1,3 +1,5 @@
+/* Ports libopus 1.5.2 (src/opus_projection_decoder.c, src/mapping_matrix.c). Copyright Google Inc.; BSD 2-Clause
+   License. Modified for Smalt. */
 package com.github.auties00.smalt.audio.opus;
 
 import com.github.auties00.smalt.MediaException;
@@ -7,6 +9,7 @@ import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.opus.internal.OpusDefines;
 import com.github.auties00.smalt.audio.opus.internal.OpusMultistreamDecoder;
 import com.github.auties00.smalt.audio.opus.internal.OpusStreamDecoder;
+import com.github.auties00.smalt.audio.opus.internal.celt.MathOps;
 import com.github.auties00.smalt.internal.codec.ConsumerFailure;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -25,13 +28,25 @@ import java.util.function.Consumer;
  * {@code OpusHead} identification header (RFC 7845 section 5.1): its channel count, pre-skip,
  * output gain and channel mapping. Mapping family 0 (mono or stereo) and family 1 (up to 7.1,
  * Vorbis order) are reordered to the WAVE order of {@link ChannelLayout#defaultFor(int)}; family
- * 255, the ambisonic family 2 and reserved families are decoded as a multistream with
- * {@link com.github.auties00.smalt.audio.Speaker#UNKNOWN} positions. The output gain is applied
- * inside the decoder and the first {@code preSkip} samples (counted at 48 kHz and scaled to the
- * output rate, rounding down) are discarded by {@link #decode(Packet, Consumer)}; trimming the end
- * of the stream is the container's job (the Ogg end granule position). A decoder created without
- * a track ({@link #OpusDecoder(OpusDecoderOptions)}) decodes a single mono or stereo stream with
- * no pre-skip and no gain.
+ * 255, the ambisonic family 2 and reserved families are decoded as a multistream in coded order, and
+ * family 3 (RFC 8486 section 3.2) multiplies the decoded channels of its streams by the demixing matrix
+ * of the header. The ambisonic families output the layout of {@link ChannelLayout#ofAmbisonics(int)}
+ * (ACN order, SN3D), followed by a non-diegetic front left and right pair when the channel count is an
+ * order squared plus two; the other families and counts output
+ * {@link com.github.auties00.smalt.audio.Speaker#UNKNOWN} positions. The output gain is applied inside the decoder
+ * and the first {@code preSkip} samples (counted at 48 kHz and scaled to the output rate, rounding down)
+ * are discarded by {@link #decode(Packet, Consumer)}; trimming the end of the stream is the container's
+ * job (the Ogg end granule position). A decoder created without a track
+ * ({@link #OpusDecoder(OpusDecoderOptions)}) decodes a single mono or stereo stream with no pre-skip and
+ * no gain.
+ *
+ * <p>When the {@linkplain OpusDecoderOptions#channels() options} ask for a channel count other than the
+ * stream's, a single mono or stereo stream decodes to it natively and any other stream is mixed down to
+ * mono or stereo by fixed matrices: the stereo downmix of RFC 7845 section 5.1.1.5 for the Vorbis order,
+ * the ambisonic downmix of RFC 8486 section 4 for families 2 and 3, and the first two channels for
+ * channels without positions; a mono output averages the stereo one, except that ambisonics without a
+ * non-diegetic pair output the omnidirectional channel. The Vorbis-order stereo downmix is bit-identical
+ * to opusfile 0.12's {@code op_read_float_stereo} for every channel count but four.
  *
  * <p>{@link #decode(Packet, Consumer)} accepts every packet form: 1 to 48 frames (codes 0 to 3, with padding and CBR or
  * VBR framing), every mode (SILK-only, hybrid, CELT-only), every bandwidth, every frame size from 2.5 to 60 ms, and
@@ -41,9 +56,9 @@ import java.util.function.Consumer;
  *
  * <p>The per-packet methods ({@link #decode(byte[], int, int, short[], int, int)},
  * {@link #recover(byte[], int, int, short[], int, int)}, {@link #conceal(short[], int, int)} and
- * their float overloads) work on a single-stream decoder (mono or stereo) and write interleaved
- * samples into a caller-owned array, without pre-skip. Every call names a size in samples per
- * channel, which means one of two things:
+ * their float overloads) write {@code layout().channels()} interleaved channels in the order of
+ * {@link #layout()} into a caller-owned array, without pre-skip, for a single stream or a
+ * multistream alike. Every call names a size in samples per channel, which means one of two things:
  * <ul>
  * <li>for {@code decode}, the capacity of the output: the packet is decoded whole and the call
  *     returns its duration, which must not exceed the capacity;</li>
@@ -54,15 +69,20 @@ import java.util.function.Consumer;
  * the in-band copy and rebuilds that last frame from the copy, so a lost 60 ms packet is rebuilt by
  * passing the following 60 ms packet with a 60 ms span. When the copy cannot be used (the packet
  * carries no SILK frame, or the span is shorter than one of its frames) the whole span is concealed
- * instead.
+ * instead; each stream of a multistream packet is rebuilt or concealed on its own. The 16-bit methods
+ * soft-clip every stream before rounding.
  *
  * <p>The decoder runs natively at the {@linkplain OpusDecoderOptions#sampleRate() output rate},
  * which need not match the rate the stream was encoded at. Decoded samples are bit-identical to
- * those of the float build of libopus 1.5.2 without SIMD. Instances are not thread-safe.
+ * those of the float build of libopus 1.5.2 without SIMD ({@code opus_decode}, {@code opus_multistream_decode}
+ * and {@code opus_projection_decode} with their float variants), reordered to {@link #layout()}, for every
+ * span of at most 120 ms. Instances are not thread-safe.
  *
  * @implNote This implementation decodes natively at the requested output rate rather than
  * resampling a 48 kHz decode: at 8, 12 or 16 kHz the SILK layer skips its upsampler and CELT
- * decodes a band-limited, decimated signal.
+ * decodes a band-limited, decimated signal. A family 3 stream is demixed with every column of its
+ * matrix, as RFC 8486 defines; libopus 1.5.2 ignores the decoded channels past the output channel
+ * count and rejects a stream with fewer decoded than output channels, which no libopus encoder writes.
  */
 public final class OpusDecoder implements AudioDecoder {
     /**
@@ -87,6 +107,11 @@ public final class OpusDecoder implements AudioDecoder {
     private final ChannelLayout layout;
 
     /**
+     * The number of output channels.
+     */
+    private final int channels;
+
+    /**
      * The time base of the packet durations.
      */
     private final Rational timeBase;
@@ -97,14 +122,47 @@ public final class OpusDecoder implements AudioDecoder {
     private final OpusMultistreamDecoder decoder;
 
     /**
-     * The decoder of the only elementary stream, or {@code null} for a multistream.
+     * The decoder of the only elementary stream when it writes the output directly, or {@code null}.
      */
     private final OpusStreamDecoder stream;
 
     /**
-     * The output plane of each coded channel.
+     * The plane each channel of {@link #decoder} is written to: an output plane when
+     * {@link #decoded} is {@code null}, otherwise a plane of {@link #decoded}.
      */
     private final int[] route;
+
+    /**
+     * The planes {@link #decoder} writes when its channels are mixed before output, or {@code null}.
+     */
+    private final float[][] decoded;
+
+    /**
+     * The demixing coefficients of family 3 as floats, {@code (1 / 32768) * d}, indexed
+     * {@code [row][decoded channel]}, or {@code null}.
+     */
+    private final float[][] demix;
+
+    /**
+     * The demixing coefficients of family 3 in Q15, indexed {@code [row][decoded channel]}, or {@code null}.
+     */
+    private final short[][] demixQ15;
+
+    /**
+     * Whether each row of {@link #demix} is computed: every row without a downmix, else only those the
+     * downmix reads.
+     */
+    private final boolean[] demixRows;
+
+    /**
+     * The planes in coded order the downmix reads, or {@code null} without a downmix.
+     */
+    private final float[][] coded;
+
+    /**
+     * The downmix coefficients, indexed {@code [output channel][coded channel]}, or {@code null}.
+     */
+    private final float[][] downmix;
 
     /**
      * The reusable output buffer, sized for the longest packet (120 ms).
@@ -133,7 +191,7 @@ public final class OpusDecoder implements AudioDecoder {
      * @param track the Opus track; its codec configuration holds the {@code OpusHead}
      * @throws IllegalArgumentException if the track is not an Opus track
      * @throws MediaException.Malformed if the {@code OpusHead} is missing or corrupt
-     * @throws MediaException.Unsupported if the header uses an unsupported version or mapping family
+     * @throws MediaException.Unsupported if the header uses an unsupported version
      * @throws MediaException.LimitExceeded if the channel count exceeds the default limits
      */
     public OpusDecoder(AudioTrack track) {
@@ -141,16 +199,15 @@ public final class OpusDecoder implements AudioDecoder {
     }
 
     /**
-     * Constructs a decoder for a track, decoding at the options' rate and, for a mono or stereo
-     * track, to the options' channel count when one is set.
+     * Constructs a decoder for a track, decoding at the options' rate and to the options' channel
+     * count when one is set.
      *
      * @param track the Opus track; its codec configuration holds the {@code OpusHead}
      * @param options the limits, output rate and output channel count
      * @throws IllegalArgumentException if the track is not an Opus track
      * @throws MediaException.Malformed if the {@code OpusHead} is missing or corrupt
-     * @throws MediaException.Unsupported if the header uses an unsupported version or mapping family,
-     * or the options ask a multichannel track for another channel count
-     * @throws MediaException.LimitExceeded if the channel count exceeds the options' limits
+     * @throws MediaException.Unsupported if the header uses an unsupported version
+     * @throws MediaException.LimitExceeded if the channel count of the header exceeds the options' limits
      */
     public OpusDecoder(AudioTrack track, OpusDecoderOptions options) {
         Objects.requireNonNull(track, "track");
@@ -161,7 +218,7 @@ public final class OpusDecoder implements AudioDecoder {
         var parsed = track.codecConfig()
                 .map(config -> OpusHead.parse(config, options.limits()))
                 .orElseGet(() -> fallbackHead(track));
-        this(options, remix(parsed, options), track.timeBase());
+        this(options, nativeRemix(parsed, options), track.timeBase());
     }
 
     /**
@@ -182,23 +239,67 @@ public final class OpusDecoder implements AudioDecoder {
     private OpusDecoder(OpusDecoderOptions options, OpusHead head, Rational timeBase) {
         this.options = options;
         this.sampleRate = options.sampleRate();
-        this.layout = head.layout();
         this.timeBase = timeBase;
+        var projection = head.mappingFamily() == 3;
+        var target = options.channels().orElse(head.channels());
+        var mixed = target != head.channels();
         try {
-            this.decoder = new OpusMultistreamDecoder(sampleRate, head.channels(), head.streamCount(),
-                    head.coupledCount(), head.mapping());
+            if (projection) {
+                var identity = new int[head.decodedChannels()];
+                for (var i = 0; i < identity.length; i++) {
+                    identity[i] = i;
+                }
+                this.decoder = new OpusMultistreamDecoder(sampleRate, identity.length, head.streamCount(),
+                        head.coupledCount(), identity);
+            } else {
+                this.decoder = new OpusMultistreamDecoder(sampleRate, head.channels(), head.streamCount(),
+                        head.coupledCount(), head.mapping());
+            }
         } catch (IllegalArgumentException exception) {
             throw new MediaException.Malformed("invalid OpusHead channel layout", exception);
         }
         if (head.outputGain() != 0) {
             decoder.setGain(head.outputGain());
         }
-        this.stream = decoder.streamCount() == 1 ? decoder.stream(0) : null;
-        this.route = new int[head.channels()];
+        var max = decoder.maxFrameSize();
+        this.channels = target;
+        this.layout = mixed ? ChannelLayout.defaultFor(target) : head.layout();
+        this.downmix = mixed ? OpusDownmix.matrix(head.mappingFamily(), head.channels(), target) : null;
+        var direct = !projection && !mixed;
+        this.route = new int[projection ? head.decodedChannels() : head.channels()];
+        var single = direct && decoder.streamCount() == 1 && head.channels() == head.coupledCount() + 1;
+        var mapping = projection ? null : head.mapping();
         for (var i = 0; i < route.length; i++) {
-            route[i] = head.wavePosition(i);
+            route[i] = direct ? head.wavePosition(i) : i;
+            single &= direct && route[i] == i && mapping[i] == i;
         }
-        this.buffer = new AudioBuffer(layout, sampleRate, decoder.maxFrameSize());
+        this.stream = single ? decoder.stream(0) : null;
+        this.decoded = direct ? null : new float[route.length][max];
+        if (projection) {
+            var rows = head.channels();
+            var columns = head.decodedChannels();
+            var matrix = head.demixing();
+            this.demix = new float[rows][columns];
+            this.demixQ15 = new short[rows][columns];
+            this.demixRows = new boolean[rows];
+            for (var r = 0; r < rows; r++) {
+                for (var k = 0; k < columns; k++) {
+                    var value = matrix[k * rows + r];
+                    demixQ15[r][k] = value;
+                    demix[r][k] = (1 / 32768.f) * value;
+                }
+                demixRows[r] = !mixed;
+                for (var o = 0; mixed && o < target; o++) {
+                    demixRows[r] |= downmix[o][r] != 0;
+                }
+            }
+        } else {
+            this.demix = null;
+            this.demixQ15 = null;
+            this.demixRows = null;
+        }
+        this.coded = !mixed ? null : projection ? new float[head.channels()][max] : decoded;
+        this.buffer = new AudioBuffer(layout, sampleRate, max);
         this.skipRemaining = (long) head.preSkip() * sampleRate / 48000;
     }
 
@@ -218,27 +319,27 @@ public final class OpusDecoder implements AudioDecoder {
     }
 
     /**
-     * Returns the header that decodes a track into the options' channel count.
+     * Returns the header that decodes a single mono or stereo stream natively into the options'
+     * channel count.
      *
      * @param head the track's header
      * @param options the decoding options, whose channel count is the target
-     * @return {@code head} when the options keep its channel count, otherwise a single-stream
-     * header with the requested count and the same pre-skip and gain
-     * @throws MediaException.Unsupported if the track is not a single mono or stereo stream
+     * @return a single-stream header with the requested count and the same pre-skip and gain when
+     * the track is a single stream that feeds its channels in order and the options ask for another
+     * count, otherwise {@code head}, which a downmix brings to the requested count
      */
-    private static OpusHead remix(OpusHead head, OpusDecoderOptions options) {
+    private static OpusHead nativeRemix(OpusHead head, OpusDecoderOptions options) {
         var requested = options.channels();
-        if (requested.isEmpty() || requested.getAsInt() == head.channels()) {
+        if (requested.isEmpty() || requested.getAsInt() == head.channels() || head.mappingFamily() == 3) {
             return head;
         }
         var mapping = head.mapping();
-        var single = head.streamCount() == 1 && head.channels() <= 2;
+        var single = head.streamCount() == 1 && head.channels() <= 2 && head.coupledCount() == head.channels() - 1;
         for (var i = 0; single && i < head.channels(); i++) {
             single = mapping[i] == i;
         }
         if (!single) {
-            throw new MediaException.Unsupported("opus channel remix", "cannot decode a " + head.channels()
-                    + "-channel multistream Opus track into " + requested.getAsInt() + " channels");
+            return head;
         }
         return OpusHead.family0(requested.getAsInt(), head.preSkip(), head.inputSampleRate(), head.outputGain());
     }
@@ -282,11 +383,12 @@ public final class OpusDecoder implements AudioDecoder {
      */
     private void decodePacket(Packet packet, Consumer<AudioBuffer> output) {
         var data = packet.data();
+        var planes = buffer.planes();
         int decoded;
         if (data.length == 0) {
-            decoded = decoder.decode(null, 0, 0, buffer.planes(), 0, route, concealmentSize(packet), false);
+            decoded = decodePlanar(null, 0, 0, planes, concealmentSize(packet), false, false);
         } else {
-            decoded = decoder.decode(data, 0, data.length, buffer.planes(), 0, route, decoder.maxFrameSize(), false);
+            decoded = decodePlanar(data, 0, data.length, planes, this.decoder.maxFrameSize(), false, false);
         }
         if (decoded < 0) {
             throw new MediaException.Malformed("invalid Opus packet: " + OpusDefines.strerror(decoded));
@@ -302,12 +404,73 @@ public final class OpusDecoder implements AudioDecoder {
             return;
         }
         if (start > 0) {
-            for (var plane : buffer.planes()) {
+            for (var plane : planes) {
                 System.arraycopy(plane, start, plane, 0, frames);
             }
         }
         buffer.setFrames(frames);
         output.accept(buffer);
+    }
+
+    /**
+     * Decodes, conceals or rebuilds at most 120 ms into output planes in layout order, mixing the
+     * decoded channels when the stream needs it.
+     *
+     * @param data the packet buffer, or {@code null} to conceal
+     * @param frameSize the capacity, or the number of samples to conceal or rebuild
+     * @param fec whether to rebuild the previous packet from this packet's in-band copy
+     * @param softClip whether each stream is soft-clipped
+     * @return the number of samples per channel, or a negative {@code OPUS_*} error code
+     */
+    private int decodePlanar(byte[] data, int offset, int length, float[][] out, int frameSize, boolean fec,
+                             boolean softClip) {
+        var target = decoded != null ? decoded : out;
+        var result = decoder.decode(data, offset, length, target, 0, route, frameSize, fec, softClip);
+        if (result <= 0 || decoded == null) {
+            return result;
+        }
+        if (demix != null) {
+            demix(coded != null ? coded : out, result);
+        }
+        if (downmix != null) {
+            for (var o = 0; o < downmix.length; o++) {
+                mixRow(downmix[o], coded, out[o], result);
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Writes the demixed rows of a family 3 frame: each computed row {@code r} is the sum over the
+     * decoded channels {@code k}, in ascending order, of {@code demix[r][k] * decoded[k]}
+     * ({@code mapping_matrix_multiply_channel_out_float}).
+     */
+    private void demix(float[][] out, int frames) {
+        for (var r = 0; r < demix.length; r++) {
+            if (demixRows[r]) {
+                mixRow(demix[r], decoded, out[r], frames);
+            }
+        }
+    }
+
+    /**
+     * Writes one matrix row applied to planes, accumulating the terms in ascending input order from
+     * zero; zero coefficients are skipped, which leaves the finite sums unchanged.
+     */
+    private static void mixRow(float[] coefficients, float[][] in, float[] out, int frames) {
+        for (var i = 0; i < frames; i++) {
+            out[i] = 0;
+        }
+        for (var k = 0; k < coefficients.length; k++) {
+            var c = coefficients[k];
+            if (c == 0) {
+                continue;
+            }
+            var x = in[k];
+            for (var i = 0; i < frames; i++) {
+                out[i] += c * x[i];
+            }
+        }
     }
 
     /**
@@ -349,11 +512,12 @@ public final class OpusDecoder implements AudioDecoder {
      */
     private int decode(byte[] packet, int offset, int length, short[] pcm, int pcmOffset, int frameSize, boolean fec) {
         Objects.requireNonNull(pcm, "pcm");
-        var stream = singleStream();
-        checkSpan(stream, packet, offset, length, pcm.length, pcmOffset, frameSize);
+        checkOpen();
+        checkSpan(packet, offset, length, pcm.length, pcmOffset, frameSize);
         int result;
         try {
-            result = stream.decode(packet, offset, length, pcm, pcmOffset, frameSize, fec);
+            result = stream != null ? stream.decode(packet, offset, length, pcm, pcmOffset, frameSize, fec)
+                    : decodeInterleaved(packet, offset, length, null, pcm, pcmOffset, frameSize, fec);
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt Opus packet", exception);
         }
@@ -365,15 +529,105 @@ public final class OpusDecoder implements AudioDecoder {
      */
     private int decode(byte[] packet, int offset, int length, float[] pcm, int pcmOffset, int frameSize, boolean fec) {
         Objects.requireNonNull(pcm, "pcm");
-        var stream = singleStream();
-        checkSpan(stream, packet, offset, length, pcm.length, pcmOffset, frameSize);
+        checkOpen();
+        checkSpan(packet, offset, length, pcm.length, pcmOffset, frameSize);
         int result;
         try {
-            result = stream.decodeNative(packet, offset, length, pcm, pcmOffset, frameSize, fec, false, null, false);
+            result = stream != null
+                    ? stream.decodeNative(packet, offset, length, pcm, pcmOffset, frameSize, fec, false, null, false)
+                    : decodeInterleaved(packet, offset, length, pcm, null, pcmOffset, frameSize, fec);
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt Opus packet", exception);
         }
         return decoded(result, frameSize);
+    }
+
+    /**
+     * Decodes, conceals or recovers a multistream, or a stream whose channels are mixed, into one of two
+     * interleaved arrays; spans longer than 120 ms are produced in pieces of at most 120 ms, the last piece
+     * the one rebuilt from the in-band copy.
+     *
+     * @param floats the float output, or {@code null}
+     * @param shorts the 16-bit output, or {@code null}
+     * @return the number of samples per channel, or a negative {@code OPUS_*} error code
+     */
+    private int decodeInterleaved(byte[] packet, int offset, int length, float[] floats, short[] shorts,
+                                  int pcmOffset, int frameSize, boolean fec) {
+        var max = decoder.maxFrameSize();
+        var span = packet == null || length == 0 || fec;
+        if (!span) {
+            return decodePiece(packet, offset, length, floats, shorts, pcmOffset, Math.min(frameSize, max), false);
+        }
+        var produced = 0;
+        while (produced < frameSize) {
+            var remaining = frameSize - produced;
+            var piece = remaining > max ? remaining - (remaining - 1) / max * max : remaining;
+            var last = produced + piece == frameSize;
+            var result = decodePiece(last && fec ? packet : null, offset, last && fec ? length : 0, floats, shorts,
+                    pcmOffset + produced * channels, piece, last && fec);
+            if (result <= 0) {
+                return result;
+            }
+            produced += result;
+        }
+        return produced;
+    }
+
+    /**
+     * Decodes, conceals or recovers at most 120 ms into interleaved output.
+     *
+     * @return the number of samples per channel, or a negative {@code OPUS_*} error code
+     */
+    private int decodePiece(byte[] packet, int offset, int length, float[] floats, short[] shorts, int pcmOffset,
+                            int frameSize, boolean fec) {
+        var planes = buffer.planes();
+        if (shorts != null && demix != null && downmix == null) {
+            var result = decoder.decode(packet, offset, length, decoded, 0, route, frameSize, fec, true);
+            if (result > 0) {
+                demixShort(shorts, pcmOffset, result);
+            }
+            return result;
+        }
+        var result = decodePlanar(packet, offset, length, planes, frameSize, fec, shorts != null);
+        if (result <= 0) {
+            return result;
+        }
+        for (var c = 0; c < channels; c++) {
+            var plane = planes[c];
+            if (floats != null) {
+                for (var i = 0; i < result; i++) {
+                    floats[pcmOffset + i * channels + c] = plane[i];
+                }
+            } else {
+                for (var i = 0; i < result; i++) {
+                    shorts[pcmOffset + i * channels + c] = MathOps.float2int16(plane[i]);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Writes a demixed family 3 frame as interleaved 16-bit samples: every decoded sample is rounded to
+     * 16 bits and each output sample accumulates {@code (d * x + 16384) >> 15} over the decoded channels,
+     * wrapping at 16 bits ({@code mapping_matrix_multiply_channel_out_short}).
+     */
+    private void demixShort(short[] pcm, int pcmOffset, int frames) {
+        var rows = demixQ15.length;
+        for (var i = 0; i < frames * rows; i++) {
+            pcm[pcmOffset + i] = 0;
+        }
+        for (var k = 0; k < decoded.length; k++) {
+            var x = decoded[k];
+            for (var i = 0; i < frames; i++) {
+                int sample = MathOps.float2int16(x[i]);
+                var base = pcmOffset + i * rows;
+                for (var r = 0; r < rows; r++) {
+                    var tmp = demixQ15[r][k] * sample;
+                    pcm[base + r] = (short) (pcm[base + r] + ((tmp + 16384) >> 15));
+                }
+            }
+        }
     }
 
     /**
@@ -394,7 +648,7 @@ public final class OpusDecoder implements AudioDecoder {
      * @return the number of samples per channel written, the packet's duration
      * @throws IllegalArgumentException if {@code length} is zero, or {@code maxFrameSize} is not
      * positive or is shorter than the packet
-     * @throws IllegalStateException if the decoder was closed or decodes a multistream
+     * @throws IllegalStateException if the decoder was closed
      * @throws IndexOutOfBoundsException if the packet or the output span lies outside its array
      * @throws MediaException.Malformed if the packet is invalid or corrupt
      */
@@ -422,7 +676,7 @@ public final class OpusDecoder implements AudioDecoder {
      * @return the number of samples per channel written, the packet's duration
      * @throws IllegalArgumentException if {@code length} is zero, or {@code maxFrameSize} is not
      * positive or is shorter than the packet
-     * @throws IllegalStateException if the decoder was closed or decodes a multistream
+     * @throws IllegalStateException if the decoder was closed
      * @throws IndexOutOfBoundsException if the packet or the output span lies outside its array
      * @throws MediaException.Malformed if the packet is invalid or corrupt
      */
@@ -441,8 +695,9 @@ public final class OpusDecoder implements AudioDecoder {
      * following 60 ms packet with a {@code frameSize} of 60 ms. When the copy cannot be used (the
      * packet carries none, see {@link OpusPackets#hasInbandFec(byte[], int, int)}, or
      * {@code frameSize} is shorter than one of its frames) the whole span is concealed, as
-     * {@link #conceal(short[], int, int)} does. {@code nextPacket} itself is not decoded: pass it
-     * to {@link #decode(byte[], int, int, short[], int, int)} afterwards.
+     * {@link #conceal(short[], int, int)} does; the streams of a multistream packet are rebuilt or
+     * concealed one by one. {@code nextPacket} itself is not decoded: pass it to
+     * {@link #decode(byte[], int, int, short[], int, int)} afterwards.
      *
      * @param nextPacket the buffer holding the packet that follows the lost one
      * @param offset the index of the packet's table-of-contents byte
@@ -454,7 +709,7 @@ public final class OpusDecoder implements AudioDecoder {
      * @return {@code frameSize}
      * @throws IllegalArgumentException if {@code length} is zero, or {@code frameSize} is not a
      * positive multiple of 2.5 ms
-     * @throws IllegalStateException if the decoder was closed or decodes a multistream
+     * @throws IllegalStateException if the decoder was closed
      * @throws IndexOutOfBoundsException if the packet or the output span lies outside its array
      * @throws MediaException.Malformed if the packet is invalid or corrupt
      */
@@ -482,7 +737,7 @@ public final class OpusDecoder implements AudioDecoder {
      * @return {@code frameSize}
      * @throws IllegalArgumentException if {@code length} is zero, or {@code frameSize} is not a
      * positive multiple of 2.5 ms
-     * @throws IllegalStateException if the decoder was closed or decodes a multistream
+     * @throws IllegalStateException if the decoder was closed
      * @throws IndexOutOfBoundsException if the packet or the output span lies outside its array
      * @throws MediaException.Malformed if the packet is invalid or corrupt
      */
@@ -515,7 +770,7 @@ public final class OpusDecoder implements AudioDecoder {
      * @param frameSize the number of samples per channel to produce, a multiple of 2.5 ms
      * @return {@code frameSize}
      * @throws IllegalArgumentException if {@code frameSize} is not a positive multiple of 2.5 ms
-     * @throws IllegalStateException if the decoder was closed or decodes a multistream
+     * @throws IllegalStateException if the decoder was closed
      * @throws IndexOutOfBoundsException if the output span lies outside {@code pcm}
      */
     public int conceal(short[] pcm, int pcmOffset, int frameSize) {
@@ -532,26 +787,11 @@ public final class OpusDecoder implements AudioDecoder {
      * @param frameSize the number of samples per channel to produce, a multiple of 2.5 ms
      * @return {@code frameSize}
      * @throws IllegalArgumentException if {@code frameSize} is not a positive multiple of 2.5 ms
-     * @throws IllegalStateException if the decoder was closed or decodes a multistream
+     * @throws IllegalStateException if the decoder was closed
      * @throws IndexOutOfBoundsException if the output span lies outside {@code pcm}
      */
     public int conceal(float[] pcm, int pcmOffset, int frameSize) {
         return decode(null, 0, 0, pcm, pcmOffset, frameSize, false);
-    }
-
-    /**
-     * Returns the decoder of the only elementary stream.
-     *
-     * @return the stream decoder
-     * @throws IllegalStateException if the decoder was closed or decodes a multistream
-     */
-    private OpusStreamDecoder singleStream() {
-        checkOpen();
-        if (stream == null) {
-            throw new IllegalStateException("per-packet decoding needs a mono or stereo stream, not "
-                    + decoder.streamCount() + " streams");
-        }
-        return stream;
     }
 
     /**
@@ -573,15 +813,15 @@ public final class OpusDecoder implements AudioDecoder {
      * @throws IllegalArgumentException if {@code frameSize} is not positive
      * @throws IndexOutOfBoundsException if the packet or the output span lies outside its array
      */
-    private static void checkSpan(OpusStreamDecoder stream, byte[] packet, int offset, int length, int pcmLength,
-                                  int pcmOffset, int frameSize) {
+    private void checkSpan(byte[] packet, int offset, int length, int pcmLength, int pcmOffset, int frameSize) {
         if (frameSize <= 0) {
             throw new IllegalArgumentException("invalid Opus frame size " + frameSize);
         }
         if (packet != null) {
             Objects.checkFromIndexSize(offset, length, packet.length);
         }
-        Objects.checkFromIndexSize(pcmOffset, (int) Math.min(Integer.MAX_VALUE, (long) frameSize * stream.channels()), pcmLength);
+        Objects.checkFromIndexSize(pcmOffset, (int) Math.min(Integer.MAX_VALUE, (long) frameSize * channels),
+                pcmLength);
     }
 
     /**
@@ -615,7 +855,7 @@ public final class OpusDecoder implements AudioDecoder {
      * call}
      */
     public int lastPacketDuration() {
-        return decoder.lastPacketDuration();
+        return lastDuration;
     }
 
     /**
@@ -639,6 +879,8 @@ public final class OpusDecoder implements AudioDecoder {
 
     /**
      * Sets the gain applied to the output, replacing the output gain of the {@code OpusHead}.
+     *
+     * <p>The gain applies to every stream before any demixing or downmix.
      *
      * @param gainQ8 the gain in 1/256 dB, between -32768 and 32767
      * @throws IllegalArgumentException if the value is out of range

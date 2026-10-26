@@ -1,0 +1,19 @@
+# image dump of resources/jxl/features/gray-icc.jxl; regenerate with -Dsmalt.test.updateDumps=true
+format JXL
+info ImageInfo[format=JXL, width=99, height=70, hasAlpha=false, animated=false, frameCount=1, orientation=NORMAL]
+decode
+picture 99x70 rgba8 alpha=false crc=0a6c28d9
+  format=JXL orientation=NORMAL source=99x70
+  icc=272:6fcca6d6 exif=none xmp=none
+  profile=ColorProfile[Gray 1.8 toe, GRAY, DISPLAY, v4.3.0]
+scaled 24x17
+picture 99x70 rgba8 alpha=false crc=0a6c28d9
+  format=JXL orientation=NORMAL source=99x70
+  icc=272:6fcca6d6 exif=none xmp=none
+  profile=ColorProfile[Gray 1.8 toe, GRAY, DISPLAY, v4.3.0]
+decoder preview
+null
+decoder gain map
+null
+decoder boxes
+[]

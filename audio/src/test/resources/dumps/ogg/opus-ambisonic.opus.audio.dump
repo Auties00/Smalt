@@ -1,0 +1,18 @@
+# audio decode dump of ogg/opus-ambisonic.opus; regenerate with -Dsmalt.test.updateDumps=true
+format OGG
+duration 250000
+seekable true
+track 0 OPUS rate=48000 layout=[UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, FRONT_LEFT, FRONT_RIGHT] ambisonics=SN3D[0, 1, 2, 3]
+0 frames=4096 crc16=df459f3b
+1 frames=4096 crc16=0520b6aa
+2 frames=3808 crc16=bc9014f5
+seek 0: @sample 0
+seek 83333: @sample 4000
+seek 166666: @sample 8000
+seek 250000: end
+seek -1000000: @sample 0
+header over READ_ONCE_UNKNOWN_LENGTH:
+  format OGG
+  duration -1
+  seekable false
+  track 0 OPUS rate=48000 layout=[UNKNOWN, UNKNOWN, UNKNOWN, UNKNOWN, FRONT_LEFT, FRONT_RIGHT] ambisonics=SN3D[0, 1, 2, 3]
