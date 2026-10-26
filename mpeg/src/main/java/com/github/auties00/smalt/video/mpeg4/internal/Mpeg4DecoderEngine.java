@@ -2,8 +2,14 @@ package com.github.auties00.smalt.video.mpeg4.internal;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.Picture;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.task.ParallelBands;
+import com.github.auties00.smalt.video.FrameSideData;
+import com.github.auties00.smalt.video.VideoLayer;
+import com.github.auties00.smalt.video.h263.internal.H263PlusStream;
+import com.github.auties00.smalt.video.mpeg4.internal.object.ObjectStream;
 
 import java.lang.invoke.MethodHandles;
 import java.lang.invoke.VarHandle;
@@ -64,6 +70,20 @@ public final class Mpeg4DecoderEngine {
          * @param duration the duration in the track time base, or 0
          */
         void emit(Frame frame, VideoObjectLayer layer, long pts, long duration);
+
+        /**
+         * Hands out one picture of a layer decoded by the object decoder or the H.263 annex decoder.
+         *
+         * @param picture the picture, valid until the call returns
+         * @param layer the layer the picture belongs to
+         * @param pts the presentation timestamp in the track time base, or
+         * {@code Long.MIN_VALUE}
+         * @param duration the duration in the track time base, or 0
+         * @param keyframe whether the picture comes from an intra VOP or picture
+         * @param sideData the side data of the frame
+         */
+        void emitPicture(Picture picture, VideoObjectLayer layer, long pts, long duration, boolean keyframe,
+                         FrameSideData sideData);
     }
 
     /**
@@ -296,6 +316,69 @@ public final class Mpeg4DecoderEngine {
     private RuntimeException deferred;
 
     /**
+     * Whether pictures of more than 8 bits keep their depth.
+     */
+    private final boolean highBitDepth;
+
+    /**
+     * The decoder of the active layer when it needs the object decoder, or {@code null}.
+     */
+    private ObjectStream object;
+
+    /**
+     * The index of the group of VOP start code waiting for the next VOP of the object decoder, or
+     * {@code -1}.
+     */
+    private int objectGov = -1;
+
+    /**
+     * The display width of arbitrarily shaped layers, from the track, or 0.
+     */
+    private final int displayWidth;
+
+    /**
+     * The display height of arbitrarily shaped layers, from the track, or 0.
+     */
+    private final int displayHeight;
+
+    /**
+     * The receiver of the pictures of the object decoder.
+     */
+    private final ObjectStream.Sink objectSink = this::emitObject;
+
+    /**
+     * The decoder of H.263 streams with the modes the macroblock engine lacks, or {@code null} while the engine
+     * decodes the stream.
+     */
+    private H263PlusStream plus;
+
+    /**
+     * The receiver of the pictures of the H.263 annex decoder.
+     */
+    private final H263PlusStream.Sink plusSink = this::emitPlus;
+
+    /**
+     * The timestamp of the first picture of the H.263 annex decoder, or {@code Long.MIN_VALUE}.
+     */
+    private long plusBasePts = Long.MIN_VALUE;
+
+    /**
+     * The time {@link #plusBasePts} belongs to in ticks of 1/1800000 second, or {@code Long.MIN_VALUE} when the
+     * first picture of the annex decoder sets it.
+     */
+    private long plusBaseTime = Long.MIN_VALUE;
+
+    /**
+     * Whether the H.263 stream has more than one layer or sub-bitstream, whose frames name theirs.
+     */
+    private boolean plusLayered;
+
+    /**
+     * The layer description of the pictures of the H.263 annex decoder.
+     */
+    private VideoObjectLayer plusLayer;
+
+    /**
      * The array holding the VOP being started.
      */
     private byte[] windowData;
@@ -322,11 +405,18 @@ public final class Mpeg4DecoderEngine {
      * one at a time
      * @param trackFrameDuration the frame duration from the track, or 0
      * @param timeScale the conversion of VOP times to the track time base
+     * @param displayWidth the width of the track, the display of arbitrarily shaped layers, or 0
+     * @param displayHeight the height of the track, or 0
+     * @param highBitDepth whether pictures of more than 8 bits keep their depth
      * @param output the receiver of pictures
      */
     public Mpeg4DecoderEngine(MediaLimits limits, boolean h263, int threads, boolean frameThreads,
-                              long trackFrameDuration, TimeScale timeScale, Output output) {
+                              long trackFrameDuration, TimeScale timeScale, int displayWidth, int displayHeight,
+                              boolean highBitDepth, Output output) {
         this.limits = limits;
+        this.highBitDepth = highBitDepth;
+        this.displayWidth = displayWidth;
+        this.displayHeight = displayHeight;
         this.h263 = h263;
         this.threads = Math.max(1, threads);
         this.frameThreads = frameThreads && !h263 && this.threads > 1;
@@ -384,6 +474,12 @@ public final class Mpeg4DecoderEngine {
      * Hands out the picture still held for reordering.
      */
     public void flush() {
+        if (object != null) {
+            object.flush(objectSink);
+        }
+        if (plus != null) {
+            plus.flush(plusSink);
+        }
         if (future != null && !futureShown) {
             futureShown = true;
             emit(future);
@@ -413,6 +509,15 @@ public final class Mpeg4DecoderEngine {
      * Forgets the references and pending timestamps, as after a seek.
      */
     public void reset() {
+        if (object != null) {
+            object.reset();
+            objectGov = -1;
+        }
+        if (plus != null) {
+            plus.reset();
+            plusBasePts = Long.MIN_VALUE;
+            plusBaseTime = Long.MIN_VALUE;
+        }
         if (frameThreads) {
             drain(true);
             finishJobs();
@@ -449,7 +554,7 @@ public final class Mpeg4DecoderEngine {
             while (position >= 0) {
                 var end = nextShortStart(data, position + 3);
                 if (decode) {
-                    if (!timestampAdded && pts != Long.MIN_VALUE) {
+                    if (!timestampAdded && pts != Long.MIN_VALUE && plus == null) {
                         timestamps.add(pts);
                         timestampAdded = true;
                     }
@@ -466,13 +571,21 @@ public final class Mpeg4DecoderEngine {
             var start = position + 4;
             var next = nextStartCode(data, start);
             var end = next < 0 ? length : next;
-            if (code == 0xB6) {
+            if (object != null && code == 0xB3) {
+                objectGov = position;
+            } else if (code == 0xB6) {
                 if (decode) {
                     if (!timestampAdded && pts != Long.MIN_VALUE) {
                         timestamps.add(pts);
                         timestampAdded = true;
                     }
-                    if (decodeVop(data, start, end - start, vops, pts)) {
+                    if (object != null) {
+                        var from = objectGov >= 0 ? objectGov : position;
+                        objectGov = -1;
+                        if (decodeObject(data, from, end - from, vops, pts)) {
+                            vops++;
+                        }
+                    } else if (decodeVop(data, start, end - start, vops, pts)) {
                         vops++;
                     }
                 }
@@ -567,7 +680,12 @@ public final class Mpeg4DecoderEngine {
             }
             reader.load(data, offset, length);
             var parsed = VideoObjectLayer.parse(reader, profileAndLevel, visualVerid, limits, signal);
-            activate(parsed);
+            if (parsed.objectTools) {
+                activateObject(parsed, data, offset - 4, length + 4);
+            } else {
+                object = null;
+                activate(parsed);
+            }
             layerBytes = bytes;
         } else if (code == 0xB3) {
             reader.load(data, offset, length);
@@ -642,8 +760,89 @@ public final class Mpeg4DecoderEngine {
             bFrame = null;
         }
         layer = parsed;
-        delayed = !parsed.lowDelay;
+        delayed = !parsed.lowDelay || h263;
         parser.configure(parsed);
+    }
+
+    /**
+     * Makes a layer that needs the object decoder active.
+     *
+     * @param parsed the layer as the fast engine read it
+     * @param data the bytes
+     * @param offset the index of the layer's start code
+     * @param length the length of the layer header with its start code
+     */
+    private void activateObject(VideoObjectLayer parsed, byte[] data, int offset, int length) {
+        if (future != null && !futureShown) {
+            futureShown = true;
+            emit(future);
+        }
+        if (object != null) {
+            object.flush(objectSink);
+        }
+        if (frameThreads) {
+            try {
+                drain(true);
+            } finally {
+                finishJobs();
+                frames.clear();
+            }
+        }
+        pool.clear();
+        past = null;
+        future = null;
+        bFrame = null;
+        object = new ObjectStream(data, offset, length, displayWidth, displayHeight, parsed.color(), highBitDepth,
+                limits);
+        parsed.width = object.width();
+        parsed.height = object.height();
+        layer = parsed;
+        objectGov = -1;
+    }
+
+    /**
+     * Decodes one VOP with the object decoder.
+     *
+     * @param data the bytes
+     * @param offset the index of the VOP start code, or of the group of VOP start code before it
+     * @param length the length up to the next VOP
+     * @param index the number of VOPs decoded before in the same packet
+     * @param pts the packet timestamp
+     * @return {@code true} when the VOP was coded
+     */
+    private boolean decodeObject(byte[] data, int offset, int length, int index, long pts) {
+        var coded = object.decode(data, offset, length, objectSink);
+        if (!coded) {
+            if (owed > 0) {
+                owed--;
+            } else {
+                dropTimestamp(pts, index);
+            }
+        }
+        return coded;
+    }
+
+    /**
+     * Hands a picture of the object decoder out with its timestamp.
+     *
+     * @param picture the decoded VOP, valid until the call returns
+     * @param time the VOP time in ticks
+     * @param keyframe whether the picture comes from an intra VOP
+     */
+    private void emitObject(Picture picture, long time, boolean keyframe) {
+        long pts;
+        var polled = timestamps.poll();
+        if (polled != null) {
+            pts = polled;
+        } else if (lastPts != Long.MIN_VALUE) {
+            var delta = time - lastTime;
+            pts = lastPts + (delta > 0 ? timeScale.convert(delta, object.timeResolution()) : frameDuration());
+        } else {
+            pts = Long.MIN_VALUE;
+        }
+        lastPts = pts;
+        lastTime = time;
+        output.emitPicture(picture, layer, pts, frameDuration(), keyframe, FrameSideData.NONE);
     }
 
     /**
@@ -723,6 +922,20 @@ public final class Mpeg4DecoderEngine {
      * @param index the number of pictures of the packet decoded before
      */
     private void decodeShortPicture(byte[] data, int offset, int length, long pts, int index) {
+        if (plus == null && h263) {
+            reader.load(data, offset, length);
+            if (H263PlusStream.required(reader, layer == null ? 0 : layer.width, layer == null ? 0 : layer.height)) {
+                startPlus(pts);
+            }
+        }
+        if (plus != null) {
+            try {
+                plus.decode(data, offset, length, plusSink);
+            } catch (MediaException.Malformed exception) {
+                damaged = true;
+            }
+            return;
+        }
         reader.load(data, offset, length);
         var parsed = h263Header.parse(reader, h263, layer, limits);
         if (parsed == null) {
@@ -744,6 +957,77 @@ public final class Mpeg4DecoderEngine {
         layer.obmcDisable = !h263Header.advancedPrediction;
         var time = h263Header.time();
         decodePicture(vop, time, pts, index);
+    }
+
+    /**
+     * Hands the stream over to the H.263 annex decoder, with the reference pictures and header state of the pictures
+     * decoded so far.
+     *
+     * @param pts the timestamp of the packet that needs the annex decoder
+     */
+    private void startPlus(long pts) {
+        plus = new H263PlusStream(limits);
+        if (layer != null && layer.shortVideoHeader && future != null) {
+            plus.adopt(h263Header.state(), past, pastTime, true, future, futureTime, futureShown, layer.width,
+                    layer.height);
+            if (!futureShown) {
+                var first = timestamps.peek();
+                if (first != null) {
+                    plusBasePts = first;
+                    plusBaseTime = futureTime;
+                }
+            }
+        }
+        if (plusBasePts == Long.MIN_VALUE && lastPts != Long.MIN_VALUE) {
+            plusBasePts = lastPts;
+            plusBaseTime = lastTime;
+        } else if (plusBasePts == Long.MIN_VALUE && pts != Long.MIN_VALUE) {
+            plusBasePts = pts;
+        }
+        if (past != null) {
+            pool.add(past);
+        }
+        if (future != null) {
+            pool.add(future);
+        }
+        past = null;
+        future = null;
+        futureShown = true;
+        timestamps.clear();
+        owed = 0;
+    }
+
+    /**
+     * Hands out a picture of the H.263 annex decoder, timed from its temporal reference.
+     *
+     * @param picture the decoded picture, valid until the call returns
+     * @param time the picture time in ticks of 1/1800000 second
+     * @param keyframe whether the picture is an I- or EI-picture
+     * @param number the enhancement layer number
+     * @param subBitstream the sub-bitstream
+     */
+    private void emitPlus(YuvPicture picture, long time, boolean keyframe, int number, int subBitstream) {
+        if (plusBaseTime == Long.MIN_VALUE) {
+            plusBaseTime = time;
+            if (plusBasePts == Long.MIN_VALUE) {
+                plusBasePts = 0;
+            }
+        }
+        var delta = time - plusBaseTime;
+        var pts = plusBasePts + (delta >= 0 ? timeScale.convert(delta, 1800000)
+                : -timeScale.convert(-delta, 1800000));
+        if (number > 1 || subBitstream > 0) {
+            plusLayered = true;
+        }
+        var sideData = plusLayered ? FrameSideData.builder().layer(new VideoLayer(number - 1, subBitstream,
+                VideoLayer.Type.PRIMARY)).build() : FrameSideData.NONE;
+        if (plusLayer == null || plusLayer.width != picture.width() || plusLayer.height != picture.height()) {
+            plusLayer = VideoObjectLayer.shortHeader(picture.width(), picture.height());
+            plusLayer.timeResolution = 1800000;
+        }
+        lastPts = pts;
+        lastTime = time;
+        output.emitPicture(picture, plusLayer, pts, frameDuration(), keyframe, sideData);
     }
 
     /**

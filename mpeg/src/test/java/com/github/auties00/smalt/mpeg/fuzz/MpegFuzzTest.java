@@ -18,12 +18,14 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.VideoTrack;
+import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
 import com.github.auties00.smalt.video.h264.H264StreamInfo;
 import com.github.auties00.smalt.video.hevc.HevcDecoder;
 import com.github.auties00.smalt.video.hevc.HevcDecoderOptions;
+import com.github.auties00.smalt.video.mpeg4.Mpeg4Decoder;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4ElementaryStream;
 
 import java.io.ByteArrayOutputStream;
@@ -38,7 +40,8 @@ import java.util.function.Consumer;
  * {@link com.github.auties00.smalt.testkit.fuzz.FuzzPackets} format (see {@link FuzzMedia#video} and
  * {@link FuzzMedia#audio}), among them the HEVC decoder decoding the layers of an output layer set, of the HEIC
  * image decoder (see {@link FuzzMedia#image}), of the MPEG-4 Part 2 and H.263 elementary stream reader, of the
- * H.264 parameter set parser and of the H.264 decoder decoding every layer of a stream (see {@link #h264Layers}).
+ * MPEG-4 Part 2 decoder decoding the two layers of a scalable object (see {@link #mpeg4Layers}), of the H.264
+ * parameter set parser and of the H.264 decoder decoding every layer of a stream (see {@link #h264Layers}).
  */
 class MpegFuzzTest {
     /** The packets of an elementary stream that are decoded after it is split. */
@@ -123,6 +126,66 @@ class MpegFuzzTest {
     @FuzzTest
     void mpeg4(byte[] data) {
         FuzzMedia.video(Codec.MPEG4_PART2, data);
+    }
+
+    /**
+     * Decodes the two layers of a scalable MPEG-4 Part 2 object: a 4-byte big-endian length, the base layer's
+     * elementary stream of that length and the enhancement layer's elementary stream, each split by
+     * {@link Mpeg4ElementaryStream}, whose packets are fed alternately. A packet the decoder rejects is skipped and
+     * decoding goes on with the next one.
+     */
+    @FuzzTest
+    void mpeg4Layers(byte[] data) {
+        var run = Fuzz.start("mpeg4Layers");
+        if (data.length < 4) {
+            return;
+        }
+        var length = (int) Math.min(data.length - 4L, ((data[0] & 0xFFL) << 24 | (data[1] & 0xFF) << 16
+                | (data[2] & 0xFF) << 8 | (data[3] & 0xFF)));
+        var layers = new byte[][]{Arrays.copyOfRange(data, 4, 4 + length),
+                Arrays.copyOfRange(data, 4 + length, data.length)};
+        var options = DemuxerOptions.builder().limits(Fuzz.LIMITS).build();
+        var tracks = new VideoTrack[2];
+        var packets = List.of(new ArrayList<Packet>(), new ArrayList<Packet>());
+        for (var layer = 0; layer < 2; layer++) {
+            var index = layer;
+            run.step("split " + layer, () -> {
+                try (var stream = Mpeg4ElementaryStream.open(MediaSource.of(layers[index]), options)) {
+                    tracks[index] = stream.track().toBuilder().id(index + 1).build();
+                    Packet packet;
+                    while (packets.get(index).size() < DECODED_PACKETS && (packet = stream.read()) != null) {
+                        packets.get(index).add(packet.withTrackId(index + 1));
+                    }
+                }
+            });
+        }
+        if (tracks[0] == null || tracks[1] == null || tracks[0].codec() != Codec.MPEG4_PART2
+                || tracks[1].codec() != Codec.MPEG4_PART2) {
+            return;
+        }
+        var decoderOptions = VideoDecoderOptions.builder().limits(Fuzz.LIMITS).threads(1).build();
+        var decoder = run.value("open", () -> new Mpeg4Decoder(tracks[0], tracks[1], decoderOptions));
+        if (decoder.isEmpty()) {
+            return;
+        }
+        Consumer<VideoFrame> sink = frame -> {
+            var picture = frame.picture();
+            if (picture.width() <= 0 || picture.height() <= 0) {
+                throw new IllegalStateException("decoded an empty picture " + picture.width() + "x" + picture.height());
+            }
+            run.output();
+        };
+        try (var opened = decoder.get()) {
+            for (var index = 0; index < DECODED_PACKETS; index++) {
+                for (var layer = 0; layer < 2; layer++) {
+                    if (index < packets.get(layer).size()) {
+                        var packet = packets.get(layer).get(index);
+                        run.step("packet " + layer + "." + index, () -> opened.decode(packet, sink));
+                    }
+                }
+            }
+            run.step("flush", () -> opened.flush(sink));
+        }
     }
 
     @FuzzTest

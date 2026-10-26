@@ -1,0 +1,20 @@
+# video decode dump of elementary/mpeg4/object/shape-sadct.m4v.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 333333
+seekable true
+track 1 MPEG4_PART2 176x144 timebase=1/30
+0 pts=0 dur=1 key=true 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=ac236560 u=1a967498 v=3d75641e a=9ff7da9c
+1 pts=1 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=1182ac1c u=ae2d08b3 v=fe10ac30 a=6e4894d5
+2 pts=2 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=124ed8cf u=708a73f5 v=4040ce5b a=80d58eac
+3 pts=3 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=54a9f9da u=d6107e8a v=af364b9e a=50f6e71b
+4 pts=4 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=fb1d6c18 u=61be1812 v=5d6e790f a=501c395e
+5 pts=5 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=93f572f9 u=42ce406c v=ac00bb16 a=40a81dff
+6 pts=6 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=268604ba u=fb134e51 v=444c40d9 a=95c98829
+7 pts=7 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=11db4090 u=8a188428 v=95cbfadd a=991be184
+8 pts=8 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=3b81c13d u=1573fa3b v=4c74e2b0 a=46d14b77
+9 pts=9 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=da30e252 u=1664adb8 v=bae70647 a=bf150b9e
+seek 0: @0
+seek 111111: @3
+seek 222222: @6
+seek 333333: @9
+seek -1000000: @0

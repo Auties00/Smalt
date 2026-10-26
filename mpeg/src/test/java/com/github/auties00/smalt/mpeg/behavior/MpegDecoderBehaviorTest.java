@@ -19,8 +19,9 @@ import java.nio.file.Path;
  * ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
  * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
  * vectors, the HEIF fuzz seeds of AVC, uncompressed and layered HEVC items, the HEVC screen content coding and
- * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), comparing each with its golden
- * dump under {@code src/test/resources/dumps}.
+ * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), and the MPEG-4 object tool and
+ * H.263 annex test streams in AVI ({@link ElementarySamples}), comparing each with its golden dump under
+ * {@code src/test/resources/dumps}.
  */
 @DisplayName("MPEG and Dolby decoder I/O behaviors")
 class MpegDecoderBehaviorTest {
@@ -32,12 +33,31 @@ class MpegDecoderBehaviorTest {
     private static final Path HEVC_VECTORS = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
             "video", "hevc");
 
+    private static final Path ELEMENTARY = Path.of("src", "test", "resources", "com", "github", "auties00", "smalt",
+            "video");
+
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mp4/faststart.mp4", "mp4/fragmented.mp4", "mp4/hevc.mp4", "mp4/h264-422-10.mov",
             "mp4/h264-444.mp4", "ts/h264-aac.ts", "avi/mpeg4-mp3.avi", "mp4/h263-amr.3gp", "mp4/quicktime.mov"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void video(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"mpeg4/object/shape-sadct.m4v", "mpeg4/object/shape-resilient.m4v",
+            "mpeg4/object/gray-mac.m4v", "mpeg4/object/sprite-lowlatency.m4v", "mpeg4/object/sprite-rect.m4v",
+            "mpeg4/object/sprite-lowlatency-rect.m4v", "mpeg4/object/nbit4.m4v", "mpeg4/object/newpred.m4v",
+            "mpeg4/object/rrv.m4v", "h263/annex/tmn-sac.263", "h263/annex/tmn-b.263", "h263/annex/tmn-snr.263",
+            "h263/annex/tmn-pb.263", "h263/annex/tmn-pb-sac.263", "h263/annex/tmn-ipb.263",
+            "h263/annex/smalt-ipb-rru.263", "h263/annex/smalt-cpm.263", "h263/annex/smalt-rpr.263",
+            "h263/annex/smalt-rru.263", "h263/annex/smalt-isd-rect.263", "h263/annex/smalt-erps-b.263",
+            "h263/annex/smalt-rps.263", "h263/annex/smalt-dps.263", "h263/annex/smalt-dps-snr.263",
+            "h263/annex/smalt-dps-ist.263", "h263/annex/smalt-dps-ipb-ist.263"})
+    @DisplayName("MPEG-4 object tools and H.263 annex streams in AVI: identical frames under every source behavior")
+    void elementary(String stream) throws IOException {
+        var data = Files.readAllBytes(ELEMENTARY.resolve(stream));
+        ReaderAsserts.video("elementary/" + stream + ".avi", ElementarySamples.avi(data, 176, 144)).run();
     }
 
     @ParameterizedTest(name = "{0}")

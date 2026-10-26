@@ -386,6 +386,30 @@ class FuzzSeedWriter {
                 "-c:v", "mpeg4", "-q:v", "10", "-bf", "1", "-f", "m4v"));
         copy(MpegFuzzTest.class, "elementaryStream", "valid-h263.h263", ffmpeg("h263", video(128, 96, 3),
                 "-c:v", "h263", "-q:v", "20"));
+        // the optional modes of H.263 and the object tools of MPEG-4 Visual, from the committed test vectors
+        for (var name : List.of("tmn-pb-sac", "tmn-snr", "smalt-b-rru", "smalt-erps-b", "smalt-isd-rect", "smalt-dps",
+                "smalt-dps-snr", "smalt-dps-ist", "smalt-dps-ipb-ist")) {
+            write(MpegFuzzTest.class, "elementaryStream", "valid-h263-" + name + ".h263",
+                    resource("/com/github/auties00/smalt/video/h263/annex/" + name + ".263"));
+        }
+        for (var name : List.of("shape-only-ip", "shape-sadct", "sprite-shape", "sprite-lowlatency", "sprite-rect",
+                "sprite-lowlatency-rect", "nbit4")) {
+            write(MpegFuzzTest.class, "elementaryStream", "valid-mpeg4-" + name + ".m4v",
+                    resource("/com/github/auties00/smalt/video/mpeg4/object/" + name + ".m4v"));
+        }
+        // the two layers of scalable objects: the base layer's length, the base layer and the enhancement layer
+        for (var name : List.of("tps-bgc", "tps-bgc-bbase", "tps-bgc-next", "obss-bgc", "obss-bgc-own")) {
+            var base = resource("/com/github/auties00/smalt/video/mpeg4/object/" + name + ".m4v");
+            var enhancement = resource("/com/github/auties00/smalt/video/mpeg4/object/" + name + "-e.m4v");
+            var seed = new ByteArrayOutputStream();
+            seed.write(base.length >>> 24);
+            seed.write(base.length >>> 16);
+            seed.write(base.length >>> 8);
+            seed.write(base.length);
+            seed.writeBytes(base);
+            seed.writeBytes(enhancement);
+            write(MpegFuzzTest.class, "mpeg4Layers", "valid-" + name + ".bin", seed.toByteArray());
+        }
         var mp4 = ffmpeg("mp4", video(48, 32, 1), "-c:v", "libx264", "-preset", "ultrafast", "-vf", "crop=46:30");
         write(MpegFuzzTest.class, "h264Info", "valid-avcc-cropped.bin", firstTrack(mp4).codecConfig().orElseThrow());
         var interlaced = ffmpeg("mp4", video(32, 64, 2), "-c:v", "libx264", "-preset", "ultrafast",
@@ -473,6 +497,14 @@ class FuzzSeedWriter {
                     "/com/github/auties00/smalt/video/h264/extended/" + stream + ".264").toURI());
             write(MpegFuzzTest.class, "h264", name, FuzzPackets.video(0, width, height, null,
                     h264AccessUnits(Fixtures.read(file)).subList(0, units)));
+        } catch (URISyntaxException exception) {
+            throw new IllegalStateException(exception);
+        }
+    }
+
+    private static byte[] resource(String path) {
+        try {
+            return Fixtures.read(Path.of(FuzzSeedWriter.class.getResource(path).toURI()));
         } catch (URISyntaxException exception) {
             throw new IllegalStateException(exception);
         }

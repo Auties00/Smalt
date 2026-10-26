@@ -791,13 +791,46 @@ release binary) run as a black box, through committed golden files made by the s
 coordinates, so the build makes those `int` (with the 64-bit `long` of Linux and macOS the global motion
 compensated streams `vcon-asp14L0` and `vcon-asp14L1` decode unlike on Windows, whose decode matches ffmpeg's); it
 also links an `operator new` that zeroes every allocation, since the decoder reads members of the objects it
-allocates before writing them, and widens the 100-byte buffers that hold its output file names.
+allocates before writing them, and widens the 100-byte buffers that hold its output file names. It compiles with
+`-ffp-contract=off`, since g++ otherwise fuses multiply-adds on arm64, which rounds the floating-point inverse DCT and
+shape-adaptive DCT unlike on x64 (and unlike Smalt's port, whose Java arithmetic is never fused).
 `Mpeg4ConformanceTest` compares the ISO/IEC 14496-4 Advanced Simple streams (`mpeg4visual-vcon-asp*.bits`, Wayback
 copies) and `Mpeg4InterlacedDirectTest` its synthetic interlaced direct mode streams with its decodes. Two
 behaviors of the decoder shape those streams: it reads ahead of the last macroblock, so they end with a
 `visual_object_sequence_end_code`, and it measures the temporal distances of interlaced direct mode in VOP time
 ticks rather than in field periods of the frame period, so only the streams whose VOP times count frames are
 compared with it.
+
+## MPEG-4 Visual object streams
+
+`mpeg4-object/make-vectors.py` makes the committed streams of `Mpeg4ObjectConformanceTest` (`smalt-mpeg`,
+`video/mpeg4/object/`): binary and grayscale shape, shape only layers, the shape-adaptive DCT, static sprites (basic,
+rectangular and low latency), N-bit samples, NEWPRED and reduced resolution VOPs, and the two layers (`<name>.m4v` and
+`<name>-e.m4v`) of temporal scalability and object-based spatial scalability with the partial enhancement and
+background composition of `enhancement_type` 1, each coded by the encoder of the same ISO/IEC 14496-5 reference
+software from a synthetic 176x144 sequence (352x288 for spatial enhancement layers). It builds that encoder and the
+decoder, 8-bit and N-bit, with the fixes of `mpeg4-oracle/build.py` (shared with the decoder oracle) and the source
+fixes its `PATCHES` list explains (the pre-standard for-statement scope is rewritten at compile time by
+`mpeg4-object/forscope.py`), or takes them prebuilt with `--tools`, and writes `golden.tsv` and, for the two-layer
+streams, `scalable.tsv` with the MD5s of the reference decodes in the layout Smalt hands out; the reference decoder
+reads past the end of two-layer streams and aborts before writing its last pictures unless 4 zero bytes follow them,
+which the script and `Mpeg4ObjectConformanceTest` append to the copies they hand it. The N-bit encoder codes a different
+stream on every run when it codes a shape, so `nbit10-shape.m4v` is the output of one run.
+
+## H.263 annex streams
+
+`h263-annexes/make-vectors.py` makes the committed streams of `H263AnnexStreamsTest` and `H263AnnexDecoderTest`
+(`smalt-mpeg`, `video/h263/annex/`), which exercise the optional modes of ITU-T H.263: the `tmn-*` streams are coded by
+the TMN 3.2 encoder of the University of British Columbia, run as a black box (its licence is not a permissive one, so
+its source is never read), and the `smalt-*` streams by `h263-annexes/h263enc.py`, an encoder written from the text of
+the Recommendation for the modes the TMN encoder lacks (Annexes C, K with rectangular slices, N, P, Q, R, U and V,
+and B-pictures, Improved PB-frames, SNR scalability and Annexes I, S and T combined with them). `golden.tsv` holds the
+MD5 of the reconstruction each stream implies with the double precision reference inverse DCT, which the annex
+decoder reproduces sample for sample with that transform. The script also decodes the `smalt-ist`, `smalt-b-ist` and
+`smalt-ipb-ist` streams (Annexes I, S and T without slices) with the TMN 3.2 decoder `tmndec -r` and fails unless it
+reproduces the encoder's reconstruction, and fails unless `smalt-dps-b-ist` and `smalt-dps-ipb-ist` (the same pictures
+in data partitioned slices) reconstruct the same as their twins. The Intel and TU Berlin / Oki H.263+ streams of the ITU-T video site (`h263plus-*` in `vectors.tsv`)
+are compared with their decoded sequences and logged PSNRs by `H263ConformanceTest`.
 
 ## giflib encoder oracle
 

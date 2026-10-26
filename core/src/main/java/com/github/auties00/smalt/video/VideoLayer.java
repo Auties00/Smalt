@@ -13,7 +13,10 @@ import java.util.Objects;
  * Annex G) the identifier is the view order index {@code VOIdx} of the view, from 0 to 1023, 0 for
  * the base view, and the view identifier is its {@code view_id}. For an H.264 scalable stream
  * (ITU-T H.264 Annex F) the identifier is the {@code DQId} of the layer the frame was decoded at
- * ({@code dependency_id * 16 + quality_id}), from 0 to 127, and the view identifier is 0.
+ * ({@code dependency_id * 16 + quality_id}), from 0 to 127, and the view identifier is 0. For
+ * an ITU-T H.263 stream the identifier is the enhancement layer number {@code ELNUM} minus 1 (Annex
+ * O), 0 for the base layer, and the view identifier is the sub-bitstream number of Continuous
+ * Presence Multipoint (Annex C), 0 without it.
  *
  * @param id the layer identifier, from 0 to 1023
  * @param viewId the view identifier of the layer's view, zero or more; 0 for a stream with one view

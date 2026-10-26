@@ -420,7 +420,7 @@ public final class Conformance {
             this.directorySha256 = directorySha256;
             this.url = url;
             this.pattern = java.util.regex.Pattern.compile(members);
-            var base = URI.create(url).getPath();
+            var base = URI.create(url).getRawPath();
             base = base.substring(base.lastIndexOf('/') + 1).replaceFirst("(?i)\\.zip$", "");
             var id = base + "-" + directorySha256.substring(0, 16);
             this.root = cache.resolve("archives").resolve(id);

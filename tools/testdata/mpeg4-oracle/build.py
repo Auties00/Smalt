@@ -134,6 +134,63 @@ REPLACEMENTS = [
     # from Windows, whose decode matches ffmpeg's
     ('typedef unsigned long U32;', 'typedef unsigned int U32;'),
     ('typedef long CoordI;', 'typedef int CoordI;'),
+    # the background composition of temporal scalability offsets its plane pointers through a cast to the 32-bit
+    # Int, which truncates 64-bit addresses; the offset is taken in bytes on a byte pointer instead
+    ('(PixelC*)( (Int)(pvopcSrc->pixels', '(PixelC*)( (char*)(pvopcSrc->pixels'),
+    # the pieces of low latency sprites copy 10 intra prediction directions between macroblock modes, which hold 6
+    # without grayscale alpha: the copies past the arrays corrupt the heap, so they copy what the arrays hold
+    ('memcpy (Spreddir, preddir, 10  * sizeof (IntraPredDirection));',
+     'memcpy (Spreddir, preddir, (m_volmd.fAUsage == EIGHT_BIT ? 10 : 6) * sizeof (IntraPredDirection));'),
+    ('memcpy (preddir, Spreddir, 10  * sizeof (IntraPredDirection));',
+     'memcpy (preddir, Spreddir, (m_volmd.fAUsage == EIGHT_BIT ? 10 : 6) * sizeof (IntraPredDirection));'),
+    # the sprite buffers of low latency sprites are allocated with the constructor that takes an alpha usage, a
+    # rectangle and a number of auxiliary components, called without the last argument: the call resolves to the
+    # copy of an empty VOP converted from the alpha usage instead, which fails
+    ('new CVOPU8YUVBA (m_volmd.fAUsage, rctSptQ48);',
+     'new CVOPU8YUVBA (m_volmd.fAUsage, rctSptQ48, m_volmd.iAuxCompCount);'),
+    ('new CVOPU8YUVBA (m_volmd.fAUsage, m_rctRefFrameY);',
+     'new CVOPU8YUVBA (m_volmd.fAUsage, m_rctRefFrameY, m_volmd.iAuxCompCount);'),
+    ('new CVOPU8YUVBA (m_volmd.fAUsage, m_rctSptQ);',
+     'new CVOPU8YUVBA (m_volmd.fAUsage, m_rctSptQ, m_volmd.iAuxCompCount);'),
+    # the warping of a sprite reads and writes the shapes of the sprite and the VOP, which rectangular layers do not
+    # have: a rectangular sprite warps as if its shape were opaque everywhere, and the chrominance of a rectangular
+    # VOP takes no shape into account
+    ('const CU8Image* puciCurrBY = m_pvopcCurrQ -> getPlane (BY_PLANE);',
+     'const CU8Image* puciCurrBY = m_pvopcCurrQ -> getPlane (BY_PLANE) != NULL ? m_pvopcCurrQ -> getPlane (BY_PLANE) '
+     ': new CU8Image (m_pvopcCurrQ -> whereY (), (PixelC) 0);'),
+    ('const CU8Image* puciSptBY = m_pvopcSptQ -> getPlane (BY_PLANE);',
+     'const CU8Image* puciSptBY = m_pvopcSptQ -> getPlane (BY_PLANE) != NULL ? m_pvopcSptQ -> getPlane (BY_PLANE) '
+     ': new CU8Image (m_pvopcSptQ -> whereY (), (PixelC) 255);'),
+    ('const CU8Image* puciCurrA = (m_pvopcSptQ -> fAUsage () == EIGHT_BIT)? m_pvopcCurrQ -> getPlaneA (0) : '
+     'm_pvopcCurrQ -> getPlane (BY_PLANE);',
+     'const CU8Image* puciCurrA = (m_pvopcSptQ -> fAUsage () == EIGHT_BIT)? m_pvopcCurrQ -> getPlaneA (0) : '
+     'puciCurrBY;'),
+    ('const CU8Image* puciSptA = (m_pvopcSptQ -> fAUsage () == EIGHT_BIT)? m_pvopcSptQ -> getPlaneA (0) : '
+     'm_pvopcSptQ -> getPlane (BY_PLANE);',
+     'const CU8Image* puciSptA = (m_pvopcSptQ -> fAUsage () == EIGHT_BIT)? m_pvopcSptQ -> getPlaneA (0) : '
+     'puciSptBY;'),
+    ('if (*ppxlcCurrQBY | *(ppxlcCurrQBY + 1) | *ppxlcCurrQBYNextRow | *(ppxlcCurrQBYNextRow+1)) {',
+     'if (m_pvopcSptQ -> fAUsage () == RECTANGLE || '
+     '(*ppxlcCurrQBY | *(ppxlcCurrQBY + 1) | *ppxlcCurrQBYNextRow | *(ppxlcCurrQBYNextRow+1))) {'),
+    # temporal scalability writes both layers to one output file, which it closes twice (glibc aborts the second
+    # time); the enhancement layer's files are closed only when they are their own
+    ('fclose (pfReconYUV[ENHN_LAYER]);',
+     'if (pfReconYUV[ENHN_LAYER] != pfReconYUV[BASE_LAYER]) fclose (pfReconYUV[ENHN_LAYER]);'),
+    ('fclose (pfReconSeg [ENHN_LAYER]);',
+     'if (pfReconSeg [ENHN_LAYER] != NULL && pfReconSeg [ENHN_LAYER] != pfReconSeg [BASE_LAYER]) '
+     'fclose (pfReconSeg [ENHN_LAYER]);'),
+    ('FILE* pfReconSeg [2];', 'FILE* pfReconSeg [2] = {NULL, NULL};'),
+    # an enhancement layer with enhancement_type 1 gives the reference layer VOPs it predicts from a shape opaque
+    # over the whole frame, except the backward reference of a B-VOP with ref_select_code 2 (the next reference
+    # layer VOP), whose missing shape a B-VOP predicting its shape backward reads through a null pointer; it gets the
+    # opaque shape as the backward references of codes 1 and 3 do
+    ('((pvopc->m_vopmd.iRefSelectCode == 1 || pvopc->m_vopmd.iRefSelectCode == 3) && '
+     'pvopc->m_vopmd.vopPredType == BVOP)',
+     '(pvopc->m_vopmd.iRefSelectCode != 0 && pvopc->m_vopmd.vopPredType == BVOP)'),
+    # the padding of a sprite reads the alpha plane of a sprite without one
+    ('PixelC* ppxlcRefA  = (PixelC*) m_pvopcSptQ->pixelsA (0) + m_iStartInRefToCurrRctY;',
+     'PixelC* ppxlcRefA  = (m_volmd.fAUsage == EIGHT_BIT) ? (PixelC*) m_pvopcSptQ->pixelsA (0) + '
+     'm_iStartInRefToCurrRctY : NULL;'),
     # the output file names are formatted into 100-byte buffers, which a long output path overflows
     ('Char pchTmp [100];', 'Char pchTmp [4096];'),
     ('static Char pchYUV [100];', 'static Char pchYUV [4096];'),
@@ -235,7 +292,10 @@ def build(archive, work, cxx, binary, static=False, env=None):
     shims(shim)
     objects = os.path.join(work, 'obj')
     os.makedirs(objects, exist_ok=True)
-    flags = ['-std=gnu++98', '-fpermissive', '-fno-operator-names', '-w', '-O2', '-fno-strict-aliasing', '-fwrapv']
+    # g++ fuses multiplications and additions into fused multiply-adds where the target has them (arm64) unless told
+    # not to, which rounds the floating-point inverse DCT and shape-adaptive DCT differently from x64
+    flags = ['-std=gnu++98', '-fpermissive', '-fno-operator-names', '-w', '-O2', '-fno-strict-aliasing', '-fwrapv',
+             '-ffp-contract=off']
     flags += DEFINES + ['-include', os.path.join(shim, 'prelude.h'), '-I' + shim]
     flags += ['-I' + os.path.join(source, *path.split('/')) for path in INCLUDES]
     built = []

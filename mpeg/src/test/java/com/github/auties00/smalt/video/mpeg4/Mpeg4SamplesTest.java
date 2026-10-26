@@ -75,8 +75,9 @@ class Mpeg4SamplesTest {
         void studioProfile() {
             var file = Conformance.fetch("fate-mpeg4-mpeg4_sstp_dpcm.m4v", FATE + "mpeg4_sstp_dpcm.m4v",
                     "c7389f15ceb3381be18ab21c932ef3cda952466bcd2ade824faf36a880ea860e");
-            assertThrows(MediaException.Unsupported.class,
+            var error = assertThrows(MediaException.Unsupported.class,
                     () -> Mpeg4TestStreams.decodeElementary(file, Mpeg4Decoder::new));
+            assertEquals("mpeg-4 studio profile", error.format());
         }
     }
 

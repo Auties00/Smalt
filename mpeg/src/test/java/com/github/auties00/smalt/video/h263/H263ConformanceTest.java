@@ -52,6 +52,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * differs from the decoder's by the IEEE 1180 tolerance, whose mismatches accumulate where many
  * coefficients are coded, so the tight bound applies to the coarser quantizers and to the start
  * of the finer ones, and a looser bound to every picture.
+ *
+ * <p>The streams of the optional modes in Intel's set (temporal, SNR and spatial scalability, Improved PB-frames)
+ * check the decoder that takes over at the first picture needing a mode the baseline engine lacks; the decoded
+ * sequences of the scalable streams hold their base layer. The Annex N streams of the Technical University of Berlin
+ * and Oki of January 1998 (Reference Picture Selection without back-channel, with Video Redundancy Coding in the
+ * Berlin ones) come with the luma PSNR of every picture against the source, which the decoded pictures must reach.
  */
 @DisplayName("H.263+ conformance streams")
 class H263ConformanceTest {
@@ -68,6 +74,10 @@ class H263ConformanceTest {
     private static final String SOURCE = "foreman_qcif.y4m";
     private static final String SOURCE_URL = "https://media.xiph.org/video/derf/y4m/foreman_qcif.y4m";
     private static final String SOURCE_SHA256 = "9b37e95ae2d06b3b173d6130965f450009216084bae12b2025248814baf057af";
+    private static final String ANNEX_N = "h263plus-AnnexN_TUB_Oki.zip";
+    private static final String ANNEX_N_URL =
+            "https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/AnnexN_TUB_Oki.zip";
+    private static final String ANNEX_N_SHA256 = "1f62e2183f04bad39589785ec8d82627be8bd606916a2f4a638aabbd7ca24415";
     private static final Pattern PICTURE_PSNR = Pattern.compile("Reading image no: (\\d+).*?SNR_Y\\s*:\\s*([0-9.]+)",
             Pattern.DOTALL);
 
@@ -165,6 +175,172 @@ class H263ConformanceTest {
                 assertEquals(encoderPsnr.get(i), ours, bound, name + ", picture " + i
                         + ": luma PSNR against the source differs from the encoder's reconstruction");
             }
+        } finally {
+            Files.delete(file);
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            // B-pictures of temporal scalability (Annex O), two between the P-pictures.
+            "Temp_fmn, 29, 65",
+            // Improved PB-frames (Annex M) with Advanced INTRA Coding, the Deblocking Filter and Alternative INTER
+            // VLC. The B-parts differ most: Intel predicts them forward with the rounding type of the picture and
+            // filters them with the QUANT of the P-part, where the Recommendation and the test model use 0 and BQUANT.
+            "ijmt_fmnq, 66, 45"
+    })
+    @DisplayName("decodes the Intel streams of the optional modes within the IDCT noise floor of the reference decode")
+    void matchesReferenceAnnexes(String stream, int pictures, double minimumPsnr) throws IOException {
+        byte[] bitstream;
+        byte[] reference;
+        try (var zip = new ZipFile(Conformance.fetch(ARCHIVE, URL, SHA256).toFile())) {
+            bitstream = zip.getInputStream(zip.getEntry(stream + ".263")).readAllBytes();
+            reference = zip.getInputStream(zip.getEntry(stream + ".dec")).readAllBytes();
+        }
+        var decoded = decode(bitstream);
+        assertEquals(pictures * FRAME, reference.length, "reference size");
+        assertEquals(reference.length, decoded.length, "decoded size");
+        Tolerance.psnr(minimumPsnr).assertFrames(stream + " against the reference decode", reference, decoded, FRAME);
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            // The enhancement layer has the size of the base layer.
+            "SNR_fmn, 60, 1",
+            // The enhancement layer doubles the width and the height.
+            "Spatial_fmn, 60, 4"
+    })
+    @DisplayName("decodes the base layer of the Intel scalable streams within the IDCT noise floor of the reference "
+            + "decode")
+    void matchesReferenceBaseLayer(String stream, double minimumPsnr, int enhancementScale) throws IOException {
+        byte[] bitstream;
+        byte[] reference;
+        try (var zip = new ZipFile(Conformance.fetch(ARCHIVE, URL, SHA256).toFile())) {
+            bitstream = zip.getInputStream(zip.getEntry(stream + ".263")).readAllBytes();
+            reference = zip.getInputStream(zip.getEntry(stream + ".dec")).readAllBytes();
+        }
+        // The decoded sequence of the set holds the base layer: decode the stream without its EI- and EP-pictures.
+        var base = baseLayer(bitstream);
+        assertTrue(base.length < bitstream.length, "enhancement pictures in the stream");
+        var decoded = decode(base);
+        assertEquals(34 * FRAME, reference.length, "reference size");
+        assertEquals(reference.length, decoded.length, "decoded size");
+        Tolerance.psnr(minimumPsnr).assertFrames(stream + " base layer against the reference decode", reference,
+                decoded, FRAME);
+        // Each instant shows the picture of the highest layer.
+        assertEquals(reference.length * enhancementScale, decode(bitstream).length, "pictures of the enhanced stream");
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            "TUB_N_fore, 65, 63",
+            "Oki_N_fore, 43, 43"
+    })
+    @DisplayName("reaches the PSNR the Annex N encoders logged with Reference Picture Selection")
+    void matchesReferencePictureSelection(String stream, int coded, int shown) throws IOException {
+        var archive = Conformance.fetch(ANNEX_N, ANNEX_N_URL, ANNEX_N_SHA256);
+        byte[] bitstream;
+        String log;
+        try (var zip = new ZipFile(archive.toFile())) {
+            bitstream = zip.getInputStream(zip.getEntry(stream + ".263")).readAllBytes();
+            log = new String(zip.getInputStream(zip.getEntry(stream + ".snr")).readAllBytes(),
+                    StandardCharsets.US_ASCII);
+        }
+        var images = new ArrayList<Integer>();
+        var encoderPsnr = new ArrayList<Double>();
+        for (var line : log.split("\r?\n")) {
+            var fields = line.trim().split("\\s+");
+            if (fields.length == 2) {
+                images.add(Integer.parseInt(fields[0]));
+                encoderPsnr.add(Double.parseDouble(fields[1]));
+            }
+        }
+        assertEquals(shown, images.size(), "pictures in the encoder's log");
+        assertEquals(coded, pictureStarts(bitstream).size(), "coded pictures");
+        var sources = y4mLuma(Files.readAllBytes(Conformance.fetch(SOURCE, SOURCE_URL, SOURCE_SHA256)));
+        var decoded = decode(bitstream);
+        // The pictures the TUB encoder sends twice in Video Redundancy Coding are shown once.
+        assertEquals(shown * FRAME, decoded.length, "decoded size");
+        for (var i = 0; i < shown; i++) {
+            // The log numbers the source pictures from 1.
+            var ours = Tolerance.Difference.of(sources.get(images.get(i) - 1), Arrays.copyOfRange(decoded,
+                    i * FRAME, i * FRAME + LUMA)).psnr();
+            assertEquals(encoderPsnr.get(i), ours, 0.02, stream + ", picture " + i
+                    + ": luma PSNR against the source differs from the encoder's log");
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @CsvSource({
+            "TUB_N_mad, 283, 271",
+            "Oki_N_mad, 184, 184"
+    })
+    @DisplayName("decodes every picture of the Annex N streams of Mother and Daughter")
+    void decodesReferencePictureSelection(String stream, int coded, int shown) throws IOException {
+        var archive = Conformance.fetch(ANNEX_N, ANNEX_N_URL, ANNEX_N_SHA256);
+        byte[] bitstream;
+        String log;
+        try (var zip = new ZipFile(archive.toFile())) {
+            bitstream = zip.getInputStream(zip.getEntry(stream + ".263")).readAllBytes();
+            log = new String(zip.getInputStream(zip.getEntry(stream + ".snr")).readAllBytes(),
+                    StandardCharsets.US_ASCII);
+        }
+        assertEquals(shown, log.lines().filter(line -> !line.isBlank()).count(), "pictures in the encoder's log");
+        assertEquals(coded, pictureStarts(bitstream).size(), "coded pictures");
+        assertEquals(shown * FRAME, decode(bitstream).length, "decoded size");
+    }
+
+    /**
+     * Returns a stream without its EI- and EP-pictures, the pictures whose PLUSPTYPE names picture type 4 or 5.
+     */
+    private static byte[] baseLayer(byte[] data) {
+        var starts = pictureStarts(data);
+        var out = new ByteArrayOutputStream();
+        for (var k = 0; k < starts.size(); k++) {
+            var start = starts.get(k);
+            var end = k + 1 < starts.size() ? starts.get(k + 1) : data.length;
+            // PSC (22), TR (8), PTYPE bits 1 to 5, the source format (3)
+            var at = start * 8L + 22 + 8 + 5;
+            var enhancement = false;
+            if (bits(data, at, 3) == 7) {
+                var ufep = bits(data, at + 3, 3);
+                var type = bits(data, at + 6 + (ufep == 1 ? 18 : 0), 3);
+                enhancement = type == 4 || type == 5;
+            }
+            if (!enhancement) {
+                out.write(data, start, end - start);
+            }
+        }
+        return out.toByteArray();
+    }
+
+    private static int bits(byte[] data, long position, int count) {
+        var value = 0;
+        for (var i = 0; i < count; i++) {
+            var bit = position + i;
+            value = value << 1 | (data[(int) (bit >>> 3)] >> (7 - (int) (bit & 7))) & 1;
+        }
+        return value;
+    }
+
+    /**
+     * Returns the offsets of the byte aligned picture start codes.
+     */
+    private static List<Integer> pictureStarts(byte[] data) {
+        var starts = new ArrayList<Integer>();
+        for (var i = 0; i + 2 < data.length; i++) {
+            if (data[i] == 0 && data[i + 1] == 0 && (data[i + 2] & 0xFC) == 0x80) {
+                starts.add(i);
+            }
+        }
+        return starts;
+    }
+
+    private static byte[] decode(byte[] bitstream) throws IOException {
+        var file = Files.createTempFile("h263-", ".263");
+        try {
+            Files.write(file, bitstream);
+            return decode(file);
         } finally {
             Files.delete(file);
         }

@@ -33,6 +33,7 @@ Contents
   29. opencore-amr (AMR-NB codec and AMR-WB decoder)
   30. VisualOn AMR-WB encoder (vo-amrwbenc)
   42. libxaac
+  54. MPEG-4 Visual reference software (Microsoft)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1989,3 +1990,52 @@ Apache License, Version 2.0 (libxaac LICENSE)
    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
    See the License for the specific language governing permissions and
    limitations under the License.
+
+
+===============================================================================
+54. MPEG-4 Visual reference software (Microsoft)
+===============================================================================
+
+Project:      the Microsoft MPEG-4 Visual reference software of ISO/IEC
+              14496-5:2001, version 2 (FDAM1-2.3-001213)
+Source:       ISO/IEC 14496-5:2001 reference software (video.zip,
+              video/natural/microsoft-2.3-001213) of ISO's Publicly
+              Available Standards
+License text: the notice at the head of every source file
+License:      free license for use in hardware or software products claiming
+              conformance to MPEG-4 Video (ISO/IEC 14496-2); the copyright
+              notice must be included in all copies or derivative works
+
+Derived Smalt packages:
+  video.mpeg4.internal.object (the decoder of binary and grayscale shape, the
+  shape-adaptive DCT, static sprites, N-bit samples, NEWPRED, reduced
+  resolution VOPs and spatial and temporal scalability of sys/decoder, sys and
+  tools, with the layer orchestration of app/decoder/decoder.cpp and the
+  background composition of sys/tps_bfshape.cpp)
+
+Derivation: C++ code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 1996-2000 Microsoft Corporation, Sharp Corporation, Sony
+  Corporation, Oki Electric Industry, Toshiba Corporation, Samsung AIT and the
+  other developers and editors named in the source files
+
+-------------------------------------------------------------------------------
+License notice (sys/decoder/vopsedec.cpp and the other source files)
+-------------------------------------------------------------------------------
+
+in the course of development of the MPEG-4 Video (ISO/IEC 14496-2).
+This software module is an implementation of a part of one or more MPEG-4 Video tools
+as specified by the MPEG-4 Video.
+ISO/IEC gives users of the MPEG-4 Video free license to this software module or modifications
+thereof for use in hardware or software products claiming conformance to the MPEG-4 Video.
+Those intending to use this software module in hardware or software products are advised that its use may infringe existing patents.
+The original developer of this software module and his/her company,
+the subsequent editors and their companies,
+and ISO/IEC have no liability for use of this software module or modifications thereof in an implementation.
+Copyright is not released for non MPEG-4 Video conforming products.
+Microsoft retains full right to use the code for his/her own purpose,
+assign or donate the code to a third party and to inhibit third parties from using the code for non <MPEG standard> conforming products.
+This copyright notice must be included in all copies or derivative works.
+
+Copyright (c) 1996, 1997.

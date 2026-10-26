@@ -47,7 +47,9 @@ container.adts	core
 container.aiff	core
 container.amr	core
 container.avi	core
+container.dash	core
 container.flac	core
+container.hls	core
 container.internal	core
 container.ivf	core
 container.matroska	core
@@ -161,6 +163,7 @@ video.av1.internal.encoder	video
 video.dnxhd	video
 video.dnxhd.internal	video
 video.h263	mpeg
+video.h263.internal	mpeg
 video.h264	mpeg
 video.h264.encoder	mpeg
 video.h264.encoder.internal	mpeg
@@ -170,6 +173,7 @@ video.hevc.internal	mpeg
 video.intra.internal	video
 video.mpeg4	mpeg
 video.mpeg4.internal	mpeg
+video.mpeg4.internal.object	mpeg
 video.prores	video
 video.prores.internal	video
 video.vp8	image

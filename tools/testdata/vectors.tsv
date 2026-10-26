@@ -594,6 +594,7 @@ smoke	foreman_qcif.y4m	11406644	9b37e95ae2d06b3b173d6130965f450009216084bae12b20
 smoke	gstatic-animated-1.webp	380850	8afc28fef9bba14b5eecbbc6bb8b4379dc96b6ebc3e0845607ced41b7dda337c	https://www.gstatic.com/webp/animated/1.webp
 smoke	h263plus-9807-foreman.logs.tar.gz	28485	7cb3d93d10f47665731dc8d688820f2c03045733ce88a3a810e76ff577eb049b	https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/9807_anchors/foreman.logs.tar.gz
 smoke	h263plus-9807-foreman.streams.tar	590336	8f6f98eb3b24ed505753a846ac8a93369707b44a3478bcbe75d8228e43fae31a	https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/9807_anchors/foreman.streams.tar
+smoke	h263plus-AnnexN_TUB_Oki.zip	249094	1f62e2183f04bad39589785ec8d82627be8bd606916a2f4a638aabbd7ca24415	https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/AnnexN_TUB_Oki.zip
 smoke	h263plus-Intel_Draft20.zip	12435431	d8c37e8b97f49a0fc4cecb4c81f5f178dfd3e4f7d9d7c57d20c738d9708d875b	https://www.itu.int/wftp3/av-arch/video-site/h263plus/bitstreams/Intel_Draft20.zip
 smoke	h264-AVCv1-BA3_SVA_C.zip	1003253	1c7003ff7b4507204f50e0b279149fd183c0890ee2a12c4c2d008db387299b82	https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/AVCv1/BA3_SVA_C.zip
 smoke	h264-AVCv1-BASQP1_Sony_C.zip	455642	f7cdbfaee43ff2e88b78d0b41ddcde83ac5148867e7b7df1759d97e0294f6c19	https://www.itu.int/wftp3/av-arch/jvt-site/draft_conformance/AVCv1/BASQP1_Sony_C.zip

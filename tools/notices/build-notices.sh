@@ -108,6 +108,7 @@ Contents
   51. bzip2
   52. lzokay
   53. Shaka Packager
+  54. MPEG-4 Visual reference software (Microsoft)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -1875,6 +1876,34 @@ Copyright:
 EOF
 license_start "Shaka Packager license (LICENSE)"
 cat "$LIC/shaka-packager-LICENSE"
+section "54. MPEG-4 Visual reference software (Microsoft)"
+cat <<'EOF'
+Project:      the Microsoft MPEG-4 Visual reference software of ISO/IEC
+              14496-5:2001, version 2 (FDAM1-2.3-001213)
+Source:       ISO/IEC 14496-5:2001 reference software (video.zip,
+              video/natural/microsoft-2.3-001213) of ISO's Publicly
+              Available Standards
+License text: the notice at the head of every source file
+License:      free license for use in hardware or software products claiming
+              conformance to MPEG-4 Video (ISO/IEC 14496-2); the copyright
+              notice must be included in all copies or derivative works
+
+Derived Smalt packages:
+  video.mpeg4.internal.object (the decoder of binary and grayscale shape, the
+  shape-adaptive DCT, static sprites, N-bit samples, NEWPRED, reduced
+  resolution VOPs and spatial and temporal scalability of sys/decoder, sys and
+  tools, with the layer orchestration of app/decoder/decoder.cpp and the
+  background composition of sys/tps_bfshape.cpp)
+
+Derivation: C++ code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright (c) 1996-2000 Microsoft Corporation, Sharp Corporation, Sony
+  Corporation, Oki Electric Industry, Toshiba Corporation, Samsung AIT and the
+  other developers and editors named in the source files
+EOF
+license_start "License notice (sys/decoder/vopsedec.cpp and the other source files)"
+cat "$LIC/mpeg4-msref-notice.txt"
 } > "$OUT"
 
 echo "wrote $OUT"

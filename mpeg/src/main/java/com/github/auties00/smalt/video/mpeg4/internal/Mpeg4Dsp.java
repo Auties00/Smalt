@@ -83,6 +83,19 @@ public abstract class Mpeg4Dsp {
     public abstract void idctAdd(short[] coefficients, int offset, byte[] dst, int dstOffset, int stride, int[] work);
 
     /**
+     * Transforms a coefficient block into the residual samples, without clipping, with the inverse DCT the kernels
+     * use.
+     *
+     * @param coefficients the coefficients in column-major order (coefficient {@code column} of row {@code row} at
+     * {@code offset + column * 8 + row}); cleared on return
+     * @param offset the index of the block's first coefficient
+     * @param out receives the 64 samples in raster order
+     */
+    public static void inverseTransform(short[] coefficients, int offset, int[] out) {
+        ScalarMpeg4Dsp.transform(coefficients, offset, out);
+    }
+
+    /**
      * Predicts a block by half sample bilinear interpolation (ISO/IEC 14496-2 Figure 7-18).
      *
      * @param src the reference plane

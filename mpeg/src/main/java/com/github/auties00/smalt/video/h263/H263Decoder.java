@@ -16,29 +16,46 @@ import java.util.function.Consumer;
  * Decodes an ITU-T H.263 video track: the {@code s263} streams of 3GP and MP4 files and the
  * H.263 streams of Matroska and AVI files.
  *
- * <p>The decoder implements the baseline syntax and the optional modes of the H.263 profiles 0
- * to 3 and the 3GPP profiles: the extended picture type with custom picture formats and clock
- * frequencies, Unrestricted Motion Vectors (Annex D), Advanced Prediction with four vectors per
- * macroblock and overlapped block motion compensation (Annex F), Advanced INTRA Coding (Annex
- * I), the in-loop Deblocking Filter (Annex J), the Slice Structured mode without rectangular
- * slices (Annex K), Alternative INTER VLC (Annex S) and Modified Quantization (Annex T). Output
- * samples follow the decoding process exactly, apart from the inverse DCT, which the
- * Recommendation leaves free within the IEEE 1180 accuracy (Annex A).
+ * <p>The decoder implements the baseline syntax and every optional coding mode of ITU-T H.263
+ * (2005): the extended picture type with custom picture formats and clock frequencies, Continuous
+ * Presence Multipoint (Annex C), Unrestricted Motion Vectors (Annex D), Syntax-based Arithmetic
+ * Coding (Annex E), Advanced Prediction with four vectors per macroblock and overlapped block
+ * motion compensation (Annex F), PB-frames (Annex G), Advanced INTRA Coding (Annex I), the in-loop
+ * Deblocking Filter (Annex J), the Slice Structured mode with arbitrary slice ordering and
+ * rectangular slices (Annex K), Improved PB-frames (Annex M), Reference Picture Selection (Annex
+ * N), temporal, SNR and spatial scalability with B-, EI- and EP-pictures (Annex O), Reference
+ * Picture Resampling with implicit and explicit warping (Annex P), Reduced-Resolution Update
+ * (Annex Q), Independent Segment Decoding (Annex R), Alternative INTER VLC (Annex S), Modified
+ * Quantization (Annex T), Enhanced Reference Picture Selection with multiple reference
+ * pictures, memory management and two-picture backward prediction (Annex U) and the Data
+ * Partitioned Slice mode (Annex V). Output samples follow the decoding process exactly, apart from
+ * the inverse DCT, which the Recommendation leaves free within the IEEE 1180 accuracy (Annex A).
  *
  * <p>Packets are coded pictures starting with a picture start code; a packet holding several
  * pictures is split at their start codes, and raw {@code .263} streams are split into packets by
  * {@link com.github.auties00.smalt.video.mpeg4.Mpeg4ElementaryStream}. Frames reach the consumer in
- * decoding order, which is the display order of the supported picture types, as 4:2:0
- * {@link com.github.auties00.smalt.image.YuvPicture}s with the timestamps of their packets, or
- * continuing from the previous frame by the temporal reference when packets carry none. A frame
- * is a keyframe when it is an I-picture.
+ * display order as 4:2:0 {@link com.github.auties00.smalt.image.YuvPicture}s, each once the next
+ * I-, P-, EI- or EP-picture of its stream is decoded (B-pictures and the B-part of a PB-frame
+ * display before the picture that follows them in the stream) or when the decoder is flushed. They
+ * carry the timestamps of their packets, or continue from the previous frame by the temporal
+ * reference when packets carry none; from the first picture that needs one of Annexes C, E, G, M,
+ * N, O, P, Q, R, U or V, or rectangular slices, the timestamps continue from that picture's packet by
+ * the temporal references, since a packet carries both pictures of a PB-frame and the pictures of
+ * the layers of an instant share a temporal reference. A frame is a keyframe when it is an I- or
+ * EI-picture.
  *
- * <p>Unsupported but valid streams raise {@link MediaException.Unsupported} naming the mode:
- * syntax-based arithmetic coding, PB-frames, Improved PB-frames, B, EI and EP pictures,
- * Continuous Presence Multipoint, reference picture selection, independent segment decoding,
- * reference picture resampling, reduced-resolution update and rectangular slices. Corrupt data
- * in a group of blocks or slice conceals the rest of it from the previous picture and raises
- * {@link MediaException.Malformed} after the damaged frame was handed out.
+ * <p>Of the pictures of the layers of a scalable stream that share an instant, the frame is the
+ * picture of the highest layer decoded. Once a stream has shown an enhancement layer or a second
+ * sub-bitstream of Continuous Presence Multipoint, every frame carries a
+ * {@link com.github.auties00.smalt.video.VideoLayer} in its side data, whose identifier is the
+ * enhancement layer number minus 1 and whose view identifier is the sub-bitstream number; the
+ * sub-bitstreams are independent streams, each with its own frames in display order.
+ *
+ * <p>Corrupt data in a group of blocks or slice conceals the rest of it from the previous picture
+ * and raises {@link MediaException.Malformed} after the damaged frame was handed out; in a data
+ * partitioned slice, corrupt coefficient data keeps the macroblock types and motion vectors of its
+ * partitions, so the INTER macroblocks from there on are predicted without their residual and
+ * only the INTRA ones are concealed.
  *
  * <p>Instances are not thread-safe.
  *
@@ -46,6 +63,9 @@ import java.util.function.Consumer;
  *           com.github.auties00.smalt.video.mpeg4.Mpeg4Decoder}, of which H.263 baseline is the
  *           short video header; its inverse DCT is the accurate integer transform of the
  *           Independent JPEG Group's software (ported from libjpeg-turbo's {@code jidctint.c}).
+ *           At the first picture that needs a mode the shared engine lacks, a scalar decoder
+ *           written for the optional modes takes over the stream with its reference pictures and
+ *           decodes it from there on.
  */
 public final class H263Decoder implements VideoDecoder {
     /**
@@ -90,7 +110,7 @@ public final class H263Decoder implements VideoDecoder {
         if (track.codec() != Codec.H263) {
             throw new IllegalArgumentException(track.codec() + " is not an H.263 track");
         }
-        this.core = new DecoderCore(track, options.limits(), options.threads(), true);
+        this.core = new DecoderCore(track, options.limits(), options.threads(), true, false);
     }
 
     /**
