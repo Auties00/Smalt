@@ -153,6 +153,31 @@ public final class RtEncoder {
     static final int[] MODE_LF_DELTAS = {4, -12, 2, 4};
 
     /**
+     * The loop filter delta of each mode class in good-quality mode, libvpx's
+     * {@code set_default_lf_deltas}.
+     */
+    static final int[] GOOD_MODE_LF_DELTAS = {4, -2, 2, 4};
+
+    /**
+     * The multiplier of the squared quantizer step in the rate-distortion constant of
+     * good-quality coding, libvpx's {@code rdconst}.
+     */
+    private static final double GOOD_RD_CONSTANT = 2.80;
+
+    /**
+     * The rounding offset of the quantizers of good-quality coding, in 1/128 of a step, libvpx's
+     * {@code qrounding_factor}.
+     */
+    static final int GOOD_ROUNDING = 48;
+
+    /**
+     * The increase of the rate-distortion multiplier of an inter frame at each intra-to-inter
+     * ratio of the next frame, in 1/16, libvpx's {@code rd_iifactor}.
+     */
+    private static final int[] RD_IIFACTOR = {4, 4, 3, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 0, 0, 0};
+
+    /**
      * The loop filter mode class of each macroblock mode.
      */
     private static final int[] MODE_LF_CLASS = {1, 1, 1, 1, 0, 2, 2, 1, 2, 3};
@@ -431,6 +456,34 @@ public final class RtEncoder {
      * The chroma quantization matrix of each segment.
      */
     final QuantMatrix[] uvMatrices = new QuantMatrix[4];
+
+    /**
+     * The regular luma quantizer of each segment, set for the good-quality speeds 0 to 2.
+     */
+    final RegularQuantizer[] y1Regular = new RegularQuantizer[4];
+
+    /**
+     * The regular Y2 quantizer of each segment.
+     */
+    final RegularQuantizer[] y2Regular = new RegularQuantizer[4];
+
+    /**
+     * The regular chroma quantizer of each segment.
+     */
+    final RegularQuantizer[] uvRegular = new RegularQuantizer[4];
+
+    /**
+     * The zero-bin over-quantization of the good-quality frame being coded, in 1/128 of the AC
+     * step: the widening of the zero bins of the regular quantizers that claws back bits when
+     * the largest quantizer index is not enough, libvpx's {@code zbin_over_quant}.
+     */
+    int goodZbinOverQuant;
+
+    /**
+     * Whether the zero bins of good-quality inter macroblocks widen with their modes, libvpx's
+     * {@code zbin_mode_boost_enabled}.
+     */
+    boolean zbinModeBoostEnabled = true;
 
     /**
      * The base quantizer index of the current frame.
@@ -815,6 +868,215 @@ public final class RtEncoder {
     private int lastQuantizer;
 
     /**
+     * Whether the encoder codes good-quality frames, planned by a {@link GoodEncoder}.
+     */
+    boolean good;
+
+    /**
+     * Whether the good-quality frames are coded at the best quality ({@code compressor_speed} 0),
+     * whose thresholds and searches ignore the speed.
+     */
+    boolean best;
+
+    /**
+     * The loop filter delta of each mode class of the encoder's mode.
+     */
+    int[] modeLfDeltas = MODE_LF_DELTAS;
+
+    /**
+     * Whether the decoder shows the frame being coded.
+     */
+    boolean showFrame = true;
+
+    /**
+     * Whether the vectors of the alternate reference point backwards in time, the frame's
+     * {@code sign_bias_alternate}.
+     */
+    boolean signBiasAlt;
+
+    /**
+     * Whether the frame being coded codes the source of the active alternate reference again,
+     * libvpx's {@code is_src_frame_alt_ref}: its macroblocks then predict from the alternate
+     * reference without motion.
+     */
+    boolean srcFrameAltRef;
+
+    /**
+     * Whether the frames being coded predict from an alternate reference, libvpx's
+     * {@code source_alt_ref_active}.
+     */
+    boolean altRefActive;
+
+    /**
+     * Whether a frame coding the source of the alternate reference considers no other mode than
+     * zero motion from the alternate reference, as when the alternate reference is unfiltered.
+     */
+    boolean forceZeroAltRef;
+
+    /**
+     * The frames coded since the golden frame, as the good-quality rate control counts them.
+     */
+    int goodFramesSinceGolden;
+
+    /**
+     * The intra-to-inter error ratio of the next frame, which raises the rate-distortion
+     * multiplier of inter frames.
+     */
+    int nextIIRatio = 32;
+
+    /**
+     * The intra-to-inter error ratio of the section, which biases the loop filter search.
+     */
+    int sectionIntraRating;
+
+    /**
+     * The sign bias of the reference of each macroblock of the previous shown frame, laid out
+     * like {@link #lfRef}.
+     */
+    final byte[] lfSignBias;
+
+    /**
+     * The token probabilities before the frame being coded, restored before each coding of it.
+     */
+    private final int[] goodCoefProbs = new int[1056];
+
+    /**
+     * The luma mode probabilities before the frame being coded.
+     */
+    private final int[] goodYmodeProbs = new int[4];
+
+    /**
+     * The chroma mode probabilities before the frame being coded.
+     */
+    private final int[] goodUvModeProbs = new int[3];
+
+    /**
+     * The motion vector probabilities before the frame being coded.
+     */
+    private final int[] goodMvProbs = new int[38];
+
+    /**
+     * The reference loop filter deltas the decoder held before the frame being coded.
+     */
+    private final int[] goodRefLfDeltas = new int[4];
+
+    /**
+     * The mode loop filter deltas the decoder held before the frame being coded.
+     */
+    private final int[] goodModeLfDeltas = new int[4];
+
+    /**
+     * The zero-motion counts before the frame being coded.
+     */
+    private final byte[] goodConsecZeroLast;
+
+    /**
+     * The zero-motion bias counts before the frame being coded.
+     */
+    private final byte[] goodConsecZeroLastMvBias;
+
+    /**
+     * The reference probabilities before the frame being coded: intra, last and golden.
+     */
+    private final int[] goodRefProbs = new int[3];
+
+    /**
+     * The loop filter level before the frame being coded.
+     */
+    private int goodFilterLevel;
+
+    /**
+     * The motion vector of each subblock of each macroblock, by mode info index times 16 plus
+     * subblock, packed ({@link Mv}); for a {@code SPLITMV} macroblock its subblocks' vectors.
+     */
+    final int[] bMvs;
+
+    /**
+     * The split configuration of each {@code SPLITMV} macroblock: 0 for two 16x8 halves, 1 for two
+     * 8x16 halves, 2 for four 8x8 quarters, 3 for sixteen 4x4 subblocks.
+     */
+    final byte[] mbPartitioning;
+
+    /**
+     * The coded mode of each partition of each {@code SPLITMV} macroblock, by mode info index
+     * times 16 plus partition: 0 for the left subblock's vector, 1 for the above subblock's, 2
+     * for zero motion, 3 for a new vector.
+     */
+    final byte[] partModes;
+
+    /**
+     * The token costs of the rate-distortion mode decision of the frame being coded.
+     */
+    final RdCosts rdCosts = new RdCosts();
+
+    /**
+     * The cost of each chroma intra mode, in 1/256 bit.
+     */
+    final int[] uvModeCost = new int[4];
+
+    /**
+     * The cost of each split partition mode, without context, in 1/256 bit, libvpx's
+     * {@code inter_bmode_costs} of the split modes.
+     */
+    final int[] subMvRefCost = new int[4];
+
+    /**
+     * The cost of each split configuration, in 1/256 bit.
+     */
+    final int[] mbSplitCost = new int[4];
+
+    /**
+     * The cost of a vector bit in SAD units of 4x4 blocks, libvpx's {@code sadperbit4}.
+     */
+    int sadPerBit4;
+
+    /**
+     * The index of the first diamond step of the rate-distortion motion search, libvpx's
+     * {@code first_step}.
+     */
+    int firstStep;
+
+    /**
+     * Whether the rate-distortion split search tries 4x4 partitions even when 8x8 does not win,
+     * libvpx's {@code no_skip_block4x4_search}.
+     */
+    boolean noSkipBlock4x4Search;
+
+    /**
+     * The probability of a macroblock with coefficients the mode decision assumes, libvpx's
+     * {@code prob_skip_false}.
+     */
+    int probSkipFalse = 128;
+
+    /**
+     * The probability of a macroblock with coefficients of the last ordinary frame coded at each
+     * quantizer index, libvpx's {@code base_skip_false_prob}.
+     */
+    private final int[] baseSkipFalseProb = GoodTables.BASE_SKIP_FALSE_PROB.clone();
+
+    /**
+     * The probability of a macroblock with coefficients of the last ordinary frame, golden frame
+     * and alternate reference, 0 before the first, libvpx's {@code last_skip_false_probs}.
+     */
+    private final int[] lastSkipFalseProbs = new int[3];
+
+    /**
+     * The token probabilities after the last frame that refreshed the last reference, which the
+     * mode decision of ordinary frames assumes, libvpx's {@code lfc_n}.
+     */
+    private final int[] costProbsLast = Vp8Tables.COEF_PROBS_DEFAULT.clone();
+
+    /**
+     * The token probabilities after the last golden frame, libvpx's {@code lfc_g}.
+     */
+    private final int[] costProbsGolden = Vp8Tables.COEF_PROBS_DEFAULT.clone();
+
+    /**
+     * The token probabilities after the last alternate reference, libvpx's {@code lfc_a}.
+     */
+    private final int[] costProbsAlt = Vp8Tables.COEF_PROBS_DEFAULT.clone();
+
+    /**
      * Creates an encoder for pictures of one size, configured with {@link #configure}.
      *
      * @param width the picture width, from 1 to 16383
@@ -852,16 +1114,25 @@ public final class RtEncoder {
         bModes = new byte[miSize * 16];
         lfMv = new int[(mbRows + 2) * (mbCols + 2)];
         lfRef = new byte[(mbRows + 2) * (mbCols + 2)];
+        lfSignBias = new byte[(mbRows + 2) * (mbCols + 2)];
+        bMvs = new int[miSize * 16];
+        mbPartitioning = new byte[miSize];
+        partModes = new byte[miSize * 16];
         segmentationMap = new byte[mbs];
         cyclicRefreshMap = new byte[mbs];
         consecZeroLast = new byte[mbs];
         consecZeroLastMvBias = new byte[mbs];
+        goodConsecZeroLast = new byte[mbs];
+        goodConsecZeroLastMvBias = new byte[mbs];
         skinMap = new byte[mbs];
         aboveContext = new byte[mbCols * 9];
         for (var i = 0; i < 4; i++) {
             y1Matrices[i] = new QuantMatrix();
             y2Matrices[i] = new QuantMatrix();
             uvMatrices[i] = new QuantMatrix();
+            y1Regular[i] = new RegularQuantizer();
+            y2Regular[i] = new RegularQuantizer();
+            uvRegular[i] = new RegularQuantizer();
         }
         rc = new RtRateControl(mbs, layers);
         rows = new RtRow[mbRows];
@@ -888,7 +1159,7 @@ public final class RtEncoder {
         Arrays.fill(rdThreshMult, 128);
         mvSadCost[MVFP_MAX] = 300;
         for (var i = 1; i <= MVFP_MAX; i++) {
-            var z = (int) (256 * (2 * (Math.log(8.0 * i) / Math.log(2) + 0.6)));
+            var z = (int) (256 * (2 * (StrictMath.log(8.0 * i) / StrictMath.log(2) + 0.6)));
             mvSadCost[MVFP_MAX + i] = z;
             mvSadCost[MVFP_MAX - i] = z;
         }
@@ -1404,6 +1675,17 @@ public final class RtEncoder {
     }
 
     /**
+     * Returns the frame buffer of a reference of the frame being coded, whether or not the mode
+     * search considers it.
+     *
+     * @param ref the reference: {@code LAST_FRAME}, {@code GOLDEN_FRAME} or {@code ALTREF_FRAME}
+     * @return the buffer
+     */
+    FrameBuffer refBuffer(int ref) {
+        return buffers[ref == LAST_FRAME ? lastIdx : ref == GOLDEN_FRAME ? goldenIdx : altIdx];
+    }
+
+    /**
      * Prepares the state of a key frame, libvpx's {@code vp8_setup_key_frame} and the key frame
      * resets of the decoder: default probabilities, motion vector costs and the initial loop
      * filter level.
@@ -1460,12 +1742,19 @@ public final class RtEncoder {
         y2DcDelta = q < 4 ? 4 - q : 0;
         for (var s = 0; s < 4; s++) {
             var segQ = segmentationEnabled ? Math.clamp(q + segmentQuant[s], 0, 127) : q;
-            setMatrix(y1Matrices[s], Vp8Tables.DC_QLOOKUP[segQ], Vp8Tables.AC_QLOOKUP[segQ], LUMA_ROUNDING);
+            var luma = good ? GOOD_ROUNDING : LUMA_ROUNDING;
+            var chroma = good ? GOOD_ROUNDING : CHROMA_ROUNDING;
+            setMatrix(y1Matrices[s], Vp8Tables.DC_QLOOKUP[segQ], Vp8Tables.AC_QLOOKUP[segQ], luma);
             var y2ac = (Vp8Tables.AC_QLOOKUP[segQ] * 101581) >> 16;
             setMatrix(y2Matrices[s], Vp8Tables.DC_QLOOKUP[Math.clamp(segQ + y2DcDelta, 0, 127)] * 2, Math.max(y2ac, 8),
-                    LUMA_ROUNDING);
-            setMatrix(uvMatrices[s], Math.min(Vp8Tables.DC_QLOOKUP[segQ], 132), Vp8Tables.AC_QLOOKUP[segQ],
-                    CHROMA_ROUNDING);
+                    luma);
+            setMatrix(uvMatrices[s], Math.min(Vp8Tables.DC_QLOOKUP[segQ], 132), Vp8Tables.AC_QLOOKUP[segQ], chroma);
+            if (good && speed <= 2) {
+                y1Regular[s].set(Vp8Tables.DC_QLOOKUP[segQ], Vp8Tables.AC_QLOOKUP[segQ], segQ);
+                y2Regular[s].set(Vp8Tables.DC_QLOOKUP[Math.clamp(segQ + y2DcDelta, 0, 127)] * 2, Math.max(y2ac, 8),
+                        segQ);
+                uvRegular[s].set(Math.min(Vp8Tables.DC_QLOOKUP[segQ], 132), Vp8Tables.AC_QLOOKUP[segQ], segQ);
+            }
         }
     }
 
@@ -1481,7 +1770,7 @@ public final class RtEncoder {
      * @param ac       the AC step
      * @param rounding the rounding offset in 1/128 of a step
      */
-    private static void setMatrix(QuantMatrix m, int dc, int ac, int rounding) {
+    static void setMatrix(QuantMatrix m, int dc, int ac, int rounding) {
         for (var i = 0; i < 16; i++) {
             var q = i == 0 ? dc : ac;
             m.q[i] = q;
@@ -1674,11 +1963,12 @@ public final class RtEncoder {
     }
 
     /**
-     * Sets the speed features of the current frame, libvpx's {@code vp8_set_speed_features}
-     * for real-time mode.
+     * Sets the speed features of the current frame, libvpx's {@code vp8_set_speed_features}:
+     * the continuous speed is 0 at the best quality, the speed plus 1 at good quality and the
+     * speed plus 7 in real time.
      */
     private void setSpeedFeatures() {
-        var continuous = speed + 7;
+        var continuous = good ? (best ? 0 : speed + 1) : speed + 7;
         var refFrames = 1 + Integer.bitCount(keyFrame ? 0 : refFrameFlags);
         Arrays.fill(threshMult, 0);
         Arrays.fill(modeCheckFreq, 0);
@@ -1698,9 +1988,16 @@ public final class RtEncoder {
         var new2 = RtTables.speedMap(continuous, RtTables.THRESH_NEW2);
         threshMult[RtTables.THR_NEW2] = new2;
         threshMult[RtTables.THR_NEW3] = new2;
-        threshMult[16] = RtTables.MAX;
-        threshMult[17] = RtTables.MAX;
-        threshMult[18] = RtTables.MAX;
+        if (good) {
+            threshMult[16] = RtTables.speedMap(continuous, GoodTables.THRESH_SPLIT1);
+            var split2 = RtTables.speedMap(continuous, GoodTables.THRESH_SPLIT2);
+            threshMult[17] = split2;
+            threshMult[18] = split2;
+        } else {
+            threshMult[16] = RtTables.MAX;
+            threshMult[17] = RtTables.MAX;
+            threshMult[18] = RtTables.MAX;
+        }
         if (speed <= 6 && layers > 1 && (refFrameFlags & FLAG_LAST) != 0 && (refFrameFlags & FLAG_GOLDEN) != 0) {
             var shift = closestReferenceFrame == GOLDEN_FRAME ? 3 : 1;
             threshMult[RtTables.THR_ZERO2] >>= shift;
@@ -1723,6 +2020,12 @@ public final class RtEncoder {
         var freqNew2 = RtTables.speedMap(continuous, RtTables.FREQ_NEW2);
         modeCheckFreq[RtTables.THR_NEW2] = freqNew2;
         modeCheckFreq[RtTables.THR_NEW3] = freqNew2;
+        if (good) {
+            modeCheckFreq[16] = RtTables.speedMap(continuous, GoodTables.FREQ_SPLIT1);
+            var split2 = RtTables.speedMap(continuous, GoodTables.FREQ_SPLIT2);
+            modeCheckFreq[17] = split2;
+            modeCheckFreq[18] = split2;
+        }
         fullFilterSearch = speed <= 4;
         searchMethod = speed > 4 ? SEARCH_HEX : SEARCH_DIAMOND;
         improvedMvPred = true;
@@ -1783,16 +2086,20 @@ public final class RtEncoder {
     private void initializeRdConsts() {
         var qValue = Vp8Tables.DC_QLOOKUP[baseQ];
         var cappedQ = Math.min(qValue, 160);
-        var rdconst = RD_CONSTANT;
+        var rdconst = good ? GOOD_RD_CONSTANT : RD_CONSTANT;
         var mult = (int) (rdconst * ((double) cappedQ * cappedQ));
-        if (rc.zbinOverQuant > 0) {
-            var oqFactor = 1.0 + 0.0015625 * rc.zbinOverQuant;
+        var overQuant = good ? goodZbinOverQuant : rc.zbinOverQuant;
+        if (overQuant > 0) {
+            var oqFactor = 1.0 + 0.0015625 * overQuant;
             var modq = (double) (int) (cappedQ * oqFactor);
             mult = (int) (rdconst * (modq * modq));
         }
+        if (good && !keyFrame) {
+            mult += (mult * RD_IIFACTOR[Math.clamp(nextIIRatio, 0, 31)]) >> 4;
+        }
         errorPerBit = Math.max(1, mult / 110);
         setSpeedFeatures();
-        var q = Math.max(8, (int) Math.pow(qValue, 1.25));
+        var q = Math.max(8, (int) StrictMath.pow(qValue, 1.25));
         if (mult > 1000) {
             rdDiv = 1;
             rdMult = mult / 100;
@@ -1807,6 +2114,25 @@ public final class RtEncoder {
             }
         }
         sadPerBit16 = RtTables.SAD_PER_BIT16[baseQ];
+        sadPerBit4 = GoodTables.SAD_PER_BIT4[baseQ];
+        if (good && speed <= 3) {
+            rdCosts.build(keyFrame ? Vp8Tables.COEF_PROBS_DEFAULT
+                    : refreshAlt ? costProbsAlt : refreshGolden ? costProbsGolden : costProbsLast);
+            for (var mode = 0; mode < 4; mode++) {
+                uvModeCost[mode] = RtTables.treeCost(RtTables.UV_MODE_CODES, Vp8Tables.UV_MODE_TREE,
+                        keyFrame ? Vp8Tables.KF_UV_MODE_PROBS : uvModeProbs, 0, mode);
+            }
+            subMvRefCost[0] = RtTables.bitCost(180, 0);
+            subMvRefCost[1] = RtTables.bitCost(180, 1) + RtTables.bitCost(162, 0);
+            subMvRefCost[2] = RtTables.bitCost(180, 1) + RtTables.bitCost(162, 1) + RtTables.bitCost(25, 0);
+            subMvRefCost[3] = RtTables.bitCost(180, 1) + RtTables.bitCost(162, 1) + RtTables.bitCost(25, 1);
+            mbSplitCost[3] = RtTables.bitCost(110, 0);
+            mbSplitCost[2] = RtTables.bitCost(110, 1) + RtTables.bitCost(111, 0);
+            mbSplitCost[0] = RtTables.bitCost(110, 1) + RtTables.bitCost(111, 1) + RtTables.bitCost(150, 0);
+            mbSplitCost[1] = RtTables.bitCost(110, 1) + RtTables.bitCost(111, 1) + RtTables.bitCost(150, 1);
+            firstStep = speed > 0 ? 1 : 0;
+            noSkipBlock4x4Search = speed == 0;
+        }
         if (keyFrame) {
             for (var mode = 0; mode < 5; mode++) {
                 mbModeCost[mode] = RtTables.treeCost(RtTables.KF_YMODE_CODES, Vp8Tables.KF_YMODE_TREE,
@@ -1869,16 +2195,28 @@ public final class RtEncoder {
      * {@code vp8_build_component_cost_table}.
      */
     private void buildMvCosts() {
+        buildMvCosts(mvProbs, mvCost);
+    }
+
+    /**
+     * Builds the motion vector component costs of a set of motion vector probabilities, libvpx's
+     * {@code vp8_build_component_cost_table}.
+     *
+     * @param probs the 38 motion vector probabilities, rows then columns
+     * @param out receives the costs, {@code 2 * RtStats.MV_VALS} values: the row component's
+     * centered on {@code RtStats.MV_MAX}, then the column component's
+     */
+    static void buildMvCosts(int[] probs, int[] out) {
         for (var component = 0; component < 2; component++) {
             var base = component * 19;
             var off = component * RtStats.MV_VALS + RtStats.MV_MAX;
-            mvCost[off] = mvComponentCost(0, base);
-            var sign0 = RtTables.bitCost(mvProbs[base + 1], 0);
-            var sign1 = RtTables.bitCost(mvProbs[base + 1], 1);
+            out[off] = mvComponentCost(probs, 0, base);
+            var sign0 = RtTables.bitCost(probs[base + 1], 0);
+            var sign1 = RtTables.bitCost(probs[base + 1], 1);
             for (var i = 1; i <= RtStats.MV_MAX; i++) {
-                var cost = mvComponentCost(i, base);
-                mvCost[off + i] = cost + sign0;
-                mvCost[off - i] = cost + sign1;
+                var cost = mvComponentCost(probs, i, base);
+                out[off + i] = cost + sign0;
+                out[off - i] = cost + sign1;
             }
         }
     }
@@ -1887,12 +2225,12 @@ public final class RtEncoder {
      * Returns the cost of a motion vector component magnitude without its sign, libvpx's
      * {@code cost_mvcomponent}.
      *
+     * @param p    the motion vector probabilities
      * @param v    the magnitude in quarter pixels
      * @param base the index of the component's probabilities
      * @return the cost in 1/256 bit
      */
-    private int mvComponentCost(int v, int base) {
-        var p = mvProbs;
+    private static int mvComponentCost(int[] p, int v, int base) {
         int cost;
         if (v < 8) {
             cost = RtTables.bitCost(p[base], 0) + RtTables.treeCost(RtTables.SMALL_MV_CODES, Vp8Tables.SMALL_MV_TREE, p,
@@ -2042,8 +2380,9 @@ public final class RtEncoder {
      * frame for the next frame's predictions and the count of last-frame zero motion.
      */
     private void afterMacroblocks() {
-        if (!keyFrame) {
+        if (!keyFrame && showFrame) {
             var lfStride = mbCols + 2;
+            var mask = signBiasMask();
             for (var r = 0; r <= mbRows; r++) {
                 for (var c = 0; c <= mbCols; c++) {
                     var mi = r * miStride + c;
@@ -2052,6 +2391,7 @@ public final class RtEncoder {
                         lfMv[lf] = mbMv[mi];
                     }
                     lfRef[lf] = mbRef[mi];
+                    lfSignBias[lf] = (byte) ((mask >> mbRef[mi]) & 1);
                 }
             }
         }
@@ -2073,6 +2413,10 @@ public final class RtEncoder {
      * {@code vp8_loopfilter_frame}.
      */
     private void pickLoopFilterLevel() {
+        if (good) {
+            pickFilterLevelGood();
+            return;
+        }
         Arrays.fill(filterErrors, -1);
         if (layers > 1) {
             filterLevel = rc.filterLevel;
@@ -2348,6 +2692,322 @@ public final class RtEncoder {
     }
 
     /**
+     * Searches the loop filter level of a good-quality frame like {@link #pickFilterLevelFull()},
+     * favoring lower levels by a bias that follows the section's intra rating and capping the
+     * level of sections rich in intra prediction, libvpx's {@code vp8cx_pick_filter_level} in its
+     * second pass.
+     */
+    private void pickFilterLevelGood() {
+        if (keyFrame) {
+            filterLevel = baseQ * 3 / 8;
+        }
+        var min = altRefActive && refreshGolden && !refreshAlt ? 0 : minFilterLevel();
+        var max = sectionIntraRating > 8 ? 63 * 3 / 4 : 63;
+        var ssErr = goodFilterErrors;
+        Arrays.fill(ssErr, 0);
+        var filtMid = Math.clamp(filterLevel, min, Math.max(min, max));
+        var filterStep = filtMid < 16 ? 4 : filtMid / 4;
+        var bestErr = fullFilterError(filtMid);
+        ssErr[filtMid] = bestErr;
+        var filtBest = filtMid;
+        var filtDirection = 0;
+        while (filterStep > 0) {
+            var bias = (bestErr >> (15 - (filtMid / 8))) * filterStep;
+            if (sectionIntraRating < 20) {
+                bias = bias * sectionIntraRating / 20;
+            }
+            var filtHigh = Math.min(filtMid + filterStep, max);
+            var filtLow = Math.max(filtMid - filterStep, min);
+            if (filtDirection <= 0 && filtLow != filtMid) {
+                var err = ssErr[filtLow] == 0 ? fullFilterError(filtLow) : ssErr[filtLow];
+                ssErr[filtLow] = err;
+                if (err - bias < bestErr) {
+                    if (err < bestErr) {
+                        bestErr = err;
+                    }
+                    filtBest = filtLow;
+                }
+            }
+            if (filtDirection >= 0 && filtHigh != filtMid) {
+                var err = ssErr[filtHigh] == 0 ? fullFilterError(filtHigh) : ssErr[filtHigh];
+                ssErr[filtHigh] = err;
+                if (err < bestErr - bias) {
+                    bestErr = err;
+                    filtBest = filtHigh;
+                }
+            }
+            if (filtBest == filtMid) {
+                filterStep /= 2;
+                filtDirection = 0;
+            } else {
+                filtDirection = filtBest < filtMid ? -1 : 1;
+                filtMid = filtBest;
+            }
+        }
+        filterLevel = filtBest;
+    }
+
+    /**
+     * The luma errors of the loop filter levels the good-quality search filtered, 0 for the
+     * levels not filtered.
+     */
+    private final long[] goodFilterErrors = new long[64];
+
+    /**
+     * Returns the sign bias of each reference frame, bit {@code r} for reference {@code r}.
+     *
+     * @return the mask
+     */
+    int signBiasMask() {
+        return signBiasAlt ? 1 << ALTREF_FRAME : 0;
+    }
+
+    /**
+     * Starts a good-quality frame: selects its references, resets the per-frame state of a key
+     * frame, estimates the reference probabilities the mode search assumes, and saves the
+     * probabilities and filter state that each coding of the frame starts from.
+     *
+     * <p>The caller sets {@link #showFrame}, {@link #signBiasAlt}, {@link #srcFrameAltRef},
+     * {@link #altRefActive}, {@link #goodFramesSinceGolden}, {@link #nextIIRatio} and
+     * {@link #sectionIntraRating} first.
+     *
+     * @param picture the source picture, padded to whole macroblocks
+     * @param key whether the frame is a key frame
+     * @param refreshLast whether the frame refreshes the last reference
+     * @param refreshGolden whether the frame refreshes the golden reference
+     * @param refreshAlt whether the frame refreshes the alternate reference
+     * @param goodSpeed the good-quality speed, from 0 to 4
+     * @param bestQuality whether the frame is coded at the best quality, as at speed 0 with the
+     * lowest mode thresholds and the fullest split search
+     */
+    void beginGoodFrame(FrameBuffer picture, boolean key, boolean refreshLast, boolean refreshGolden,
+                        boolean refreshAlt, int goodSpeed, boolean bestQuality) {
+        source = picture;
+        best = bestQuality;
+        speed = bestQuality ? 0 : goodSpeed;
+        keyFrame = key;
+        copyToAlt = 0;
+        this.refreshLast = refreshLast || key;
+        this.refreshGolden = refreshGolden || key;
+        this.refreshAlt = refreshAlt || key;
+        if (key) {
+            refFrameFlags = 0;
+        } else {
+            refFrameFlags = FLAG_LAST | FLAG_GOLDEN | FLAG_ALTREF;
+            if (goldIsLast) {
+                refFrameFlags &= ~FLAG_GOLDEN;
+            }
+            if (altIsLast || goldIsAlt) {
+                refFrameFlags &= ~FLAG_ALTREF;
+            }
+        }
+        closestReferenceFrame = LAST_FRAME;
+        if (key) {
+            lfDeltaUpdate = true;
+            Arrays.fill(lastRefLfDeltas, 0);
+            Arrays.fill(lastModeLfDeltas, 0);
+            Arrays.fill(rdThreshMult, 128);
+            Arrays.fill(consecZeroLast, (byte) 0);
+            Arrays.fill(consecZeroLastMvBias, (byte) 0);
+        }
+        updateGoodRefFrameProbs();
+        computeSkinMap();
+        segmentationEnabled = false;
+        System.arraycopy(coefProbs, 0, goodCoefProbs, 0, 1056);
+        System.arraycopy(ymodeProbs, 0, goodYmodeProbs, 0, 4);
+        System.arraycopy(uvModeProbs, 0, goodUvModeProbs, 0, 3);
+        System.arraycopy(mvProbs, 0, goodMvProbs, 0, 38);
+        System.arraycopy(lastRefLfDeltas, 0, goodRefLfDeltas, 0, 4);
+        System.arraycopy(lastModeLfDeltas, 0, goodModeLfDeltas, 0, 4);
+        System.arraycopy(consecZeroLast, 0, goodConsecZeroLast, 0, mbs);
+        System.arraycopy(consecZeroLastMvBias, 0, goodConsecZeroLastMvBias, 0, mbs);
+        goodRefProbs[0] = probIntraCoded;
+        goodRefProbs[1] = probLastCoded;
+        goodRefProbs[2] = probGfCoded;
+        goodFilterLevel = filterLevel;
+        refreshEntropy = true;
+        newIdx = freeBuffer();
+        cur = buffers[newIdx];
+        setupReferences();
+    }
+
+    /**
+     * Codes the frame {@link #beginGoodFrame} started at a quantizer, filters and packs it; a
+     * later call codes the same frame again from the same state.
+     *
+     * @param q the quantizer index
+     * @param zbinOverQuant the zero-bin over-quantization, {@link #goodZbinOverQuant}
+     * @return the size of the packed frame in bytes
+     */
+    int codeGoodFrame(int q, int zbinOverQuant) {
+        goodZbinOverQuant = zbinOverQuant;
+        System.arraycopy(goodCoefProbs, 0, coefProbs, 0, 1056);
+        System.arraycopy(goodYmodeProbs, 0, ymodeProbs, 0, 4);
+        System.arraycopy(goodUvModeProbs, 0, uvModeProbs, 0, 3);
+        System.arraycopy(goodMvProbs, 0, mvProbs, 0, 38);
+        System.arraycopy(goodRefLfDeltas, 0, lastRefLfDeltas, 0, 4);
+        System.arraycopy(goodModeLfDeltas, 0, lastModeLfDeltas, 0, 4);
+        System.arraycopy(goodConsecZeroLast, 0, consecZeroLast, 0, mbs);
+        System.arraycopy(goodConsecZeroLastMvBias, 0, consecZeroLastMvBias, 0, mbs);
+        probIntraCoded = goodRefProbs[0];
+        probLastCoded = goodRefProbs[1];
+        probGfCoded = goodRefProbs[2];
+        filterLevel = goodFilterLevel;
+        mvCostsDirty = true;
+        setQuantizer(q);
+        probSkipFalse = baseSkipFalseProb[q];
+        if (!keyFrame) {
+            var last = lastSkipFalseProbs[refreshAlt ? 2 : refreshGolden ? 1 : 0];
+            if (last != 0) {
+                probSkipFalse = last;
+            }
+            probSkipFalse = Math.clamp(probSkipFalse, 5, 250);
+            if (srcFrameAltRef) {
+                probSkipFalse = 1;
+            }
+        }
+        if (keyFrame) {
+            System.arraycopy(Vp8Tables.COEF_PROBS_DEFAULT, 0, coefProbs, 0, 1056);
+            System.arraycopy(Vp8Tables.YMODE_PROBS_DEFAULT, 0, ymodeProbs, 0, 4);
+            System.arraycopy(Vp8Tables.UV_MODE_PROBS_DEFAULT, 0, uvModeProbs, 0, 3);
+            System.arraycopy(Vp8Tables.MV_PROBS_DEFAULT, 0, mvProbs, 0, 38);
+            filterLevel = baseQ * 3 / 8;
+        }
+        refreshEntropy = true;
+        encodeMacroblocks();
+        unfilteredLumaError = measureLumaError ? lumaError() : 0;
+        copyToAlt = refreshGolden && !keyFrame ? 2 : 0;
+        pickLoopFilterLevel();
+        finishFrame();
+        return packedFrame.length;
+    }
+
+    /**
+     * Whether {@link #codeGoodFrame} measures {@link #unfilteredLumaError}.
+     */
+    boolean measureLumaError;
+
+    /**
+     * The luma squared error of the reconstruction of the last {@link #codeGoodFrame} before the
+     * loop filter, over the whole macroblocks, when {@link #measureLumaError} asks for it,
+     * libvpx's {@code vp8_calc_ss_err}.
+     */
+    long unfilteredLumaError;
+
+    /**
+     * Returns the luma squared error of the frame being coded against its source, over the whole
+     * macroblocks.
+     *
+     * @return the error
+     */
+    private long lumaError() {
+        var a = source;
+        var b = cur;
+        long sum = 0;
+        for (var r = 0; r < mbRows * 16; r++) {
+            var ao = a.yOrigin + r * a.yStride;
+            var bo = b.yOrigin + r * b.yStride;
+            for (var c = 0; c < mbCols * 16; c++) {
+                var d = (a.y[ao + c] & 0xFF) - (b.y[bo + c] & 0xFF);
+                sum += d * d;
+            }
+        }
+        return sum;
+    }
+
+    /**
+     * Keeps the last coding of the frame {@link #beginGoodFrame} started: makes it the
+     * references it refreshes and returns it.
+     *
+     * @return the packed frame
+     */
+    byte[] commitGoodFrame() {
+        afterMacroblocks();
+        updateReferenceFrames();
+        var frame = packedFrame;
+        packedFrame = null;
+        lastFrameKey = keyFrame;
+        lastQuantizer = baseQ;
+        if (refreshLast && refreshGolden) {
+            goldIsLast = true;
+        } else if (refreshLast ^ refreshGolden) {
+            goldIsLast = false;
+        }
+        if (refreshLast && refreshAlt) {
+            altIsLast = true;
+        } else if (refreshLast ^ refreshAlt) {
+            altIsLast = false;
+        }
+        if (refreshAlt && refreshGolden) {
+            goldIsAlt = true;
+        } else if (refreshAlt ^ refreshGolden) {
+            goldIsAlt = false;
+        }
+        System.arraycopy(stats.refUsage, 0, rc.refFrameUsage, 0, 4);
+        if (keyFrame) {
+            System.arraycopy(coefProbs, 0, costProbsLast, 0, 1056);
+            System.arraycopy(coefProbs, 0, costProbsGolden, 0, 1056);
+            System.arraycopy(coefProbs, 0, costProbsAlt, 0, 1056);
+        } else {
+            var packed = bitstream.probSkipFalse();
+            if (refreshAlt) {
+                lastSkipFalseProbs[2] = packed;
+            } else if (refreshGolden) {
+                lastSkipFalseProbs[1] = packed;
+            } else {
+                lastSkipFalseProbs[0] = packed;
+                baseSkipFalseProb[baseQ] = packed;
+            }
+            if (refreshAlt) {
+                System.arraycopy(coefProbs, 0, costProbsAlt, 0, 1056);
+            }
+            if (refreshGolden) {
+                System.arraycopy(coefProbs, 0, costProbsGolden, 0, 1056);
+            }
+            if (refreshLast) {
+                System.arraycopy(coefProbs, 0, costProbsLast, 0, 1056);
+            }
+        }
+        lfDeltaUpdate = false;
+        frameCount++;
+        return frame;
+    }
+
+    /**
+     * Estimates the reference probabilities the mode search of a good-quality frame assumes,
+     * libvpx's {@code update_rd_ref_frame_probs}.
+     */
+    private void updateGoodRefFrameProbs() {
+        var rfct = rc.refFrameUsage;
+        var rfIntra = rfct[INTRA_FRAME];
+        var rfInter = rfct[LAST_FRAME] + rfct[GOLDEN_FRAME] + rfct[ALTREF_FRAME];
+        if (keyFrame) {
+            probIntraCoded = 255;
+            probLastCoded = 128;
+            probGfCoded = 128;
+        } else if (rfIntra + rfInter == 0) {
+            probIntraCoded = 63;
+            probLastCoded = 128;
+            probGfCoded = 128;
+        }
+        if (refreshAlt && !keyFrame) {
+            probIntraCoded = Math.min(probIntraCoded + 40, 255);
+            probLastCoded = 200;
+            probGfCoded = 1;
+        } else if (goodFramesSinceGolden == 0) {
+            probLastCoded = 214;
+        } else if (goodFramesSinceGolden == 1) {
+            probLastCoded = 192;
+            probGfCoded = 220;
+        } else if (altRefActive) {
+            probGfCoded = Math.max(probGfCoded - 20, 10);
+        }
+        if (!altRefActive) {
+            probGfCoded = 255;
+        }
+    }
+
+    /**
      * Returns the luma error of the whole frame filtered at a level.
      *
      * @param level the frame filter level
@@ -2388,12 +3048,12 @@ public final class RtEncoder {
             }
             var base = seg * 16;
             var lvlRef = lvlSeg + REF_LF_DELTAS[INTRA_FRAME];
-            filterLevels[base] = Math.clamp(lvlRef + MODE_LF_DELTAS[0], 0, 63);
+            filterLevels[base] = Math.clamp(lvlRef + modeLfDeltas[0], 0, 63);
             filterLevels[base + 1] = Math.clamp(lvlRef, 0, 63);
             for (var ref = 1; ref < 4; ref++) {
                 lvlRef = lvlSeg + REF_LF_DELTAS[ref];
                 for (var mode = 1; mode < 4; mode++) {
-                    filterLevels[base + ref * 4 + mode] = Math.clamp(lvlRef + MODE_LF_DELTAS[mode], 0, 63);
+                    filterLevels[base + ref * 4 + mode] = Math.clamp(lvlRef + modeLfDeltas[mode], 0, 63);
                 }
             }
         }
@@ -2456,7 +3116,7 @@ public final class RtEncoder {
         var uvOff = frame.uvOrigin + row * 8 * uvStride + col * 8;
         var idx = (row + 1) * miStride + col + 1;
         var mode = mbMode[idx];
-        var skipInner = mode != B_PRED && mbSkip[idx] != 0;
+        var skipInner = mode != B_PRED && mode != Vp8FrameDecoder.SPLITMV && mbSkip[idx] != 0;
         var level = filterLevels[mbSegment[idx] * 16 + mbRef[idx] * 4 + MODE_LF_CLASS[mode]];
         if (level == 0) {
             return;

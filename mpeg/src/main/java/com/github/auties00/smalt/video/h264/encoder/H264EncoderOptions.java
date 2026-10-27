@@ -1,10 +1,12 @@
 package com.github.auties00.smalt.video.h264.encoder;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ChromaFormat;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.FieldOrder;
 
 import java.time.Duration;
 import java.util.Objects;
@@ -50,6 +52,26 @@ public final class H264EncoderOptions {
      * The largest number of consecutive B pictures.
      */
     private static final int MAX_B_FRAMES = 8;
+
+    /**
+     * The largest number of slices per picture.
+     */
+    private static final int MAX_SLICES = 256;
+
+    /**
+     * The smallest slice size limit in bytes.
+     */
+    private static final int MIN_SLICE_BYTES = 64;
+
+    /**
+     * The longest intra refresh cycle in frames.
+     */
+    private static final int MAX_REFRESH_PERIOD = 4096;
+
+    /**
+     * The largest number of temporal layers.
+     */
+    private static final int MAX_TEMPORAL_LAYERS = 4;
 
     /**
      * The settings of {@link #forFile()}, which {@link #defaults()} also returns.
@@ -101,10 +123,7 @@ public final class H264EncoderOptions {
 
     private final int quality;
 
-    /**
-     * The most frames between two IDR pictures, or 0 for no periodic IDR.
-     */
-    private final int keyframeInterval;
+    private final OptionalInt keyframeInterval;
 
     private final H264EncoderSpeed speed;
 
@@ -125,6 +144,51 @@ public final class H264EncoderOptions {
     private final int bFrames;
 
     private final MediaLimits limits;
+
+    private final ChromaFormat chromaFormat;
+
+    private final int bitDepth;
+
+    private final boolean lossless;
+
+    private final FieldOrder fieldOrder;
+
+    private final H264FieldCoding fieldCoding;
+
+    private final int slices;
+
+    /**
+     * The slice size limit in bytes, or 0 for none.
+     */
+    private final int maxSliceBytes;
+
+    /**
+     * The intra refresh period in frames, or 0 for none.
+     */
+    private final int intraRefresh;
+
+    private final int temporalLayers;
+
+    private final Rational sampleAspectRatio;
+
+    private final boolean fixedFrameRate;
+
+    private final boolean cavlc;
+
+    /**
+     * The first pass statistics of a second pass, or {@code null} for a single pass.
+     */
+    private final H264FirstPassStats firstPassStats;
+
+    private final boolean hrd;
+
+    private final H264AdaptiveQuantization adaptiveQuantization;
+
+    private final double adaptiveQuantizationStrength;
+
+    private final double macroblockTreeStrength;
+
+    private final double psychovisualStrength;
 
     private H264EncoderOptions(Builder builder) {
         this.frameRate = builder.frameRate;
@@ -147,6 +211,24 @@ public final class H264EncoderOptions {
         this.lookahead = builder.lookahead;
         this.bFrames = builder.bFrames;
         this.limits = builder.limits;
+        this.chromaFormat = builder.chromaFormat;
+        this.bitDepth = builder.bitDepth;
+        this.lossless = builder.lossless;
+        this.fieldOrder = builder.fieldOrder;
+        this.fieldCoding = builder.fieldCoding;
+        this.slices = builder.slices;
+        this.maxSliceBytes = builder.maxSliceBytes;
+        this.intraRefresh = builder.intraRefresh;
+        this.temporalLayers = builder.temporalLayers;
+        this.sampleAspectRatio = builder.sampleAspectRatio;
+        this.fixedFrameRate = builder.fixedFrameRate;
+        this.cavlc = builder.cavlc;
+        this.firstPassStats = builder.firstPassStats;
+        this.hrd = builder.hrd;
+        this.adaptiveQuantization = builder.adaptiveQuantization;
+        this.adaptiveQuantizationStrength = builder.adaptiveQuantizationStrength;
+        this.macroblockTreeStrength = builder.macroblockTreeStrength;
+        this.psychovisualStrength = builder.psychovisualStrength;
     }
 
     /**
@@ -328,7 +410,7 @@ public final class H264EncoderOptions {
      * {@link H264Encoder#requestKeyframe()} still produce one.
      */
     public OptionalInt keyframeInterval() {
-        return keyframeInterval == 0 ? OptionalInt.empty() : OptionalInt.of(keyframeInterval);
+        return keyframeInterval;
     }
 
     /**
@@ -342,10 +424,17 @@ public final class H264EncoderOptions {
      * {@return the color description written to the stream and used to convert RGB input;
      * {@link ColorInfo#BT709_LIMITED} by default}
      *
-     * <p>Its matrix is one of {@link MatrixCoefficients#BT709}, {@link MatrixCoefficients#BT601},
-     * {@link MatrixCoefficients#BT470BG}, {@link MatrixCoefficients#SMPTE240M},
-     * {@link MatrixCoefficients#FCC}, {@link MatrixCoefficients#BT2020_NCL} or
-     * {@link MatrixCoefficients#UNSPECIFIED} (converted as BT.709).
+     * <p>RGB input converts with the luma weights of a weighted matrix, {@link MatrixCoefficients#UNSPECIFIED}
+     * as BT.709, and with every other matrix as
+     * {@link com.github.auties00.smalt.image.ops.ImageOps#toYuv(com.github.auties00.smalt.image.Picture,
+     * com.github.auties00.smalt.image.ChromaFormat, ColorInfo) ImageOps.toYuv} converts it, which includes
+     * {@link MatrixCoefficients#YCGCO}, the constant-luminance {@link MatrixCoefficients#BT2020_CL} and
+     * {@link MatrixCoefficients#IDENTITY} (G, B and R coded as Y, Cb and Cr). The identity matrix needs the
+     * {@link com.github.auties00.smalt.image.ChromaFormat#YUV444} {@linkplain #chromaFormat() chroma format},
+     * as H.264 allows it only there. The range, primaries, transfer and matrix are written to the video
+     * usability information, the chroma siting, when specified, as its {@code chroma_sample_loc_type}, and
+     * the mastering display and content light level, when present, as SEI messages of every IDR access
+     * unit.
      */
     public ColorInfo color() {
         return color;
@@ -417,9 +506,11 @@ public final class H264EncoderOptions {
      *
      * <p>With a look-ahead, a half-resolution analysis of the coming pictures estimates how much of
      * each macroblock later pictures reuse, and macroblocks that are reused longer get a finer
-     * quantizer. This costs as many pictures of delay: the encoder emits nothing for the first
-     * {@code lookahead} frames, and {@link H264Encoder#flush} emits the rest. It is ignored, and
-     * treated as 0, in {@link #realtime()} mode.
+     * quantizer ({@link #macroblockTreeStrength()}). This costs as many pictures of delay: the encoder
+     * emits nothing for the first {@code lookahead} frames, and {@link H264Encoder#flush} emits the
+     * rest. It is ignored, and
+     * treated as 0, in {@link #realtime()} mode, with more than one {@linkplain #temporalLayers() temporal
+     * layer}, and in streams that are not 8-bit, 4:2:0, progressive and lossy.
      */
     public int lookahead() {
         return lookahead;
@@ -438,7 +529,9 @@ public final class H264EncoderOptions {
      * B pictures reorder the packets, so packets carry a decoding timestamp earlier than the
      * presentation timestamp. They need a {@link #lookahead()} above their number, so the encoder
      * uses one fewer than the look-ahead when it is smaller, and a profile with B pictures: the
-     * {@link H264Profile#CONSTRAINED_BASELINE} profile and {@link #realtime()} mode code none.
+     * {@link H264Profile#CONSTRAINED_BASELINE} profile and {@link #realtime()} mode code none, and
+     * neither do streams with {@link #intraRefresh()} or more than one {@linkplain #temporalLayers()
+     * temporal layer}, nor streams that are not 8-bit, 4:2:0, progressive and lossy.
      */
     public int bFrames() {
         return bFrames;
@@ -452,23 +545,309 @@ public final class H264EncoderOptions {
         return limits;
     }
 
+    /**
+     * {@return the chroma format of the stream; {@link ChromaFormat#YUV420} by default}
+     *
+     * <p>Every input picture is converted to it: Y'CbCr input of the same layout keeps its samples,
+     * other layouts are resampled as
+     * {@link com.github.auties00.smalt.image.ops.ImageOps#toYuv(com.github.auties00.smalt.image.Picture,
+     * ChromaFormat, ColorInfo) ImageOps.toYuv} resamples them, and RGB input is converted with
+     * {@link #color()}. {@link ChromaFormat#MONOCHROME} codes luma alone ({@code chroma_format_idc} 0).
+     * {@link ChromaFormat#YUV440} is not an H.264 format. The formats each profile codes are listed in
+     * {@link H264Profile}.
+     */
+    public ChromaFormat chromaFormat() {
+        return chromaFormat;
+    }
+
+    /**
+     * {@return the bit depth of the luma and chroma samples, from 8 to 14; 8 by default}
+     *
+     * <p>Input of another depth is scaled to it as
+     * {@link com.github.auties00.smalt.image.ops.ImageOps#toYuv16(com.github.auties00.smalt.image.Picture,
+     * ChromaFormat, ColorInfo, int) ImageOps.toYuv16} scales it: a limited-range sample by shifting, so an 8-bit
+     * sample {@code v} becomes {@code v << (bitDepth - 8)}, a full-range sample by requantizing to the new
+     * largest value. The depths each profile codes are listed in {@link H264Profile}.
+     */
+    public int bitDepth() {
+        return bitDepth;
+    }
+
+    /**
+     * {@return whether the stream is coded losslessly; {@code false} by default}
+     *
+     * <p>A lossless stream sets {@code qpprime_y_zero_transform_bypass_flag} and codes every
+     * macroblock with the quantizer {@code QP'Y} 0, so the residual bypasses the transform and the
+     * decoded pictures equal the input exactly, once converted to the stream's
+     * {@linkplain #chromaFormat() chroma format} and {@linkplain #bitDepth() bit depth}. The rate
+     * control mode, bitrate, quality and quantizer window are ignored. It needs
+     * {@link H264Profile#HIGH_444_PREDICTIVE}.
+     */
+    public boolean lossless() {
+        return lossless;
+    }
+
+    /**
+     * {@return the field order of interlaced input, or {@link FieldOrder#PROGRESSIVE} for progressive
+     * input; {@link FieldOrder#PROGRESSIVE} by default}
+     *
+     * <p>An interlaced input picture is a frame of two interleaved fields: rows 0, 2, 4 and so on
+     * form the top field, the other rows the bottom field, and {@link FieldOrder#TOP_FIRST} means
+     * the top field was sampled first. Such frames are coded as {@link #fieldCoding()} says, with
+     * picture order counts that give the fields their order, and the coded height is rounded up to a
+     * multiple of 32. Interlaced coding needs a profile other than
+     * {@link H264Profile#CONSTRAINED_BASELINE} and a level from 2.1 to 4.1.
+     */
+    public FieldOrder fieldOrder() {
+        return fieldOrder;
+    }
+
+    /**
+     * {@return how interlaced frames are coded; {@link H264FieldCoding#MBAFF} by default}
+     *
+     * <p>Progressive streams ignore it.
+     */
+    public H264FieldCoding fieldCoding() {
+        return fieldCoding;
+    }
+
+    /**
+     * {@return the number of slices each picture is divided into, from 1 to 256; 1 by default}
+     *
+     * <p>Each slice covers whole rows of macroblocks (of macroblock pairs, for interlaced frames
+     * coded as {@link H264FieldCoding#MBAFF}), the rows divided as evenly as possible; a picture with
+     * fewer rows has one slice per row. Slices are decoded independently: no prediction crosses a
+     * slice boundary, so a lost slice does not damage the others, at some cost in compression.
+     * {@link #maxSliceBytes()} may divide the slices further.
+     */
+    public int slices() {
+        return slices;
+    }
+
+    /**
+     * {@return the largest size of a slice NAL unit in bytes, at least 64, or empty for no limit; empty
+     * by default}
+     *
+     * <p>A slice ends before the macroblock that would make its NAL unit larger, counting the NAL
+     * unit header and the emulation prevention bytes but not the length prefix or start code, and the
+     * next slice starts with that macroblock; only a slice of a single macroblock can exceed the limit.
+     * The limit suits transports that carry each NAL unit in one datagram. With a limit, the
+     * macroblocks of a picture are decided on the calling thread as they are coded, whatever
+     * {@link #threads()} says.
+     */
+    public OptionalInt maxSliceBytes() {
+        return maxSliceBytes == 0 ? OptionalInt.empty() : OptionalInt.of(maxSliceBytes);
+    }
+
+    /**
+     * {@return the number of frames over which periodic intra refresh sweeps the picture, from 2 to
+     * 4096, or empty for no intra refresh; empty by default}
+     *
+     * <p>With intra refresh the encoder codes an IDR picture first and on
+     * {@link H264Encoder#requestKeyframe()}, and P pictures otherwise: neither
+     * {@link #keyframeInterval()} nor scene cuts produce IDR pictures. Each P picture codes a band of
+     * {@code ceil(columns / frames)} macroblock columns as intra macroblocks, the bands of a cycle
+     * covering the picture from left to right, so a cycle lasts {@code ceil(columns / band)} pictures,
+     * at most the given number; the columns that a cycle refreshed predict only from columns it
+     * refreshed. The first picture of each cycle carries a recovery point SEI message, so a decoder
+     * that starts there, or recovers from a loss there, outputs exact pictures from the last picture
+     * of the cycle on. The size of every picture stays close to the size of a P picture, which suits
+     * real-time transmission. The stream uses one reference frame and no B pictures, and it cannot be
+     * combined with {@link #temporalLayers()}.
+     */
+    public OptionalInt intraRefresh() {
+        return intraRefresh == 0 ? OptionalInt.empty() : OptionalInt.of(intraRefresh);
+    }
+
+    /**
+     * {@return the number of temporal layers, from 1 to 4; 1 by default}
+     *
+     * <p>With {@code n} layers the frames repeat a pattern of {@code 2^(n - 1)} frames whose first
+     * frame is in layer 0: with two layers 0, 1; with three 0, 2, 1, 2; with four 0, 3, 2, 3, 1, 3,
+     * 2, 3. A frame of layer {@code t} above 0 is predicted from the latest frame of a lower layer, a
+     * frame of layer 0 from the latest frame of layer 0, and the frames of the highest layer are not
+     * reference pictures, so the frames of any layer and the layers below it form a stream that
+     * decodes on its own at a fraction of the frame rate. Each slice is preceded by a prefix NAL unit
+     * ({@code nal_unit_type} 14) whose {@code temporal_id} names the layer, which decoders of the
+     * profiles without the scalable extensions ignore, and {@link H264EncoderStats#lastTemporalLayer()}
+     * reports the layer of the last packet. Frames of layer {@code t} are coded {@code 2 * t}
+     * quantizer steps coarser. The stream uses no B pictures and no look-ahead, and more than one layer
+     * cannot be combined with {@link #intraRefresh()}.
+     */
+    public int temporalLayers() {
+        return temporalLayers;
+    }
+
+    /**
+     * {@return the sample aspect ratio, the width of a sample over its height, written to the video
+     * usability information; {@code 1/1} by default}
+     *
+     * <p>Both terms are from 1 to 65535. A ratio of ITU-T H.264 Table E-1 is written as its
+     * {@code aspect_ratio_idc}, any other as {@code Extended_SAR}.
+     */
+    public Rational sampleAspectRatio() {
+        return sampleAspectRatio;
+    }
+
+    /**
+     * {@return whether the video usability information declares that pictures follow at the nominal
+     * {@linkplain #frameRate() frame rate} ({@code fixed_frame_rate_flag}); {@code false} by default}
+     */
+    public boolean fixedFrameRate() {
+        return fixedFrameRate;
+    }
+
+    /**
+     * {@return whether a profile other than {@link H264Profile#CONSTRAINED_BASELINE}, which always
+     * uses CAVLC, entropy codes with CAVLC instead of CABAC; {@code false} by default}
+     *
+     * <p>CAVLC costs more bits than CABAC and less decoding time. A CAVLC stream has no
+     * {@linkplain #bFrames() B pictures}, and an 8-bit, 4:2:0, progressive, lossy CAVLC stream has no 8x8
+     * transform either.
+     */
+    public boolean cavlc() {
+        return cavlc;
+    }
+
+    /**
+     * {@return the first pass statistics of the video, which make the encode the second pass of a two-pass
+     * encode, or empty for a single pass; empty by default}
+     *
+     * <p>An {@link H264FirstPass} measures them. With them, an {@link H264RateControl#AVERAGE_BITRATE} encode
+     * spends its bits over the whole video instead of over the next few seconds: complex passages get the bits
+     * simple ones save, and the total size of the packets of the measured frames comes close to the
+     * {@linkplain #bitrate() bitrate} times their duration ({@link H264FirstPassStats#duration()}). The
+     * buffering verifier still bounds every frame, and the encoder never codes a frame twice to correct its
+     * size. The second pass expects the frames of the first pass, in the same order and with the same
+     * timestamps, and the same options apart from the speed, the thread count, the bitrate and these
+     * statistics; frames beyond the measured ones are coded as in a single pass, and a
+     * {@linkplain H264Encoder#setTargetBitrate(long) new target bitrate} applies to the measured frames not yet
+     * coded. The statistics need lossy {@link H264RateControl#AVERAGE_BITRATE} coding outside
+     * {@link #realtime()} mode, and the picture size they were measured at.
+     *
+     * @apiNote For a stream of a target size, set the bitrate to the size in bits divided by
+     * {@link H264FirstPassStats#duration()} in seconds.
+     */
+    public Optional<H264FirstPassStats> firstPassStats() {
+        return Optional.ofNullable(firstPassStats);
+    }
+
+    /**
+     * {@return whether the stream signals a hypothetical reference decoder (ITU-T H.264 Annex C) that it
+     * conforms to, as broadcast transport streams require; {@code false} by default}
+     *
+     * <p>The video usability information then carries NAL HRD parameters with one schedule: the
+     * {@linkplain #maxBitrate() maximum bitrate} rounded down to a multiple of 64 bits per second as the
+     * delivery rate, and the {@linkplain #bufferSize() buffer} in bits rounded down to a multiple of 16 as the
+     * coded picture buffer. Every IDR access unit carries a buffering period SEI message and every access
+     * unit a picture timing SEI message, and rate control keeps every access unit inside that buffer, so that
+     * each arrives before its removal time, as far as the {@linkplain #maxQuantizer() quantizer window}
+     * allows. The first access unit is removed when nine tenths of the buffer has arrived, and access unit
+     * {@code n} in decoding order {@code n} frame periods later, or {@code n} field periods for field
+     * pictures, whatever the frame timestamps, which suits input at the nominal
+     * {@linkplain #frameRate() frame rate}. Every access unit starts with an access unit delimiter and every
+     * IDR access unit carries the parameter sets, also in the {@link H264PacketFormat#LENGTH_PREFIXED} format,
+     * and the decoder counts every byte of a packet, a length prefix as the four-byte start code it becomes:
+     * the stream it checks is the byte stream a transport stream multiplexer makes of the packets.
+     * <ul>
+     *   <li>With {@link H264RateControl#CONSTANT_BITRATE} the decoder receives the stream at exactly the
+     *       bitrate ({@code cbr_flag} 1): whenever the buffer would overflow, the access unit is padded with
+     *       filler data NAL units, so the stream's rate is constant, as a transport stream multiplex
+     *       needs.</li>
+     *   <li>With {@link H264RateControl#AVERAGE_BITRATE} the delivery is variable ({@code cbr_flag} 0) and no
+     *       filler is added.</li>
+     * </ul>
+     * The signaling needs a bitrate mode and a lossy stream; with {@code CONSTANT_BITRATE} the maximum
+     * bitrate must be the bitrate. At the maximum bitrate the buffer must last at least two frame periods and
+     * less than 2^24 periods of the 90 kHz clock (about 186 seconds), which the {@link H264Encoder} constructor
+     * checks. The decoder's parameters are fixed for the whole stream, so
+     * {@link H264Encoder#setTargetBitrate(long)} is refused.
+     */
+    public boolean hrd() {
+        return hrd;
+    }
+
+    /**
+     * {@return how the quantizer varies between the macroblocks of a picture;
+     * {@link H264AdaptiveQuantization#VARIANCE} by default}
+     *
+     * <p>{@link #realtime()} mode and lossless streams code every macroblock with the picture's quantizer,
+     * whatever this says.
+     */
+    public H264AdaptiveQuantization adaptiveQuantization() {
+        return adaptiveQuantization;
+    }
+
+    /**
+     * {@return the strength of {@linkplain #adaptiveQuantization() adaptive quantization}, from 0, which
+     * varies nothing, to 2; 1 by default}
+     *
+     * <p>The offsets of every mode grow in proportion to it. They stay within six quantizer steps either way
+     * of the picture's quantizer, and within the {@linkplain #minQuantizer() quantizer window}.
+     */
+    public double adaptiveQuantizationStrength() {
+        return adaptiveQuantizationStrength;
+    }
+
+    /**
+     * {@return how strongly the macroblock tree lowers the quantizer of the macroblocks that later pictures
+     * predict from, from 0, which turns it off, to 2; 1 by default}
+     *
+     * <p>The macroblock tree estimates, over the {@linkplain #lookahead() look-ahead}, how much of each
+     * macroblock the following pictures reuse, and quantizes the macroblocks that are reused longer finer, as
+     * their quality propagates. It needs a look-ahead, and so applies neither in {@link #realtime()} mode nor
+     * to streams that are not 8-bit, 4:2:0, progressive and lossy.
+     */
+    public double macroblockTreeStrength() {
+        return macroblockTreeStrength;
+    }
+
+    /**
+     * {@return the weight of texture retention in mode decision, from 0, which decides by squared error and
+     * bits alone, to 2; 0 by default}
+     *
+     * <p>Above 0, the rate-distortion cost of each candidate coding of a macroblock adds the difference between
+     * the texture energy (the sum of the magnitudes of the 4x4 Hadamard coefficients apart from the DC
+     * coefficient) of the source luma and of the candidate's reconstruction, times the strength and the
+     * quantizer step. Candidates that keep the detail, grain and noise of the source then win over smoother
+     * ones that would blur it, which looks sharper at the same bitrate though it measures a lower PSNR. From
+     * {@link H264EncoderSpeed#FAST} on every rate-distortion choice between candidates weighs it;
+     * {@link H264EncoderSpeed#FASTEST}, which decides by prediction error, weighs it only in the choice between
+     * skipping a macroblock and coding it. Streams that are not 8-bit, 4:2:0, progressive and lossy ignore the
+     * setting.
+     */
+    public double psychovisualStrength() {
+        return psychovisualStrength;
+    }
+
     @Override
     public boolean equals(Object o) {
         return o instanceof H264EncoderOptions that && frameRate.equals(that.frameRate)
                 && timeBase.equals(that.timeBase) && profile == that.profile && level == that.level
                 && rateControl == that.rateControl && bitrate == that.bitrate && maxBitrate == that.maxBitrate
                 && Objects.equals(bufferSize, that.bufferSize) && quality == that.quality
-                && keyframeInterval == that.keyframeInterval && speed == that.speed && color.equals(that.color)
+                && keyframeInterval.equals(that.keyframeInterval) && speed == that.speed && color.equals(that.color)
                 && threads == that.threads && packetFormat == that.packetFormat && minQuantizer == that.minQuantizer
                 && maxQuantizer == that.maxQuantizer && realtime == that.realtime && lookahead == that.lookahead
-                && bFrames == that.bFrames && limits.equals(that.limits);
+                && bFrames == that.bFrames && limits.equals(that.limits) && chromaFormat == that.chromaFormat
+                && bitDepth == that.bitDepth && lossless == that.lossless && fieldOrder == that.fieldOrder
+                && fieldCoding == that.fieldCoding && slices == that.slices && maxSliceBytes == that.maxSliceBytes
+                && intraRefresh == that.intraRefresh && temporalLayers == that.temporalLayers
+                && sampleAspectRatio.equals(that.sampleAspectRatio) && fixedFrameRate == that.fixedFrameRate
+                && cavlc == that.cavlc && Objects.equals(firstPassStats, that.firstPassStats) && hrd == that.hrd
+                && adaptiveQuantization == that.adaptiveQuantization
+                && Double.compare(adaptiveQuantizationStrength, that.adaptiveQuantizationStrength) == 0
+                && Double.compare(macroblockTreeStrength, that.macroblockTreeStrength) == 0
+                && Double.compare(psychovisualStrength, that.psychovisualStrength) == 0;
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(frameRate, timeBase, profile, level, rateControl, bitrate, maxBitrate, bufferSize, quality,
                 keyframeInterval, speed, color, threads, packetFormat, minQuantizer, maxQuantizer, realtime, lookahead,
-                bFrames, limits);
+                bFrames, limits, chromaFormat, bitDepth, lossless, fieldOrder, fieldCoding, slices, maxSliceBytes,
+                intraRefresh, temporalLayers, sampleAspectRatio, fixedFrameRate, cavlc, firstPassStats, hrd,
+                adaptiveQuantization, adaptiveQuantizationStrength, macroblockTreeStrength, psychovisualStrength);
     }
 
     @Override
@@ -477,10 +856,18 @@ public final class H264EncoderOptions {
                 + ", level=" + (level == null ? "auto" : level) + ", rateControl=" + rateControl + ", bitrate="
                 + bitrate + ", maxBitrate=" + (maxBitrate == 0 ? "default" : maxBitrate) + ", bufferSize="
                 + (bufferSize == null ? "default" : bufferSize) + ", quality=" + quality + ", keyframeInterval="
-                + keyframeInterval() + ", speed=" + speed + ", color=" + color + ", threads=" + threads
+                + keyframeInterval + ", speed=" + speed + ", color=" + color + ", threads=" + threads
                 + ", packetFormat=" + packetFormat + ", quantizers=" + minQuantizer + ".." + maxQuantizer
                 + ", realtime=" + realtime + ", lookahead=" + lookahead + ", bFrames=" + bFrames + ", limits=" + limits
-                + "]";
+                + ", chromaFormat=" + chromaFormat + ", bitDepth=" + bitDepth + ", lossless=" + lossless
+                + ", fieldOrder=" + fieldOrder + ", fieldCoding=" + fieldCoding + ", slices=" + slices
+                + ", maxSliceBytes=" + (maxSliceBytes == 0 ? "none" : maxSliceBytes) + ", intraRefresh="
+                + (intraRefresh == 0 ? "none" : intraRefresh) + ", temporalLayers=" + temporalLayers
+                + ", sampleAspectRatio=" + sampleAspectRatio + ", fixedFrameRate=" + fixedFrameRate + ", cavlc=" + cavlc
+                + ", firstPassStats=" + (firstPassStats == null ? "none" : firstPassStats) + ", hrd=" + hrd
+                + ", adaptiveQuantization=" + adaptiveQuantization + ", adaptiveQuantizationStrength="
+                + adaptiveQuantizationStrength + ", macroblockTreeStrength=" + macroblockTreeStrength
+                + ", psychovisualStrength=" + psychovisualStrength + "]";
     }
 
     /**
@@ -510,9 +897,7 @@ public final class H264EncoderOptions {
 
         private int quality;
 
-        private int keyframeInterval;
-
-        private boolean periodicKeyframes;
+        private OptionalInt keyframeInterval;
 
         private H264EncoderSpeed speed;
 
@@ -534,6 +919,42 @@ public final class H264EncoderOptions {
 
         private MediaLimits limits;
 
+        private ChromaFormat chromaFormat;
+
+        private int bitDepth;
+
+        private boolean lossless;
+
+        private FieldOrder fieldOrder;
+
+        private H264FieldCoding fieldCoding;
+
+        private int slices;
+
+        private int maxSliceBytes;
+
+        private int intraRefresh;
+
+        private int temporalLayers;
+
+        private Rational sampleAspectRatio;
+
+        private boolean fixedFrameRate;
+
+        private boolean cavlc;
+
+        private H264FirstPassStats firstPassStats;
+
+        private boolean hrd;
+
+        private H264AdaptiveQuantization adaptiveQuantization;
+
+        private double adaptiveQuantizationStrength;
+
+        private double macroblockTreeStrength;
+
+        private double psychovisualStrength;
+
         private Builder() {
             frameRate = new Rational(30, 1);
             timeBase = new Rational(1, 90_000);
@@ -542,8 +963,7 @@ public final class H264EncoderOptions {
             bitrate = 1_000_000;
             bufferSize = Duration.ofSeconds(1);
             quality = 23;
-            keyframeInterval = 60;
-            periodicKeyframes = true;
+            keyframeInterval = OptionalInt.of(60);
             speed = H264EncoderSpeed.BALANCED;
             color = ColorInfo.BT709_LIMITED;
             threads = 1;
@@ -553,6 +973,16 @@ public final class H264EncoderOptions {
             lookahead = 20;
             bFrames = 7;
             limits = MediaLimits.DEFAULT;
+            chromaFormat = ChromaFormat.YUV420;
+            bitDepth = 8;
+            fieldOrder = FieldOrder.PROGRESSIVE;
+            fieldCoding = H264FieldCoding.MBAFF;
+            slices = 1;
+            temporalLayers = 1;
+            sampleAspectRatio = new Rational(1, 1);
+            adaptiveQuantization = H264AdaptiveQuantization.VARIANCE;
+            adaptiveQuantizationStrength = 1;
+            macroblockTreeStrength = 1;
         }
 
         private Builder(H264EncoderOptions from) {
@@ -567,7 +997,6 @@ public final class H264EncoderOptions {
             bufferSize = from.bufferSize;
             quality = from.quality;
             keyframeInterval = from.keyframeInterval;
-            periodicKeyframes = from.keyframeInterval != 0;
             speed = from.speed;
             color = from.color;
             threads = from.threads;
@@ -578,6 +1007,24 @@ public final class H264EncoderOptions {
             lookahead = from.lookahead;
             bFrames = from.bFrames;
             limits = from.limits;
+            chromaFormat = from.chromaFormat;
+            bitDepth = from.bitDepth;
+            lossless = from.lossless;
+            fieldOrder = from.fieldOrder;
+            fieldCoding = from.fieldCoding;
+            slices = from.slices;
+            maxSliceBytes = from.maxSliceBytes;
+            intraRefresh = from.intraRefresh;
+            temporalLayers = from.temporalLayers;
+            sampleAspectRatio = from.sampleAspectRatio;
+            fixedFrameRate = from.fixedFrameRate;
+            cavlc = from.cavlc;
+            firstPassStats = from.firstPassStats;
+            hrd = from.hrd;
+            adaptiveQuantization = from.adaptiveQuantization;
+            adaptiveQuantizationStrength = from.adaptiveQuantizationStrength;
+            macroblockTreeStrength = from.macroblockTreeStrength;
+            psychovisualStrength = from.psychovisualStrength;
         }
 
         /**
@@ -723,8 +1170,7 @@ public final class H264EncoderOptions {
          * @return this builder
          */
         public Builder keyframeInterval(int frames) {
-            this.keyframeInterval = frames;
-            this.periodicKeyframes = true;
+            this.keyframeInterval = OptionalInt.of(frames);
             return this;
         }
 
@@ -735,8 +1181,7 @@ public final class H264EncoderOptions {
          * @return this builder
          */
         public Builder noPeriodicKeyframes() {
-            this.keyframeInterval = 0;
-            this.periodicKeyframes = false;
+            this.keyframeInterval = OptionalInt.empty();
             return this;
         }
 
@@ -844,6 +1289,241 @@ public final class H264EncoderOptions {
         }
 
         /**
+         * Sets the chroma format of the stream; see {@link H264EncoderOptions#chromaFormat()}.
+         *
+         * @param chromaFormat the value
+         * @return this builder
+         */
+        public Builder chromaFormat(ChromaFormat chromaFormat) {
+            this.chromaFormat = Objects.requireNonNull(chromaFormat, "chromaFormat");
+            return this;
+        }
+
+        /**
+         * Sets the bit depth of the samples; see {@link H264EncoderOptions#bitDepth()}.
+         *
+         * @param bitDepth the value
+         * @return this builder
+         */
+        public Builder bitDepth(int bitDepth) {
+            this.bitDepth = bitDepth;
+            return this;
+        }
+
+        /**
+         * Sets whether the stream is coded losslessly; see {@link H264EncoderOptions#lossless()}.
+         *
+         * @param lossless the value
+         * @return this builder
+         */
+        public Builder lossless(boolean lossless) {
+            this.lossless = lossless;
+            return this;
+        }
+
+        /**
+         * Sets the field order of the input; see {@link H264EncoderOptions#fieldOrder()}.
+         *
+         * @param fieldOrder the value
+         * @return this builder
+         */
+        public Builder fieldOrder(FieldOrder fieldOrder) {
+            this.fieldOrder = Objects.requireNonNull(fieldOrder, "fieldOrder");
+            return this;
+        }
+
+        /**
+         * Sets how interlaced frames are coded; see {@link H264EncoderOptions#fieldCoding()}.
+         *
+         * @param fieldCoding the value
+         * @return this builder
+         */
+        public Builder fieldCoding(H264FieldCoding fieldCoding) {
+            this.fieldCoding = Objects.requireNonNull(fieldCoding, "fieldCoding");
+            return this;
+        }
+
+        /**
+         * Sets the number of slices per picture; see {@link H264EncoderOptions#slices()}.
+         *
+         * @param slices the value
+         * @return this builder
+         */
+        public Builder slices(int slices) {
+            this.slices = slices;
+            return this;
+        }
+
+        /**
+         * Sets the largest size of a slice NAL unit; see {@link H264EncoderOptions#maxSliceBytes()}.
+         *
+         * @param bytes the value
+         * @return this builder
+         */
+        public Builder maxSliceBytes(int bytes) {
+            this.maxSliceBytes = bytes;
+            return this;
+        }
+
+        /**
+         * Removes the limit on the size of a slice NAL unit; see
+         * {@link H264EncoderOptions#maxSliceBytes()}.
+         *
+         * @return this builder
+         */
+        public Builder noMaxSliceBytes() {
+            this.maxSliceBytes = 0;
+            return this;
+        }
+
+        /**
+         * Enables periodic intra refresh over a number of frames; see
+         * {@link H264EncoderOptions#intraRefresh()}.
+         *
+         * @param frames the value
+         * @return this builder
+         */
+        public Builder intraRefresh(int frames) {
+            this.intraRefresh = frames;
+            return this;
+        }
+
+        /**
+         * Disables periodic intra refresh; see {@link H264EncoderOptions#intraRefresh()}.
+         *
+         * @return this builder
+         */
+        public Builder noIntraRefresh() {
+            this.intraRefresh = 0;
+            return this;
+        }
+
+        /**
+         * Sets the number of temporal layers; see {@link H264EncoderOptions#temporalLayers()}.
+         *
+         * @param temporalLayers the value
+         * @return this builder
+         */
+        public Builder temporalLayers(int temporalLayers) {
+            this.temporalLayers = temporalLayers;
+            return this;
+        }
+
+        /**
+         * Sets the sample aspect ratio; see {@link H264EncoderOptions#sampleAspectRatio()}.
+         *
+         * @param sampleAspectRatio the value
+         * @return this builder
+         */
+        public Builder sampleAspectRatio(Rational sampleAspectRatio) {
+            this.sampleAspectRatio = Objects.requireNonNull(sampleAspectRatio, "sampleAspectRatio");
+            return this;
+        }
+
+        /**
+         * Sets whether the stream declares a fixed frame rate; see
+         * {@link H264EncoderOptions#fixedFrameRate()}.
+         *
+         * @param fixedFrameRate the value
+         * @return this builder
+         */
+        public Builder fixedFrameRate(boolean fixedFrameRate) {
+            this.fixedFrameRate = fixedFrameRate;
+            return this;
+        }
+
+        /**
+         * Sets whether the stream is entropy coded with CAVLC; see {@link H264EncoderOptions#cavlc()}.
+         *
+         * @param cavlc the value
+         * @return this builder
+         */
+        public Builder cavlc(boolean cavlc) {
+            this.cavlc = cavlc;
+            return this;
+        }
+
+        /**
+         * Makes the encode the second pass of a two-pass encode; see
+         * {@link H264EncoderOptions#firstPassStats()}.
+         *
+         * @param stats the first pass statistics of the video
+         * @return this builder
+         */
+        public Builder firstPassStats(H264FirstPassStats stats) {
+            this.firstPassStats = Objects.requireNonNull(stats, "stats");
+            return this;
+        }
+
+        /**
+         * Makes the encode a single pass, the default; see {@link H264EncoderOptions#firstPassStats()}.
+         *
+         * @return this builder
+         */
+        public Builder noFirstPassStats() {
+            this.firstPassStats = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the stream signals a hypothetical reference decoder; see {@link H264EncoderOptions#hrd()}.
+         *
+         * @param hrd the value
+         * @return this builder
+         */
+        public Builder hrd(boolean hrd) {
+            this.hrd = hrd;
+            return this;
+        }
+
+        /**
+         * Sets how the quantizer varies between macroblocks; see
+         * {@link H264EncoderOptions#adaptiveQuantization()}.
+         *
+         * @param mode the value
+         * @return this builder
+         */
+        public Builder adaptiveQuantization(H264AdaptiveQuantization mode) {
+            this.adaptiveQuantization = Objects.requireNonNull(mode, "mode");
+            return this;
+        }
+
+        /**
+         * Sets the strength of adaptive quantization; see
+         * {@link H264EncoderOptions#adaptiveQuantizationStrength()}.
+         *
+         * @param strength the value
+         * @return this builder
+         */
+        public Builder adaptiveQuantizationStrength(double strength) {
+            this.adaptiveQuantizationStrength = strength;
+            return this;
+        }
+
+        /**
+         * Sets the strength of the macroblock tree; see {@link H264EncoderOptions#macroblockTreeStrength()}.
+         *
+         * @param strength the value
+         * @return this builder
+         */
+        public Builder macroblockTreeStrength(double strength) {
+            this.macroblockTreeStrength = strength;
+            return this;
+        }
+
+        /**
+         * Sets the weight of texture retention in mode decision; see
+         * {@link H264EncoderOptions#psychovisualStrength()}.
+         *
+         * @param strength the value
+         * @return this builder
+         */
+        public Builder psychovisualStrength(double strength) {
+            this.psychovisualStrength = strength;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -854,7 +1534,18 @@ public final class H264EncoderOptions {
          * {@code Integer.MAX_VALUE} milliseconds, the quality is not in [0, 51], the key frame
          * interval is not positive, the thread count is not in [1, 64], the look-ahead is not in
          * [0, 120], the B picture count is not in [0, 8], the quantizer window is not inside [0, 51]
-         * or is empty, or the color matrix is not one {@link H264EncoderOptions#color()} accepts
+         * or is empty, the bit depth is not in [8, 14], the slice count is not in [1, 256], the slice
+         * size limit is below 64 bytes, the intra refresh period is not in [2, 4096], the temporal
+         * layers are not in [1, 4], the sample aspect ratio is not positive or a term exceeds 65535,
+         * the chroma format is {@link ChromaFormat#YUV440}, the profile does not code the chroma
+         * format, bit depth, lossless coding or interlaced coding (see {@link H264Profile}), the color
+         * matrix is {@link MatrixCoefficients#IDENTITY} without {@link ChromaFormat#YUV444}, intra
+         * refresh is combined with more than one temporal layer, a strength of adaptive quantization, of the
+         * macroblock tree or of texture retention is not in [0, 2], first pass statistics are set without
+         * {@link H264RateControl#AVERAGE_BITRATE}, in real-time mode or for a lossless stream, or the
+         * hypothetical reference decoder is signaled with {@link H264RateControl#CONSTANT_QUALITY}, for a
+         * lossless stream, or with {@link H264RateControl#CONSTANT_BITRATE} and a maximum bitrate other than
+         * the bitrate
          */
         public H264EncoderOptions build() {
             var rate = frameRate.toDouble();
@@ -881,20 +1572,86 @@ public final class H264EncoderOptions {
                 Checks.inRange("buffer size", bufferSize, Duration.ZERO, Duration.ofMillis(Integer.MAX_VALUE));
             }
             Checks.inRange("quality", quality, MIN_QUANTIZER, MAX_QUANTIZER);
-            if (periodicKeyframes) {
-                Checks.positive("keyframe interval", keyframeInterval);
+            if (keyframeInterval.isPresent()) {
+                Checks.positive("keyframe interval", keyframeInterval.getAsInt());
             }
             Checks.inRange("thread count", threads, 1, MAX_THREADS);
             Checks.inRange("look-ahead", lookahead, 0, MAX_LOOKAHEAD);
             Checks.inRange("B picture count", bFrames, 0, MAX_B_FRAMES);
             Checks.inRange("minimum quantizer", minQuantizer, MIN_QUANTIZER, MAX_QUANTIZER);
             Checks.inRange("maximum quantizer", maxQuantizer, minQuantizer, MAX_QUANTIZER);
-            switch (color.matrix()) {
-                case BT709, BT601, BT470BG, SMPTE240M, FCC, BT2020_NCL, UNSPECIFIED -> {
+            Checks.inRange("bit depth", bitDepth, 8, 14);
+            Checks.inRange("slice count", slices, 1, MAX_SLICES);
+            if (maxSliceBytes != 0) {
+                Checks.inRange("slice size limit", maxSliceBytes, MIN_SLICE_BYTES, Integer.MAX_VALUE);
+            }
+            if (intraRefresh != 0) {
+                Checks.inRange("intra refresh period", intraRefresh, 2, MAX_REFRESH_PERIOD);
+            }
+            Checks.inRange("temporal layers", temporalLayers, 1, MAX_TEMPORAL_LAYERS);
+            if (sampleAspectRatio.numerator() <= 0 || sampleAspectRatio.denominator() <= 0
+                    || sampleAspectRatio.numerator() > 65535 || sampleAspectRatio.denominator() > 65535) {
+                throw new IllegalArgumentException("sample aspect ratio " + sampleAspectRatio
+                        + " is not positive with terms of at most 65535");
+            }
+            if (chromaFormat == ChromaFormat.YUV440) {
+                throw new IllegalArgumentException("4:4:0 is not an H.264 chroma format");
+            }
+            var formatOk = switch (chromaFormat) {
+                case YUV420 -> true;
+                case MONOCHROME -> profile.high();
+                case YUV422 -> profile == H264Profile.HIGH_422 || profile == H264Profile.HIGH_444_PREDICTIVE;
+                default -> profile == H264Profile.HIGH_444_PREDICTIVE;
+            };
+            if (!formatOk) {
+                throw new IllegalArgumentException("the " + profile + " profile does not code " + chromaFormat);
+            }
+            if (bitDepth > profile.maxBitDepth()) {
+                throw new IllegalArgumentException("the " + profile + " profile does not code " + bitDepth
+                        + "-bit samples");
+            }
+            if (lossless && profile != H264Profile.HIGH_444_PREDICTIVE) {
+                throw new IllegalArgumentException("lossless coding needs the HIGH_444_PREDICTIVE profile");
+            }
+            if (fieldOrder.isInterlaced() && profile == H264Profile.CONSTRAINED_BASELINE) {
+                throw new IllegalArgumentException("the CONSTRAINED_BASELINE profile does not code interlaced video");
+            }
+            if (color.matrix() == MatrixCoefficients.IDENTITY && chromaFormat != ChromaFormat.YUV444) {
+                throw new IllegalArgumentException("the identity color matrix needs the YUV444 chroma format");
+            }
+            if (intraRefresh != 0 && temporalLayers > 1) {
+                throw new IllegalArgumentException("intra refresh cannot be combined with temporal layers");
+            }
+            strength("adaptive quantization strength", adaptiveQuantizationStrength);
+            strength("macroblock tree strength", macroblockTreeStrength);
+            strength("psychovisual strength", psychovisualStrength);
+            if (firstPassStats != null && (rateControl != H264RateControl.AVERAGE_BITRATE || realtime || lossless)) {
+                throw new IllegalArgumentException("first pass statistics need lossy AVERAGE_BITRATE rate control "
+                        + "outside real-time mode");
+            }
+            if (hrd) {
+                if (rateControl == H264RateControl.CONSTANT_QUALITY || lossless) {
+                    throw new IllegalArgumentException("the hypothetical reference decoder needs a lossy bitrate mode");
                 }
-                default -> throw new IllegalArgumentException("color matrix " + color.matrix() + " is not supported");
+                if (rateControl == H264RateControl.CONSTANT_BITRATE && explicitMaxBitrate && maxBitrate != bitrate) {
+                    throw new IllegalArgumentException("a constant bitrate hypothetical reference decoder needs the "
+                            + "maximum bitrate " + maxBitrate + " to be the bitrate " + bitrate);
+                }
             }
             return new H264EncoderOptions(this);
+        }
+
+        /**
+         * Checks that a strength is in [0, 2].
+         *
+         * @param name the name of the setting
+         * @param value the strength
+         * @throws IllegalArgumentException if the strength is not in [0, 2]
+         */
+        private static void strength(String name, double value) {
+            if (!(value >= 0 && value <= 2)) {
+                throw new IllegalArgumentException(name + " " + value + " is not in [0, 2]");
+            }
         }
     }
 }

@@ -6,6 +6,7 @@ import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.Fixtures;
 import com.github.auties00.smalt.testkit.Oracle;
+import com.github.auties00.smalt.testkit.Scratch;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -39,7 +40,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  */
 @DisplayName("Mp4Muxer")
 class Mp4MuxerTest {
-    static final Path OUTPUT = Path.of("target", "mp4-muxer-out");
+    static final Path OUTPUT = Scratch.directory("mp4-muxer-out");
 
     record RemuxCase(String name, java.util.function.Supplier<Path> file) {
         @Override

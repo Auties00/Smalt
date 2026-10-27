@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.internal.limits;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.internal.region.RegionOutsideImageException;
 
 import java.util.function.Supplier;
 
@@ -10,7 +11,8 @@ import java.util.function.Supplier;
  *
  * <p>Decoders read untrusted input, so any failure of their body is the input's fault:
  * <ul>
- *   <li>a {@link MediaException} passes through unchanged;</li>
+ *   <li>a {@link MediaException} passes through unchanged, and so does the {@link IllegalArgumentException}
+ *       of a decoding region outside the image ({@link RegionOutsideImageException});</li>
  *   <li>an {@link OutOfMemoryError} or a {@link StackOverflowError} becomes
  *       {@link MediaException.LimitExceeded};</li>
  *   <li>any other {@link RuntimeException} becomes {@link MediaException.Malformed} with the
@@ -56,6 +58,8 @@ public final class Guards {
             throw outOfMemory(what);
         } catch (StackOverflowError error) {
             throw tooDeep(what);
+        } catch (RegionOutsideImageException exception) {
+            throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt " + what, exception);
         }
@@ -86,6 +90,27 @@ public final class Guards {
             throw tooDeep(what);
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt " + what, exception);
+        }
+    }
+
+    /**
+     * Runs a body that reads untrusted input and already reports its own failures, translating only the resource
+     * failures that escape it: an {@link OutOfMemoryError} or a {@link StackOverflowError} becomes
+     * {@link MediaException.LimitExceeded}, and every other failure propagates unchanged.
+     *
+     * @param what the input, a noun phrase for messages
+     * @param body the work to run
+     * @param <T> the result type
+     * @return the result of {@code body}
+     * @throws MediaException.LimitExceeded if {@code body} runs out of memory or stack
+     */
+    public static <T> T bounded(String what, Supplier<T> body) {
+        try {
+            return body.get();
+        } catch (OutOfMemoryError error) {
+            throw outOfMemory(what);
+        } catch (StackOverflowError error) {
+            throw tooDeep(what);
         }
     }
 

@@ -38,7 +38,7 @@ public final class EncoderChannel {
      * The masking ratio of tonal bands and of short windows: thresholds sit 29 dB below band
      * energies.
      */
-    private static final float MASKING_RATIO = (float) Math.pow(10, -2.9);
+    private static final float MASKING_RATIO = (float) StrictMath.pow(10, -2.9);
 
     /**
      * The signal-to-mask ratio of a tonal band, in decibels.
@@ -91,27 +91,27 @@ public final class EncoderChannel {
     /**
      * The signal-to-mask ratio of a noise-like band at this channel's bitrate, in decibels.
      */
-    private final float noiseSmr;
+    private float noiseSmr;
 
     /**
      * The long-window band layout.
      */
-    private final BandLayout longLayout;
+    private BandLayout longLayout;
 
     /**
      * The short-window band layout.
      */
-    private final BandLayout shortLayout;
+    private BandLayout shortLayout;
 
     /**
      * The long-window TNS encoder, or {@code null} when TNS is disabled.
      */
-    private final TnsEncoder longTns;
+    private TnsEncoder longTns;
 
     /**
      * The short-window TNS encoder, or {@code null} when TNS is disabled.
      */
-    private final TnsEncoder shortTns;
+    private TnsEncoder shortTns;
 
     /**
      * The forward transform.
@@ -392,6 +392,35 @@ public final class EncoderChannel {
     }
 
     /**
+     * Adapts the channel to a new bandwidth and bitrate from the next frame on, keeping the transform overlap and
+     * the attack detector's history; the previous frame's thresholds stop limiting pre-echo when the number of
+     * bands changes, since they do not cover the new bands.
+     *
+     * @param sampleRate the sampling rate in hertz
+     * @param bandwidth the audio bandwidth in hertz
+     * @param channelBitrate the bitrate per channel in bits per second
+     */
+    public void retune(int sampleRate, int bandwidth, int channelBitrate) {
+        this.noiseSmr = TONAL_SMR - NOISE_RELIEF * Math.clamp((128000 - channelBitrate) / 64000f, 0, 1);
+        var longBands = longLayout.count();
+        var shortBands = shortLayout.count();
+        this.longLayout = new BandLayout(sampleRate, false, bandwidth, channelBitrate);
+        this.shortLayout = new BandLayout(sampleRate, true, bandwidth, channelBitrate);
+        if (longLayout.count() != longBands) {
+            previousLongValid = false;
+        }
+        if (shortLayout.count() != shortBands) {
+            previousShortValid = false;
+        }
+        if (longTns != null) {
+            this.longTns = new TnsEncoder(longLayout, sampleRate, false, kernel);
+            this.shortTns = new TnsEncoder(shortLayout, sampleRate, true, kernel);
+        }
+        this.layout = longLayout;
+        detector.retune(channelBitrate);
+    }
+
+    /**
      * Returns the attack detector of the channel.
      *
      * @return the detector
@@ -589,7 +618,7 @@ public final class EncoderChannel {
         var flatness = 3.0103f * (logSum / lines - fastLog2(sum / lines));
         var tonality = Math.clamp(flatness / TONAL_FLATNESS, 0, 1);
         var smr = noiseSmr + tonality * (TONAL_SMR - noiseSmr);
-        return (float) Math.pow(10, -smr / 10);
+        return (float) StrictMath.pow(10, -smr / 10);
     }
 
     /**
@@ -836,7 +865,7 @@ public final class EncoderChannel {
         var count = layout.count();
         var lowest = Integer.MAX_VALUE;
         var highestBound = 0;
-        var lowering = parameter < 0 ? (float) Math.pow(10, 3 * parameter) : 1;
+        var lowering = parameter < 0 ? (float) StrictMath.pow(10, 3 * parameter) : 1;
         for (var group = 0; group < groupCount; group++) {
             for (var band = 0; band < count; band++) {
                 var index = group * MAX_BANDS + band;
