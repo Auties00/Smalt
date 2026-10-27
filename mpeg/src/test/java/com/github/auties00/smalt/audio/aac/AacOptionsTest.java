@@ -3,6 +3,7 @@ package com.github.auties00.smalt.audio.aac;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -66,7 +67,6 @@ class AacOptionsTest {
         void validation() {
             var defaults = AacEncoderOptions.defaults();
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().format(44_000, ChannelLayout.STEREO).build());
-            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().format(48_000, ChannelLayout.defaultFor(3)).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().format(8_000, ChannelLayout.STEREO).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().bitrate(11_999).build());
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().bitrate(0).build());
@@ -74,6 +74,65 @@ class AacOptionsTest {
             assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().bandwidth(0).build());
             assertThrows(NullPointerException.class, () -> defaults.toBuilder().bitrateMode(null).build());
             assertThrows(NullPointerException.class, () -> defaults.toBuilder().format(48_000, null).build());
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().frameLength(512).build());
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().frameLength(0).build());
+            // 6144 bits per channel and frame: 6 times the rate per channel at 1024 samples, 6.4 times at 960.
+            assertEquals(576_000, defaults.toBuilder().bitrate(576_000).build().bitrate());
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().bitrate(576_001).build());
+            assertEquals(614_400, defaults.toBuilder().frameLength(960).bitrate(614_400).build().bitrate());
+            assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().frameLength(960).bitrate(614_401)
+                    .build());
+        }
+
+        @Test
+        @DisplayName("frameLength() is 1024 by default, 960 on request, and takes part in equality")
+        void frameLength() {
+            var defaults = AacEncoderOptions.defaults();
+            assertEquals(1024, defaults.frameLength());
+            var shortFrames = defaults.toBuilder().frameLength(960).build();
+            assertEquals(960, shortFrames.frameLength());
+            assertEquals(shortFrames, shortFrames.toBuilder().build());
+            assertNotEquals(defaults, shortFrames);
+            assertNotEquals(defaults.hashCode(), shortFrames.hashCode());
+            assertEquals(defaults, shortFrames.toBuilder().frameLength(1024).build());
+        }
+
+        @Test
+        @DisplayName("accepts every channel configuration and the layouts a program config element positions")
+        void layouts() {
+            var defaults = AacEncoderOptions.defaults();
+            assertEquals(2, defaults.channelConfiguration());
+            assertEquals(3, defaults.toBuilder().format(48_000, ChannelLayout.defaultFor(3)).bitrate(192_000).build()
+                    .channelConfiguration());
+            assertEquals(6, defaults.toBuilder().format(48_000, ChannelLayout.SURROUND_5_1).bitrate(384_000).build()
+                    .channelConfiguration());
+            assertEquals(12, defaults.toBuilder().format(48_000, ChannelLayout.SURROUND_7_1).bitrate(512_000).build()
+                    .channelConfiguration());
+            assertEquals(0, defaults.toBuilder().format(48_000, ChannelLayout.defaultFor(4)).bitrate(256_000).build()
+                    .channelConfiguration());
+            for (var speakers : java.util.List.of(
+                    java.util.List.of(Speaker.FRONT_LEFT),
+                    java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_LEFT),
+                    java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_LEFT_OF_CENTER,
+                            Speaker.FRONT_RIGHT_OF_CENTER, Speaker.BACK_CENTER, Speaker.BACK_CENTER),
+                    java.util.List.of(Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER),
+                    java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.SIDE_LEFT),
+                    java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.TOP_CENTER),
+                    java.util.List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.LOW_FREQUENCY,
+                            Speaker.LOW_FREQUENCY_2),
+                    java.util.List.of(Speaker.UNKNOWN, Speaker.UNKNOWN))) {
+                var layout = new ChannelLayout(speakers);
+                assertThrows(IllegalArgumentException.class, () -> defaults.toBuilder().format(48_000, layout)
+                        .bitrate(64_000 * speakers.size()).build(), speakers.toString());
+            }
+        }
+
+        @Test
+        @DisplayName("derives the automatic bandwidth from the bitrate of the full-band channels, LFE excluded")
+        void bandwidthPerChannel() {
+            var surround = AacEncoderOptions.of(48_000, ChannelLayout.SURROUND_7_1, 7 * 64_000);
+            assertEquals(AacEncoderOptions.of(48_000, ChannelLayout.STEREO, 128_000).effectiveBandwidth(),
+                    surround.effectiveBandwidth());
         }
     }
 

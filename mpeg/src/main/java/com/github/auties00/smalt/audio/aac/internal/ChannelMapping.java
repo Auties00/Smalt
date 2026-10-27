@@ -338,6 +338,25 @@ public final class ChannelMapping {
     }
 
     /**
+     * Returns the loudspeaker a coded channel feeds.
+     *
+     * @param codedChannel the coded channel index
+     * @return the speaker
+     */
+    public Speaker speaker(int codedChannel) {
+        return layout.speakers().get(outputIndex[codedChannel]);
+    }
+
+    /**
+     * Returns the element type of each slot, in coding order.
+     *
+     * @return a new array of {@link ElementId} values
+     */
+    public int[] elementTypes() {
+        return slotTypes.clone();
+    }
+
+    /**
      * Returns the coded channel index of the first channel an element feeds.
      *
      * @param type the element type

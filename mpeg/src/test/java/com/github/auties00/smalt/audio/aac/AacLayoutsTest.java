@@ -62,7 +62,7 @@ class AacLayoutsTest {
      * The speaker of each channel of ffmpeg's decode of configuration 13, which follows the channel order of
      * ITU-R BS.2051 sound system H rather than its channel layout's own order.
      */
-    private static final List<Speaker> FFMPEG_ORDER_13 = List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
+    static final List<Speaker> FFMPEG_ORDER_13 = List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT,
             Speaker.FRONT_CENTER, Speaker.LOW_FREQUENCY, Speaker.BACK_LEFT, Speaker.BACK_RIGHT,
             Speaker.FRONT_LEFT_OF_CENTER, Speaker.FRONT_RIGHT_OF_CENTER, Speaker.BACK_CENTER, Speaker.LOW_FREQUENCY_2,
             Speaker.SIDE_LEFT, Speaker.SIDE_RIGHT, Speaker.TOP_FRONT_LEFT, Speaker.TOP_FRONT_RIGHT,

@@ -77,14 +77,16 @@ public final class BandLayout {
      * Computes the layout of one window size.
      *
      * @param sampleRate the sampling rate in hertz
+     * @param frameLength the frame length, 1024 or 960
      * @param shortWindow whether the layout is for short windows
      * @param bandwidth the audio bandwidth in hertz
      * @param channelBitrate the bitrate per channel in bits per second
      */
-    public BandLayout(int sampleRate, boolean shortWindow, int bandwidth, int channelBitrate) {
+    public BandLayout(int sampleRate, int frameLength, boolean shortWindow, int bandwidth, int channelBitrate) {
         var tableIndex = SamplingTables.tableIndexFor(sampleRate);
-        this.offsets = shortWindow ? SamplingTables.shortOffsets(tableIndex, 1024) : SamplingTables.longOffsets(tableIndex, 1024);
-        this.windowLength = shortWindow ? 128 : 1024;
+        this.offsets = shortWindow ? SamplingTables.shortOffsets(tableIndex, frameLength)
+                : SamplingTables.longOffsets(tableIndex, frameLength);
+        this.windowLength = shortWindow ? frameLength / 8 : frameLength;
         this.count = offsets.length - 1;
         this.lowpassLine = Math.min(windowLength, (int) ((long) bandwidth * 2 * windowLength / sampleRate));
         var activeBands = 0;
@@ -151,7 +153,7 @@ public final class BandLayout {
     /**
      * Returns the number of spectral lines of one window.
      *
-     * @return 1024 or 128
+     * @return the frame length for long windows, an eighth of it for short windows
      */
     public int windowLength() {
         return windowLength;

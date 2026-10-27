@@ -530,6 +530,9 @@ class SharedHeadersTest {
             assertMessage("AAC object type 6 cannot be expressed in ADTS", new byte[]{0x32, 0x10});
             assertMessage("invalid sampling frequency index 13", new byte[]{0x16, (byte) 0x90});
             assertMessage("channel configuration 0 cannot be expressed in ADTS", new byte[]{0x12, 0x00});
+            assertMessage("channel configuration 12 cannot be expressed in ADTS", new byte[]{0x12, 0x60});
+            // 0x14: channel configuration 2 followed by a set frameLengthFlag.
+            assertMessage("960-sample frames cannot be expressed in ADTS", new byte[]{0x12, 0x14});
             assertEquals(1, AdtsHeader.fromAudioSpecificConfig(new byte[]{0x2A, 0x10, 0x08, 0x00}).profile());
         }
 

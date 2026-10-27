@@ -23,8 +23,9 @@ import java.util.Objects;
  * are representable), the sampling frequency index and the channel configuration. A configuration
  * that signals SBR or PS explicitly (object type 5 or 29) is written as its core object type at the
  * core sampling rate, the implicit signaling decoders recognize. A sampling rate without an index
- * (index 15) and channel configuration 0, which needs a program configuration element inside the
- * bitstream, cannot be expressed and are rejected.
+ * (index 15), channel configuration 0, which needs a program configuration element inside the
+ * bitstream, channel configurations above 7 and 960-sample frames cannot be expressed and are
+ * rejected.
  *
  * <p>Each packet must be one raw AAC access unit (a {@code raw_data_block}), as the MP4, Matroska
  * and ADTS demuxers produce, of at most 8184 bytes; it becomes one ADTS frame without CRC, with the

@@ -76,7 +76,8 @@ public record AdtsHeader(int profile, int frequencyIndex, int channelConfigurati
      * @return the header fields, with a frame length of 0
      * @throws IllegalArgumentException if {@code config} is {@code null} or truncated, uses an
      * explicit sampling rate or a reserved frequency index, codes an object type other than 1 to 4,
-     * or has a channel configuration outside 1 to 7
+     * has a channel configuration outside 1 to 7, or sets the {@code frameLengthFlag} of 960-sample
+     * frames
      */
     public static AdtsHeader fromAudioSpecificConfig(byte[] config) {
         if (config == null) {
@@ -103,6 +104,9 @@ public record AdtsHeader(int profile, int frequencyIndex, int channelConfigurati
         }
         if (channels == 0 || channels > 7) {
             throw new IllegalArgumentException("channel configuration " + channels + " cannot be expressed in ADTS");
+        }
+        if (bits.remaining() > 0 && bits.read(1) == 1) {
+            throw new IllegalArgumentException("960-sample frames cannot be expressed in ADTS");
         }
         return new AdtsHeader(objectType - 1, index, channels, true, 0, 1);
     }
@@ -196,6 +200,13 @@ public record AdtsHeader(int profile, int frequencyIndex, int channelConfigurati
                 value = (value << 1) | ((data[position >> 3] >> (7 - (position & 7))) & 1);
             }
             return value;
+        }
+
+        /**
+         * {@return the number of bits left after the current position}
+         */
+        private long remaining() {
+            return data.length * 8L - position;
         }
 
         /**

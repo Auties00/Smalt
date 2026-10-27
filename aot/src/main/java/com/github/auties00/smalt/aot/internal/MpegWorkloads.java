@@ -103,6 +103,7 @@ final class MpegWorkloads {
                 file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
                 file("h264-svc-decode", MpegWorkloads::h264ScalableDecode),
                 file("aac-encode", () -> aacEncode(6)),
+                file("aac-960-surround-encode", () -> aacShortFrameSurroundEncode(3)),
                 file("aac-decode", () -> aacDecode("aac-decode", false, false, 6)),
                 file("heaac-decode", () -> aacDecode("heaac-decode", true, false, 6)),
                 file("heaacv2-decode", () -> aacDecode("heaacv2-decode", true, true, 6)),
@@ -357,6 +358,25 @@ final class MpegWorkloads {
     private static TrainingWorkload aacEncode(double seconds) {
         var encoder = new AacEncoder(AacEncoderOptions.of(44100, ChannelLayout.STEREO, 128000));
         return AudioStreams.encode("aac-encode", SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100, encoder);
+    }
+
+    /**
+     * Returns a workload that encodes 7.1 music (channel configuration 12, its LFE element included) as
+     * 48 kHz AAC-LC with 960-sample frames, whose transforms and band tables differ from those of
+     * 1024-sample frames, one encoder across rounds.
+     *
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload aacShortFrameSurroundEncode(double seconds) {
+        var layout = ChannelLayout.SURROUND_7_1;
+        var encoder = new AacEncoder(AacEncoderOptions.of(48000, layout, 512000).toBuilder().frameLength(960).build());
+        var stereo = SyntheticAudio.music(48000, seconds);
+        var planes = new float[layout.channels()][];
+        for (var c = 0; c < planes.length; c++) {
+            planes[c] = stereo[c % stereo.length];
+        }
+        return AudioStreams.encode("aac-960-surround-encode", planes, layout, 48000, encoder);
     }
 
     /**

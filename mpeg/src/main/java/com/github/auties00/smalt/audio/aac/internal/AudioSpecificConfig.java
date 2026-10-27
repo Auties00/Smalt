@@ -347,15 +347,42 @@ public record AudioSpecificConfig(int objectType, int sampleRate, int tableIndex
      * @throws IllegalArgumentException if the rate has no sampling frequency index
      */
     public static byte[] lowComplexity(int sampleRate, int channelConfiguration) {
+        return lowComplexity(sampleRate, channelConfiguration, 1024, null);
+    }
+
+    /**
+     * Returns the configuration of a plain AAC Low Complexity stream of any channel configuration and
+     * frame length.
+     *
+     * @param sampleRate a standard sampling frequency in hertz
+     * @param channelConfiguration the channel configuration, from 1 to 7 or 11 to 14, or 0 with a program
+     * config element
+     * @param frameLength the samples per frame, 1024 or 960
+     * @param programConfig the program config element of channel configuration 0, or {@code null}
+     * @return the configuration bytes
+     * @throws IllegalArgumentException if the rate has no sampling frequency index, or the program config
+     * element is missing for configuration 0 or given for another one
+     */
+    public static byte[] lowComplexity(int sampleRate, int channelConfiguration, int frameLength,
+                                       ProgramConfig programConfig) {
         var index = AacRates.index(sampleRate);
         if (index < 0) {
             throw new IllegalArgumentException("no sampling frequency index for " + sampleRate + " Hz");
         }
-        var writer = new MsbBitWriter(2);
+        if ((channelConfiguration == 0) != (programConfig != null)) {
+            throw new IllegalArgumentException("a program config element goes with channel configuration 0 only");
+        }
+        var writer = new MsbBitWriter(64);
         writer.write(AOT_LC, 5);
         writer.write(index, 4);
         writer.write(channelConfiguration, 4);
-        writer.write(0, 3);
+        writer.write(frameLength == 960 ? 1 : 0, 1);
+        writer.write(0, 1);
+        writer.write(0, 1);
+        if (programConfig != null) {
+            programConfig.write(writer);
+        }
+        writer.alignWithZeros();
         return writer.toByteArray();
     }
 
