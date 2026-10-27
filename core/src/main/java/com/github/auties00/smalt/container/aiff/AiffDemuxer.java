@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
@@ -11,7 +12,9 @@ import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.io.ReadAheadCache;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.internal.tags.RiffMetadataChunks;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -20,8 +23,10 @@ import com.github.auties00.smalt.track.Track;
 
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,7 +37,8 @@ import java.util.Objects;
  *
  * <p>The {@code COMM} chunk gives the channel count, frame count, sample size and the sampling
  * rate as an 80-bit IEEE 754 extended float, rounded to the nearest integer. AIFF samples are
- * big-endian two's-complement integers, left-justified in {@code ceil(bits / 8)} bytes. AIFF-C
+ * big-endian two's-complement integers, left-justified in {@code ceil(bits / 8)} bytes, of 1 to 32 bits or of
+ * exactly 64 bits in eight bytes. AIFF-C
  * adds a compression type; {@code NONE}/{@code twos} (big-endian integers), {@code sowt}
  * (little-endian integers), {@code in24}, {@code in32}, {@code raw } (unsigned 8-bit),
  * {@code fl32}/{@code FL32}, {@code fl64}/{@code FL64}, {@code alaw}/{@code ALAW} and
@@ -44,7 +50,11 @@ import java.util.Objects;
  * not seek back (a zero {@code COMM} frame count and a minimal {@code SSND} size) are read to the
  * end of the source. AIFF has no channel mask, so the
  * track uses {@link ChannelLayout#defaultFor(int)}. {@code NAME}, {@code AUTH}, {@code (c) } and
- * {@code ANNO} chunks and an embedded {@code ID3 } tag become {@link #metadata()}.
+ * {@code ANNO} chunks, the texts of the {@code COMT} chunk (under {@code COMT}), the instrument
+ * fields of the {@code INST} chunk (under keys such as {@code inst:base_note} and {@code inst:sustain_loop},
+ * as {@link com.github.auties00.smalt.metadata.TagEditor} reads them) and an embedded {@code ID3 } tag become
+ * {@link #metadata()}. The markers of the {@code MARK} chunk that no {@code INST} loop uses become
+ * {@link #chapters()}, titled by their names, each ending where the next starts.
  *
  * <p>Packets hold as many whole frames as fit in 4096 bytes (at least one), with timestamps in
  * samples. A source that is not in memory is read in blocks of {@value #READ_BLOCK} bytes that
@@ -92,6 +102,11 @@ public final class AiffDemuxer implements Demuxer {
      * The container metadata.
      */
     private final Map<String, String> metadata;
+
+    /**
+     * The chapters of the markers.
+     */
+    private final List<Chapter> chapters;
 
     /**
      * The size of one interleaved frame in bytes.
@@ -174,6 +189,8 @@ public final class AiffDemuxer implements Demuxer {
             var soundStart = -1L;
             var soundEnd = -1L;
             var streaming = false;
+            byte[] mark = null;
+            byte[] inst = null;
             while (size < 0 ? !reader.atEnd() : size - reader.position() >= 8) {
                 var id = reader.fourCc();
                 var chunkSize = reader.u32be();
@@ -210,6 +227,18 @@ public final class AiffDemuxer implements Demuxer {
                     case 0x41555448 -> text(reader, chunkSize, "AUTH", tags);
                     case 0x28632920 -> text(reader, chunkSize, "(c) ", tags);
                     case 0x414E4E4F -> text(reader, chunkSize, "ANNO", tags);
+                    case 0x4D41524B -> mark = chunk(reader, chunkSize, mark);
+                    case 0x494E5354 -> inst = chunk(reader, chunkSize, inst);
+                    case 0x434F4D54 -> {
+                        var comments = new ArrayList<MediaTags.Entry>();
+                        var comment = chunk(reader, chunkSize, null);
+                        if (comment != null) {
+                            RiffMetadataChunks.decodeComments(comment, comments);
+                        }
+                        for (var entry : comments) {
+                            tags.merge("COMT", entry.value(), (previous, next) -> previous + "; " + next);
+                        }
+                    }
                     case 0x49443320 -> {
                         if (size < 0 || chunkSize <= size - body) {
                             Id3v2.skip(source, body, body + chunkSize, tags);
@@ -246,6 +275,15 @@ public final class AiffDemuxer implements Demuxer {
             this.totalFrames = frames == 0 ? available : Math.min(frames, available);
             var limit = totalFrames > (Long.MAX_VALUE - soundStart) / frameSize ? Long.MAX_VALUE : soundStart + totalFrames * frameSize;
             this.data = new ReadAheadCache(source, READ_BLOCK, 0, limit);
+            var markers = RiffMetadataChunks.decodeMarkers(mark == null ? new byte[0] : mark);
+            var loopMarkers = new HashSet<Integer>();
+            var instrument = new ArrayList<MediaTags.Entry>();
+            if (inst != null) {
+                RiffMetadataChunks.decodeInst(inst, markers, instrument, loopMarkers);
+            }
+            for (var entry : instrument) {
+                tags.putIfAbsent(entry.key(), entry.value());
+            }
             this.metadata = Collections.unmodifiableMap(tags);
             var validBits = switch (codec) {
                 case PCM_ALAW, PCM_MULAW -> 8;
@@ -260,6 +298,8 @@ public final class AiffDemuxer implements Demuxer {
                     .bitsPerSample(validBits)
                     .build();
             this.tracks = List.of(track);
+            this.chapters = List.copyOf(RiffMetadataChunks.markerChapters(markers, loopMarkers, sampleRate,
+                    durationMicros()));
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
@@ -304,6 +344,7 @@ public final class AiffDemuxer implements Demuxer {
                 case 2 -> Codec.PCM_S16BE;
                 case 3 -> Codec.PCM_S24BE;
                 case 4 -> Codec.PCM_S32BE;
+                case 8 -> Codec.PCM_S64BE;
                 default -> throw new MediaException.Unsupported("pcm_s" + bits + "be", bits + "-bit AIFF samples are not supported");
             };
             case 0x736F7774 -> switch ((bits + 7) / 8) {
@@ -311,6 +352,7 @@ public final class AiffDemuxer implements Demuxer {
                 case 2 -> Codec.PCM_S16LE;
                 case 3 -> Codec.PCM_S24LE;
                 case 4 -> Codec.PCM_S32LE;
+                case 8 -> Codec.PCM_S64LE;
                 default -> throw new MediaException.Unsupported("pcm_s" + bits + "le", bits + "-bit AIFF samples are not supported");
             };
             case 0x696E3234 -> Codec.PCM_S24BE;
@@ -327,6 +369,22 @@ public final class AiffDemuxer implements Demuxer {
                         "AIFF-C compression type '" + name + "' is not supported");
             }
         };
+    }
+
+    /**
+     * Reads the payload of a chunk kept whole, the first of its type.
+     *
+     * @param reader the reader positioned at the chunk body
+     * @param chunkSize the chunk body size
+     * @param previous the payload of an earlier chunk of the same type, or {@code null}
+     * @return {@code previous} when there was one, otherwise the payload, or {@code null} when it is larger than
+     * {@value #MAX_TEXT_SIZE} bytes or runs past the source
+     */
+    private static byte[] chunk(SourceReader reader, long chunkSize, byte[] previous) {
+        if (previous != null || chunkSize > MAX_TEXT_SIZE || chunkSize > reader.remaining()) {
+            return previous;
+        }
+        return reader.bytes(chunkSize, MAX_TEXT_SIZE);
     }
 
     /**
@@ -365,6 +423,11 @@ public final class AiffDemuxer implements Demuxer {
     @Override
     public Map<String, String> metadata() {
         return metadata;
+    }
+
+    @Override
+    public List<Chapter> chapters() {
+        return chapters;
     }
 
     @Override
