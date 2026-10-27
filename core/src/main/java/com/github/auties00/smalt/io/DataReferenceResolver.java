@@ -14,6 +14,8 @@ import java.util.Optional;
  * stored elsewhere and closes the source once it has read the item. The HLS and DASH demuxers, whose references are
  * the URLs of their playlists, segments and keys ({@link DataReference.Kind#URL}), ask for each file once to learn
  * its size and again whenever they read it after a few other files, closing every source they no longer hold open.
+ * The Matroska demuxer asks for each linked segment once, when it is created, and closes the sources when it is
+ * closed; it ignores a source whose first segment is not the one referenced.
  * A reference the resolver cannot supply makes the samples or items that use it fail with
  * {@link MediaException.Unsupported}, as they do without a resolver.
  * A resolver may be called from several threads at once when several readers share it.
@@ -49,7 +51,13 @@ public interface DataReferenceResolver {
      * <p>A {@link DataReference.Kind#URL URL} or {@link DataReference.Kind#URN URN} location that is a relative
      * URL (such as {@code ../media/a.mov} or {@code ./data.dat}, its {@code %XX} escapes decoded) resolves against
      * the directory, and a {@code file:} URL resolves to its path; an {@link DataReference.Kind#ALIAS alias}
-     * resolves to its {@link DataReference#fileName() file name} in the directory. The reference resolves only
+     * resolves to its {@link DataReference#fileName() file name} in the directory. A
+     * {@link DataReference.Kind#MATROSKA_SEGMENT Matroska segment} reference resolves to the file of that name when
+     * its first segment is the one referenced, and otherwise to the first file, in name order, of the directory
+     * itself (not of its subdirectories) whose name ends in {@code .mkv}, {@code .mka}, {@code .mks}, {@code .mk3d}
+     * or {@code .webm} and whose first segment is the one referenced (by its {@code SegmentUUID}, or for a
+     * {@link DataReference.Kind#MATROSKA_NEXT_SEGMENT} reference by its {@code PrevUUID}); finding it reads the
+     * start of every such file. The reference resolves only
      * when that path is a regular file inside the directory, symbolic links followed, so a media file cannot reach
      * a file outside it; URLs of other schemes resolve to nothing. Resolvers over the same directory are equal.
      *

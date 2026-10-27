@@ -5,6 +5,7 @@ import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.container.ContainerProbe;
+import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.MuxSupport;
 import com.github.auties00.smalt.internal.tags.Ebml;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
@@ -111,11 +112,17 @@ class MatroskaChaptersTest {
         @DisplayName("reads back every edition, nested chapter, localized title and attachment the muxer writes")
         void muxer() {
             var output = mux(tags());
-            try (var demuxer = new MatroskaDemuxer(MediaSource.of(output))) {
+            var stored = DemuxerOptions.builder().virtualTimeline(false).build();
+            try (var demuxer = new MatroskaDemuxer(MediaSource.of(output), stored)) {
                 assertEquals(MediaTags.builder().editions(editions()).build().editions(), demuxer.chapterEditions());
-                // the default edition is the second, flagged; it is ordered, so its stored order is kept
                 assertEquals(List.of(Chapter.of(0, 2_000_000, "A"), Chapter.of(2_000_000, 3_000_000, "B")),
                         demuxer.chapters());
+            }
+            try (var demuxer = new MatroskaDemuxer(MediaSource.of(output))) {
+                // the default edition is the second, flagged and ordered: its chapters make the timeline
+                assertEquals(List.of(new ChapterEdition(List.of(Chapter.of(0, 1_000_000, "B"),
+                        Chapter.of(1_000_000, 3_000_000, "A")), true, false, List.of())), demuxer.chapterEditions());
+                assertEquals(3_000_000, demuxer.durationMicros());
                 assertEquals(List.of(Attachment.of("DejaVuSans.ttf", "font/ttf", "subtitle font", FONT),
                         Attachment.of("notes.txt", "text/plain", "", "notes\n".getBytes(StandardCharsets.UTF_8))),
                         demuxer.attachments());
@@ -301,6 +308,27 @@ class MatroskaChaptersTest {
         }
 
         @Test
+        @DisplayName("reports the visible chapters nested in a hidden chapter in its place (RFC 9559 section 20.2.5)")
+        void hiddenParent() {
+            var file = chapters(
+                    master(EbmlIds.EDITION_ENTRY, atom(0, "a"), atom(1000, "hidden",
+                            uint(EbmlIds.CHAPTER_FLAG_HIDDEN, 1), uint(EbmlIds.CHAPTER_TIME_END, 3_000_000L),
+                            atom(1500, "visible"), atom(2500, "secret", uint(EbmlIds.CHAPTER_FLAG_HIDDEN, 1))),
+                            atom(4000, "b")),
+                    master(EbmlIds.EDITION_ENTRY, atom(0, "only hidden", uint(EbmlIds.CHAPTER_FLAG_HIDDEN, 1),
+                            atom(100, "shown"))));
+            var editions = editionsOf(file);
+            assertEquals(2, editions.size());
+            var chapters = editions.getFirst().chapters();
+            assertEquals(List.of(Optional.of("a"), Optional.of("visible"), Optional.of("b")),
+                    chapters.stream().map(Chapter::title).toList());
+            // a nested chapter without end ends with the hidden chapter it was nested in
+            assertEquals(List.of(1500L, 3000L), List.of(chapters.get(1).startMicros(), chapters.get(1).endMicros()));
+            assertEquals(List.of(Optional.of("shown")), editions.get(1).chapters().stream().map(Chapter::title)
+                    .toList());
+        }
+
+        @Test
         @DisplayName("gives a display one title per language, ChapLanguageBCP47 over ChapLanguage")
         void displays() {
             var display = master(EbmlIds.CHAPTER_DISPLAY, string(EbmlIds.CHAP_STRING, "Hello"),
@@ -415,7 +443,8 @@ class MatroskaChaptersTest {
             var output = directory.resolve("output.mka");
             run("mkvmerge", "-q", "-o", output.toString(), "--chapters", xml.toString(), "--attachment-mime-type",
                     "font/ttf", "--attachment-description", "font", "--attach-file", font.toString(), input.toString());
-            try (var demuxer = new MatroskaDemuxer(MediaSource.of(output))) {
+            try (var demuxer = new MatroskaDemuxer(MediaSource.of(output), DemuxerOptions.builder()
+                    .virtualTimeline(false).build())) {
                 var editions = demuxer.chapterEditions();
                 assertEquals(2, editions.size());
                 assertTrue(editions.get(1).defaultEdition() && editions.get(1).ordered());
@@ -437,6 +466,13 @@ class MatroskaChaptersTest {
                 assertEquals("font/ttf", attached.mediaType());
                 assertEquals("font", attached.description());
                 assertArrayEquals(FONT, attached.data());
+            }
+            try (var demuxer = new MatroskaDemuxer(MediaSource.of(output))) {
+                // the ordered default edition plays its one chapter
+                assertEquals(2_000_000, demuxer.durationMicros());
+                var cut = demuxer.chapters().getFirst();
+                assertEquals(List.of(0L, 2_000_000L), List.of(cut.startMicros(), cut.endMicros()));
+                assertEquals(Optional.of("Cut"), cut.title());
             }
         }
 

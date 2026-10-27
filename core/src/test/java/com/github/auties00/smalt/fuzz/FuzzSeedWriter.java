@@ -932,6 +932,14 @@ class FuzzSeedWriter {
     }
 
     @Test
+    @DisplayName("the ordered-chapters behavior sample; the linked-file seeds come from make-timeline-samples.py")
+    void timelines() throws IOException {
+        var samples = Path.of("src", "test", "resources", "samples");
+        copy(DemuxerFuzzTest.class, "matroska", "valid-ordered-parts.mkv",
+                samples.resolve("matroska/ordered-parts.mkv"));
+    }
+
+    @Test
     @DisplayName("Dolby Vision behavior samples and the first RPU of each, unescaped, for the RPU target")
     void dolbyVision() throws IOException {
         var samples = Path.of("src", "test", "resources", "samples");

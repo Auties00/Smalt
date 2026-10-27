@@ -28,6 +28,11 @@ class DemuxerFuzzTest {
     }
 
     @FuzzTest
+    void matroskaLinked(byte[] data) {
+        FuzzMedia.linkedMatroska(data);
+    }
+
+    @FuzzTest
     void mp4Encrypted(byte[] data) {
         FuzzMedia.demuxer(ContainerFormat.MP4, data, ENCRYPTED);
     }

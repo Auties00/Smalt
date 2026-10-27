@@ -7,6 +7,7 @@ import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
 import com.github.auties00.smalt.internal.header.XiphLacing;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
 import com.github.auties00.smalt.internal.io.LocalSource;
@@ -91,7 +92,8 @@ public final class TagCarry {
      * or in a file) and can be read again, otherwise, and for every part the tag file lacks, from its demuxer.
      *
      * <p>A tag file that cannot be read is ignored, so that corrupt metadata never fails a conversion of the
-     * media. A source that is not local is not read again for its tags, since that could transfer it again.
+     * media. The chapters of a Matroska demuxer that presents a virtual timeline are those of the demuxer. A source
+     * that is not local is not read again for its tags, since that could transfer it again.
      *
      * @param input the input, whose demuxer is open; not closed
      * @param demuxer the demuxer of the input
@@ -118,7 +120,10 @@ public final class TagCarry {
         if (file == null || file.pictures().isEmpty()) {
             builder.pictures(demuxer.attachedPictures());
         }
-        if (file == null || file.chapters().isEmpty()) {
+        if (demuxer instanceof MatroskaDemuxer matroska && matroska.isVirtualTimeline()) {
+            // the chapters of the file lie on its stored timeline, not on the one the demuxer presents
+            builder.editions(demuxer.chapterEditions());
+        } else if (file == null || file.chapters().isEmpty()) {
             builder.chapters(demuxer.chapters());
         }
         if (file == null || file.tracks().isEmpty()) {

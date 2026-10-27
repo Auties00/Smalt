@@ -108,6 +108,36 @@ public final class EbmlIds {
     public static final int TITLE = 0x7BA9;
 
     /**
+     * The {@code SegmentUUID} element of {@code Info}.
+     */
+    public static final int SEGMENT_UUID = 0x73A4;
+
+    /**
+     * The {@code SegmentFilename} element of {@code Info}.
+     */
+    public static final int SEGMENT_FILENAME = 0x7384;
+
+    /**
+     * The {@code PrevUUID} element of {@code Info}: the segment before this one in a hard-linked chain.
+     */
+    public static final int PREV_UUID = 0x3CB923;
+
+    /**
+     * The {@code PrevFilename} element of {@code Info}.
+     */
+    public static final int PREV_FILENAME = 0x3C83AB;
+
+    /**
+     * The {@code NextUUID} element of {@code Info}: the segment after this one in a hard-linked chain.
+     */
+    public static final int NEXT_UUID = 0x3EB923;
+
+    /**
+     * The {@code NextFilename} element of {@code Info}.
+     */
+    public static final int NEXT_FILENAME = 0x3E83BB;
+
+    /**
      * The {@code MuxingApp} element.
      */
     public static final int MUXING_APP = 0x4D80;
@@ -687,6 +717,23 @@ public final class EbmlIds {
      * The {@code ChapterFlagHidden} element of {@code ChapterAtom}.
      */
     public static final int CHAPTER_FLAG_HIDDEN = 0x98;
+
+    /**
+     * The {@code ChapterFlagEnabled} element of {@code ChapterAtom}, of the Matroska specification before RFC 9559: a
+     * disabled chapter is skipped in playback.
+     */
+    public static final int CHAPTER_FLAG_ENABLED = 0x4598;
+
+    /**
+     * The {@code ChapterSegmentUUID} element of {@code ChapterAtom}: the segment an ordered chapter plays.
+     */
+    public static final int CHAPTER_SEGMENT_UUID = 0x6E67;
+
+    /**
+     * The {@code ChapterSegmentEditionUID} element of {@code ChapterAtom}: the edition of the linked segment an
+     * ordered chapter plays.
+     */
+    public static final int CHAPTER_SEGMENT_EDITION_UID = 0x6EBC;
 
     /**
      * The {@code ChapterDisplay} element of {@code ChapterAtom}.

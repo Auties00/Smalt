@@ -14,6 +14,9 @@ import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.matroska.MatroskaDemuxer;
+import com.github.auties00.smalt.internal.tags.MatroskaSegmentProbe;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
@@ -41,6 +44,7 @@ import com.github.auties00.smalt.video.VideoDecoders;
 import com.github.auties00.smalt.video.VideoFrame;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.BiFunction;
@@ -592,6 +596,68 @@ public final class FuzzMedia {
         if (TagEditor.isSupported(format)) {
             tags(run, data);
         }
+        return run;
+    }
+
+    /**
+     * Demuxes a set of linked Matroska files: the input is up to four files one after another, each starting at an
+     * EBML header, and the first is demuxed with a resolver that supplies the others by the segment identifiers
+     * their {@code Info} holds, so that ordered chapters and hard links reach them. The demuxer reads every packet,
+     * seeks to the start and the middle, and is closed.
+     *
+     * @param data the input
+     * @return the run
+     */
+    public static FuzzRun linkedMatroska(byte[] data) {
+        var run = Fuzz.start("MATROSKA linked");
+        var files = new ArrayList<byte[]>();
+        var start = 0;
+        for (var index = 1; index + 4 <= data.length && files.size() < 3; index++) {
+            if (data[index] == 0x1A && data[index + 1] == 0x45 && (data[index + 2] & 0xFF) == 0xDF
+                    && (data[index + 3] & 0xFF) == 0xA3) {
+                files.add(Arrays.copyOfRange(data, start, index));
+                start = index;
+            }
+        }
+        files.add(Arrays.copyOfRange(data, start, data.length));
+        var detected = run.value("detect", () -> Containers.detect(MediaSource.of(files.getFirst())).orElse(null));
+        if (detected.isEmpty() || detected.get() != ContainerFormat.MATROSKA) {
+            run.skip("detected " + detected.map(Enum::name).orElse("nothing"));
+            return run;
+        }
+        DataReferenceResolver resolver = reference -> {
+            for (var file : files.subList(1, files.size())) {
+                var identifiers = MatroskaSegmentProbe.probe(MediaSource.of(file));
+                if (identifiers == null) {
+                    continue;
+                }
+                var wanted = switch (reference.kind()) {
+                    case MATROSKA_SEGMENT -> identifiers.segmentUuid();
+                    case MATROSKA_NEXT_SEGMENT -> identifiers.prevUuid();
+                    default -> null;
+                };
+                if (reference.location().equals(wanted)) {
+                    return Optional.of(MediaSource.of(file));
+                }
+            }
+            return Optional.empty();
+        };
+        var options = DemuxerOptions.builder().limits(Fuzz.LIMITS).dataReferences(resolver).build();
+        run.step("demux", () -> {
+            try (var demuxer = new MatroskaDemuxer(MediaSource.of(files.getFirst()), options)) {
+                demuxer.tracks();
+                demuxer.chapterEditions();
+                demuxer.isVirtualTimeline();
+                var duration = demuxer.durationMicros();
+                drain(run, demuxer, Fuzz.MAX_PACKETS);
+                demuxer.seek(0);
+                drain(run, demuxer, 16);
+                if (duration > 0) {
+                    demuxer.seek(duration / 2);
+                    drain(run, demuxer, 16);
+                }
+            }
+        });
         return run;
     }
 

@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.io.MediaSource;
 
@@ -111,7 +112,9 @@ public final class Transcoder {
     /**
      * Transcodes an audio/video file into another.
      *
-     * <p>The output file is created or truncated, and deleted when the transcode fails.
+     * <p>The output file is created or truncated, and deleted when the transcode fails. When the options resolve no
+     * other file ({@link TranscodeOptions#dataReferences()}), the files the input names are those of its directory
+     * that {@link DataReferenceResolver#directory(Path)} supplies, such as the linked segments of a Matroska file.
      *
      * @param input   the input file
      * @param output  the output file
@@ -131,9 +134,12 @@ public final class Transcoder {
         Objects.requireNonNull(input, "input");
         Objects.requireNonNull(output, "output");
         Objects.requireNonNull(options, "options");
+        var directory = input.toAbsolutePath().getParent();
+        var resolved = directory == null || !options.dataReferences().equals(DataReferenceResolver.none()) ? options
+                : options.toBuilder().dataReferences(DataReferenceResolver.directory(directory)).build();
         var completed = false;
         try (var source = MediaSource.of(input); var sink = MediaSink.of(output)) {
-            var result = transcode(source, sink, options);
+            var result = transcode(source, sink, resolved);
             completed = true;
             return result;
         } finally {

@@ -442,8 +442,9 @@ public final class MatroskaTags {
     /**
      * Decodes the visible editions of a {@code Chapters} element, with every missing end resolved.
      *
-     * <p>An edition or chapter flagged hidden is skipped with everything it holds, and so is a chapter without
-     * start time. A title is the {@code ChapString} of a {@code ChapterDisplay}, once per language the display
+     * <p>An edition flagged hidden is skipped with everything it holds, and so is a chapter without start time. A
+     * chapter flagged hidden is skipped, and its nested chapters that are not take its place (RFC 9559 section
+     * 20.2.5). A title is the {@code ChapString} of a {@code ChapterDisplay}, once per language the display
      * names: its {@code ChapLanguageBCP47} elements when it has any, otherwise its {@code ChapLanguage} elements
      * ({@code eng} when it has none); a chapter whose only title is in the undetermined language {@code und} has
      * that title and no localized titles. Editions without visible chapters are skipped. A chapter without valid
@@ -500,6 +501,8 @@ public final class MatroskaTags {
             return List.of();
         }
         var atoms = new ArrayList<List<Ebml.Element>>();
+        var hidden = new ArrayList<Boolean>();
+        var atomStarts = new ArrayList<Long>();
         var starts = new ArrayList<Long>();
         for (var atom : fields) {
             if (atom.id() != EbmlIds.CHAPTER_ATOM) {
@@ -508,19 +511,34 @@ public final class MatroskaTags {
             var children = Ebml.children(data, atom.data(), atom.end());
             var start = Ebml.find(children, EbmlIds.CHAPTER_TIME_START);
             var startMicros = start == null ? -1 : Ebml.unsigned(data, start) / 1000;
-            if (startMicros < 0 || flag(data, children, EbmlIds.CHAPTER_FLAG_HIDDEN) || budget[0] <= 0) {
+            if (startMicros < 0) {
+                continue;
+            }
+            if (flag(data, children, EbmlIds.CHAPTER_FLAG_HIDDEN)) {
+                atoms.add(children);
+                hidden.add(true);
+                atomStarts.add(startMicros);
+                continue;
+            }
+            if (budget[0] <= 0) {
                 continue;
             }
             budget[0]--;
             atoms.add(children);
+            hidden.add(false);
+            atomStarts.add(startMicros);
             starts.add(startMicros);
         }
         var result = new ArrayList<Chapter>(atoms.size());
         for (var index = 0; index < atoms.size(); index++) {
             var children = atoms.get(index);
-            var start = starts.get(index);
+            var start = atomStarts.get(index);
             var endElement = Ebml.find(children, EbmlIds.CHAPTER_TIME_END);
             var end = endElement != null ? Ebml.unsigned(data, endElement) / 1000 : -1;
+            if (hidden.get(index)) {
+                result.addAll(decodeAtoms(data, children, end >= start ? end : parentEndMicros, depth + 1, budget));
+                continue;
+            }
             if (end < start) {
                 var next = Long.MAX_VALUE;
                 for (var other : starts) {
@@ -542,6 +560,139 @@ public final class MatroskaTags {
             }
             var nested = decodeAtoms(data, children, end, depth + 1, budget);
             result.add(new Chapter(start, end, title, titles, nested));
+        }
+        return result;
+    }
+
+    /**
+     * Holds an {@code EditionEntry} as playback reads it, hidden or not.
+     *
+     * @param uid the {@code EditionUID}, or {@code 0} when absent
+     * @param hidden whether {@code EditionFlagHidden} is set
+     * @param defaultEdition whether {@code EditionFlagDefault} is set
+     * @param ordered whether {@code EditionFlagOrdered} is set
+     * @param visible whether {@link #decodeEditions} reports the edition: it is not hidden and has a chapter it
+     * reports
+     * @param names the names of the edition
+     * @param atoms the top-level chapters, in file order
+     */
+    public record EditionEntry(long uid, boolean hidden, boolean defaultEdition, boolean ordered, boolean visible,
+                               List<Chapter.Title> names, List<AtomEntry> atoms) {
+    }
+
+    /**
+     * Holds a {@code ChapterAtom} as playback reads it.
+     *
+     * @param startNanos the {@code ChapterTimeStart} in nanoseconds, or {@code -1} when absent or out of range
+     * @param endNanos the {@code ChapterTimeEnd} in nanoseconds, or {@code -1} when absent or out of range
+     * @param hidden whether {@code ChapterFlagHidden} is set
+     * @param enabled whether the chapter plays: {@code ChapterFlagEnabled} is absent or not zero
+     * @param segmentUuid the 16 bytes of {@code ChapterSegmentUUID}, or {@code null} when absent or not 16 bytes long
+     * @param segmentEditionUid the {@code ChapterSegmentEditionUID}, or {@code 0} when absent
+     * @param title the first title, as {@link Chapter#title()}
+     * @param titles the localized titles, as {@link Chapter#titles()}
+     * @param children the nested chapters, in file order
+     */
+    public record AtomEntry(long startNanos, long endNanos, boolean hidden, boolean enabled, byte[] segmentUuid,
+                            long segmentEditionUid, Optional<String> title, List<Chapter.Title> titles,
+                            List<AtomEntry> children) {
+    }
+
+    /**
+     * Decodes every edition of a {@code Chapters} element, hidden editions and chapters included, with the elements
+     * that ordered editions and segment linking use (RFC 9559 sections 17 and 20).
+     *
+     * <p>Titles follow {@link #decodeEditions}. Chapters nested deeper than {@value #MAX_CHAPTER_DEPTH} levels are
+     * dropped, and at most {@value #MAX_CHAPTERS} chapters are kept.
+     *
+     * @param data the bytes
+     * @param chapters the {@code Chapters} element
+     * @return the editions, in file order
+     */
+    public static List<EditionEntry> decodeEditionEntries(byte[] data, Ebml.Element chapters) {
+        var editions = new ArrayList<EditionEntry>();
+        var budget = new int[]{MAX_CHAPTERS};
+        for (var child : Ebml.children(data, chapters.data(), chapters.end())) {
+            if (child.id() != EbmlIds.EDITION_ENTRY) {
+                continue;
+            }
+            var fields = Ebml.children(data, child.data(), child.end());
+            var names = new ArrayList<Chapter.Title>();
+            for (var field : fields) {
+                if (field.id() == EbmlIds.EDITION_DISPLAY) {
+                    editionName(data, field, names);
+                }
+            }
+            var uidElement = Ebml.find(fields, EbmlIds.EDITION_UID);
+            var hidden = flag(data, fields, EbmlIds.EDITION_FLAG_HIDDEN);
+            var atoms = atomEntries(data, fields, 0, budget);
+            var visible = !hidden && reported(atoms);
+            editions.add(new EditionEntry(uidElement == null ? 0 : Ebml.unsigned(data, uidElement), hidden,
+                    flag(data, fields, EbmlIds.EDITION_FLAG_DEFAULT), flag(data, fields, EbmlIds.EDITION_FLAG_ORDERED),
+                    visible, names, atoms));
+        }
+        return editions;
+    }
+
+    /**
+     * Returns whether {@link #decodeEditions} reports a chapter of a level: one with a start time that is not
+     * hidden, or a nested chapter it reports in place of a hidden one.
+     *
+     * @param atoms the chapters of the level
+     * @return {@code true} when one of them is reported
+     */
+    private static boolean reported(List<AtomEntry> atoms) {
+        for (var atom : atoms) {
+            if (atom.startNanos() >= 0 && (!atom.hidden() || reported(atom.children()))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Decodes the chapters of one level for {@link #decodeEditionEntries}.
+     *
+     * @param data the bytes
+     * @param fields the children of the edition or the parent chapter
+     * @param depth the nesting level, 0 for the top-level chapters
+     * @param budget the number of chapters that may still be decoded, in its first element
+     * @return the chapters, in file order
+     */
+    private static List<AtomEntry> atomEntries(byte[] data, List<Ebml.Element> fields, int depth, int[] budget) {
+        if (depth >= MAX_CHAPTER_DEPTH) {
+            return List.of();
+        }
+        var result = new ArrayList<AtomEntry>();
+        for (var atom : fields) {
+            if (atom.id() != EbmlIds.CHAPTER_ATOM || budget[0] <= 0) {
+                continue;
+            }
+            budget[0]--;
+            var children = Ebml.children(data, atom.data(), atom.end());
+            var start = Ebml.find(children, EbmlIds.CHAPTER_TIME_START);
+            var end = Ebml.find(children, EbmlIds.CHAPTER_TIME_END);
+            var enabled = Ebml.find(children, EbmlIds.CHAPTER_FLAG_ENABLED);
+            var segment = Ebml.find(children, EbmlIds.CHAPTER_SEGMENT_UUID);
+            var edition = Ebml.find(children, EbmlIds.CHAPTER_SEGMENT_EDITION_UID);
+            var titles = new ArrayList<Chapter.Title>();
+            for (var child : children) {
+                if (child.id() == EbmlIds.CHAPTER_DISPLAY) {
+                    chapterTitles(data, child, titles);
+                }
+            }
+            var title = titles.isEmpty() ? Optional.<String>empty() : Optional.of(titles.getFirst().text());
+            if (titles.size() == 1 && titles.getFirst().language().equals("und")) {
+                titles.clear();
+            }
+            result.add(new AtomEntry(start == null ? -1 : Math.max(-1, Ebml.unsigned(data, start)),
+                    end == null ? -1 : Math.max(-1, Ebml.unsigned(data, end)),
+                    flag(data, children, EbmlIds.CHAPTER_FLAG_HIDDEN),
+                    enabled == null || Ebml.unsigned(data, enabled) != 0,
+                    segment != null && segment.size() == 16 ? Arrays.copyOfRange(data, segment.data(), segment.end())
+                            : null,
+                    edition == null ? 0 : Ebml.unsigned(data, edition), title, List.copyOf(titles),
+                    atomEntries(data, children, depth + 1, budget)));
         }
         return result;
     }

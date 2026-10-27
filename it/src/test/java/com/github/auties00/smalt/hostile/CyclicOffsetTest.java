@@ -28,7 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 /**
  * Offsets and references that form cycles: TIFF and EXIF directories chained to themselves or to each other, sub
  * directories pointing back at their parent, HEIF derived images that use themselves, a Matroska seek head pointing
- * at itself, ID3 chapter tables that contain themselves and OS/2 bitmap arrays whose entries link back. Every entry
+ * at itself, a Matroska ordered edition that replays one span thousands of times, ID3 chapter tables that contain
+ * themselves and OS/2 bitmap arrays whose entries link back. Every entry
  * point must finish, within its deadline and on a quarter of the default thread stack, with a result or a
  * {@code MediaException}.
  */
@@ -66,6 +67,8 @@ class CyclicOffsetTest {
     static Stream<Input> containers() {
         return Stream.of(
                 new Input("Matroska seek head pointing at itself", CyclicOffsetTest::matroskaSeekHead),
+                new Input("Matroska ordered edition replaying one span in 4096 chapters",
+                        CyclicOffsetTest::matroskaReplays),
                 new Input("MP3 whose ID3 table of contents contains itself", () -> id3Toc(true)),
                 new Input("MP3 whose ID3 tables of contents contain each other", () -> id3Toc(false)));
     }
@@ -395,6 +398,24 @@ class CyclicOffsetTest {
             throw new AssertionError("the seek head has no seek position");
         }
         return data;
+    }
+
+    static byte[] matroskaReplays() {
+        var stream = Streams.audio(Codec.PCM_S16LE, ChannelLayout.STEREO, 8000, 4000, builder -> builder);
+        var chapters = new ArrayList<com.github.auties00.smalt.container.Chapter>();
+        for (var index = 0; index < 4096; index++) {
+            chapters.add(com.github.auties00.smalt.container.Chapter.of(400_000, 410_000, null));
+        }
+        var tags = com.github.auties00.smalt.metadata.MediaTags.builder().editions(List.of(
+                new com.github.auties00.smalt.container.ChapterEdition(chapters, true, true, List.of()))).build();
+        var sink = MediaSink.memory();
+        try (var muxer = Containers.openMuxer(ContainerFormat.MATROSKA, sink)) {
+            muxer.addTrack(stream.track());
+            muxer.setTags(tags);
+            stream.packets().forEach(muxer::writePacket);
+            muxer.finish();
+        }
+        return sink.toByteArray();
     }
 
     static byte[] id3Toc(boolean self) {

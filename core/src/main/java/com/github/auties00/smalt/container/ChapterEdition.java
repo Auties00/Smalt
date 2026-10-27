@@ -16,7 +16,8 @@ import java.util.Objects;
  * @param defaultEdition whether the container flags this edition as the one to use by default
  * @param ordered whether the chapters are ordered chapters, which play in their stored order and
  * skip the parts of the presentation they do not cover, rather than marks on its timeline; a
- * demuxer reports the presentation as it is stored either way
+ * demuxer that presents the timeline an ordered edition defines reports that edition with its
+ * chapters on that timeline, not ordered
  * @param names the name of the edition in each language the container stores, in container order
  */
 public record ChapterEdition(List<Chapter> chapters, boolean defaultEdition, boolean ordered,

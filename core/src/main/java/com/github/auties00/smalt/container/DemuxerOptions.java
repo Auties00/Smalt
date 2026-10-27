@@ -7,6 +7,7 @@ import com.github.auties00.smalt.track.Rational;
 import java.nio.charset.Charset;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.OptionalInt;
 
 /**
  * Holds the settings of a {@link Demuxer}. Instances are immutable and thread-safe; create them with
@@ -17,7 +18,7 @@ public final class DemuxerOptions {
      * The options of {@link #defaults()}.
      */
     private static final DemuxerOptions DEFAULTS = new DemuxerOptions(MediaLimits.DEFAULT, DataReferenceResolver.none(),
-            null, null, DecryptionKeys.none());
+            null, null, DecryptionKeys.none(), -1, true);
 
     private final MediaLimits limits;
     private final DataReferenceResolver dataReferences;
@@ -33,18 +34,27 @@ public final class DemuxerOptions {
     private final Rational subtitleFrameRate;
     private final DecryptionKeys decryptionKeys;
 
+    /**
+     * The index of the edition to play, or {@code -1} for the default one.
+     */
+    private final int edition;
+    private final boolean virtualTimeline;
+
     private DemuxerOptions(MediaLimits limits, DataReferenceResolver dataReferences, Charset charset,
-                           Rational subtitleFrameRate, DecryptionKeys decryptionKeys) {
+                           Rational subtitleFrameRate, DecryptionKeys decryptionKeys, int edition,
+                           boolean virtualTimeline) {
         this.limits = limits;
         this.dataReferences = dataReferences;
         this.charset = charset;
         this.subtitleFrameRate = subtitleFrameRate;
         this.decryptionKeys = decryptionKeys;
+        this.edition = edition;
+        this.virtualTimeline = virtualTimeline;
     }
 
     /**
-     * Returns demuxing under {@link MediaLimits#defaults()}, without resolving data references and with
-     * detected text encodings.
+     * Returns demuxing under {@link MediaLimits#defaults()}, without resolving data references, with detected text
+     * encodings, and with the virtual timeline of the default edition.
      *
      * @return the default options
      */
@@ -127,29 +137,59 @@ public final class DemuxerOptions {
         return decryptionKeys;
     }
 
+    /**
+     * {@return the index of the chapter edition a demuxer plays, among the editions it reports with
+     * {@link #virtualTimeline()} off, or empty for the default edition; empty by default}
+     *
+     * <p>The Matroska demuxer plays the edition at this index, which it then reports as the default edition, and
+     * plays the default edition ({@link ChapterEdition#defaultIndex}) when the index is empty or past its last
+     * edition. Other demuxers store a single edition and do not use it.
+     */
+    public OptionalInt edition() {
+        return edition < 0 ? OptionalInt.empty() : OptionalInt.of(edition);
+    }
+
+    /**
+     * {@return whether a demuxer presents the virtual timeline of the edition it plays rather than the
+     * presentation as it is stored; {@code true} by default}
+     *
+     * <p>A Matroska edition of ordered chapters, and a chain of hard-linked segments, define a virtual timeline
+     * (RFC 9559 sections 17 and 20.1.3): the parts of the segments the chapters name, in their order, or the linked
+     * segments one after another. With this setting the Matroska demuxer returns the packets of that timeline,
+     * reading the other segments it names from the {@link #dataReferences()} resolver; without it, the packets of
+     * its own segment as they are stored. Other demuxers do not use it.
+     */
+    public boolean virtualTimeline() {
+        return virtualTimeline;
+    }
+
     @Override
     public boolean equals(Object other) {
         return other instanceof DemuxerOptions that && limits.equals(that.limits)
                 && dataReferences.equals(that.dataReferences)
                 && Objects.equals(charset, that.charset) && Objects.equals(subtitleFrameRate, that.subtitleFrameRate)
-                && decryptionKeys.equals(that.decryptionKeys);
+                && decryptionKeys.equals(that.decryptionKeys) && edition == that.edition
+                && virtualTimeline == that.virtualTimeline;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(limits, dataReferences, charset, subtitleFrameRate, decryptionKeys);
+        return Objects.hash(limits, dataReferences, charset, subtitleFrameRate, decryptionKeys, edition,
+                virtualTimeline);
     }
 
     @Override
     public String toString() {
         return "DemuxerOptions[limits=" + limits + ", dataReferences=" + dataReferences + ", charset=" + charset()
-                + ", subtitleFrameRate=" + subtitleFrameRate() + ", decryptionKeys=" + decryptionKeys + "]";
+                + ", subtitleFrameRate=" + subtitleFrameRate() + ", decryptionKeys=" + decryptionKeys
+                + ", edition=" + edition() + ", virtualTimeline=" + virtualTimeline + "]";
     }
 
     /**
      * Assembles {@link DemuxerOptions} setting by setting.
      *
-     * <p>Setters reject {@code null}; {@link #build()} checks the frame rate. Instances are not thread-safe.
+     * <p>Setters reject {@code null} and a negative edition index; {@link #build()} checks the frame rate.
+     * Instances are not thread-safe.
      */
     public static final class Builder {
         private MediaLimits limits;
@@ -157,6 +197,8 @@ public final class DemuxerOptions {
         private Charset charset;
         private Rational subtitleFrameRate;
         private DecryptionKeys decryptionKeys;
+        private int edition;
+        private boolean virtualTimeline;
 
         private Builder(DemuxerOptions options) {
             this.limits = options.limits;
@@ -164,6 +206,8 @@ public final class DemuxerOptions {
             this.charset = options.charset;
             this.subtitleFrameRate = options.subtitleFrameRate;
             this.decryptionKeys = options.decryptionKeys;
+            this.edition = options.edition;
+            this.virtualTimeline = options.virtualTimeline;
         }
 
         /**
@@ -264,6 +308,43 @@ public final class DemuxerOptions {
         }
 
         /**
+         * Sets the chapter edition to play; see {@link DemuxerOptions#edition()}.
+         *
+         * @param index the value, zero or more
+         * @return this builder
+         * @throws IllegalArgumentException if {@code index} is negative
+         */
+        public Builder edition(int index) {
+            if (index < 0) {
+                throw new IllegalArgumentException("negative edition index " + index);
+            }
+            this.edition = index;
+            return this;
+        }
+
+        /**
+         * Plays the default chapter edition, the default; see {@link DemuxerOptions#edition()}.
+         *
+         * @return this builder
+         */
+        public Builder defaultEdition() {
+            this.edition = -1;
+            return this;
+        }
+
+        /**
+         * Sets whether the virtual timeline of the played edition is presented; see
+         * {@link DemuxerOptions#virtualTimeline()}.
+         *
+         * @param virtualTimeline the value
+         * @return this builder
+         */
+        public Builder virtualTimeline(boolean virtualTimeline) {
+            this.virtualTimeline = virtualTimeline;
+            return this;
+        }
+
+        /**
          * Builds the options.
          *
          * @return the options
@@ -273,7 +354,8 @@ public final class DemuxerOptions {
             if (subtitleFrameRate != null && (subtitleFrameRate.numerator() <= 0 || subtitleFrameRate.denominator() <= 0)) {
                 throw new IllegalArgumentException("the subtitle frame rate must be positive, not " + subtitleFrameRate);
             }
-            return new DemuxerOptions(limits, dataReferences, charset, subtitleFrameRate, decryptionKeys);
+            return new DemuxerOptions(limits, dataReferences, charset, subtitleFrameRate, decryptionKeys, edition,
+                    virtualTimeline);
         }
     }
 }

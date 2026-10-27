@@ -10,6 +10,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.ToLongFunction;
 
 /**
  * Trims the packets a demuxer reads after jumping to a position before a seek target, so that
@@ -86,12 +87,28 @@ public final class SeekFilter {
      * @param targetMicros the seek target in microseconds
      */
     public SeekFilter(List<Track> tracks, long targetMicros) {
+        this(tracks, targetMicros, track -> 0);
+    }
+
+    /**
+     * Constructs a filter for a seek target that some tracks restart before.
+     *
+     * <p>A track restarts at its last key frame at or before the target less its lead, so that a
+     * reader can rebuild the decoder state of a track whose codec needs packets before the target;
+     * the margin and the end of the other tracks count from the target itself.
+     *
+     * @param tracks the tracks of the demuxer
+     * @param targetMicros the seek target in microseconds
+     * @param leadMicros the lead of each track in microseconds, zero or more
+     */
+    public SeekFilter(List<Track> tracks, long targetMicros, ToLongFunction<Track> leadMicros) {
         this.states = new HashMap<>();
         this.targetMicros = targetMicros;
         this.queue = new ArrayDeque<>();
         for (var track : tracks) {
-            var target = rescale(targetMicros, track.timeBase());
-            states.put(track.id(), new TrackState(track.timeBase(), target));
+            var lead = Math.max(0, leadMicros.applyAsLong(track));
+            var micros = targetMicros < Long.MIN_VALUE + lead ? Long.MIN_VALUE : targetMicros - lead;
+            states.put(track.id(), new TrackState(track.timeBase(), rescale(micros, track.timeBase())));
         }
         this.unresolved = states.size();
     }

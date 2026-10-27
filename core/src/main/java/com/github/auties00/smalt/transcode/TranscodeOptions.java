@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.transcode;
 
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.metadata.MediaTags;
 import com.github.auties00.smalt.metadata.TagMode;
@@ -52,6 +53,7 @@ public final class TranscodeOptions {
     private final TranscodeListener listener;
 
     private final MediaLimits limits;
+    private final DataReferenceResolver dataReferences;
     private final TagMode tagMode;
 
     /**
@@ -70,6 +72,7 @@ public final class TranscodeOptions {
         this.seeking = builder.seeking;
         this.listener = builder.listener;
         this.limits = builder.limits;
+        this.dataReferences = builder.dataReferences;
         this.tagMode = builder.tagMode;
         this.tags = builder.tags;
     }
@@ -210,6 +213,18 @@ public final class TranscodeOptions {
     }
 
     /**
+     * {@return the resolver of the other files the input names, such as the linked segments a Matroska file plays and
+     * the data references of an MP4 file; {@link DataReferenceResolver#none()} by default}
+     *
+     * <p>The demuxer of the input asks it for those files, as
+     * {@link com.github.auties00.smalt.container.DemuxerOptions#dataReferences()} describes. A transcode of a file
+     * on disk resolves the files of the input's directory when this resolves nothing.
+     */
+    public DataReferenceResolver dataReferences() {
+        return dataReferences;
+    }
+
+    /**
      * {@return which tags, attached pictures, chapters and track tags the output carries; {@link TagMode#COPY}, the
      * input's, by default}
      *
@@ -251,7 +266,7 @@ public final class TranscodeOptions {
      */
     private Object[] state() {
         return new Object[]{container, video, audio, subtitles, startMicros, endMicros, maxDurationMicros, seeking, listener,
-                limits, tagMode, tags};
+                limits, dataReferences, tagMode, tags};
     }
 
     @Override
@@ -269,7 +284,8 @@ public final class TranscodeOptions {
         return "TranscodeOptions[container=" + container + ", video=" + video + ", audio=" + audio + ", subtitles="
                 + subtitles + ", startMicros="
                 + startMicros + ", endMicros=" + endMicros() + ", maxDurationMicros=" + maxDurationMicros()
-                + ", seeking=" + seeking + ", listener=" + listener + ", limits=" + limits + ", tagMode=" + tagMode
+                + ", seeking=" + seeking + ", listener=" + listener + ", limits=" + limits + ", dataReferences="
+                + dataReferences + ", tagMode=" + tagMode
                 + (tags == null ? "" : ", tags=" + tags) + "]";
     }
 
@@ -302,6 +318,7 @@ public final class TranscodeOptions {
         private boolean seeking = true;
         private TranscodeListener listener;
         private MediaLimits limits = MediaLimits.DEFAULT;
+        private DataReferenceResolver dataReferences = DataReferenceResolver.none();
         private TagMode tagMode = TagMode.COPY;
         private MediaTags tags;
 
@@ -321,6 +338,7 @@ public final class TranscodeOptions {
             this.seeking = options.seeking;
             this.listener = options.listener;
             this.limits = options.limits;
+            this.dataReferences = options.dataReferences;
             this.tagMode = options.tagMode;
             this.tags = options.tags;
         }
@@ -482,6 +500,27 @@ public final class TranscodeOptions {
          */
         public Builder limits(MediaLimits limits) {
             this.limits = Objects.requireNonNull(limits, "limits");
+            return this;
+        }
+
+        /**
+         * Sets the resolver of the other files the input names; see {@link TranscodeOptions#dataReferences()}.
+         *
+         * @param dataReferences the value
+         * @return this builder
+         */
+        public Builder dataReferences(DataReferenceResolver dataReferences) {
+            this.dataReferences = Objects.requireNonNull(dataReferences, "dataReferences");
+            return this;
+        }
+
+        /**
+         * Resolves no other file, the default; see {@link TranscodeOptions#dataReferences()}.
+         *
+         * @return this builder
+         */
+        public Builder noDataReferences() {
+            this.dataReferences = DataReferenceResolver.none();
             return this;
         }
 

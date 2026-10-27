@@ -187,7 +187,7 @@ final class AvTranscode {
             throw new MediaException.Unsupported("unknown container", "the input is not a recognized media container"
                     + (image != null ? " but a still " + image.name().toLowerCase(Locale.ROOT) + " image" : ""));
         }
-        try (var demuxer = Containers.openDemuxer(input, DemuxerOptions.builder().limits(options.limits()).build())) {
+        try (var demuxer = Containers.openDemuxer(input, demuxerOptions(options))) {
             return runDemuxed(format, demuxer);
         }
     }
@@ -432,7 +432,7 @@ final class AvTranscode {
         if (subtitles.isEmpty()) {
             return;
         }
-        try (var scan = Containers.openDemuxer(input, DemuxerOptions.builder().limits(options.limits()).build())) {
+        try (var scan = Containers.openDemuxer(input, demuxerOptions(options))) {
             var timeBases = new HashMap<Integer, Rational>();
             for (var track : scan.tracks()) {
                 timeBases.put(track.id(), track.timeBase());
@@ -478,8 +478,7 @@ final class AvTranscode {
         }
         for (var stage : stages) {
             if (stage instanceof AudioEncodeStage audio) {
-                try (var measuring = Containers.openDemuxer(input, DemuxerOptions.builder().limits(options.limits())
-                        .build())) {
+                try (var measuring = Containers.openDemuxer(input, demuxerOptions(options))) {
                     audio.normalize(measuring, normalization.get(), cancellation);
                 }
             }
@@ -1105,7 +1104,7 @@ final class AvTranscode {
      */
     private List<SubtitleCue> readCues(Track track) {
         var cues = new ArrayList<SubtitleCue>();
-        try (var demuxer = Containers.openDemuxer(input, DemuxerOptions.builder().limits(options.limits()).build())) {
+        try (var demuxer = Containers.openDemuxer(input, demuxerOptions(options))) {
             Track found = null;
             for (var candidate : demuxer.tracks()) {
                 if (candidate.id() == track.id()) {
@@ -1348,5 +1347,15 @@ final class AvTranscode {
         @Override
         public void close() {
         }
+    }
+
+    /**
+     * Returns the options the demuxers of a transcode's input use.
+     *
+     * @param options the transcode options
+     * @return the limits and the resolver of the files the input names
+     */
+    private static DemuxerOptions demuxerOptions(TranscodeOptions options) {
+        return DemuxerOptions.builder().limits(options.limits()).dataReferences(options.dataReferences()).build();
     }
 }

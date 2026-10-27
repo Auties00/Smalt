@@ -624,7 +624,9 @@ public final class DemuxerAsserts {
                 var found = firstSync;
                 for (var i = firstSync; i >= 0 && i < indices.size(); i++) {
                     var packet = packet(i);
-                    if (packet.flags().contains(PacketFlag.KEY) && packet.pts() != Packet.NO_TIMESTAMP
+                    // a discarded key frame is decode-only pre-roll, not a frame a seek can land on
+                    if (packet.flags().contains(PacketFlag.KEY) && !packet.flags().contains(PacketFlag.DISCARD)
+                            && packet.pts() != Packet.NO_TIMESTAMP
                             && atOrBefore(packet.pts() + 1, track.timeBase(), target)) {
                         found = i;
                     }
