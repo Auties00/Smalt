@@ -159,8 +159,10 @@ class ContainersApiTest {
         @EnumSource(ContainerFormat.class)
         @DisplayName("creates a muxer for every format")
         void format(ContainerFormat format) {
-            if (format == ContainerFormat.VOBSUB || format == ContainerFormat.HLS || format == ContainerFormat.DASH) {
-                // a VobSub pair is two files, written by VobSubMuxer; an HLS or DASH presentation many, by Packager
+            if (format == ContainerFormat.VOBSUB || format == ContainerFormat.HLS || format == ContainerFormat.DASH
+                    || format == ContainerFormat.OTHER) {
+                // a VobSub pair is two files, written by VobSubMuxer; an HLS or DASH presentation many, by Packager;
+                // OTHER names no single container
                 assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer(format, MediaSink.memory()));
                 return;
             }

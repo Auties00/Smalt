@@ -82,8 +82,8 @@ final class Prober {
             var stream = new ImageStreamInfo(fields, image, header.width, header.height, header.orientation,
                     header.bitDepth, header.alpha, header.animated, header.loops);
             var bitRate = size >= 0 && header.durationMicros > 0 ? size * 8_000_000L / header.durationMicros : -1;
-            return new MediaInfo(null, image, size, header.durationMicros, bitRate, List.of(stream), header.tags, List.of(),
-                    List.of());
+            return new MediaInfo(null, null, image, size, header.durationMicros, bitRate, List.of(stream), header.tags,
+                    List.of(), List.of());
         }
         var format = Containers.detect(source).orElseThrow(() -> new MediaException.Unsupported("unknown format",
                 "the input is neither a recognized image nor a recognized container"));
@@ -135,8 +135,9 @@ final class Prober {
             metadata.forEach((key, value) -> renamed.putIfAbsent(TagFiles.riffInfoKey(key), value));
             metadata = renamed;
         }
-        return new MediaInfo(demuxer.format(), null, size, duration, bitRate, streams, TagNames.normalize(metadata),
-                demuxer.chapters(), options.attachedPictures() ? demuxer.attachedPictures() : List.of());
+        return new MediaInfo(demuxer.format(), demuxer.formatName(), null, size, duration, bitRate, streams,
+                TagNames.normalize(metadata), demuxer.chapters(),
+                options.attachedPictures() ? demuxer.attachedPictures() : List.of());
     }
 
     /**

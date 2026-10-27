@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.DemuxerOptions;
+import com.github.auties00.smalt.container.Muxer;
 import com.github.auties00.smalt.internal.subtitle.Markup;
 import com.github.auties00.smalt.internal.subtitle.TtmlWriter;
 import com.github.auties00.smalt.io.MediaSink;
@@ -20,6 +21,8 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.Predicate;
+import java.util.function.Supplier;
 
 /**
  * Reads, writes and converts text subtitles.
@@ -239,29 +242,100 @@ public final class Subtitles {
      * MicroDVD files, WebVTT for WebVTT and LRC files, ASS events for ASS files and a TTML document for
      * TTML files. An ASS cue keeps its event fields; a SubRip, WebVTT, ASS or TTML file is written in
      * UTF-8, a SAMI file in UTF-8 with its charset declared, a MicroDVD file at 24000/1001 frames per
-     * second.
+     * second. A format that core does not write but a {@link com.github.auties00.smalt.spi.ContainerProvider} does
+     * is written by the provider's muxer, as one track of the first of SubRip, WebVTT, ASS and TTML that the muxer
+     * {@linkplain Containers#isMuxable(ContainerFormat, Codec) carries}.
      *
      * @param cues the cues to write, in presentation order
      * @param markup the markup of the cue texts
      * @param format {@link ContainerFormat#SUBRIP}, {@link ContainerFormat#WEBVTT}, {@link ContainerFormat#ASS},
-     * {@link ContainerFormat#TTML}, {@link ContainerFormat#SAMI}, {@link ContainerFormat#LRC} or
-     * {@link ContainerFormat#MICRODVD}
+     * {@link ContainerFormat#TTML}, {@link ContainerFormat#SAMI}, {@link ContainerFormat#LRC},
+     * {@link ContainerFormat#MICRODVD}, or a format whose provider writes text subtitle tracks
      * @param sink the output, written from its position; not closed
      * @throws NullPointerException if a cue is {@code null}
      * @throws IllegalArgumentException if {@code format} is not a text subtitle file format
      * @throws MediaException.Io if writing fails
      */
     public static void write(List<SubtitleCue> cues, SubtitleMarkup markup, ContainerFormat format, MediaSink sink) {
-        Objects.requireNonNull(cues, "cues");
-        Objects.requireNonNull(markup, "markup");
-        Objects.requireNonNull(sink, "sink");
-        var codec = switch (Objects.requireNonNull(format, "format")) {
+        Objects.requireNonNull(format, "format");
+        var codec = switch (format) {
             case SUBRIP, SAMI, MICRODVD -> Codec.SUBRIP;
             case WEBVTT, LRC -> Codec.WEBVTT;
             case ASS -> Codec.ASS;
             case TTML -> Codec.TTML;
-            default -> throw new IllegalArgumentException(format + " is not a text subtitle file format");
+            case MP4, MATROSKA, OGG, MPEG_AUDIO, ADTS, WAV, FLAC, AMR, AIFF, IVF, AVI, MPEG_TS, AC3, SUP, VOBSUB, H264,
+                 HEVC, AV1, AV1_ANNEX_B, MPEG4_VIDEO, H263, Y4M, HLS, DASH, PCM, OTHER -> null;
+            default -> textCodec(candidate -> Containers.isMuxable(format, candidate));
         };
+        if (codec == null) {
+            throw new IllegalArgumentException(format + " is not a text subtitle file format");
+        }
+        write(cues, markup, codec, () -> Containers.openMuxer(format, sink), sink);
+    }
+
+    /**
+     * Writes cues as a text subtitle file of a container named by its short name.
+     *
+     * <p>A {@link ContainerFormat#shortName()} writes the file
+     * {@link #write(List, SubtitleMarkup, ContainerFormat, MediaSink)} writes for that format; the name of a
+     * container a {@link com.github.auties00.smalt.spi.ContainerProvider} adds writes the cues, in start order, as
+     * one track of the first of SubRip, WebVTT, ASS and TTML that the provider's muxer
+     * {@linkplain Containers#isMuxable(String, Codec) carries}.
+     *
+     * @param cues the cues to write, in presentation order
+     * @param markup the markup of the cue texts
+     * @param container the short name of the container, for example {@code "subrip"}
+     * @param sink the output, written from its position; not closed
+     * @throws NullPointerException if a cue is {@code null}
+     * @throws IllegalArgumentException if the container is not a text subtitle file format that core or a provider
+     * on the module or class path writes
+     * @throws MediaException.Io if writing fails
+     */
+    public static void write(List<SubtitleCue> cues, SubtitleMarkup markup, String container, MediaSink sink) {
+        Objects.requireNonNull(container, "container");
+        var format = ContainerFormat.ofShortName(container);
+        if (format.isPresent()) {
+            write(cues, markup, format.get(), sink);
+            return;
+        }
+        var codec = textCodec(candidate -> Containers.isMuxable(container, candidate));
+        if (codec == null) {
+            throw new IllegalArgumentException(container + " is not a text subtitle file format Smalt writes");
+        }
+        write(cues, markup, codec, () -> Containers.openMuxer(container, sink), sink);
+    }
+
+    /**
+     * Returns the first text subtitle codec a muxer carries.
+     *
+     * @param carries whether the muxer carries a codec
+     * @return the first of SubRip, WebVTT, ASS and TTML it carries, or {@code null}
+     */
+    private static Codec textCodec(Predicate<Codec> carries) {
+        for (var codec : List.of(Codec.SUBRIP, Codec.WEBVTT, Codec.ASS, Codec.TTML)) {
+            if (carries.test(codec)) {
+                return codec;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Writes cues as one text subtitle track.
+     *
+     * @param cues the cues to write
+     * @param markup the markup of the cue texts
+     * @param codec the codec of the track
+     * @param muxer creates the muxer of the file
+     * @param sink the output
+     * @throws NullPointerException if a cue is {@code null}
+     * @throws MediaException.Io if writing fails
+     */
+    private static void write(List<SubtitleCue> cues, SubtitleMarkup markup, Codec codec, Supplier<Muxer> muxer,
+                              MediaSink sink) {
+        Objects.requireNonNull(cues, "cues");
+        Objects.requireNonNull(markup, "markup");
+        Objects.requireNonNull(sink, "sink");
         var sorted = new ArrayList<>(cues);
         for (var cue : sorted) {
             Objects.requireNonNull(cue, "cue");
@@ -274,22 +348,22 @@ public final class Subtitles {
             for (var cue : sorted) {
                 end = Math.max(end, cue.endMicros());
             }
-            try (var muxer = Containers.openMuxer(format, sink)) {
-                muxer.addTrack(track);
-                muxer.writePacket(new Packet(1, document, 0, 0, Rational.MICROSECONDS.rescale(end, track.timeBase()),
+            try (var output = muxer.get()) {
+                output.addTrack(track);
+                output.writePacket(new Packet(1, document, 0, 0, Rational.MICROSECONDS.rescale(end, track.timeBase()),
                         KEY, PacketSideData.NONE));
-                muxer.finish();
+                output.finish();
             }
             return;
         }
         var track = SubtitleEncoder.track(codec, 1);
         var encoder = new SubtitleEncoder(track);
-        try (var muxer = Containers.openMuxer(format, sink)) {
-            muxer.addTrack(track);
+        try (var output = muxer.get()) {
+            output.addTrack(track);
             for (var cue : sorted) {
-                muxer.writePacket(encoder.encode(cue, markup));
+                output.writePacket(encoder.encode(cue, markup));
             }
-            muxer.finish();
+            output.finish();
         }
     }
 }

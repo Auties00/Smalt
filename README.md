@@ -554,8 +554,9 @@ box) reads:
 
 ### Containers
 
-All containers live in `smalt-core`, so demuxing, seeking, probing and muxing never need a codec
-artifact. "Seek" is how `Demuxer.seek` finds the key frame at or before a time (every track
+All the containers below live in `smalt-core`, so demuxing, seeking, probing and muxing never need a codec
+artifact; other artifacts and applications add containers through the `spi.ContainerProvider` interface
+(see [Container providers](#container-providers)). "Seek" is how `Demuxer.seek` finds the key frame at or before a time (every track
 restarts at its own); "Probe" is the metadata `Media.probe` reads beyond the streams (every
 container gives codec, size, color, rate, channels and language; the codec configuration records
 give profile, level and bit depth, and the H.264 and HEVC sample aspect ratio when the container
@@ -592,6 +593,26 @@ of the first frame) and `pasp` (the track's sample aspect ratio, else square sam
 when the first frame carries alpha. `MatroskaMuxer` writes
 ProRes as `V_PRORES` (frames without their size and `icpf` prefix, as Matroska stores them) and DNxHD as
 `V_QUICKTIME` with a QuickTime sample description. MXF, the other home of DNxHD, is not supported.
+
+#### Container providers
+
+A module or class-path jar adds a container by providing a `spi.ContainerProvider` (`provides` in its module
+declaration, or a `META-INF/services` entry), the way the codec artifacts add codecs. A provider names its
+container (`name()`, for example `"mxf"`), recognizes it from up to 64 KiB of leading bytes (`matches`, also
+asked after a leading ID3v2 tag) and implements any of reading (`openDemuxer`), writing (`openMuxer`, with the
+codecs it `carries`) and tag editing (`readTags`, and `planTags`, which returns a `TagRewrite` of literal bytes and
+copied ranges that `TagEditor` applies in place when the ranges stay put). Its container is then recognized by
+`Containers.detect`, opened by `Containers.openDemuxer`, the readers (`AudioReader`, `VideoReader`,
+`SubtitleReader`, `Subtitles.read`), `Media.probe`, `Packager` and the transcoder's input, written by
+`Containers.openMuxer(String, MediaSink)` and `Subtitles.write(cues, markup, String, sink)`, and its tags read
+and written by `TagEditor`. A container `ContainerFormat` does not name is `ContainerFormat.OTHER`, identified by
+the provider's name (`Containers.detectName`, `Demuxer.formatName()`, `MediaInfo.containerName()`); a provider
+may also name a `ContainerFormat` constant, for which it adds the operations core lacks (for example tag editing of
+YUV4MPEG2 files). Core's own containers come first: recognition asks the providers after the formats with a magic
+number and before the ones found by heuristics (frame sync words, elementary video, text), and a provider is used
+only for the operations core lacks. A container
+that is recognized but that no provider on the path reads, writes or edits raises `MediaException.Unsupported`
+naming it, and the Smalt artifact that implements it when there is one.
 
 The MP4 demuxer applies every segment of an edit list (ISO/IEC 14496-12 clause 8.6.6): several media edits,
 empty edits between them and dwell edits (media rate 0, which hold a picture) become a presentation index whose
@@ -1690,6 +1711,9 @@ checks a FLAC source's MD5 signature on the way.
   cover hold whatever the X server returns; window capture on macOS needs ScreenCaptureKit (macOS 12.3), and the
   screen snapshots of older macOS versions never show the pointer. Screen and window capture of a Wayland session
   is not implemented (it needs the screen cast portal and PipeWire).
+- Container providers: the transcoder writes only the `OutputContainer` profiles, so a container a provider adds
+  that `ContainerFormat` does not name (`ContainerFormat.OTHER`) is a transcode input but not a transcode output;
+  `Containers.openMuxer(String, MediaSink)` writes it.
 
 ---
 

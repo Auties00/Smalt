@@ -103,6 +103,12 @@ import java.util.Objects;
  * </tbody>
  * </table>
  *
+ * <p>A container that another artifact or an application adds through a
+ * {@link com.github.auties00.smalt.spi.ContainerProvider ContainerProvider} is edited by that provider, when it
+ * {@linkplain com.github.auties00.smalt.spi.ContainerProvider#editsTags() edits tags}, under the same contract: the
+ * read, write and location-stripping methods below apply to its files, in place when its
+ * {@linkplain com.github.auties00.smalt.spi.ContainerProvider#planTags plan} allows it.
+ *
  * <p>In MP4, Matroska, AVI and MPEG-TS files the {@linkplain MediaTags#tracks() track tags} of every
  * track are read too, and a write replaces the name, tags and dispositions of each track the written
  * tags hold, keeping those of the other tracks; {@link TrackTags} lists how each container stores them.
@@ -150,11 +156,26 @@ public final class TagEditor {
      * {@link ContainerFormat#AC3}, {@link ContainerFormat#AMR}, {@link ContainerFormat#FLAC},
      * {@link ContainerFormat#OGG}, {@link ContainerFormat#MP4}, {@link ContainerFormat#MATROSKA},
      * {@link ContainerFormat#WAV}, {@link ContainerFormat#AIFF}, {@link ContainerFormat#AVI} and
-     * {@link ContainerFormat#MPEG_TS}
+     * {@link ContainerFormat#MPEG_TS}, and for a format whose
+     * {@link com.github.auties00.smalt.spi.ContainerProvider ContainerProvider} edits its tags; {@code false} for
+     * {@link ContainerFormat#OTHER}, which names no single container
      */
     public static boolean isSupported(ContainerFormat format) {
         Objects.requireNonNull(format, "format");
         return TagFiles.isSupported(format);
+    }
+
+    /**
+     * Returns whether the tags of a container, named by its short name, can be read and written.
+     *
+     * @param name the {@link ContainerFormat#shortName()} of a format, or the
+     * {@linkplain com.github.auties00.smalt.spi.ContainerProvider#name() name} of a container a provider adds
+     * @return {@code true} when {@link #isSupported(ContainerFormat)} holds for the format of that name, or a
+     * provider of that name edits the tags of its container; {@code false} for a name no container has
+     */
+    public static boolean isSupported(String name) {
+        Objects.requireNonNull(name, "name");
+        return TagFiles.isSupported(name);
     }
 
     /**

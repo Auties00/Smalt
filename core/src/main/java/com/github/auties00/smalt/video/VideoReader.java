@@ -210,6 +210,14 @@ public final class VideoReader implements AutoCloseable {
     }
 
     /**
+     * {@return the short name of the container the input was recognized as, which identifies a container that
+     * {@link ContainerFormat} does not name; see {@link com.github.auties00.smalt.container.Demuxer#formatName()}}
+     */
+    public String formatName() {
+        return demuxer.formatName();
+    }
+
+    /**
      * Returns the track being decoded.
      *
      * @return the track

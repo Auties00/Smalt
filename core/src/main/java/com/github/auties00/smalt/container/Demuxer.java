@@ -39,6 +39,21 @@ public interface Demuxer extends AutoCloseable {
     ContainerFormat format();
 
     /**
+     * Returns the short name of the recognized container, which identifies a container that
+     * {@link ContainerFormat} does not name.
+     *
+     * <p>A demuxer of a {@link com.github.auties00.smalt.spi.ContainerProvider} of {@link ContainerFormat#OTHER}
+     * returns the provider's {@linkplain com.github.auties00.smalt.spi.ContainerProvider#name() name}.
+     *
+     * @implSpec The default implementation returns {@link ContainerFormat#shortName()} of {@link #format()}.
+     *
+     * @return the name, for example {@code "matroska"}
+     */
+    default String formatName() {
+        return format().shortName();
+    }
+
+    /**
      * Returns every elementary stream of the container, in container order.
      *
      * @return the tracks; unmodifiable

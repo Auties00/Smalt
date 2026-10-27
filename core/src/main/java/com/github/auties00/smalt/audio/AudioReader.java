@@ -216,6 +216,14 @@ public final class AudioReader implements AutoCloseable {
     }
 
     /**
+     * {@return the short name of the container the input was recognized as, which identifies a container that
+     * {@link ContainerFormat} does not name; see {@link com.github.auties00.smalt.container.Demuxer#formatName()}}
+     */
+    public String formatName() {
+        return demuxer.formatName();
+    }
+
+    /**
      * {@return the track being decoded}
      */
     public AudioTrack track() {

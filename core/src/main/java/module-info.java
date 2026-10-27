@@ -21,7 +21,8 @@
  * <p>The registries ({@code Images}, {@code AudioDecoders}, {@code AudioEncoders},
  * {@code VideoDecoders}, {@code VideoEncoders} and {@code Containers}) name no codec: they find
  * the decoders and encoders through the service-provider interfaces of the {@code spi} package,
- * so a module or class-path jar adds a codec by providing an implementation. Inputs are read
+ * so a module or class-path jar adds a codec by providing an implementation, and a container the
+ * same way. Inputs are read
  * through {@code MediaSource} and outputs written through {@code MediaSink}. The {@code transcode}
  * package converts files on top of them: remuxing, re-encoding, trimming, scaling and resampling;
  * the {@code container.packaging} package segments them into HLS and DASH presentations, which the
@@ -40,6 +41,8 @@
  * {@code AudioEncoders}
  * @uses com.github.auties00.smalt.spi.VideoCodecProvider the video codecs of {@code VideoDecoders} and
  * {@code VideoEncoders}
+ * @uses com.github.auties00.smalt.spi.ContainerProvider the containers of other artifacts and applications, which
+ * {@code Containers}, the readers, {@code Media.probe}, {@code TagEditor} and the transcoder handle like core's own
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider the PCM decoders and encoders
  * @provides com.github.auties00.smalt.spi.VideoCodecProvider the uncompressed video decoder and encoder
  */
@@ -51,7 +54,7 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt;
     exports com.github.auties00.smalt.io;
 
-    // Codec service-provider interfaces, through which the registries find the codecs
+    // Codec and container service-provider interfaces, through which the registries find the codecs and containers
     exports com.github.auties00.smalt.spi;
 
     // Pictures, samples, tracks and the codec/container contracts
@@ -202,6 +205,8 @@ module com.github.auties00.smalt {
     uses com.github.auties00.smalt.spi.ImageCodecProvider;
     uses com.github.auties00.smalt.spi.AudioCodecProvider;
     uses com.github.auties00.smalt.spi.VideoCodecProvider;
+    // Containers and the tag editor look up the containers of other artifacts and applications through this one
+    uses com.github.auties00.smalt.spi.ContainerProvider;
     // The HEIF item codecs of other artifacts, for the HEIF decoders of the artifacts that do not depend on them
     uses com.github.auties00.smalt.internal.heif.HeifComponentCodec;
     // The HEIF decoders of the artifacts, each handing the images of the other's codings to it

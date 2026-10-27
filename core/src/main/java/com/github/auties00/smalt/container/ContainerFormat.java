@@ -1,10 +1,15 @@
 package com.github.auties00.smalt.container;
 
+import java.util.Locale;
+import java.util.Objects;
+import java.util.Optional;
+
 /**
- * Enumerates the container formats this module can recognize or write.
+ * Enumerates the container formats Smalt recognizes or writes, in core or through a container provider.
  *
  * <p>Every constant is recognized by {@link Containers#detect(com.github.auties00.smalt.io.MediaSource)} except
- * {@link #PCM}, raw samples that carry no header to recognize them by.
+ * {@link #PCM}, raw samples that carry no header to recognize them by. {@link #OTHER} stands for every container a
+ * {@link com.github.auties00.smalt.spi.ContainerProvider} adds that this enum does not name.
  *
  * <p>Constants may be added in minor releases as new formats are recognized, so a {@code switch}
  * over this type needs a {@code default} branch.
@@ -183,5 +188,42 @@ public enum ContainerFormat {
      * Raw PCM samples without a header ({@code .pcm}, {@code .raw}), whose sample format, rate and channel count
      * the reader must know. Never recognized.
      */
-    PCM
+    PCM,
+
+    /**
+     * A container this enum does not name, read or written by a {@link com.github.auties00.smalt.spi.ContainerProvider}
+     * outside Smalt; the provider's name, which {@link Demuxer#formatName()} and
+     * {@link com.github.auties00.smalt.probe.MediaInfo#containerName()} report, identifies it.
+     */
+    OTHER;
+
+    /**
+     * Returns the short name of the format: the constant's name in lowercase with hyphens for underscores, for
+     * example {@code "mp4"}, {@code "mpeg-ts"} or {@code "av1-annex-b"}.
+     *
+     * <p>The short names identify the formats in failures and in the name-based lookups of {@link Containers},
+     * which also accept the names of the containers that providers add.
+     *
+     * @return the short name; {@code "other"} for {@link #OTHER}, which names no single container
+     */
+    public String shortName() {
+        return name().toLowerCase(Locale.ROOT).replace('_', '-');
+    }
+
+    /**
+     * Returns the format of a short name.
+     *
+     * @param shortName the short name, as {@link #shortName()} spells it
+     * @return the format, or empty when no constant has that short name (as for the name of a container a
+     * {@link com.github.auties00.smalt.spi.ContainerProvider} adds)
+     */
+    public static Optional<ContainerFormat> ofShortName(String shortName) {
+        Objects.requireNonNull(shortName, "shortName");
+        for (var format : values()) {
+            if (format.shortName().equals(shortName)) {
+                return Optional.of(format);
+            }
+        }
+        return Optional.empty();
+    }
 }

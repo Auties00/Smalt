@@ -58,6 +58,8 @@ import com.github.auties00.smalt.container.y4m.Y4mMuxer;
 import com.github.auties00.smalt.io.MediaSink;
 import com.github.auties00.smalt.internal.header.MpegAudioHeader;
 import com.github.auties00.smalt.internal.limits.Guards;
+import com.github.auties00.smalt.internal.provider.Artifacts;
+import com.github.auties00.smalt.internal.provider.Providers;
 import com.github.auties00.smalt.internal.subtitle.AssFile;
 import com.github.auties00.smalt.internal.subtitle.LrcText;
 import com.github.auties00.smalt.internal.subtitle.MicroDvdText;
@@ -69,6 +71,7 @@ import com.github.auties00.smalt.internal.subtitle.WebVttText;
 import com.github.auties00.smalt.internal.tags.Id3v2Tag;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.metadata.MediaTags;
+import com.github.auties00.smalt.spi.ContainerProvider;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Track;
@@ -76,6 +79,7 @@ import com.github.auties00.smalt.transcode.OutputContainer;
 
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -112,6 +116,16 @@ import java.util.function.Predicate;
  * {@link #openMuxer(OutputContainer, MediaSink)} also writes WebM, M4A, QuickTime and fragmented MP4
  * ({@link FragmentedMp4Muxer}). A caller that needs other options (RF64 policies, fragment durations)
  * constructs the muxer directly.
+ *
+ * <p>Other artifacts and applications add containers through {@link ContainerProvider}s: the formats core names
+ * but does not implement, and containers {@link ContainerFormat} does not name, which are
+ * {@link ContainerFormat#OTHER} and identified by their short name ({@link #detectName(MediaSource)},
+ * {@link #openMuxer(String, MediaSink)}). Core's own containers take precedence. Recognition asks the providers
+ * after the formats with a magic number and before the ones recognized by heuristics, as
+ * {@link ContainerProvider} describes. A container that is recognized but that neither core nor a provider on the
+ * module or class path reads or writes raises {@link MediaException.Unsupported} naming it and, when a Smalt
+ * artifact implements it, the artifact to add. A method that consults the providers throws
+ * {@link java.util.ServiceConfigurationError} when one is misconfigured.
  */
 public final class Containers {
     /**
@@ -149,42 +163,139 @@ public final class Containers {
      * @throws MediaException.Io if reading the source fails
      */
     public static Optional<ContainerFormat> detect(MediaSource source) {
+        return Optional.ofNullable(recognize(source)).map(Detection::format);
+    }
+
+    /**
+     * Recognizes the container of a media file, by content only, and returns its short name.
+     *
+     * <p>The name is {@link ContainerFormat#shortName()} of the format {@link #detect(MediaSource)} recognizes,
+     * or, for a container a {@link ContainerProvider} adds that {@link ContainerFormat} does not name, the
+     * provider's {@linkplain ContainerProvider#name() name}.
+     *
+     * @param source the input
+     * @return the name, for example {@code "mp4"}, or empty when the content matches no known container
+     * @throws MediaException.Io if reading the source fails
+     */
+    public static Optional<String> detectName(MediaSource source) {
+        return Optional.ofNullable(recognize(source)).map(Detection::name);
+    }
+
+    /**
+     * Recognizes the container of a media file.
+     *
+     * @param source the input
+     * @return the recognized container, or {@code null}
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static Detection recognize(MediaSource source) {
         Objects.requireNonNull(source, "source");
         var header = read(source, 0, HEADER_LENGTH);
         var magic = detectMagic(header);
         if (magic != null) {
-            return Optional.of(magic);
+            return new Detection(magic, null);
+        }
+        var providers = Providers.containers();
+        var provided = detectProvided(providers, source, 0, header);
+        if (provided != null) {
+            return provided;
         }
         var leading = header;
         var offset = 0L;
         var tagSize = Id3v2Tag.size(header, 0);
         if (tagSize >= 0) {
             if (tagSize > MAX_ID3_SKIP) {
-                return Optional.empty();
+                return null;
             }
             offset = tagSize;
             header = read(source, offset, HEADER_LENGTH);
             if (header.length >= 4 && header[0] == 'f' && header[1] == 'L' && header[2] == 'a' && header[3] == 'C') {
-                return Optional.of(ContainerFormat.FLAC);
+                return new Detection(ContainerFormat.FLAC, null);
             }
             if (Ac3Demuxer.matches(header)) {
-                return Optional.of(ContainerFormat.AC3);
+                return new Detection(ContainerFormat.AC3, null);
             }
             if (matches(header, 0, "#!AMR")) {
-                return Optional.of(ContainerFormat.AMR);
+                return new Detection(ContainerFormat.AMR, null);
+            }
+            provided = detectProvided(providers, source, offset, header);
+            if (provided != null) {
+                return provided;
             }
         }
         var frames = detectFrameStream(header);
         if (frames != null) {
-            return Optional.of(frames);
+            return new Detection(frames, null);
         }
         if (offset == 0) {
             var video = detectElementaryVideo(source, leading);
             if (video != null) {
-                return Optional.of(video);
+                return new Detection(video, null);
             }
         }
-        return Optional.ofNullable(detectText(leading));
+        var text = detectText(leading);
+        return text == null ? null : new Detection(text, null);
+    }
+
+    /**
+     * Asks the container providers whether they recognize the bytes at an offset.
+     *
+     * @param providers the container providers, in the order the service loader found them
+     * @param source the input
+     * @param offset the offset of {@code header}: zero, or the size of a leading ID3v2 tag
+     * @param header the {@value #HEADER_LENGTH} bytes at {@code offset}, or fewer at the end of the input
+     * @return the container of the first provider that recognizes the bytes, or {@code null}
+     * @throws MediaException.Io if reading the source fails
+     */
+    private static Detection detectProvided(List<ContainerProvider> providers, MediaSource source, long offset,
+                                            byte[] header) {
+        if (providers.isEmpty()) {
+            return null;
+        }
+        var longest = 0;
+        for (var provider : providers) {
+            longest = Math.max(longest, probeLength(provider));
+        }
+        var probe = longest <= header.length || header.length < HEADER_LENGTH ? header : read(source, offset, longest);
+        for (var provider : providers) {
+            var view = Arrays.copyOf(probe, Math.min(probe.length, probeLength(provider)));
+            boolean matched;
+            try {
+                matched = provider.matches(view, offset);
+            } catch (RuntimeException exception) {
+                // A provider that breaks the contract by throwing must not make detection fail for every input
+                matched = false;
+            }
+            if (matched) {
+                return new Detection(provider.format(), provider);
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Returns how many leading bytes a provider recognizes its format from.
+     *
+     * @param provider the container provider asked
+     * @return its {@link ContainerProvider#probeLength()}, from 0 to {@link ContainerProvider#MAX_PROBE_LENGTH}
+     */
+    private static int probeLength(ContainerProvider provider) {
+        return Math.clamp(provider.probeLength(), 0, ContainerProvider.MAX_PROBE_LENGTH);
+    }
+
+    /**
+     * A recognized container.
+     *
+     * @param format the recognized format, {@link ContainerFormat#OTHER} for a container the enum does not name
+     * @param provider the provider that recognized it, or {@code null} when core did
+     */
+    private record Detection(ContainerFormat format, ContainerProvider provider) {
+        /**
+         * {@return the short name of the container}
+         */
+        String name() {
+            return provider != null ? provider.name() : format.shortName();
+        }
     }
 
     /**
@@ -230,8 +341,34 @@ public final class Containers {
      * @throws MediaException.Unsupported if the content is not a recognized container
      */
     private static Demuxer open(MediaSource source, DemuxerOptions options) {
-        var format = detect(source).orElseThrow(() -> new MediaException.Unsupported(
-                "unknown container", "the input is not a recognized media container"));
+        var detection = recognize(source);
+        if (detection == null) {
+            throw new MediaException.Unsupported("unknown container", "the input is not a recognized media container");
+        }
+        var format = detection.format();
+        var demuxer = openBuiltIn(format, source, options);
+        if (demuxer != null) {
+            return demuxer;
+        }
+        var provider = detection.provider() != null && detection.provider().demuxes() ? detection.provider()
+                : provider(format, detection.name(), ContainerProvider::demuxes);
+        if (provider == null) {
+            var name = detection.name();
+            throw Artifacts.unsupportedContainer(name, "demuxable", missingArtifact(format, name));
+        }
+        return Objects.requireNonNull(provider.openDemuxer(source, options), "the demuxer a provider opens");
+    }
+
+    /**
+     * Creates the demuxer core implements for a container format.
+     *
+     * @param format the format of the input
+     * @param source the input
+     * @param options the demuxing options
+     * @return the demuxer, or {@code null} when core reads no file of {@code format}
+     * @throws MediaException.Unsupported if core recognizes the format but cannot read it from the input alone
+     */
+    private static Demuxer openBuiltIn(ContainerFormat format, MediaSource source, DemuxerOptions options) {
         return switch (format) {
             case MP4 -> new Mp4Demuxer(source, options);
             case MATROSKA -> new MatroskaDemuxer(source, options);
@@ -269,7 +406,26 @@ public final class Containers {
             case MPEG4_VIDEO, H263 -> new Mpeg4VideoDemuxer(source, options);
             case Y4M -> new Y4mDemuxer(source, options);
             case PCM -> throw new MediaException.Unsupported("pcm", "raw PCM needs its sample format: use PcmDemuxer");
+            default -> null;
         };
+    }
+
+    /**
+     * Finds the provider of a container that offers an operation.
+     *
+     * @param format the format of the container, {@link ContainerFormat#OTHER} for one the enum does not name
+     * @param name the short name of the container
+     * @param offers whether a provider offers the operation
+     * @return the first provider of the container that offers it, or {@code null}
+     */
+    private static ContainerProvider provider(ContainerFormat format, String name,
+                                              Predicate<ContainerProvider> offers) {
+        for (var provider : Providers.containers()) {
+            if (provider.format() == format && provider.name().equals(name) && offers.test(provider)) {
+                return provider;
+            }
+        }
+        return null;
     }
 
     /**
@@ -305,7 +461,32 @@ public final class Containers {
             case VOBSUB, HLS, DASH -> false;
             case AVI -> AviMuxer.supports(codec);
             case Y4M -> Y4mMuxer.supports(codec);
+            case OTHER -> false;
+            default -> {
+                var provider = provider(format, format.shortName(), ContainerProvider::muxes);
+                yield provider != null && provider.carries(codec);
+            }
         };
+    }
+
+    /**
+     * Returns whether the muxer of a container, named by its short name, accepts tracks of a codec.
+     *
+     * @param name the short name of the container: a {@link ContainerFormat#shortName()} or the
+     * {@linkplain ContainerProvider#name() name} of a container a provider adds
+     * @param codec the codec of the track
+     * @return {@code true} when the muxer {@link #openMuxer(String, MediaSink)} returns for {@code name} can carry
+     * {@code codec}; {@code false} for a name no container has
+     */
+    public static boolean isMuxable(String name, Codec codec) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(codec, "codec");
+        var format = ContainerFormat.ofShortName(name).orElse(null);
+        if (format != null) {
+            return isMuxable(format, codec);
+        }
+        var provider = provider(ContainerFormat.OTHER, name, ContainerProvider::muxes);
+        return provider != null && provider.carries(codec);
     }
 
     /**
@@ -335,8 +516,10 @@ public final class Containers {
      * @param output the sink, written from its position and not closed by the muxer
      * @return the muxer, which the caller finishes and closes
      * @throws IllegalArgumentException if {@code format} is {@link ContainerFormat#VOBSUB}, which writes two files
-     * ({@code VobSubMuxer}), or {@link ContainerFormat#HLS} or {@link ContainerFormat#DASH}, presentations of many
-     * files that {@link com.github.auties00.smalt.container.packaging.Packager} writes
+     * ({@code VobSubMuxer}), {@link ContainerFormat#HLS} or {@link ContainerFormat#DASH}, presentations of many
+     * files that {@link com.github.auties00.smalt.container.packaging.Packager} writes, or
+     * {@link ContainerFormat#OTHER}, which names no single container
+     * @throws MediaException.Unsupported if no muxer of a format core does not write is on the module or class path
      * @throws MediaException.Io if the sink position cannot be read
      */
     public static Muxer openMuxer(ContainerFormat format, MediaSink output) {
@@ -368,7 +551,61 @@ public final class Containers {
                     + "Packager");
             case AVI -> new AviMuxer(output);
             case Y4M -> new Y4mMuxer(output);
+            case OTHER -> throw new IllegalArgumentException("OTHER names no single container: name the container");
+            default -> openProvided(format, format.shortName(), output);
         };
+    }
+
+    /**
+     * Creates the muxer that writes a container, named by its short name, with the default options of that
+     * container.
+     *
+     * <p>A {@link ContainerFormat#shortName()} gives the muxer {@link #openMuxer(ContainerFormat, MediaSink)}
+     * returns for that format; any other name gives the muxer of the {@link ContainerProvider} of that name.
+     *
+     * @param name the short name of the container, for example {@code "matroska"}
+     * @param output the sink, written from its position and not closed by the muxer
+     * @return the muxer, which the caller finishes and closes
+     * @throws IllegalArgumentException if {@code name} is {@code "vobsub"}, {@code "hls"}, {@code "dash"} or
+     * {@code "other"}, as for {@link #openMuxer(ContainerFormat, MediaSink)}
+     * @throws MediaException.Unsupported if no container of that name is written by core or a provider on the
+     * module or class path
+     * @throws MediaException.Io if the sink position cannot be read
+     */
+    public static Muxer openMuxer(String name, MediaSink output) {
+        Objects.requireNonNull(name, "name");
+        Objects.requireNonNull(output, "output");
+        var format = ContainerFormat.ofShortName(name).orElse(null);
+        return format != null ? openMuxer(format, output) : openProvided(ContainerFormat.OTHER, name, output);
+    }
+
+    /**
+     * Returns the Smalt artifact to add for a container no provider on the module or class path handles.
+     *
+     * @param format the format of the container
+     * @param name the short name of the container
+     * @return the artifact that implements the container, or {@code null} when none does or a provider of the
+     * container is present
+     */
+    private static String missingArtifact(ContainerFormat format, String name) {
+        return provider(format, name, _ -> true) != null ? null : Artifacts.containerOf(format);
+    }
+
+    /**
+     * Creates the muxer of a container a provider writes.
+     *
+     * @param format the format of the container, {@link ContainerFormat#OTHER} for one the enum does not name
+     * @param name the short name of the container
+     * @param output the sink
+     * @return the muxer
+     * @throws MediaException.Unsupported if no provider writes the container
+     */
+    private static Muxer openProvided(ContainerFormat format, String name, MediaSink output) {
+        var provider = provider(format, name, ContainerProvider::muxes);
+        if (provider == null) {
+            throw Artifacts.unsupportedContainer(name, "writable", missingArtifact(format, name));
+        }
+        return Objects.requireNonNull(provider.openMuxer(output), "the muxer a provider opens");
     }
 
     /**

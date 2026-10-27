@@ -322,7 +322,8 @@ class ElementaryMuxersTest {
         @DisplayName("creates a muxer for every writable format and reports which codecs it carries")
         void createMuxer() {
             for (var format : ContainerFormat.values()) {
-                if (format != ContainerFormat.VOBSUB && format != ContainerFormat.HLS && format != ContainerFormat.DASH) {
+                if (format != ContainerFormat.VOBSUB && format != ContainerFormat.HLS && format != ContainerFormat.DASH
+                        && format != ContainerFormat.OTHER) {
                     assertInstanceOf(Muxer.class, Containers.openMuxer(format, MediaSink.memory()));
                 }
             }

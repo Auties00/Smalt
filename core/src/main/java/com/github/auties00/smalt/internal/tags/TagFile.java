@@ -14,7 +14,7 @@ import com.github.auties00.smalt.metadata.TagWriteOptions;
  * video data. Instances are not thread-safe.
  */
 public sealed interface TagFile permits AviTagFile, FlacTagFile, Id3StreamTagFile, MatroskaTagFile, Mp4TagFile,
-        OggTagFile, RiffTagFile, TsTagFile {
+        OggTagFile, ProvidedTagFile, RiffTagFile, TsTagFile {
     /**
      * Returns the tags, pictures and chapters of the file.
      *
