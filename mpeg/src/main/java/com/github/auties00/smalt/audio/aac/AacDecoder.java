@@ -694,7 +694,7 @@ public final class AacDecoder implements AudioDecoder {
      * @implNote This implementation substitutes spectra in the manner of the informative error concealment of
      * ISO/IEC 14496-3 but without its interpolation toward the next good block, which would delay the output by a
      * block.
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      * @throws MediaException.Unsupported if the stream is USAC ({@code "usac concealment"})
      */
     @Override

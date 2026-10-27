@@ -63,6 +63,29 @@ class WaveFormatTest {
         }
     }
 
+    @ParameterizedTest(name = "{0} channels")
+    @CsvSource({"3, true", "4, true", "9, true", "16, true", "2, false", "10, false"})
+    @DisplayName("gives the Ambisonic sub-formats the Furse-Malham layout of the channel count, ignoring the mask")
+    void ambisonicLayout(int channels, boolean defined) {
+        var bytes = extensible("0100000021" + "07d3118644c8c1ca000000");
+        ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).putShort(2, (short) channels);
+        var format = WaveFormat.parse(bytes, bytes.length, false);
+        assertEquals(3, format.channelMask());
+        var layout = format.layout();
+        assertEquals(channels, layout.channels());
+        assertEquals(defined, layout.ambisonics().isPresent());
+        if (defined) {
+            assertEquals(com.github.auties00.smalt.audio.ChannelLayout.ofAmbisonics(
+                    com.github.auties00.smalt.audio.Ambisonics.ofFurseMalham(channels)), layout);
+            assertTrue(WaveFormat.isAmbisonicBFormat(layout));
+        } else {
+            assertTrue(layout.speakers().stream().allMatch(
+                    speaker -> speaker == com.github.auties00.smalt.audio.Speaker.UNKNOWN));
+        }
+        var standard = WaveFormat.parse(extensible("01000000000010008000" + "00aa00389b71"), 40, false);
+        assertTrue(standard.layout().ambisonics().isEmpty());
+    }
+
     @Test
     @DisplayName("keeps a plain WAVEFORMATEX and a truncated extensible tag apart from the families")
     void plain() {

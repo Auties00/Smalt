@@ -177,7 +177,11 @@ public final class DemuxDump {
             case AudioTrack audio -> {
                 text.append("  audio rate=").append(audio.sampleRate()).append(" bits=").append(audio.bitsPerSample())
                         .append(" skip=").append(audio.skipSamples());
-                audio.layout().ifPresent(layout -> text.append(" layout=").append(layout.speakers()));
+                audio.layout().ifPresent(layout -> {
+                    text.append(" layout=").append(layout.speakers());
+                    layout.ambisonics().ifPresent(ambisonics -> text.append(" ambisonics=")
+                            .append(ambisonics.normalization()).append(ambisonics.components()));
+                });
                 text.append('\n');
             }
             case DataTrack ignored -> {

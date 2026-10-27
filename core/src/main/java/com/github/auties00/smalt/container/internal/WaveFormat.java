@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.internal.io.ByteArrays;
@@ -9,6 +10,7 @@ import com.github.auties00.smalt.track.Codec;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Objects;
 
 /**
@@ -313,9 +315,13 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
 
     /**
      * {@return the speaker layout of the channel mask: the speakers of the set mask bits in mask order,
-     * padded with {@link Speaker#UNKNOWN}, or the default layout of the channel count without a mask}
+     * padded with {@link Speaker#UNKNOWN}, or the default layout of the channel count without a mask; for the
+     * {@link SubFormat#AMBISONIC} sub-formats, the layout of {@link #ambisonicLayout(int)} whatever the mask}
      */
     public ChannelLayout layout() {
+        if (subFormat == SubFormat.AMBISONIC) {
+            return ambisonicLayout(channels);
+        }
         if (channelMask == 0) {
             return ChannelLayout.defaultFor(channels);
         }
@@ -330,6 +336,34 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             speakers.add(Speaker.UNKNOWN);
         }
         return new ChannelLayout(speakers);
+    }
+
+    /**
+     * Returns the layout of the Ambisonic B-format sub-formats: the Furse-Malham channels of a count, in the order
+     * {@code W X Y Z R S T U V K L M N O P Q} restricted to the set of the count.
+     *
+     * @param channels the channel count
+     * @return the B-format layout for 3, 4, 5, 6, 7, 8, 9, 11 and 16 channels, channels of unknown position
+     * without ambisonics for other counts
+     */
+    public static ChannelLayout ambisonicLayout(int channels) {
+        return switch (channels) {
+            case 3, 4, 5, 6, 7, 8, 9, 11, 16 -> ChannelLayout.ofAmbisonics(Ambisonics.ofFurseMalham(channels));
+            default -> new ChannelLayout(Collections.nCopies(channels, Speaker.UNKNOWN));
+        };
+    }
+
+    /**
+     * Returns whether a layout is a Furse-Malham B-format that the Ambisonic sub-formats describe, so that a
+     * writer declares it with {@link SubFormat#AMBISONIC}.
+     *
+     * @param layout the channel layout of a track
+     * @return {@code true} when every channel carries a component in the B-format order of its channel count
+     */
+    public static boolean isAmbisonicBFormat(ChannelLayout layout) {
+        var ambisonics = layout.ambisonics();
+        return ambisonics.isPresent() && ambisonics.get().channels() == layout.channels()
+                && ambisonicLayout(layout.channels()).equals(layout);
     }
 
     /**

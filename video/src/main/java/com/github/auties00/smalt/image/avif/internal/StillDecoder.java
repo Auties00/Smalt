@@ -153,6 +153,7 @@ final class StillDecoder {
             var decoder = new ItemDecoder(limits, true);
             var frame = decoder.decodeItem(plan.config(), payload, StillPlan.operatingPoint(item), StillPlan.layer(item));
             try {
+                checkExtent(item, frame);
                 var matrix = colorInfo(plan.item(), frame.seqHdr, null, null).matrix();
                 canvas = new Canvas(limits, frame.w, frame.h, SequenceHeader.chromaFormat(frame.layout), frame.bpc,
                         frame.bpc > 8 && (highBitDepth || Colors.reducesToRgb(matrix, frame.bpc)), plan.hasAlpha());
@@ -292,6 +293,28 @@ final class StillDecoder {
             }
         }
         return indices;
+    }
+
+    /**
+     * Checks that a coded item of a single layer decodes to the size its {@code ispe} property declares, the size a
+     * region of it is taken from, as a grid tile must ({@link #checkTile}). An item that selects an operating point
+     * or a layer may decode to a layer smaller than its {@code ispe}, and an item without the property declares
+     * nothing; neither is checked.
+     *
+     * @param item the coded item
+     * @param frame the decoded picture
+     * @throws MediaException.Malformed if the sizes differ
+     */
+    private static void checkExtent(HeifItem item, Av1Picture frame) {
+        var extent = item.property(HeifProperty.SpatialExtent.class);
+        if (extent == null || item.property(HeifProperty.OperatingPointSelector.class) != null
+                || item.property(HeifProperty.LayerSelector.class) != null) {
+            return;
+        }
+        if (frame.w != extent.width() || frame.h != extent.height()) {
+            throw new MediaException.Malformed("avif: item " + item.id() + " decodes to " + frame.w + "x" + frame.h
+                    + ", not the " + extent.width() + "x" + extent.height() + " its ispe property declares");
+        }
     }
 
     /**

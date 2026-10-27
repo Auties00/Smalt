@@ -195,7 +195,12 @@ import java.util.Set;
  * {@link com.github.auties00.smalt.track.VideoTrack#stereoMode() stereo mode} and
  * {@link com.github.auties00.smalt.track.VideoTrack#spherical() spherical projection}, and its {@code dvcC},
  * {@code dvvC} or {@code dvwC} box the {@link com.github.auties00.smalt.track.VideoTrack#dolbyVision() Dolby Vision
- * configuration}. Seeking uses the sample index, as {@link #seek(long)} describes.
+ * configuration}. An audio sample entry's spatial audio box ({@code SA3D}, Google Spatial Audio RFC) gives the
+ * track an {@linkplain com.github.auties00.smalt.audio.ChannelLayout#ambisonics() ambisonic} layout: channel
+ * {@code i} carries the ACN component of channel map entry {@code i}, and the entries {@code (order + 1)^2} and
+ * {@code (order + 1)^2 + 1} of a box flagged for head-locked stereo are front left and front right; a box of
+ * another version, type, ordering or normalization, or with an inconsistent channel map, is ignored. Seeking
+ * uses the sample index, as {@link #seek(long)} describes.
  *
  * <p>A source that is not in memory is read forwards as far as the layout allows: a file whose
  * {@code moov} follows its media data is read with one jump to the {@code moov} and one back to

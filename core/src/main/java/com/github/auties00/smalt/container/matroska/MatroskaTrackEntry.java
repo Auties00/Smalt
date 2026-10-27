@@ -25,6 +25,7 @@ import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.track.AudioTrack;
@@ -932,7 +933,7 @@ final class MatroskaTrackEntry {
                     .codecConfig(config)
                     .language(lang.orElse(null))
                     .sampleRate(sampleRate)
-                    .layout(ChannelLayout.defaultFor(channelCount))
+                    .layout(audioLayout(codec, config, channelCount))
                     .bitsPerSample(codec.isPcm() ? bits : 0)
                     .skipSamples(Math.max(skip, 0))
                     .build();
@@ -956,6 +957,33 @@ final class MatroskaTrackEntry {
                 .language(lang.orElse(null))
                 .handler(codecId)
                 .build();
+    }
+
+    /**
+     * Returns the layout of an audio track: the ambisonic layout of an Opus identification header of mapping
+     * family 2 or 3, the Furse-Malham layout of an {@code A_MS/ACM} codec private of the Ambisonic B-format
+     * sub-format, otherwise the default layout of the channel count.
+     *
+     * @param codec the coding format of the track
+     * @param config the codec configuration, or {@code null}
+     * @param channels the channel count of the track entry
+     * @return the layout
+     */
+    private ChannelLayout audioLayout(Codec codec, byte[] config, int channels) {
+        if (codec == Codec.OPUS && config != null && config.length > OpusHeader.BASE_SIZE
+                && (config[9] & 0xFF) == channels) {
+            var ambisonic = OpusHeader.ambisonicLayout(channels, config[18] & 0xFF);
+            if (ambisonic != null) {
+                return ambisonic;
+            }
+        }
+        if (codecId.equals("A_MS/ACM") && codecPrivate != null && codecPrivate.length >= 16) {
+            var format = WaveFormat.parse(codecPrivate, codecPrivate.length, false);
+            if (format.subFormat() == WaveFormat.SubFormat.AMBISONIC && format.channels() == channels) {
+                return format.layout();
+            }
+        }
+        return ChannelLayout.defaultFor(channels);
     }
 
     /**

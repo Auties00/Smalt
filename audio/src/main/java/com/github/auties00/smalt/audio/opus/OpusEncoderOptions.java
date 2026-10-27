@@ -1,11 +1,13 @@
 package com.github.auties00.smalt.audio.opus;
 
+import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.opus.internal.OpusMultistreamEncoder;
 import com.github.auties00.smalt.internal.check.Checks;
 import com.github.auties00.smalt.internal.header.VorbisChannelOrder;
 
+import java.util.List;
 import java.util.Objects;
 import java.util.OptionalInt;
 
@@ -203,14 +205,35 @@ public final class OpusEncoderOptions {
     /**
      * {@return the channel mapping family the stream uses}
      *
-     * <p>Unless one is set, the mapping is {@link OpusChannelMapping#VORBIS} for one or two channels
-     * and for the layouts {@code VORBIS} accepts, and {@link OpusChannelMapping#DISCRETE} otherwise.
+     * <p>Unless one is set, the mapping is {@link OpusChannelMapping#AMBISONIC} for a layout with
+     * {@linkplain ChannelLayout#ambisonics() ambisonics}, {@link OpusChannelMapping#VORBIS} for one or two
+     * channels and for the layouts {@code VORBIS} accepts, and {@link OpusChannelMapping#DISCRETE} otherwise.
      */
     public OpusChannelMapping channelMapping() {
         if (channelMapping != null) {
             return channelMapping;
         }
+        if (layout.ambisonics().isPresent()) {
+            return OpusChannelMapping.AMBISONIC;
+        }
         return vorbisRouting(layout) != null ? OpusChannelMapping.VORBIS : OpusChannelMapping.DISCRETE;
+    }
+
+    /**
+     * Returns whether a layout is one the ambisonic mappings code: every component of an order in ACN order
+     * with SN3D normalization, optionally followed by front left and front right.
+     *
+     * @param layout the input layout
+     * @return {@code true} when a decoder of an ambisonic mapping outputs this layout
+     */
+    static boolean isOpusAmbisonic(ChannelLayout layout) {
+        var ambisonics = layout.ambisonics().orElse(null);
+        if (ambisonics == null || ambisonics.normalization() != Ambisonics.Normalization.SN3D
+                || !ambisonics.isSequential()) {
+            return false;
+        }
+        return layout.equals(ChannelLayout.ofAmbisonics(ambisonics))
+                || layout.equals(ChannelLayout.ofAmbisonics(ambisonics, List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT)));
     }
 
     /**
@@ -645,7 +668,9 @@ public final class OpusEncoderOptions {
          *
          * @return the options
          * @throws IllegalArgumentException if the sampling rate is not 8000, 12000, 16000, 24000 or
-         * 48000 Hz, the channel count is outside 1 to 255, the {@link OpusChannelMapping#VORBIS}
+         * 48000 Hz, the channel count is outside 1 to 255, the layout has ambisonics other than every
+         * component of an order in ACN order with SN3D normalization, optionally followed by front left and
+         * right, and the mapping is not {@link OpusChannelMapping#DISCRETE}, the {@link OpusChannelMapping#VORBIS}
          * mapping is set for a layout it does not accept, the {@link OpusChannelMapping#AMBISONIC}
          * mapping is set for a channel count that is not an ambisonic order squared, optionally plus
          * two, the {@link OpusChannelMapping#AMBISONIC_PROJECTION} mapping is set for a channel count
@@ -662,6 +687,12 @@ public final class OpusEncoderOptions {
             }
             var count = resolved.channels();
             Checks.inRange("channel count", count, 1, MAX_CHANNELS);
+            if (resolved.ambisonics().isPresent() && channelMapping != OpusChannelMapping.DISCRETE
+                    && !isOpusAmbisonic(resolved)) {
+                throw new IllegalArgumentException("Opus codes ambisonics only as every component of an order in"
+                        + " ACN order with SN3D normalization, optionally followed by front left and right, not "
+                        + resolved);
+            }
             if (channelMapping == OpusChannelMapping.VORBIS && vorbisRouting(resolved) == null) {
                 throw new IllegalArgumentException("the Vorbis channel mapping does not code the layout " + resolved);
             }

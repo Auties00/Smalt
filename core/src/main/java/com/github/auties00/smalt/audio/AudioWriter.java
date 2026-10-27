@@ -227,8 +227,8 @@ public final class AudioWriter implements AutoCloseable {
     }
 
     /**
-     * Opens the encoder, falling back to 48 kHz and to stereo where the options leave the coded
-     * format free.
+     * Opens the encoder, falling back to 48 kHz, to the ACN and SN3D form of an ambisonic layout and
+     * to stereo where the options leave the coded format free.
      *
      * @param codec the codec to encode
      * @param options the settings

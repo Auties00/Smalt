@@ -467,7 +467,7 @@ public final class Ac3Decoder implements AudioDecoder {
      * coefficients of its channel with a falling gain, dependent substreams included, so the output keeps its
      * layout.
      *
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      * @throws IllegalStateException if the decoder is closed
      */
     @Override

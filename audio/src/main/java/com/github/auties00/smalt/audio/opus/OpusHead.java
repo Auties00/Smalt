@@ -15,10 +15,12 @@ import java.util.Collections;
  * section 3.2), and the channel routing the decoder derives from them.
  *
  * <p>Families 0 and 1 use the Vorbis channel order, which {@link #wavePosition(int)} maps to the WAVE order of
- * {@link ChannelLayout#defaultFor(int)}; family 255, the ambisonic families 2 and 3 and every reserved family
- * have {@link Speaker#UNKNOWN} positions in coded order. Family 3 has no mapping table: its output channels are
- * the product of the demixing matrix and the decoded channels. The record owns its mapping table and demixing
- * matrix: the constructor and the accessors copy them.
+ * {@link ChannelLayout#defaultFor(int)}; the ambisonic families 2 and 3 have the layout of
+ * {@link ChannelLayout#ofAmbisonics(int)} (ACN order, SN3D), followed by a non-diegetic front left and right pair
+ * when the count is an order squared plus two, and family 255, every reserved family and the other counts of
+ * families 2 and 3 have {@link Speaker#UNKNOWN} positions in coded order. Family 3 has no mapping table: its
+ * output channels are the product of the demixing matrix and the decoded channels. The record owns its mapping
+ * table and demixing matrix: the constructor and the accessors copy them.
  *
  * @param version the encapsulation version; its major version (high four bits) is 0
  * @param channels the number of output channels, from 1 to 255
@@ -223,12 +225,16 @@ record OpusHead(int version, int channels, int preSkip, long inputSampleRate, in
     }
 
     /**
-     * {@return the output channel layout: the WAVE-order layout for families 0 and 1, otherwise unknown
-     * positions}
+     * {@return the output channel layout: the WAVE-order layout for families 0 and 1, the ambisonic layout of
+     * RFC 8486 for the ambisonic channel counts of families 2 and 3, otherwise unknown positions}
      */
     ChannelLayout layout() {
         if (vorbisOrder()) {
             return ChannelLayout.defaultFor(channels);
+        }
+        var ambisonic = OpusHeader.ambisonicLayout(channels, mappingFamily);
+        if (ambisonic != null) {
+            return ambisonic;
         }
         return new ChannelLayout(Collections.nCopies(channels, Speaker.UNKNOWN));
     }

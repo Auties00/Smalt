@@ -274,7 +274,7 @@ public final class AmrDecoder implements AudioDecoder {
      * ("no data") frame of every channel: concealed from the preceding frames by the bad frame handling of TS 26.091
      * and TS 26.191 during speech, and continued as comfort noise during discontinuous transmission.
      *
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      * @throws IllegalStateException if the decoder is closed
      */
     @Override

@@ -204,7 +204,10 @@ class ImageMetadataFuzzTest {
                     Math.max(1, height / 3))).fill(JpegFill.FLAT).progressive(true).build());
             options.add(JpegTransformOptions.builder().drop(data, 0, 0).requantizeDrop(true).build());
         }
-        for (var option : options) {
+        for (var unlimited : options) {
+            // the transform works under the limits the output is decoded with, so an image too large to decode
+            // is refused before it is transformed
+            var option = unlimited.toBuilder().limits(Fuzz.LIMITS).build();
             run.value("transform " + option, () -> JpegTransforms.transform(MediaSource.of(data), option))
                     .ifPresent(output -> {
                         try {

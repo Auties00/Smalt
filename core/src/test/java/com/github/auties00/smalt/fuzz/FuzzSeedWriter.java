@@ -1,5 +1,8 @@
 package com.github.auties00.smalt.fuzz;
 
+import com.github.auties00.smalt.audio.Ambisonics;
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
 import com.github.auties00.smalt.container.ChapterEdition;
@@ -685,6 +688,35 @@ class FuzzSeedWriter {
             out.writeBytes(packet);
         }
         return out.toByteArray();
+    }
+
+    @Test
+    @DisplayName("writes ambisonic seeds: SA3D in MP4, the B-format WAVE sub-format and Opus mapping family 2")
+    void ambisonic() throws IOException {
+        var foa = ffmpeg("wav", tone(8000, 0.05), "-c:a", "pcm_s16le", "-ac", "6");
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(foa))) {
+            var packets = new java.util.ArrayList<com.github.auties00.smalt.track.Packet>();
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                packets.add(packet);
+            }
+            var track = (com.github.auties00.smalt.track.AudioTrack) demuxer.tracks().getFirst();
+            var headLocked = track.toBuilder().layout(ChannelLayout.ofAmbisonics(Ambisonics.of(1),
+                    List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT))).build();
+            write(DemuxerFuzzTest.class, "mp4", "valid-ambisonic-pcm.mp4", mux(List.of(headLocked), packets,
+                    sink -> new Mp4Muxer(sink, Mp4MuxerOptions.builder().brand(Mp4MuxerOptions.Brand.MP4).build())));
+        }
+        var bFormat = ffmpeg("wav", tone(8000, 0.05), "-c:a", "pcm_s16le", "-ac", "4");
+        try (var demuxer = Containers.openDemuxer(MediaSource.of(bFormat))) {
+            var packets = new java.util.ArrayList<com.github.auties00.smalt.track.Packet>();
+            for (var packet = demuxer.read(); packet != null; packet = demuxer.read()) {
+                packets.add(packet);
+            }
+            var track = (com.github.auties00.smalt.track.AudioTrack) demuxer.tracks().getFirst();
+            write(DemuxerFuzzTest.class, "wav", "valid-ambisonic-bformat.wav", mux(List.of(track.toBuilder()
+                    .layout(ChannelLayout.ofAmbisonics(Ambisonics.ofFurseMalham(4))).build()), packets, WavMuxer::new));
+        }
+        copy(DemuxerFuzzTest.class, "ogg", "valid-opus-ambisonic.opus", ffmpeg("opus", tone(48000, 0.1),
+                "-ac", "4", "-c:a", "libopus", "-mapping_family", "2", "-b:a", "48k"));
     }
 
     /** Muxes packets into memory. */

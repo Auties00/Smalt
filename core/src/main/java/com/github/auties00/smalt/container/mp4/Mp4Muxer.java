@@ -425,9 +425,12 @@ public final class Mp4Muxer implements Muxer {
      * sound description ({@code twos}, {@code sowt}, {@code raw }, {@code in24}, {@code in32},
      * {@code fl32}, {@code fl64}, {@code alaw}, {@code ulaw}) or, for the encodings without one,
      * more than two channels or rates above 65535 Hz, a version 2 description ({@code lpcm} for
-     * linear PCM), with a {@code chan} box. ProRes and DNxHD (QuickTime only) take their sample
-     * entry type from the track's four-character configuration, or derive it from the first frame
-     * when the track has none. The text subtitle codecs are {@link Codec#MOV_TEXT} (a
+     * linear PCM), with a {@code chan} box. Every audio sample entry whose track layout carries every
+     * {@linkplain com.github.auties00.smalt.audio.ChannelLayout#ambisonics() ambisonic} component of its
+     * order with SN3D normalization, optionally with a front left and right pair, gets a spatial audio box
+     * ({@code SA3D}) mapping each channel to its component, the pair as head-locked stereo. ProRes and
+     * DNxHD (QuickTime only) take their sample entry type from the track's four-character configuration,
+     * or derive it from the first frame when the track has none. The text subtitle codecs are {@link Codec#MOV_TEXT} (a
      * {@code tx3g} track) and {@link Codec#WEBVTT} (a {@code wvtt} track); their packets may
      * overlap and leave gaps, as cues do: the muxer cuts them into the gapless samples MP4 stores,
      * each holding the cues shown during it, starting the track at zero with an empty sample.

@@ -37,7 +37,8 @@ import java.util.function.Consumer;
  * display order as 4:2:0 {@link com.github.auties00.smalt.image.YuvPicture}s, each once the next
  * I-, P-, EI- or EP-picture of its stream is decoded (B-pictures and the B-part of a PB-frame
  * display before the picture that follows them in the stream) or when the decoder is flushed. They
- * carry the timestamps of their packets, or continue from the previous frame by the temporal
+ * carry the timestamps of their packets (one that does not follow the previous frame's is moved a
+ * frame duration, at least one tick, after it), or continue from the previous frame by the temporal
  * reference when packets carry none; from the first picture that needs one of Annexes C, E, G, M,
  * N, O, P, Q, R, U or V, or rectangular slices, the timestamps continue from that picture's packet by
  * the temporal references, since a packet carries both pictures of a PB-frame and the pictures of

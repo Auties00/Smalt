@@ -52,8 +52,9 @@ import java.util.Objects;
  * bit in mask order, with {@link Speaker#UNKNOWN} for channels beyond the mask. The sample
  * container size comes from the block alignment, so 24-bit samples in 32-bit containers decode as
  * left-justified 32-bit samples. The Ambisonic B-format sub-formats (integer and float) read as PCM
- * whose channels are the B-format components in file order, each with {@link Speaker#UNKNOWN} as
- * its position.
+ * whose layout is the Furse-Malham B-format of {@link
+ * com.github.auties00.smalt.audio.Ambisonics#ofFurseMalham(int)} for the channel counts it defines, and
+ * channels of {@link Speaker#UNKNOWN} position without ambisonics for other counts.
  *
  * <p>A {@code data} chunk of coded audio is handed to the demuxer of its elementary stream, whose
  * track, packets, timestamps, duration and seeking this demuxer exposes unchanged, and whose tags
@@ -628,6 +629,7 @@ public final class WavDemuxer implements Demuxer {
         header.format = format;
         header.channels = channels;
         header.sampleRate = (int) sampleRate;
+        // TODO: the ambisonic layouts that BW64 ADM metadata (chna and axml HOA type definitions) declares
         header.layout = format.layout();
         header.hasFormat = true;
         var payload = payload(format);
@@ -649,9 +651,6 @@ public final class WavDemuxer implements Demuxer {
         header.codec = codec(payload == Payload.IEC61937 ? WaveFormat.PCM : tag, containerBytes, header.bigEndian);
         header.blockAlign = containerBytes * channels;
         header.validBits = header.codec == Codec.PCM_ALAW || header.codec == Codec.PCM_MULAW ? 8 : Math.max(format.validBits(), 1);
-        if (format.subFormat() == WaveFormat.SubFormat.AMBISONIC) {
-            header.layout = new ChannelLayout(Collections.nCopies(channels, Speaker.UNKNOWN));
-        }
         LimitChecks.checkAllocation(limits, Math.min(MAX_PACKET_BYTES, (long) header.blockAlign * Integer.highestOneBit(Math.max(1, header.sampleRate / 10))));
     }
 

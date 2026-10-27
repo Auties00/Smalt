@@ -14,6 +14,12 @@ import java.nio.charset.StandardCharsets;
  * the ReplayGain tag fields.
  */
 class TagFuzzTest {
+    /**
+     * The most a gain moves when written with two decimals: half a hundredth, plus the error of the binary
+     * fractions on both sides of a tie such as 52.375 written as 52.38.
+     */
+    private static final double GAIN_ROUNDING = 0.005 + 1e-9;
+
     @FuzzTest
     void tags(byte[] data) {
         FuzzMedia.tags(Fuzz.start("tags"), data);
@@ -65,8 +71,8 @@ class TagFuzzTest {
             }
         }
         var written = ReplayGain.fromTags(gains.toTags(MediaTags.empty(), ReplayGain.TagFormat.REPLAYGAIN));
-        if (!close(gains.trackGainDb(), written.trackGainDb(), 0.005)
-                || !close(gains.albumGainDb(), written.albumGainDb(), 0.005)
+        if (!close(gains.trackGainDb(), written.trackGainDb(), GAIN_ROUNDING)
+                || !close(gains.albumGainDb(), written.albumGainDb(), GAIN_ROUNDING)
                 || !close(gains.trackPeak(), written.trackPeak(), 5e-7 + Math.abs(gains.trackPeak()) * 1e-12)) {
             throw new AssertionError(gains + " read back as " + written);
         }

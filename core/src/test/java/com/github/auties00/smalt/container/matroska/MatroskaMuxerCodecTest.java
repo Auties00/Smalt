@@ -458,5 +458,40 @@ class MatroskaMuxerCodecTest {
             assertTrue(read.codecConfig().isEmpty());
             assertNotNull(read);
         }
+
+        @Test
+        @DisplayName("writes a Furse-Malham layout of 64-bit PCM with the Ambisonic B-format sub-format and reads it back")
+        void ambisonicPcm() {
+            // KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_PCM and KSDATAFORMAT_SUBTYPE_PCM
+            var bFormat = java.util.HexFormat.of().parseHex("010000002107d3118644c8c1ca000000");
+            var standard = java.util.HexFormat.of().parseHex("0100000000001000800000aa00389b71");
+            var fuma = ChannelLayout.ofAmbisonics(com.github.auties00.smalt.audio.Ambisonics.ofFurseMalham(9));
+            for (var layout : List.of(fuma, ChannelLayout.ofAmbisonics(1))) {
+                var track = AudioTrack.builder().id(1).codec(Codec.PCM_S64LE).timeBase(Rational.timeBaseOf(48_000))
+                        .sampleRate(48_000).layout(layout).bitsPerSample(64).build();
+                var data = new byte[layout.channels() * 8 * 10];
+                new java.util.Random(layout.channels()).nextBytes(data);
+                var output = MuxSupport.toMemory(List.of(track), List.of(new Packet(1, data, 0, 0, 10, true)),
+                        MatroskaMuxer::new);
+                var entry = MatroskaStructure.check(output).tracks.getFirst();
+                assertEquals("A_MS/ACM", new String(MatroskaStructure.child(entry, EbmlIds.CODEC_ID).payload(),
+                        StandardCharsets.US_ASCII));
+                var wave = MatroskaStructure.child(entry, EbmlIds.CODEC_PRIVATE).payload();
+                var mask = ByteBuffer.wrap(wave).order(ByteOrder.LITTLE_ENDIAN).getInt(20);
+                var guid = Arrays.copyOfRange(wave, 24, 40);
+                var demuxed = MuxSupport.demux(output);
+                var read = (AudioTrack) demuxed.tracks().getFirst();
+                assertEquals(Codec.PCM_S64LE, read.codec());
+                assertArrayEquals(data, demuxed.order().getFirst().data());
+                if (layout == fuma) {
+                    assertArrayEquals(bFormat, guid, "B-format sub-format");
+                    assertEquals(0, mask, "channel mask");
+                    assertEquals(fuma, read.layout().orElseThrow());
+                } else {
+                    assertArrayEquals(standard, guid, "PCM sub-format for an ACN layout");
+                    assertTrue(read.layout().orElseThrow().ambisonics().isEmpty());
+                }
+            }
+        }
     }
 }

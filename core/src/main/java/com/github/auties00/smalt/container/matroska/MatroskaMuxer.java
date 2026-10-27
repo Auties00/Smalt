@@ -85,7 +85,9 @@ import java.util.Set;
  *       of format tag 6 or 7), and PCM
  *       ({@code A_PCM/INT/LIT} for 8-bit and little-endian integers up to 32 bits, {@code A_PCM/INT/BIG}
  *       for big-endian integers up to 32 bits, {@code A_MS/ACM} with a {@code WAVEFORMATEXTENSIBLE} for
- *       64-bit integers, {@code A_PCM/FLOAT/IEEE} for floats). Matroska stores 8-bit PCM as
+ *       64-bit integers, of the Ambisonic B-format sub-format for the Furse-Malham layouts of
+ *       {@link com.github.auties00.smalt.audio.Ambisonics#ofFurseMalham(int)}, {@code A_PCM/FLOAT/IEEE} for
+ *       floats). Matroska stores 8-bit PCM as
  *       unsigned, and float and 64-bit integer PCM as little-endian, so signed 8-bit samples are written
  *       with their sign bit flipped and big-endian floats and 64-bit integers byte-swapped; such a track
  *       reads back as {@link Codec#PCM_U8}, {@link Codec#PCM_F32LE}, {@link Codec#PCM_F64LE} or
@@ -1828,9 +1830,11 @@ public final class MatroskaMuxer implements Muxer {
                 }
                 case PCM_S64LE, PCM_S64BE -> {
                     if (sampleRate > 0 && channels > 0) {
+                        var bFormat = audio.layout().filter(WaveFormat::isAmbisonicBFormat).isPresent();
                         var wave = new WaveFormat(WaveFormat.PCM, channels, sampleRate, (long) sampleRate * channels * 8,
-                                channels * 8, 64, 64, audio.layout().map(WaveFormat::channelMask).orElse(0L),
-                                WaveFormat.SubFormat.STANDARD, new byte[0]);
+                                channels * 8, 64, 64,
+                                bFormat ? 0 : audio.layout().map(WaveFormat::channelMask).orElse(0L),
+                                bFormat ? WaveFormat.SubFormat.AMBISONIC : WaveFormat.SubFormat.STANDARD, new byte[0]);
                         var out = new ByteWriter(wave.size(true));
                         wave.write(out, true);
                         codecPrivate = out.toByteArray();

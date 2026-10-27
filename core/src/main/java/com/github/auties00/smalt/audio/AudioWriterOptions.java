@@ -127,8 +127,10 @@ public final class AudioWriterOptions {
     }
 
     /**
-     * {@return the channel layout the track is coded in, or empty for the input layout, or stereo
-     * when the codec cannot code an input layout of more than two channels; empty by default}
+     * {@return the channel layout the track is coded in, or empty for the input layout, or, when the
+     * codec cannot code the input layout, the same sound field in ACN order with SN3D normalization
+     * for an {@linkplain ChannelLayout#ambisonics() ambisonic} input and then stereo for an input of
+     * more than two channels; empty by default}
      *
      * <p>A coded layout other than the input layout mixes the input as {@link
      * com.github.auties00.smalt.audio.process.ChannelMixer} describes.

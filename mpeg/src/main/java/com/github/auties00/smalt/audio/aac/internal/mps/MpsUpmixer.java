@@ -214,8 +214,8 @@ public final class MpsUpmixer {
      * <p>The decoder is (re)created when the configuration changes or the block format does; a spatial frame
      * must last as long as a block. Until a frame whose {@code bsIndependencyFlag} is set arrives after the decoder
      * is created, frames are dropped and the downmix stays the output; after {@link #lose()}, frames are dropped
-     * the same way until such a frame, and the last parameters read stay in use. A configuration with a tool the decoder
-     * does not support is dropped the same way.
+     * the same way until such a frame, and the last parameters read stay in use. A configuration with a tool the
+     * decoder does not support is dropped the same way.
      *
      * @param sampleRate the output sampling frequency of the core decoder
      * @param blockLength the number of samples per channel of the decoded block

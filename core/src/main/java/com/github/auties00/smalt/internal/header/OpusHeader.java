@@ -2,10 +2,14 @@ package com.github.auties00.smalt.internal.header;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.audio.Ambisonics;
+import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * Holds the fields of an Ogg Opus identification header, {@code OpusHead} (RFC 7845 section 5.1).
@@ -146,6 +150,28 @@ public record OpusHeader(int version, int channels, int preSkip, long inputSampl
      */
     public static int tableSize(int family, int channels, int streams, int coupled) {
         return family == 3 ? 2 * channels * (streams + coupled) : channels;
+    }
+
+    /**
+     * Returns the ambisonic layout of a stream of mapping family 2 or 3 (RFC 8486 section 3.1).
+     *
+     * @param channels the output channel count
+     * @param family the channel mapping family
+     * @return the components of an order from 0 to 14 in ACN order with SN3D normalization, followed by the
+     * non-diegetic stereo pair when the count is {@code (order + 1)^2 + 2}, or {@code null} when the family is
+     * not 2 or 3 or the count is not one of those
+     */
+    public static ChannelLayout ambisonicLayout(int channels, int family) {
+        if (family != 2 && family != 3 || channels < 1) {
+            return null;
+        }
+        var order = Ambisonics.degree(channels) - 1;
+        var components = (order + 1) * (order + 1);
+        if (order < 0 || order > Ambisonics.MAX_ORDER || channels != components && channels != components + 2) {
+            return null;
+        }
+        return channels == components ? ChannelLayout.ofAmbisonics(order)
+                : ChannelLayout.ofAmbisonics(Ambisonics.of(order), List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT));
     }
 
     /**

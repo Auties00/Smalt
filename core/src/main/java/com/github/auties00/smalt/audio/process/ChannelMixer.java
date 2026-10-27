@@ -1,8 +1,11 @@
 package com.github.auties00.smalt.audio.process;
 
+import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -62,6 +65,29 @@ import java.util.Objects;
  * Rt = R + ltrtclev * C + ltrtslev * S
  * }
  * A caller's matrix ({@link ChannelMixerOptions#matrix()}) replaces the rules altogether.
+ *
+ * <p>When either layout has {@linkplain ChannelLayout#ambisonics() ambisonics}, these rules apply instead,
+ * with every component taken in {@link Ambisonics.Normalization#SN3D} scaling:
+ * <ul>
+ *   <li>into an ambisonic output, each component the output carries is copied from the input channel that
+ *       carries it, rescaled to the output normalization, and a component the input lacks stays silent, so
+ *       conversions between orders, normalizations and channel orders are exact; a speaker the output has
+ *       (a non-diegetic channel) goes there at gain {@code 1}, any other speaker is encoded as a plane wave
+ *       from its nominal direction (see the {@linkplain com.github.auties00.smalt.audio.process package
+ *       documentation}), a low-frequency channel feeds {@code W} at the low-frequency mix level, and the
+ *       {@link Speaker#UNKNOWN} channels of a layout without ambisonics are mapped by index;</li>
+ *   <li>from an ambisonic input to loudspeakers, each output speaker at the nominal azimuth {@code A} and
+ *       elevation {@code E} is fed by the first-order cardioid aimed at it,
+ *       {@code (W + cos(A) cos(E) X + sin(A) cos(E) Y + sin(E) Z) / 2}, except that a stereo output aims its
+ *       cardioids to the sides, so that left and right are {@code (W + Y) / 2} and {@code (W - Y) / 2} as in
+ *       RFC 8486 section 4; components above the first order are not used, low-frequency outputs stay silent,
+ *       a mono output is {@code W}, and an output whose speakers are all {@link Speaker#UNKNOWN} takes the
+ *       input channels by index;</li>
+ *   <li>the non-diegetic channels of an ambisonic input follow the speaker rules at gain {@code 1/2}, and the
+ *       sound field is then decoded at half its gain, so that stereo is {@code (W + Y) / 4 + L / 2} and
+ *       {@code (W - Y) / 4 + R / 2} and mono is the average of the two;</li>
+ *   <li>the Lt/Rt downmix does not apply to an ambisonic input.</li>
+ * </ul>
  *
  * <p>By default the matrix is not normalized: a downmix such as 5.1 to stereo sums up to
  * {@code 1 + 0.707 + 0.707} into each output and can exceed full scale, so the caller clips (or
@@ -178,7 +204,7 @@ public final class ChannelMixer {
                 coefficients[row] = custom[row].clone();
             }
         } else if (options.stereoDownmix() == ChannelMixerOptions.StereoDownmix.LT_RT
-                && output.equals(ChannelLayout.STEREO) && !isMono(input)) {
+                && output.equals(ChannelLayout.STEREO) && !isMono(input) && input.ambisonics().isEmpty()) {
             coefficients = matrixEncoded(input, options);
         } else {
             coefficients = build(input, output, options);
@@ -278,6 +304,10 @@ public final class ChannelMixer {
             }
             return result;
         }
+        if (input.ambisonics().isPresent() || output.ambisonics().isPresent()) {
+            return output.ambisonics().isPresent() ? toAmbisonics(input, output, options)
+                    : fromAmbisonics(input, output, options);
+        }
         if (isMono(input)) {
             var center = output.indexOf(Speaker.FRONT_CENTER);
             var left = output.indexOf(Speaker.FRONT_LEFT);
@@ -320,6 +350,159 @@ public final class ChannelMixer {
             }
             for (var o = 0; o < outputs; o++) {
                 result[o][i] += column[o];
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Builds the matrix into an ambisonic output by the rules on the class.
+     *
+     * @param input the input layout, ambisonic or not
+     * @param output the ambisonic output layout
+     * @param options the mix levels
+     * @return the coefficients, indexed {@code [output][input]}
+     */
+    private static double[][] toAmbisonics(ChannelLayout input, ChannelLayout output, ChannelMixerOptions options) {
+        var target = output.ambisonics().orElseThrow().normalization();
+        var order = output.ambisonics().orElseThrow().order();
+        var targetComponents = components(output);
+        var inputComponents = components(input);
+        var source = input.ambisonics().map(Ambisonics::normalization).orElse(Ambisonics.Normalization.SN3D);
+        var result = new double[output.channels()][input.channels()];
+        for (var i = 0; i < input.channels(); i++) {
+            var component = inputComponents[i];
+            if (component >= 0) {
+                var o = output.indexOfComponent(component);
+                if (o >= 0) {
+                    result[o][i] = SphericalHarmonics.toSn3d(source, component)
+                            / SphericalHarmonics.toSn3d(target, component);
+                }
+                continue;
+            }
+            var speaker = input.speakers().get(i);
+            if (speaker == Speaker.UNKNOWN) {
+                if (i < output.channels()) {
+                    result[i][i] = 1;
+                }
+                continue;
+            }
+            var index = output.indexOf(speaker);
+            if (index >= 0) {
+                result[index][i] = 1;
+                continue;
+            }
+            var direction = SphericalHarmonics.direction(speaker);
+            if (direction == null) {
+                var w = output.indexOfComponent(0);
+                if (w >= 0) {
+                    result[w][i] = options.lfeMixLevel() / SphericalHarmonics.toSn3d(target, 0);
+                }
+                continue;
+            }
+            var harmonics = SphericalHarmonics.sn3d(order, Math.toRadians(direction[0]), Math.toRadians(direction[1]));
+            for (var o = 0; o < output.channels(); o++) {
+                var c = targetComponents[o];
+                if (c >= 0) {
+                    result[o][i] = harmonics[c] / SphericalHarmonics.toSn3d(target, c);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Builds the matrix from an ambisonic input to loudspeakers by the rules on the class.
+     *
+     * @param input the ambisonic input layout
+     * @param output the output layout, without ambisonics
+     * @param options the mix levels
+     * @return the coefficients, indexed {@code [output][input]}
+     */
+    private static double[][] fromAmbisonics(ChannelLayout input, ChannelLayout output, ChannelMixerOptions options) {
+        var outputs = output.channels();
+        var inputs = input.channels();
+        var result = new double[outputs][inputs];
+        var nonDiegetic = Collections.frequency(input.speakers(), Speaker.UNKNOWN) != inputs;
+        if (isMono(output)) {
+            if (nonDiegetic) {
+                var stereo = fromAmbisonics(input, ChannelLayout.STEREO, options);
+                for (var i = 0; i < inputs; i++) {
+                    result[0][i] = 0.5 * (stereo[0][i] + stereo[1][i]);
+                }
+            } else {
+                addComponent(result[0], input, 0, 1);
+            }
+            return result;
+        }
+        if (allUnknown(output)) {
+            for (var i = 0; i < Math.min(inputs, outputs); i++) {
+                result[i][i] = 1;
+            }
+            return result;
+        }
+        var gain = nonDiegetic ? 0.25 : 0.5;
+        var stereo = output.equals(ChannelLayout.STEREO);
+        for (var o = 0; o < outputs; o++) {
+            var speaker = output.speakers().get(o);
+            var direction = stereo ? new double[]{speaker == Speaker.FRONT_LEFT ? 90 : -90, 0}
+                    : SphericalHarmonics.direction(speaker);
+            if (direction == null) {
+                continue;
+            }
+            var azimuth = Math.toRadians(direction[0]);
+            var elevation = Math.toRadians(direction[1]);
+            addComponent(result[o], input, 0, gain);
+            addComponent(result[o], input, 1, gain * StrictMath.sin(azimuth) * StrictMath.cos(elevation));
+            addComponent(result[o], input, 2, gain * StrictMath.sin(elevation));
+            addComponent(result[o], input, 3, gain * StrictMath.cos(azimuth) * StrictMath.cos(elevation));
+        }
+        for (var i = 0; i < inputs; i++) {
+            var speaker = input.speakers().get(i);
+            if (speaker == Speaker.UNKNOWN) {
+                continue;
+            }
+            var column = new double[outputs];
+            route(speaker, 0.5, input, output, options, column, 0);
+            for (var o = 0; o < outputs; o++) {
+                result[o][i] += column[o];
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Adds an SN3D component of an ambisonic input to a matrix row.
+     *
+     * @param row the coefficients of one output channel, indexed by input channel
+     * @param input the ambisonic input layout
+     * @param component the ACN
+     * @param gain the gain of the SN3D component
+     */
+    private static void addComponent(double[] row, ChannelLayout input, int component, double gain) {
+        var channel = input.indexOfComponent(component);
+        if (channel >= 0) {
+            row[channel] += gain * SphericalHarmonics.toSn3d(input.ambisonics().orElseThrow().normalization(),
+                    component);
+        }
+    }
+
+    /**
+     * Returns the component each channel of a layout carries.
+     *
+     * @param layout the layout whose channels to describe
+     * @return the ACN per channel, or {@code -1} for a channel that carries no ambisonic component
+     */
+    private static int[] components(ChannelLayout layout) {
+        var result = new int[layout.channels()];
+        Arrays.fill(result, -1);
+        if (layout.ambisonics().isPresent()) {
+            var components = layout.ambisonics().get().components();
+            var k = 0;
+            for (var channel = 0; channel < result.length; channel++) {
+                if (layout.speakers().get(channel) == Speaker.UNKNOWN) {
+                    result[channel] = components.get(k++);
+                }
             }
         }
         return result;

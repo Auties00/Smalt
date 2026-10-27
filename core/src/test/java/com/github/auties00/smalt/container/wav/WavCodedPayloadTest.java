@@ -1,8 +1,11 @@
 package com.github.auties00.smalt.container.wav;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.audio.Ambisonics;
+import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.MuxSupport;
 import com.github.auties00.smalt.container.ac3.Ac3Demuxer;
 import com.github.auties00.smalt.container.adts.AdtsDemuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
@@ -19,6 +22,7 @@ import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
+import com.github.auties00.smalt.track.Rational;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -38,6 +42,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -121,6 +126,17 @@ class WavCodedPayloadTest {
 
     static byte[] ambisonicGuid(int tag) {
         return guid(tag, "2107d3118644c8c1ca000000");
+    }
+
+    /** Returns the offset of the body of the {@code fmt } chunk of a RIFF WAVE file. */
+    static int formatChunk(byte[] wav) {
+        var buffer = ByteBuffer.wrap(wav).order(ByteOrder.LITTLE_ENDIAN);
+        for (var position = 12; position + 8 <= wav.length; position += 8 + (buffer.getInt(position + 4) + 1 & ~1)) {
+            if (new String(wav, position, 4, StandardCharsets.US_ASCII).equals("fmt ")) {
+                return position + 8;
+            }
+        }
+        throw new AssertionError("no fmt chunk");
     }
 
     /** Returns the body of the {@code data} chunk of a RIFF WAVE file. */
@@ -1859,8 +1875,10 @@ class WavCodedPayloadTest {
     @DisplayName("Ambisonic B-format")
     class Ambisonic {
         @ParameterizedTest(name = "tag {0}, {1} channels")
-        @CsvSource({"1, 4, 16, PCM_S16LE", "1, 9, 24, PCM_S24LE", "3, 4, 32, PCM_F32LE", "3, 16, 64, PCM_F64LE"})
-        @DisplayName("reads the components as PCM without speaker positions")
+        @CsvSource({"1, 4, 16, PCM_S16LE", "1, 9, 24, PCM_S24LE", "3, 4, 32, PCM_F32LE", "3, 16, 64, PCM_F64LE",
+                "1, 3, 16, PCM_S16LE", "1, 5, 16, PCM_S16LE", "3, 6, 32, PCM_F32LE", "1, 7, 16, PCM_S16LE",
+                "1, 8, 32, PCM_S32LE", "3, 11, 32, PCM_F32LE", "1, 10, 16, PCM_S16LE", "1, 2, 16, PCM_S16LE"})
+        @DisplayName("reads the components as PCM in the Furse-Malham layout of the channel count")
         void bFormat(int tag, int channels, int bits, Codec codec) {
             var blockAlign = channels * bits / 8;
             var samples = new byte[blockAlign * 10];
@@ -1872,10 +1890,61 @@ class WavCodedPayloadTest {
                 var track = (AudioTrack) demuxer.tracks().getFirst();
                 assertEquals(codec, track.codec());
                 assertEquals(Collections.nCopies(channels, Speaker.UNKNOWN), track.layout().orElseThrow().speakers());
+                var defined = channels != 2 && channels != 10;
+                assertEquals(defined ? Optional.of(Ambisonics.ofFurseMalham(channels)) : Optional.empty(),
+                        track.layout().orElseThrow().ambisonics());
                 assertEquals(10, track.duration());
                 var packets = packets(demuxer);
                 assertEquals(1, packets.size());
                 assertArrayEquals(samples, packets.getFirst().data());
+            }
+        }
+
+        @ParameterizedTest(name = "{0} channels, {1}")
+        @CsvSource({"3, PCM_S16LE", "4, PCM_S16LE", "4, PCM_F32LE", "5, PCM_S24LE", "6, PCM_S16LE", "7, PCM_S32LE",
+                "8, PCM_F64LE", "9, PCM_S16LE", "11, PCM_F32LE", "16, PCM_S24LE"})
+        @DisplayName("writes a Furse-Malham layout with the B-format GUID, which reads back as the same layout")
+        void muxer(int channels, Codec codec) {
+            var layout = ChannelLayout.ofAmbisonics(Ambisonics.ofFurseMalham(channels));
+            var bytesPerSample = codec.pcmBitsPerSample().orElseThrow() / 8;
+            var samples = new byte[channels * bytesPerSample * 100];
+            new java.util.SplittableRandom(channels).nextBytes(samples);
+            var track = AudioTrack.builder().id(1).codec(codec).timeBase(Rational.timeBaseOf(48000)).sampleRate(48000)
+                    .layout(layout).build();
+            var file = MuxSupport.toMemory(List.of(track), List.of(new Packet(1, samples, 0, 0, 100, true)),
+                    WavMuxer::new);
+            var tag = codec == Codec.PCM_F32LE || codec == Codec.PCM_F64LE ? 3 : 1;
+            var fmt = formatChunk(file);
+            var format = ByteBuffer.wrap(file).order(ByteOrder.LITTLE_ENDIAN);
+            assertEquals(0xFFFE, format.getShort(fmt) & 0xFFFF, "WAVE_FORMAT_EXTENSIBLE");
+            assertEquals(0, format.getInt(fmt + 20), "channel mask");
+            assertArrayEquals(ambisonicGuid(tag), Arrays.copyOfRange(file, fmt + 24, fmt + 40), "sub-format GUID");
+            try (var demuxer = new WavDemuxer(MediaSource.of(file))) {
+                var read = (AudioTrack) demuxer.tracks().getFirst();
+                assertEquals(layout, read.layout().orElseThrow());
+                assertEquals(codec, read.codec());
+                assertArrayEquals(samples, packets(demuxer).getFirst().data());
+            }
+        }
+
+        @Test
+        @DisplayName("writes other ambisonic layouts as channels without positions")
+        void otherLayouts() {
+            for (var layout : List.of(ChannelLayout.ofAmbisonics(1), ChannelLayout.ofAmbisonics(Ambisonics.of(1,
+                    Ambisonics.Normalization.FUMA)), ChannelLayout.ofAmbisonics(Ambisonics.of(1), List.of(
+                    Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT)))) {
+                var track = AudioTrack.builder().id(1).codec(Codec.PCM_S16LE).timeBase(Rational.timeBaseOf(48000))
+                        .sampleRate(48000).layout(layout).build();
+                var file = MuxSupport.toMemory(List.of(track), List.of(new Packet(1,
+                        new byte[2 * layout.channels() * 10], 0, 0, 10, true)), WavMuxer::new);
+                var fmt = formatChunk(file);
+                assertFalse(Arrays.equals(ambisonicGuid(1), Arrays.copyOfRange(file, fmt + 24, fmt + 40)),
+                        layout.toString());
+                try (var demuxer = new WavDemuxer(MediaSource.of(file))) {
+                    var read = ((AudioTrack) demuxer.tracks().getFirst()).layout().orElseThrow();
+                    assertTrue(read.ambisonics().isEmpty(), layout.toString());
+                    assertEquals(layout.channels(), read.channels());
+                }
             }
         }
 

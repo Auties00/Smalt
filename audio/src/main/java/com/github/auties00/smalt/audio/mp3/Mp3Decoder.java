@@ -405,7 +405,7 @@ public final class Mp3Decoder implements AudioDecoder {
      * A Layer III frame after the loss whose main data begins in a lost frame is concealed too, instead of decoding
      * to silence.
      *
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      */
     @Override
     public int conceal(int samples, Consumer<AudioBuffer> output) {

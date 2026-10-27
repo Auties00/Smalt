@@ -226,7 +226,10 @@ final class SampleEntryWriter {
                     if (rate > 0) {
                         builder.sampleRate(rate);
                     }
-                    if (layout != null) {
+                    var declared = audio.layout().orElse(null);
+                    if (declared != null && declared.ambisonics().isPresent() && declared.channels() == channels) {
+                        builder.layout(declared);
+                    } else if (layout != null) {
                         builder.layout(layout);
                     } else if (channels > 0 && channels != audio.layout().map(ChannelLayout::channels).orElse(0)) {
                         builder.layout(ChannelLayout.defaultFor(channels));
@@ -627,6 +630,7 @@ final class SampleEntryWriter {
             writer.u8(bits);
             writer.end();
             writeChnl(writer, audio.layout().get());
+            SpatialAudioBox.write(writer, audio.layout().get(), channels);
             writer.end();
             return;
         }
@@ -680,6 +684,7 @@ final class SampleEntryWriter {
             writer.u32(law ? 2 : bits / 8);
         }
         writeChan(writer, audio.layout().get());
+        SpatialAudioBox.write(writer, audio.layout().get(), channels);
         writer.end();
     }
 
@@ -1082,6 +1087,7 @@ final class SampleEntryWriter {
             default -> {
             }
         }
+        SpatialAudioBox.write(writer, audio.layout().orElse(null), channels);
         writer.end();
     }
 

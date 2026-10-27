@@ -142,6 +142,7 @@ internal.provider.mpeg	mpeg
 internal.provider.raw	raw
 internal.provider.video	video
 internal.quantize	core
+internal.region	core
 internal.resize	core
 internal.sei	mpeg
 internal.simd	core

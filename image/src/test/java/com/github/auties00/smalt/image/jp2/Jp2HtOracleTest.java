@@ -11,6 +11,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
 
@@ -24,7 +25,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * full and reduced resolution and with a layer limit: the codestreams of the ISO/IEC 15444-4:2024 HTJ2K sets, those
  * of its JPH files, and OpenJPEG's own HTJ2K test files. OpenJPEG 2.5.3 rejects HT code-blocks with placeholder
  * passes, more than one HT set, regions of interest or mixed block coders; for the codestreams that need one of them
- * the test checks that OpenJPEG still rejects them, so the list stays exact.
+ * the test checks that OpenJPEG still rejects them, so the list stays exact. Three components with subsampled chroma,
+ * which {@code opj_decompress} writes converted to RGB, are compared after the same conversion.
  */
 @DisplayName("HTJ2K decoding matches opj_decompress bit for bit")
 class Jp2HtOracleTest {
@@ -108,14 +110,20 @@ class Jp2HtOracleTest {
         }
         var image = Jp2Decoder.decodeChannels(MediaSource.of(data), options);
         var channels = image.channels();
-        Skip.when(channels.size() == 3 && channels.get(1).subsamplingX() != 1
-                && channels.get(0).subsamplingX() == channels.get(0).subsamplingY(),
-                "input:opj-rgb", "opj_decompress converts this image to RGB");
+        // opj_decompress takes three channels whose luma is not subsampled and whose second channel is for sYCC
+        // and writes them converted to RGB
+        var converted = channels.size() == 3 && channels.get(1).subsamplingX() != 1
+                && channels.get(0).subsamplingX() == channels.get(0).subsamplingY();
         var expected = OpenJpeg.decode(data, "j2k", image.reduction(), layers);
         // OpenJPEG decodes the first layer of ds0_ht_16_b11, a single HT set per code-block
         if (REJECTED.contains(name) && !(name.equals("ds0_ht_16_b11") && layers == 1)) {
             assertTrue(expected == null, "opj_decompress now decodes " + name);
             return;
+        }
+        if (converted) {
+            Skip.unless(syccConvertible(image), "input:opj-rgb",
+                    "opj_decompress leaves this sYCC layout or origin unconverted or converts it with edge rules");
+            channels = syccToRgb(image);
         }
         assertNotNull(expected, "opj_decompress rejected " + name);
         assertEquals(expected.length, channels.size(), "channel count");
@@ -125,5 +133,63 @@ class Jp2HtOracleTest {
             assertEquals(expected[c].height(), actual.height(), "height of channel " + c);
             assertArrayEquals(expected[c].samples(), actual.samples(), "samples of channel " + c);
         }
+    }
+
+    /**
+     * Returns whether {@code opj_decompress} converts an image of three channels with subsampled chroma by
+     * replicating each chroma sample over the luma samples it covers: unsigned channels of one precision, 4:2:0 or
+     * 4:2:2 chroma, and an image and channels that start on even reference grid coordinates (its
+     * {@code sycc420_to_rgb} and {@code sycc422_to_rgb} treat an odd origin with edge rules of their own, and it
+     * leaves other layouts unconverted).
+     */
+    private static boolean syccConvertible(Jp2Image image) {
+        var channels = image.channels();
+        var luma = channels.getFirst();
+        if (luma.subsamplingX() != 1 || luma.subsamplingY() != 1 || (image.x0() & 1) != 0 || (image.y0() & 1) != 0) {
+            return false;
+        }
+        var dy = channels.get(1).subsamplingY();
+        for (var channel : channels) {
+            if (channel.signed() || channel.precision() != luma.precision() || channel.precision() > 30
+                    || (channel != luma && (channel.subsamplingX() != 2 || channel.subsamplingY() != dy
+                    || (dy != 1 && dy != 2) || (channel.x0() & 1) != 0 || (channel.y0() & 1) != 0))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Converts the channels of an sYCC image to the RGB channels {@code opj_decompress} writes: chroma replicated to
+     * the luma grid and the per-sample formula of OpenJPEG's {@code sycc_to_rgb} ({@code color.c}), which truncates
+     * the products of the float differences and clips to the channel precision.
+     */
+    private static List<Jp2Channel> syccToRgb(Jp2Image image) {
+        var luma = image.channels().getFirst();
+        var width = luma.width();
+        var height = luma.height();
+        var y = luma.samples();
+        var cb = Jp2Testing.upsample(image, image.channels().get(1), width, height);
+        var cr = Jp2Testing.upsample(image, image.channels().get(2), width, height);
+        var offset = 1 << (luma.precision() - 1);
+        var upb = (1 << luma.precision()) - 1;
+        var red = new int[y.length];
+        var green = new int[y.length];
+        var blue = new int[y.length];
+        for (var i = 0; i < y.length; i++) {
+            var blueDifference = cb[i] - offset;
+            var redDifference = cr[i] - offset;
+            red[i] = Math.clamp(y[i] + (int) (1.402 * (float) redDifference), 0, upb);
+            green[i] = Math.clamp(y[i] - (int) (0.344 * (float) blueDifference + 0.714 * (float) redDifference), 0,
+                    upb);
+            blue[i] = Math.clamp(y[i] + (int) (1.772 * (float) blueDifference), 0, upb);
+        }
+        var result = new ArrayList<Jp2Channel>();
+        var planes = List.of(red, green, blue);
+        for (var c = 0; c < planes.size(); c++) {
+            result.add(new Jp2Channel(luma.x0(), luma.y0(), width, height, 1, 1, luma.precision(), false, luma.type(),
+                    c + 1, planes.get(c)));
+        }
+        return result;
     }
 }

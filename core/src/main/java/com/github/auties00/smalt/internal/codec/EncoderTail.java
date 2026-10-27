@@ -1,15 +1,18 @@
 package com.github.auties00.smalt.internal.codec;
 
+import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.AudioEncoder;
 import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Objects;
 import java.util.function.BiFunction;
 import java.util.function.Consumer;
@@ -59,9 +62,13 @@ public final class EncoderTail implements Consumer<Packet> {
      * Opens an encoder, falling back to other settings the encoder may support.
      *
      * <p>The candidates are tried in this order: the requested rate and layout; 48 kHz unless
-     * {@code fixedRate}; and, unless {@code fixedLayout} and when the layout has more than two
-     * channels, stereo at the requested rate and then stereo at 48 kHz (unless {@code fixedRate}).
-     * A candidate the registry rejects with an {@link IllegalArgumentException} is skipped.
+     * {@code fixedRate}; unless {@code fixedLayout}, for a layout with ambisonics that is not already
+     * in that form, every component of its order in ACN order with SN3D normalization, followed by
+     * front left and right when the layout has exactly that non-diegetic pair, at the requested rate
+     * and then at 48 kHz (unless {@code fixedRate}); and, unless {@code fixedLayout} and when the
+     * layout has more than two channels, stereo at the requested rate and then stereo at 48 kHz
+     * (unless {@code fixedRate}). A candidate the registry rejects with an
+     * {@link IllegalArgumentException} is skipped.
      *
      * @param codec the codec to encode
      * @param rate the requested sampling rate in hertz
@@ -82,6 +89,13 @@ public final class EncoderTail implements Consumer<Packet> {
         if (!fixedRate && rate != FALLBACK_RATE) {
             candidates.add(options.apply(FALLBACK_RATE, layout));
         }
+        var ambiX = fixedLayout ? null : ambiX(layout);
+        if (ambiX != null) {
+            candidates.add(options.apply(rate, ambiX));
+            if (!fixedRate && rate != FALLBACK_RATE) {
+                candidates.add(options.apply(FALLBACK_RATE, ambiX));
+            }
+        }
         if (!fixedLayout && layout.channels() > 2) {
             candidates.add(options.apply(rate, ChannelLayout.STEREO));
             if (!fixedRate && rate != FALLBACK_RATE) {
@@ -101,6 +115,27 @@ public final class EncoderTail implements Consumer<Packet> {
             }
         }
         throw failure;
+    }
+
+    /**
+     * Returns the AmbiX form of an ambisonic layout: every component of its order in ACN order with SN3D
+     * normalization, followed by front left and right when the layout's other channels are exactly that pair.
+     *
+     * @param layout the requested layout
+     * @return the AmbiX layout, or {@code null} when the layout has no ambisonics or is already in that form
+     */
+    private static ChannelLayout ambiX(ChannelLayout layout) {
+        var ambisonics = layout.ambisonics().orElse(null);
+        if (ambisonics == null) {
+            return null;
+        }
+        var speakers = layout.speakers();
+        var pair = speakers.size() == ambisonics.channels() + 2 && speakers.contains(Speaker.FRONT_LEFT)
+                && speakers.contains(Speaker.FRONT_RIGHT);
+        var full = Ambisonics.of(ambisonics.order());
+        var result = pair ? ChannelLayout.ofAmbisonics(full, List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT))
+                : ChannelLayout.ofAmbisonics(full);
+        return result.equals(layout) ? null : result;
     }
 
     /**

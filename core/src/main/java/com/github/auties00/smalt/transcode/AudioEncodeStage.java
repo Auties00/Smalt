@@ -267,8 +267,8 @@ final class AudioEncodeStage implements Stage {
     }
 
     /**
-     * Creates the encoder, falling back to 48 kHz and to stereo when the codec rejects the
-     * requested input format and the options leave it free.
+     * Creates the encoder, falling back to 48 kHz, to the ACN and SN3D form of an ambisonic layout and
+     * to stereo when the codec rejects the requested input format and the options leave it free.
      *
      * @param codec the output codec
      * @param rate the requested sampling rate

@@ -219,7 +219,7 @@ public final class VorbisDecoder implements AudioDecoder {
      * smooths the joins. Before the first packet the span is silence and the next packet still only primes the
      * decoder.
      *
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      */
     @Override
     public int conceal(int samples, Consumer<AudioBuffer> output) {

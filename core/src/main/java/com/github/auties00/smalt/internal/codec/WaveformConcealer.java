@@ -175,6 +175,24 @@ public final class WaveformConcealer {
     }
 
     /**
+     * Returns an upper bound of the bytes the buffers of a concealer take, for checking against
+     * {@link com.github.auties00.smalt.MediaLimits#maxBytes()} before constructing one: the buffers grow with the
+     * sampling rate, which a hostile stream may declare as large as its field allows.
+     *
+     * @param channels the number of channels, positive
+     * @param sampleRate the sampling rate in hertz, positive
+     * @return the size of the buffers in bytes
+     */
+    public static long footprint(int channels, int sampleRate) {
+        var pitchMax = Math.max(Math.max(2, sampleRate / 200) + 1, 3L * sampleRate / 200);
+        var period = 3 * pitchMax + pitchMax / 4 + 1;
+        var length = Math.max(period, Math.max(4, sampleRate / 50) + pitchMax);
+        var maxRecovery = Math.max(Math.max(1, (long) sampleRate * RECOVERY_MILLIS / 1000),
+                (long) sampleRate * MAX_RECOVERY_MILLIS / 1000);
+        return (long) Float.BYTES * ((long) channels * (length + period + maxRecovery) + length);
+    }
+
+    /**
      * Appends a block the decoder outputs to the history.
      *
      * @param planes the channels of the block

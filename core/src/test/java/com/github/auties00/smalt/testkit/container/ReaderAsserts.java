@@ -623,7 +623,9 @@ public final class ReaderAsserts {
                 var track = reader.track();
                 header = "format " + reader.format() + "\nduration " + reader.durationMicros() + "\nseekable "
                         + reader.isSeekable() + "\ntrack " + track.id() + " " + track.codec() + " rate="
-                        + reader.sampleRate() + " layout=" + reader.layout().speakers() + "\n";
+                        + reader.sampleRate() + " layout=" + reader.layout().speakers()
+                        + reader.layout().ambisonics().map(ambisonics -> " ambisonics=" + ambisonics.normalization()
+                        + ambisonics.components()).orElse("") + "\n";
                 for (var block = reader.read(); block != null; block = reader.read()) {
                     var bits = new CRC32();
                     var rounded = new CRC32();

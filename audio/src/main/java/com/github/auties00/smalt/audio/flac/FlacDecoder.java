@@ -408,7 +408,7 @@ public final class FlacDecoder implements AudioDecoder {
      * {@inheritDoc}
      *
      * @return {@code samples}, the span being produced exactly
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      */
     @Override
     public int conceal(int samples, Consumer<AudioBuffer> output) {
@@ -445,6 +445,7 @@ public final class FlacDecoder implements AudioDecoder {
      */
     private WaveformConcealer concealer(int channels, int rate) {
         if (concealer == null || concealerChannels != channels || concealerRate != rate) {
+            LimitChecks.checkAllocation(limits, WaveformConcealer.footprint(channels, rate));
             concealer = new WaveformConcealer(channels, rate);
             concealerChannels = channels;
             concealerRate = rate;

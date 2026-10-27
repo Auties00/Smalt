@@ -134,6 +134,14 @@ final class EntryPoints {
                     ? " at " + thrown.getStackTrace()[0] : ""));
         }
         if (allocated > Hostile.MAX_ALLOCATION + 3L * data.length) {
+            // The first run of a step also loads and initializes the classes it reaches (and, under the coverage
+            // agent, instruments them), which allocates once per JVM; a second run measures the step alone, and a
+            // step that allocates from the input's declared sizes allocates as much again.
+            var again = threads.getTotalThreadAllocatedBytes();
+            Hostile.onSmallStack(what + " " + step, body);
+            allocated = threads.getTotalThreadAllocatedBytes() - again;
+        }
+        if (allocated > Hostile.MAX_ALLOCATION + 3L * data.length) {
             failures.add(name + " allocated " + (allocated >> 20) + " MiB");
         }
     }

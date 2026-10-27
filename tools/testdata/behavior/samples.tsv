@@ -35,6 +35,7 @@ core/src/test/resources/samples/mp3/cbr.mp3	16320	31d01dbcaaca53513b3cbca0e80130
 core/src/test/resources/samples/mp3/mp2-id3v1.mp2	16256	f1ea5ce2d6d0635840ad39de502fa10ca5498cc5c87bd63da2e1d2b0b0617dd1	make-samples.sh
 core/src/test/resources/samples/mp3/vbr-xing.mp3	16291	a2ca147138148b6847109c3ac5a45491a4b3f4c73404c35633675884ed69b4a4	make-samples.sh
 core/src/test/resources/samples/mp4/alac.m4a	46897	c357835c07fc39aad0099889fbb94816e600f792c647e3609ea5ad7e0dd310ba	make-samples.sh
+core/src/test/resources/samples/mp4/ambisonic.mov	144705	733aebf085b021146c497b235034936b23447eb2a1a9644c775793229dc44960	make-ambisonic-samples.py
 core/src/test/resources/samples/mp4/dnxhr.mov	25367	ea7de6628b1331cef28828e4154db4e48d812c428b5f338ea685e0835245a384	make-samples.sh
 core/src/test/resources/samples/mp4/dolby-vision-p5.mp4	10129	9791ba948dc577d772ab48ec745a2f54ccf0f7beae8447f0ed2cb97057174ca9	make-dolby-vision-samples.py
 core/src/test/resources/samples/mp4/dolby-vision-p84.mp4	10129	d56e611e19ea4bbf0b0fe6c6557456102f672da667aca99d2a588ea54c0c7e5b	make-dolby-vision-samples.py
@@ -55,6 +56,7 @@ core/src/test/resources/samples/mp4/timecode-spherical.mov	16384	45ecc9d0b26f294
 core/src/test/resources/samples/mp4/vobsub.mp4	6344	764945832252bf06f3b6819a9cadcda14147a18adba3f0c9c3d897a10f4d7ded	make-samples.sh, make-bitmap-caption-samples.py
 core/src/test/resources/samples/ogg/chained.ogg	10178	143e9c49ce5401aa9da89334a3f834acebfc9c5b32ff44d8f9c90bbf12f48e01	make-samples.sh
 core/src/test/resources/samples/ogg/flac.oga	34014	35fbcd1131ae0a7cec861958eb461ad41ada8cfe68916840d89af93f1b1959f9	make-samples.sh
+core/src/test/resources/samples/ogg/opus-ambisonic.opus	2876	225919e440f5d788e6a56ecd73b4be65ee7fd3bd29b13878b5ffa1f825624ba4	make-ambisonic-samples.py
 core/src/test/resources/samples/ogg/opus.opus	10841	ac8202a28ae12f6b7f4e381d83ee823cc7dace2f6d6e69ab50584fb053bc39d3	make-samples.sh
 core/src/test/resources/samples/ogg/vorbis.ogg	18054	fb11a857110af7946c0609e0074b65588e749df24fb3d6fc7c16af4bf67f7f70	make-samples.sh
 core/src/test/resources/samples/rawvideo/2vuy.mov	37645	de78ffa5a82b5b130b1f2ec1bdce42d79e61b66fc387b8a0a568e43d22468cd7	make-samples.sh
@@ -84,6 +86,7 @@ core/src/test/resources/samples/ts/s302m.ts	75388	4e8b88fff340d198301def2a4bb3bd
 core/src/test/resources/samples/ts/teletext.ts	2068	898068f4e85efb92586d19fbaeb637010cf69ff3ac7d82b6ea104d0ebe17b102	make-bitmap-caption-samples.py
 core/src/test/resources/samples/wav/aac-raw.wav	8082	ced6abefd6ca5a8e4e315de9b087bdc5c62fff7eb740031901becf99c426867b	make-wav-samples.py
 core/src/test/resources/samples/wav/ac3.wav	16476	b76cc7668502a43cd91534ccef394cc8a67c247dfa57f76caa2fd9ffbf88c9d1	make-wav-samples.py
+core/src/test/resources/samples/wav/ambisonic-bformat.wav	96068	be1f071aaa716603d3b68b3079b44e7d307af88f4d2b0869be0a019cd082240f	make-ambisonic-samples.py
 core/src/test/resources/samples/wav/amr.wav	1118	edb864115c08bd6a0cb0919b6b713d359819a44db0e89c20b39c67741a3f228d	make-wav-samples.py
 core/src/test/resources/samples/wav/bext-cue.wav	17034	1a5769f993ed51e70fc7d754af073f5466571a3c93068488258f19969c164da6	make-descriptive-samples.py
 core/src/test/resources/samples/wav/dts.wav	96348	5852e31b5ab4c5455122f40569f691dc30e586528c592b8c7b03a1191023fa82	make-wav-samples.py

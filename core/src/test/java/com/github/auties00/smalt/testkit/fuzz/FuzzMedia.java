@@ -324,7 +324,8 @@ public final class FuzzMedia {
      * {@link #video(Codec, byte[])}. A codec with integer or double output decodes the stream again through it, in a
      * decoder of its own, and every packet that both decoders accept must give the blocks of the float output: the
      * same sizes, integers that fit their sample size and that the floats equal once scaled, and doubles that the
-     * floats equal once rounded.
+     * floats equal once rounded (a finite double beyond the float range rounding to an infinity, which the float
+     * output replaces with {@code +-1}).
      *
      * @param codec the codec of the target
      * @param data the input
@@ -489,7 +490,11 @@ public final class FuzzMedia {
                 } else {
                     var block = doubles.get(b);
                     for (var i = 0; i < frames; i++) {
-                        if (Float.compare((float) block.plane(c)[i], expected[i]) != 0) {
+                        var rounded = (float) block.plane(c)[i];
+                        if (Float.isInfinite(rounded)) {
+                            rounded = Math.copySign(1.0f, rounded);
+                        }
+                        if (Float.compare(rounded, expected[i]) != 0) {
                             throw new IllegalStateException("packet " + index + ": double " + block.plane(c)[i]
                                     + " does not round to the float " + expected[i]);
                         }

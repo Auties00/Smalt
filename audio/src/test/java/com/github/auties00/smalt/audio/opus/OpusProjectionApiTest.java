@@ -2,6 +2,7 @@ package com.github.auties00.smalt.audio.opus;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.audio.Ambisonics;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.Demuxer;
@@ -89,7 +90,9 @@ class OpusProjectionApiTest {
         var input = OpusMultistreamApiTest.tones(layout, 48000, 48000);
         var packets = OpusMultistreamApiTest.encode(encoder, input);
         var decoder = new OpusDecoder(OpusMultistreamApiTest.track(bytes, 48000));
-        assertEquals(layout, decoder.layout());
+        var components = (order + 1) * (order + 1);
+        assertEquals(channels == components ? ChannelLayout.ofAmbisonics(order) : ChannelLayout.ofAmbisonics(
+                Ambisonics.of(order), List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT)), decoder.layout());
         var decoded = OpusMultistreamApiTest.decode(decoder, packets);
         assertEquals(48000, decoded[0].length, 960);
         OpusMultistreamApiTest.assertRouted(layout, decoder.layout(), decoded, 48000);

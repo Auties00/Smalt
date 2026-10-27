@@ -29,7 +29,10 @@ import java.util.Objects;
  * A-law and mu-law. The {@code fmt } chunk uses {@code WAVE_FORMAT_EXTENSIBLE} when the plain
  * format cannot describe the stream: integer samples wider than 16 bits, more than two channels,
  * or a layout other than mono or stereo; its channel mask has one bit per {@link Speaker} of the
- * layout when the speakers are positioned and in mask order, and is zero otherwise. Float,
+ * layout when the speakers are positioned and in mask order, and is zero otherwise. A layout that is
+ * exactly the Furse-Malham B-format of {@link com.github.auties00.smalt.audio.Ambisonics#ofFurseMalham(int)}
+ * gets the Ambisonic B-format sub-format GUID instead, with a zero mask; other ambisonic layouts, which
+ * that sub-format cannot describe, are written as channels without positions. Float,
  * A-law and mu-law files carry a {@code fact} chunk with the sample count. Packets are appended
  * to the {@code data} chunk in the order they arrive; their timestamps are ignored, so a gap
  * between packets is not filled.
@@ -404,11 +407,13 @@ public final class WavMuxer implements Muxer {
             default -> WaveFormat.PCM;
         };
         var standardLayout = channels <= 2 && layout.equals(ChannelLayout.defaultFor(channels));
+        var bFormat = tag != WaveFormat.ALAW && tag != WaveFormat.MULAW && WaveFormat.isAmbisonicBFormat(layout);
         var extensible = tag != WaveFormat.ALAW && tag != WaveFormat.MULAW
                 && (channels > 2 || !standardLayout || tag == WaveFormat.PCM && bits > 16);
+        var subFormat = bFormat ? WaveFormat.SubFormat.AMBISONIC
+                : extensible ? WaveFormat.SubFormat.STANDARD : WaveFormat.SubFormat.NONE;
         var format = new WaveFormat(tag, channels, track.sampleRate(), (long) track.sampleRate() * blockAlign, blockAlign,
-                bits, bits, extensible ? WaveFormat.channelMask(layout) : 0,
-                extensible ? WaveFormat.SubFormat.STANDARD : WaveFormat.SubFormat.NONE, new byte[0]);
+                bits, bits, extensible && !bFormat ? WaveFormat.channelMask(layout) : 0, subFormat, new byte[0]);
         header.fourCc("fmt ");
         header.u32le(format.size(tag != WaveFormat.PCM));
         format.write(header, tag != WaveFormat.PCM);

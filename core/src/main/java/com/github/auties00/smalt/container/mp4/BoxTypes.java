@@ -629,6 +629,11 @@ final class BoxTypes {
     static final int CHNL = 0x63686E6C;
 
     /**
+     * The spatial audio box ({@code SA3D}) of the Google Spatial Audio RFC.
+     */
+    static final int SA3D = 0x53413344;
+
+    /**
      * The Opus sample entry ({@code Opus}).
      */
     static final int OPUS = 0x4F707573;

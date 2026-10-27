@@ -43,6 +43,10 @@ import java.util.function.Consumer;
  * packet the codec rejects as corrupt is skipped, as players do; a run of
  * {@value #MAX_CONSECUTIVE_FAILURES} corrupt packets in a row fails.
  *
+ * <p>The codec's layout is the default output layout, except that a PCM or FLAC track whose container declares an
+ * {@linkplain ChannelLayout#ambisonics() ambisonic} layout of as many channels (the MP4 spatial audio box, the
+ * WAVE B-format sub-format) outputs that layout, the codec's channels taken in coded order.
+ *
  * <p>The output is 32-bit floats unless {@link AudioStreamDecoderOptions#sampleFormat()} asks for
  * another {@link SampleFormat}: {@link SampleFormat#INTEGER} outputs the codec's own integer
  * samples bit for bit ({@link #readIntegers(int[][], int, int)}), and {@link SampleFormat#DOUBLE}
@@ -112,6 +116,12 @@ public final class AudioStreamDecoder implements AutoCloseable {
      * The channel layout of the output.
      */
     private final ChannelLayout outputLayout;
+
+    /**
+     * The ambisonic layout the container declares for the codec's output channels, or {@code null} when the
+     * codec's own layout stands.
+     */
+    private final ChannelLayout declared;
 
     /**
      * The converted samples not yet read, or {@code null} unless the output is float.
@@ -381,15 +391,16 @@ public final class AudioStreamDecoder implements AutoCloseable {
         this.decoder = decoder;
         this.decoderOptions = decoderOptions;
         this.config = track.codecConfig().orElse(null);
+        this.declared = declaredAmbisonics(track, decoder.layout());
         this.outputRate = options.sampleRate().orElse(decoder.sampleRate());
-        this.outputLayout = options.layout().orElse(decoder.layout());
+        this.outputLayout = options.layout().orElse(relabel(decoder.layout()));
         this.mixing = options.mixing();
         this.customMatrix = mixing.matrix().isPresent();
         this.format = options.sampleFormat();
         if (format != SampleFormat.FLOAT) {
-            if (outputRate != decoder.sampleRate() || !outputLayout.equals(decoder.layout())) {
+            if (outputRate != decoder.sampleRate() || !outputLayout.equals(relabel(decoder.layout()))) {
                 throw new IllegalArgumentException(format + " output keeps the codec's " + decoder.sampleRate() + " Hz "
-                        + decoder.layout() + ", not " + outputRate + " Hz " + outputLayout);
+                        + relabel(decoder.layout()) + ", not " + outputRate + " Hz " + outputLayout);
             }
             requireIntegers(decoder);
         }
@@ -404,6 +415,35 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 ? track.timeBase().rescale(track.duration(), Rational.timeBaseOf(decoderRate))
                 : Long.MAX_VALUE;
         this.packetLimit = Long.MAX_VALUE;
+    }
+
+    /**
+     * Returns the ambisonic layout a container declares for a codec whose output keeps the coded channel order.
+     *
+     * @param track the track, whose layout the container declares
+     * @param codec the codec's output layout
+     * @return the track's ambisonic layout when the codec is PCM or FLAC, its output has no ambisonics and has as
+     * many channels, otherwise {@code null}
+     */
+    private static ChannelLayout declaredAmbisonics(AudioTrack track, ChannelLayout codec) {
+        // TODO: AAC, ALAC and Vorbis decoders reorder their coded channels to speaker order, so a container's
+        // ambisonic layout (SA3D of an AAC track) would need that reordering undone before it applies
+        var keepsOrder = track.codec().isPcm() || track.codec() == Codec.FLAC;
+        var layout = track.layout().orElse(null);
+        return keepsOrder && layout != null && layout.ambisonics().isPresent() && codec.ambisonics().isEmpty()
+                && layout.channels() == codec.channels() ? layout : null;
+    }
+
+    /**
+     * Returns the layout a codec block is mixed from: the container's ambisonic layout in place of a codec layout
+     * of as many channels.
+     *
+     * @param layout the codec block's layout
+     * @return the layout to mix from
+     */
+    private ChannelLayout relabel(ChannelLayout layout) {
+        return declared != null && layout.channels() == declared.channels() && layout.ambisonics().isEmpty()
+                ? declared : layout;
     }
 
     /**
@@ -1191,16 +1231,17 @@ public final class AudioStreamDecoder implements AutoCloseable {
         switch (buffer) {
             case AudioBuffer block -> resample(mix(block, offset, frames), block.sampleRate(), frames);
             case IntegerAudioBuffer block -> {
-                if (converts(block.sampleRate(), block.layout())) {
-                    convert(block.layout(), block.sampleRate(), block.planes(), block.bitsPerSample(), offset, frames);
+                if (converts(block.sampleRate(), relabel(block.layout()))) {
+                    convert(relabel(block.layout()), block.sampleRate(), block.planes(), block.bitsPerSample(), offset,
+                            frames);
                 } else {
                     flushResampler();
                     queueIntegers(block, offset, frames);
                 }
             }
             case DoubleAudioBuffer block -> {
-                if (converts(block.sampleRate(), block.layout())) {
-                    convert(block.layout(), block.sampleRate(), block.planes(), 0, offset, frames);
+                if (converts(block.sampleRate(), relabel(block.layout()))) {
+                    convert(relabel(block.layout()), block.sampleRate(), block.planes(), 0, offset, frames);
                 } else {
                     flushResampler();
                     exact.write(block.planes(), offset, frames);
@@ -1352,12 +1393,13 @@ public final class AudioStreamDecoder implements AutoCloseable {
             }
             input = shifted;
         }
-        if (buffer.layout().equals(outputLayout) && !customMatrix) {
+        var layout = relabel(buffer.layout());
+        if (layout.equals(outputLayout) && !customMatrix) {
             return input;
         }
-        if (mixer == null || !buffer.layout().equals(mixerInput)) {
-            mixer = new ChannelMixer(buffer.layout(), outputLayout, mixing);
-            mixerInput = buffer.layout();
+        if (mixer == null || !layout.equals(mixerInput)) {
+            mixer = new ChannelMixer(layout, outputLayout, mixing);
+            mixerInput = layout;
         }
         if (mixed == null || mixed[0].length < frames) {
             mixed = new float[outputLayout.channels()][frames];

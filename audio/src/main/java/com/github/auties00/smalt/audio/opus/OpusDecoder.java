@@ -29,10 +29,12 @@ import java.util.function.Consumer;
  * {@code OpusHead} identification header (RFC 7845 section 5.1): its channel count, pre-skip,
  * output gain and channel mapping. Mapping family 0 (mono or stereo) and family 1 (up to 7.1,
  * Vorbis order) are reordered to the WAVE order of {@link ChannelLayout#defaultFor(int)}; family
- * 255, the ambisonic family 2 and reserved families are decoded as a multistream with
- * {@link com.github.auties00.smalt.audio.Speaker#UNKNOWN} positions in coded order. Family 3
- * (RFC 8486 section 3.2) multiplies the decoded channels of its streams by the demixing matrix of the
- * header, giving ambisonic channels of unknown position. The output gain is applied inside the decoder
+ * 255, the ambisonic family 2 and reserved families are decoded as a multistream in coded order, and
+ * family 3 (RFC 8486 section 3.2) multiplies the decoded channels of its streams by the demixing matrix
+ * of the header. The ambisonic families output the layout of {@link ChannelLayout#ofAmbisonics(int)}
+ * (ACN order, SN3D), followed by a non-diegetic front left and right pair when the channel count is an
+ * order squared plus two; the other families and counts output
+ * {@link com.github.auties00.smalt.audio.Speaker#UNKNOWN} positions. The output gain is applied inside the decoder
  * and the first {@code preSkip} samples (counted at 48 kHz and scaled to the output rate, rounding down)
  * are discarded by {@link #decode(Packet, Consumer)}; trimming the end of the stream is the container's
  * job (the Ogg end granule position). A decoder created without a track
@@ -503,7 +505,7 @@ public final class OpusDecoder implements AudioDecoder {
      * concealment of libopus 1.5.2 ({@code opus_decode} without a packet). Pre-skip samples not yet dropped are
      * dropped from them as from decoded packets.
      *
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      * @throws IllegalStateException if the decoder was closed
      */
     @Override

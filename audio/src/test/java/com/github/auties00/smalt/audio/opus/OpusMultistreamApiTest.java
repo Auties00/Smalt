@@ -105,7 +105,7 @@ class OpusMultistreamApiTest {
                     default -> speaker;
                 });
             }
-            if (speaker == Speaker.UNKNOWN) {
+            if (speaker == Speaker.UNKNOWN || decoded.ambisonics().isPresent()) {
                 source = d;
             }
             assertTrue(source >= 0, "no input channel for " + speaker);

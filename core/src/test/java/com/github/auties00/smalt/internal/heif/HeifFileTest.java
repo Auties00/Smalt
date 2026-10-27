@@ -262,6 +262,30 @@ class HeifFileTest {
         }
 
         @Test
+        @DisplayName("rejects a moov box that runs past the end of the file without reserving its declared size")
+        void moovPastEnd() throws ReflectiveOperationException {
+            var out = new ByteArrayOutputStream();
+            out.writeBytes(box("ftyp", "avis\0\0\0\0avis".getBytes(StandardCharsets.ISO_8859_1)));
+            var moov = box("moov", new byte[32]);
+            // Within the default byte limit, so only the end of the file can reject it.
+            ByteArrays.put32be(moov, 0, (1 << 30) - 64);
+            out.writeBytes(moov);
+            var data = out.toByteArray();
+            var file = HeifFile.parse(MediaSource.of(data), MediaLimits.DEFAULT);
+            assertTrue(file.hasMovie());
+            var threads = Class.forName("java.lang.management.ManagementFactory").getMethod("getThreadMXBean")
+                    .invoke(null);
+            var allocated = Class.forName("com.sun.management.ThreadMXBean")
+                    .getMethod("getCurrentThreadAllocatedBytes");
+            var before = (long) allocated.invoke(threads);
+            var failure = assertThrows(MediaException.Malformed.class,
+                    () -> HeifMovie.parse(MediaSource.of(data), file, MediaLimits.DEFAULT));
+            var bytes = (long) allocated.invoke(threads) - before;
+            assertTrue(failure.getMessage().contains("moov box"), failure.getMessage());
+            assertTrue(bytes < 16 << 20, "allocated " + bytes + " bytes for a " + data.length + " byte file");
+        }
+
+        @Test
         @DisplayName("raises only MediaException on every truncation and on random corruption")
         void hostile() {
             var data = simple();

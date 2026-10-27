@@ -32,6 +32,8 @@ def generator(root, relative):
     if relative in ("matroska/editions.mkv", "mp4/timecode-spherical.mov", "wav/bext-cue.wav", "aiff/markers.aiff",
                     "flac/cuesheet.flac"):
         return "make-descriptive-samples.py"
+    if relative in ("ogg/opus-ambisonic.opus", "mp4/ambisonic.mov", "wav/ambisonic-bformat.wav"):
+        return "make-ambisonic-samples.py"
     if relative.startswith("wav/") and relative not in ("wav/s16.wav", "wav/f32.wav"):
         return "make-wav-samples.py"
     if relative in ("subtitle/pgs.sup", "subtitle/vobsub.sub", "ts/dvb-subtitles.ts", "ts/teletext.ts"):

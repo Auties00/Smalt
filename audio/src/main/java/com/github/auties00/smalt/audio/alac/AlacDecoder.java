@@ -270,7 +270,7 @@ public final class AlacDecoder implements AudioDecoder {
      * @throws MediaException.Malformed if the configuration is missing or invalid
      * @throws MediaException.Unsupported if the configuration's version, sample size or channel
      * count is not supported
-     * @throws MediaException.LimitExceeded if the channel count or the frame buffers exceed
+     * @throws MediaException.LimitExceeded if the channel count or the frame or concealment buffers exceed
      * {@link MediaLimits#DEFAULT}
      */
     public AlacDecoder(AudioTrack track) {
@@ -290,7 +290,7 @@ public final class AlacDecoder implements AudioDecoder {
      * @throws MediaException.Malformed if the configuration is missing or invalid
      * @throws MediaException.Unsupported if the configuration's version, sample size or channel
      * count is not supported
-     * @throws MediaException.LimitExceeded if the channel count or the frame buffers exceed the
+     * @throws MediaException.LimitExceeded if the channel count or the frame or concealment buffers exceed the
      * options' limits
      */
     public AlacDecoder(AudioTrack track, AudioDecoderOptions options) {
@@ -337,6 +337,7 @@ public final class AlacDecoder implements AudioDecoder {
         LimitChecks.checkChannels(limits, channels);
         LimitChecks.checkAllocation(limits, ((long) channels + 7) * frameLength * Integer.BYTES + (long) channels * frameLength * Float.BYTES);
         this.sampleRate = rate > 0 ? rate : Math.max(track.sampleRate(), 0);
+        LimitChecks.checkAllocation(limits, WaveformConcealer.footprint(channels, Math.max(sampleRate, 1)));
         var speakers = BITSTREAM_ORDER[channels - 1];
         var sorted = new ArrayList<>(List.of(speakers));
         sorted.sort(Comparator.naturalOrder());
@@ -433,7 +434,7 @@ public final class AlacDecoder implements AudioDecoder {
      * {@inheritDoc}
      *
      * @return {@code samples}, the span being produced exactly
-     * @throws IllegalArgumentException {@inheritDoc}
+     * @throws IllegalArgumentException if {@code samples} is not positive
      */
     @Override
     public int conceal(int samples, Consumer<AudioBuffer> output) {

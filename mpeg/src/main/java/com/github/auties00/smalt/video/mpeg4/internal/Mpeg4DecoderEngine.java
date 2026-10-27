@@ -33,8 +33,11 @@ import java.util.PriorityQueue;
  * <p>Pictures leave in display order: with B-VOPs possible, each reference picture is held until
  * the next reference picture is decoded or {@link #flush()} is called. Every picture takes the
  * smallest pending packet timestamp, which is the display order of the packets' timestamps
- * whether a container stores decoding or presentation times; pictures without a pending timestamp
- * continue from the previous one by the VOP time difference. VOPs that cannot be decoded (a P-VOP
+ * whether a container stores decoding or presentation times; a timestamp that does not follow the
+ * previous picture's (two pictures timed alike, as a {@code vop_time_increment} outside the range of
+ * its {@code vop_time_increment_resolution} gives) is replaced by the previous one plus the frame
+ * duration, at least one tick. Pictures without a pending timestamp continue from the previous one by
+ * the VOP time difference. VOPs that cannot be decoded (a P-VOP
  * or B-VOP whose references precede the first intra VOP) and not-coded VOPs produce no picture.
  *
  * <p>With frame threads (see the constructor) the engine does not decode a picture before it
@@ -326,8 +329,8 @@ public final class Mpeg4DecoderEngine {
     private ObjectStream object;
 
     /**
-     * The index of the group of VOP start code waiting for the next VOP of the object decoder, or
-     * {@code -1}.
+     * The index, in the data being scanned, of the group of VOP start code waiting for the next VOP of
+     * the object decoder, or {@code -1}.
      */
     private int objectGov = -1;
 
@@ -565,6 +568,7 @@ public final class Mpeg4DecoderEngine {
             }
             return;
         }
+        objectGov = -1;
         var position = nextStartCode(data, 0);
         while (position >= 0 && position + 3 < length) {
             var code = data[position + 3] & 0xFF;
@@ -833,7 +837,7 @@ public final class Mpeg4DecoderEngine {
         long pts;
         var polled = timestamps.poll();
         if (polled != null) {
-            pts = polled;
+            pts = lastPts != Long.MIN_VALUE && polled <= lastPts ? lastPts + Math.max(1, frameDuration()) : polled;
         } else if (lastPts != Long.MIN_VALUE) {
             var delta = time - lastTime;
             pts = lastPts + (delta > 0 ? timeScale.convert(delta, object.timeResolution()) : frameDuration());
@@ -1382,7 +1386,7 @@ public final class Mpeg4DecoderEngine {
         long pts;
         var polled = timestamps.poll();
         if (polled != null) {
-            pts = polled;
+            pts = lastPts != Long.MIN_VALUE && polled <= lastPts ? lastPts + Math.max(1, frameDuration()) : polled;
         } else if (lastPts != Long.MIN_VALUE) {
             var delta = frame.time - lastTime;
             pts = lastPts + (delta > 0 ? timeScale.convert(delta, layer.timeResolution) : frameDuration());

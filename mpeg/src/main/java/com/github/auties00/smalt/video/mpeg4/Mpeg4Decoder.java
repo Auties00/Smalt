@@ -57,7 +57,9 @@ import java.util.function.Consumer;
  * them, and layers of fewer than 8 bits have their samples shifted up to 8 bits. Each frame takes the smallest
  * timestamp among the packets fed and not yet assigned,
  * which gives frames their presentation times whether a container stores presentation times
- * (MP4, Matroska) or one timestamp per stored frame in decoding order (AVI). The color
+ * (MP4, Matroska) or one timestamp per stored frame in decoding order (AVI); a timestamp that does
+ * not follow the previous frame's (two VOPs timed alike) is replaced by the previous one plus the
+ * frame duration, at least one tick, so presentation times increase. The color
  * description comes from the visual object's {@code video_signal_type()}, with BT.601 or BT.709
  * by picture size for components left unspecified. A frame is a keyframe when it is an I-VOP.
  *

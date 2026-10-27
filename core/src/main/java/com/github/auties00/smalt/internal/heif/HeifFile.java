@@ -306,7 +306,7 @@ public final class HeifFile {
                 if (meta != null) {
                     throw new MediaException.Malformed("heif: duplicate file-level meta box");
                 }
-                meta = readPayload(source, size, payloadOffset, payloadSize, limits);
+                meta = readPayload(source, size, "meta", payloadOffset, payloadSize, limits);
             } else if (type.equals("moov")) {
                 if (movieOffset >= 0) {
                     throw new MediaException.Malformed("heif: duplicate moov box");
@@ -362,6 +362,7 @@ public final class HeifFile {
      *
      * @param source the file
      * @param size the size of the source, or a negative value when unknown
+     * @param box the type of the box, for messages
      * @param offset the offset of the payload
      * @param length the declared size of the payload
      * @param limits the bound of the allocation
@@ -369,11 +370,12 @@ public final class HeifFile {
      * @throws MediaException.LimitExceeded if {@code length} exceeds the allocation limit
      * @throws MediaException.Malformed if the source ends before the payload does
      */
-    private static byte[] readPayload(MediaSource source, long size, long offset, long length, MediaLimits limits) {
+    static byte[] readPayload(MediaSource source, long size, String box, long offset, long length,
+                              MediaLimits limits) {
         LimitChecks.checkAllocation(limits, length);
         if (size >= 0) {
             if (length > size - offset) {
-                throw new MediaException.Malformed("heif: the meta box at offset " + offset + " declares "
+                throw new MediaException.Malformed("heif: the " + box + " box at offset " + offset + " declares "
                         + length + " bytes but the file ends after " + Math.max(0, size - offset));
             }
             var payload = new byte[(int) length];
@@ -388,7 +390,7 @@ public final class HeifFile {
             }
             var read = source.read(offset + done, payload, done, payload.length - done);
             if (read <= 0) {
-                throw new MediaException.Malformed("heif: the meta box at offset " + offset + " declares "
+                throw new MediaException.Malformed("heif: the " + box + " box at offset " + offset + " declares "
                         + length + " bytes but the file ends after " + done);
             }
             done += read;

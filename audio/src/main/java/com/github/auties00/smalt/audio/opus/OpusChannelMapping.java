@@ -28,7 +28,9 @@ public enum OpusChannelMapping {
      *
      * <p>Each ambisonic channel is coded as a mono stream and the stereo pair as a coupled stream,
      * all in CELT. The channel order is the input order; the speakers of the input layout are not
-     * used.
+     * used. A decoder outputs the layout of {@link
+     * com.github.auties00.smalt.audio.ChannelLayout#ofAmbisonics(int) ChannelLayout.ofAmbisonics}, followed by the
+     * front left and right pair when the stream has one.
      */
     AMBISONIC(2),
 
@@ -40,7 +42,7 @@ public enum OpusChannelMapping {
      * <p>The encoder mixes the channels with a fixed matrix of the order into coupled streams (and
      * one mono stream for an odd count), which may use every coding mode; the identification header
      * carries the matrix that undoes the mix and, as its output gain, the gain that matrix needs. A
-     * decoder outputs the ambisonic channels, of unknown position, in input order.
+     * decoder outputs the ambisonic channels in input order, in the layout of {@link #AMBISONIC}.
      */
     AMBISONIC_PROJECTION(3),
 

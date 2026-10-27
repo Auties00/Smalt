@@ -19,6 +19,7 @@ import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.header.OpusHeader;
 import com.github.auties00.smalt.internal.heif.BoxCursor;
 import com.github.auties00.smalt.internal.heif.DataReferences;
 import com.github.auties00.smalt.internal.io.FourCc;
@@ -802,6 +803,10 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 if (audio.dops != null) {
                     config = AudioConfigs.opusHeadFromDops(audio.dops);
                     channels = config[9] & 0xFF;
+                    var ambisonic = OpusHeader.ambisonicLayout(channels, config[18] & 0xFF);
+                    if (ambisonic != null) {
+                        audio.layout = ambisonic;
+                    }
                 }
                 sampleRate = 48000;
             }
@@ -895,7 +900,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (channels > 0) {
             LimitChecks.checkChannels(limits, channels);
         }
-        var layout = audio.layout;
+        var layout = audio.spatial != null && audio.spatial.channels() == channels ? audio.spatial : audio.layout;
         if (layout != null && layout.channels() != channels) {
             layout = null;
         }
@@ -1108,6 +1113,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         private ChannelLayout layout;
 
         /**
+         * The ambisonic layout declared by an {@code SA3D} box, or {@code null}.
+         */
+        private ChannelLayout spatial;
+
+        /**
          * The protection scheme information boxes.
          */
         private final List<BoxCursor> sinfs = new ArrayList<>();
@@ -1152,6 +1162,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         }
                         case BoxTypes.CHAN -> layout = parseChan(body);
                         case BoxTypes.CHNL -> layout = parseChnl(body);
+                        case BoxTypes.SA3D -> spatial = SpatialAudioBox.parse(body);
                         case BoxTypes.SINF -> sinfs.add(body);
                         default -> {
                             if (box.type() == FourCc.of("srat")) {
@@ -1196,6 +1207,8 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                 }
             }
         } else {
+            // TODO: the higher-order ambisonics layout tags (ACN with SN3D or N3D scaling) and channel labels, once
+            // their values are confirmed against a specification or a sample file
             return switch (tag >>> 16) {
                 case 100 -> ChannelLayout.MONO;
                 case 101, 102 -> ChannelLayout.STEREO;

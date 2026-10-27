@@ -23,7 +23,7 @@ class AudioDecoderBehaviorTest {
     @ValueSource(strings = {"ogg/opus.opus", "ogg/vorbis.ogg", "ogg/flac.oga", "ogg/chained.ogg", "flac/flac.flac",
             "matroska/flac.mka", "matroska/h264-opus.mkv", "matroska/vp9-vorbis.webm", "mp4/alac.m4a",
             "mp3/vbr-xing.mp3", "mp3/cbr.mp3", "mp3/mp2-id3v1.mp2", "avi/mpeg4-mp3.avi", "wav/mp3.wav", "wav/flac.wav",
-            "wav/opus.wav"})
+            "wav/opus.wav", "ogg/opus-ambisonic.opus"})
     @DisplayName("samples: identical samples under every source behavior and clean faults")
     void sample(String sample) throws IOException {
         ReaderAsserts.audio(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

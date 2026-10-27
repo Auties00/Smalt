@@ -209,8 +209,9 @@ public final class AudioTranscodeOptions {
     /**
      * {@return the output channel layout, or empty to keep the source layout; empty by default}
      *
-     * <p>When the source layout is kept, a codec that cannot code it gets the stream mixed down to
-     * stereo.
+     * <p>When the source layout is kept, a codec that cannot code it gets an ambisonic stream converted
+     * to ACN order with SN3D normalization when the codec codes that, and otherwise the stream mixed
+     * down to stereo.
      */
     public Optional<ChannelLayout> layout() {
         return Optional.ofNullable(layout);

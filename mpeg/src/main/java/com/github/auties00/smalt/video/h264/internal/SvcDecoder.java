@@ -389,7 +389,14 @@ final class SvcDecoder implements SvcLayerDecoder.Context, SvcDpb.Entries {
             for (var slice : rep.slices) {
                 refDq = Math.max(refDq, slice.refLayerDqId);
             }
-            rep.derive(refDq >= 0 ? reps[refDq] : null);
+            var ref = refDq >= 0 ? reps[refDq] : null;
+            rep.derive(ref);
+            if (ref != null && !rep.spatialResolutionChange && !rep.minNoInterLayerPred && rep.scaledLeft == 0
+                    && rep.scaledTop == 0 && rep.scaledRight == 0 && rep.scaledBottom == 0
+                    && (rep.widthMbs != ref.widthMbs || rep.heightMbs != ref.heightMbs)) {
+                throw new MediaException.Malformed("layer representation " + dqIdList[i]
+                        + " predicts without resampling from a reference layer of another size");
+            }
             checkSupported(rep);
         }
         var dqMax = dqIdList[0];

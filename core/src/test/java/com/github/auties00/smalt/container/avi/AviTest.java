@@ -128,6 +128,36 @@ class AviTest {
         }
     }
 
+    @Test
+    @DisplayName("reads an Ambisonic B-format WAVEFORMATEXTENSIBLE as the Furse-Malham layout, whatever its mask")
+    void ambisonicBFormat() {
+        // ffmpeg writes four-channel PCM as WAVEFORMATEXTENSIBLE with the quad mask and KSDATAFORMAT_SUBTYPE_PCM,
+        // which is swapped for KSDATAFORMAT_SUBTYPE_AMBISONIC_B_FORMAT_PCM
+        var file = Fixtures.read(Fixtures.ffmpeg("avi", List.of("-f", "lavfi", "-i",
+                "sine=frequency=440:sample_rate=48000:duration=0.2"), List.of("-af", "pan=quad|c0=c0|c1=c0|c2=c0|c3=c0",
+                "-c:a", "pcm_s16le")));
+        var standard = java.util.HexFormat.of().parseHex("0100000000001000800000aa00389b71");
+        var ambisonic = java.util.HexFormat.of().parseHex("010000002107d3118644c8c1ca000000");
+        var at = -1;
+        for (var i = 0; i + standard.length <= file.length; i++) {
+            if (Arrays.equals(file, i, i + standard.length, standard, 0, standard.length)) {
+                at = i;
+                break;
+            }
+        }
+        assertTrue(at > 0, "PCM sub-format GUID");
+        var plain = MuxSupport.demux(file).tracks().getFirst();
+        assertEquals(ChannelLayout.defaultFor(4), ((com.github.auties00.smalt.track.AudioTrack) plain).layout()
+                .orElseThrow());
+        System.arraycopy(ambisonic, 0, file, at, ambisonic.length);
+        var demuxed = MuxSupport.demux(file);
+        var track = (com.github.auties00.smalt.track.AudioTrack) demuxed.tracks().getFirst();
+        assertEquals(Codec.PCM_S16LE, track.codec());
+        assertEquals(ChannelLayout.ofAmbisonics(com.github.auties00.smalt.audio.Ambisonics.ofFurseMalham(4)),
+                track.layout().orElseThrow());
+        assertFalse(demuxed.order().isEmpty());
+    }
+
     @Nested
     @DisplayName("demuxer")
     class Demuxing {
