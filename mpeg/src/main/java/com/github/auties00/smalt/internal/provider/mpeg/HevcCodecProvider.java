@@ -34,6 +34,7 @@ public final class HevcCodecProvider implements VideoCodecProvider {
                 .limits(options.limits())
                 .threads(options.threads())
                 .highBitDepth(options.highBitDepth())
+                .dolbyVisionBaseLayer(options.dolbyVisionBaseLayer())
                 .build();
         return new HevcDecoder(track, hevcOptions);
     }
