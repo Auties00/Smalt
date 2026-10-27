@@ -5,14 +5,10 @@ package com.github.auties00.smalt.audio.flac;
 import com.github.auties00.smalt.audio.AudioBuffer;
 import com.github.auties00.smalt.audio.AudioEncoder;
 import com.github.auties00.smalt.audio.ChannelLayout;
+import com.github.auties00.smalt.audio.IntegerAudioBuffer;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 
-import java.lang.invoke.MethodHandles;
-import java.lang.invoke.VarHandle;
-import java.nio.ByteOrder;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.util.Arrays;
 import java.util.Objects;
 import java.util.Optional;
@@ -23,7 +19,8 @@ import java.util.function.Consumer;
  *
  * <p>The encoder takes integer samples of the configured {@link FlacEncoderOptions#bitsPerSample()
  * sample size} through {@link #encode(int[][], int, int, Consumer)} and
- * {@link #encodeInterleaved(int[], int, int, Consumer)}, or planar floats through
+ * {@link #encodeInterleaved(int[], int, int, Consumer)}, integer blocks of any sample size through
+ * {@link #encode(IntegerAudioBuffer, Consumer)}, or planar floats through
  * {@link #encode(AudioBuffer, Consumer)}, which it quantizes: a float sample is clipped to
  * {@code [-1, 1]}, multiplied by {@code 2^(bitsPerSample - 1)}, rounded to the nearest integer
  * with ties toward positive infinity and clamped to the sample range, and NaN becomes zero. That
@@ -87,16 +84,6 @@ public final class FlacEncoder implements AudioEncoder {
     private static final int TYPE_SEEKTABLE = 3;
 
     /**
-     * Stores two bytes as a little-endian {@code short}.
-     */
-    private static final VarHandle SHORT_LE = MethodHandles.byteArrayViewVarHandle(short[].class, ByteOrder.LITTLE_ENDIAN);
-
-    /**
-     * Stores four bytes as a little-endian {@code int}.
-     */
-    private static final VarHandle INT_LE = MethodHandles.byteArrayViewVarHandle(int[].class, ByteOrder.LITTLE_ENDIAN);
-
-    /**
      * The sample number of a placeholder seek point.
      */
     private static final long PLACEHOLDER = -1L;
@@ -137,14 +124,14 @@ public final class FlacEncoder implements AudioEncoder {
     private final FlacFrameEncoder frames;
 
     /**
-     * The MD5 digest of the samples.
+     * The MD5 signature of the samples.
      */
-    private final MessageDigest md5;
+    private final FlacMd5 md5;
 
     /**
-     * The bytes of one block laid out for the digest.
+     * The frame encoder's input arrays, one per channel.
      */
-    private final byte[] digestBuffer;
+    private final int[][] inputs;
 
     /**
      * The seek point interval in samples, zero without a seek table.
@@ -235,12 +222,11 @@ public final class FlacEncoder implements AudioEncoder {
         this.minSample = bitsPerSample == 32 ? Integer.MIN_VALUE : -(1 << (bitsPerSample - 1));
         this.maxSample = bitsPerSample == 32 ? Integer.MAX_VALUE : (1 << (bitsPerSample - 1)) - 1;
         this.frames = new FlacFrameEncoder(options, kernel);
-        try {
-            this.md5 = MessageDigest.getInstance("MD5");
-        } catch (NoSuchAlgorithmException exception) {
-            throw new IllegalStateException("MD5 is not available", exception);
+        this.md5 = new FlacMd5(blockSize * channels * ((bitsPerSample + 7) / 8));
+        this.inputs = new int[channels][];
+        for (var c = 0; c < channels; c++) {
+            inputs[c] = frames.input(c);
         }
-        this.digestBuffer = new byte[blockSize * channels * ((bitsPerSample + 7) / 8)];
         this.seekInterval = options.seekPointInterval()
                 .map(interval -> Math.max(1, Math.round(interval.toNanos() / 1e9 * options.sampleRate())))
                 .orElse(0L);
@@ -391,6 +377,72 @@ public final class FlacEncoder implements AudioEncoder {
     }
 
     /**
+     * {@inheritDoc}
+     *
+     * @return {@code true}
+     */
+    @Override
+    public boolean supportsIntegerInput() {
+        return true;
+    }
+
+    /**
+     * Buffers an integer block, emitting a packet for every block completed.
+     *
+     * <p>Samples of the configured sample size are coded unchanged; samples of a smaller size are
+     * shifted left to it and samples of a larger size rounded to it (to nearest, ties toward
+     * positive infinity) and clamped. A rejected block leaves the encoder unchanged.
+     *
+     * @param input the samples, of any length
+     * @param output receives zero or more packets
+     * @throws IllegalArgumentException if the input rate or layout differs from the encoder's, or a
+     * sample is outside the range of the input's sample size
+     * @throws IllegalStateException if the encoder was flushed
+     */
+    @Override
+    public void encode(IntegerAudioBuffer input, Consumer<Packet> output) {
+        Objects.requireNonNull(input, "input");
+        Objects.requireNonNull(output, "output");
+        checkOpen();
+        if (input.sampleRate() != options.sampleRate() || !input.layout().equals(options.layout())) {
+            throw new IllegalArgumentException("input " + input.sampleRate() + " Hz " + input.layout()
+                    + " differs from the encoder's " + options.sampleRate() + " Hz " + options.layout());
+        }
+        var bits = input.bitsPerSample();
+        if (bits == bitsPerSample) {
+            encode(input.planes(), 0, input.frames(), output);
+            return;
+        }
+        var planes = input.planes();
+        var total = input.frames();
+        for (var plane : planes) {
+            checkInputRange(plane, total, bits);
+        }
+        var consumed = 0;
+        while (consumed < total) {
+            var count = Math.min(total - consumed, blockSize - pending);
+            for (var c = 0; c < channels; c++) {
+                var plane = planes[c];
+                var target = inputs[c];
+                if (bits < bitsPerSample) {
+                    var shift = bitsPerSample - bits;
+                    for (var i = 0; i < count; i++) {
+                        target[pending + i] = plane[consumed + i] << shift;
+                    }
+                } else {
+                    var shift = bits - bitsPerSample;
+                    var half = 1L << (shift - 1);
+                    for (var i = 0; i < count; i++) {
+                        target[pending + i] = (int) Math.min((plane[consumed + i] + half) >> shift, maxSample);
+                    }
+                }
+            }
+            advance(count, output);
+            consumed += count;
+        }
+    }
+
+    /**
      * Buffers interleaved integer samples, emitting a packet for every block completed.
      *
      * @param samples the samples, channel by channel within each sample frame
@@ -448,6 +500,31 @@ public final class FlacEncoder implements AudioEncoder {
     private void checkOpen() {
         if (finalHeader != null) {
             throw new IllegalStateException("the encoder was flushed");
+        }
+    }
+
+    /**
+     * Checks that the first samples of a plane fit another sample size.
+     *
+     * @param samples the integer samples to check
+     * @param count the number of samples, from index zero
+     * @param bits the sample size, from 1 to 32
+     * @throws IllegalArgumentException if a sample is out of range
+     */
+    private static void checkInputRange(int[] samples, int count, int bits) {
+        if (bits == 32) {
+            return;
+        }
+        var low = -(1 << (bits - 1));
+        var high = (1 << (bits - 1)) - 1;
+        var min = 0;
+        var max = 0;
+        for (var i = 0; i < count; i++) {
+            min = Math.min(min, samples[i]);
+            max = Math.max(max, samples[i]);
+        }
+        if (min < low || max > high) {
+            throw new IllegalArgumentException("sample " + (min < low ? min : max) + " does not fit " + bits + " bits");
         }
     }
 
@@ -530,39 +607,7 @@ public final class FlacEncoder implements AudioEncoder {
      * @param size the number of samples per channel
      */
     private void digest(int size) {
-        var bytes = (bitsPerSample + 7) / 8;
-        var buffer = digestBuffer;
-        var stride = channels * bytes;
-        for (var c = 0; c < channels; c++) {
-            var samples = frames.input(c);
-            var position = c * bytes;
-            switch (bytes) {
-                case 1 -> {
-                    for (var i = 0; i < size; i++, position += stride) {
-                        buffer[position] = (byte) samples[i];
-                    }
-                }
-                case 2 -> {
-                    for (var i = 0; i < size; i++, position += stride) {
-                        SHORT_LE.set(buffer, position, (short) samples[i]);
-                    }
-                }
-                case 3 -> {
-                    for (var i = 0; i < size; i++, position += stride) {
-                        var value = samples[i];
-                        buffer[position] = (byte) value;
-                        buffer[position + 1] = (byte) (value >> 8);
-                        buffer[position + 2] = (byte) (value >> 16);
-                    }
-                }
-                default -> {
-                    for (var i = 0; i < size; i++, position += stride) {
-                        INT_LE.set(buffer, position, samples[i]);
-                    }
-                }
-            }
-        }
-        md5.update(buffer, 0, size * stride);
+        md5.update(inputs, channels, size, bitsPerSample);
     }
 
     /**

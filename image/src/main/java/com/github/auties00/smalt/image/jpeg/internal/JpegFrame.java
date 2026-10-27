@@ -10,7 +10,7 @@ import java.util.List;
  */
 public final class JpegFrame {
     /**
-     * The SOF marker code, {@code 0xC0} to {@code 0xCF}.
+     * The SOF marker code, {@code 0xC0} to {@code 0xCF} or {@code 0xF7} (JPEG-LS).
      */
     final int marker;
 
@@ -85,7 +85,7 @@ public final class JpegFrame {
      * @return {@code true} for SOF2, SOF6, SOF10 and SOF14
      */
     public boolean progressive() {
-        return (marker & 3) == 2;
+        return marker >= 0xC0 && marker <= 0xCF && (marker & 3) == 2;
     }
 
     /**
@@ -94,7 +94,16 @@ public final class JpegFrame {
      * @return {@code true} for SOF9 to SOF15
      */
     public boolean arithmetic() {
-        return marker >= 0xC9;
+        return marker >= 0xC9 && marker <= 0xCF;
+    }
+
+    /**
+     * Returns whether the frame's samples are not DCT coded.
+     *
+     * @return {@code true} for the lossless processes SOF3, SOF7, SOF11 and SOF15 and for JPEG-LS (SOF55)
+     */
+    public boolean lossless() {
+        return marker == 0xC3 || marker == 0xC7 || marker == 0xCB || marker == 0xCF || marker == 0xF7;
     }
 
     /**
@@ -136,6 +145,13 @@ public final class JpegFrame {
      */
     static int ceilDiv(long value, int divisor) {
         return (int) ((value + divisor - 1) / divisor);
+    }
+
+    /**
+     * {@return the sample precision in bits}
+     */
+    public int precision() {
+        return precision;
     }
 
     /**

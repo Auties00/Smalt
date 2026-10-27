@@ -16,9 +16,11 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.OptionalDouble;
 import java.util.OptionalInt;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
@@ -103,6 +105,100 @@ class WebpEncoderOptionsTest {
             assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().targetSize(0).build());
             assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().targetSize(-5).build());
             assertThrows(NullPointerException.class, () -> WebpEncoderOptions.builder().alphaFilter(null).build());
+        }
+
+        @Test
+        @DisplayName("the lossy tuning defaults are cwebp's: sns 50, filter 60, sharpness 0, normal filter, 4 segments")
+        void tuningDefaults() {
+            var defaults = WebpEncoderOptions.defaults();
+            assertEquals(OptionalDouble.empty(), defaults.targetPsnr());
+            assertEquals(OptionalInt.empty(), defaults.passes());
+            assertEquals(100, defaults.nearLossless());
+            assertFalse(defaults.sharpYuv());
+            assertFalse(defaults.dithering());
+            assertEquals(50, defaults.snsStrength());
+            assertEquals(60, defaults.filterStrength());
+            assertEquals(0, defaults.filterSharpness());
+            assertFalse(defaults.simpleFilter());
+            assertFalse(defaults.autoFilter());
+            assertEquals(4, defaults.segments());
+            assertEquals(1, defaults.tokenPartitions());
+            assertEquals(defaults, WebpEncoderOptions.forPreset(WebpEncoderOptions.Preset.DEFAULT));
+        }
+
+        @Test
+        @DisplayName("the presets set cwebp's -preset values and keep everything else at the defaults")
+        void presets() {
+            var expected = java.util.Map.of(
+                    WebpEncoderOptions.Preset.PICTURE, new int[]{80, 35, 4, 0, 4},
+                    WebpEncoderOptions.Preset.PHOTO, new int[]{80, 30, 3, 1, 4},
+                    WebpEncoderOptions.Preset.DRAWING, new int[]{25, 10, 6, 0, 4},
+                    WebpEncoderOptions.Preset.ICON, new int[]{0, 0, 0, 0, 4},
+                    WebpEncoderOptions.Preset.TEXT, new int[]{0, 0, 0, 0, 2});
+            expected.forEach((preset, values) -> {
+                var options = WebpEncoderOptions.forPreset(preset);
+                assertEquals(values[0], options.snsStrength(), preset + " sns");
+                assertEquals(values[1], options.filterStrength(), preset + " filter");
+                assertEquals(values[2], options.filterSharpness(), preset + " sharpness");
+                assertEquals(values[3] == 1, options.dithering(), preset + " dithering");
+                assertEquals(values[4], options.segments(), preset + " segments");
+                var rest = options.toBuilder().snsStrength(50).filterStrength(60).filterSharpness(0).dithering(false)
+                        .segments(4).build();
+                assertEquals(WebpEncoderOptions.defaults(), rest, preset + " leaves the rest at the defaults");
+            });
+        }
+
+        @Test
+        @DisplayName("the lossy tuning settings round-trip through the builder and have value equality")
+        void tuningConvention() {
+            var options = WebpEncoderOptions.builder().targetPsnr(41.5).passes(7).nearLossless(30).sharpYuv(true)
+                    .dithering(true).snsStrength(12).filterStrength(13).filterSharpness(5).simpleFilter(true)
+                    .autoFilter(true).segments(3).tokenPartitions(8).build();
+            assertEquals(OptionalDouble.of(41.5), options.targetPsnr());
+            assertEquals(OptionalInt.of(7), options.passes());
+            assertEquals(30, options.nearLossless());
+            assertTrue(options.sharpYuv());
+            assertTrue(options.dithering());
+            assertEquals(12, options.snsStrength());
+            assertEquals(13, options.filterStrength());
+            assertEquals(5, options.filterSharpness());
+            assertTrue(options.simpleFilter());
+            assertTrue(options.autoFilter());
+            assertEquals(3, options.segments());
+            assertEquals(8, options.tokenPartitions());
+            assertEquals(options, options.toBuilder().build());
+            assertEquals(options.hashCode(), options.toBuilder().build().hashCode());
+            var reset = options.toBuilder().noTargetPsnr().automaticPasses().build();
+            assertEquals(OptionalDouble.empty(), reset.targetPsnr());
+            assertEquals(OptionalInt.empty(), reset.passes());
+            assertNotEquals(options, reset);
+            assertTrue(options.toString().contains("autoFilter=true"), options.toString());
+        }
+
+        @Test
+        @DisplayName("rejects tuning values out of range and a target size combined with a target PSNR")
+        void tuningValidation() {
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().targetPsnr(0).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().targetPsnr(-1).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().targetPsnr(99.5).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().targetPsnr(Double.NaN).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().targetPsnr(40).targetSize(1000)
+                    .build());
+            assertDoesNotThrow(() -> WebpEncoderOptions.builder().targetPsnr(40).targetSize(1000).noTargetSize().build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().passes(0).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().passes(11).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().nearLossless(101).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().nearLossless(-1).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().snsStrength(101).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().filterStrength(-1).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().filterSharpness(8).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().segments(0).build());
+            assertThrows(IllegalArgumentException.class, () -> WebpEncoderOptions.builder().segments(5).build());
+            for (var partitions : new int[]{0, 3, 5, 16}) {
+                assertThrows(IllegalArgumentException.class,
+                        () -> WebpEncoderOptions.builder().tokenPartitions(partitions).build());
+            }
+            assertThrows(NullPointerException.class, () -> WebpEncoderOptions.forPreset(null));
         }
 
         @Test

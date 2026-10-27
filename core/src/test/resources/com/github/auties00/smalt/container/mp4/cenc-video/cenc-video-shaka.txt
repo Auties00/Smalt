@@ -1,0 +1,784 @@
+# vp90-2-16-intra-only.webm: Shaka Packager cannot read it
+vp90-2-17-show-existing-frame.webm:clear 0 30298 f1ed83cd2d510dae1641b7fb79d4b09c
+vp90-2-17-show-existing-frame.webm:clear 1 6894 c0f6013f690ed2ebd7a40994f536ce17
+vp90-2-17-show-existing-frame.webm:clear 2 6007 488c2cf4489e012f4b28afd5134c5d75
+vp90-2-17-show-existing-frame.webm:clear 3 7642 59cec7b43049fdfb5540c6a008ebdf89
+vp90-2-17-show-existing-frame.webm:clear 4 9063 6bcb644fed1e5e1e77df36d02359d4c0
+vp90-2-17-show-existing-frame.webm:clear 5 10494 a54981bb36bc6152cdab4063ed889b93
+vp90-2-17-show-existing-frame.webm:clear 6 12244 c72d9114c7d0c8b5ed30bac010a5d6e5
+vp90-2-17-show-existing-frame.webm:clear 7 13372 b96503f6f6a4ffc2bbdd95041d96f832
+vp90-2-17-show-existing-frame.webm:clear 8 1 76446346147d6a63180d28e0e6a6b072
+vp90-2-17-show-existing-frame.webm:clear 9 1 2854272fec044d0bdb16de12cb62d07e
+vp90-2-17-show-existing-frame.webm:clear 10 1 1d948537445132ebf746bd33d5494b70
+vp90-2-17-show-existing-frame.webm:clear 11 1 348dd9e974848a61e8abe2dffcfcce93
+vp90-2-17-show-existing-frame.webm:clear 12 1 97775ba09eac63b5dcc98a94b2f779b9
+vp90-2-17-show-existing-frame.webm:clear 13 1 cf87de09914066fde46e4a24f22ea535
+vp90-2-17-show-existing-frame.webm:clear 14 1 f1663aba9ffae5338b6382a24b2e5377
+vp90-2-17-show-existing-frame.webm:clear 15 1 32b401960154e86d27ba06c6b9d3408c
+vp90-2-17-show-existing-frame.webm:clear 16 1 76446346147d6a63180d28e0e6a6b072
+vp90-2-17-show-existing-frame.webm:clear 17 1 2854272fec044d0bdb16de12cb62d07e
+vp90-2-17-show-existing-frame.webm:clear 18 1 1d948537445132ebf746bd33d5494b70
+vp90-2-17-show-existing-frame.webm:clear 19 1 348dd9e974848a61e8abe2dffcfcce93
+vp90-2-17-show-existing-frame.webm:clear 20 1 97775ba09eac63b5dcc98a94b2f779b9
+vp90-2-17-show-existing-frame.webm:clear 21 1 cf87de09914066fde46e4a24f22ea535
+vp90-2-17-show-existing-frame.webm:clear 22 1 f1663aba9ffae5338b6382a24b2e5377
+vp90-2-17-show-existing-frame.webm:clear 23 1 32b401960154e86d27ba06c6b9d3408c
+vp90-2-17-show-existing-frame.webm:clear 24 19478 97620c4f800a71c2b666b0b2422d9ab1
+vp90-2-17-show-existing-frame.webm:clear 25 9179 36cf256f13ab42df97da3392a445a4f2
+vp90-2-17-show-existing-frame.webm:clear 26 9422 b10798e29a23b1bda9254aec6887200b
+vp90-2-17-show-existing-frame.webm:clear 27 11808 96128636b580db31316d44bae52f639b
+vp90-2-17-show-existing-frame.webm:clear 28 13797 113b634b1fe47bfa1216bcbda88639e2
+vp90-2-17-show-existing-frame.webm:clear 29 15536 fb82e5b5d81e2de8804c505bf0519d63
+vp90-2-17-show-existing-frame.webm:cenc 0 30298 2eb9324219b2a7be2161ba5dff65bab2 iv=f0e1d2c3b4a59687 26:30272
+vp90-2-17-show-existing-frame.webm:cenc 1 6894 3ad42293c9d35bb645c849138f92f966 iv=f0e1d2c3b4a59688 14:6880
+vp90-2-17-show-existing-frame.webm:cenc 2 6007 6b208033f95b919c0764519f769a0a99 iv=f0e1d2c3b4a59689 23:5984
+vp90-2-17-show-existing-frame.webm:cenc 3 7642 88e4dc4e4bcdb1ad0d7e791eed86a7ad iv=f0e1d2c3b4a5968a 10:7632
+vp90-2-17-show-existing-frame.webm:cenc 4 9063 0918df6a4a76b3a055c78cf9d2401ed4 iv=f0e1d2c3b4a5968b 23:9040
+vp90-2-17-show-existing-frame.webm:cenc 5 10494 122653fd3fcdb3e1fe6821ea7b8b4a8f iv=f0e1d2c3b4a5968c 14:10480
+vp90-2-17-show-existing-frame.webm:cenc 6 12244 06773c9e6932fcc46c1fa9f7d8a0d83f iv=f0e1d2c3b4a5968d 20:12224
+vp90-2-17-show-existing-frame.webm:cenc 7 13372 67bd74d5f93ea84bd2e0352fac405710 iv=f0e1d2c3b4a5968e 12:13360
+vp90-2-17-show-existing-frame.webm:cenc 8 1 76446346147d6a63180d28e0e6a6b072 iv=f0e1d2c3b4a5968f 1:0
+vp90-2-17-show-existing-frame.webm:cenc 9 1 2854272fec044d0bdb16de12cb62d07e iv=f0e1d2c3b4a59690 1:0
+vp90-2-17-show-existing-frame.webm:cenc 10 1 1d948537445132ebf746bd33d5494b70 iv=f0e1d2c3b4a59691 1:0
+vp90-2-17-show-existing-frame.webm:cenc 11 1 348dd9e974848a61e8abe2dffcfcce93 iv=f0e1d2c3b4a59692 1:0
+vp90-2-17-show-existing-frame.webm:cenc 12 1 97775ba09eac63b5dcc98a94b2f779b9 iv=f0e1d2c3b4a59693 1:0
+vp90-2-17-show-existing-frame.webm:cenc 13 1 cf87de09914066fde46e4a24f22ea535 iv=f0e1d2c3b4a59694 1:0
+vp90-2-17-show-existing-frame.webm:cenc 14 1 f1663aba9ffae5338b6382a24b2e5377 iv=f0e1d2c3b4a59695 1:0
+vp90-2-17-show-existing-frame.webm:cenc 15 1 32b401960154e86d27ba06c6b9d3408c iv=f0e1d2c3b4a59696 1:0
+vp90-2-17-show-existing-frame.webm:cenc 16 1 76446346147d6a63180d28e0e6a6b072 iv=f0e1d2c3b4a59697 1:0
+vp90-2-17-show-existing-frame.webm:cenc 17 1 2854272fec044d0bdb16de12cb62d07e iv=f0e1d2c3b4a59698 1:0
+vp90-2-17-show-existing-frame.webm:cenc 18 1 1d948537445132ebf746bd33d5494b70 iv=f0e1d2c3b4a59699 1:0
+vp90-2-17-show-existing-frame.webm:cenc 19 1 348dd9e974848a61e8abe2dffcfcce93 iv=f0e1d2c3b4a5969a 1:0
+vp90-2-17-show-existing-frame.webm:cenc 20 1 97775ba09eac63b5dcc98a94b2f779b9 iv=f0e1d2c3b4a5969b 1:0
+vp90-2-17-show-existing-frame.webm:cenc 21 1 cf87de09914066fde46e4a24f22ea535 iv=f0e1d2c3b4a5969c 1:0
+vp90-2-17-show-existing-frame.webm:cenc 22 1 f1663aba9ffae5338b6382a24b2e5377 iv=f0e1d2c3b4a5969d 1:0
+vp90-2-17-show-existing-frame.webm:cenc 23 1 32b401960154e86d27ba06c6b9d3408c iv=f0e1d2c3b4a5969e 1:0
+vp90-2-17-show-existing-frame.webm:cenc 24 19478 2d3e21d621862b91aac59c80c6c4343b iv=f0e1d2c3b4a5969f 22:19456
+vp90-2-17-show-existing-frame.webm:cenc 25 9179 1b8aa78e4846631f6f5b243775d98565 iv=f0e1d2c3b4a596a0 11:9168
+vp90-2-17-show-existing-frame.webm:cenc 26 9422 26f076289a0f27b0f95e512b732538f2 iv=f0e1d2c3b4a596a1 14:9408
+vp90-2-17-show-existing-frame.webm:cenc 27 11808 af5ccb2168fc1f05c12663cedb4706d5 iv=f0e1d2c3b4a596a2 16:11792
+vp90-2-17-show-existing-frame.webm:cenc 28 13797 614fae9f18213e21d3fc1e3836436855 iv=f0e1d2c3b4a596a3 21:13776
+vp90-2-17-show-existing-frame.webm:cenc 29 15536 c0f0232134294b08b9db0ebcfce7a05e iv=f0e1d2c3b4a596a4 16:15520
+vp90-2-17-show-existing-frame.webm:cbcs 0 30298 6df385a95d79a8a79ec0d8cc2166a295 iv=- 26:30272
+vp90-2-17-show-existing-frame.webm:cbcs 1 6894 1b126a9f2622dd41a4bfbca1e3078ae9 iv=- 14:6880
+vp90-2-17-show-existing-frame.webm:cbcs 2 6007 f47ec76b30a895c031ca161ea2a6ef09 iv=- 23:5984
+vp90-2-17-show-existing-frame.webm:cbcs 3 7642 a937e0856b9c94d485a9b37d344bbe82 iv=- 10:7632
+vp90-2-17-show-existing-frame.webm:cbcs 4 9063 ac0ba4c27946183277b2ea073fddf84f iv=- 23:9040
+vp90-2-17-show-existing-frame.webm:cbcs 5 10494 7124649f50b0e8e0f3146301bb1ee048 iv=- 14:10480
+vp90-2-17-show-existing-frame.webm:cbcs 6 12244 3291164c9829cfa479bf42fa936f15ea iv=- 20:12224
+vp90-2-17-show-existing-frame.webm:cbcs 7 13372 213743513ef2f077c79de69ed5338ef8 iv=- 12:13360
+vp90-2-17-show-existing-frame.webm:cbcs 8 1 76446346147d6a63180d28e0e6a6b072 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 9 1 2854272fec044d0bdb16de12cb62d07e iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 10 1 1d948537445132ebf746bd33d5494b70 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 11 1 348dd9e974848a61e8abe2dffcfcce93 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 12 1 97775ba09eac63b5dcc98a94b2f779b9 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 13 1 cf87de09914066fde46e4a24f22ea535 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 14 1 f1663aba9ffae5338b6382a24b2e5377 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 15 1 32b401960154e86d27ba06c6b9d3408c iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 16 1 76446346147d6a63180d28e0e6a6b072 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 17 1 2854272fec044d0bdb16de12cb62d07e iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 18 1 1d948537445132ebf746bd33d5494b70 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 19 1 348dd9e974848a61e8abe2dffcfcce93 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 20 1 97775ba09eac63b5dcc98a94b2f779b9 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 21 1 cf87de09914066fde46e4a24f22ea535 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 22 1 f1663aba9ffae5338b6382a24b2e5377 iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 23 1 32b401960154e86d27ba06c6b9d3408c iv=- 1:0
+vp90-2-17-show-existing-frame.webm:cbcs 24 19478 7353495773709db0f9ddd1ab67c883c1 iv=- 22:19456
+vp90-2-17-show-existing-frame.webm:cbcs 25 9179 c577c73c997ac4266e9b8b711da8faaf iv=- 11:9168
+vp90-2-17-show-existing-frame.webm:cbcs 26 9422 a29c568b07284c839230b04bd6acf9a2 iv=- 14:9408
+vp90-2-17-show-existing-frame.webm:cbcs 27 11808 2e62dc77e8bf7500809c447d5b288998 iv=- 16:11792
+vp90-2-17-show-existing-frame.webm:cbcs 28 13797 e2e861d724bc89cb2ad74934324ef65f iv=- 21:13776
+vp90-2-17-show-existing-frame.webm:cbcs 29 15536 39f8de9ae200ee91f86fb0f0aad9beba iv=- 16:15520
+vp90-2-15-segkey.webm:clear 0 43641 fd364e9e47eb89d7c7a9e3f44cddd00e
+vp90-2-15-segkey.webm:cenc 0 43641 688c496cd45dc7bfef938d35b2ef6fe3 iv=f0e1d2c3b4a59687 41:43600
+vp90-2-15-segkey.webm:cbcs 0 43641 e72301595c63103f63abf7fda807e437 iv=- 41:43600
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 0 1802 9e63c5d3b532967515f662782ae011eb
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 1 446 585d15863ab647e148619de73e761867
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 2 1744 ac75171aa5c60f9f093c13a17c712ece
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 3 5384 e2a4e2a24db51c4a1b4460341fd4d8e3
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 4 225 c82ea78e3fb1450a7aa8028d278b0445
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 5 457 31af47b409539f90451972c37e64c79a
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 6 6352 770a904e6748ae55f7b0b5433f29e52f
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 7 289 d70d2a6e24aaad38e6aeb8dcb336cb31
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 8 722 c0a36ece95b9ae899ebd35011e6996b3
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 9 15954 ddccac849ebd685a1242765838c69e87
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 10 635 119edfbac17c0425b23a22f629f835c9
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 11 1087 d7b43e9cd2d83c502dc3759376ee9c60
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 12 15759 5a910c693e5140671f0383f48dba32b7
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 13 650 07dd9441a620f4ce0493597c14b51e46
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 14 1796 f3019852f73fc7b3227a8c20680765a2
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 15 1826 6cf30a0e4fa9a1d6500b91fa8de6283e
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 16 124 00c19dd4ac87da3712600702f091e669
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:clear 17 252 079f694c19139337cb0d67ac3a2ca20d
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 0 1802 0cfd5c9cb603873e00603a4e9f9e3c66 iv=f0e1d2c3b4a59687 26:1776
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 1 446 00d6884039ec02ed2ef682abbf3621aa iv=f0e1d2c3b4a59688 14:432
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 2 1744 7835c080eaf0e5efbf8afe23ceb944f7 iv=f0e1d2c3b4a59689 16:1728
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 3 5384 e25b9836a60b51514791c545b05d71b2 iv=f0e1d2c3b4a5968a 24:5360
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 4 225 1d8382f3a7df263ce8b8428296b5a326 iv=f0e1d2c3b4a5968b 17:208
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 5 457 d68516fc82f675510a553f09340ccb58 iv=f0e1d2c3b4a5968c 25:432
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 6 6352 6c4911581ab37a077853fc742ce2accc iv=f0e1d2c3b4a5968d 32:6320
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 7 289 1ddde8b7990fb95efa61175478bf638d iv=f0e1d2c3b4a5968e 17:272
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 8 722 78e7a07e2c6577b02e7c1ee6d348b631 iv=f0e1d2c3b4a5968f 18:704
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 9 15954 a9c1c6470fbdc157690f59131cef86c7 iv=f0e1d2c3b4a59690 18:15936
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 10 635 1b9cc20b3870fc9d462070126cc2c6f9 iv=f0e1d2c3b4a59691 11:624
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 11 1087 9681a75f9f1c4841c5dd0a6d0e6ceae6 iv=f0e1d2c3b4a59692 15:1072
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 12 15759 a38ee815f0baeab4eedb48febe4e8c1b iv=f0e1d2c3b4a59693 31:15728
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 13 650 a11e3576c5afafb3188bf6a512ee2931 iv=f0e1d2c3b4a59694 26:624
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 14 1796 ff081d5f2b8363d631c2fe87fc8602a9 iv=f0e1d2c3b4a59695 20:1776
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 15 1826 8d757e6027b74374e43692df28b73c6f iv=f0e1d2c3b4a59696 18:1808
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 16 124 d634227225b1fab3ec3fa3e98e465ede iv=f0e1d2c3b4a59697 12:112
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cenc 17 252 af7c442405da2f08fbe8f7a31826fd33 iv=f0e1d2c3b4a59698 12:240
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 0 1802 eb2dd2cf44c2ecba94bfc4d4b09d42df iv=- 26:1776
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 1 446 3fda41e07bb51f6951b2539b25c14bdc iv=- 14:432
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 2 1744 9016ec6474c63d7345d7944f850b6ef6 iv=- 16:1728
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 3 5384 512c7d34d03f2309969d651ab2a04df6 iv=- 24:5360
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 4 225 a743d1481c4c030aa4eaf073590cc0d9 iv=- 17:208
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 5 457 accece723594d726a1cfc12c74590f8f iv=- 25:432
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 6 6352 f6b1c048072609826dd7c0086c808de7 iv=- 32:6320
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 7 289 3b97c81f7ee25aae47066745d9ba2589 iv=- 17:272
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 8 722 3b50e06b9f3c8dadca8d01c4e429d489 iv=- 18:704
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 9 15954 031f2fda7a239f1d33baf7964d68cd81 iv=- 18:15936
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 10 635 83a6f348508d2d3b1e2afc1252bf799c iv=- 11:624
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 11 1087 088d909fa84a0bc7f97bf2f5d0db54a1 iv=- 15:1072
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 12 15759 4df186617a3ba957ef156230784359fc iv=- 31:15728
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 13 650 7be6955fc1aee013396b68cd97c559a8 iv=- 26:624
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 14 1796 0bb287cae576978cbd28dfbbc4b0d5d6 iv=- 20:1776
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 15 1826 1d6eb4ac6b4aba3f4d78d1988f38f431 iv=- 18:1808
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 16 124 34f101fdfe25ab4353d8bebaa0c14255 iv=- 12:112
+vp90-2-14-resize-fp-tiles-1-2-4-8-16.webm:cbcs 17 252 8e2feea6e31fa10c22839b3a6c975c05 iv=- 12:240
+vp90-2-20-big_superframe-01.webm:clear 0 27389 39ebf8d3dec9a0c3b480e15240c9e66f
+vp90-2-20-big_superframe-01.webm:clear 1 32650 03ae07e8dcc8486c6266bc237cc5102e
+vp90-2-20-big_superframe-01.webm:clear 2 4631 6b7160aa3c49d16247dfd8e48387f988
+vp90-2-20-big_superframe-01.webm:clear 3 22459 7488fb10ae2aaa51f54c767395685f74
+vp90-2-20-big_superframe-01.webm:clear 4 3272 1c23102ec2e504fb5a8ecbe1a3771557
+vp90-2-20-big_superframe-01.webm:clear 5 4404 fbfe8fd6dc19fadb6540d2dac4ee9183
+vp90-2-20-big_superframe-01.webm:clear 6 3588 5094295990c24678f57a3e97860d5502
+vp90-2-20-big_superframe-01.webm:clear 7 3580 258892bc5681769ec54bbc692855dcba
+vp90-2-20-big_superframe-01.webm:clear 8 3622 d21870230b44573ab4336fafe96d5281
+vp90-2-20-big_superframe-01.webm:clear 9 3335 783e27c38ce0e3146c7afcd20e3d56f4
+vp90-2-20-big_superframe-01.webm:clear 10 3690 d9ebc837ba6699edf8b4ae3b1d4c98a7
+vp90-2-20-big_superframe-01.webm:clear 11 2732 88b2f95cf94e6069ebe3266c11436348
+vp90-2-20-big_superframe-01.webm:clear 12 3234 230bc5158ebf575c10ac074e07d0dc58
+vp90-2-20-big_superframe-01.webm:cenc 0 27389 fe62b50abb525fe37a31cff11551c1c8 iv=f0e1d2c3b4a59687 29:27360
+vp90-2-20-big_superframe-01.webm:cenc 1 32650 515bd29068b90bf769e59c104e3bb72a iv=f0e1d2c3b4a59688 14:3856,21:4096,13:4112,14:4032,22:4000,17:4048,16:4176,19:4176,18:0
+vp90-2-20-big_superframe-01.webm:cenc 2 4631 02896a40e20087fb6733f9f09191c1e6 iv=f0e1d2c3b4a59689 23:4608
+vp90-2-20-big_superframe-01.webm:cenc 3 22459 1e1c22ac961cb70348a67d14041a9668 iv=f0e1d2c3b4a5968a 27:22432
+vp90-2-20-big_superframe-01.webm:cenc 4 3272 52b08c6a21ff145cc14b45be284e2772 iv=f0e1d2c3b4a5968b 24:3248
+vp90-2-20-big_superframe-01.webm:cenc 5 4404 a831ef5484a02dab46b3c99b9ce1c56a iv=f0e1d2c3b4a5968c 20:4384
+vp90-2-20-big_superframe-01.webm:cenc 6 3588 9987749d1877cf9335e103caed802eb7 iv=f0e1d2c3b4a5968d 20:3568
+vp90-2-20-big_superframe-01.webm:cenc 7 3580 2653ad7367fbbc1ba4e22b3ffe003e04 iv=f0e1d2c3b4a5968e 28:3552
+vp90-2-20-big_superframe-01.webm:cenc 8 3622 9ca20607a65ff171c00b910ceb096e3d iv=f0e1d2c3b4a5968f 22:3600
+vp90-2-20-big_superframe-01.webm:cenc 9 3335 86b3ef33bc1cdfe31d86ce9704a2548e iv=f0e1d2c3b4a59690 23:3312
+vp90-2-20-big_superframe-01.webm:cenc 10 3690 0abda2578118a66f02dc99e79f33eac2 iv=f0e1d2c3b4a59691 26:3664
+vp90-2-20-big_superframe-01.webm:cenc 11 2732 45291fda7b2e59663c5c53dc88530e8d iv=f0e1d2c3b4a59692 28:2704
+vp90-2-20-big_superframe-01.webm:cenc 12 3234 194386b27b753db3d57c5e2030d67c32 iv=f0e1d2c3b4a59693 18:3216
+vp90-2-20-big_superframe-01.webm:cbcs 0 27389 159e42beb2d22d977bf98e7984c0b03f iv=- 29:27360
+vp90-2-20-big_superframe-01.webm:cbcs 1 32650 e99eeee2d3d3c5da3f68e434a07f2fdd iv=- 14:3856,21:4096,13:4112,14:4032,22:4000,17:4048,16:4176,19:4176,18:0
+vp90-2-20-big_superframe-01.webm:cbcs 2 4631 d62d1a9958ea7619e0dc3f5f7549122e iv=- 23:4608
+vp90-2-20-big_superframe-01.webm:cbcs 3 22459 1f6dd62283ab8a807c8b3f53f56520a5 iv=- 27:22432
+vp90-2-20-big_superframe-01.webm:cbcs 4 3272 2d9a1d557c9d13638ee7bea19b8ae19c iv=- 24:3248
+vp90-2-20-big_superframe-01.webm:cbcs 5 4404 12220e497173cd1661a8a6e996a47c04 iv=- 20:4384
+vp90-2-20-big_superframe-01.webm:cbcs 6 3588 c060a1b04f02f409eb3f87c007896d40 iv=- 20:3568
+vp90-2-20-big_superframe-01.webm:cbcs 7 3580 0c84aa5db504a72acc22e85a7c24fa93 iv=- 28:3552
+vp90-2-20-big_superframe-01.webm:cbcs 8 3622 ecb220c1bf82f64b651d5d94d1e4a9d4 iv=- 22:3600
+vp90-2-20-big_superframe-01.webm:cbcs 9 3335 a8618fc1e06b7e1c1fee7f5acd8f48d4 iv=- 23:3312
+vp90-2-20-big_superframe-01.webm:cbcs 10 3690 2222e89151d46dc6b9f8dd95849503b3 iv=- 26:3664
+vp90-2-20-big_superframe-01.webm:cbcs 11 2732 1b4356ea51c22a064585d07b69f2b0d8 iv=- 28:2704
+vp90-2-20-big_superframe-01.webm:cbcs 12 3234 c009b88396fefb3bcb7ac39a8e149ede iv=- 18:3216
+vp90-2-22-svc_1280x720_3.ivf:clear 0 11623 26b938d3ee43929cf12aa13d0bc50546
+vp90-2-22-svc_1280x720_3.ivf:clear 1 4471 46612d0f6811155ac6a13049b427ec62
+vp90-2-22-svc_1280x720_3.ivf:clear 2 6018 536edb253e851d3c3de9d4759e3d0d60
+vp90-2-22-svc_1280x720_3.ivf:clear 3 4763 64186cb0a909b6176e9dcc564903ecc2
+vp90-2-22-svc_1280x720_3.ivf:clear 4 6380 8b5ab2eb4950d0153e9f14c40dcc2fe0
+vp90-2-22-svc_1280x720_3.ivf:clear 5 6490 a748ca75dcf7b529ca1296a390be7d8d
+vp90-2-22-svc_1280x720_3.ivf:clear 6 6442 a8a2c9cb35ba40bef320c3cf87cad03e
+vp90-2-22-svc_1280x720_3.ivf:clear 7 5801 18442dd580077b2c2b290b7344e6f0f7
+vp90-2-22-svc_1280x720_3.ivf:clear 8 6110 e43ce758d94bdd17c84ab29eeb4b3f72
+vp90-2-22-svc_1280x720_3.ivf:clear 9 7613 be8263807efef0936c82e956a5992a32
+vp90-2-22-svc_1280x720_3.ivf:clear 10 7184 a663deb5066bc4c4d123b9a39312c199
+vp90-2-22-svc_1280x720_3.ivf:clear 11 6767 cab131704a40095277fc95734f9c5bd1
+vp90-2-22-svc_1280x720_3.ivf:clear 12 7844 0d6939e42775f8a2c1cfd2869b8a79a0
+vp90-2-22-svc_1280x720_3.ivf:clear 13 4379 ddd634d6804e2645502ad1dd22f2ad6c
+vp90-2-22-svc_1280x720_3.ivf:clear 14 4203 150a4768ed391ac984d721af39b9d1fe
+vp90-2-22-svc_1280x720_3.ivf:clear 15 6205 8916d7e7d7e6ac23868e5c93d52ce702
+vp90-2-22-svc_1280x720_3.ivf:clear 16 5413 515a91768e85d5f6ab540d6dae064efd
+vp90-2-22-svc_1280x720_3.ivf:clear 17 5841 1a323ccd6931dd261e4d30caf62bb4f7
+vp90-2-22-svc_1280x720_3.ivf:clear 18 6645 334acff2b8a3880fa49fcba994b9fe19
+vp90-2-22-svc_1280x720_3.ivf:clear 19 6145 63eaf1601b4f1fb659b65465c171afe5
+vp90-2-22-svc_1280x720_3.ivf:cenc 0 11623 79d79ed9a17a2cc877f352c65874df0c iv=f0e1d2c3b4a59687 26:4656,44:1696,41:5152,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 1 4471 7aad86a5140c0f87a0379298bd499700 iv=f0e1d2c3b4a59688 35:128,37:1088,39:3136,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 2 6018 57d30e1815a34cc7c3c2864c7b6aa4b2 iv=f0e1d2c3b4a59689 39:336,42:1760,41:3792,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 3 4763 f0f52567fc2d9c53beb392757d4064b4 iv=f0e1d2c3b4a5968a 41:240,45:1056,29:3344,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 4 6380 32e70d53ddb929ad4cd07b8176602543 iv=f0e1d2c3b4a5968b 44:480,39:1616,33:4160,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 5 6490 aec98aa34956d74cf8da76e5150cd118 iv=f0e1d2c3b4a5968c 37:816,47:1696,30:3856,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 6 6442 3f74a7e8e59ee4918c8d676a82be252f iv=f0e1d2c3b4a5968d 43:576,42:1872,29:3872,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 7 5801 df79b741450a517348e6bf1d5ab8638b iv=f0e1d2c3b4a5968e 33:640,46:1472,34:3568,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 8 6110 ad9687087bb23f04c0fd0ed2970cacda iv=f0e1d2c3b4a5968f 43:624,36:1344,39:4016,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 9 7613 153155466e3a0e952ebbedf7a315cc71 iv=f0e1d2c3b4a59690 34:944,34:2224,33:4336,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 10 7184 f3736d25e52886eda93a6851c9c7fc2b iv=f0e1d2c3b4a59691 41:816,48:1664,31:4576,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 11 6767 41eb0e6286c5f9aefdbd9abf83f7b234 iv=f0e1d2c3b4a59692 48:576,46:2032,41:4016,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 12 7844 e6ee43120f4198c7431cd695c5ff9d0f iv=f0e1d2c3b4a59693 41:656,40:1888,43:5168,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 13 4379 a34e7504d9e5ecf4e0efa0e4e2b9508e iv=f0e1d2c3b4a59694 39:464,33:1024,43:2768,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 14 4203 e40d187ede2038b5a8d4564868369444 iv=f0e1d2c3b4a59695 44:320,45:1200,42:2544,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 15 6205 051c25901a31c1c4cf06f232a32c7400 iv=f0e1d2c3b4a59696 34:512,38:1424,29:4160,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 16 5413 b4766549cafbd8eb0ff5d9072ca3846d iv=f0e1d2c3b4a59697 46:432,42:1456,37:3392,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 17 5841 4e66f20ca9f007956567352ed51a1c07 iv=f0e1d2c3b4a59698 48:432,45:1408,44:3856,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 18 6645 503b8ed8392dcba11caef7619bb76414 iv=f0e1d2c3b4a59699 43:480,44:1920,38:4112,8:0
+vp90-2-22-svc_1280x720_3.ivf:cenc 19 6145 a94a0586a3806da3873e0f4d8b7c7f80 iv=f0e1d2c3b4a5969a 39:496,38:1424,44:4096,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 0 11623 a53bfcea3bb6af30060fcd6cf4e2e62c iv=- 26:4656,44:1696,41:5152,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 1 4471 61fe7acd40423f96e0ce1bbf6a12c045 iv=- 35:128,37:1088,39:3136,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 2 6018 6bee93b381261d7e23660fca7f4f82ba iv=- 39:336,42:1760,41:3792,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 3 4763 4656f08fe6462556455c5d5dfdb89779 iv=- 41:240,45:1056,29:3344,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 4 6380 754e990eef544bd22c27b37cc72cce41 iv=- 44:480,39:1616,33:4160,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 5 6490 f490b3acdebad29a160db24b53f4b10f iv=- 37:816,47:1696,30:3856,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 6 6442 51e762fce59c56fa198ce0338e772e74 iv=- 43:576,42:1872,29:3872,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 7 5801 36785bf177d85259d2786f3cbbabe348 iv=- 33:640,46:1472,34:3568,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 8 6110 67656b61a52b0070593e9b78a9c17b3e iv=- 43:624,36:1344,39:4016,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 9 7613 782a1863b256b1eaa60106fbe91c5c10 iv=- 34:944,34:2224,33:4336,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 10 7184 c8c6dd664510be9bd27b92c3a7bb5744 iv=- 41:816,48:1664,31:4576,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 11 6767 75c8381567ca6f981288f5ed34dcaa4e iv=- 48:576,46:2032,41:4016,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 12 7844 de533217bafdbacdbd9636c7b8baf140 iv=- 41:656,40:1888,43:5168,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 13 4379 a876dac6f6adfa2faec6b0d3f624ac52 iv=- 39:464,33:1024,43:2768,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 14 4203 84b02ff747f3f02b1b68c0397295b9d3 iv=- 44:320,45:1200,42:2544,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 15 6205 acf61952a6c158db262a513ea329972d iv=- 34:512,38:1424,29:4160,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 16 5413 9c24684ae4cd2b11bbce342a41575e42 iv=- 46:432,42:1456,37:3392,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 17 5841 c8811e6ef491e71c4f913ed11ff9a144 iv=- 48:432,45:1408,44:3856,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 18 6645 5d0aeb54852c34ba87e8c7d1369b421b iv=- 43:480,44:1920,38:4112,8:0
+vp90-2-22-svc_1280x720_3.ivf:cbcs 19 6145 3e6124d3a2c95d05d1947f0117e143b0 iv=- 39:496,38:1424,44:4096,8:0
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 0 5769 810755e8390c9f377747e117e8890c12
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 1 88 a2a558bf7e4a192ee6674e5651c99c40
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 2 267 b4502378090f9d817bc656997480fbd8
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 3 395 3700b5c359f7a3eb06685ee6c69e3d23
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 4 504 41989a02a5626bce6fa65e1b3eb90d92
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 5 583 4c8039d3860fea4e9eb562f437c80f33
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 6 318 9fd41c4b1629dab6fffe1c6901dc32b1
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 7 385 61b3c25d0313ea91894fa0e4b622ffe2
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 8 356 7cf6a954bbbda1c79ec096474fd19ffd
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 9 404 1b7437059365ea69afc930fe6df5b8ef
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 10 562 d756648ed9ae32ddee30f553efb2dfdd
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 11 31 3162498252d4ee88025dea2adb2592f7
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 12 34 d36f5207344ce89ea70b7177ba12acc3
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 13 45 83e68cc46f0d1ee7ba1a42518f132a67
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 14 48 a2085b6b629d50f0f02f05b62f6f97e0
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 15 50 67a3fd1583152ba01c901838dbbc39f0
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 16 42 f6649e24df91175f7ee9e16e1888ffc6
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 17 49 f0cb71a06214118a6927d1855bbfffd0
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 18 91 cf716d62416f15487d6c673c05c8f728
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 19 63 ec7cad3b67934b786c1a404bf3cb35bd
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 20 238 e492b9f85aa2bee82a0cf56035ccdab3
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 21 209 cfb25d6238e1a70fcefef24359afa3c1
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 22 597 4173db62728551ca708735da50888444
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 23 589 a279604935212f780758a32fb6baad89
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 24 623 365d45743c866e2a8d0b380042c5268d
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 25 726 c4417492d1e90ca20dc1a2b7586a7b4f
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 26 906 11c31e15721e0bd2307cb77d49d06a63
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 27 852 bb1863841499cd2f5b2a27060c7a4013
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 28 676 18e6a3329a994127430bbd9c7c4bfbea
+vp90-2-21-resize_inter_320x180_5_1-2.webm:clear 29 819 ca5d7cfa1e38a97f4dd8d3a8576fa3e2
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 0 5769 66aedbbdc47ad72045c6760548b30913 iv=f0e1d2c3b4a59687 25:5744
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 1 88 45e76b2694e2382cb43daa01fa6523b4 iv=f0e1d2c3b4a59688 40:48
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 2 267 5979e9c3c86ecdb4cc98cc9cf2c602da iv=f0e1d2c3b4a59689 43:224
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 3 395 0d92af44ae0a4952611d54ce3d1e0283 iv=f0e1d2c3b4a5968a 43:352
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 4 504 845d1bc61efd5d211c33acd22da0701e iv=f0e1d2c3b4a5968b 40:464
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 5 583 343c69865748d84aa54dd4225581afd2 iv=f0e1d2c3b4a5968c 39:544
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 6 318 cbbdf563e115d2febe7506bc61280cdc iv=f0e1d2c3b4a5968d 30:288
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 7 385 24b3c8cef0f976cac07af04faafd040a iv=f0e1d2c3b4a5968e 33:352
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 8 356 026956d3c83e6d39dfd93fe6ef23224d iv=f0e1d2c3b4a5968f 36:320
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 9 404 29af3bd3e2258e565bdad0a64143be9a iv=f0e1d2c3b4a59690 36:368
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 10 562 9530d08819def6066939a85d817792cb iv=f0e1d2c3b4a59691 34:528
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 11 31 3162498252d4ee88025dea2adb2592f7 iv=f0e1d2c3b4a59692 31:0
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 12 34 88c279114baa168148296380fa2d8c8c iv=f0e1d2c3b4a59693 18:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 13 45 dadb681cfb1302f0f6d23e1fdf7d674f iv=f0e1d2c3b4a59694 29:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 14 48 23d44fac68b2251b09d9c461dc567cbc iv=f0e1d2c3b4a59695 32:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 15 50 412cc9b7a2c554ca70d4e705ad3f04d6 iv=f0e1d2c3b4a59696 18:32
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 16 42 e00f94ff6639ecf35aad5b4eeb9d4084 iv=f0e1d2c3b4a59697 26:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 17 49 211dca15c5360aff81151e4db2d45c8e iv=f0e1d2c3b4a59698 17:32
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 18 91 c9a3ba1ec14610aca0465a0d8ae2e2fc iv=f0e1d2c3b4a59699 27:64
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 19 63 d1ae2ba54fbf178523b72527fc35040f iv=f0e1d2c3b4a5969a 31:32
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 20 238 61487e25361afde36828d17ebaac9a4f iv=f0e1d2c3b4a5969b 30:208
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 21 209 34281df4283b3498119d7391a841e58f iv=f0e1d2c3b4a5969c 17:192
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 22 597 840338825ebef260165eee027d846fff iv=f0e1d2c3b4a5969d 21:576
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 23 589 dd0c2bb890d1a0bad7fe75968f16613a iv=f0e1d2c3b4a5969e 29:560
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 24 623 aa0abbbe33f0ca16ee141209bcb41d54 iv=f0e1d2c3b4a5969f 31:592
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 25 726 daf243c710c8b710e05e305fabcc3605 iv=f0e1d2c3b4a596a0 22:704
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 26 906 72fe0507d4a570d687cbb48b25bfade4 iv=f0e1d2c3b4a596a1 26:880
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 27 852 f06d25b29c024eb0cb67410464acac7e iv=f0e1d2c3b4a596a2 20:832
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 28 676 f542fd9ce9a3240f416a1bd9dfa4d460 iv=f0e1d2c3b4a596a3 20:656
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cenc 29 819 89539f3e3bf7b7685cb3601ba03bd68c iv=f0e1d2c3b4a596a4 19:800
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 0 5769 083403908fcec135a1168ab332625dc6 iv=- 25:5744
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 1 88 c01e519ed647382e1d91b75976f0f334 iv=- 40:48
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 2 267 dd55d264b5ec1fed4d0d31cabac20519 iv=- 43:224
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 3 395 97ad386b79b6ceb3c50ace881fee2fca iv=- 43:352
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 4 504 a18d1e4a9f268a34140b87665dab7a96 iv=- 40:464
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 5 583 e2c9036493e9b02db6cc101209383bc1 iv=- 39:544
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 6 318 e80310c5b06dcfe23b11d6ddd22c990f iv=- 30:288
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 7 385 969059f504b5349c3f69b76746cccaa5 iv=- 33:352
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 8 356 8500d65ec4c4152e48fc98a9366296b5 iv=- 36:320
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 9 404 9e0db68fe6e847dd88cbb073f6eb6313 iv=- 36:368
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 10 562 3f1494d6496a5f176e8f0aa386fb1911 iv=- 34:528
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 11 31 3162498252d4ee88025dea2adb2592f7 iv=- 31:0
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 12 34 345f7588efe7463a1446bfae4956def7 iv=- 18:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 13 45 8b8f82be2dc8fefc9fa564942a721e97 iv=- 29:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 14 48 cb9d87aba3886b89229e3fca8cd6182b iv=- 32:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 15 50 bcd5a5505797963153a2572687983a90 iv=- 18:32
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 16 42 5b6cb1f133379e761c099a2a0d3803a1 iv=- 26:16
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 17 49 b03dd9ef6f402cb6f0874c5847037b51 iv=- 17:32
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 18 91 65071db3a269d44dab351309ff264739 iv=- 27:64
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 19 63 bcc1ffdd873e28f97a293ee46d898185 iv=- 31:32
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 20 238 62bc4a72204570e57abe0a461f17eca2 iv=- 30:208
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 21 209 1d79e78304ed286f04631dae2c04e671 iv=- 17:192
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 22 597 96dcde9bcad248616ccb8d853828990e iv=- 21:576
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 23 589 325b9c3e638de7bb098db7e4fa587b81 iv=- 29:560
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 24 623 280c05025653f1b89725661b69482958 iv=- 31:592
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 25 726 c3d82e36997bc1d14c9e858ec0f713e3 iv=- 22:704
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 26 906 49adcfa19b3f729db9bcefe0d7ccc0b5 iv=- 26:880
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 27 852 f3403b9f231dcb1c638435a7d4139647 iv=- 20:832
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 28 676 08e42706d5fae49687f0b0c59f3c9e08 iv=- 20:656
+vp90-2-21-resize_inter_320x180_5_1-2.webm:cbcs 29 819 10958b6f821eb72b39bdd47e094027e4 iv=- 19:800
+vp91-2-04-yuv444.webm:clear 0 6534 4c245480f5e789bc901af0755c4c34ef
+vp91-2-04-yuv444.webm:clear 1 4396 2d1cc14e8322151c67faf1ab91f0608b
+vp91-2-04-yuv444.webm:clear 2 828 7bf56405c9903c96e883887f634b23d4
+vp91-2-04-yuv444.webm:clear 3 814 0e8057b0c3f571aa980fece48d04d73b
+vp91-2-04-yuv444.webm:clear 4 789 ab83086004d0d5ca89e108863c37fc90
+vp91-2-04-yuv444.webm:clear 5 751 f9bb6c232e6a213d74a496317eaefc81
+vp91-2-04-yuv444.webm:clear 6 647 7ae3e13f500a4e79fa83fc3e0ffd2c06
+vp91-2-04-yuv444.webm:clear 7 572 a6f49ff5818d69938e0f78ed7dc3d679
+vp91-2-04-yuv444.webm:clear 8 390 ffefd1cf32fe73c98f15ccda972bc049
+vp91-2-04-yuv444.webm:clear 9 26 1e388e891ee9f7015a6c8b0968e82183
+vp91-2-04-yuv444.webm:cenc 0 6534 c51806cbae467bd4d5a76c0654755e79 iv=f0e1d2c3b4a59687 22:6512
+vp91-2-04-yuv444.webm:cenc 1 4396 24b6d70275dfa3b75a644d7432cd04b7 iv=f0e1d2c3b4a59688 24:3664,14:688,6:0
+vp91-2-04-yuv444.webm:cenc 2 828 470ce59c3ca207d2189f30258c2c625b iv=f0e1d2c3b4a59689 12:816
+vp91-2-04-yuv444.webm:cenc 3 814 f77283f9377504d3d5c2ab65732717c0 iv=f0e1d2c3b4a5968a 14:800
+vp91-2-04-yuv444.webm:cenc 4 789 8ab65d14e9525f01d977115f26aecc66 iv=f0e1d2c3b4a5968b 21:768
+vp91-2-04-yuv444.webm:cenc 5 751 b3b2629a7b533d67c8714ad9368c40e3 iv=f0e1d2c3b4a5968c 15:736
+vp91-2-04-yuv444.webm:cenc 6 647 475fbc50e6419400acb2fd3e849d823a iv=f0e1d2c3b4a5968d 23:624
+vp91-2-04-yuv444.webm:cenc 7 572 b3c4c11ce177fc940ccac8d89d21fc24 iv=f0e1d2c3b4a5968e 12:560
+vp91-2-04-yuv444.webm:cenc 8 390 88fa644f753ea8d7a45dcbc5da544e6b iv=f0e1d2c3b4a5968f 22:368
+vp91-2-04-yuv444.webm:cenc 9 26 52a42cf769684b567b4a71cba3ae4d55 iv=f0e1d2c3b4a59690 10:16
+vp91-2-04-yuv444.webm:cbcs 0 6534 f37238ec4a316252cf4673672d1cee30 iv=- 22:6512
+vp91-2-04-yuv444.webm:cbcs 1 4396 8887baaa3322d52cabfe856c4b467446 iv=- 24:3664,14:688,6:0
+vp91-2-04-yuv444.webm:cbcs 2 828 d859ed658ae031dfba8e5d9f20e11802 iv=- 12:816
+vp91-2-04-yuv444.webm:cbcs 3 814 af05cd2c0c0163e9da9afc4eebc2e9a4 iv=- 14:800
+vp91-2-04-yuv444.webm:cbcs 4 789 4fbdb2104299b598dcf74ada813b770e iv=- 21:768
+vp91-2-04-yuv444.webm:cbcs 5 751 08986c7b5e703f745e934bfa82a8f5ac iv=- 15:736
+vp91-2-04-yuv444.webm:cbcs 6 647 9ee14973d60557428e48d0fa72b1a6c9 iv=- 23:624
+vp91-2-04-yuv444.webm:cbcs 7 572 d4e7d7328d88b85de10bfaf410d24f35 iv=- 12:560
+vp91-2-04-yuv444.webm:cbcs 8 390 f0eb4cb2d180573cf42ca95e52798685 iv=- 22:368
+vp91-2-04-yuv444.webm:cbcs 9 26 fa9b318e95d8041a61655d85675bd57f iv=- 10:16
+av1-av1-1-b8-01-size-16x18.ivf:clear 0 206 6e3f5f912b9b56e25e99802d6a1d5f90
+av1-av1-1-b8-01-size-16x18.ivf:clear 1 84 94badc4897fcdecffa04272e6570f8c9
+av1-av1-1-b8-01-size-16x18.ivf:cenc 0 206 3b0a2d42dd8c5bf60655c1d562596da5 iv=f0e1d2c3b4a59687 30:176
+av1-av1-1-b8-01-size-16x18.ivf:cenc 1 84 d4606e2c77fa5a17f1b670c83cc62ad6 iv=f0e1d2c3b4a59688 20:64
+av1-av1-1-b8-01-size-16x18.ivf:cbcs 0 206 c63b940bec963c98cf31d473bccce389 iv=- 26:180
+av1-av1-1-b8-01-size-16x18.ivf:cbcs 1 84 7727a4cc8b84e7fe5501720b285bd350 iv=- 20:64
+av1-av1-1-b8-01-size-66x66.ivf:clear 0 367 4e554a06f0a0a6ec857979d3daa556ee
+av1-av1-1-b8-01-size-66x66.ivf:clear 1 39 bbd5bdc9a7994ee19bc3a7a6c80d02f2
+av1-av1-1-b8-01-size-66x66.ivf:cenc 0 367 e3ef7071e517d185d9e1df395f5019da iv=f0e1d2c3b4a59687 31:336
+av1-av1-1-b8-01-size-66x66.ivf:cenc 1 39 2c499048f69e1a68d0bb7e3d246ba1bc iv=f0e1d2c3b4a59688 23:16
+av1-av1-1-b8-01-size-66x66.ivf:cbcs 0 367 f3c870ce7a916c4e345b0283f2cab0c9 iv=- 27:340
+av1-av1-1-b8-01-size-66x66.ivf:cbcs 1 39 66ed54f3bb88fbfcf4dbea572bd0b661 iv=- 20:19
+av1-av1-1-b8-02-allintra.ivf:clear 0 36265 235b0c6e389c4084845981e08d60db04
+av1-av1-1-b8-02-allintra.ivf:clear 1 36497 d8b1fdf0fd2cf1af1e7ce4a3518ab3ef
+av1-av1-1-b8-02-allintra.ivf:clear 2 36327 fadfb1c6158908cac3203e15aa7e9414
+av1-av1-1-b8-02-allintra.ivf:clear 3 36159 c1f5611d71abb1a1355284006972f171
+av1-av1-1-b8-02-allintra.ivf:clear 4 36272 2b0a90c36e4484bd91f27f4cae881102
+av1-av1-1-b8-02-allintra.ivf:clear 5 36739 5982b42ec7e5d072aa18724baf32efc4
+av1-av1-1-b8-02-allintra.ivf:clear 6 43723 929a04bfaa77f5850bbdf155fe9b6506
+av1-av1-1-b8-02-allintra.ivf:clear 7 43940 1636d46522ec17724cf34c751e65eaba
+av1-av1-1-b8-02-allintra.ivf:clear 8 44989 88d40becd82f330ec8f55b55a2bab90e
+av1-av1-1-b8-02-allintra.ivf:clear 9 19078 9b286b785e3ed453351e42320948bb52
+av1-av1-1-b8-02-allintra.ivf:clear 10 19493 634ed172b6465153ab49e60df95a60b8
+av1-av1-1-b8-02-allintra.ivf:clear 11 19231 917c6a967eca8f09b7843491c6e0fb5d
+av1-av1-1-b8-02-allintra.ivf:clear 12 26738 75e9e60587581ff65afa0f85331a29ed
+av1-av1-1-b8-02-allintra.ivf:clear 13 30468 1f39ec4390663df5eb074b299943fe62
+av1-av1-1-b8-02-allintra.ivf:clear 14 27338 aae976797c06f05b813d39704d02b47c
+av1-av1-1-b8-02-allintra.ivf:clear 15 56734 0a048bb7a543066cfa0b907f23e192e5
+av1-av1-1-b8-02-allintra.ivf:clear 16 56900 bba356faae13e62a00bd53ae89a76c61
+av1-av1-1-b8-02-allintra.ivf:clear 17 56484 50f11f4e1d87fc9267addeff818b652e
+av1-av1-1-b8-02-allintra.ivf:clear 18 26002 a63de2332864905e6addb4c6c30c78fa
+av1-av1-1-b8-02-allintra.ivf:clear 19 26845 4ebebdc94669fcd2ae36dd63bc00c742
+av1-av1-1-b8-02-allintra.ivf:clear 20 27861 10b05ae695d3c9603776bddd44227411
+av1-av1-1-b8-02-allintra.ivf:clear 21 18449 886836a25e786e736fc3df407ba5d74d
+av1-av1-1-b8-02-allintra.ivf:clear 22 11593 fb7135c9842a286c97d86b47dc1a0529
+av1-av1-1-b8-02-allintra.ivf:clear 23 7167 7e87efb819cd681ba96c16e7ac537f95
+av1-av1-1-b8-02-allintra.ivf:clear 24 58921 69860740d49239000c12d5fae6dd7563
+av1-av1-1-b8-02-allintra.ivf:clear 25 59275 69d1c2dcd94c2776b47be73ea83baf40
+av1-av1-1-b8-02-allintra.ivf:clear 26 58682 1d60b68a3c7560cf26fa1ea50a40c7e0
+av1-av1-1-b8-02-allintra.ivf:clear 27 39536 ec8a53ce384459d32cbce75235190ce9
+av1-av1-1-b8-02-allintra.ivf:clear 28 39476 888c0ac6a01e2e85c7a5c83c84942ee9
+av1-av1-1-b8-02-allintra.ivf:clear 29 39538 b2d45f6432823fa2be1d525c43fc514a
+av1-av1-1-b8-02-allintra.ivf:clear 30 35445 6292e1b381d714f431e9f6cbd891fd44
+av1-av1-1-b8-02-allintra.ivf:clear 31 38785 20748941ecefad09a2282bc49b29ba1d
+av1-av1-1-b8-02-allintra.ivf:clear 32 34785 11b34ae9725b7ceb45215a21138caa4e
+av1-av1-1-b8-02-allintra.ivf:clear 33 55437 d1e41f5547cdfe85ea6bc6bb12cc170a
+av1-av1-1-b8-02-allintra.ivf:clear 34 54297 e60c67b89ab3ff771a76339ec7cf18fa
+av1-av1-1-b8-02-allintra.ivf:clear 35 52305 cf629844a6a112acc9b18b515d4fc281
+av1-av1-1-b8-02-allintra.ivf:clear 36 46785 75b958533e8092343edb1032e554450b
+av1-av1-1-b8-02-allintra.ivf:clear 37 46829 6f8e0bb49cfe263e313374988a4bd85d
+av1-av1-1-b8-02-allintra.ivf:clear 38 46759 bbe411069287b43eedeaad7209b4a842
+av1-av1-1-b8-02-allintra.ivf:cenc 0 36265 5e6d13a5720f1a3728c3caacd1d7469d iv=f0e1d2c3b4a59687 41:36224
+av1-av1-1-b8-02-allintra.ivf:cenc 1 36497 55d7bae9611bbe940ecd61c3458be637 iv=f0e1d2c3b4a59688 49:36448
+av1-av1-1-b8-02-allintra.ivf:cenc 2 36327 bea788bd76756c727fb779d36e752101 iv=f0e1d2c3b4a59689 39:36288
+av1-av1-1-b8-02-allintra.ivf:cenc 3 36159 ee54b26fd179b114204f6e8a6700accb iv=f0e1d2c3b4a5968a 47:36112
+av1-av1-1-b8-02-allintra.ivf:cenc 4 36272 f3146ae421d27f261e662f0095f7fa44 iv=f0e1d2c3b4a5968b 48:36224
+av1-av1-1-b8-02-allintra.ivf:cenc 5 36739 945a94c9ad79f67474c763bd5f557ab4 iv=f0e1d2c3b4a5968c 51:36688
+av1-av1-1-b8-02-allintra.ivf:cenc 6 43723 8d93c7420b84dae60738a25eadbef31c iv=f0e1d2c3b4a5968d 43:43680
+av1-av1-1-b8-02-allintra.ivf:cenc 7 43940 7f7167fbe5b0f9e5a0b36bd7c8cb5900 iv=f0e1d2c3b4a5968e 36:43904
+av1-av1-1-b8-02-allintra.ivf:cenc 8 44989 8f736114b55ad83af428030d451d9f5f iv=f0e1d2c3b4a5968f 45:44944
+av1-av1-1-b8-02-allintra.ivf:cenc 9 19078 bbd54768212eea12861dcf10cb8a02e4 iv=f0e1d2c3b4a59690 38:19040
+av1-av1-1-b8-02-allintra.ivf:cenc 10 19493 ba8e19bcf765ed5183f93c95e83454c4 iv=f0e1d2c3b4a59691 37:19456
+av1-av1-1-b8-02-allintra.ivf:cenc 11 19231 4999ef58505d4ac3b7c1a40c14ce41e4 iv=f0e1d2c3b4a59692 47:19184
+av1-av1-1-b8-02-allintra.ivf:cenc 12 26738 9a3040f032ef7c0f99d6dc7a5fa75a69 iv=f0e1d2c3b4a59693 34:26704
+av1-av1-1-b8-02-allintra.ivf:cenc 13 30468 25ba6c721c341e646262e2357f05e157 iv=f0e1d2c3b4a59694 36:30432
+av1-av1-1-b8-02-allintra.ivf:cenc 14 27338 334b6cf223d67addafa2300b67f067eb iv=f0e1d2c3b4a59695 42:27296
+av1-av1-1-b8-02-allintra.ivf:cenc 15 56734 948da4e7ce00b4689586aa38004861af iv=f0e1d2c3b4a59696 30:56704
+av1-av1-1-b8-02-allintra.ivf:cenc 16 56900 92b6e4afa34fe6c439f8e58017cf0d48 iv=f0e1d2c3b4a59697 36:56864
+av1-av1-1-b8-02-allintra.ivf:cenc 17 56484 9dcfd13c3c1845620c93fd06c39cf96b iv=f0e1d2c3b4a59698 36:56448
+av1-av1-1-b8-02-allintra.ivf:cenc 18 26002 b45746ae8d6d79ad66903259dc64fb68 iv=f0e1d2c3b4a59699 34:25968
+av1-av1-1-b8-02-allintra.ivf:cenc 19 26845 1678035c4b87e9f546316e65652e6ab8 iv=f0e1d2c3b4a5969a 45:26800
+av1-av1-1-b8-02-allintra.ivf:cenc 20 27861 862fe33f4a98dc966be39546e132394a iv=f0e1d2c3b4a5969b 37:27824
+av1-av1-1-b8-02-allintra.ivf:cenc 21 18449 6f5c9d499fc6bbb8428311fec3d778e8 iv=f0e1d2c3b4a5969c 49:18400
+av1-av1-1-b8-02-allintra.ivf:cenc 22 11593 0bd3f95fe4a68fd5571991dfd0afe5f9 iv=f0e1d2c3b4a5969d 41:11552
+av1-av1-1-b8-02-allintra.ivf:cenc 23 7167 1fae7f8e870996545882f26e4f8831e0 iv=f0e1d2c3b4a5969e 47:7120
+av1-av1-1-b8-02-allintra.ivf:cenc 24 58921 66ca1937fa9a0f20dc95edd1fab6a33c iv=f0e1d2c3b4a5969f 41:58880
+av1-av1-1-b8-02-allintra.ivf:cenc 25 59275 063ef3785b9efdbf76126698bc3cebb5 iv=f0e1d2c3b4a596a0 43:59232
+av1-av1-1-b8-02-allintra.ivf:cenc 26 58682 73ffdc15f03fdd56d7a5759cd216d4a0 iv=f0e1d2c3b4a596a1 42:58640
+av1-av1-1-b8-02-allintra.ivf:cenc 27 39536 90c63b8e4ece1e2e33befccda7f25b56 iv=f0e1d2c3b4a596a2 32:39504
+av1-av1-1-b8-02-allintra.ivf:cenc 28 39476 6faca8b7a35d8376bf8a653436e49256 iv=f0e1d2c3b4a596a3 36:39440
+av1-av1-1-b8-02-allintra.ivf:cenc 29 39538 d429c38284e96be361ff0f1bf2f76aa4 iv=f0e1d2c3b4a596a4 34:39504
+av1-av1-1-b8-02-allintra.ivf:cenc 30 35445 9de957c3229614b68ee15f75b9e3c385 iv=f0e1d2c3b4a596a5 37:35408
+av1-av1-1-b8-02-allintra.ivf:cenc 31 38785 205e74902193906630a31aff16ba2f3e iv=f0e1d2c3b4a596a6 33:38752
+av1-av1-1-b8-02-allintra.ivf:cenc 32 34785 6ba3993addca32cde324794c63f1648b iv=f0e1d2c3b4a596a7 33:34752
+av1-av1-1-b8-02-allintra.ivf:cenc 33 55437 5c94d60fdd73c6ed42475d67ba05413b iv=f0e1d2c3b4a596a8 29:55408
+av1-av1-1-b8-02-allintra.ivf:cenc 34 54297 2714653c5b91116caeb6c1dfddd7118c iv=f0e1d2c3b4a596a9 41:54256
+av1-av1-1-b8-02-allintra.ivf:cenc 35 52305 f6e851e692feb956f0b2cae22e2fd34c iv=f0e1d2c3b4a596aa 33:52272
+av1-av1-1-b8-02-allintra.ivf:cenc 36 46785 77f154b96ad18ad78e2da1953bc2e501 iv=f0e1d2c3b4a596ab 33:46752
+av1-av1-1-b8-02-allintra.ivf:cenc 37 46829 f11a81e7b1f4a7324dde2ae2328d03e2 iv=f0e1d2c3b4a596ac 45:46784
+av1-av1-1-b8-02-allintra.ivf:cenc 38 46759 8854054712618332c1d0621e029686b4 iv=f0e1d2c3b4a596ad 39:46720
+av1-av1-1-b8-02-allintra.ivf:cbcs 0 36265 940c69fc7706242fcb946a976e3775ba iv=- 39:36226
+av1-av1-1-b8-02-allintra.ivf:cbcs 1 36497 25249c0292f43c2dd1ae636f3697eef4 iv=- 39:36458
+av1-av1-1-b8-02-allintra.ivf:cbcs 2 36327 13f3791c196efb26838914dcd1a8d5cf iv=- 39:36288
+av1-av1-1-b8-02-allintra.ivf:cbcs 3 36159 911d1dec210b8faf18c201efbd23cd65 iv=- 39:36120
+av1-av1-1-b8-02-allintra.ivf:cbcs 4 36272 ad7630a74499261a1809fe9c8417cc2a iv=- 39:36233
+av1-av1-1-b8-02-allintra.ivf:cbcs 5 36739 986240998576e2674818a101762e2dc3 iv=- 39:36700
+av1-av1-1-b8-02-allintra.ivf:cbcs 6 43723 0b847fc5563c608b7efac22a3cf9dae6 iv=- 30:43693
+av1-av1-1-b8-02-allintra.ivf:cbcs 7 43940 67b1dc21b6fa6118039d0927bbd26a82 iv=- 30:43910
+av1-av1-1-b8-02-allintra.ivf:cbcs 8 44989 e54f66beb87a93d02a07c2ed1e03f641 iv=- 30:44959
+av1-av1-1-b8-02-allintra.ivf:cbcs 9 19078 f7f980b582b5abdc178e94f23d6b3f32 iv=- 33:19045
+av1-av1-1-b8-02-allintra.ivf:cbcs 10 19493 5731dec7ad9cfddcc5df5229999a97fc iv=- 33:19460
+av1-av1-1-b8-02-allintra.ivf:cbcs 11 19231 e678a93ba8b677c16dc0b2b19f9face6 iv=- 39:19192
+av1-av1-1-b8-02-allintra.ivf:cbcs 12 26738 495fa01a91e8a799b9e0921eb5612bbc iv=- 33:26705
+av1-av1-1-b8-02-allintra.ivf:cbcs 13 30468 ea99d8a4b103ff1a61028e4d369646aa iv=- 33:30435
+av1-av1-1-b8-02-allintra.ivf:cbcs 14 27338 cf2e6c2d1bad67556554f31c8d653ec6 iv=- 30:27308
+av1-av1-1-b8-02-allintra.ivf:cbcs 15 56734 4df114355247c773494fb63b6b5ae6d7 iv=- 28:56706
+av1-av1-1-b8-02-allintra.ivf:cbcs 16 56900 3e33507e802288b0726760318563a7e4 iv=- 28:56872
+av1-av1-1-b8-02-allintra.ivf:cbcs 17 56484 b6c5ed88628cb42e70a8ba6604be2781 iv=- 28:56456
+av1-av1-1-b8-02-allintra.ivf:cbcs 18 26002 f059feea6581b8e7561e17a1b1eea2af iv=- 32:25970
+av1-av1-1-b8-02-allintra.ivf:cbcs 19 26845 299342b274bdf7e85d5b4bda7ab47635 iv=- 33:26812
+av1-av1-1-b8-02-allintra.ivf:cbcs 20 27861 cbf29f64cf664cc384c04737c91966ac iv=- 29:27832
+av1-av1-1-b8-02-allintra.ivf:cbcs 21 18449 07950cc4bc2bc69b4f9eda99a27a1065 iv=- 38:18411
+av1-av1-1-b8-02-allintra.ivf:cbcs 22 11593 2c3f870408138fe39e1b253310e2ebc0 iv=- 38:11555
+av1-av1-1-b8-02-allintra.ivf:cbcs 23 7167 cdf5ba8409206c1bc16e25152056e74b iv=- 38:7129
+av1-av1-1-b8-02-allintra.ivf:cbcs 24 58921 443ace3649cb4d81d34a859c526e7ecb iv=- 28:58893
+av1-av1-1-b8-02-allintra.ivf:cbcs 25 59275 8e6d518a32f8e6d3bd601c8e23c50ab8 iv=- 30:59245
+av1-av1-1-b8-02-allintra.ivf:cbcs 26 58682 920f2560b5f873c190b7cba7a86ce55f iv=- 28:58654
+av1-av1-1-b8-02-allintra.ivf:cbcs 27 39536 bc2fd6c5e28d6b881a22f04ce8d30f1b iv=- 29:39507
+av1-av1-1-b8-02-allintra.ivf:cbcs 28 39476 2260c74b875b48c24731a7ecb9f060a7 iv=- 30:39446
+av1-av1-1-b8-02-allintra.ivf:cbcs 29 39538 6e24a9baeaae44f8148dd86cadb47acb iv=- 28:39510
+av1-av1-1-b8-02-allintra.ivf:cbcs 30 35445 3d169a3e49bfdd65d0ff3110a79836c5 iv=- 30:35415
+av1-av1-1-b8-02-allintra.ivf:cbcs 31 38785 69faae113218fc08063291ceafcd4386 iv=- 30:38755
+av1-av1-1-b8-02-allintra.ivf:cbcs 32 34785 fd558af931cb261a940de2beb54ddc4d iv=- 33:34752
+av1-av1-1-b8-02-allintra.ivf:cbcs 33 55437 b2ad03ed6993927bebc0e1859967ed09 iv=- 29:55408
+av1-av1-1-b8-02-allintra.ivf:cbcs 34 54297 f9e47d3f329f6955b5d9806ded1fb13e iv=- 29:54268
+av1-av1-1-b8-02-allintra.ivf:cbcs 35 52305 062b5d2d8eb06480e253347034940c9a iv=- 29:52276
+av1-av1-1-b8-02-allintra.ivf:cbcs 36 46785 04079176bc5b00ba423b575b5398893a iv=- 33:46752
+av1-av1-1-b8-02-allintra.ivf:cbcs 37 46829 61a9837988ac7287ac44ad4a3d0d5d98 iv=- 30:46799
+av1-av1-1-b8-02-allintra.ivf:cbcs 38 46759 bc2c39c80c7cb234a65cab95fb7070e6 iv=- 29:46730
+av1-av1-1-b8-03-sizeup.mkv:clear 0 16213 c32c3168c4ba8e810ea0c946bedda7a9
+av1-av1-1-b8-03-sizeup.mkv:clear 1 8448 c22e317b2fa27c10b0bbb861da4183df
+av1-av1-1-b8-03-sizeup.mkv:clear 2 3 e64942de71689927fabfb52eab4ade5d
+av1-av1-1-b8-03-sizeup.mkv:clear 3 81 fa2c22909e97f2469f4c1548f80b32b6
+av1-av1-1-b8-03-sizeup.mkv:clear 4 3 1712a2ea930e5d940107a68f2d6330eb
+av1-av1-1-b8-03-sizeup.mkv:clear 5 401 1ed0f9e3c134b1929c275e1260498697
+av1-av1-1-b8-03-sizeup.mkv:clear 6 3 065f59f831b680b4cb51b77029ea6a3b
+av1-av1-1-b8-03-sizeup.mkv:clear 7 131 96dc776e8d5e1d15dbce94fc9078a66d
+av1-av1-1-b8-03-sizeup.mkv:clear 8 95 7c95bc51435752bdaa972e8a58e0e665
+av1-av1-1-b8-03-sizeup.mkv:clear 9 30 96fdd38e7539dbffe46b3de88b1cbb59
+av1-av1-1-b8-03-sizeup.mkv:clear 10 6224 ea34262b5942596e073d05ee44eebfd9
+av1-av1-1-b8-03-sizeup.mkv:clear 11 2636 0a90c045bbb6f12006a77dc8af582de9
+av1-av1-1-b8-03-sizeup.mkv:clear 12 3 e64942de71689927fabfb52eab4ade5d
+av1-av1-1-b8-03-sizeup.mkv:clear 13 74 1d0f28ef496d0b5137e34d7517b88a23
+av1-av1-1-b8-03-sizeup.mkv:clear 14 3 1712a2ea930e5d940107a68f2d6330eb
+av1-av1-1-b8-03-sizeup.mkv:clear 15 326 1eadcfdaad88ba6a5979926e2a48c3b7
+av1-av1-1-b8-03-sizeup.mkv:clear 16 3 065f59f831b680b4cb51b77029ea6a3b
+av1-av1-1-b8-03-sizeup.mkv:clear 17 136 23e82eca820a54ca472af085a3a1ca10
+av1-av1-1-b8-03-sizeup.mkv:clear 18 88 95d4d11e507dbf609c9e6cb47fe22c54
+av1-av1-1-b8-03-sizeup.mkv:clear 19 32 740220d248978ab8100171cffca2a61d
+av1-av1-1-b8-03-sizeup.mkv:cenc 0 16213 02069f9afcaf8a7e39f589bee95c0a9b iv=f0e1d2c3b4a59687 53:16160
+av1-av1-1-b8-03-sizeup.mkv:cenc 1 8448 5e45583693743688305381576517fede iv=f0e1d2c3b4a59688 34:7248,31:784,30:208,33:80
+av1-av1-1-b8-03-sizeup.mkv:cenc 2 3 e64942de71689927fabfb52eab4ade5d iv=f0e1d2c3b4a59689 3:0
+av1-av1-1-b8-03-sizeup.mkv:cenc 3 81 2e69726d99b5f0a8a33240830fff9231 iv=f0e1d2c3b4a5968a 33:48
+av1-av1-1-b8-03-sizeup.mkv:cenc 4 3 1712a2ea930e5d940107a68f2d6330eb iv=f0e1d2c3b4a5968b 3:0
+av1-av1-1-b8-03-sizeup.mkv:cenc 5 401 326f414e264858376afdfd6b6fe9d5f9 iv=f0e1d2c3b4a5968c 30:272,19:80
+av1-av1-1-b8-03-sizeup.mkv:cenc 6 3 065f59f831b680b4cb51b77029ea6a3b iv=f0e1d2c3b4a5968d 3:0
+av1-av1-1-b8-03-sizeup.mkv:cenc 7 131 dede09927727546b099365f25b5c41d4 iv=f0e1d2c3b4a5968e 19:112
+av1-av1-1-b8-03-sizeup.mkv:cenc 8 95 dc5b2ae1cd5b92e39bb91869114aec70 iv=f0e1d2c3b4a5968f 31:64
+av1-av1-1-b8-03-sizeup.mkv:cenc 9 30 96fdd38e7539dbffe46b3de88b1cbb59 iv=f0e1d2c3b4a59690 30:0
+av1-av1-1-b8-03-sizeup.mkv:cenc 10 6224 359ad98865a666b5048c687c065c439f iv=f0e1d2c3b4a59691 48:6176
+av1-av1-1-b8-03-sizeup.mkv:cenc 11 2636 fbf21fd3cdbd650f543809619e8df3d0 iv=f0e1d2c3b4a59692 38:2032,22:288,32:128,32:64
+av1-av1-1-b8-03-sizeup.mkv:cenc 12 3 e64942de71689927fabfb52eab4ade5d iv=f0e1d2c3b4a59693 3:0
+av1-av1-1-b8-03-sizeup.mkv:cenc 13 74 ee0f703dc0077353f44de45f577d15cf iv=f0e1d2c3b4a59694 26:48
+av1-av1-1-b8-03-sizeup.mkv:cenc 14 3 1712a2ea930e5d940107a68f2d6330eb iv=f0e1d2c3b4a59695 3:0
+av1-av1-1-b8-03-sizeup.mkv:cenc 15 326 bc54de233eb99302c1ea64afdc079c3a iv=f0e1d2c3b4a59696 22:208,32:64
+av1-av1-1-b8-03-sizeup.mkv:cenc 16 3 065f59f831b680b4cb51b77029ea6a3b iv=f0e1d2c3b4a59697 3:0
+av1-av1-1-b8-03-sizeup.mkv:cenc 17 136 067dc373260932e733f40a6dee593d61 iv=f0e1d2c3b4a59698 24:112
+av1-av1-1-b8-03-sizeup.mkv:cenc 18 88 f2d6b76f2ad7ada9e7fa1c536a79ff26 iv=f0e1d2c3b4a59699 24:64
+av1-av1-1-b8-03-sizeup.mkv:cenc 19 32 740220d248978ab8100171cffca2a61d iv=f0e1d2c3b4a5969a 32:0
+av1-av1-1-b8-03-sizeup.mkv:cbcs 0 16213 d54de26a5041674b1d0c2c216d1ccdfc iv=- 39:16174
+av1-av1-1-b8-03-sizeup.mkv:cbcs 1 8448 8f75922a5734d3f9fb6d153281eb3426 iv=- 32:7250,25:790,22:216,18:95
+av1-av1-1-b8-03-sizeup.mkv:cbcs 2 3 e64942de71689927fabfb52eab4ade5d iv=- 3:0
+av1-av1-1-b8-03-sizeup.mkv:cbcs 3 81 3dff20dfdc74fdb5e28db78f3eec3b9c iv=- 19:62
+av1-av1-1-b8-03-sizeup.mkv:cbcs 4 3 1712a2ea930e5d940107a68f2d6330eb iv=- 3:0
+av1-av1-1-b8-03-sizeup.mkv:cbcs 5 401 dc8572cb2b505cec772f5062ac92fc64 iv=- 20:282,18:81
+av1-av1-1-b8-03-sizeup.mkv:cbcs 6 3 065f59f831b680b4cb51b77029ea6a3b iv=- 3:0
+av1-av1-1-b8-03-sizeup.mkv:cbcs 7 131 bff310d1353c218a253b26017e958be0 iv=- 19:112
+av1-av1-1-b8-03-sizeup.mkv:cbcs 8 95 b4577c9803a0d47129e19545747568ad iv=- 18:77
+av1-av1-1-b8-03-sizeup.mkv:cbcs 9 30 96fdd38e7539dbffe46b3de88b1cbb59 iv=- 19:11
+av1-av1-1-b8-03-sizeup.mkv:cbcs 10 6224 4d6ef3be28d1cc2068d9db9e146e5d21 iv=- 39:6185
+av1-av1-1-b8-03-sizeup.mkv:cbcs 11 2636 607ad56c7abb2a9fb4d9b3373a6ff562 iv=- 32:2038,22:288,22:138,20:76
+av1-av1-1-b8-03-sizeup.mkv:cbcs 12 3 e64942de71689927fabfb52eab4ade5d iv=- 3:0
+av1-av1-1-b8-03-sizeup.mkv:cbcs 13 74 82843e2465d119e619882a78832e9660 iv=- 19:55
+av1-av1-1-b8-03-sizeup.mkv:cbcs 14 3 1712a2ea930e5d940107a68f2d6330eb iv=- 3:0
+av1-av1-1-b8-03-sizeup.mkv:cbcs 15 326 dd9764f53cf8f9b372ae3c2656801648 iv=- 20:210,19:77
+av1-av1-1-b8-03-sizeup.mkv:cbcs 16 3 065f59f831b680b4cb51b77029ea6a3b iv=- 3:0
+av1-av1-1-b8-03-sizeup.mkv:cbcs 17 136 bebd665469db9a0ad02980a3e84cb793 iv=- 20:116
+av1-av1-1-b8-03-sizeup.mkv:cbcs 18 88 6409a9eb940b8875a824a3141e8b8a44 iv=- 19:69
+av1-av1-1-b8-03-sizeup.mkv:cbcs 19 32 740220d248978ab8100171cffca2a61d iv=- 21:11
+av1-av1-1-b8-03-sizedown.mkv:clear 0 6224 ea34262b5942596e073d05ee44eebfd9
+av1-av1-1-b8-03-sizedown.mkv:clear 1 2636 0a90c045bbb6f12006a77dc8af582de9
+av1-av1-1-b8-03-sizedown.mkv:clear 2 3 e64942de71689927fabfb52eab4ade5d
+av1-av1-1-b8-03-sizedown.mkv:clear 3 74 1d0f28ef496d0b5137e34d7517b88a23
+av1-av1-1-b8-03-sizedown.mkv:clear 4 3 1712a2ea930e5d940107a68f2d6330eb
+av1-av1-1-b8-03-sizedown.mkv:clear 5 326 1eadcfdaad88ba6a5979926e2a48c3b7
+av1-av1-1-b8-03-sizedown.mkv:clear 6 3 065f59f831b680b4cb51b77029ea6a3b
+av1-av1-1-b8-03-sizedown.mkv:clear 7 136 23e82eca820a54ca472af085a3a1ca10
+av1-av1-1-b8-03-sizedown.mkv:clear 8 88 95d4d11e507dbf609c9e6cb47fe22c54
+av1-av1-1-b8-03-sizedown.mkv:clear 9 32 740220d248978ab8100171cffca2a61d
+av1-av1-1-b8-03-sizedown.mkv:clear 10 16213 c32c3168c4ba8e810ea0c946bedda7a9
+av1-av1-1-b8-03-sizedown.mkv:clear 11 8448 c22e317b2fa27c10b0bbb861da4183df
+av1-av1-1-b8-03-sizedown.mkv:clear 12 3 e64942de71689927fabfb52eab4ade5d
+av1-av1-1-b8-03-sizedown.mkv:clear 13 81 fa2c22909e97f2469f4c1548f80b32b6
+av1-av1-1-b8-03-sizedown.mkv:clear 14 3 1712a2ea930e5d940107a68f2d6330eb
+av1-av1-1-b8-03-sizedown.mkv:clear 15 401 1ed0f9e3c134b1929c275e1260498697
+av1-av1-1-b8-03-sizedown.mkv:clear 16 3 065f59f831b680b4cb51b77029ea6a3b
+av1-av1-1-b8-03-sizedown.mkv:clear 17 131 96dc776e8d5e1d15dbce94fc9078a66d
+av1-av1-1-b8-03-sizedown.mkv:clear 18 95 7c95bc51435752bdaa972e8a58e0e665
+av1-av1-1-b8-03-sizedown.mkv:clear 19 30 96fdd38e7539dbffe46b3de88b1cbb59
+av1-av1-1-b8-03-sizedown.mkv:cenc 0 6224 cbce90d2ad6a9847325ba3e30f6cbc91 iv=f0e1d2c3b4a59687 48:6176
+av1-av1-1-b8-03-sizedown.mkv:cenc 1 2636 9ba973252b904141e4f6eb10f82c68be iv=f0e1d2c3b4a59688 38:2032,22:288,32:128,32:64
+av1-av1-1-b8-03-sizedown.mkv:cenc 2 3 e64942de71689927fabfb52eab4ade5d iv=f0e1d2c3b4a59689 3:0
+av1-av1-1-b8-03-sizedown.mkv:cenc 3 74 2182f28e554bbea89f29d65529d1aaf3 iv=f0e1d2c3b4a5968a 26:48
+av1-av1-1-b8-03-sizedown.mkv:cenc 4 3 1712a2ea930e5d940107a68f2d6330eb iv=f0e1d2c3b4a5968b 3:0
+av1-av1-1-b8-03-sizedown.mkv:cenc 5 326 1b03dcb26f32b6fb8faa5906334a972a iv=f0e1d2c3b4a5968c 22:208,32:64
+av1-av1-1-b8-03-sizedown.mkv:cenc 6 3 065f59f831b680b4cb51b77029ea6a3b iv=f0e1d2c3b4a5968d 3:0
+av1-av1-1-b8-03-sizedown.mkv:cenc 7 136 2f51e84589ac0df0bf037243830d8491 iv=f0e1d2c3b4a5968e 24:112
+av1-av1-1-b8-03-sizedown.mkv:cenc 8 88 fae3d9f3fcb22b9a95130a392d8c67ea iv=f0e1d2c3b4a5968f 24:64
+av1-av1-1-b8-03-sizedown.mkv:cenc 9 32 740220d248978ab8100171cffca2a61d iv=f0e1d2c3b4a59690 32:0
+av1-av1-1-b8-03-sizedown.mkv:cenc 10 16213 3cfa45ad186c95c871a5811c16d75b38 iv=f0e1d2c3b4a59691 53:16160
+av1-av1-1-b8-03-sizedown.mkv:cenc 11 8448 d4a8b6380896b0a1704fb53b9cf7da6a iv=f0e1d2c3b4a59692 34:7248,31:784,30:208,33:80
+av1-av1-1-b8-03-sizedown.mkv:cenc 12 3 e64942de71689927fabfb52eab4ade5d iv=f0e1d2c3b4a59693 3:0
+av1-av1-1-b8-03-sizedown.mkv:cenc 13 81 92594276995f01a0e0fbf01ab292e38e iv=f0e1d2c3b4a59694 33:48
+av1-av1-1-b8-03-sizedown.mkv:cenc 14 3 1712a2ea930e5d940107a68f2d6330eb iv=f0e1d2c3b4a59695 3:0
+av1-av1-1-b8-03-sizedown.mkv:cenc 15 401 817fdd456779b7b3c0159066261c3cd0 iv=f0e1d2c3b4a59696 30:272,19:80
+av1-av1-1-b8-03-sizedown.mkv:cenc 16 3 065f59f831b680b4cb51b77029ea6a3b iv=f0e1d2c3b4a59697 3:0
+av1-av1-1-b8-03-sizedown.mkv:cenc 17 131 0d7c55ef6cabea8a1855a80d65a05f6a iv=f0e1d2c3b4a59698 19:112
+av1-av1-1-b8-03-sizedown.mkv:cenc 18 95 7607da105f8f30d7f248c7a39ac2e777 iv=f0e1d2c3b4a59699 31:64
+av1-av1-1-b8-03-sizedown.mkv:cenc 19 30 96fdd38e7539dbffe46b3de88b1cbb59 iv=f0e1d2c3b4a5969a 30:0
+av1-av1-1-b8-03-sizedown.mkv:cbcs 0 6224 4d6ef3be28d1cc2068d9db9e146e5d21 iv=- 39:6185
+av1-av1-1-b8-03-sizedown.mkv:cbcs 1 2636 607ad56c7abb2a9fb4d9b3373a6ff562 iv=- 32:2038,22:288,22:138,20:76
+av1-av1-1-b8-03-sizedown.mkv:cbcs 2 3 e64942de71689927fabfb52eab4ade5d iv=- 3:0
+av1-av1-1-b8-03-sizedown.mkv:cbcs 3 74 82843e2465d119e619882a78832e9660 iv=- 19:55
+av1-av1-1-b8-03-sizedown.mkv:cbcs 4 3 1712a2ea930e5d940107a68f2d6330eb iv=- 3:0
+av1-av1-1-b8-03-sizedown.mkv:cbcs 5 326 dd9764f53cf8f9b372ae3c2656801648 iv=- 20:210,19:77
+av1-av1-1-b8-03-sizedown.mkv:cbcs 6 3 065f59f831b680b4cb51b77029ea6a3b iv=- 3:0
+av1-av1-1-b8-03-sizedown.mkv:cbcs 7 136 bebd665469db9a0ad02980a3e84cb793 iv=- 20:116
+av1-av1-1-b8-03-sizedown.mkv:cbcs 8 88 6409a9eb940b8875a824a3141e8b8a44 iv=- 19:69
+av1-av1-1-b8-03-sizedown.mkv:cbcs 9 32 740220d248978ab8100171cffca2a61d iv=- 21:11
+av1-av1-1-b8-03-sizedown.mkv:cbcs 10 16213 d54de26a5041674b1d0c2c216d1ccdfc iv=- 39:16174
+av1-av1-1-b8-03-sizedown.mkv:cbcs 11 8448 8f75922a5734d3f9fb6d153281eb3426 iv=- 32:7250,25:790,22:216,18:95
+av1-av1-1-b8-03-sizedown.mkv:cbcs 12 3 e64942de71689927fabfb52eab4ade5d iv=- 3:0
+av1-av1-1-b8-03-sizedown.mkv:cbcs 13 81 3dff20dfdc74fdb5e28db78f3eec3b9c iv=- 19:62
+av1-av1-1-b8-03-sizedown.mkv:cbcs 14 3 1712a2ea930e5d940107a68f2d6330eb iv=- 3:0
+av1-av1-1-b8-03-sizedown.mkv:cbcs 15 401 dc8572cb2b505cec772f5062ac92fc64 iv=- 20:282,18:81
+av1-av1-1-b8-03-sizedown.mkv:cbcs 16 3 065f59f831b680b4cb51b77029ea6a3b iv=- 3:0
+av1-av1-1-b8-03-sizedown.mkv:cbcs 17 131 bff310d1353c218a253b26017e958be0 iv=- 19:112
+av1-av1-1-b8-03-sizedown.mkv:cbcs 18 95 b4577c9803a0d47129e19545747568ad iv=- 18:77
+av1-av1-1-b8-03-sizedown.mkv:cbcs 19 30 96fdd38e7539dbffe46b3de88b1cbb59 iv=- 19:11
+av1-av1-1-b8-04-cdfupdate.ivf:clear 0 30831 90ef066f10d224f688562a58951c2a57
+av1-av1-1-b8-04-cdfupdate.ivf:clear 1 5197 3ee7f66ebc5c6219f5f5e74241584677
+av1-av1-1-b8-04-cdfupdate.ivf:cenc 0 30831 be81a19036c25cac657a473eab97595f iv=f0e1d2c3b4a59687 47:30784
+av1-av1-1-b8-04-cdfupdate.ivf:cenc 1 5197 d6d4fe0cd58ec9e672e3bb51b9a1d726 iv=f0e1d2c3b4a59688 45:5152
+av1-av1-1-b8-04-cdfupdate.ivf:cbcs 0 30831 4c04cda47d22bd3805b2f1739e5e255d iv=- 39:30792
+av1-av1-1-b8-04-cdfupdate.ivf:cbcs 1 5197 762c4f69af87c5dc0e250ade625cab59 iv=- 38:5159
+av1-av1-1-b8-06-mfmv.ivf:clear 0 29982 dd4e62ecfda7cc15a4b45242cf9879b3
+av1-av1-1-b8-06-mfmv.ivf:clear 1 4857 812b53e8210dc5bef9022bd21b886325
+av1-av1-1-b8-06-mfmv.ivf:clear 2 5090 ff1c7addf3e55086a5c8d15ed5b65513
+av1-av1-1-b8-06-mfmv.ivf:clear 3 4947 755ae0a0741773ee0b26ccbbda4eb5e4
+av1-av1-1-b8-06-mfmv.ivf:cenc 0 29982 27abc693e8bd53024a13bbd8d4f05a5b iv=f0e1d2c3b4a59687 46:29936
+av1-av1-1-b8-06-mfmv.ivf:cenc 1 4857 599326988f714c9f9ef12662446ff42b iv=f0e1d2c3b4a59688 41:4816
+av1-av1-1-b8-06-mfmv.ivf:cenc 2 5090 271efff1f6ac3e78b4c4141c52419dd1 iv=f0e1d2c3b4a59689 50:5040
+av1-av1-1-b8-06-mfmv.ivf:cenc 3 4947 f3c7f65abf123f841678cc3152df2c3c iv=f0e1d2c3b4a5968a 51:4896
+av1-av1-1-b8-06-mfmv.ivf:cbcs 0 29982 f3472f39f0c091fd2d984ce096b683d7 iv=- 39:29943
+av1-av1-1-b8-06-mfmv.ivf:cbcs 1 4857 218944eb8e0de9b652517b2b60aa521d iv=- 36:4821
+av1-av1-1-b8-06-mfmv.ivf:cbcs 2 5090 16f7200a04c7ffb39f528e2c3d364953 iv=- 40:5050
+av1-av1-1-b8-06-mfmv.ivf:cbcs 3 4947 14aeb39c63c25026359752663cdedc37 iv=- 39:4908
+av1-av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf:clear 0 170170 212a106dae52c74e8b90830cc0cb2e97
+av1-av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf:clear 1 169044 618963657ab4640a642285a14b7c8420
+av1-av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf:cenc 0 170170 2642ce61020dc8744a97286e6dcc65ba iv=f0e1d2c3b4a59687 26:170144
+av1-av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf:cenc 1 169044 c51806892190bcc57e2d81a262235c30 iv=f0e1d2c3b4a59688 36:169008
+av1-av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf:cbcs 0 170170 4af6ed40fa879a4ae1bc765c96420c22 iv=- 22:170148
+av1-av1-1-b8-16-intra_only-intrabc-extreme-dv.ivf:cbcs 1 169044 1e19f35d0c6df836aed8954f80cdd0bf iv=- 22:169022
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 0 40668 37e1a05dfff0663f6a577f6ab3bcbcf0
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 1 454 544a590918a45c4c9b0dda1524fa40e9
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 2 955 96409de4c64c2ca2fb100f1a85ed6fae
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 3 750 5225c1f167c342d830dbcd6d95750260
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 4 2187 c55bb358e713717f677b8f1310e2657c
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 5 790 ef791f0baa645f781f43628d2036ae0e
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 6 1791 5920f276b6cb226bc6ecc0f4b3afd29c
+av1-av1-1-b8-22-svc-L1T2.ivf:clear 7 1144 b6dc38358e51414f3e96970b45836e95
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 0 40668 54c07dcbed8f98f6c300d50ee562a9fb iv=f0e1d2c3b4a59687 50:13152,15:24480,11:2960
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 1 454 51e2ee408147ff161c8de61c67d27ad9 iv=f0e1d2c3b4a59688 37:128,16:240,17:16
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 2 955 838e01673fc9d23f7eeeca868f782817 iv=f0e1d2c3b4a59689 48:336,18:512,9:32
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 3 750 758eb4137dfd4362b6d559969013ef9c iv=f0e1d2c3b4a5968a 43:256,11:400,8:32
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 4 2187 81a0fe6f15cc18c655b11f0ae08ecaf5 iv=f0e1d2c3b4a5968b 43:800,9:1232,7:96
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 5 790 daaccfb726c4b86909a1785ee0e2975e iv=f0e1d2c3b4a5968c 49:224,9:464,12:32
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 6 1791 741d7275b09d921d902e4149507a8f7e iv=f0e1d2c3b4a5968d 38:672,13:992,12:64
+av1-av1-1-b8-22-svc-L1T2.ivf:cenc 7 1144 bef27d1617cee35f562f0463ffcba1fa iv=f0e1d2c3b4a5968e 41:448,8:592,7:48
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 0 40668 919829ac12a51ebd7a52bb37cd681a2f iv=- 44:13158,5:24490,4:2967
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 1 454 e7c37bfd6afac478b8c104957a2e05d5 iv=- 29:136,5:251,4:29
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 2 955 8a9fac02c97a2e2bb321fedafe537d14 iv=- 33:351,4:526,3:38
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 3 750 92c0e8e41e2549ed9f463e31a4546104 iv=- 35:264,5:406,4:36
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 4 2187 7ba0a8f1b276e55a97b049fce025ea39 iv=- 33:810,4:1237,3:100
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 5 790 5e55573fe867be8cc920586aecec9a7e iv=- 35:238,5:468,4:40
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 6 1791 5ffd375a512e9e3993fd9f6b654679dd iv=- 33:677,4:1001,3:73
+av1-av1-1-b8-22-svc-L1T2.ivf:cbcs 7 1144 285855f2cce4bf90240ab1e8c4445899 iv=- 35:454,5:595,4:51
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 0 64241 78b46f602b705e107d9a38c1d44553ce
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 1 1933 b96cd9d7eeddf8034ef2774148e06f0f
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 2 14120 90039a361fbe7a5ee43994afef0da0e5
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 3 2142 8b88c82365aa1ba11720afb2666cae68
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 4 15667 ef0a46a4a91f77f21397a0e67cdeb240
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 5 2552 aeafe0109f3deb02b7c2adf56dce3a79
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 6 15663 199d343c46a21960218d3e3a745c4570
+av1-av1-1-b8-22-svc-L2T2-2.ivf:clear 7 3445 8c3f60670b8c3530b260b7c65d8f190e
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 0 64241 f474af950d780780d3aca13ed02f0c7d iv=f0e1d2c3b4a59687 57:13152,15:24480,11:2960,46:3008,15:14416,11:5968,6:96
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 1 1933 945b8b8c5470c75bf61dc55f2583c119 iv=f0e1d2c3b4a59688 48:176,14:368,5:32,48:336,15:368,12:496,15:0
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 2 14120 3e2eae7882a41e1c74f53c6a6b24e97a iv=f0e1d2c3b4a59689 35:512,15:768,16:48,48:3856,6:4592,21:4048,11:144
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 3 2142 a76869d4c6496e0b01162739323732a8 iv=f0e1d2c3b4a5968a 47:272,15:464,10:32,48:400,14:400,20:400,4:16
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 4 15667 86fb85f0785b598602407f6cf42287de iv=f0e1d2c3b4a5968b 42:1648,18:1920,6:192,46:3872,9:4032,13:3728,13:128
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 5 2552 3905dc4e77146eba312edb05e8ab4e8c iv=f0e1d2c3b4a5968c 36:288,15:560,16:32,39:464,8:544,20:512,2:16
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 6 15663 ad457ba9aec558851229d26a0c40c969 iv=f0e1d2c3b4a5968d 46:832,14:1200,4:80,47:4464,6:4640,23:4160,3:144
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cenc 7 3445 28b965196dd328b6257e606631ee5d70 iv=f0e1d2c3b4a5968e 41:544,15:720,6:64,54:640,6:688,11:640,0:16
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 0 64241 2e38a1fd3a8c1763a2d9be0b9d1bc78a iv=- 51:13158,5:24490,4:2967,41:3013,0:14431,9:5970,0:102
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 1 1933 660ce3180f7dbdeadef27ece96a36266 iv=- 35:189,5:377,4:33,39:345,0:383,9:499,0:15
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 2 14120 088bf8c29fee9f2f6321fb79c4e03812 iv=- 33:514,4:779,3:61,39:3865,0:4598,9:4060,0:155
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 3 2142 4927573746711995e426f42632ad3051 iv=- 35:284,5:474,4:38,39:409,0:414,9:411,0:20
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 4 15667 f6add09eb15d42e402f0db75fc249291 iv=- 33:1657,4:1934,4:194,39:3879,0:4041,9:3732,0:141
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 5 2552 9a6c88eb93361fb63692cd0c7c4c9c22 iv=- 35:289,5:570,4:44,39:464,0:552,9:523,0:18
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 6 15663 3402089c29259d279bc2bc0c8bbcbbff iv=- 33:845,4:1210,3:81,39:4472,0:4646,9:4174,0:147
+av1-av1-1-b8-22-svc-L2T2-2.ivf:cbcs 7 3445 da3ee9f2a34a310768748b3cb607275e iv=- 35:550,5:730,4:66,39:655,0:694,9:642,0:16
+av1-av1-1-b8-23-film_grain-50.ivf:clear 0 15292 491ba4429e11980c3d7c7e015e970c0f
+av1-av1-1-b8-23-film_grain-50.ivf:clear 1 8255 6e5623720ba35c55aef3ac8670f2ff6c
+av1-av1-1-b8-23-film_grain-50.ivf:clear 2 3 1712a2ea930e5d940107a68f2d6330eb
+av1-av1-1-b8-23-film_grain-50.ivf:clear 3 1036 15d2a40a08747cf59b3d91be4556053c
+av1-av1-1-b8-23-film_grain-50.ivf:clear 4 3 01280f5c5d241d7616f8713db19a4c9e
+av1-av1-1-b8-23-film_grain-50.ivf:clear 5 2432 1e04ce58dd0cb63acc817de089f86087
+av1-av1-1-b8-23-film_grain-50.ivf:clear 6 3 185d63e0436583b84943c2cef48d2cbe
+av1-av1-1-b8-23-film_grain-50.ivf:clear 7 631 cbb7d5ffd8b44aae1821e4fc672e304b
+av1-av1-1-b8-23-film_grain-50.ivf:clear 8 222 7da2704fd4ab2749039831f51724ffd4
+av1-av1-1-b8-23-film_grain-50.ivf:clear 9 585 a5844c013f0abb1f15fe1cf38674256f
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 0 15292 497622a4888ed494a7ed728443a924be iv=f0e1d2c3b4a59687 172:15120
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 1 8255 a8a6a5935ac981592658b833a50f2905 iv=f0e1d2c3b4a59688 39:3664,153:1968,163:1312,156:800
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 2 3 1712a2ea930e5d940107a68f2d6330eb iv=f0e1d2c3b4a59689 3:0
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 3 1036 8559662098c8cebd62262074d8c9d471 iv=f0e1d2c3b4a5968a 156:880
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 4 3 01280f5c5d241d7616f8713db19a4c9e iv=f0e1d2c3b4a5968b 3:0
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 5 2432 92b2fa452d083c4661e651acacef34af iv=f0e1d2c3b4a5968c 166:1296,154:816
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 6 3 185d63e0436583b84943c2cef48d2cbe iv=f0e1d2c3b4a5968d 3:0
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 7 631 014149939f3abd931c7469935d55ec1d iv=f0e1d2c3b4a5968e 151:480
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 8 222 5255130577165c35185a768d9dc9a7cb iv=f0e1d2c3b4a5968f 158:64
+av1-av1-1-b8-23-film_grain-50.ivf:cenc 9 585 1dd64a80e6568cca2b12d6c364a25e2d iv=f0e1d2c3b4a59690 153:432
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 0 15292 d54d4b5c3bac77c469f78bb0159169d2 iv=- 159:15133
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 1 8255 08293431f636d8235c87157551f7f698 iv=- 33:3670,151:1970,152:1323,144:812
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 2 3 1712a2ea930e5d940107a68f2d6330eb iv=- 3:0
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 3 1036 0cdd8143f12b541ab7007673dd9e6f34 iv=- 150:886
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 4 3 01280f5c5d241d7616f8713db19a4c9e iv=- 3:0
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 5 2432 d2b5dea32cfe8d46cb62b96f934f0267 iv=- 152:1310,146:824
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 6 3 185d63e0436583b84943c2cef48d2cbe iv=- 3:0
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 7 631 b50bc65d67540512bbcb478f026ecc56 iv=- 144:487
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 8 222 0321f62eb9b25d09a355a2cc697cb4fd iv=- 147:75
+av1-av1-1-b8-23-film_grain-50.ivf:cbcs 9 585 447d7df4392f770823f34f17f77b3b97 iv=- 144:441
+av1-av1-1-b8-24-monochrome.ivf:clear 0 9309 ae07bc8c37d9dcf0ba3062bfb2a7cba9
+av1-av1-1-b8-24-monochrome.ivf:clear 1 335 563b93f5f0387bd905bcad218f273f11
+av1-av1-1-b8-24-monochrome.ivf:clear 2 3 cecb8b8d27be94b445cfc2714a60b04e
+av1-av1-1-b8-24-monochrome.ivf:clear 3 33 b29140687cafb64ea1330b3b56ac4869
+av1-av1-1-b8-24-monochrome.ivf:clear 4 3 185d63e0436583b84943c2cef48d2cbe
+av1-av1-1-b8-24-monochrome.ivf:clear 5 68 9b0476fb4ecbe7525c70bf859638ae30
+av1-av1-1-b8-24-monochrome.ivf:clear 6 3 f2776d79af226516c2548298ccf24faf
+av1-av1-1-b8-24-monochrome.ivf:clear 7 28 3abf85e94c7f621d913c8f675b36b33e
+av1-av1-1-b8-24-monochrome.ivf:clear 8 3 065f59f831b680b4cb51b77029ea6a3b
+av1-av1-1-b8-24-monochrome.ivf:clear 9 43 72e3118f17b4cc58b5d665d61348d984
+av1-av1-1-b8-24-monochrome.ivf:cenc 0 9309 98db4113f90c21afd6285775f6dc27e2 iv=f0e1d2c3b4a59687 29:9280
+av1-av1-1-b8-24-monochrome.ivf:cenc 1 335 c9d684e75d964f5b6191a61ac2220fcc iv=f0e1d2c3b4a59688 17:192,48:32,30:16
+av1-av1-1-b8-24-monochrome.ivf:cenc 2 3 cecb8b8d27be94b445cfc2714a60b04e iv=f0e1d2c3b4a59689 3:0
+av1-av1-1-b8-24-monochrome.ivf:cenc 3 33 683b225bd1156876aba963114bbe9078 iv=f0e1d2c3b4a5968a 17:16
+av1-av1-1-b8-24-monochrome.ivf:cenc 4 3 185d63e0436583b84943c2cef48d2cbe iv=f0e1d2c3b4a5968b 3:0
+av1-av1-1-b8-24-monochrome.ivf:cenc 5 68 fac59e63d529151bf2dd35ccab145e19 iv=f0e1d2c3b4a5968c 27:16,25:0
+av1-av1-1-b8-24-monochrome.ivf:cenc 6 3 f2776d79af226516c2548298ccf24faf iv=f0e1d2c3b4a5968d 3:0
+av1-av1-1-b8-24-monochrome.ivf:cenc 7 28 3abf85e94c7f621d913c8f675b36b33e iv=f0e1d2c3b4a5968e 28:0
+av1-av1-1-b8-24-monochrome.ivf:cenc 8 3 065f59f831b680b4cb51b77029ea6a3b iv=f0e1d2c3b4a5968f 3:0
+av1-av1-1-b8-24-monochrome.ivf:cenc 9 43 e31cc412e44f2f488769c26c47a875cf iv=f0e1d2c3b4a59690 27:16
+av1-av1-1-b8-24-monochrome.ivf:cbcs 0 9309 34061dd5d7b7e701f847b44132e6aacd iv=- 23:9286
+av1-av1-1-b8-24-monochrome.ivf:cbcs 1 335 d1556e0a9e1f7a0788e070c34b7f64b2 iv=- 17:192,16:7,16:41,16:30
+av1-av1-1-b8-24-monochrome.ivf:cbcs 2 3 cecb8b8d27be94b445cfc2714a60b04e iv=- 3:0
+av1-av1-1-b8-24-monochrome.ivf:cbcs 3 33 c3151029386568e205a3f6945cc884d5 iv=- 16:17
+av1-av1-1-b8-24-monochrome.ivf:cbcs 4 3 185d63e0436583b84943c2cef48d2cbe iv=- 3:0
+av1-av1-1-b8-24-monochrome.ivf:cbcs 5 68 765f9701e45afbf19fe17449343fc1a9 iv=- 16:27,16:9
+av1-av1-1-b8-24-monochrome.ivf:cbcs 6 3 f2776d79af226516c2548298ccf24faf iv=- 3:0
+av1-av1-1-b8-24-monochrome.ivf:cbcs 7 28 3abf85e94c7f621d913c8f675b36b33e iv=- 16:12
+av1-av1-1-b8-24-monochrome.ivf:cbcs 8 3 065f59f831b680b4cb51b77029ea6a3b iv=- 3:0
+av1-av1-1-b8-24-monochrome.ivf:cbcs 9 43 2160d452fc0e11516542cf7ab688cca5 iv=- 16:27
+av1-av1-1-b10-00-quantizer-00.ivf:clear 0 222784 f0639efb412fa84d85ff555fe0c04b49
+av1-av1-1-b10-00-quantizer-00.ivf:clear 1 193953 1e0498cb9bc0b28a9d70b66b2019dfc5
+av1-av1-1-b10-00-quantizer-00.ivf:cenc 0 222784 86f063bbc6b5949f77443a2645c10d8c iv=f0e1d2c3b4a59687 32:222752
+av1-av1-1-b10-00-quantizer-00.ivf:cenc 1 193953 96ff8e6f5e7a04645f00ecac993ca556 iv=f0e1d2c3b4a59688 17:193936
+av1-av1-1-b10-00-quantizer-00.ivf:cbcs 0 222784 6c3e7f9f47b33ff2ef3f372284d0ef53 iv=- 22:222762
+av1-av1-1-b10-00-quantizer-00.ivf:cbcs 1 193953 691d10e57aafe2f955d295a5c70d1047 iv=- 14:193939
+av1-av1-1-b10-24-monochrome.ivf:clear 0 15455 42c0f74c539492f8466b44f0b14bcd67
+av1-av1-1-b10-24-monochrome.ivf:clear 1 262 37ed793ebf98e04dbe1c7a123159e6f7
+av1-av1-1-b10-24-monochrome.ivf:clear 2 3 cecb8b8d27be94b445cfc2714a60b04e
+av1-av1-1-b10-24-monochrome.ivf:clear 3 23 959dd0dec3401ad0f3f65105b860bd67
+av1-av1-1-b10-24-monochrome.ivf:clear 4 3 185d63e0436583b84943c2cef48d2cbe
+av1-av1-1-b10-24-monochrome.ivf:clear 5 47 747d010c580b31bfe7145c8a353230b0
+av1-av1-1-b10-24-monochrome.ivf:clear 6 3 f2776d79af226516c2548298ccf24faf
+av1-av1-1-b10-24-monochrome.ivf:clear 7 21 d13492b083191d192e10b002de73d9e9
+av1-av1-1-b10-24-monochrome.ivf:clear 8 3 065f59f831b680b4cb51b77029ea6a3b
+av1-av1-1-b10-24-monochrome.ivf:clear 9 52 3dd10597aebafbab43e99f9784b364ed
+av1-av1-1-b10-24-monochrome.ivf:cenc 0 15455 c7b2701b9611fe9d6301aed82b7e4103 iv=f0e1d2c3b4a59687 31:15424
+av1-av1-1-b10-24-monochrome.ivf:cenc 1 262 52e538e938232feb26dbf077d458971c iv=f0e1d2c3b4a59688 21:96,19:16,23:32,23:32
+av1-av1-1-b10-24-monochrome.ivf:cenc 2 3 cecb8b8d27be94b445cfc2714a60b04e iv=f0e1d2c3b4a59689 3:0
+av1-av1-1-b10-24-monochrome.ivf:cenc 3 23 959dd0dec3401ad0f3f65105b860bd67 iv=f0e1d2c3b4a5968a 23:0
+av1-av1-1-b10-24-monochrome.ivf:cenc 4 3 185d63e0436583b84943c2cef48d2cbe iv=f0e1d2c3b4a5968b 3:0
+av1-av1-1-b10-24-monochrome.ivf:cenc 5 47 747d010c580b31bfe7145c8a353230b0 iv=f0e1d2c3b4a5968c 47:0
+av1-av1-1-b10-24-monochrome.ivf:cenc 6 3 f2776d79af226516c2548298ccf24faf iv=f0e1d2c3b4a5968d 3:0
+av1-av1-1-b10-24-monochrome.ivf:cenc 7 21 d13492b083191d192e10b002de73d9e9 iv=f0e1d2c3b4a5968e 21:0
+av1-av1-1-b10-24-monochrome.ivf:cenc 8 3 065f59f831b680b4cb51b77029ea6a3b iv=f0e1d2c3b4a5968f 3:0
+av1-av1-1-b10-24-monochrome.ivf:cenc 9 52 0f533ccb242df593af9852bfea171260 iv=f0e1d2c3b4a59690 20:32
+av1-av1-1-b10-24-monochrome.ivf:cbcs 0 15455 7d8a6b1d6be573f1f887d5edb5aaa7e0 iv=- 23:15432
+av1-av1-1-b10-24-monochrome.ivf:cbcs 1 262 6f664bac66504cab7d85a751537a8eec iv=- 16:101,16:19,16:39,16:39
+av1-av1-1-b10-24-monochrome.ivf:cbcs 2 3 cecb8b8d27be94b445cfc2714a60b04e iv=- 3:0
+av1-av1-1-b10-24-monochrome.ivf:cbcs 3 23 959dd0dec3401ad0f3f65105b860bd67 iv=- 16:7
+av1-av1-1-b10-24-monochrome.ivf:cbcs 4 3 185d63e0436583b84943c2cef48d2cbe iv=- 3:0
+av1-av1-1-b10-24-monochrome.ivf:cbcs 5 47 747d010c580b31bfe7145c8a353230b0 iv=- 16:10,16:5
+av1-av1-1-b10-24-monochrome.ivf:cbcs 6 3 f2776d79af226516c2548298ccf24faf iv=- 3:0
+av1-av1-1-b10-24-monochrome.ivf:cbcs 7 21 d13492b083191d192e10b002de73d9e9 iv=- 16:5
+av1-av1-1-b10-24-monochrome.ivf:cbcs 8 3 065f59f831b680b4cb51b77029ea6a3b iv=- 3:0
+av1-av1-1-b10-24-monochrome.ivf:cbcs 9 52 c7393969d47b36e2aaa51c09b5eaadb7 iv=- 16:36

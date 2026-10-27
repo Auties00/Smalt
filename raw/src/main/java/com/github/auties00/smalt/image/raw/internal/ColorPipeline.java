@@ -5,16 +5,18 @@ import com.github.auties00.smalt.image.raw.RawDecoderOptions;
 import com.github.auties00.smalt.image.raw.RawHighlights;
 import com.github.auties00.smalt.image.raw.RawToneCurve;
 
+import java.util.List;
+
 /**
  * Turns demosaiced camera values into output pixels: white balance, highlight treatment, the
  * camera to output color matrix, the DNG profile tables, exposure, tone curve and the output
  * color space's transfer function.
  *
  * <p>The steps follow the DNG rendering model: white-balanced camera values are mapped to linear
- * ProPhoto RGB (D50), where the hue, saturation and value map, the exposure, the look table and
- * the tone curve apply, then to the output primaries, clipped to the gamut and encoded. When none
- * of the profile steps applies, the matrices fold into one, which {@link ColorKernel} applies to
- * whole rows.
+ * ProPhoto RGB (D50), where the hue, saturation and value map, the exposure, the gain table map,
+ * the automatic black subtraction, the look table, the tone curve and the masked color tables
+ * apply, then to the output primaries, clipped to the gamut and encoded. When none of the profile
+ * steps applies, the matrices fold into one, which {@link ColorKernel} applies to whole rows.
  *
  * @implNote This implementation's default tone curve, used when the file has no
  * {@code ProfileToneCurve}, is the rational approximation of a filmic curve published by
@@ -101,6 +103,43 @@ final class ColorPipeline {
     final boolean monochrome;
 
     /**
+     * Whether the values arrive white balanced and with their highlights treated, as the
+     * projection of a four-color image leaves them: {@link #balance} then only clips them under
+     * {@link RawHighlights#CLIP}.
+     */
+    private final boolean prebalanced;
+
+    /**
+     * The gain table map, or {@code null}.
+     */
+    private final GainTableMap gainMap;
+
+    /**
+     * The masked color tables, or {@code null}.
+     */
+    private final RgbTables rgbTables;
+
+    /**
+     * The semantic mask of each of {@link #rgbTables}, or {@code null} entries.
+     */
+    private final SemanticMask[] tableMasks;
+
+    /**
+     * The decoded values of each of {@link #tableMasks}, or {@code null} entries.
+     */
+    private final float[][] maskValues;
+
+    /**
+     * Whether an automatic black point is subtracted.
+     */
+    final boolean autoBlack;
+
+    /**
+     * The automatic black point, in linear ProPhoto RGB after exposure; 0 until measured.
+     */
+    private float black;
+
+    /**
      * Builds the pipeline of a file for a rendering.
      *
      * @param color the camera color mapping
@@ -109,12 +148,30 @@ final class ColorPipeline {
      * @param monochrome whether the image has a single channel
      */
     ColorPipeline(CameraColor color, ColorCalibration calibration, RawDecoderOptions options, boolean monochrome) {
+        this(color, calibration, options, monochrome, false, List.of());
+    }
+
+    /**
+     * Builds the pipeline of a file for a rendering.
+     *
+     * @param color the camera color mapping
+     * @param calibration the color description the rendering uses
+     * @param options the rendering options
+     * @param monochrome whether the image has a single channel
+     * @param prebalanced whether the values arrive white balanced, as a four-color projection
+     * leaves them
+     * @param masks the semantic masks of the file, which the masked color tables refer to
+     */
+    ColorPipeline(CameraColor color, ColorCalibration calibration, RawDecoderOptions options, boolean monochrome,
+                  boolean prebalanced, List<SemanticMask> masks) {
         this.monochrome = monochrome;
+        this.prebalanced = prebalanced;
+        var limits = options.limits();
         this.space = options.colorSpace();
         this.highlights = options.highlights();
         var standard = options.toneCurve() == RawToneCurve.STANDARD;
         var stops = options.exposure() + (standard ? calibration.baselineExposure : 0);
-        this.gain = (float) Math.pow(2, Math.clamp(stops, -16, 16));
+        this.gain = (float) StrictMath.pow(2, Math.clamp(stops, -16, 16));
         var minimum = Double.MAX_VALUE;
         var maximum = 0.0;
         for (var index = 0; index < 3; index++) {
@@ -136,8 +193,23 @@ final class ColorPipeline {
         }
         look = standard && calibration.lookDims != null
                 ? new HueSatTable(calibration.lookDims, calibration.lookTable, calibration.lookSrgb) : null;
+        if (hueSat != null) {
+            ColorKernels.HUE_SAT.prepare(hueSat);
+        }
+        if (look != null) {
+            ColorKernels.HUE_SAT.prepare(look);
+        }
         tone = standard ? toneTable(calibration.toneCurve) : null;
-        profiled = !monochrome && (hueSat != null || look != null || tone != null);
+        gainMap = standard && !monochrome ? calibration.gainTableMap : null;
+        rgbTables = standard && !monochrome ? calibration.rgbTables : null;
+        tableMasks = rgbTables != null ? rgbTables.match(masks, limits) : null;
+        maskValues = tableMasks != null ? new float[tableMasks.length][] : null;
+        for (var index = 0; tableMasks != null && index < tableMasks.length; index++) {
+            maskValues[index] = tableMasks[index] != null ? tableMasks[index].values(limits) : null;
+        }
+        autoBlack = standard && !monochrome && options.autoBlack() && calibration.blackRender == 0;
+        profiled = !monochrome && (hueSat != null || look != null || tone != null || gainMap != null
+                || rgbTables != null || autoBlack);
         var folded = ColorMath.multiply(proPhotoToOutput, balancedToProPhoto);
         for (var index = 0; index < 9; index++) {
             folded[index] *= gain;
@@ -230,6 +302,16 @@ final class ColorPipeline {
      * @param count the number of pixels
      */
     void balance(float[] r, float[] g, float[] b, int count) {
+        if (prebalanced) {
+            if (highlights == RawHighlights.CLIP) {
+                for (var index = 0; index < count; index++) {
+                    r[index] = Math.min(r[index], 1f);
+                    g[index] = Math.min(g[index], 1f);
+                    b[index] = Math.min(b[index], 1f);
+                }
+            }
+            return;
+        }
         var mr = multipliers[0];
         var mg = multipliers[1];
         var mb = multipliers[2];
@@ -263,15 +345,87 @@ final class ColorPipeline {
     }
 
     /**
-     * Applies the profile steps to a row of white-balanced values, producing linear output values,
+     * Sets the automatic black point.
+     *
+     * @param black the luminance subtracted, in linear ProPhoto RGB after exposure, from 0 to 0.02
+     */
+    void black(float black) {
+        this.black = black;
+    }
+
+    /**
+     * Returns the luminance of a white-balanced camera value after exposure, as the automatic black
+     * point is measured.
+     *
+     * @param r the white-balanced red
+     * @param g the white-balanced green
+     * @param b the white-balanced blue
+     * @return the luminance in linear ProPhoto RGB
+     */
+    float luminance(float r, float g, float b) {
+        var p = toProPhoto;
+        // the luminance row of ProPhoto RGB
+        var red = p[0] * r + p[1] * g + p[2] * b;
+        var green = p[3] * r + p[4] * g + p[5] * b;
+        var blue = p[6] * r + p[7] * g + p[8] * b;
+        return gain * (0.2880402f * red + 0.7118741f * green + 0.0000857f * blue);
+    }
+
+    /**
+     * Scratch arrays for {@link #profile}, one set per thread.
+     */
+    static final class Scratch {
+        /**
+         * The gain tables of a row, or {@code null} without a gain table map.
+         */
+        final float[] gainTables;
+
+        /**
+         * The scratch arrays of the masked color tables, or {@code null} without them.
+         */
+        final RgbTables.Scratch tables;
+
+        /**
+         * Constructs the arrays.
+         *
+         * @param gainTables the gain tables of a row, or {@code null}
+         * @param tables the scratch arrays of the masked color tables, or {@code null}
+         */
+        Scratch(float[] gainTables, RgbTables.Scratch tables) {
+            this.gainTables = gainTables;
+            this.tables = tables;
+        }
+    }
+
+    /**
+     * Returns the scratch arrays {@link #profile} works in.
+     *
+     * @return new scratch arrays
+     */
+    Scratch scratch() {
+        return new Scratch(gainMap != null ? new float[gainMap.pointsH * gainMap.pointsN] : null,
+                rgbTables != null ? rgbTables.scratch() : null);
+    }
+
+    /**
+     * Applies the profile steps to a tile of white-balanced values, producing linear output values,
      * in place. Only used when {@link #profiled} is {@code true}.
      *
-     * @param r the red values
+     * @param r the red values, row by row
      * @param g the green values
      * @param b the blue values
-     * @param count the number of pixels
+     * @param columns the pixels of each row
+     * @param rows the number of rows
+     * @param u the horizontal position of the first pixel's center, relative to the main image's
+     * active area
+     * @param du the horizontal distance between pixels, relative to the active area
+     * @param v the vertical position of the first row's center, relative to the active area
+     * @param dv the vertical distance between rows, relative to the active area
+     * @param scratch the scratch arrays, from {@link #scratch()}
      */
-    void profile(float[] r, float[] g, float[] b, int count) {
+    void profile(float[] r, float[] g, float[] b, int columns, int rows, double u, double du, double v, double dv,
+                 Scratch scratch) {
+        var count = columns * rows;
         var p = toProPhoto;
         for (var index = 0; index < count; index++) {
             var red = r[index];
@@ -289,6 +443,22 @@ final class ColorPipeline {
             g[index] *= gain;
             b[index] *= gain;
         }
+        if (gainMap != null) {
+            for (var row = 0; row < rows; row++) {
+                gainMap.apply(r, g, b, row * columns, columns, u, du, v + row * dv, scratch.gainTables);
+            }
+        }
+        if (autoBlack && black > 0) {
+            var level = black;
+            var scale = 1 / (1 - level);
+            var knee = 2 * level;
+            var toe = scale / (4 * level);
+            for (var index = 0; index < count; index++) {
+                r[index] = ramp(r[index], level, knee, scale, toe);
+                g[index] = ramp(g[index], level, knee, scale, toe);
+                b[index] = ramp(b[index], level, knee, scale, toe);
+            }
+        }
         if (look != null) {
             ColorKernels.HUE_SAT.apply(look, r, g, b, count);
         }
@@ -297,6 +467,12 @@ final class ColorPipeline {
                 r[index] = tone(r[index]);
                 g[index] = tone(g[index]);
                 b[index] = tone(b[index]);
+            }
+        }
+        if (rgbTables != null) {
+            for (var row = 0; row < rows; row++) {
+                rgbTables.apply(r, g, b, row * columns, columns, u, du, v + row * dv, tableMasks, maskValues,
+                        scratch.tables);
             }
         }
         var o = fromProPhoto;
@@ -308,6 +484,24 @@ final class ColorPipeline {
             g[index] = o[3] * red + o[4] * green + o[5] * blue;
             b[index] = o[6] * red + o[7] * green + o[8] * blue;
         }
+    }
+
+    /**
+     * Subtracts the black point from a value: linearly above twice the black point, along a
+     * parabola that meets the line with the same slope below it, so that 0 stays 0.
+     *
+     * @param x the value
+     * @param level the black point
+     * @param knee twice the black point
+     * @param scale the slope of the line, the reciprocal of one minus the black point
+     * @param toe the parabola's coefficient, {@code scale / (4 * level)}
+     * @return the value with the black point subtracted
+     */
+    private static float ramp(float x, float level, float knee, float scale, float toe) {
+        if (x >= knee) {
+            return (x - level) * scale;
+        }
+        return x > 0 ? x * x * toe : 0;
     }
 
     /**
