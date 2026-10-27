@@ -117,11 +117,37 @@ class OpusHeadTest {
     }
 
     @Test
-    @DisplayName("rejects the projection family 3 as unsupported")
+    @DisplayName("reads the demixing matrix of family 3 and writes it back unchanged")
     void family3() {
-        var error = assertThrows(MediaException.Unsupported.class, () -> OpusHead.parse(head(4, 0, 0, 3, 2, 2, 0, 1, 2, 3),
-                MediaLimits.DEFAULT));
-        assertTrue(error.format().contains("family 3"));
+        // Three output channels from two streams, one coupled: a 3 x 3 matrix, column-major Q15 little-endian.
+        short[] matrix = {32767, 0, -16384, 0, 23170, 16384, -1, -32768, 255};
+        var table = new int[2 * matrix.length];
+        for (var i = 0; i < matrix.length; i++) {
+            table[2 * i] = matrix[i] & 0xFF;
+            table[2 * i + 1] = (matrix[i] >> 8) & 0xFF;
+        }
+        var bytes = head(3, 312, 3050, 3, 2, 1, table);
+        var parsed = OpusHead.parse(bytes, MediaLimits.DEFAULT);
+        assertEquals(3, parsed.mappingFamily());
+        assertEquals(3050, parsed.outputGain());
+        assertEquals(3, parsed.decodedChannels());
+        assertArrayEquals(matrix, parsed.demixing());
+        assertArrayEquals(new int[0], parsed.mapping());
+        assertTrue(parsed.ambisonic());
+        assertEquals(Speaker.UNKNOWN, parsed.layout().speakers().get(0));
+        assertArrayEquals(bytes, parsed.toBytes());
+        parsed.demixing()[0] = 5;
+        assertEquals(32767, parsed.demixing()[0]);
+        // More output channels than decoded channels is valid: the matrix has 4 rows and 2 columns.
+        var wide = OpusHead.parse(head(4, 0, 0, 3, 2, 0, new int[16]), MediaLimits.DEFAULT);
+        assertEquals(8, wide.demixing().length);
+        var truncated = java.util.Arrays.copyOf(bytes, bytes.length - 1);
+        assertThrows(MediaException.Malformed.class, () -> OpusHead.parse(truncated, MediaLimits.DEFAULT));
+        assertThrows(MediaException.Malformed.class, () -> OpusHead.parse(head(2, 0, 0, 3, 0, 0), MediaLimits.DEFAULT));
+        assertThrows(MediaException.Malformed.class,
+                () -> OpusHead.parse(head(2, 0, 0, 3, 1, 2, new int[12]), MediaLimits.DEFAULT));
+        assertThrows(MediaException.Malformed.class,
+                () -> OpusHead.parse(java.util.Arrays.copyOf(bytes, 20), MediaLimits.DEFAULT));
     }
 
     @ParameterizedTest(name = "{0}")
