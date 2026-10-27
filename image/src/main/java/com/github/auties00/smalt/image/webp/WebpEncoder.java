@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.webp;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.image.ChannelPicture;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.RgbaPicture;
@@ -15,10 +16,12 @@ import com.github.auties00.smalt.image.webp.internal.color.YuvConverter;
 import com.github.auties00.smalt.image.webp.internal.riff.FourCc;
 import com.github.auties00.smalt.image.webp.internal.riff.WebpParser;
 import com.github.auties00.smalt.image.webp.internal.riff.WebpWriter;
+import com.github.auties00.smalt.internal.color.YcgcoR;
 import com.github.auties00.smalt.internal.limits.Guards;
 import com.github.auties00.smalt.internal.plane.PictureCopy;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.io.MediaSink;
+import com.github.auties00.smalt.video.vp8.internal.Vp8KeyFrameSettings;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -28,17 +31,28 @@ import java.util.concurrent.Callable;
 /**
  * Encodes still WebP images.
  *
- * <p>Lossless mode codes the exact RGBA pixels as VP8L. Lossy mode converts RGBA to
- * limited-range BT.601 4:2:0 (averaging chroma alpha-weighted in a gamma-linear domain), codes it
- * as VP8, and codes any transparency as a separate alpha plane. The simple container (a single
+ * <p>Lossless mode codes the RGBA pixels as VP8L: every pixel decodes to its exact value, except that
+ * the color of a fully transparent pixel is kept only with {@link WebpEncoderOptions#exact()} and
+ * that a {@linkplain WebpEncoderOptions#nearLossless() near-lossless level} below 100 bounds the
+ * change of every channel instead. Lossy mode converts RGBA to limited-range BT.601 4:2:0
+ * (averaging chroma alpha-weighted in a gamma-linear domain, or with the
+ * {@linkplain WebpEncoderOptions#sharpYuv() sharp conversion} or
+ * {@linkplain WebpEncoderOptions#dithering() dithering} the options select), codes it as VP8, and
+ * codes any transparency as a separate alpha plane. The simple container (a single
  * {@code VP8 } or {@code VP8L} chunk) is written unless the options ask for the extended one, a
  * lossy image has transparency, which needs {@code VP8X} and {@code ALPH}, or the options embed a
- * color profile, which needs {@code VP8X} and {@code ICCP}.
+ * color profile, which needs {@code VP8X} and {@code ICCP}, or EXIF or XMP metadata, which need {@code VP8X}
+ * and an {@code EXIF} or {@code XMP } chunk after the image data.
  *
  * <p>With a target size, lossy encoding first tries the requested quality and, when the file is
  * too large, bisects the quality down to 0 and returns the best-quality result that fits, color
- * profile included; when not even quality 0 fits, it returns the smallest file it produced and
- * the caller decides. Lossless encoding ignores the target size.
+ * profile and metadata included; when not even quality 0 fits, it returns the smallest file it produced and
+ * the caller decides. Lossless encoding ignores the target size. With a
+ * {@linkplain WebpEncoderOptions#targetPsnr() target PSNR} the quality is searched inside the VP8
+ * encoder, over its entropy-analysis passes, instead.
+ *
+ * <p>Without a target size and with one token partition, files are byte-identical to those of
+ * libwebp 1.6.0's {@code cwebp} for the same pixels and equivalent settings.
  *
  * <p>Lossy encoding runs independent work in parallel on the shared threads
  * {@link com.github.auties00.smalt.MediaRuntime MediaRuntime} describes: the alpha plane beside
@@ -68,8 +82,7 @@ public final class WebpEncoder {
      *
      * @param picture the picture, at most 16383 pixels per side
      * @return the WebP file
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B', or the image is lossy and no VP8 encoder is available
+     * @throws MediaException.Unsupported if the image is lossy and no VP8 encoder is available
      * @throws MediaException.LimitExceeded if a side exceeds 16383 pixels, encoding runs out of
      * memory, or the file would exceed the RIFF size limit
      * @see #encode(Picture, WebpEncoderOptions)
@@ -86,8 +99,7 @@ public final class WebpEncoder {
      * @param picture the picture, at most 16383 pixels per side
      * @param options the encoder settings
      * @param sink the output, written from its position and not closed
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B', or the image is lossy and no VP8 encoder is available
+     * @throws MediaException.Unsupported if the image is lossy and no VP8 encoder is available
      * @throws MediaException.LimitExceeded if a side exceeds 16383 pixels, encoding runs out of
      * memory, or the file would exceed the RIFF size limit
      * @throws MediaException.Io if writing the sink fails
@@ -105,13 +117,15 @@ public final class WebpEncoder {
      * representation lossy WebP decodes to, is coded as it is, its alpha plane kept; any other
      * {@link YuvPicture} is first converted with {@link ImageOps#toRgba(Picture)}. A
      * {@link Rgba16Picture} or {@link Yuv16Picture} is first reduced to 8 bits with
-     * {@link ImageOps#toEightBit(Picture)}.
+     * {@link ImageOps#toEightBit(Picture)}, except that a {@link Yuv16Picture} in the YCgCo-Re or
+     * YCgCo-Ro matrix, whose 8-bit samples would keep only 6 or 7 bits of R'G'B', is converted with
+     * {@link ImageOps#toRgba(Picture)}; a {@link ChannelPicture} is first converted with
+     * {@link ImageOps#toRgba(Picture)}.
      *
      * @param picture the picture, at most 16383 pixels per side
      * @param options the encoder settings
      * @return the WebP file
-     * @throws MediaException.Unsupported if a planar picture's color matrix has no conversion to
-     * R'G'B', or the image is lossy and no VP8 encoder is available
+     * @throws MediaException.Unsupported if the image is lossy and no VP8 encoder is available
      * @throws MediaException.LimitExceeded if a side exceeds 16383 pixels, encoding runs out of
      * memory, or the file would exceed the RIFF size limit
      */
@@ -151,12 +165,19 @@ public final class WebpEncoder {
             case Rgba16Picture high -> {
                 return encodeLossless(ImageOps.toEightBit(high), options, icc);
             }
+            case Yuv16Picture high when YcgcoR.applies(high.color().matrix()) -> {
+                return encodeLossless(ImageOps.toRgba(high), options, icc);
+            }
             case Yuv16Picture high -> {
                 return encodeLossless(ImageOps.toEightBit(high), options, icc);
             }
+            case ChannelPicture channels -> {
+                return encodeLossless(ImageOps.toRgba(channels), options, icc);
+            }
         }
-        var image = FrameEncoder.encodeLossless(argb, width, height, options.quality(), options.method(), options.exact());
-        return assemble(image, width, height, options.extendedFormat(), icc);
+        var image = FrameEncoder.encodeLossless(argb, width, height, options.quality(), options.method(), options.exact(),
+                options.nearLossless());
+        return assemble(image, width, height, options, icc);
     }
 
     /**
@@ -181,6 +202,9 @@ public final class WebpEncoder {
             case YuvPicture source when FrameEncoder.isLossyLayout(source) -> prepareLossyYuv(source, options);
             case YuvPicture source -> prepareLossyRgba(ImageOps.toRgba(source), options, limits);
             case Rgba16Picture high -> prepareLossyRgba(ImageOps.toEightBit(high), options, limits);
+            case ChannelPicture channels -> prepareLossyRgba(ImageOps.toRgba(channels), options, limits);
+            case Yuv16Picture high when YcgcoR.applies(high.color().matrix()) ->
+                    prepareLossyRgba(ImageOps.toRgba(high), options, limits);
             case Yuv16Picture high -> {
                 var eight = ImageOps.toEightBit(high);
                 yield FrameEncoder.isLossyLayout(eight) ? prepareLossyYuv(eight, options)
@@ -190,10 +214,10 @@ public final class WebpEncoder {
         var first = ParallelBands.<byte[]>invokeAll(List.of(
                 () -> FrameEncoder.encodeAlpha(yuv, options.alphaQuality(), alphaFilterMode(options.alphaFilter()),
                         options.method()),
-                () -> FrameEncoder.encodeVp8(yuv, options.quality(), options.method(), false)));
+                () -> FrameEncoder.encodeVp8(yuv, vp8Settings(options, options.quality()))));
         var alph = first.get(0);
         var file = assemble(new FrameEncoder.EncodedImage(first.get(1), false, alph, alph != null), width, height,
-                options.extendedFormat(), icc);
+                options, icc);
         var target = options.targetSize().orElse(0);
         if (target <= 0 || file.length <= target) {
             return file;
@@ -272,9 +296,40 @@ public final class WebpEncoder {
      */
     private static byte[] lossyFile(YuvPicture yuv, byte[] alph, float quality, WebpEncoderOptions options,
                                     byte[] icc) {
-        var vp8 = FrameEncoder.encodeVp8(yuv, quality, options.method(), false);
+        var vp8 = FrameEncoder.encodeVp8(yuv, vp8Settings(options, quality));
         var image = new FrameEncoder.EncodedImage(vp8, false, alph, alph != null);
-        return assemble(image, yuv.width(), yuv.height(), options.extendedFormat(), icc);
+        return assemble(image, yuv.width(), yuv.height(), options, icc);
+    }
+
+    /**
+     * Returns the VP8 coding settings of the options at a quality.
+     *
+     * @param options the settings
+     * @param quality the VP8 quality, from 0 to 100
+     * @return the VP8 settings
+     */
+    private static Vp8KeyFrameSettings vp8Settings(WebpEncoderOptions options, float quality) {
+        var target = options.targetPsnr();
+        var passes = options.passes().orElse(target.isPresent() ? 6 : 1);
+        return new Vp8KeyFrameSettings(quality, options.method(), options.segments(), options.filterStrength(),
+                options.filterSharpness(), options.tokenPartitions(), options.snsStrength(), options.simpleFilter(),
+                options.autoFilter(), passes, (float) target.orElse(0));
+    }
+
+    /**
+     * Returns the dithering amplitude of the RGB to Y'CbCr conversion: from 1 at quality 0 down to
+     * 0.5 at quality 100 when the options ask for dithering, otherwise 0.
+     *
+     * @param options the settings
+     * @return the amplitude, from 0 to 1
+     */
+    private static float ditheringAmplitude(WebpEncoderOptions options) {
+        if (!options.dithering()) {
+            return 0;
+        }
+        var x = options.quality() / 100f;
+        var x2 = x * x;
+        return 1.0f + (0.5f - 1.0f) * x2 * x2;
     }
 
     /**
@@ -288,7 +343,7 @@ public final class WebpEncoder {
      */
     private static YuvPicture prepareLossyRgba(RgbaPicture rgba, WebpEncoderOptions options, MediaLimits limits) {
         return FrameEncoder.prepareLossy(rgba.pixels(), rgba.stride(), rgba.width(), rgba.height(), rgba.hasAlpha(),
-                options.exact(), limits);
+                options.exact(), options.sharpYuv(), ditheringAmplitude(options), limits);
     }
 
     /**
@@ -329,20 +384,30 @@ public final class WebpEncoder {
      * @param image the encoded image
      * @param width the image width in pixels
      * @param height the image height in pixels
-     * @param extended whether the extended container is requested
+     * @param options the settings, which ask for the extended container and hold the EXIF and XMP metadata
+     * @param icc the ICC profile, or {@code null}
      * @return the file
      */
-    private static byte[] assemble(FrameEncoder.EncodedImage image, int width, int height, boolean extended,
+    private static byte[] assemble(FrameEncoder.EncodedImage image, int width, int height, WebpEncoderOptions options,
                                    byte[] icc) {
+        var exif = options.exif().orElse(null);
+        var xmp = options.xmp().orElse(null);
         var chunks = new ArrayList<byte[]>();
-        if (extended || image.alph() != null || icc != null) {
-            var flags = (image.hasAlpha() ? WebpParser.FLAG_ALPHA : 0) | (icc != null ? WebpParser.FLAG_ICCP : 0);
+        if (options.extendedFormat() || image.alph() != null || icc != null || exif != null || xmp != null) {
+            var flags = (image.hasAlpha() ? WebpParser.FLAG_ALPHA : 0) | (icc != null ? WebpParser.FLAG_ICCP : 0)
+                    | (exif != null ? WebpParser.FLAG_EXIF : 0) | (xmp != null ? WebpParser.FLAG_XMP : 0);
             chunks.add(WebpWriter.vp8x(flags, width, height));
         }
         if (icc != null) {
             chunks.add(WebpWriter.chunk(FourCc.ICCP, icc));
         }
         chunks.addAll(image.chunks());
+        if (exif != null) {
+            chunks.add(WebpWriter.chunk(FourCc.EXIF, exif));
+        }
+        if (xmp != null) {
+            chunks.add(WebpWriter.chunk(FourCc.XMP, xmp));
+        }
         return WebpWriter.riff(chunks);
     }
 }
