@@ -35,8 +35,9 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Reads the data bursts of an IEC 61937 stream (IEC 61937-1 to -5, -9 and -11) carried in the 16-bit stereo samples
- * of a WAVE {@code data} chunk: AC-3, E-AC-3, MPEG-1 and MPEG-2 audio, MPEG-2 AAC in ADTS framing, MPEG-4 AAC in LOAS
+ * Reads the data bursts of an IEC 61937 stream (IEC 61937-1 to -5, -9 and -11) carried in the 16-bit samples of a
+ * WAVE {@code data} chunk, stereo or the 8 channels of the high bit rate formats, which hold the same sequence of
+ * 16-bit words: AC-3, E-AC-3, MPEG-1 and MPEG-2 audio, MPEG-2 AAC in ADTS framing, MPEG-4 AAC in LOAS
  * framing, DTS (types I to IV, the last carrying DTS-HD frames) and Dolby TrueHD in MAT frames.
  *
  * <p>A burst starts on a 16-bit boundary with the preamble words {@code Pa = 0xF872} and {@code Pb = 0x4E1F}, the

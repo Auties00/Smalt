@@ -294,6 +294,63 @@ public enum Codec {
     PCM_MULAW(TrackKind.AUDIO, "pcm_mulaw"),
 
     /**
+     * IMA ADPCM (the DVI ADPCM of the IMA Digital Audio Focus recommendation) in the block layout of Microsoft's
+     * WAVE format {@code 0x0011}, 4 bits per sample.
+     *
+     * <p>A packet is one block, which decodes on its own: for each channel a four-byte header (the first sample as a
+     * signed 16-bit little-endian integer, the step index from 0 to 88 and a zero byte), then the codes of the other
+     * samples in groups of four bytes, eight samples of one channel each, one group of every channel in turn, the low
+     * nibble of each byte first. A block of {@code B} bytes and {@code C} channels, {@code B - 4C} a multiple of
+     * {@code 4C}, codes {@code 1 + 2 * (B - 4C) / C} samples per channel. The packets of a stream have one size,
+     * except the last, which may be shorter. The track has no configuration.
+     */
+    ADPCM_IMA_WAV(TrackKind.AUDIO, "adpcm_ima_wav"),
+
+    /**
+     * Microsoft ADPCM, WAVE format {@code 0x0002}, 4 bits per sample.
+     *
+     * <p>A packet is one block, which decodes on its own: the predictor index of each channel (one byte), the initial
+     * quantization delta of each channel, the second sample of each channel and the first sample of each channel
+     * (signed 16-bit little-endian integers), then the codes of the other samples, one sample of every channel in
+     * turn, the high nibble of each byte first. A block of {@code B} bytes and {@code C} channels codes
+     * {@code 2 + 2 * (B - 7C) / C} samples per channel. The packets of a stream have one size, except the last,
+     * which may be shorter. The configuration, when present, is what an {@code ADPCMWAVEFORMAT} stores after its
+     * {@code cbSize} field: {@code wSamplesPerBlock}, {@code wNumCoef} and {@code wNumCoef} pairs of predictor
+     * coefficients, as 16-bit little-endian integers; without one, the predictors are the seven standard pairs.
+     */
+    ADPCM_MS(TrackKind.AUDIO, "adpcm_ms"),
+
+    /**
+     * ETSI GSM 06.10 full-rate speech in Microsoft's packing, WAVE format {@code 0x0031}: one channel, usually at
+     * 8 kHz.
+     *
+     * <p>A packet holds one or more 65-byte blocks, each two 20 ms frames of 260 bits (320 samples per block)
+     * packed from the least significant bit of each byte, the second frame starting in the middle of the 33rd byte.
+     * The track has no configuration.
+     */
+    GSM_MS(TrackKind.AUDIO, "gsm_ms"),
+
+    /**
+     * ITU-T G.722 sub-band ADPCM: one channel, at 16 kHz (also where RTP declares a clock rate of 8 kHz).
+     *
+     * <p>A packet is any number of bytes, each coding two samples: the 2-bit code of the higher sub-band in its top
+     * bits and the 6-bit code of the lower sub-band below them (the 64 kbit/s mode; the 56 and 48 kbit/s modes leave
+     * the lowest one or two bits to auxiliary data). The track has no configuration.
+     */
+    ADPCM_G722(TrackKind.AUDIO, "adpcm_g722"),
+
+    /**
+     * ITU-T G.726 ADPCM: one channel, usually at 8 kHz, with codes of 2, 3, 4 or 5 bits (16, 24, 32 and 40 kbit/s
+     * at 8 kHz), the track's {@link AudioTrack#bitsPerSample() bitsPerSample}.
+     *
+     * <p>A packet holds the codes of consecutive samples packed from the most significant bit of each byte (the
+     * packing of ITU-T I.366.2 and of WAVE format {@code 0x0045}). Every packet but the last ends on a byte boundary
+     * after a whole number of codes: any number of bytes for 2 and 4-bit codes, a multiple of 3 or 5 bytes (8 codes)
+     * for 3 and 5-bit codes. The track has no configuration.
+     */
+    ADPCM_G726(TrackKind.AUDIO, "adpcm_g726"),
+
+    /**
      * An audio codec the demuxer could not identify.
      */
     UNKNOWN_AUDIO(TrackKind.AUDIO, "unknown audio"),

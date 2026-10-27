@@ -283,11 +283,13 @@ class MuxDemuxIdentityTest {
     /**
      * Returns whether a container stamps a codec's packets on a timeline of its own: Ogg derives every timestamp
      * from granule positions (an Opus stream starting at minus its pre-skip, a Vorbis one ending its first packet at
-     * zero), and Matroska stamps an Opus block with its time plus the pre-skip, which it signals in band.
+     * zero), Matroska stamps an Opus block with its time plus the pre-skip, which it signals in band, and WAV stores
+     * no timestamps, so its Opus packets start at minus the pre-skip of the format's {@code OpusHead}, as in Ogg.
      */
     private static boolean anchorsItsOwnTimeline(OutputContainer container, Codec codec) {
         return container.format() == ContainerFormat.OGG
-                || container.format() == ContainerFormat.MATROSKA && codec == Codec.OPUS;
+                || (container.format() == ContainerFormat.MATROSKA || container.format() == ContainerFormat.WAV)
+                && codec == Codec.OPUS;
     }
 
     /**

@@ -1000,7 +1000,7 @@ final class AvTranscode {
         } else if (container == OutputContainer.MPEG_TS && !TsMuxer.supports(track)) {
             reason = container + " carries PCM at 48, 96 or 192 kHz with one to eight channels only";
         } else if ((codec == Codec.AMR_NB || codec == Codec.AMR_WB) && container != OutputContainer.AMR
-                && track.layout().map(ChannelLayout::channels).orElse(1) > 1) {
+                && container != OutputContainer.WAV && track.layout().map(ChannelLayout::channels).orElse(1) > 1) {
             reason = container + " carries single-channel " + codec.displayName() + " only";
         } else if (audio.codec().isPresent() && audio.codec().get() != codec) {
             reason = "the options ask for " + audio.codec().get().displayName();
@@ -1016,7 +1016,7 @@ final class AvTranscode {
                 yield true;
             }
             case ENCODE -> false;
-            default -> reason == null;
+            default -> reason == null && (container.copiesByDefault(codec) || audio.codec().isPresent());
         };
         if (copy) {
             return new AudioPlan(track, true, codec);

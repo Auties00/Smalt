@@ -184,6 +184,15 @@ def main():
         bursts = open(temp("a.spdif"), "rb").read()
         open(os.path.join(out, "iec61937-ac3.wav"), "wb").write(wave(0x0001, 2, 48000, 192000, 4, 16, b"", bursts))
 
+        # the ADPCM and telephony formats WavDemuxer reads itself, as ffmpeg's WAVE muxer writes them (libgsm, the
+        # permissive GSM 06.10 library, encodes the GSM sample)
+        ffmpeg(*noise(22050, 0.5), "-c:a", "adpcm_ima_wav", "-block_size", "512", "-ac", "2",
+               os.path.join(out, "ima-adpcm.wav"))
+        ffmpeg(*noise(8000, 0.5), "-c:a", "adpcm_ms", "-block_size", "256", "-ac", "1", os.path.join(out, "ms-adpcm.wav"))
+        ffmpeg(*noise(8000, 0.5), "-c:a", "libgsm_ms", "-ac", "1", os.path.join(out, "gsm.wav"))
+        ffmpeg(*noise(16000, 0.5), "-c:a", "g722", "-ac", "1", os.path.join(out, "g722.wav"))
+        ffmpeg(*noise(8000, 0.5), "-c:a", "g726", "-b:a", "24k", "-ac", "1", os.path.join(out, "g726.wav"))
+
         ffmpeg(*noise(48000), "-c:a", "aac", "-b:a", "96k", "-ac", "2", "-f", "adts", temp("b.aac"))
         ffmpeg("-i", temp("b.aac"), "-c:a", "copy", "-f", "spdif", temp("b.spdif"))
         bursts = open(temp("b.spdif"), "rb").read()

@@ -305,11 +305,13 @@ class WavDemuxerTest {
         @Test
         @DisplayName("rejects unsupported and malformed files with the right exception")
         void rejects() {
-            var ima = new WavBuilder();
-            var imaBytes = ima.chunk("fmt ", ima.format(0x11, 1, 8000, 256, 4)).chunk("data", new byte[256]).build();
+            // DSP Group TrueSpeech, a format tag no reader of Smalt handles
+            var trueSpeech = new WavBuilder();
+            var trueSpeechBytes = trueSpeech.chunk("fmt ", trueSpeech.format(0x22, 1, 8000, 32, 1))
+                    .chunk("data", new byte[256]).build();
             var unsupported = assertThrows(MediaException.Unsupported.class,
-                    () -> new WavDemuxer(MediaSource.of(imaBytes)));
-            assertEquals("wav format 0x0011", unsupported.format());
+                    () -> new WavDemuxer(MediaSource.of(trueSpeechBytes)));
+            assertEquals("wav format 0x0022", unsupported.format());
             var s40 = new WavBuilder();
             var s40Bytes = s40.chunk("fmt ", s40.format(1, 1, 8000, 5, 40)).chunk("data", new byte[10]).build();
             assertEquals("pcm_s40", assertThrows(MediaException.Unsupported.class,

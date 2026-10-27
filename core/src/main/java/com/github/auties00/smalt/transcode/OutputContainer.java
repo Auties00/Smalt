@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.transcode;
 
+import com.github.auties00.smalt.audio.AudioDecoders;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Containers;
 import com.github.auties00.smalt.container.Muxer;
@@ -83,6 +84,13 @@ public enum OutputContainer {
 
     /**
      * A RIFF WAVE file, switching to RF64 when it outgrows 4 GiB.
+     *
+     * <p>It carries every PCM format and the coded audio
+     * {@link com.github.auties00.smalt.container.wav.WavMuxer} writes (MPEG audio, AC-3, E-AC-3, AAC,
+     * FLAC, Opus, AMR, DTS and the ADPCM and telephony codecs), but a transcode copies coded audio into
+     * it only when the options ask to copy or name the stream's codec, or when no decoder of the codec is
+     * installed: in {@link StreamMode#AUTO} without a codec it decodes coded audio to PCM, the samples
+     * readers of WAVE files expect.
      */
     WAV(ContainerFormat.WAV, "wav", "audio/wav", List.of(), List.of(Codec.PCM_S16LE)),
 
@@ -362,6 +370,18 @@ public enum OutputContainer {
     }
 
     /**
+     * Returns whether a transcode in {@link StreamMode#AUTO} copies a stream of a codec the file can carry without the
+     * options naming the codec.
+     *
+     * @param codec the codec of the stream
+     * @return {@code false} for coded audio in {@link #WAV} that an installed decoder decodes to PCM, {@code true}
+     * otherwise
+     */
+    boolean copiesByDefault(Codec codec) {
+        return this != WAV || codec.isPcm() || !AudioDecoders.isSupported(codec);
+    }
+
+    /**
      * Returns whether the file stores a display orientation for video, so that a transcode can
      * keep the coded pixels and record the rotation instead of turning the pixels upright.
      *
@@ -455,6 +475,7 @@ public enum OutputContainer {
                 default -> false;
             };
             case OGG -> codec == Codec.VORBIS || codec == Codec.FLAC;
+            case WAV -> codec == Codec.AAC || codec == Codec.FLAC;
             case H264 -> codec == Codec.H264;
             case HEVC -> codec == Codec.HEVC;
             case Y4M -> codec == Codec.RAW_VIDEO;

@@ -60,7 +60,7 @@ public final class AudioTrack implements Track {
     private final ChannelLayout layout;
 
     /**
-     * The declared PCM sample size, or {@code 0}.
+     * The declared PCM sample or ADPCM code size, or {@code 0}.
      */
     private final int bitsPerSample;
 
@@ -169,7 +169,8 @@ public final class AudioTrack implements Track {
     }
 
     /**
-     * Returns the declared sample size of a PCM codec.
+     * Returns the declared sample size of a PCM codec, or the code size of an ADPCM codec: 2 to 5 for
+     * {@link Codec#ADPCM_G726}, 4 for {@link Codec#ADPCM_IMA_WAV} and {@link Codec#ADPCM_MS}.
      *
      * @return the size in bits, or {@code 0} when not applicable
      */
@@ -273,7 +274,7 @@ public final class AudioTrack implements Track {
         private ChannelLayout layout;
 
         /**
-         * The PCM sample size, or {@code 0}.
+         * The PCM sample or ADPCM code size, or {@code 0}.
          */
         private int bitsPerSample;
 
@@ -379,7 +380,7 @@ public final class AudioTrack implements Track {
         }
 
         /**
-         * Sets the declared sample size of a PCM codec.
+         * Sets the declared sample size of a PCM codec, or the code size of an ADPCM codec.
          *
          * @param bitsPerSample the size in bits, or {@code 0} when not applicable; non-negative
          * @return this builder

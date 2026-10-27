@@ -2,6 +2,7 @@
 # job	module	class	reason	count
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.alac.AlacEncoderInteropTest	platform:macos	1
 linux-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
+linux-arm64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-arm64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 linux-arm64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
 linux-arm64-vector-full	it	com.github.auties00.smalt.jit.JitStressTest	opt-in:jit-stress	1
@@ -38,6 +39,7 @@ linux-arm64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessF
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
+linux-arm64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 linux-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -178,6 +180,7 @@ linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ConformanceTest	
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.ogg.OggCrcTest	simd:disabled	16
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
+linux-x64-scalar-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 linux-x64-scalar-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -303,6 +306,7 @@ linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.linux.L
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WasapiAudioTest	platform:windows	5
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WindowsCaptureTest	platform:windows	3
 linux-x64-vector-full	capture	com.github.auties00.smalt.capture.internal.windows.WindowsWindowCaptureTest	platform:windows	2
+linux-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-x64-vector-full	desktop	com.github.auties00.smalt.desktop.sound.JavaSoundReadTest	device:audio-output	1
 linux-x64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 linux-x64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
@@ -338,6 +342,7 @@ linux-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessFfm
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 linux-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
+linux-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 linux-x64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -445,6 +450,7 @@ macos-arm64-capture	capture	com.github.auties00.smalt.capture.internal.windows.W
 macos-arm64-capture	capture	com.github.auties00.smalt.capture.internal.windows.WindowsCaptureTest	platform:windows	3
 macos-arm64-capture	capture	com.github.auties00.smalt.capture.internal.windows.WindowsWindowCaptureTest	platform:windows	2
 macos-arm64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
+macos-arm64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 macos-arm64-vector-full	core	com.github.auties00.smalt.internal.task.ParallelTasksTest	env:threads	1
 macos-arm64-vector-full	image	com.github.auties00.smalt.image.ico.AniTest	platform:windows	1
 macos-arm64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
@@ -475,6 +481,7 @@ macos-arm64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessF
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
+macos-arm64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 macos-arm64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1
@@ -580,6 +587,7 @@ windows-x64-capture	capture	com.github.auties00.smalt.capture.internal.windows.W
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.alac.AlacEncoderInteropTest	platform:macos	1
 windows-x64-vector-full	audio	com.github.auties00.smalt.audio.opus.OpusEncoderAllocationTest	simd:enabled	12
 windows-x64-vector-full	core	com.github.auties00.smalt.SkipTest	platform:unix	1
+windows-x64-vector-full	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-full	image	com.github.auties00.smalt.video.vp8.Vp8RtQualityTest	opt-in:vp8rt-quality	1
 windows-x64-vector-full	it	com.github.auties00.smalt.jit.JitStressTest	opt-in:jit-stress	1
 windows-x64-vector-full	it	com.github.auties00.smalt.soak.SoakTest	opt-in:soak	1
@@ -612,6 +620,7 @@ windows-x64-vector-smoke	core	com.github.auties00.smalt.audio.loudness.LoudnessF
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.ConformanceTest	data:vector	8
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.FileFormatConformanceTest	data:vector	144
 windows-x64-vector-smoke	core	com.github.auties00.smalt.container.packaging.DashTestVectorsTest	data:vector	2
+windows-x64-vector-smoke	core	com.github.auties00.smalt.container.wav.WavMuxerCodedTest	opt-in:mf-decode	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorProfileTest	data:vector	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.ColorTransformTest	data:vector	3
 windows-x64-vector-smoke	core	com.github.auties00.smalt.image.color.HdrColorTest	data:vector	1

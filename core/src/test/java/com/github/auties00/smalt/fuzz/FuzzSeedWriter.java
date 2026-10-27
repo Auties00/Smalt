@@ -169,8 +169,16 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "wav", "valid-s16.wav", wav);
         copy(DemuxerFuzzTest.class, "wav", "valid-float-stereo.wav", ffmpeg("wav", tone(8000, 0.05),
                 "-c:a", "pcm_f32le", "-ac", "2"));
-        copy(DemuxerFuzzTest.class, "wav", "unsupported-ima-adpcm.wav", ffmpeg("wav", tone(8000, 0.1),
+        copy(DemuxerFuzzTest.class, "wav", "valid-ima-adpcm.wav", ffmpeg("wav", tone(8000, 0.1),
                 "-c:a", "adpcm_ima_wav"));
+        copy(DemuxerFuzzTest.class, "wav", "valid-ms-adpcm.wav", ffmpeg("wav", tone(8000, 0.1), "-c:a", "adpcm_ms"));
+        // GSM 06.10 from the behavior sample libgsm encoded (tools/testdata/behavior/make-wav-samples.py), since the
+        // ffmpeg of every runner has no GSM encoder
+        copy(DemuxerFuzzTest.class, "wav", "valid-gsm-ms.wav", Path.of("src", "test", "resources", "samples", "wav",
+                "gsm.wav"));
+        copy(DemuxerFuzzTest.class, "wav", "valid-g726.wav", ffmpeg("wav", tone(8000, 0.1), "-c:a", "g726",
+                "-b:a", "40k"));
+        copy(DemuxerFuzzTest.class, "wav", "valid-g722.wav", ffmpeg("wav", tone(16000, 0.1), "-c:a", "g722"));
 
         var flac = ffmpeg("flac", tone(8000, 0.1), "-c:a", "flac", "-metadata", "title=seed");
         copy(DemuxerFuzzTest.class, "flac", "valid-flac.flac", flac);

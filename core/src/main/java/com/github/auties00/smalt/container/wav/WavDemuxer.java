@@ -56,6 +56,33 @@ import java.util.Objects;
  * com.github.auties00.smalt.audio.Ambisonics#ofFurseMalham(int)} for the channel counts it defines, and
  * channels of {@link Speaker#UNKNOWN} position without ambisonics for other counts.
  *
+ * <p>The ADPCM and telephony formats are read by this demuxer, in the packets their {@link Codec} constant defines:
+ * <table class="striped">
+ * <caption>ADPCM and telephony formats</caption>
+ * <thead><tr><th scope="col">Format</th><th scope="col">Codec</th><th scope="col">Packets</th></tr></thead>
+ * <tbody>
+ * <tr><td>{@code 0x0011}, 4 bits per sample</td><td>{@link Codec#ADPCM_IMA_WAV}</td><td>one block of the block
+ * alignment</td></tr>
+ * <tr><td>{@code 0x0002}, 4 bits per sample</td><td>{@link Codec#ADPCM_MS}, configured with the format's extra
+ * bytes up to the end of their coefficient table, and without a configuration (the standard coefficients) when
+ * they hold no complete table</td><td>one block of the block alignment</td></tr>
+ * <tr><td>{@code 0x0031}, one channel, 65-byte blocks</td><td>{@link Codec#GSM_MS}</td><td>whole blocks</td></tr>
+ * <tr><td>{@code 0x028F}, one channel</td><td>{@link Codec#ADPCM_G722}</td><td>bytes</td></tr>
+ * <tr><td>{@code 0x0045}, one channel, codes of 2 to 5 bits</td><td>{@link Codec#ADPCM_G726}</td><td>bytes holding
+ * eight codes for 3 and 5-bit codes</td></tr>
+ * </tbody>
+ * </table>
+ * The code streams are read in packets of the whole units (a byte, eight codes, a GSM block) within
+ * the largest power of two of samples that lasts at most 100 ms, at least one unit, and blocks one
+ * per packet; at the end of the data, the bytes left that still code samples
+ * (a block's header and whole groups of its codes, whole GSM blocks) form a last, shorter packet.
+ * Every packet is a key frame, timestamped in samples. The {@code fact} chunk, when it counts
+ * fewer samples than the packets code, ends the stream: the packets after it are dropped and the
+ * last one's duration is cut to it; in an RF64 file, a {@code fact} count of {@code 0xFFFFFFFF}
+ * refers to the sample count of the {@code ds64} chunk. The G.726 code size is the format's bits
+ * per sample, or, when that is not between 2 and 5, its bit rate over its sampling rate. ADPCM in
+ * a big-endian RIFX file raises {@link MediaException.Unsupported}.
+ *
  * <p>A {@code data} chunk of coded audio is handed to the demuxer of its elementary stream, whose
  * track, packets, timestamps, duration and seeking this demuxer exposes unchanged, and whose tags
  * complete {@link #metadata()}:
@@ -103,10 +130,12 @@ import java.util.Objects;
  * bitstream number; each burst becomes one packet per access unit, stamped with the burst's position
  * on the IEC 61937 timeline, TrueHD access units are stamped continuously across the MAT frames that
  * carry them, and a burst whose error flag is set yields packets flagged
- * {@link com.github.auties00.smalt.track.PacketFlag#CORRUPT}. A 16-bit stereo PCM file is read as bursts
+ * {@link com.github.auties00.smalt.track.PacketFlag#CORRUPT}. Bursts are carried by 16-bit stereo
+ * samples, or by the 8 channels of the high bit rate formats (DTS-HD and MAT over HDMI), whose samples
+ * hold the same sequence of 16-bit words. A 16-bit stereo or 8-channel PCM file is read as bursts
  * when its data starts, within its first 128 KiB, with a burst whose payload starts with a valid access
- * unit, and as DTS frames when it starts with two consecutive DTS frames; other PCM files, and bursts of
- * other data types, read as PCM. Opus packets
+ * unit, and a stereo one as DTS frames when it starts with two consecutive DTS frames; other PCM files,
+ * and bursts of other data types, read as PCM. Opus packets
  * are returned in the standard framing of RFC 6716 section 3; the track's {@code OpusHead} is the
  * format's extra bytes when they hold one, and is otherwise built from the channel count with a
  * pre-skip of zero. Any other format tag or sub-format GUID raises {@link MediaException.Unsupported}
@@ -183,7 +212,7 @@ public final class WavDemuxer implements Demuxer {
      * The kinds of data chunk payload.
      */
     private enum Payload {
-        PCM, MPEG, AC3, AAC, FLAC, AMR, OPUS, DTS, IEC61937
+        PCM, ADPCM, MPEG, AC3, AAC, FLAC, AMR, OPUS, DTS, IEC61937
     }
 
     /**
@@ -242,6 +271,27 @@ public final class WavDemuxer implements Demuxer {
     private final int packetFrames;
 
     /**
+     * The samples per channel of one frame of ADPCM (a block or a unit of codes), or 0 for PCM, whose frames are
+     * samples.
+     */
+    private final int unitSamples;
+
+    /**
+     * The channel count.
+     */
+    private final int channels;
+
+    /**
+     * The G.726 code size in bits, or 0.
+     */
+    private final int codeSize;
+
+    /**
+     * The samples per channel of ADPCM the packets end at, or {@code -1} when unknown.
+     */
+    private final long sampleLimit;
+
+    /**
      * The offset of the next packet.
      */
     private long position;
@@ -294,26 +344,30 @@ public final class WavDemuxer implements Demuxer {
         try {
             var header = new Header();
             parse(new SourceReader(source, 4096), header);
-            if (header.payload == Payload.PCM && header.channels == 2
+            if (header.payload == Payload.PCM && (header.channels == 2 || header.channels == 8)
                     && (header.codec == Codec.PCM_S16LE || header.codec == Codec.PCM_S16BE)) {
                 detectBursts(header);
             }
-            if (header.payload != Payload.PCM) {
+            if (header.payload != Payload.PCM && header.payload != Payload.ADPCM) {
                 this.coded = openPayload(header);
                 for (var entry : coded.metadata().entrySet()) {
                     header.metadata.putIfAbsent(entry.getKey(), entry.getValue());
                 }
                 this.metadata = Collections.unmodifiableMap(header.metadata);
                 var inner = (AudioTrack) coded.tracks().getFirst();
-                if (inner.duration() < 0 && header.factSamples > 0) {
+                if (inner.duration() < 0 && header.sampleCount() > 0) {
                     inner = inner.toBuilder().duration(Rational.timeBaseOf(header.sampleRate)
-                            .rescale(header.factSamples, inner.timeBase())).build();
+                            .rescale(header.sampleCount(), inner.timeBase())).build();
                 }
                 this.track = inner;
                 this.tracks = List.of(track);
                 this.cueChapters = cueChapters(header, inner.durationMicros().orElse(-1));
                 this.frameSize = 1;
                 this.packetFrames = 1;
+                this.unitSamples = 0;
+                this.channels = header.channels;
+                this.codeSize = 0;
+                this.sampleLimit = -1;
                 this.dataStart = header.dataStart;
                 this.dataEnd = header.dataEnd;
                 this.data = null;
@@ -322,15 +376,35 @@ public final class WavDemuxer implements Demuxer {
             this.coded = null;
             this.metadata = Collections.unmodifiableMap(header.metadata);
             this.frameSize = header.blockAlign;
-            this.packetFrames = Math.max(1, Math.min(Integer.highestOneBit(Math.max(1, header.sampleRate / 10)),
-                    MAX_PACKET_BYTES / frameSize));
+            this.channels = header.channels;
             this.dataStart = header.dataStart;
             this.dataEnd = header.dataEnd;
             this.position = dataStart;
             this.data = new ReadAheadCache(source, READ_BLOCK, 0, dataEnd < 0 ? Long.MAX_VALUE : dataEnd);
-            var frames = dataEnd < 0 ? -1 : (dataEnd - dataStart) / frameSize;
+            long frames;
+            if (header.payload == Payload.ADPCM) {
+                this.unitSamples = header.unitSamples;
+                this.codeSize = header.codeSize;
+                this.packetFrames = adpcmPacketUnits(header);
+                var codedSamples = dataEnd < 0 ? -1 : codedSamples(header.codec, dataEnd - dataStart);
+                var factSamples = header.sampleCount();
+                if (factSamples > 0) {
+                    frames = codedSamples < 0 ? factSamples : Math.min(codedSamples, factSamples);
+                } else {
+                    frames = codedSamples;
+                }
+                this.sampleLimit = frames;
+            } else {
+                this.unitSamples = 0;
+                this.codeSize = 0;
+                this.sampleLimit = -1;
+                this.packetFrames = Math.max(1, Math.min(Integer.highestOneBit(Math.max(1, header.sampleRate / 10)),
+                        MAX_PACKET_BYTES / frameSize));
+                frames = dataEnd < 0 ? -1 : (dataEnd - dataStart) / frameSize;
+            }
             this.track = AudioTrack.builder().codec(header.codec).timeBase(Rational.timeBaseOf(header.sampleRate))
                     .duration(frames)
+                    .codecConfig(header.config)
                     .sampleRate(header.sampleRate)
                     .layout(header.layout)
                     .bitsPerSample(header.validBits)
@@ -364,6 +438,11 @@ public final class WavDemuxer implements Demuxer {
         private long ds64DataSize = -1;
 
         /**
+         * The 64-bit sample count of {@code ds64}, or {@code -1}.
+         */
+        private long ds64Samples = -1;
+
+        /**
          * Whether a {@code fmt } chunk was seen.
          */
         private boolean hasFormat;
@@ -394,6 +473,16 @@ public final class WavDemuxer implements Demuxer {
         private long factSamples = -1;
 
         /**
+         * Returns the sample count of the file: the {@code fact} count, or the {@code ds64} one of an RF64 file whose
+         * {@code fact} count is {@code 0xFFFFFFFF}, the value that refers to it (EBU Tech 3306).
+         *
+         * @return the samples per channel, or {@code -1} without a {@code fact} chunk
+         */
+        private long sampleCount() {
+            return rf64 && factSamples == 0xFFFFFFFFL && ds64Samples >= 0 ? ds64Samples : factSamples;
+        }
+
+        /**
          * The sample coding.
          */
         private Codec codec;
@@ -409,9 +498,25 @@ public final class WavDemuxer implements Demuxer {
         private int validBits;
 
         /**
-         * The size of one frame in bytes.
+         * The size of one frame in bytes: of a sample of every channel for PCM, of a block or a unit of codes for
+         * ADPCM.
          */
         private int blockAlign;
+
+        /**
+         * The samples per channel of an ADPCM block or unit of codes.
+         */
+        private int unitSamples;
+
+        /**
+         * The G.726 code size in bits.
+         */
+        private int codeSize;
+
+        /**
+         * The codec configuration of ADPCM, or {@code null}.
+         */
+        private byte[] config;
 
         /**
          * The channel layout.
@@ -593,6 +698,7 @@ public final class WavDemuxer implements Demuxer {
             throw new MediaException.Malformed("ds64 data size is negative");
         }
         header.ds64DataSize = dataSize;
+        header.ds64Samples = reader.u64le();
     }
 
     /**
@@ -634,12 +740,22 @@ public final class WavDemuxer implements Demuxer {
         header.hasFormat = true;
         var payload = payload(format);
         var dtsTag = tag == WaveFormat.DTS_SPDIF && format.subFormat() != WaveFormat.SubFormat.IEC61937;
-        if (payload == Payload.IEC61937 && (channels != 2 || bits != 16)) {
+        if (payload == Payload.IEC61937 && (channels != 2 && channels != 8 || bits != 16)) {
             if (!dtsTag) {
                 throw new MediaException.Malformed("IEC 61937 WAVE data of " + channels + " channels of " + bits
                         + " bits");
             }
             payload = Payload.DTS;
+        }
+        if (payload == Payload.ADPCM) {
+            if (header.bigEndian) {
+                throw new MediaException.Unsupported(String.format("rifx format 0x%04x", tag),
+                        "ADPCM in a big-endian RIFX file is not supported");
+            }
+            header.payload = payload;
+            parseAdpcm(format, header);
+            LimitChecks.checkAllocation(limits, (long) header.blockAlign * adpcmPacketUnits(header));
+            return;
         }
         if (payload != Payload.PCM && payload != Payload.IEC61937) {
             header.payload = payload;
@@ -652,6 +768,127 @@ public final class WavDemuxer implements Demuxer {
         header.blockAlign = containerBytes * channels;
         header.validBits = header.codec == Codec.PCM_ALAW || header.codec == Codec.PCM_MULAW ? 8 : Math.max(format.validBits(), 1);
         LimitChecks.checkAllocation(limits, Math.min(MAX_PACKET_BYTES, (long) header.blockAlign * Integer.highestOneBit(Math.max(1, header.sampleRate / 10))));
+    }
+
+    /**
+     * Reads the format of ADPCM or telephony audio.
+     *
+     * @param format the parsed {@code fmt } chunk, of an ADPCM tag
+     * @param header receives the codec, the frame layout and the configuration
+     * @throws MediaException.Unsupported if the format uses a variant that is not readable: IMA or Microsoft ADPCM of
+     * other than 4 bits per sample, GSM 06.10 in blocks of other than 65 bytes, G.722, G.726 or GSM 06.10 of more
+     * than one channel
+     * @throws MediaException.Malformed if the format has no channels, or its block alignment or G.726 code size is
+     * invalid
+     */
+    private static void parseAdpcm(WaveFormat format, Header header) {
+        var tag = format.tag();
+        var channels = format.channels();
+        var bits = format.bitsPerSample();
+        var codec = switch (tag) {
+            case WaveFormat.IMA_ADPCM -> Codec.ADPCM_IMA_WAV;
+            case WaveFormat.MS_ADPCM -> Codec.ADPCM_MS;
+            case WaveFormat.GSM610 -> Codec.GSM_MS;
+            case WaveFormat.G722 -> Codec.ADPCM_G722;
+            default -> Codec.ADPCM_G726;
+        };
+        if (channels == 0) {
+            throw new MediaException.Malformed(codec.displayName() + " of no channels");
+        }
+        header.codec = codec;
+        if (AdpcmBlocks.hasBlocks(codec)) {
+            if (bits != 4) {
+                throw new MediaException.Unsupported(codec.displayName() + " " + bits + "-bit",
+                        bits + "-bit " + codec.displayName() + " is not supported, only 4-bit");
+            }
+            var block = format.blockAlign();
+            if (!AdpcmBlocks.isBlock(codec, block, channels)) {
+                throw new MediaException.Malformed(codec.displayName() + " block of " + block + " bytes for " + channels
+                        + " channels");
+            }
+            header.blockAlign = block;
+            header.unitSamples = (int) AdpcmBlocks.samples(codec, block, channels, 0);
+            header.validBits = 4;
+            if (codec == Codec.ADPCM_MS) {
+                header.config = msConfig(format.extra());
+            }
+            return;
+        }
+        if (channels != 1) {
+            throw new MediaException.Unsupported(codec.displayName() + " " + channels + " channels",
+                    codec.displayName() + " of " + channels + " channels is not supported, only mono");
+        }
+        if (codec == Codec.GSM_MS && format.blockAlign() != AdpcmBlocks.GSM_BLOCK) {
+            throw new MediaException.Unsupported("gsm_ms block " + format.blockAlign(),
+                    "GSM 06.10 in blocks of " + format.blockAlign() + " bytes is not supported, only 65");
+        }
+        var codeSize = 0;
+        if (codec == Codec.ADPCM_G726) {
+            codeSize = bits;
+            if (codeSize < 2 || codeSize > 5) {
+                // a format without the code size states it through the bit rate
+                var rate = format.byteRate() * 8;
+                codeSize = rate % format.sampleRate() == 0 ? (int) Math.min(rate / format.sampleRate(), 6) : 0;
+            }
+            if (codeSize < 2 || codeSize > 5) {
+                throw new MediaException.Malformed("G.726 of " + bits + " bits per sample at " + format.byteRate()
+                        + " bytes per second");
+            }
+            header.validBits = codeSize;
+        }
+        header.codeSize = codeSize;
+        header.blockAlign = AdpcmBlocks.unitBytes(codec, codeSize);
+        header.unitSamples = AdpcmBlocks.unitSamples(codec, codeSize);
+    }
+
+    /**
+     * Returns the configuration of Microsoft ADPCM from the extra bytes of its format.
+     *
+     * @param extra the {@code ADPCMWAVEFORMAT} fields after {@code cbSize}
+     * @return {@code wSamplesPerBlock}, {@code wNumCoef} and the coefficient table, without the bytes after it, or
+     * {@code null} when the bytes hold no table or a shorter one than {@code wNumCoef} declares, so that the standard
+     * coefficients apply
+     */
+    private static byte[] msConfig(byte[] extra) {
+        if (extra.length < 4) {
+            return null;
+        }
+        var count = (extra[2] & 0xFF) | (extra[3] & 0xFF) << 8;
+        var length = 4 + 4 * count;
+        if (count == 0 || extra.length < length) {
+            return null;
+        }
+        return extra.length == length ? extra : Arrays.copyOf(extra, length);
+    }
+
+    /**
+     * Returns the number of blocks or units of codes of an ADPCM packet: one block, or the units of the largest power
+     * of two of samples that lasts at most 100 ms, at least one, within {@value #MAX_PACKET_BYTES} bytes.
+     *
+     * @param header the parsed format of ADPCM
+     * @return the units per packet
+     */
+    private static int adpcmPacketUnits(Header header) {
+        if (AdpcmBlocks.hasBlocks(header.codec)) {
+            return 1;
+        }
+        var units = Integer.highestOneBit(Math.max(1, header.sampleRate / 10)) / header.unitSamples;
+        return Math.max(1, Math.min(units, MAX_PACKET_BYTES / header.blockAlign));
+    }
+
+    /**
+     * Returns the samples per channel the ADPCM of a {@code data} chunk codes: those of its whole frames and of the
+     * last packet its remaining bytes make.
+     *
+     * @param codec the ADPCM codec
+     * @param bytes the size of the sample data
+     * @return the samples per channel
+     */
+    private long codedSamples(Codec codec, long bytes) {
+        var units = bytes / frameSize;
+        var rest = (int) (bytes - units * frameSize);
+        var tail = AdpcmBlocks.tail(codec, rest, channels, codeSize);
+        return units * unitSamples + (tail == 0 ? 0 : AdpcmBlocks.samples(codec, tail, channels, codeSize));
     }
 
     /**
@@ -680,6 +917,8 @@ public final class WavDemuxer implements Demuxer {
             };
             case NONE, STANDARD -> switch (tag) {
                 case WaveFormat.PCM, WaveFormat.FLOAT, WaveFormat.ALAW, WaveFormat.MULAW -> Payload.PCM;
+                case WaveFormat.IMA_ADPCM, WaveFormat.MS_ADPCM, WaveFormat.GSM610, WaveFormat.G722, WaveFormat.G726 ->
+                        Payload.ADPCM;
                 case WaveFormat.DOLBY_AC3_SPDIF, WaveFormat.DTS_SPDIF -> Payload.IEC61937;
                 case WaveFormat.MPEG, WaveFormat.MPEG_LAYER3 -> Payload.MPEG;
                 default -> switch (WaveFormat.codec(tag, format.bitsPerSample())) {
@@ -697,8 +936,8 @@ public final class WavDemuxer implements Demuxer {
     }
 
     /**
-     * Switches a 16-bit stereo PCM file to IEC 61937 bursts when its data starts with one, or to DTS frames when it
-     * starts with two of them, and finds the first burst of a file that declares them.
+     * Switches a 16-bit stereo or 8-channel PCM file to IEC 61937 bursts when its data starts with one, or a stereo
+     * one to DTS frames when it starts with two of them, and finds the first burst of a file that declares them.
      *
      * @param header the parsed values
      */
@@ -711,7 +950,7 @@ public final class WavDemuxer implements Demuxer {
         if (start != null) {
             header.payload = Payload.IEC61937;
             header.burst = start;
-        } else if (DtsFramesDemuxer.startsWithFrames(source, header.dataStart, header.dataEnd)) {
+        } else if (header.channels == 2 && DtsFramesDemuxer.startsWithFrames(source, header.dataStart, header.dataEnd)) {
             header.payload = Payload.DTS;
         }
     }
@@ -764,7 +1003,7 @@ public final class WavDemuxer implements Demuxer {
                 }
                 yield new Iec61937Demuxer(source, start, header.dataEnd, limits, burst);
             }
-            case PCM -> throw new IllegalStateException("PCM is not coded audio");
+            case PCM, ADPCM -> throw new IllegalStateException("PCM and ADPCM are not handed to another demuxer");
         };
     }
 
@@ -1079,10 +1318,10 @@ public final class WavDemuxer implements Demuxer {
     }
 
     /**
-     * Returns whether the file can seek: always for uncompressed or companded samples, whose frames are
-     * at computable offsets, and as the demuxer of the elementary stream decides for coded audio.
+     * Returns whether the file can seek: always for uncompressed or companded samples and ADPCM, whose frames
+     * are at computable offsets, and as the demuxer of the elementary stream decides for coded audio.
      *
-     * @return {@code true} for PCM, the elementary stream demuxer's answer for coded audio
+     * @return {@code true} for PCM and ADPCM, the elementary stream demuxer's answer for coded audio
      */
     @Override
     public boolean isSeekable() {
@@ -1093,7 +1332,8 @@ public final class WavDemuxer implements Demuxer {
      * {@inheritDoc}
      *
      * <p>Every packet of uncompressed audio is a key frame, so the next packet starts at the
-     * sample frame displayed at {@code micros}. Coded audio seeks as the demuxer of its elementary
+     * sample frame displayed at {@code micros}; ADPCM seeks to the packet holding that sample, the block or
+     * unit of codes it falls in. Coded audio seeks as the demuxer of its elementary
      * stream does: MPEG audio through its frame index, IEC 61937 bursts from the position of the target
      * on their timeline, self-delimited Opus through an index of its packets.
      *
@@ -1106,11 +1346,43 @@ public final class WavDemuxer implements Demuxer {
             return;
         }
         var frame = frameAt(micros, track.sampleRate());
+        if (unitSamples > 0) {
+            seekAdpcm(frame);
+            return;
+        }
         var available = dataEnd >= 0 ? (dataEnd - dataStart) / frameSize : (Long.MAX_VALUE - dataStart) / frameSize;
         frame = Math.min(frame, Math.max(0, available));
         frameIndex = frame;
         position = dataStart + frame * frameSize;
         finished = false;
+    }
+
+    /**
+     * Positions ADPCM at the packet holding a sample, as {@link #nextAdpcmPacket()} cuts them: whole packets from the
+     * start of the data, and in the last, shorter run of bytes its whole units, then the bytes left.
+     *
+     * @param sample the index of the sample, per channel
+     */
+    private void seekAdpcm(long sample) {
+        var packetSamples = (long) packetFrames * unitSamples;
+        var packetBytes = (long) packetFrames * frameSize;
+        var index = sample / packetSamples;
+        if (dataEnd >= 0) {
+            index = Math.min(index, (dataEnd - dataStart) / packetBytes);
+        }
+        var start = index * packetSamples;
+        var offset = dataStart + index * packetBytes;
+        if (dataEnd >= 0 && dataEnd - offset < packetBytes) {
+            var whole = (dataEnd - offset) / frameSize * frameSize;
+            var wholeSamples = whole / frameSize * unitSamples;
+            if (whole > 0 && whole < dataEnd - offset && sample >= start + wholeSamples) {
+                offset += whole;
+                start += wholeSamples;
+            }
+        }
+        position = offset;
+        frameIndex = start;
+        finished = dataEnd >= 0 && offset >= dataEnd || sampleLimit >= 0 && sample >= sampleLimit;
     }
 
     /**
@@ -1154,6 +1426,9 @@ public final class WavDemuxer implements Demuxer {
         if (finished) {
             return null;
         }
+        if (unitSamples > 0) {
+            return nextAdpcmPacket();
+        }
         var wanted = (long) packetFrames * frameSize;
         if (dataEnd >= 0) {
             wanted = Math.min(wanted, (dataEnd - position) / frameSize * frameSize);
@@ -1176,6 +1451,47 @@ public final class WavDemuxer implements Demuxer {
         var packet = new Packet(track.id(), data, frameIndex, frameIndex, frames, true);
         position += whole;
         frameIndex += frames;
+        ForwardOnlySource.release(source, position);
+        return packet;
+    }
+
+    /**
+     * Reads the next packet of ADPCM: one block, or whole units of a code stream, and at the end of the data the
+     * bytes {@link AdpcmBlocks#tail} keeps of a truncated one.
+     *
+     * @return the packet, or {@code null} at the end of the samples
+     */
+    private Packet nextAdpcmPacket() {
+        var wanted = (long) packetFrames * frameSize;
+        if (dataEnd >= 0) {
+            wanted = Math.min(wanted, dataEnd - position);
+        }
+        if (wanted <= 0 || sampleLimit >= 0 && frameIndex >= sampleLimit) {
+            finished = true;
+            return null;
+        }
+        var data = new byte[(int) wanted];
+        var done = this.data.readUpTo(position, data, 0, data.length);
+        var whole = done / frameSize * frameSize;
+        var size = whole;
+        if (whole == 0 && (done < data.length || dataEnd >= 0 && position + done >= dataEnd)) {
+            size = AdpcmBlocks.tail(track.codec(), done, channels, codeSize);
+            finished = true;
+        } else if (done < data.length && whole == done) {
+            finished = true;
+        }
+        if (size == 0) {
+            finished = true;
+            return null;
+        }
+        if (size < data.length) {
+            data = Arrays.copyOf(data, size);
+        }
+        var samples = AdpcmBlocks.samples(track.codec(), size, channels, codeSize);
+        var duration = sampleLimit >= 0 ? Math.min(samples, sampleLimit - frameIndex) : samples;
+        var packet = new Packet(track.id(), data, frameIndex, frameIndex, duration, true);
+        position += size;
+        frameIndex += samples;
         ForwardOnlySource.release(source, position);
         return packet;
     }

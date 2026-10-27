@@ -332,7 +332,9 @@ class ElementaryMuxersTest {
             assertTrue(Containers.isMuxable(ContainerFormat.MATROSKA, Codec.H264));
             assertTrue(Containers.isMuxable(ContainerFormat.MP4, Codec.AV1));
             assertTrue(Containers.isMuxable(ContainerFormat.WAV, Codec.PCM_F32LE));
-            assertFalse(Containers.isMuxable(ContainerFormat.WAV, Codec.PCM_S16BE));
+            assertTrue(Containers.isMuxable(ContainerFormat.WAV, Codec.PCM_S16BE));
+            assertTrue(Containers.isMuxable(ContainerFormat.WAV, Codec.MP3));
+            assertFalse(Containers.isMuxable(ContainerFormat.WAV, Codec.VORBIS));
             assertTrue(Containers.isMuxable(ContainerFormat.AIFF, Codec.PCM_S16BE));
             assertTrue(Containers.isMuxable(ContainerFormat.OGG, Codec.VORBIS));
             assertTrue(Containers.isMuxable(ContainerFormat.OGG, Codec.FLAC));

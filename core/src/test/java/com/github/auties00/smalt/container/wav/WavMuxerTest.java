@@ -175,10 +175,11 @@ class WavMuxerTest {
     }
 
     @Test
-    @DisplayName("rejects big-endian samples, partial frames, a second track and late tracks")
+    @DisplayName("rejects codecs WAV cannot carry, partial frames, a second track and late tracks")
     void rejections() {
         assertThrows(IllegalArgumentException.class,
-                () -> new WavMuxer(MediaSink.memory()).addTrack(PcmPackets.tone(Codec.PCM_S16BE, 8000, ChannelLayout.MONO, 1).track()));
+                () -> new WavMuxer(MediaSink.memory()).addTrack(PcmPackets.tone(Codec.PCM_S16LE, 8000, ChannelLayout.MONO, 1)
+                        .track().toBuilder().codec(Codec.VORBIS).build()));
         var input = PcmPackets.tone(Codec.PCM_S16LE, 8000, ChannelLayout.STEREO, 10);
         try (var muxer = new WavMuxer(MediaSink.memory())) {
             muxer.addTrack(input.track());

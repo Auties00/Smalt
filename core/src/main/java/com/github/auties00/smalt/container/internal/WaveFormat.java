@@ -68,6 +68,32 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
     public static final int MULAW = 0x0007;
 
     /**
+     * The format tag of Microsoft ADPCM ({@code WAVE_FORMAT_ADPCM}).
+     */
+    public static final int MS_ADPCM = 0x0002;
+
+    /**
+     * The format tag of IMA ADPCM ({@code WAVE_FORMAT_DVI_ADPCM}, also {@code WAVE_FORMAT_IMA_ADPCM}).
+     */
+    public static final int IMA_ADPCM = 0x0011;
+
+    /**
+     * The format tag of GSM 06.10 in Microsoft's 65-byte blocks ({@code WAVE_FORMAT_GSM610}).
+     */
+    public static final int GSM610 = 0x0031;
+
+    /**
+     * The format tag of G.726 ADPCM whose codes are packed from the most significant bit, as ffmpeg reads and writes
+     * it.
+     */
+    public static final int G726 = 0x0045;
+
+    /**
+     * The format tag of G.722 ADPCM, as ffmpeg reads and writes it.
+     */
+    public static final int G722 = 0x028F;
+
+    /**
      * The format tag of MPEG-1 Layer I or II audio.
      */
     public static final int MPEG = 0x0050;
@@ -113,6 +139,16 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
      * {@code wPayloadType} names the framing.
      */
     public static final int MPEG_HEAAC = 0x1610;
+
+    /**
+     * The format tag of AMR-NB storage-format frames ({@code WAVE_FORMAT_AMR_NB}).
+     */
+    public static final int AMR_NB = 0x0057;
+
+    /**
+     * The format tag of AMR-WB storage-format frames ({@code WAVE_FORMAT_AMR_WB}).
+     */
+    public static final int AMR_WB = 0x0058;
 
     /**
      * The format tag of AC-3 sync frames ({@code WAVE_FORMAT_DOLBY_AC3}).
@@ -487,8 +523,8 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             case DOLBY_AC3 -> Codec.AC3;
             case OPUS -> Codec.OPUS;
             case FLAC -> Codec.FLAC;
-            case 0x0038, 0x0057, 0x00FE -> Codec.AMR_NB;
-            case 0x0058 -> Codec.AMR_WB;
+            case 0x0038, AMR_NB, 0x00FE -> Codec.AMR_NB;
+            case AMR_WB -> Codec.AMR_WB;
             case DTS_SPDIF, DTS -> Codec.DTS;
             default -> Codec.UNKNOWN_AUDIO;
         };

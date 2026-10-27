@@ -659,8 +659,8 @@ jobs:
       os: '["windows-latest","macos-latest"]'
       data: false
 
-  # The Media Foundation comparison of the MPEG-4 interlaced direct streams (tools/testdata/mf-oracle), which only
-  # Windows runs.
+  # The Media Foundation comparisons (tools/testdata/mf-oracle), which only Windows runs: the MPEG-4 interlaced
+  # direct streams, and the MPEG audio and AAC that WavMuxer writes into WAVE files.
   opt-in-windows:
     name: opt-in tests (Windows)
     needs: oracles-desktop
@@ -700,8 +700,9 @@ jobs:
         id: test
         shell: bash
         run: >
-          mvn -B -ntp -fae -pl mpeg -am verify -Dtest=Mpeg4InterlacedDirectTest -Dsurefire.failIfNoSpecifiedTests=false
-          -Dsmalt.test.mfDecode="$RUNNER_TEMP/mf/MfDecode.exe"
+          mvn -B -ntp -fae -pl mpeg -am verify -Dtest=Mpeg4InterlacedDirectTest,WavMuxerCodedTest
+          -Dsurefire.failIfNoSpecifiedTests=false -Dsmalt.test.mfDecode="$RUNNER_TEMP/mf/MfDecode.exe"
+          -Dsmalt.test.mfAudioDecode="$RUNNER_TEMP/mf/MfAudioDecode.exe"
 
       - name: Record the outcomes
         if: always() && steps.test.outcome != 'skipped'
