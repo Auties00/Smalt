@@ -24,7 +24,8 @@
  * so a module or class-path jar adds a codec by providing an implementation. Inputs are read
  * through {@code MediaSource} and outputs written through {@code MediaSink}. The {@code transcode}
  * package converts files on top of them: remuxing, re-encoding, trimming, scaling and resampling;
- * the {@code container.packaging} package segments them into HLS and DASH presentations.
+ * the {@code container.packaging} package segments them into HLS and DASH presentations, which the
+ * {@code container.hls} and {@code container.dash} demuxers read back.
  * The {@code metadata} package reads and writes the tags, cover art and chapters of audio and video
  * files without touching their streams, and models XMP packets. The {@code subtitle} package reads,
  * writes and converts text subtitles, and {@code audio.loudness} measures loudness (EBU R128),
@@ -40,6 +41,7 @@
  * @uses com.github.auties00.smalt.spi.VideoCodecProvider the video codecs of {@code VideoDecoders} and
  * {@code VideoEncoders}
  * @provides com.github.auties00.smalt.spi.AudioCodecProvider the PCM decoders and encoders
+ * @provides com.github.auties00.smalt.spi.VideoCodecProvider the uncompressed video decoder and encoder
  */
 module com.github.auties00.smalt {
     // Vector API: optional, selected at runtime by internal.simd.Simd
@@ -77,13 +79,18 @@ module com.github.auties00.smalt {
     // Color management: ICC profiles and color transforms
     exports com.github.auties00.smalt.image.color;
 
+    // HDR gain maps
+    exports com.github.auties00.smalt.image.gainmap;
+
     // Containers
     exports com.github.auties00.smalt.container.ac3;
     exports com.github.auties00.smalt.container.adts;
     exports com.github.auties00.smalt.container.aiff;
     exports com.github.auties00.smalt.container.amr;
     exports com.github.auties00.smalt.container.avi;
+    exports com.github.auties00.smalt.container.dash;
     exports com.github.auties00.smalt.container.flac;
+    exports com.github.auties00.smalt.container.hls;
     exports com.github.auties00.smalt.container.ivf;
     exports com.github.auties00.smalt.container.matroska;
     exports com.github.auties00.smalt.container.mp4;
@@ -94,6 +101,7 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.container.subtitle;
     exports com.github.auties00.smalt.container.ts;
     exports com.github.auties00.smalt.container.wav;
+    exports com.github.auties00.smalt.container.y4m;
 
     // Audio codecs and processing
     exports com.github.auties00.smalt.audio.loudness;
@@ -104,7 +112,10 @@ module com.github.auties00.smalt {
     exports com.github.auties00.smalt.transcode;
 
     // Internals shared with the other Smalt modules
-    exports com.github.auties00.smalt.internal.anim to com.github.auties00.smalt.image;
+    exports com.github.auties00.smalt.internal.anim to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.mpeg,
+            com.github.auties00.smalt.video;
     exports com.github.auties00.smalt.internal.bits to
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.audio;
@@ -132,7 +143,12 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.audio,
             com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.edit to com.github.auties00.smalt.image;
+    exports com.github.auties00.smalt.internal.gainmap to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.video,
+            com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.heif to
+            com.github.auties00.smalt.aot,
             com.github.auties00.smalt.image,
             com.github.auties00.smalt.video,
             com.github.auties00.smalt.mpeg;
@@ -144,11 +160,17 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.capture,
             com.github.auties00.smalt.raw;
     exports com.github.auties00.smalt.internal.nal to com.github.auties00.smalt.mpeg;
+    exports com.github.auties00.smalt.internal.caption to com.github.auties00.smalt.mpeg;
     exports com.github.auties00.smalt.internal.plane to
             com.github.auties00.smalt.image,
             com.github.auties00.smalt.video,
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.capture,
+            com.github.auties00.smalt.raw;
+    exports com.github.auties00.smalt.internal.region to
+            com.github.auties00.smalt.image,
+            com.github.auties00.smalt.video,
+            com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.raw;
     exports com.github.auties00.smalt.internal.tiff to
             com.github.auties00.smalt.image,
@@ -171,6 +193,7 @@ module com.github.auties00.smalt {
             com.github.auties00.smalt.raw;
     exports com.github.auties00.smalt.internal.task to
             com.github.auties00.smalt.image,
+            com.github.auties00.smalt.audio,
             com.github.auties00.smalt.video,
             com.github.auties00.smalt.mpeg,
             com.github.auties00.smalt.raw;
@@ -179,8 +202,14 @@ module com.github.auties00.smalt {
     uses com.github.auties00.smalt.spi.ImageCodecProvider;
     uses com.github.auties00.smalt.spi.AudioCodecProvider;
     uses com.github.auties00.smalt.spi.VideoCodecProvider;
+    // The HEIF item codecs of other artifacts, for the HEIF decoders of the artifacts that do not depend on them
+    uses com.github.auties00.smalt.internal.heif.HeifComponentCodec;
+    // The HEIF decoders of the artifacts, each handing the images of the other's codings to it
+    uses com.github.auties00.smalt.internal.heif.HeifImageCodec;
 
     // The codecs of this module
     provides com.github.auties00.smalt.spi.AudioCodecProvider with
             com.github.auties00.smalt.internal.provider.PcmCodecProvider;
+    provides com.github.auties00.smalt.spi.VideoCodecProvider with
+            com.github.auties00.smalt.internal.provider.RawVideoCodecProvider;
 }
