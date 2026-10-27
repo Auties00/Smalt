@@ -10,13 +10,14 @@ import java.util.Arrays;
  * Encodes planar float samples into AAC Low Complexity raw data blocks.
  *
  * <p>Samples are appended with {@link #push}; once {@link #frameReady()} holds, each
- * {@link #encodeFrame()} codes the next 1024 samples of every channel. The first frame codes the
- * encoder delay of 1024 silent samples, so a decoder reproduces input sample {@code i} at output
- * sample {@code i + 1024}. Each frame needs 512 samples of look-ahead for block switching;
- * {@link #pad(int)} appends silence at the end of the input.
+ * {@link #encodeFrame()} codes the next frame (1024 or 960 samples) of every channel. The first
+ * frame codes an encoder delay of one silent frame, so a decoder reproduces input sample {@code i}
+ * at output sample {@code i + frameLength}. Each frame needs half a frame of look-ahead for block
+ * switching; {@link #pad(int)} appends silence at the end of the input.
  *
- * <p>Mono is coded as one single channel element, stereo as one channel pair element and 5.1
- * (input in WAVE order) as the elements of channel configuration 6. In constant bitrate mode
+ * <p>The channel elements, their instance tags and the input channel of each coded channel come
+ * from an {@link EncoderLayout}; LFE elements code only long windows below 240 Hz, without TNS, and
+ * count as a fifth of a channel when the bitrate is shared out. In constant bitrate mode
  * the frame budget follows a bit reservoir of {@code 6144 * channels} bits minus the mean frame
  * size, filled with fill elements whenever it would overflow, so the long-term bitrate is exact.
  * In variable bitrate mode every frame is coded at the same rate control parameter, a
@@ -28,21 +29,6 @@ import java.util.Arrays;
  * the bit counts of actual quantizations, so frames use their budget closely.
  */
 public final class EncoderEngine {
-    /**
-     * The frame length.
-     */
-    public static final int FRAME = 1024;
-
-    /**
-     * The look-ahead of block switching beyond the frame's window.
-     */
-    private static final int LOOKAHEAD = 512;
-
-    /**
-     * The capacity of each channel's input buffer.
-     */
-    private static final int BUFFER = 3 * FRAME;
-
     /**
      * The largest number of bits one channel may use in a frame.
      */
@@ -64,6 +50,21 @@ public final class EncoderEngine {
     private final int sampleRate;
 
     /**
+     * The frame length, 1024 or 960.
+     */
+    private final int frameLength;
+
+    /**
+     * The look-ahead of block switching beyond the frame's window, half a frame.
+     */
+    private final int lookahead;
+
+    /**
+     * The capacity of each channel's input buffer, three frames.
+     */
+    private final int bufferLength;
+
+    /**
      * The number of channels.
      */
     private final int channels;
@@ -71,7 +72,12 @@ public final class EncoderEngine {
     /**
      * The bitrate in bits per second.
      */
-    private final int bitrate;
+    private int bitrate;
+
+    /**
+     * The number of frames encoded when {@link #bitrate} took effect.
+     */
+    private long rateOrigin;
 
     /**
      * Whether the encoder codes at constant quality.
@@ -89,9 +95,24 @@ public final class EncoderEngine {
     private final int[] inputChannel;
 
     /**
+     * Whether each coded channel is an LFE channel.
+     */
+    private final boolean[] lfe;
+
+    /**
+     * The number of LFE channels.
+     */
+    private final int lfeChannels;
+
+    /**
      * The element types, in coded order.
      */
     private final int[] elementTypes;
+
+    /**
+     * The instance tag of each element.
+     */
+    private final int[] elementTags;
 
     /**
      * The input buffer of each coded channel; index 0 holds the first sample of the next
@@ -140,11 +161,6 @@ public final class EncoderEngine {
     private final float[] nextEnergies;
 
     /**
-     * The next instance tag of each element type while writing a frame.
-     */
-    private final int[] tags = new int[4];
-
-    /**
      * The window sequence of the previous frame of each element.
      */
     private final int[] previousSequences;
@@ -167,7 +183,7 @@ public final class EncoderEngine {
     /**
      * The bit reservoir capacity in bits.
      */
-    private final int reservoirSize;
+    private int reservoirSize;
 
     /**
      * The smallest perceptual entropy of the bit reservoir control's interpolation range.
@@ -182,7 +198,7 @@ public final class EncoderEngine {
     /**
      * The constant threshold parameter of variable bitrate mode.
      */
-    private final float vbrParameter;
+    private float vbrParameter;
 
     /**
      * The threshold parameter the rate control chose for the previous frame.
@@ -198,43 +214,35 @@ public final class EncoderEngine {
      * Creates an engine.
      *
      * @param sampleRate a standard AAC sampling rate
-     * @param channels 1, 2 or 6
+     * @param frameLength the frame length, 1024 or 960
+     * @param layout the channel elements and the input channel of each coded channel
      * @param bitrate the bitrate in bits per second
      * @param vbr whether to code at constant quality instead of constant bitrate
      * @param bandwidth the audio bandwidth in hertz
      * @param kernel the DSP kernel
      */
-    public EncoderEngine(int sampleRate, int channels, int bitrate, boolean vbr, int bandwidth, AacKernel kernel) {
+    public EncoderEngine(int sampleRate, int frameLength, EncoderLayout layout, int bitrate, boolean vbr,
+                         int bandwidth, AacKernel kernel) {
         this.sampleRate = sampleRate;
-        this.channels = channels;
+        this.frameLength = frameLength;
+        this.lookahead = frameLength / 2;
+        this.bufferLength = 3 * frameLength;
+        this.channels = layout.inputChannels().length;
         this.bitrate = bitrate;
         this.vbr = vbr;
-        switch (channels) {
-            case 1 -> {
-                elementTypes = new int[]{ElementId.SCE};
-                inputChannel = new int[]{0};
-            }
-            case 2 -> {
-                elementTypes = new int[]{ElementId.CPE};
-                inputChannel = new int[]{0, 1};
-            }
-            case 6 -> {
-                elementTypes = new int[]{ElementId.SCE, ElementId.CPE, ElementId.CPE,
-                        ElementId.LFE};
-                inputChannel = new int[]{2, 0, 1, 4, 5, 3};
-            }
-            default -> throw new IllegalArgumentException("unsupported channel count " + channels);
-        }
-        var fullBitrate = channels == 6 ? bitrate * 5 / 5.2 : bitrate;
-        var perChannel = (int) (fullBitrate / (channels == 6 ? 5 : channels));
+        this.elementTypes = layout.elementTypes().clone();
+        this.elementTags = layout.elementTags().clone();
+        this.inputChannel = layout.inputChannels().clone();
+        this.lfe = layout.lfe().clone();
+        this.lfeChannels = layout.lfeChannels();
+        var perChannel = channelBitrate(bitrate);
         coded = new EncoderChannel[channels];
         for (var i = 0; i < channels; i++) {
-            var lfe = channels == 6 && i == 5;
-            coded[i] = new EncoderChannel(sampleRate, lfe ? Math.min(bandwidth, 240) : bandwidth,
-                    lfe ? Math.max(perChannel / 5, 1000) : perChannel, !lfe, kernel);
+            coded[i] = new EncoderChannel(sampleRate, frameLength, lfe[i] ? Math.min(bandwidth, 240) : bandwidth,
+                    lfe[i] ? Math.max(perChannel / 5, 1000) : perChannel, !lfe[i], kernel);
         }
-        buffers = new float[channels][BUFFER];
-        filled = FRAME;
+        buffers = new float[channels][bufferLength];
+        filled = frameLength;
         attacks = new boolean[channels];
         attackIndexes = new int[channels];
         attackEnergies = new float[channels];
@@ -247,10 +255,10 @@ public final class EncoderEngine {
         var mean = meanFrameBits();
         reservoirSize = Math.max(0, (CHANNEL_BITS * channels - mean) & ~7);
         reservoir = reservoirSize;
-        var meanPe = 10.0f * FRAME * Math.min(bandwidth, sampleRate / 2) / (sampleRate / 2.0f) * channels;
+        var meanPe = 10.0f * frameLength * Math.min(bandwidth, sampleRate / 2) / (sampleRate / 2.0f) * channels;
         peMin = 0.8f * meanPe;
         peMax = 1.2f * meanPe;
-        vbrParameter = vbrParameter(bitrate / (channels == 6 ? 5.2 : channels));
+        vbrParameter = vbrParameter(bitrate / channelWeight());
     }
 
     /**
@@ -278,7 +286,7 @@ public final class EncoderEngine {
      * @return the free capacity in samples per channel
      */
     public int capacity() {
-        return BUFFER - filled;
+        return bufferLength - filled;
     }
 
     /**
@@ -318,7 +326,7 @@ public final class EncoderEngine {
      * @return {@code true} when the window and the look-ahead are complete
      */
     public boolean frameReady() {
-        return filled >= 2 * FRAME + LOOKAHEAD;
+        return filled >= 2 * frameLength + lookahead;
     }
 
     /**
@@ -329,12 +337,12 @@ public final class EncoderEngine {
     public byte[] encodeFrame() {
         if (frames == 0) {
             for (var channel = 0; channel < channels; channel++) {
-                detect(channel, FRAME - LOOKAHEAD);
+                detect(channel, frameLength - lookahead);
             }
         }
         for (var channel = 0; channel < channels; channel++) {
             var detector = coded[channel].detector();
-            detector.analyze(buffers[channel], 2 * FRAME - LOOKAHEAD);
+            detector.analyze(buffers[channel], 2 * frameLength - lookahead);
             nextAttacks[channel] = detector.attack();
             nextIndexes[channel] = detector.attackIndex();
             nextEnergies[channel] = detector.peakEnergy();
@@ -378,9 +386,9 @@ public final class EncoderEngine {
         }
         var block = encodeBlock();
         for (var i = 0; i < channels; i++) {
-            System.arraycopy(buffers[i], FRAME, buffers[i], 0, filled - FRAME);
+            System.arraycopy(buffers[i], frameLength, buffers[i], 0, filled - frameLength);
         }
-        filled -= FRAME;
+        filled -= frameLength;
         frames++;
         return block;
     }
@@ -485,13 +493,67 @@ public final class EncoderEngine {
     }
 
     /**
+     * Returns the number of channels the bitrate is shared among, each LFE channel counting as a fifth of one.
+     *
+     * @return the weighted channel count
+     */
+    private double channelWeight() {
+        var fullBand = channels - lfeChannels;
+        return lfeChannels == 0 ? fullBand : fullBand + 0.2 * lfeChannels;
+    }
+
+    /**
+     * Returns the bitrate of each full-band channel at a total bitrate, each LFE channel taking a fifth of one.
+     *
+     * <p>When every channel is an LFE channel, the result is five times the bitrate of each LFE channel, so that the
+     * fifth an LFE channel codes at is its share of the total.
+     *
+     * @param total the bitrate of all channels in bits per second
+     * @return the bitrate per full-band channel
+     */
+    private int channelBitrate(int total) {
+        var fullBand = channels - lfeChannels;
+        if (fullBand == 0) {
+            return 5 * total / lfeChannels;
+        }
+        var fullBitrate = lfeChannels == 0 ? total : total * fullBand / channelWeight();
+        return (int) (fullBitrate / fullBand);
+    }
+
+    /**
+     * Changes the bitrate and the bandwidth of the frames encoded from now on.
+     *
+     * <p>The mean frame size restarts its exact rounding at the next frame, the bit reservoir keeps its fullness up
+     * to the capacity of the new rate, and every channel retunes its bands and psychoacoustic model.
+     *
+     * @param newBitrate the bitrate in bits per second
+     * @param bandwidth the audio bandwidth in hertz
+     */
+    public void retarget(int newBitrate, int bandwidth) {
+        this.bitrate = newBitrate;
+        this.rateOrigin = frames;
+        reservoirSize = Math.max(0, (CHANNEL_BITS * channels - meanFrameBits()) & ~7);
+        reservoir = Math.min(reservoir, reservoirSize);
+        var meanPe = 10.0f * frameLength * Math.min(bandwidth, sampleRate / 2) / (sampleRate / 2.0f) * channels;
+        peMin = 0.8f * meanPe;
+        peMax = 1.2f * meanPe;
+        vbrParameter = vbrParameter(newBitrate / channelWeight());
+        var perChannel = channelBitrate(newBitrate);
+        for (var i = 0; i < channels; i++) {
+            coded[i].retune(sampleRate, lfe[i] ? Math.min(bandwidth, 240) : bandwidth,
+                    lfe[i] ? Math.max(perChannel / 5, 1000) : perChannel);
+        }
+    }
+
+    /**
      * Returns the mean number of bits of the next frame at the configured bitrate.
      *
-     * @return the bits, the exact long-term average rounded frame by frame
+     * @return the bits, the exact long-term average since the bitrate took effect, rounded frame by frame
      */
     private int meanFrameBits() {
-        var before = frames * FRAME * (long) bitrate / sampleRate;
-        var after = (frames + 1) * FRAME * (long) bitrate / sampleRate;
+        var elapsed = frames - rateOrigin;
+        var before = elapsed * frameLength * (long) bitrate / sampleRate;
+        var after = (elapsed + 1) * frameLength * (long) bitrate / sampleRate;
         return (int) (after - before);
     }
 
@@ -739,11 +801,10 @@ public final class EncoderEngine {
      */
     private void writeElements() {
         var channel = 0;
-        Arrays.fill(tags, 0);
         for (var element = 0; element < elementTypes.length; element++) {
             var type = elementTypes[element];
             writer.write(type, 3);
-            writer.write(tags[type]++, 4);
+            writer.write(elementTags[element], 4);
             if (type == ElementId.CPE) {
                 var left = coded[channel];
                 var right = coded[channel + 1];
