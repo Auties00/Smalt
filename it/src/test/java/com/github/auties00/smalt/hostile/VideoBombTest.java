@@ -75,6 +75,10 @@ class VideoBombTest {
                     var stream = ForgedHeaders.mpeg4(width, height);
                     return new Forged(Codec.MPEG4_PART2, stream.config(), List.of(stream.packet()));
                 }),
+                new Bomb(Codec.MPEG2_VIDEO, (width, height) -> {
+                    var stream = ForgedHeaders.mpeg2(width, height);
+                    return new Forged(Codec.MPEG2_VIDEO, stream.config(), List.of(stream.packet()));
+                }),
                 new Bomb(Codec.VP8, (width, height) -> patched(Codec.VP8, (packet) -> {
                     Hostile.le16(packet, 6, width & 0x3FFF);
                     Hostile.le16(packet, 8, height & 0x3FFF);
@@ -194,7 +198,7 @@ class VideoBombTest {
 
     static Stream<Codec> encodable() {
         return Stream.of(Codec.H264, Codec.AV1, Codec.VP8, Codec.VP9, Codec.MJPEG, Codec.JPEG2000, Codec.PRORES,
-                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2);
+                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2, Codec.MPEG2_VIDEO);
     }
 
     @Nested
@@ -216,6 +220,7 @@ class VideoBombTest {
             return switch (codec) {
                 case HEVC -> ffmpeg(codec, "libx265", "mp4", List.of("-x265-params", "log-level=error"));
                 case MPEG4_PART2 -> ffmpeg(codec, "mpeg4", "mp4", List.of());
+                case MPEG2_VIDEO -> ffmpeg(codec, "mpeg2video", "ts", List.of());
                 default -> Streams.video(codec, LARGE, LARGE, 2, options(codec));
             };
         }

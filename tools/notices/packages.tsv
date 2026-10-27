@@ -175,6 +175,8 @@ video.h264.internal	mpeg
 video.hevc	mpeg
 video.hevc.internal	mpeg
 video.intra.internal	video
+video.mpeg2	mpeg
+video.mpeg2.internal	mpeg
 video.mpeg4	mpeg
 video.mpeg4.internal	mpeg
 video.mpeg4.internal.object	mpeg

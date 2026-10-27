@@ -2,3 +2,4 @@ com.github.auties00.smalt.internal.provider.mpeg.H264CodecProvider
 com.github.auties00.smalt.internal.provider.mpeg.HevcCodecProvider
 com.github.auties00.smalt.internal.provider.mpeg.Mpeg4CodecProvider
 com.github.auties00.smalt.internal.provider.mpeg.H263CodecProvider
+com.github.auties00.smalt.internal.provider.mpeg.Mpeg2CodecProvider

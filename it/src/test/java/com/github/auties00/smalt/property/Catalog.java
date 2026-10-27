@@ -26,6 +26,7 @@ public final class Catalog {
             Codec.HEVC, new String[]{"libx265", "mp4", "-x265-params", "log-level=error:keyint=4"},
             Codec.MPEG4_PART2, new String[]{"mpeg4", "mp4", "-g", "4"},
             Codec.H263, new String[]{"h263", "3gp", "-g", "4"},
+            Codec.MPEG2_VIDEO, new String[]{"mpeg2video", "ts", "-g", "4", "-bf", "2"},
             Codec.THEORA, new String[]{"libtheora", "ogg", "-g", "4"});
 
     /** The audio codecs Smalt does not encode, with the ffmpeg encoder, container and sample rate. */

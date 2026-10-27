@@ -68,7 +68,9 @@ import java.util.Set;
  *       ({@code A_VORBIS}, the Xiph-laced headers);</li>
  *   <li>Matroska only: H.264 ({@code V_MPEG4/ISO/AVC}, {@code avcC}), HEVC
  *       ({@code V_MPEGH/ISO/HEVC}, {@code hvcC}), MPEG-4 Part 2 ({@code V_MPEG4/ISO/ASP}, the
- *       decoder specific information of the track's configuration, when it has one), Motion-JPEG
+ *       decoder specific information of the track's configuration, when it has one), MPEG-1 and MPEG-2 video
+ *       ({@code V_MPEG1}, {@code V_MPEG2}, the sequence header of the track's configuration, when it has one),
+ *       Motion-JPEG
  *       ({@code V_MJPEG}, none), Motion JPEG 2000 ({@code V_JPEG2000}, none: a frame that relies on the track's JP2
  *       Header box is made to carry it, a raw codestream or a single {@code jp2c} box written as a JP2 file and the
  *       two {@code jp2c} boxes of an interlaced frame after a copy of the header box), H.263
@@ -562,6 +564,8 @@ public final class MatroskaMuxer implements Muxer {
             case H264 -> "V_MPEG4/ISO/AVC";
             case HEVC -> "V_MPEGH/ISO/HEVC";
             case MPEG4_PART2 -> "V_MPEG4/ISO/ASP";
+            case MPEG1_VIDEO -> "V_MPEG1";
+            case MPEG2_VIDEO -> "V_MPEG2";
             case MJPEG -> "V_MJPEG";
             case JPEG2000 -> "V_JPEG2000";
             case H263 -> "V_MS/VFW/FOURCC";
@@ -1746,7 +1750,7 @@ public final class MatroskaMuxer implements Muxer {
                 switch (codec) {
                     case H264, HEVC, PRORES, THEORA -> codecPrivate = require(config);
                     case DNXHD -> codecPrivate = imageDescription(require(config), videoTrack);
-                    case AV1, MPEG4_PART2 -> codecPrivate = config;
+                    case AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO -> codecPrivate = config;
                     case VP9 -> codecPrivate = config == null ? null : vp9Features(config);
                     case H263 -> codecPrivate = bitmapInfo(videoTrack, config);
                     default -> {

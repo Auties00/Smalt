@@ -109,6 +109,7 @@ linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAnnexBDem
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAppleAlphaTest	platform:macos	1
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcConformanceTest	data:vector	34
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcRextConformanceTest	data:vector	11
+linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg2.Mpeg2ConformanceTest	data:vector	3
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4ConformanceTest	data:vector	13
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4SamplesTest	data:vector	3
 linux-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.RawJ420CrossCheckTest	data:vector	1
@@ -254,6 +255,7 @@ linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAnnexBDemux
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAppleAlphaTest	platform:macos	1
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcConformanceTest	data:vector	34
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcRextConformanceTest	data:vector	11
+linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.mpeg2.Mpeg2ConformanceTest	data:vector	3
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4ConformanceTest	data:vector	13
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4SamplesTest	data:vector	3
 linux-x64-scalar-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.RawJ420CrossCheckTest	data:vector	1
@@ -412,6 +414,7 @@ linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAnnexBDemux
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAppleAlphaTest	platform:macos	1
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcConformanceTest	data:vector	34
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcRextConformanceTest	data:vector	11
+linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg2.Mpeg2ConformanceTest	data:vector	3
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4ConformanceTest	data:vector	13
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4SamplesTest	data:vector	3
 linux-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.RawJ420CrossCheckTest	data:vector	1
@@ -549,6 +552,7 @@ macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.h264.encoder.Quali
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAnnexBDemuxTest	data:vector	31
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcConformanceTest	data:vector	34
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcRextConformanceTest	data:vector	11
+macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg2.Mpeg2ConformanceTest	data:vector	3
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4ConformanceTest	data:vector	13
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4SamplesTest	data:vector	3
 macos-arm64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.RawJ420CrossCheckTest	data:vector	1
@@ -689,6 +693,7 @@ windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAnnexBDem
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcAppleAlphaTest	platform:macos	1
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcConformanceTest	data:vector	34
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.hevc.HevcRextConformanceTest	data:vector	11
+windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg2.Mpeg2ConformanceTest	data:vector	3
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4ConformanceTest	data:vector	13
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.Mpeg4SamplesTest	data:vector	3
 windows-x64-vector-smoke	mpeg	com.github.auties00.smalt.video.mpeg4.RawJ420CrossCheckTest	data:vector	1

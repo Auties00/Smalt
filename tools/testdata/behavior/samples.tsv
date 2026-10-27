@@ -11,6 +11,7 @@ core/src/test/resources/samples/amr/nb.amr	3238	5230e69f4b53d1e3508f7833241f3068
 core/src/test/resources/samples/amr/wb-3ch.awb	18319	d4ba98ff4315a67df08b4ff23e2555941bcb9d358df89aa75c826c237aa75ad6	make-amr-mc-samples.py
 core/src/test/resources/samples/amr/wb.awb	6109	ccfea779b46271014282f1f88f9342071ec30b4088977745a6a347b797219f9e	make-samples.sh
 core/src/test/resources/samples/avi/mjpeg-pcm.avi	146694	299c10a8f4e72831adcf250d0ee65d248e02c3ca0c8d6d1987f1ca81ac07dbac	make-samples.sh
+core/src/test/resources/samples/avi/mpeg2-422.avi	42360	5ecf2158698f0fa27268d7841271abea745cb31b8286b2491d81000408c3a81f	make-samples.sh
 core/src/test/resources/samples/avi/mpeg4-mp3.avi	67810	40c50cc0c09dead43a126999f6b0fc1f5684f0ccf38b6e27c91af0cc7f09e406	make-samples.sh
 core/src/test/resources/samples/elementary/av1-annexb.obu	15637	b5e670c82b8d929fbf930383ba83b5cb1eaed75974afde393a72266e7551ebfc	make-samples.sh
 core/src/test/resources/samples/elementary/av1.obu	15577	c2b46137baf88f641c5a1e81ce48578c2a8df0a0e652ad43440d04c5801809b7	make-samples.sh
@@ -26,6 +27,7 @@ core/src/test/resources/samples/matroska/dolby-vision-p84.mkv	9941	96e0cdaebc69e
 core/src/test/resources/samples/matroska/editions.mkv	20004	9f1d4908991bf072a0fbdc88cc9d3e5bdf00dbf28a1bafb316edeaa3fb749b66	make-descriptive-samples.py
 core/src/test/resources/samples/matroska/flac.mka	33512	ac1975ad374f475c70b81e40f222627176b0ac58f054af62142efbaf2b8b1ed0	make-samples.sh
 core/src/test/resources/samples/matroska/h264-opus.mkv	42823	597f618dcacde3dc4964fa011395778eba2c0439c421286d3606510d5db752d2	make-samples.sh
+core/src/test/resources/samples/matroska/mpeg1.mkv	30929	52e7a48aacf1da7d41b33fda3534de0bc9dcf5fbc8303039ce450418ff19c86a	make-samples.sh
 core/src/test/resources/samples/matroska/ordered-parts.mkv	8925	a29734fad3d5d61f978430f9b7f3383b58adf6a15da0b349648fb9c727955b02	make-timeline-samples.py
 core/src/test/resources/samples/matroska/pgs.mkv	4842	9e52367bb683df887f5d4c905b3471706ed1d12775a5345d0cd244d185c48334	make-samples.sh, make-bitmap-caption-samples.py
 core/src/test/resources/samples/matroska/vobsub.mkv	6354	3850b30dc5e15183e99298cefcfe691e218060b41ee97ce14a3fd2bb5d3b19d8	make-samples.sh, make-bitmap-caption-samples.py
@@ -50,6 +52,7 @@ core/src/test/resources/samples/mp4/jpeg2000.mov	22043	61fcdfd99ef4e81586e7b3a12
 core/src/test/resources/samples/mp4/location-xmp.mp4	46724	bc9b03c9b5c01af5c51feea19da11d7d2a6d4cd0070777a7633f972371c79943	make-samples.sh, make-keyed-metadata-samples.py
 core/src/test/resources/samples/mp4/moov-last.mp4	45860	f07f29483d40c24ccdbed6833e4a04f5d22e446968b7448c4cf0ad36cc8281dc	make-samples.sh
 core/src/test/resources/samples/mp4/motion.mj2	18352	9c3c18eeee3e9fe70749ac0b6671c29d712f7a559d34cf38fe52ff24978976c3	make-mj2-sample.py
+core/src/test/resources/samples/mp4/mpeg2.mp4	31858	6bb0c3e442cb9996d2625aaef5b28ad370acf3ef421d346bcd9cf15af34693ee	make-samples.sh
 core/src/test/resources/samples/mp4/phone-keyed.mov	66772	59469e2655e2cc162445bfee9c0ba275d9aa8c8f38f4ad3510a6c80ffec35e70	make-samples.sh, make-keyed-metadata-samples.py
 core/src/test/resources/samples/mp4/prores.mov	11125	76b429c682e15e7ea6537ac906d400030dbae4fbf322415798be2633f13ea71c	make-samples.sh
 core/src/test/resources/samples/mp4/quicktime.mov	65138	aa49fbc8e1940cb53ce15527fcb2b4e8f6204f0c628824655c7178227c9001ae	make-samples.sh
@@ -81,6 +84,7 @@ core/src/test/resources/samples/ts/dvb-subtitles.ts	3196	21c3536a8c4afef49fa1b56
 core/src/test/resources/samples/ts/h264-aac.ts	56024	1d1be5df58c4e151117773533d98c3de47efa31ec059d491622a1be7870fefe9	make-samples.sh
 core/src/test/resources/samples/ts/h264-ac3.m2ts	73728	1ffeb7b1c6cd63f72ac245496308111bc78ff60d802ecbcc8bb167dbd9b58dc0	make-samples.sh
 core/src/test/resources/samples/ts/h264-captions.ts	32148	351b7f5fd0594443cb46796f6509f8a41d86d8918a9c3e75046f555c2e1cf24e	make-samples.sh, make-bitmap-caption-samples.py
+core/src/test/resources/samples/ts/mpeg2.ts	38540	c6bfbd8c682e1ad9ad5f5f15e287c968862e7b0eed9c05fd0318b738a7f3dcc7	make-samples.sh
 core/src/test/resources/samples/ts/mpeg4-lpcm.m2ts	159744	72de59960c421f590a8dcb65cc8c9655b91734722ea7225f35473cbf8dc1b18d	make-samples.sh
 core/src/test/resources/samples/ts/pmt-change.ts	68244	d2b5e4852700e5cae87b28157f1513484d6808ada4fef97cac2a87ec3b582db9	make-samples.sh
 core/src/test/resources/samples/ts/s302m.ts	75388	4e8b88fff340d198301def2a4bb3bd769f62282737e1cbff632efde13be00633	make-samples.sh

@@ -66,7 +66,7 @@ VERSION_ARGS = {
     'tiffcp': [], 'tiffinfo': ['-v'], 'tiffdump': [], 'tiff2rgba': [], 'MP4Box': ['-version'],
     'mkvmerge': ['--version'], 'mkvinfo': ['--version'], 'mkvalidator': ['--version'], 'tsp': ['--version'],
     'sox': ['--version'], 'smalt-pngdump': [], 'smalt-lcmsdump': [], 'smalt-mpeg4ref': [], 'smalt-gifenc': [],
-    'smalt-alacenc': [],
+    'smalt-alacenc': [], 'smalt-mpeg2dec': [], 'smalt-mpeg2enc': [],
     'ultrahdr_app': [], 'avifgainmaputil': ['--version'], 'avifdec': ['--version'],
 }
 VERSION_MARKERS = ('version', 'libtiff', 'opj_', 'usage', 'exiftool', ' v', 'copyright')
@@ -414,6 +414,9 @@ def build(row, target):
     key = '%s %s %s' % (row['version'], row['sha256'], digest(__file__))
     if name == 'smalt-mpeg4ref':
         key += ' ' + digest(os.path.join(HERE, 'mpeg4-oracle', 'build.py'))
+    if name == 'smalt-mpeg2ref':
+        key += ' ' + digest(os.path.join(HERE, 'mpeg2-oracle', 'build.py'))
+        key += ' ' + digest(os.path.join(HERE, 'mpeg2-oracle', 'smalt_idct.c'))
     if name == 'smalt-gifenc':
         key += ' ' + digest(os.path.join(HERE, 'gif-oracle', 'smalt-gifenc.c'))
     if name == 'smalt-alacenc':
@@ -537,6 +540,11 @@ def build(row, target):
             builder = load_script('mpeg4-oracle', 'build.py')
             builder.build(archive, work, cxx_compiler(target), executable, static=target.startswith('windows'),
                           env=env)
+        elif name == 'smalt-mpeg2ref':
+            archive = download(row['source'], row['sha256'])
+            builder = load_script('mpeg2-oracle', 'build.py')
+            builder.build(archive, work, compiler(target), os.path.join(out, 'smalt-mpeg2dec' + EXE),
+                          os.path.join(out, 'smalt-mpeg2enc' + EXE), env=env)
         elif name == 'libultrahdr':
             tree = source_tree(row, work)
             build_dir = os.path.join(work, 'build')

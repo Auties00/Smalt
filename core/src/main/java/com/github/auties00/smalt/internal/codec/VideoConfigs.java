@@ -18,8 +18,9 @@ import java.util.Arrays;
 /**
  * Parses the out-of-band configuration records of video codecs and the sequence-level headers
  * they carry: the H.264 {@code avcC} record and its sequence parameter set, the HEVC
- * {@code hvcC} record, the AV1 {@code av1C} record and sequence header OBU, and the VP9
- * {@code vpcC} record and uncompressed key frame header.
+ * {@code hvcC} record, the AV1 {@code av1C} record and sequence header OBU, the VP9
+ * {@code vpcC} record and uncompressed key frame header, and the MPEG-1 and MPEG-2 video sequence header
+ * ({@link MpegVideoHeaders}).
  *
  * <p>Every parser returns {@code null} instead of throwing when the bytes do not hold what it
  * needs, so a caller can fall back to the container's own description. The results feed the
@@ -135,6 +136,7 @@ public final class VideoConfigs {
                 case AV1 -> av1(config);
                 case VP9 -> vp9(config);
                 case VP8 -> new Info("0", -1, 8, ChromaFormat.YUV420, null, 0, 0, null, null);
+                case MPEG1_VIDEO, MPEG2_VIDEO -> MpegVideoHeaders.describe(config);
                 default -> null;
             };
         } catch (RuntimeException exception) {

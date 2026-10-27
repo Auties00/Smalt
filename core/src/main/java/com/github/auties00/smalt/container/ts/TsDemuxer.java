@@ -91,7 +91,11 @@ import java.util.function.Function;
  *       configuration; DVB teletext ({@code 0x06} with a teletext descriptor) as {@link Codec#DVB_TELETEXT}, each
  *       PES data field with the descriptor body as the configuration;</li>
  *   <li>MPEG-1 and MPEG-2 video ({@code 0x01}, {@code 0x02}) as {@link Codec#MPEG1_VIDEO} and
- *       {@link Codec#MPEG2_VIDEO}, one PES packet per packet;</li>
+ *       {@link Codec#MPEG2_VIDEO}, as the sequence header says (either stream type may carry either): one packet
+ *       per PES packet (a PES packet that starts inside a picture completing the packet before it), with the
+ *       sequence header and extensions of the first key frame as the configuration, and
+ *       the picture size, frame rate, sample aspect ratio and color description of that header; packets before it
+ *       are dropped;</li>
  *   <li>other PES streams: private data ({@code 0x06}, user private types from {@code 0x80})
  *       become data tracks with the handler {@code "private"}, except that a {@code 0x06} stream without a
  *       descriptor whose first payload starts with an ADTS, LOAS, AC-3 or MPEG audio header or an MPEG-4 Part 2
@@ -1307,8 +1311,8 @@ public final class TsDemuxer implements Demuxer {
     static ElementaryParser parserFor(Psi.StreamEntry stream, MediaLimits limits) {
         var hdmv = stream.programRegistered(Psi.HDMV);
         return switch (stream.streamType()) {
-            case 0x01 -> new PesParser(stream, limits, Codec.MPEG1_VIDEO, null);
-            case 0x02 -> new PesParser(stream, limits, Codec.MPEG2_VIDEO, null);
+            case 0x01 -> new MpegVideoParser(stream, limits, Codec.MPEG1_VIDEO);
+            case 0x02 -> new MpegVideoParser(stream, limits, Codec.MPEG2_VIDEO);
             case 0x03, 0x04 -> new MpegAudioParser(stream, limits);
             case 0x0F -> new AdtsParser(stream, limits);
             case 0x10 -> new Mpeg4VideoParser(stream, limits);

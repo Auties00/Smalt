@@ -142,6 +142,16 @@ class MpegFuzzTest {
         FuzzMedia.video(Codec.MPEG4_PART2, data);
     }
 
+    @FuzzTest
+    void mpeg1Video(byte[] data) {
+        FuzzMedia.video(Codec.MPEG1_VIDEO, data);
+    }
+
+    @FuzzTest
+    void mpeg2Video(byte[] data) {
+        FuzzMedia.video(Codec.MPEG2_VIDEO, data);
+    }
+
     /**
      * Decodes the two layers of a scalable MPEG-4 Part 2 object: a 4-byte big-endian length, the base layer's
      * elementary stream of that length and the enhancement layer's elementary stream, each split by

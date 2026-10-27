@@ -16,8 +16,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 
 /**
- * Runs the H.264, HEVC, MPEG-4 Part 2 and H.263 video decoders and the AAC, AC-3, E-AC-3 and AMR audio decoders
- * ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
+ * Runs the H.264, HEVC, MPEG-4 Part 2, H.263, MPEG-1 and MPEG-2 video decoders and the AAC, AC-3, E-AC-3 and AMR
+ * audio decoders ({@link ReaderAsserts}) and the HEIC image decoder ({@link ImageDecoderAsserts}) of this artifact through
  * the I/O behavior harness over the container samples (core's {@code src/test/resources/samples}), smoke-tier
  * vectors, the HEIF fuzz seeds of AVC, uncompressed and layered HEVC items, the HEVC screen content coding and
  * separate color plane vectors and the multi-layer HEVC vectors ({@link HevcSamples}), and the MPEG-4 object tool and
@@ -40,7 +40,8 @@ class MpegDecoderBehaviorTest {
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"mp4/faststart.mp4", "mp4/fragmented.mp4", "mp4/hevc.mp4", "mp4/h264-422-10.mov",
             "mp4/h264-444.mp4", "ts/h264-aac.ts", "avi/mpeg4-mp3.avi", "mp4/h263-amr.3gp", "mp4/quicktime.mov",
-            "mp4/dolby-vision-p84.mp4", "matroska/dolby-vision-p84.mkv", "ts/dolby-vision-p84.ts"})
+            "mp4/dolby-vision-p84.mp4", "matroska/dolby-vision-p84.mkv", "ts/dolby-vision-p84.ts", "ts/mpeg2.ts",
+            "mp4/mpeg2.mp4", "matroska/mpeg1.mkv", "avi/mpeg2-422.avi"})
     @DisplayName("video samples: identical frames under every source behavior and clean faults")
     void video(String sample) throws IOException {
         ReaderAsserts.video(sample, Files.readAllBytes(SAMPLES.resolve(sample))).run();

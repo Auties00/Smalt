@@ -1,6 +1,7 @@
 package com.github.auties00.smalt.container.packaging;
 
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Track;
 import com.github.auties00.smalt.track.VideoTrack;
@@ -24,9 +25,9 @@ final class CodecStrings {
      * Returns the codec string of a track.
      *
      * @param track the track to describe
-     * @param keyFrame the first key frame of a video track, which describes a VP8, VP9, AV1 or MPEG-4
-     * Part 2 track without a configuration and a ProRes or DNxHD track, or the first document of a TTML track,
-     * which names its IMSC profile, or {@code null}
+     * @param keyFrame the first key frame of a video track, which describes a VP8, VP9, AV1, MPEG-4 Part 2,
+     * MPEG-1 video or MPEG-2 video track without a configuration and a ProRes or DNxHD track, or the first document
+     * of a TTML track, which names its IMSC profile, or {@code null}
      * @return the codec string, or {@code null} when the codec has none
      */
     static String of(Track track, byte[] keyFrame) {
@@ -58,6 +59,9 @@ final class CodecStrings {
                     ? CodecConfigs.vp8Config(keyFrame, video.width(), video.height(), video.color().orElse(null)) : null);
             case MPEG4_PART2 -> mpeg4(config != null && config.length > 0 ? config
                     : keyFrame != null ? CodecConfigs.mpeg4Config(keyFrame) : null);
+            case MPEG1_VIDEO, MPEG2_VIDEO -> String.format(Locale.ROOT, "mp4v.%02X",
+                    MpegVideoHeaders.objectType(track.codec() == Codec.MPEG1_VIDEO, config != null && config.length > 0
+                            ? config : keyFrame != null ? MpegVideoHeaders.config(keyFrame) : null));
             case H263 -> "s263";
             case MJPEG -> "mp4v.6C";
             case JPEG2000 -> "mjp2";

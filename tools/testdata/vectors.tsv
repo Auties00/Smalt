@@ -7111,3 +7111,20 @@ full	mpeg4audio-er_ac121_lay2.wav	491708	f9616b7c7498c5a055a279ca856978acc6fcf82
 smoke	mpeg4audio-er_ac121_lay3.wav	491708	f638ead5b2d9a0cf90701d272d1da1641d4ed824e03c1ddf1e7b81c447a1b09d	https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/er_ac121_lay3.wav
 full	mpeg4audio-er_ac123_lay0.wav	9406652	8b9cf5f6d8de356bccdd9f364adac67f68a80c608689220c47c716e33e37a786	https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/er_ac123_lay0.wav
 full	mpeg4audio-er_ac123_lay1.wav	9406652	e6f87d0f7d88e9946a8b804a4e9b9acec3aea53744020da1133f4e95a140b030	https://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_14496-26_2010_Bitstreams/DVD2/mpeg4audio-conformance/referencesWav/er_ac123_lay1.wav
+# The MPEG-2 video conformance bitstreams of ISO/IEC 13818-4 that the Wayback Machine kept of the ISO publicly
+# available standards tree (gzip-compressed, as published; ISO terms, used for testing only, never redistributed)
+# and the MPEG-2 video samples of FFmpeg's FATE suite (no licence stated; used for testing only), for mpeg's
+# Mpeg2ConformanceTest.
+smoke	mpeg2video-hhi_burst_short.bits.gz	267049	d5f80f1a9eebe81aa101ce1439d72e06cdbfd5e480199a5739614698bf006ed0	http://web.archive.org/web/20070323225812id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Video/bitstreams/main-profile/hhi/hhi_burst_short/hhi_burst_short.bits.gz
+full	mpeg2video-hhi_burst_long.bits.gz	3147694	694b0d06a30ae529ec9b73f86fd2ee2dd973d06e893c0c33e7a796f9252d2d80	http://web.archive.org/web/20070323225756id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Video/bitstreams/main-profile/hhi/hhi_burst_long/hhi_burst_long.bits.gz
+smoke	mpeg2video-hhi_burst_422_short.bits.gz	864190	dae6bace23926e6cf1a867a921863e1d6728af349c80be29c52e70fb77efbb56	http://web.archive.org/web/20060719073828id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Video/bitstreams/422-profile/hhi/hhi_burst_422/hhi_burst_422_short.bits.gz
+full	mpeg2video-hhi_burst_422_long.bits.gz	10466297	2462b9f98d333453dcb83972815c1bc9e069aa86a8e385de97a4e31c41ee98b3	http://web.archive.org/web/20060719074502id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Video/bitstreams/422-profile/hhi/hhi_burst_422/hhi_burst_422_long.bits.gz
+smoke	mpeg2video-teracom_vlc4.bin.gz	245071	523682f4b95965f73233e95e2488312b8fe605241e70abd9ff6f9f7dd59d87d1	http://web.archive.org/web/20070222125317id_/http://standards.iso.org/ittf/PubliclyAvailableStandards/ISO_IEC_13818-4_2004_Conformance_Testing/Video/bitstreams/main-profile/teracom/teracom_vlc4/teracom_vlc4.bin.gz
+smoke	mpeg2-fate-tcela-6.bits	311007	3b267fd327ce97ace05119022e5eda0a222d9cd65c0e360c46c8a2cd0664049a	https://fate-suite.ffmpeg.org/mpeg2/tcela-6.bits
+smoke	mpeg2-fate-sony-ct3.bs	139144	fa622b9d9a0fe24dee7eea5ebe653bd3f98d5605a4257d16c11985022eaf2875	https://fate-suite.ffmpeg.org/mpeg2/sony-ct3.bs
+smoke	mpeg2-fate-mpeg2_field_encoding.ts	800000	9688333a145b9e2c2139b9cab6cd4966acd19788fd620b4b31db5c2891547cb8	https://fate-suite.ffmpeg.org/mpeg2/mpeg2_field_encoding.ts
+smoke	mpeg2-fate-xdcam8mp2-1s_small.ts	507788	c3429a5975b1e1b47602bb15cb90e72c2b8831e6349acd85f30ec834363bcb20	https://fate-suite.ffmpeg.org/mpeg2/xdcam8mp2-1s_small.ts
+smoke	mpeg2-fate-dvd_single_frame.vob	122880	3054d653e9e575ba0592de2ce223c813d9b8bc593981a1fc184ff6f49790942b	https://fate-suite.ffmpeg.org/mpeg2/dvd_single_frame.vob
+smoke	mpeg2-fate-dvd_still_frame.vob	878592	651dfc3a55a96de26cf6eb4a3851a8d8b5fdb57a8ab8dc8adb14e6c302fb409a	https://fate-suite.ffmpeg.org/mpeg2/dvd_still_frame.vob
+smoke	mpeg2-fate-matrixbench_mpeg2.lq1.mpg	210944	85e49a80cd97b0c91a548ffa7ab980575d55c8e6e2c9148a1d7bd8c2ce9b77d1	https://fate-suite.ffmpeg.org/mpeg2/matrixbench_mpeg2.lq1.mpg
+full	mpeg2-fate-t.mpg	1349276	d13177688337e32079eee871a703420e6cb503743cb6e331c961c0de0aea82ff	https://fate-suite.ffmpeg.org/mpeg2/t.mpg

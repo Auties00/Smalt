@@ -83,6 +83,17 @@ class FuzzSeedWriter {
         seed("h263", "valid-sqcif.bin", Codec.H263, ffmpeg("3gp", video(128, 96, 3), "-c:v", "h263", "-q:v", "20"));
         seed("h263", "valid-plus-annexes.bin", Codec.H263, ffmpeg("avi", video(176, 144, 2), "-c:v", "h263p",
                 "-q:v", "20", "-flags", "+aic+loop", "-umv", "1", "-aiv", "1"));
+        // MPEG-1 and MPEG-2 have no 10 Hz frame rate
+        var mpegVideo = List.of("-f", "lavfi", "-i", "testsrc2=size=32x32:rate=25:duration=0.24");
+        seed("mpeg1Video", "valid-bframes-mkv.bin", Codec.MPEG1_VIDEO, ffmpeg("mkv", mpegVideo, "-c:v", "mpeg1video",
+                "-q:v", "10", "-bf", "2", "-g", "6"));
+        // the interlaced coding flags and bitexact in one -flags:v, which a later -flags:v would replace
+        seed("mpeg2Video", "valid-interlaced-bframes-mkv.bin", Codec.MPEG2_VIDEO, Fixtures.ffmpeg("mkv", mpegVideo,
+                List.of("-c:v", "mpeg2video", "-q:v", "10", "-bf", "2", "-g", "6", "-top", "1", "-fflags",
+                        "+bitexact", "-flags:v", "+ildct+ilme+bitexact")));
+        seed("mpeg2Video", "valid-422-intra-vlc-mkv.bin", Codec.MPEG2_VIDEO, ffmpeg("mkv", mpegVideo, "-c:v",
+                "mpeg2video", "-q:v", "8", "-bf", "1", "-g", "6", "-pix_fmt", "yuv422p", "-intra_vlc", "1",
+                "-alternate_scan", "1", "-non_linear_quant", "1", "-qmax", "28"));
     }
 
     @Test

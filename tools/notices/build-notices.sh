@@ -112,6 +112,7 @@ Contents
   55. dovi_tool (the dolby_vision crate)
   56. ISO/IEC 23003-3 MPEG-D USAC reference software
   57. ISO/IEC 23003-4 MPEG-D DRC reference software
+  58. ISO/IEC 13818-5 MPEG-2 video reference software (MPEG Software Simulation Group)
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2012,6 +2013,27 @@ Copyright:
 EOF
 license_start "Notices of the source files"
 cat "$LIC/iso23003-4-drc-refsoft-notice.txt"
+
+section "58. ISO/IEC 13818-5 MPEG-2 video reference software (MPEG Software Simulation Group)"
+cat <<'EOF'
+Project:      the MPEG-2 video reference software of ISO/IEC 13818-5, the MPEG
+              Software Simulation Group's mpeg2decode and mpeg2encode
+Source:       c039486_ISO_IEC_13818-5_2005_Reference_Software.zip (video)
+              of ISO's Publicly Available Standards
+License text: the notice of the source files
+License:      free of license fee or royalty, as is
+
+Derived Smalt packages:
+  video.mpeg2.internal (Vlc: the variable length code tables of
+  mpeg2decode/getvlc.h and their table-driven decoding in getvlc.c)
+
+Derivation: tables transcribed and C code translated to Java.
+
+Copyright:
+  MPEG Software Simulation Group (1996)
+EOF
+license_start "Notice of the source files"
+cat "$LIC/iso13818-5-mssg-video-notice.txt"
 } > "$OUT"
 
 echo "wrote $OUT"

@@ -17,6 +17,7 @@ import com.github.auties00.smalt.image.Images;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.tags.TagFiles;
 import com.github.auties00.smalt.io.MediaSource;
@@ -218,12 +219,13 @@ final class Prober {
      * Returns whether a video track lacks a configuration record that describes it.
      *
      * @param track a video track
-     * @return {@code true} for VP8, ProRes, DNxHD and Motion JPEG 2000 tracks, and VP9 and AV1 tracks without one
+     * @return {@code true} for VP8, ProRes, DNxHD and Motion JPEG 2000 tracks, and VP9, AV1, MPEG-1 video and
+     * MPEG-2 video tracks without one
      */
     private static boolean needsKeyFrame(VideoTrack track) {
         return switch (track.codec()) {
             case VP8, PRORES, DNXHD, JPEG2000 -> true;
-            case VP9, AV1 -> track.codecConfig().isEmpty();
+            case VP9, AV1, MPEG1_VIDEO, MPEG2_VIDEO -> track.codecConfig().isEmpty();
             default -> false;
         };
     }
@@ -342,6 +344,29 @@ final class Prober {
                         if (width <= 0 || height <= 0) {
                             width = header.width();
                             height = header.height();
+                        }
+                    }
+                }
+                case MPEG1_VIDEO, MPEG2_VIDEO -> {
+                    var described = info != null ? null
+                            : VideoConfigs.describe(track.codec(), MpegVideoHeaders.config(keyFrame));
+                    if (described != null) {
+                        profile = described.profile();
+                        level = described.level();
+                        bitDepth = described.bitDepth();
+                        chroma = described.chroma();
+                        if (color == null) {
+                            color = described.color();
+                        }
+                        if (sar == null && described.sampleAspect() != null) {
+                            sar = described.sampleAspect();
+                        }
+                        if (frameRate == null) {
+                            frameRate = described.frameRate();
+                        }
+                        if (width <= 0 || height <= 0) {
+                            width = described.width();
+                            height = described.height();
                         }
                     }
                 }

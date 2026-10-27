@@ -65,7 +65,7 @@ The README's Install table is the single source of these descriptions; the pom `
 | `smalt-image` | `...smalt.image` | JPEG (and its lossless transforms), JPEG-LS, JPEG 2000, PNG, GIF, WebP, BMP, TIFF, ICO, ANI, JPEG XL, EXIF and image metadata editing, Motion-JPEG, Motion JPEG 2000, and VP8 (lossy WebP is VP8) |
 | `smalt-audio` | `...smalt.audio` | Opus, Vorbis, FLAC, ALAC, MP3, and voice processing |
 | `smalt-video` | `...smalt.video` | VP9, AV1, AVIF, ProRes and DNxHD/DNxHR |
-| `smalt-mpeg` | `...smalt.mpeg` | H.264, HEVC, HEIC, AAC, AMR, MPEG-4 Part 2, H.263, AC-3 and E-AC-3, the codecs licensed through patent pools or by Dolby |
+| `smalt-mpeg` | `...smalt.mpeg` | H.264, HEVC, HEIC, MPEG-1 and MPEG-2 video, AAC, AMR, MPEG-4 Part 2, H.263, AC-3 and E-AC-3, the codecs licensed through patent pools or by Dolby |
 | `smalt-capture` | `...smalt.capture` | Camera, screen and microphone capture, and speaker playback |
 | `smalt-raw` | `...smalt.raw` | DNG and camera raw decoding: Canon, Nikon, Sony, Fujifilm, Olympus, Panasonic, Pentax, Minolta and Sigma raw files, demosaicing and camera color rendering |
 | `smalt-desktop` | `...smalt.desktop` | ImageIO readers and writers and Java Sound providers for the formats the other artifacts handle |

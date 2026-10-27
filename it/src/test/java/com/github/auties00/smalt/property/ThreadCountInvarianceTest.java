@@ -56,7 +56,7 @@ class ThreadCountInvarianceTest {
 
     static Stream<Codec> decoders() {
         return Stream.of(Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000, Codec.PRORES,
-                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2);
+                Codec.DNXHD, Codec.HEVC, Codec.MPEG4_PART2, Codec.MPEG2_VIDEO);
     }
 
     @Nested
@@ -88,7 +88,8 @@ class ThreadCountInvarianceTest {
         @MethodSource("com.github.auties00.smalt.property.ThreadCountInvarianceTest#decoders")
         @DisplayName("returns the same frames for every thread count")
         void frames(Codec codec) {
-            var stream = codec == Codec.HEVC || codec == Codec.MPEG4_PART2 ? Catalog.stream(codec)
+            var stream = codec == Codec.HEVC || codec == Codec.MPEG4_PART2 || codec == Codec.MPEG2_VIDEO
+                    ? Catalog.stream(codec)
                     : Streams.video(codec, 640, 360, 10, builder -> builder.realtime(codec != Codec.H264));
             String reference = null;
             for (var threads : THREADS) {

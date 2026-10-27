@@ -118,6 +118,13 @@ ff -f lavfi -i "testsrc2=size=160x120:rate=15:duration=1" -c:v libaom-av1 -cpu-u
 
 ff -f lavfi -i "$short" -c:a flac -ac 2 -compression_level 5 "$out/flac/flac.flac"
 
+# MPEG-1 and MPEG-2 video (25 Hz: neither standard has a 15 Hz frame rate) in the containers that carry them
+mpv="testsrc2=size=160x120:rate=25:duration=0.8"
+ff -f lavfi -i "$mpv" -c:v mpeg2video -q:v 8 -g 10 -bf 2 -flags +ildct+ilme -top 1 "$out/ts/mpeg2.ts"
+ff -f lavfi -i "$mpv" -c:v mpeg2video -q:v 8 -g 10 -bf 2 "$out/mp4/mpeg2.mp4"
+ff -f lavfi -i "$mpv" -c:v mpeg1video -q:v 8 -g 10 -bf 2 "$out/matroska/mpeg1.mkv"
+ff -f lavfi -i "$mpv" -c:v mpeg2video -q:v 8 -g 10 -bf 1 -pix_fmt yuv422p "$out/avi/mpeg2-422.avi"
+
 # elementary video streams and uncompressed video
 ff -f lavfi -i "$video" "${x264[@]}" -f h264 "$out/elementary/h264.h264"
 ff -f lavfi -i "testsrc2=size=160x120:rate=15:duration=1" -c:v libx265 -preset ultrafast -crf 34 -g 5 -bf 2     -pix_fmt yuv420p -x265-params pools=1:frame-threads=1:log-level=error -f hevc "$out/elementary/hevc.h265"

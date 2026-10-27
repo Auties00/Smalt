@@ -46,7 +46,8 @@ import java.util.Objects;
  * {@code WAVEFORMATEXTENSIBLE}, whose Dolby GUIDs announce AC-3 and E-AC-3) and extra data of a
  * {@code WAVEFORMATEX}. Streams of other types (text, MIDI, interleaved DV) are skipped. The extra data
  * becomes {@link Track#codecConfig()}:
- * the video object layer headers of MPEG-4 Part 2, an {@code AVCDecoderConfigurationRecord} or
+ * the video object layer headers of MPEG-4 Part 2, the sequence header of MPEG-1 and MPEG-2 video, an
+ * {@code AVCDecoderConfigurationRecord} or
  * {@code HEVCDecoderConfigurationRecord} when the extra data is one, the {@code AudioSpecificConfig} of
  * AAC. H.264 and HEVC stored as an Annex B byte stream, the usual form in AVI, get a configuration record
  * built from the parameter sets of the extra data and of the first key frame, and their packets are
@@ -505,8 +506,10 @@ public final class AviDemuxer implements Demuxer {
             if (codec == Codec.UNKNOWN_VIDEO && handler != 0) {
                 codec = RiffCodecs.video(fourCcString(handler));
             }
-            if (headerSize >= 40 && format.length > headerSize) {
-                config = Arrays.copyOfRange(format, headerSize, format.length);
+            // the extra data follows the 40 bytes of the header, which writers count in biSize or not
+            var extra = headerSize == format.length ? 40 : headerSize;
+            if (headerSize >= 40 && format.length > extra) {
+                config = Arrays.copyOfRange(format, extra, format.length);
             }
             if (codec == Codec.UNKNOWN_VIDEO) {
                 var raw = RawVideoTags.bitmap(format);

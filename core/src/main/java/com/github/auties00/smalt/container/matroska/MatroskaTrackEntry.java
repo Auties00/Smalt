@@ -1010,10 +1010,11 @@ final class MatroskaTrackEntry {
      * Returns whether blocks of this track may be stored out of presentation order, so that their
      * decoding timestamps cannot be taken from the block timestamps.
      *
-     * @return {@code true} for H.264, HEVC, MPEG-4 Part 2 and unidentified video
+     * @return {@code true} for H.264, HEVC, MPEG-4 Part 2, MPEG-1 video, MPEG-2 video and unidentified video
      */
     boolean reorders() {
-        return codec == Codec.H264 || codec == Codec.HEVC || codec == Codec.MPEG4_PART2 || codec == Codec.UNKNOWN_VIDEO;
+        return codec == Codec.H264 || codec == Codec.HEVC || codec == Codec.MPEG4_PART2 || codec == Codec.MPEG1_VIDEO
+                || codec == Codec.MPEG2_VIDEO || codec == Codec.UNKNOWN_VIDEO;
     }
 
     /**

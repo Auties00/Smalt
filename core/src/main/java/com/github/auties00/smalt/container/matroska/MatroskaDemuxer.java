@@ -129,19 +129,19 @@ import java.util.Set;
  * end at or before the start are returned flagged {@link PacketFlag#DISCARD}, and so are the audio frames before it
  * that rebuild the decoder state (counted per codec as for the edits of an MP4 track: none for PCM, FLAC and ALAC,
  * 80 ms for Opus, two packets for AAC, one for most other codecs), while the other frames that end at or before it
- * are not returned; video and data frames that straddle it are cut to it, and audio frames that straddle it keep
- * their timestamp and carry the samples before it as their {@link PacketSideData#discardStart()}. A frame presented
- * at or after the end of the part is not returned, except a frame of a track whose frames are stored out of
- * presentation order (H.264, HEVC, MPEG-4 Part 2) that a later frame before the end follows, which is returned
- * flagged {@link PacketFlag#DISCARD}; an audio frame straddling the end carries the samples after it as its
+ * are not returned; video and data frames that straddle it are cut to it, and audio frames that straddle it keep their
+ * timestamp and carry the samples before it as their {@link PacketSideData#discardStart()}. A frame presented at or
+ * after the end of the part is not returned, except a frame of a track whose frames are stored out of presentation
+ * order (H.264, HEVC, MPEG-4 Part 2, MPEG-1 and MPEG-2 video) that a later frame before the end follows, which is
+ * returned flagged {@link PacketFlag#DISCARD}; an audio frame straddling the end carries the samples after it as its
  * {@link PacketSideData#discardEnd()} and a video or data frame straddling it is cut. Timestamps are those of the
  * timeline, decoding timestamps never decrease, and a discarded video or data frame has a negative presentation
  * timestamp, which no presented frame has. A seek within a hard-linked segment before its first key frame reads from
  * the last key frames of the segment before. The parts read at most four times the size of their segments, or 4 MiB
  * when that is more, between seeks. The duration, the track durations and the chapters are those of the timeline:
- * {@link #chapterEditions()} holds the played edition alone, flagged as the default and not ordered, its chapters
- * (the visible ones, nested as stored, the visible chapters nested in a hidden one in its place) spanning the parts
- * they play; a hard-linked chain reports the chapters of the default edition of each of its segments.
+ * {@link #chapterEditions()} holds the played edition alone, flagged as the default and not ordered, its chapters (the
+ * visible ones, nested as stored, the visible chapters nested in a hidden one in its place) spanning the parts they
+ * play; a hard-linked chain reports the chapters of the default edition of each of its segments.
  *
  * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the first video track (of
  * any track when there is no video) name the cluster holding the last key frame at or before the target. Without usable
@@ -158,8 +158,8 @@ import java.util.Set;
  * {@code DefaultDuration} converts to an exact number of samples; their block timestamps are
  * rescaled to it, keeping the rounding of the stored timestamps. Timestamps are the block
  * timestamps as stored: Matroska stores presentation timestamps only,
- * so the decoding timestamp of codecs that reorder frames (H.264, HEVC, MPEG-4 Part 2) is
- * {@link Packet#NO_TIMESTAMP}, and equals the presentation timestamp for every other track. The
+ * so the decoding timestamp of codecs that reorder frames (H.264, HEVC, MPEG-4 Part 2, MPEG-1 and MPEG-2
+ * video) is {@link Packet#NO_TIMESTAMP}, and equals the presentation timestamp for every other track. The
  * {@code CodecDelay} of an audio track is reported as {@link AudioTrack#skipSamples()} rather
  * than subtracted from the timestamps, except for Opus, whose pre-skip already signals it in band.
  * An AAC track whose {@code SamplingFrequency} is the rate of the AAC core while spectral band
@@ -1502,7 +1502,7 @@ public final class MatroskaDemuxer implements Demuxer {
      * Returns whether the frames of a track may be stored out of presentation order.
      *
      * @param trackId the track
-     * @return {@code true} for H.264, HEVC, MPEG-4 Part 2 and unidentified video
+     * @return {@code true} for H.264, HEVC, MPEG-4 Part 2, MPEG-1 video, MPEG-2 video and unidentified video
      */
     boolean reorders(int trackId) {
         var entry = byNumber.get((long) trackId);

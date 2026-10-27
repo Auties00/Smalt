@@ -845,6 +845,23 @@ behaviors of the decoder shape those streams: it reads ahead of the last macrobl
 ticks rather than in field periods of the frame period, so only the streams whose VOP times count frames are
 compared with it.
 
+## MPEG-2 video reference software
+
+`mpeg2-oracle/build.py` builds the MPEG Software Simulation Group's MPEG-2 video decoder and encoder of the
+ISO/IEC 13818-5 reference software (version 1.2, from the Internet Archive's copy of ISO's Publicly Available
+Standards, pinned by SHA-256) as `smalt-mpeg2dec` and `smalt-mpeg2enc` (the `smalt-mpeg2ref` row of `oracles.tsv`),
+with the platform's C compiler; `oracles.py install` builds them on every platform. The decoder's integer inverse DCT
+is replaced by `mpeg2-oracle/smalt_idct.c`, the transform of Smalt's decoder (the one step ISO/IEC 13818-2 leaves free
+within the IEEE 1180 accuracy), so that the two reconstruct the same samples; `-r` keeps its double precision
+reference transform, and `-o0` appends every frame to one planar file. `Mpeg2ReferenceDecoderTest`,
+`Mpeg2SyntaxTest` and `Mpeg2ConformanceTest` compare Smalt's decodes with it sample for sample: streams of ffmpeg's
+encoders and of the reference encoder (whose parameter files reach field pictures, dual-prime prediction, 4:2:2 and
+4:4:4, every intra DC precision and repeated fields), the pseudo-random syntax streams of the mpeg module's
+`SyntaxStream`, and the ISO/IEC 13818-4 and FATE samples of `vectors.tsv`. The decoder stores each reconstructed
+coefficient in 16 bits before it saturates it, so the syntax streams keep every coefficient within 16 bits before
+saturation. `mpeg2-oracle/make-training.py` writes the MPEG video streams of the `smalt-aot` training workloads with
+the reference encoder.
+
 ## MPEG-4 Visual object streams
 
 `mpeg4-object/make-vectors.py` makes the committed streams of `Mpeg4ObjectConformanceTest` (`smalt-mpeg`,

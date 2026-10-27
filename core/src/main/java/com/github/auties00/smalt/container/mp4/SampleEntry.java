@@ -487,7 +487,11 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             }
             default -> {
                 var raw = RawVideoTags.sampleEntry(FourCc.printable(format), depth, colorTable);
-                if (raw != null) {
+                var mpegVideo = mpegVideo(format);
+                if (mpegVideo != null) {
+                    codec = mpegVideo;
+                    config = esds == null ? null : esds.specificInfo();
+                } else if (raw != null) {
                     codec = Codec.RAW_VIDEO;
                     config = raw.toCodecConfig();
                     if (color == null && format == BoxTypes.J420) {
@@ -502,6 +506,36 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         return new SampleEntry(format, codec, config, width, height, color, sampleAspect, interlacing, spherical,
                 stereoMode, codec == Codec.HEVC || codec == Codec.H264 || codec == Codec.AV1 ? dolbyVision : null, 0,
                 0, null, 0, 0, protection);
+    }
+
+    /**
+     * Returns the codec of a QuickTime sample entry type of MPEG-1 or MPEG-2 video: {@code m1v }, {@code m1v1},
+     * {@code mp1v} and {@code mpeg} for MPEG-1; {@code m2v1}, {@code mp2v}, the HDV types {@code hdv1} to {@code hdv9}
+     * and {@code hdva}, the XDCAM HD types {@code xdv1} to {@code xdvf}, {@code xdhd} and {@code xdh2}, the XDCAM
+     * HD422 types {@code xd51} to {@code xd5f}, the IMX (D-10) types {@code mx3n}, {@code mx3p}, {@code mx4n},
+     * {@code mx4p}, {@code mx5n} and {@code mx5p}, Avid's {@code AVmp} and Matrox's {@code mmes} and {@code MMES}
+     * for MPEG-2.
+     *
+     * @param format the sample entry type
+     * @return the codec, or {@code null} for another type
+     */
+    static Codec mpegVideo(int format) {
+        var name = FourCc.printable(format);
+        return switch (name) {
+            case "m1v ", "m1v1", "mp1v", "mpeg" -> Codec.MPEG1_VIDEO;
+            case "m2v1", "mp2v", "hdva", "xdhd", "xdh2", "mx3n", "mx3p", "mx4n", "mx4p", "mx5n", "mx5p", "AVmp", "mmes",
+                 "MMES" -> Codec.MPEG2_VIDEO;
+            default -> {
+                var family = name.length() == 4 ? name.substring(0, 3) : "";
+                var last = name.length() == 4 ? name.charAt(3) : ' ';
+                if (family.equals("hdv") && last >= '1' && last <= '9'
+                        || (family.equals("xdv") || family.equals("xd5"))
+                        && (last >= '1' && last <= '9' || last >= 'a' && last <= 'f')) {
+                    yield Codec.MPEG2_VIDEO;
+                }
+                yield null;
+            }
+        };
     }
 
     /**

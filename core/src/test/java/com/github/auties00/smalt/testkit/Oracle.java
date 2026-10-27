@@ -138,6 +138,15 @@ public final class Oracle {
         /** {@code tools/testdata/mpeg4-oracle}'s build of the MPEG-4 Visual reference decoder of ISO/IEC 14496-5. */
         MPEG4REF("smalt-mpeg4ref"),
 
+        /**
+         * {@code tools/testdata/mpeg2-oracle}'s build of the MPEG-2 video reference decoder of ISO/IEC 13818-5, with
+         * Smalt's inverse DCT.
+         */
+        MPEG2DEC("smalt-mpeg2dec"),
+
+        /** {@code tools/testdata/mpeg2-oracle}'s build of the MPEG-2 video reference encoder of ISO/IEC 13818-5. */
+        MPEG2ENC("smalt-mpeg2enc"),
+
         /** {@code tools/testdata/gif-oracle}'s driver of giflib 5.2.2's GIF encoder. */
         GIFENC("smalt-gifenc"),
 

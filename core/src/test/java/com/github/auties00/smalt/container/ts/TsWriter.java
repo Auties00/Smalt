@@ -93,21 +93,28 @@ final class TsWriter {
         return this;
     }
 
-    /** Writes a PES packet with a presentation time and, unless negative, a decoding time. */
+    /**
+     * Writes a PES packet with a presentation time and, unless negative, a decoding time; a negative presentation
+     * time writes neither.
+     */
     TsWriter pes(int pid, int streamId, long pts, long dts, byte[] payload, boolean randomAccess) {
-        var withDts = dts >= 0;
+        var withPts = pts >= 0;
+        var withDts = withPts && dts >= 0;
         var header = new ByteArrayOutputStream();
         header.writeBytes(new byte[]{0, 0, 1, (byte) streamId});
-        var length = 3 + (withDts ? 10 : 5) + payload.length;
+        var headerLength = withDts ? 10 : withPts ? 5 : 0;
+        var length = 3 + headerLength + payload.length;
         if (length > 0xFFFF || (streamId & 0xF0) == 0xE0) {
             length = 0;
         }
         header.write(length >> 8);
         header.write(length);
         header.write(0x84);
-        header.write(withDts ? 0xC0 : 0x80);
-        header.write(withDts ? 10 : 5);
-        header.writeBytes(timestamp(withDts ? 3 : 2, pts));
+        header.write(withDts ? 0xC0 : withPts ? 0x80 : 0x00);
+        header.write(headerLength);
+        if (withPts) {
+            header.writeBytes(timestamp(withDts ? 3 : 2, pts));
+        }
         if (withDts) {
             header.writeBytes(timestamp(1, dts));
         }

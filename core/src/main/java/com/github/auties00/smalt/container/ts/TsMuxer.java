@@ -12,6 +12,7 @@ import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
+import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.internal.codec.NalConfigs;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.nal.NalUnits;
@@ -69,6 +70,9 @@ import java.util.PriorityQueue;
  *   <li>MPEG-4 Part 2 ({@code 0x10}, ids from {@code 0xE0}): frames as they are, a key frame that
  *       does not start with the visual object sequence, visual object or video object layer
  *       headers getting those of the track's configuration;</li>
+ *   <li>MPEG-1 and MPEG-2 video ({@code 0x01}, {@code 0x02}, ids from {@code 0xE0}): frames as they are, a key
+ *       frame that does not start with a sequence header getting the one of the track's configuration, when it
+ *       has one;</li>
  *   <li>AAC ({@code 0x0F}, ids from {@code 0xC0}): every packet gets an ADTS header built from the
  *       {@code AudioSpecificConfig} (HE-AAC is signaled implicitly, by its core);</li>
  *   <li>MP3 and MP2 ({@code 0x03}, or {@code 0x04} below 32 kHz, ids from {@code 0xC0}): frames as
@@ -107,7 +111,8 @@ import java.util.PriorityQueue;
  *       every timestamp and the {@code CRC_32} recomputed), any other a private PES stream ({@code 0x06}). SCTE 35 and
  *       Blu-ray linear PCM cannot share a program, where {@code 0x86} is DTS-HD audio.</li>
  * </ul>
- * A packet that changes the codec configuration of an H.264, HEVC, AV1 or MPEG-4 Part 2 track
+ * A packet that changes the codec configuration of an H.264, HEVC, AV1, MPEG-4 Part 2, MPEG-1 video or MPEG-2 video
+ * track
  * replaces the headers key frames get from then on, and one that changes the {@code AudioSpecificConfig} of an AAC
  * track the ADTS header of the following packets; a change on any other track is rejected.
  * Every track gets the language descriptor of its language. The track tags of
@@ -406,13 +411,13 @@ public final class TsMuxer implements Muxer {
      * Returns whether transport streams written by this muxer can carry a codec.
      *
      * @param codec the codec of a track to add
-     * @return {@code true} for H.264, HEVC, AV1, MPEG-4 Part 2, AAC, MP3, MP2, AC-3, E-AC-3, Opus, 16-bit and
-     * 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
+     * @return {@code true} for H.264, HEVC, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2 video, AAC, MP3, MP2, AC-3,
+     * E-AC-3, Opus, 16-bit and 24-bit PCM, PGS and DVB subtitles, DVB teletext, and data
      */
     public static boolean supports(Codec codec) {
         return switch (Objects.requireNonNull(codec, "codec")) {
-            case H264, HEVC, AV1, MPEG4_PART2, AAC, MP3, MP2, AC3, EAC3, OPUS, PCM_S16LE, PCM_S16BE, PCM_S24LE,
-                 PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
+            case H264, HEVC, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, AAC, MP3, MP2, AC3, EAC3, OPUS, PCM_S16LE,
+                 PCM_S16BE, PCM_S24LE, PCM_S24BE, PGS, DVB_SUBTITLE, DVB_TELETEXT, DATA -> true;
             default -> false;
         };
     }
@@ -567,6 +572,11 @@ public final class TsMuxer implements Muxer {
                 }
                 stream.parameterSets = config;
                 stream.streamType = 0x10;
+                stream.streamId = 0xE0 + Math.min(video, 15);
+            }
+            case MPEG1_VIDEO, MPEG2_VIDEO -> {
+                stream.parameterSets = config == null ? new byte[0] : config;
+                stream.streamType = track.codec() == Codec.MPEG1_VIDEO ? 0x01 : 0x02;
                 stream.streamId = 0xE0 + Math.min(video, 15);
             }
             case PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE -> {
@@ -969,6 +979,12 @@ public final class TsMuxer implements Muxer {
                                 + packet.trackId() + " is empty");
                     }
                 }
+                case MPEG1_VIDEO, MPEG2_VIDEO -> {
+                    if (MpegVideoHeaders.find(newConfig) == null) {
+                        throw new IllegalArgumentException("the new " + stream.track.codec().displayName()
+                                + " configuration of track " + packet.trackId() + " holds no sequence header");
+                    }
+                }
                 case AAC -> configureAac(new Stream(stream.track, stream.pid), newConfig);
                 default -> throw ConfigChanges.unsupported("MPEG-TS", packet.trackId());
             }
@@ -1319,6 +1335,7 @@ public final class TsMuxer implements Muxer {
         return switch (stream.track.codec()) {
             case AV1 -> av1AccessUnit(stream, packet);
             case MPEG4_PART2 -> mpeg4Frame(stream, packet);
+            case MPEG1_VIDEO, MPEG2_VIDEO -> mpegVideoFrame(stream, packet);
             default -> annexB(stream, packet);
         };
     }
@@ -1446,6 +1463,29 @@ public final class TsMuxer implements Muxer {
         }
         var data = packet.data();
         if (!packet.keyframe() || startsWithHeaders(data)) {
+            return data;
+        }
+        var frame = Arrays.copyOf(stream.parameterSets, stream.parameterSets.length + data.length);
+        System.arraycopy(data, 0, frame, stream.parameterSets.length, data.length);
+        return frame;
+    }
+
+    /**
+     * Prepends the sequence header of the track's configuration to an MPEG-1 or MPEG-2 video key frame that does
+     * not start with one, so that decoding can start at every key frame.
+     *
+     * @param stream the MPEG video stream, which holds the configuration, empty without one
+     * @param packet the frame
+     * @return the PES payload
+     */
+    private static byte[] mpegVideoFrame(Stream stream, Packet packet) {
+        var newConfig = ConfigChanges.changed(packet, stream.appliedConfig);
+        if (newConfig != null) {
+            stream.parameterSets = newConfig;
+            stream.appliedConfig = newConfig;
+        }
+        var data = packet.data();
+        if (!packet.keyframe() || stream.parameterSets.length == 0 || MpegVideoHeaders.startsWithSequenceHeader(data)) {
             return data;
         }
         var frame = Arrays.copyOf(stream.parameterSets, stream.parameterSets.length + data.length);
@@ -2155,7 +2195,8 @@ public final class TsMuxer implements Muxer {
         int lengthSize = 4;
 
         /**
-         * The parameter sets of an H.264 or HEVC track, start-code prefixed.
+         * The parameter sets of an H.264 or HEVC track, start-code prefixed, or the headers of an MPEG-1, MPEG-2 or
+         * MPEG-4 Part 2 video track, or the sequence header OBU of an AV1 track; empty when the track has none.
          */
         byte[] parameterSets = new byte[0];
 

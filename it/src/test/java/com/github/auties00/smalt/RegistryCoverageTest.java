@@ -84,7 +84,8 @@ class RegistryCoverageTest {
     @DisplayName("report the decoders and encoders of every artifact")
     void supported() {
         for (var codec : new Codec[]{Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG,
-                Codec.JPEG2000, Codec.MPEG4_PART2, Codec.H263, Codec.PRORES, Codec.DNXHD}) {
+                Codec.JPEG2000, Codec.MPEG4_PART2, Codec.H263, Codec.MPEG1_VIDEO, Codec.MPEG2_VIDEO, Codec.PRORES,
+                Codec.DNXHD}) {
             assertTrue(com.github.auties00.smalt.video.VideoDecoders.isSupported(codec), codec.name());
         }
         for (var codec : new Codec[]{Codec.AAC, Codec.MP3, Codec.MP2, Codec.OPUS, Codec.VORBIS, Codec.FLAC, Codec.PCM_F32LE}) {

@@ -3,6 +3,7 @@ package com.github.auties00.smalt.container.mp4;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
 import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
+import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
@@ -322,12 +323,12 @@ final class MuxTrack {
     }
 
     /**
-     * Derives the configuration of a VP8, VP9, AV1 or MPEG-4 Part 2 track that declares none from
-     * a key frame.
+     * Derives the configuration of a VP8, VP9, AV1, MPEG-4 Part 2, MPEG-1 video or MPEG-2 video track that
+     * declares none from a key frame.
      *
      * <p>Does nothing when the configuration is known, the codec is none of those, or the frame
-     * does not hold the headers the configuration comes from; an MPEG-4 Part 2 configuration is
-     * looked for in the first frame only, since later frames repeat it if they carry it at all.
+     * does not hold the headers the configuration comes from; an MPEG-4 Part 2, MPEG-1 or MPEG-2
+     * configuration is looked for in the first frame only, since later frames repeat it if they carry it at all.
      *
      * @param data the array holding the key frame
      * @param offset the index of the first frame byte
@@ -335,9 +336,10 @@ final class MuxTrack {
      */
     void deriveConfig(byte[] data, int offset, int size) {
         var codec = track.codec();
+        var firstOnly = codec == Codec.MPEG4_PART2 || codec == Codec.MPEG1_VIDEO || codec == Codec.MPEG2_VIDEO;
         if (config != null || data == null
-                || (codec != Codec.AV1 && codec != Codec.VP9 && codec != Codec.VP8 && codec != Codec.MPEG4_PART2)
-                || (codec == Codec.MPEG4_PART2 && count > 0)) {
+                || (codec != Codec.AV1 && codec != Codec.VP9 && codec != Codec.VP8 && !firstOnly)
+                || (firstOnly && count > 0)) {
             return;
         }
         var frame = offset == 0 && size == data.length ? data : Arrays.copyOfRange(data, offset, offset + size);
@@ -346,6 +348,7 @@ final class MuxTrack {
             case AV1 -> CodecConfigs.av1Config(frame);
             case VP9 -> CodecConfigs.vp9Config(frame, video.width(), video.height(), video.color().orElse(null));
             case VP8 -> CodecConfigs.vp8Config(frame, video.width(), video.height(), video.color().orElse(null));
+            case MPEG1_VIDEO, MPEG2_VIDEO -> MpegVideoHeaders.config(frame);
             default -> CodecConfigs.mpeg4Config(frame);
         };
     }

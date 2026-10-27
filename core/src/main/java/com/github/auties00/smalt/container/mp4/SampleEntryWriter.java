@@ -13,6 +13,7 @@ import com.github.auties00.smalt.internal.codec.AudioConfigs;
 import com.github.auties00.smalt.internal.codec.CodecConfigs;
 import com.github.auties00.smalt.internal.codec.DolbyVisionConfigs;
 import com.github.auties00.smalt.internal.codec.Jp2Frames;
+import com.github.auties00.smalt.internal.codec.MpegVideoHeaders;
 import com.github.auties00.smalt.internal.codec.VideoConfigs;
 import com.github.auties00.smalt.internal.nal.NalRecords;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
@@ -135,6 +136,9 @@ final class SampleEntryWriter {
             case AV1 -> writeVisual(writer, dolbyVisionFormat(BoxTypes.AV01, BoxTypes.DAV1, (VideoTrack) described),
                     BoxTypes.AV1C, false, (VideoTrack) described, config);
             case MPEG4_PART2 -> writeVisualEsds(writer, plan, MPEG4_VISUAL, (VideoTrack) described, config);
+            case MPEG1_VIDEO, MPEG2_VIDEO -> writeVisualEsds(writer, plan,
+                    MpegVideoHeaders.objectType(track.codec() == Codec.MPEG1_VIDEO, config), (VideoTrack) described,
+                    config);
             case MJPEG -> {
                 if (track.quickTime) {
                     var format = isMotionJpegA(track.firstBytes) ? BoxTypes.MJPA

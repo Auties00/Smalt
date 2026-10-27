@@ -33,16 +33,16 @@ import java.util.Objects;
 /**
  * Writes AVI files with the OpenDML 1.02 extensions.
  *
- * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-4 Part 2, H.264, HEVC, H.263, VP8 and VP9, and audio
- * tracks of PCM (8-bit unsigned, 16, 24, 32 and 64-bit signed and 32 and 64-bit float little-endian, A-law,
- * mu-law), MP3, MP2, AAC and AC-3 are accepted, at most 99 tracks in all. Video is stored at a
- * constant frame rate, the track's frame rate (or the inverse of its time base when that is a
- * plausible frame period, 25 frames per second otherwise); a gap in the timestamps is filled with
+ * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-1 and MPEG-2 video ({@code mpg1}, {@code mpg2}), MPEG-4
+ * Part 2, H.264, HEVC, H.263, VP8 and VP9, and audio tracks of PCM (8-bit unsigned, 16, 24, 32 and 64-bit signed
+ * and 32 and 64-bit float little-endian, A-law, mu-law), MP3, MP2, AAC and AC-3 are accepted, at most 99 tracks
+ * in all. Video is stored at a constant frame rate, the track's frame rate (or the inverse of its time base when
+ * that is a plausible frame period, 25 frames per second otherwise); a gap in the timestamps is filled with
  * empty chunks, which players treat as dropped frames, so presentation times survive. H.264 and
  * HEVC packets, length-prefixed in Smalt, are written as Annex B byte streams with the parameter
  * sets of the track's configuration record in front of every key frame that carries none of its own.
- * The decoder configuration of MPEG-4 Part 2 and AAC tracks is stored as the extra data of the
- * stream format. Motion JPEG 2000 is stored with the FourCC {@code MJ2C}, and a frame that relies on its
+ * The decoder configuration of MPEG-1 video, MPEG-2 video, MPEG-4 Part 2 and AAC tracks is stored as the extra
+ * data of the stream format. Motion JPEG 2000 is stored with the FourCC {@code MJ2C}, and a frame that relies on its
  * track's JP2 Header box is made to carry that header, since the stream format has no place for it: a raw
  * codestream or a single {@code jp2c} box is written as a JP2 file, the two {@code jp2c} boxes of an
  * interlaced frame after a copy of the header box. PCM audio is a
@@ -1113,7 +1113,7 @@ public final class AviMuxer implements Muxer {
             if (video) {
                 var videoTrack = (VideoTrack) track;
                 var extra = switch (track.codec()) {
-                    case MPEG4_PART2 -> config;
+                    case MPEG1_VIDEO, MPEG2_VIDEO, MPEG4_PART2 -> config;
                     case H264, HEVC -> parameterSets;
                     default -> new byte[0];
                 };

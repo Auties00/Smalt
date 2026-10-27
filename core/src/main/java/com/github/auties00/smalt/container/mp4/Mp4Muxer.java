@@ -376,9 +376,10 @@ public final class Mp4Muxer implements Muxer {
      * <p>Every brand carries AAC, Opus, MP3, MP2, ALAC, FLAC, AMR-NB, AMR-WB, AC-3 and E-AC-3;
      * {@link Mp4MuxerOptions.Brand#MP4}, {@link Mp4MuxerOptions.Brand#QUICKTIME} and
      * {@link Mp4MuxerOptions.Brand#MJ2} add Motion JPEG 2000; {@link Mp4MuxerOptions.Brand#MP4} and
-     * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VP8, VP9, AV1, MPEG-4 Part 2, H.263, Motion-JPEG, the
-     * 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats, {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT},
-     * {@link Codec#TTML}, {@link Codec#DVD_SUBTITLE}, {@link Codec#CEA_608} and {@link Codec#CEA_708}; only
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME} add H.264, HEVC, VP8, VP9, AV1, MPEG-4 Part 2, MPEG-1 and MPEG-2
+     * video, H.263, Motion-JPEG, the 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats,
+     * {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT}, {@link Codec#TTML}, {@link Codec#DVD_SUBTITLE},
+     * {@link Codec#CEA_608} and {@link Codec#CEA_708}; only
      * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law and mu-law.
      *
      * @param brand the brand of the file
@@ -390,8 +391,8 @@ public final class Mp4Muxer implements Muxer {
         return switch (Objects.requireNonNull(codec, "codec")) {
             case AAC, OPUS, MP3, MP2, ALAC, FLAC, AMR_NB, AMR_WB, AC3, EAC3 -> true;
             case JPEG2000 -> brand != Mp4MuxerOptions.Brand.M4A;
-            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, H263, MJPEG, MOV_TEXT, WEBVTT, TTML, DVD_SUBTITLE, CEA_608,
-                 CEA_708, PCM_S16LE, PCM_S16BE,
+            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, H263, MJPEG, MOV_TEXT, WEBVTT,
+                 TTML, DVD_SUBTITLE, CEA_608, CEA_708, PCM_S16LE, PCM_S16BE,
                  PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE ->
                     brand == Mp4MuxerOptions.Brand.MP4 || brand == Mp4MuxerOptions.Brand.QUICKTIME;
             case PRORES, DNXHD, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> brand == Mp4MuxerOptions.Brand.QUICKTIME;
@@ -408,7 +409,9 @@ public final class Mp4Muxer implements Muxer {
      * {@code vp09} and {@code av01}) take their {@code vpcC}/{@code av1C} record from the track or,
      * when it has none, derive it from the first key frame's headers; MPEG-4 Part 2 is an
      * {@code mp4v} entry whose {@code esds} holds the track's decoder configuration or the headers
-     * that precede the first picture of the first frame; H.263 is {@code s263} with a {@code d263}
+     * that precede the first picture of the first frame; MPEG-1 and MPEG-2 video are {@code mp4v} entries of
+     * object type {@code 0x6A} and of the profile's object type ({@code 0x60} to {@code 0x65}) whose {@code esds}
+     * holds the track's sequence header or that of the first frame; H.263 is {@code s263} with a {@code d263}
      * box ({@code h263} in a QuickTime file); Motion-JPEG is {@code mp4v} with the JPEG object
      * type in an ISO file and {@code jpeg} ({@code mjpa} for Motion-JPEG format A frames,
      * {@code mjpb} for format B frames) in a QuickTime file. Motion JPEG 2000 is {@code mjp2} with a {@code jp2h}
@@ -748,7 +751,8 @@ public final class Mp4Muxer implements Muxer {
             return;
         }
         switch (target.codec()) {
-            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, AAC, OPUS, ALAC, FLAC, PRORES, DNXHD -> {
+            case H264, HEVC, VP8, VP9, AV1, MPEG4_PART2, MPEG1_VIDEO, MPEG2_VIDEO, AAC, OPUS, ALAC, FLAC, PRORES,
+                 DNXHD -> {
             }
             default -> throw ConfigChanges.unsupported("MP4", trackId);
         }

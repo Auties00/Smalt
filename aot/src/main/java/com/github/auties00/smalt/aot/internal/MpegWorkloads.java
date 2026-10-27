@@ -28,6 +28,7 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.VideoFrame;
+import com.github.auties00.smalt.video.VideoDecoderOptions;
 import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264AdaptiveQuantization;
@@ -40,6 +41,7 @@ import com.github.auties00.smalt.video.h264.encoder.H264FirstPassStats;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
 import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
+import com.github.auties00.smalt.video.mpeg2.Mpeg2Decoder;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -59,8 +61,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264,
- * AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across rounds as a long-running
- * application does.
+ * MPEG-1 and MPEG-2 video, AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across rounds as a
+ * long-running application does.
  */
 final class MpegWorkloads {
     /**
@@ -110,6 +112,8 @@ final class MpegWorkloads {
                 file("h264-decode-t2", () -> h264Decode(2, false)),
                 file("h264-decode-film-grain-t2", () -> h264FilmGrainDecode(2)),
                 file("h264-svc-decode", MpegWorkloads::h264ScalableDecode),
+                file("mpeg2-decode-t1", () -> mpegVideoDecode(1)),
+                file("mpeg2-decode-t2", () -> mpegVideoDecode(2)),
                 file("aac-encode", () -> aacEncode(6)),
                 file("aac-960-surround-encode", () -> aacShortFrameSurroundEncode(3)),
                 file("aac-decode", () -> aacDecode("aac-decode", false, false, 6)),
@@ -327,6 +331,38 @@ final class MpegWorkloads {
             }
         }
         return TrainingWorkload.of("h264-svc-decode", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * The MPEG-1 and MPEG-2 video streams decoded by {@link #mpegVideoDecode(int)}: frame pictures with B-pictures
+     * and field and frame prediction, field pictures with dual-prime prediction, 4:2:2 field pictures with
+     * B-pictures, the alternate scan and the intra VLC table, and MPEG-1 with B-pictures, each of a synthetic scene
+     * coded by the ISO/IEC 13818-5 reference encoder ({@code tools/testdata/mpeg2-oracle/make-training.py}).
+     */
+    private static final List<String> MPEG_VIDEO_STREAMS = List.of("frame-bframes.m2v", "field-dualprime.m2v",
+            "field-422-bframes.m2v", "mpeg1-bframes.m1v");
+
+    /**
+     * Returns a workload that decodes the MPEG-1 and MPEG-2 video streams, each in one packet.
+     *
+     * @param threads the decoder threads; above 1 the rows of the MPEG-2 pictures are decoded in parallel
+     * @return the workload
+     */
+    private static TrainingWorkload mpegVideoDecode(int threads) {
+        var rounds = new ArrayList<Runnable>();
+        for (var name : MPEG_VIDEO_STREAMS) {
+            byte[] stream;
+            try (var input = MpegWorkloads.class.getResourceAsStream("mpeg2/" + name)) {
+                stream = input.readAllBytes();
+            } catch (java.io.IOException | NullPointerException exception) {
+                throw new IllegalStateException("missing training stream " + name, exception);
+            }
+            var codec = name.endsWith(".m1v") ? Codec.MPEG1_VIDEO : Codec.MPEG2_VIDEO;
+            var packets = List.of(new Packet(1, stream, Packet.NO_TIMESTAMP, Packet.NO_TIMESTAMP, 0, true));
+            rounds.add(VideoStreams.decodeRound(packets, new Mpeg2Decoder(VideoStreams.track(codec, 128, 96, null),
+                    VideoDecoderOptions.builder().threads(threads).build())));
+        }
+        return TrainingWorkload.of("mpeg2-decode-t" + threads, () -> rounds.forEach(Runnable::run));
     }
 
     /**

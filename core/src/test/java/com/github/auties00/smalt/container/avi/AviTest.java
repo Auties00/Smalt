@@ -340,6 +340,47 @@ class AviTest {
             }
         }
 
+        static byte[] videoOnly(byte[] format) {
+            var avih = java.nio.ByteBuffer.allocate(56).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            avih.putInt(0, 40000).putInt(16, 1).putInt(24, 1);
+            var strh = java.nio.ByteBuffer.allocate(56).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            strh.put(0, "vids".getBytes(StandardCharsets.ISO_8859_1)).putInt(20, 1).putInt(24, 25).putInt(32, 1);
+            var frame = new byte[]{0, 0, 1, 0, 0, 0x0F, (byte) 0xFF, (byte) 0xF8};
+            var movi = list("LIST", "movi", chunk("00dc", frame));
+            var index = java.nio.ByteBuffer.allocate(16).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            index.put("00dc".getBytes(StandardCharsets.ISO_8859_1)).putInt(0x10).putInt(4).putInt(frame.length);
+            return list("RIFF", "AVI ", list("LIST", "hdrl", chunk("avih", avih.array()),
+                    list("LIST", "strl", chunk("strh", strh.array()), chunk("strf", format))), movi,
+                    chunk("idx1", index.array()));
+        }
+
+        static byte[] bitmapFormat(int headerSize, int length, byte[] extra) {
+            var format = java.nio.ByteBuffer.allocate(length).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+            format.putInt(headerSize).putInt(64).putInt(48).putShort((short) 1).putShort((short) 24)
+                    .put("MPG2".getBytes(StandardCharsets.ISO_8859_1));
+            format.position(length - extra.length);
+            format.put(extra);
+            return format.array();
+        }
+
+        @Test
+        @DisplayName("reads the extra data after the 40-byte header whether biSize counts it or not")
+        void bitmapExtraData() {
+            var config = new byte[]{0, 0, 1, (byte) 0xB3, 0x04, 0x00, 0x30, 0x13, (byte) 0xFF, (byte) 0xFF,
+                    (byte) 0xE0, 0x18};
+            for (var headerSize : List.of(40, 40 + config.length)) {
+                try (var demuxer = new AviDemuxer(MediaSource.of(videoOnly(bitmapFormat(headerSize,
+                        40 + config.length, config))))) {
+                    var track = demuxer.tracks().getFirst();
+                    assertEquals(Codec.MPEG2_VIDEO, track.codec(), "biSize " + headerSize);
+                    assertArrayEquals(config, track.codecConfig().orElseThrow(), "biSize " + headerSize);
+                }
+            }
+            try (var demuxer = new AviDemuxer(MediaSource.of(videoOnly(bitmapFormat(40, 40, new byte[0]))))) {
+                assertTrue(demuxer.tracks().getFirst().codecConfig().isEmpty(), "a bare header holds no extra data");
+            }
+        }
+
         @Test
         @DisplayName("reports an unknown duration when the stream's end does not fit in microseconds")
         void hugeTimeBase() {

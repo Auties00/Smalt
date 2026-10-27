@@ -165,6 +165,33 @@ final class ForgedHeaders {
         return new Stream(config, vop.toByteArray());
     }
 
+    /**
+     * Returns an MPEG-2 sequence header and sequence extension declaring a size (with the extension's size bits
+     * above 4095), then a group of pictures, an I-picture header with its coding extension and a junk slice.
+     */
+    static Stream mpeg2(int width, int height) {
+        var out = new ByteArrayOutputStream();
+        out.writeBytes(new byte[]{0, 0, 1, (byte) 0xB3});
+        out.writeBytes(new Hostile.MsbBits().u(12, width & 0xFFF).u(12, height & 0xFFF).u(4, 1).u(4, 3)
+                .u(18, 0x3FFFF).u(1, 1).u(10, 112).u(1, 0).u(1, 0).u(1, 0).align());
+        out.writeBytes(new byte[]{0, 0, 1, (byte) 0xB5});
+        out.writeBytes(new Hostile.MsbBits().u(4, 1).u(8, 0x14).u(1, 1).u(2, 1).u(2, width >> 12)
+                .u(2, height >> 12).u(12, 0).u(1, 1).u(8, 0).u(1, 0).u(2, 0).u(5, 0).align());
+        var config = out.toByteArray();
+        var picture = new ByteArrayOutputStream();
+        picture.writeBytes(new byte[]{0, 0, 1, (byte) 0xB8, 0, 8, 0, 0});
+        picture.writeBytes(new byte[]{0, 0, 1, 0});
+        picture.writeBytes(new Hostile.MsbBits().u(10, 0).u(3, 1).u(16, 0xFFFF).u(1, 0).align());
+        picture.writeBytes(new byte[]{0, 0, 1, (byte) 0xB5});
+        picture.writeBytes(new Hostile.MsbBits().u(4, 8).u(16, 0xFFFF).u(2, 0).u(2, 3).u(1, 1).u(1, 1).u(1, 0)
+                .u(1, 0).u(1, 0).u(1, 0).u(1, 0).u(1, 1).u(1, 1).align());
+        picture.writeBytes(new byte[]{0, 0, 1, 1, 0x5A, 0x5A, 0x5A, 0x5A});
+        var packet = new ByteArrayOutputStream();
+        packet.writeBytes(config);
+        packet.writeBytes(picture.toByteArray());
+        return new Stream(config, packet.toByteArray());
+    }
+
     private static byte[] stuffed(Hostile.MsbBits bits) {
         bits.u(1, 0);
         return bits.alignOnes();
