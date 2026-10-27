@@ -6,7 +6,11 @@ import java.util.Optional;
 /**
  * Holds the sensor image of a camera raw file before demosaicing and color rendering: one sample
  * per photosite of a color filter array, or three per pixel of linear raw data, as linear 16-bit
- * values in which 0 is the black level and 65535 the white level.
+ * values in which 0 is the black level and 65535 the white level. Sensors that read each photosite
+ * twice (the two photodiodes of different sensitivity of Fujifilm SuperCCD SR sensors, the two
+ * photosites of a pair of Fujifilm EXR sensors in their DR and SN modes) give two samples per
+ * photosite, each scaled by its own black and white levels, in the order the file stores them;
+ * the rendering merges them.
  *
  * <p>The values are the DNG "linear reference values" of the default crop (or of the whole active
  * area): stored samples after the linearization table, black level subtraction and white level
@@ -38,19 +42,22 @@ public final class RawImage {
 
     private final double[] balancedToXyz;
 
+    private final CfaLayout layout;
+
     /**
      * Constructs an image; {@link RawDecoder} creates instances.
      *
      * @param width the width in pixels
      * @param height the height in pixels
-     * @param channels the samples of each pixel, 1 or 3
+     * @param channels the samples of each pixel, 1, 2 or 3
      * @param samples the 16-bit samples, row by row with the channels of a pixel interleaved; not copied
      * @param cfa the color filter array, or {@code null}
      * @param neutral the camera neutral
-     * @param balancedToXyz the white-balanced camera to XYZ matrix
+     * @param balancedToXyz the white-balanced camera to XYZ matrix, or an empty array
+     * @param layout the spatial layout of the color filter array
      */
     RawImage(int width, int height, int channels, short[] samples, CfaPattern cfa, double[] neutral,
-             double[] balancedToXyz) {
+             double[] balancedToXyz, CfaLayout layout) {
         this.width = width;
         this.height = height;
         this.channels = channels;
@@ -58,6 +65,7 @@ public final class RawImage {
         this.cfa = cfa;
         this.neutral = neutral.clone();
         this.balancedToXyz = balancedToXyz.clone();
+        this.layout = Objects.requireNonNull(layout, "layout");
     }
 
     /**
@@ -75,8 +83,8 @@ public final class RawImage {
     }
 
     /**
-     * {@return the number of samples of each pixel: 1 for color filter array and monochrome images, 3
-     * for linear raw images}
+     * {@return the number of samples of each pixel: 1 for color filter array and monochrome images, 2
+     * for color filter arrays that read each photosite twice, 3 for linear raw images}
      */
     public int channels() {
         return channels;
@@ -101,6 +109,16 @@ public final class RawImage {
     }
 
     /**
+     * {@return the spatial layout of the color filter array's photosites, aligned as
+     * {@link #cfaPattern()} is: {@link CfaLayout#RECTANGULAR} for most sensors and for linear raw and
+     * monochrome images, a staggered layout for sensors whose photosites are offset by half a row or
+     * column}
+     */
+    public CfaLayout cfaLayout() {
+        return layout;
+    }
+
+    /**
      * {@return a copy of the camera's response to a neutral under the shot's light (the white balance
      * the file records, scaled so its largest component is 1), one component per color plane: red,
      * green and blue, or the four colors of a four-color sensor in the order of the file's color
@@ -113,7 +131,8 @@ public final class RawImage {
     /**
      * {@return a copy of the matrix that maps white-balanced camera values (each channel divided by
      * {@link #cameraNeutral()}) to CIE XYZ relative to a D50 white, row by row: three rows of one
-     * column per color plane, nine values or twelve for a four-color sensor}
+     * column per color plane, nine values or twelve for a four-color sensor; empty for a four-color
+     * sensor whose file carries no color matrices when the options supply none}
      */
     public double[] balancedToXyz() {
         return balancedToXyz.clone();

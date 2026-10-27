@@ -27,6 +27,8 @@ Contents
   36. arw (Go package by Sjon Kosse)
   37. Adobe Digital Negative (DNG) specification
   38. rawtoaces-data (camera spectral sensitivities)
+  40. X3F tools
+  58. gpr (GoPro VC-5 decoder)
 
 
 ===============================================================================
@@ -45,6 +47,7 @@ License:      Apache License, Version 2.0
 Derived Smalt packages:
   audio.aac.internal (HuffmanTables; BandLayout, EncoderChannel,
   EncoderEngine, TnsEncoder, TransientDetector)
+  container.internal (AacHuffmanTables)
 
 Derivation: the AAC Huffman codeword and length values are taken from the
 tables of aacenc/src/aac_rom.c. The encoder's psychoacoustic model, block
@@ -628,23 +631,28 @@ rawtoaces-data license (LICENSE)
 
 Project:      X3F tools, a library for Sigma X3F raw files (commit e8b48ca)
 Source:       https://github.com/Kalpanika/x3f (src/x3f_io.c, x3f_meta.c,
-              x3f_image.c, x3f_process.c)
+              x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+              x3f_denoise.cpp, x3f_denoise_utils.cpp)
 License text: https://github.com/Kalpanika/x3f/blob/master/doc/copyright.txt
 License:      BSD 3-Clause License
 
 Derived Smalt packages:
-  image.raw.internal (X3fCamf, X3fDecoder, X3fParser)
+  image.raw.internal (X3fCamf, X3fCorrections, X3fDecoder, X3fParser,
+  X3fQuattro)
 
-Derivation: the decoding of the camera metadata block (the type 2 XOR stream
-and the type 4 coding, the CMbM, CMbT and CMbP entries), the TRUE and the
-older Huffman codings of the raw layers, the mapping of the KeepImageArea
-rectangles, the dark shield and white level entries, and the color conversion
-from the white balance gain, color correction, illuminant and gain factor
-entries follow that library's x3f_io.c, x3f_meta.c, x3f_image.c and
-x3f_process.c.
+Derivation: the decoding of the camera metadata block (the type 2 XOR stream,
+the type 4 and type 5 codings, the CMbM, CMbT and CMbP entries), the TRUE and
+Quattro codings and the older coding, Huffman coded or not, of the raw layers,
+the mapping of the KeepImageArea rectangles, the dark shield and white level
+entries, the bad pixel interpolation, the spatial gain tables, the expansion
+of the Quattro layers and the color conversion from the white balance gain,
+color correction, illuminant and gain factor entries follow that library's
+x3f_io.c, x3f_meta.c, x3f_image.c, x3f_process.c, x3f_spatial_gain.c,
+x3f_denoise.cpp and x3f_denoise_utils.cpp.
 
 Copyright:
   Copyright 2015 Roland and Erik Karlsson
+  Copyright 2015 Mark Roden and Erik Karlsson
 
 -------------------------------------------------------------------------------
 X3F tools license (doc/copyright.txt)
@@ -681,3 +689,51 @@ BSD-style License
 * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+
+===============================================================================
+58. gpr (GoPro VC-5 decoder)
+===============================================================================
+
+Project:      gpr, GoPro's General Purpose Raw SDK, version 1.0.0, with the
+              VC-5 reference decoder
+Source:       https://github.com/gopro/gpr (source/lib/vc5_decoder: decoder.c,
+              inverse.c, wavelet.c, dequantize.c, vlc.c, raw.c;
+              source/lib/vc5_common: bitstream.c, companding.c, logcurve.c,
+              codec.c, table17.inc)
+License text: https://raw.githubusercontent.com/gopro/gpr/master/LICENSE-MIT
+License:      MIT License (the project is licensed under the Apache License 2.0
+              or the MIT License, at the user's option; Smalt uses the MIT
+              License)
+
+Derived Smalt packages:
+  image.raw.internal (Vc5Decoder)
+
+Derivation: C code translated to Java and the codebook transcribed.
+
+Copyright:
+  Copyright 2018 GoPro, Inc.
+
+-------------------------------------------------------------------------------
+gpr license (LICENSE-MIT)
+-------------------------------------------------------------------------------
+
+Copyright 2018 GoPro, Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a 
+copy of this software and associated documentation files (the "Software"), 
+to deal in the Software without restriction, including without limitation 
+the rights to use, copy, modify, merge, publish, distribute, sublicense, 
+and/or sell copies of the Software, and to permit persons to whom the 
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included 
+in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS 
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, 
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL 
+THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER 
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING 
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER 
+DEALINGS IN THE SOFTWARE.

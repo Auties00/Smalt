@@ -66,6 +66,52 @@ class TagRobustnessTest {
         }
     }
 
+    static Stream<Arguments> phoneFiles() {
+        var xmp = XmpPacket.empty().with(XmpPacket.DC, "title", "Robust").with(XmpPacket.EXIF, "GPSLatitude", "1,2N");
+        var withXmp = TagFixtures.sample().toBuilder().xmp(xmp).build();
+        return Stream.of(
+                Arguments.of("iPhone keyed metadata", Fixtures.read(PhoneMetadataTest.PHONE)),
+                Arguments.of("3GPP location and XMP uuid", Fixtures.read(PhoneMetadataTest.ANDROID)),
+                Arguments.of("wav xmp", TagEditor.write(Fixtures.read(TagFixtures.audio("wav", List.of("-c:a",
+                        "pcm_s16le"))), withXmp, TagWriteOptions.defaults())),
+                Arguments.of("aiff xmp", TagEditor.write(Fixtures.read(TagFixtures.audio("aiff", List.of("-c:a",
+                        "pcm_s16be"))), withXmp, TagWriteOptions.defaults())),
+                Arguments.of("mp3 xmp", TagEditor.write(Fixtures.read(TagFixtures.audio("mp3", List.of("-c:a",
+                        "libmp3lame", "-b:a", "32k"))), withXmp, TagWriteOptions.defaults())));
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @MethodSource("phoneFiles")
+    @DisplayName("mutated keyed metadata, locations and XMP packets raise nothing but MediaException")
+    void phoneMutations(String name, byte[] tagged) {
+        var random = new Random(name.hashCode());
+        var limits = MediaLimits.builder().maxBytes(16 << 20).build();
+        var options = TagWriteOptions.builder().limits(limits).build();
+        var start = Math.max(0, tagged.length - 4096);
+        for (var round = 0; round < 150; round++) {
+            var mutated = tagged.clone();
+            for (var flips = 0; flips < 1 + random.nextInt(10); flips++) {
+                // the movie box of the MP4 samples and the XMP chunks of the audio files end the files
+                var at = random.nextBoolean() ? start + random.nextInt(tagged.length - start) : random.nextInt(4096);
+                mutated[at] = random.nextInt(3) == 0 ? (byte) 0xFF : (byte) random.nextInt(256);
+            }
+            if (random.nextInt(5) == 0) {
+                mutated = Arrays.copyOf(mutated, 1 + random.nextInt(mutated.length - 1));
+            }
+            var input = mutated;
+            assertTimeoutPreemptively(Duration.ofSeconds(10), () -> {
+                attempt(() -> {
+                    var read = TagEditor.read(MediaSource.of(input), TagReadOptions.builder().limits(limits).build());
+                    read.hasLocation();
+                    TagEditor.write(input, read.toBuilder().removeLocation().set("com.apple.quicktime.make", "x")
+                            .build(), options);
+                });
+                attempt(() -> TagEditor.stripLocation(input, options));
+                attempt(() -> TagEditor.write(input, MediaTags.empty(), options));
+            });
+        }
+    }
+
     /** Runs an operation that may reject its input, failing on any other exception or on a guarded runtime failure. */
     static void attempt(Runnable operation) {
         try {

@@ -1,0 +1,43 @@
+# demux dump of encrypted/valid-webm-audio.webm; regenerate with -Dsmalt.test.updateDumps=true
+format MATROSKA
+duration 622000
+seekable true
+track 1 AUDIO OPUS timebase=1/48000 duration=29856 config=19:016adf29
+  audio rate=48000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 31
+0 t1 pts=0 dts=0 dur=960 flags=KEY size=69 crc=3abfa6fc
+1 t1 pts=1008 dts=1008 dur=960 flags=KEY size=59 crc=10c1f81f
+2 t1 pts=1968 dts=1968 dur=960 flags=KEY size=50 crc=839aea59
+3 t1 pts=2928 dts=2928 dur=960 flags=KEY size=55 crc=b1e83c87
+4 t1 pts=3888 dts=3888 dur=960 flags=KEY size=50 crc=aa910829
+5 t1 pts=4848 dts=4848 dur=960 flags=KEY size=50 crc=5304904c
+6 t1 pts=5808 dts=5808 dur=960 flags=KEY size=47 crc=cdd3c748
+7 t1 pts=6768 dts=6768 dur=960 flags=KEY size=50 crc=ef0eaaf0
+8 t1 pts=7728 dts=7728 dur=960 flags=KEY size=48 crc=2dce8849
+9 t1 pts=8688 dts=8688 dur=960 flags=KEY size=41 crc=cfccab34
+10 t1 pts=9648 dts=9648 dur=960 flags=KEY size=45 crc=2ba1941f
+11 t1 pts=10608 dts=10608 dur=960 flags=KEY size=46 crc=e003b9ee
+12 t1 pts=11568 dts=11568 dur=960 flags=KEY size=52 crc=3e9fb6e5
+13 t1 pts=12528 dts=12528 dur=960 flags=KEY size=49 crc=e2b79528
+14 t1 pts=13488 dts=13488 dur=960 flags=KEY size=46 crc=9878b0dd
+15 t1 pts=14448 dts=14448 dur=960 flags=KEY size=43 crc=67d00445
+16 t1 pts=15408 dts=15408 dur=960 flags=KEY size=46 crc=a2af7800
+17 t1 pts=16368 dts=16368 dur=960 flags=KEY size=47 crc=324e1ca0
+18 t1 pts=17328 dts=17328 dur=960 flags=KEY size=43 crc=23d7f006
+19 t1 pts=18288 dts=18288 dur=960 flags=KEY size=57 crc=dcc3ffbb
+20 t1 pts=19248 dts=19248 dur=960 flags=KEY size=35 crc=121b1a60
+21 t1 pts=20208 dts=20208 dur=960 flags=KEY size=34 crc=99437a5e
+22 t1 pts=21168 dts=21168 dur=960 flags=KEY size=33 crc=6f04a8ce
+23 t1 pts=22128 dts=22128 dur=960 flags=KEY size=34 crc=7188c155
+24 t1 pts=23088 dts=23088 dur=960 flags=KEY size=35 crc=2bde7b4a
+25 t1 pts=24048 dts=24048 dur=960 flags=KEY size=34 crc=7c9ab985
+26 t1 pts=25008 dts=25008 dur=960 flags=KEY size=35 crc=ce29caac
+27 t1 pts=25968 dts=25968 dur=960 flags=KEY size=36 crc=c3549b3c
+28 t1 pts=26928 dts=26928 dur=960 flags=KEY size=36 crc=25407c63
+29 t1 pts=27888 dts=27888 dur=960 flags=KEY size=38 crc=0c1b4d9d
+30 t1 pts=28848 dts=28848 dur=1008 flags=KEY size=72 crc=641d9a8c
+seek 0: t1@0
+seek 207333: t1@10
+seek 414666: t1@20
+seek 622000: end
+seek -1000000: t1@0

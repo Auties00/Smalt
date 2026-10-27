@@ -113,6 +113,11 @@ public final class RawParser {
             DngParser.parse(reader, file);
             return file;
         }
+        if (LeafParser.matches(first)) {
+            var file = new RawFile(source, limits, RawFormat.MOS);
+            LeafParser.parse(reader, file);
+            return file;
+        }
         var make = first.string(271);
         var vendor = make == null ? "" : make.toUpperCase(Locale.ROOT);
         if (vendor.startsWith("NIKON")) {
@@ -130,7 +135,27 @@ public final class RawParser {
             PefParser.parse(reader, file);
             return file;
         }
-        var file = new RawFile(source, limits, vendor.startsWith("SAMSUNG") ? RawFormat.SRW : RawFormat.OTHER);
+        if (vendor.startsWith("SAMSUNG")) {
+            var file = new RawFile(source, limits, RawFormat.SRW);
+            SrwParser.parse(reader, file);
+            return file;
+        }
+        if (KodakParser.matches(vendor)) {
+            var file = new RawFile(source, limits, RawFormat.DCR);
+            KodakParser.parse(reader, file);
+            return file;
+        }
+        if (vendor.startsWith("HASSELBLAD")) {
+            var file = new RawFile(source, limits, RawFormat.FFF);
+            HasselbladParser.parse(reader, file);
+            return file;
+        }
+        if (vendor.startsWith("SEIKO EPSON")) {
+            var file = new RawFile(source, limits, RawFormat.ERF);
+            ErfParser.parse(reader, file);
+            return file;
+        }
+        var file = new RawFile(source, limits, RawFormat.OTHER);
         TiffEpParser.parse(reader, file);
         return file;
     }

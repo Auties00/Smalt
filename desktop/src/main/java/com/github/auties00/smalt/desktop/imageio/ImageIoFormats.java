@@ -96,9 +96,11 @@ final class ImageIoFormats {
             case JPEG -> List.of("jpg", "jpeg");
             case TIFF -> List.of("tif", "tiff");
             case ICO -> List.of("ico", "cur");
-            case JP2 -> List.of("jp2", "jpf", "jpx", "j2k", "j2c");
+            // JPH files and HTJ2K codestreams are read; the writer writes them only when its options ask for it
+            case JP2 -> reader ? List.of("jp2", "jpf", "jpx", "j2k", "j2c", "jph", "jhc")
+                    : List.of("jp2", "jpf", "jpx", "j2k", "j2c");
             case RAW -> List.of("cr2", "cr3", "crw", "nef", "nrw", "arw", "srf", "sr2", "raf", "orf", "rw2", "rwl",
-                    "pef", "srw", "mrw", "x3f");
+                    "pef", "srw", "erf", "3fr", "fff", "mos", "dcr", "kdc", "mrw", "x3f");
             default -> List.of(format.name().toLowerCase(Locale.ROOT));
         };
     }
@@ -121,7 +123,8 @@ final class ImageIoFormats {
             return List.of(format.mimeType(), "image/x-icon");
         }
         if (format == ImageFormat.JP2) {
-            return List.of(format.mimeType(), "image/jpx");
+            return reader ? List.of(format.mimeType(), "image/jpx", "image/jph", "image/jphc")
+                    : List.of(format.mimeType(), "image/jpx");
         }
         if (format == ImageFormat.DNG) {
             return List.of(format.mimeType(), "image/dng");

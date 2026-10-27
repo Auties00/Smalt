@@ -2,6 +2,7 @@ package com.github.auties00.smalt.container.aiff;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.internal.io.ByteWriter;
 import com.github.auties00.smalt.internal.tags.MuxerTags;
 import com.github.auties00.smalt.io.MediaSink;
@@ -85,9 +86,9 @@ public final class AiffMuxer implements Muxer {
     private long dataSize;
 
     /**
-     * The metadata chunks the tags were encoded to, written before {@code SSND}.
+     * The tags of {@link #setTags(MediaTags)}, encoded into chunks before {@code SSND} when the header is written.
      */
-    private List<byte[]> metadata = List.of();
+    private MediaTags tags = MediaTags.empty();
 
     /**
      * Whether the header was written.
@@ -114,8 +115,9 @@ public final class AiffMuxer implements Muxer {
      * Returns whether AIFF files can carry a codec.
      *
      * @param codec the codec of the track to write
-     * @return {@code true} for the signed integer formats of either byte order, unsigned 8-bit, big-endian 32 and
-     * 64-bit floats, A-law and mu-law
+     * @return {@code true} for the signed 8, 16, 24 and 32-bit integer formats of either byte order, unsigned 8-bit,
+     * big-endian 32 and 64-bit floats, A-law and mu-law; {@code false} for 64-bit integers, wider than the 32-bit
+     * sample size AIFF allows
      */
     public static boolean supports(Codec codec) {
         return compression(Objects.requireNonNull(codec, "codec")) != null;
@@ -202,8 +204,14 @@ public final class AiffMuxer implements Muxer {
      * {@inheritDoc}
      *
      * <p>The tags become {@code NAME}, {@code AUTH}, {@code (c) } and {@code ANNO} chunks for the
-     * values they can hold and, when pictures, chapters or other keys need it, an {@code ID3 }
-     * chunk with every tag, all before {@code SSND}.
+     * values they can hold and, when pictures or other keys need it, an {@code ID3 } chunk with every
+     * tag, and the XMP packet an {@code APPL} chunk of signature {@code XMP }. The chapters become the markers of a
+     * {@code MARK} chunk, named by their titles, and the
+     * instrument keys an {@code INST} chunk (whose loops add markers), as
+     * {@link com.github.auties00.smalt.metadata.TagEditor} writes them. Every chunk is written before
+     * {@code SSND}.
+     *
+     * @throws IllegalArgumentException if the value of an instrument key is malformed
      */
     @Override
     public void setTags(MediaTags tags) {
@@ -211,7 +219,8 @@ public final class AiffMuxer implements Muxer {
         if (started || finished) {
             throw new IllegalStateException("tags must be set before the first packet");
         }
-        this.metadata = MuxerTags.riffChunks(tags, true);
+        MuxerTags.riffChunks(tags, true, 0);
+        this.tags = tags;
     }
 
     /**
@@ -220,6 +229,7 @@ public final class AiffMuxer implements Muxer {
      * @throws IllegalArgumentException if the packet belongs to another track or does not hold whole frames
      * @throws IllegalStateException if no track was declared, the muxer is finished, or the file would exceed the 4 GiB
      * an AIFF header can describe
+     * @throws MediaException.Unsupported if the packet changes the codec configuration
      */
     @Override
     public void writePacket(Packet packet) {
@@ -233,6 +243,7 @@ public final class AiffMuxer implements Muxer {
         if (packet.trackId() != track.id()) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        ConfigChanges.reject(packet, track.codecConfig().orElse(null), "AIFF");
         if (packet.size() % blockAlign != 0) {
             throw new IllegalArgumentException("a packet of " + packet.size() + " bytes does not hold whole frames of "
                     + blockAlign + " bytes");
@@ -321,7 +332,7 @@ public final class AiffMuxer implements Muxer {
                 header.u8(0);
             }
         }
-        for (var chunk : metadata) {
+        for (var chunk : MuxerTags.riffChunks(tags, true, track.sampleRate())) {
             header.bytes(chunk);
         }
         var seekable = output.isSeekable();

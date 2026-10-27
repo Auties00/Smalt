@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.process;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorOperators;
@@ -18,6 +19,12 @@ final class VectorProcessKernels {
      * The float species used by the mixing kernel: the platform's preferred shape.
      */
     private static final VectorSpecies<Float> PREFERRED = FloatVector.SPECIES_PREFERRED;
+
+    /**
+     * The concrete class of the vectors of {@link #PREFERRED}.
+     */
+    @SuppressWarnings("unchecked")
+    private static final Class<FloatVector> PREFERRED_VECTOR = (Class<FloatVector>) PREFERRED.vectorType();
 
     /**
      * Prevents instantiation.
@@ -85,11 +92,6 @@ final class VectorProcessKernels {
         private static final Class<FloatVector> NARROW_VECTOR = (Class<FloatVector>) NARROW.vectorType();
 
         /**
-         * Whether the platform's preferred vectors are at least 256 bits wide.
-         */
-        private static final boolean USE_WIDE = FloatVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
-
-        /**
          * Swaps adjacent lanes of an eight-lane vector.
          */
         private static final VectorShuffle<Float> SWAP_1 = VectorShuffle.fromValues(WIDE, 1, 0, 3, 2, 5, 4, 7, 6);
@@ -127,7 +129,7 @@ final class VectorProcessKernels {
 
         @Override
         public float dot(float[] x, int xOffset, float[] h, int hOffset, int taps) {
-            return USE_WIDE ? dotWide(x, xOffset, h, hOffset, taps) : dotNarrow(x, xOffset, h, hOffset, taps);
+            return Simd.WIDE ? dotWide(x, xOffset, h, hOffset, taps) : dotNarrow(x, xOffset, h, hOffset, taps);
         }
 
         /**
@@ -145,17 +147,17 @@ final class VectorProcessKernels {
             var acc = FloatVector.zero(WIDE);
             var k = 0;
             for (; k + 4 * CHAINS <= taps; k += 4 * CHAINS) {
-                acc = FloatVector.fromArray(WIDE, x, xOffset + k)
+                acc = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, x, xOffset + k))
                         .lanewise(VectorOperators.FMA, FloatVector.fromArray(WIDE, h, hOffset + k), acc);
-                acc = FloatVector.fromArray(WIDE, x, xOffset + k + 8)
+                acc = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, x, xOffset + k + 8))
                         .lanewise(VectorOperators.FMA, FloatVector.fromArray(WIDE, h, hOffset + k + 8), acc);
-                acc = FloatVector.fromArray(WIDE, x, xOffset + k + 16)
+                acc = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, x, xOffset + k + 16))
                         .lanewise(VectorOperators.FMA, FloatVector.fromArray(WIDE, h, hOffset + k + 16), acc);
-                acc = FloatVector.fromArray(WIDE, x, xOffset + k + 24)
+                acc = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, x, xOffset + k + 24))
                         .lanewise(VectorOperators.FMA, FloatVector.fromArray(WIDE, h, hOffset + k + 24), acc);
             }
             for (; k < taps; k += CHAINS) {
-                acc = FloatVector.fromArray(WIDE, x, xOffset + k)
+                acc = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, x, xOffset + k))
                         .lanewise(VectorOperators.FMA, FloatVector.fromArray(WIDE, h, hOffset + k), acc);
             }
             var sum = WIDE_VECTOR.cast(acc);
@@ -178,9 +180,9 @@ final class VectorProcessKernels {
             var low = FloatVector.zero(NARROW);
             var high = FloatVector.zero(NARROW);
             for (var k = 0; k < taps; k += CHAINS) {
-                low = FloatVector.fromArray(NARROW, x, xOffset + k)
+                low = NARROW_VECTOR.cast(FloatVector.fromArray(NARROW, x, xOffset + k))
                         .lanewise(VectorOperators.FMA, FloatVector.fromArray(NARROW, h, hOffset + k), low);
-                high = FloatVector.fromArray(NARROW, x, xOffset + k + 4)
+                high = NARROW_VECTOR.cast(FloatVector.fromArray(NARROW, x, xOffset + k + 4))
                         .lanewise(VectorOperators.FMA, FloatVector.fromArray(NARROW, h, hOffset + k + 4), high);
             }
             var lowSum = NARROW_VECTOR.cast(low);
@@ -194,7 +196,7 @@ final class VectorProcessKernels {
         @Override
         public void run(float[] x, int base, int phase, int step, int remainder, int up, float[] table, int taps,
                         float[] out, int offset, int count) {
-            if (USE_WIDE) {
+            if (Simd.WIDE) {
                 runWide(x, base, phase, step, remainder, up, table, taps, out, offset, count);
             } else {
                 runNarrow(x, base, phase, step, remainder, up, table, taps, out, offset, count);
@@ -204,7 +206,7 @@ final class VectorProcessKernels {
         @Override
         public void runPair(float[] x0, float[] x1, int base, int phase, int step, int remainder, int up, float[] table,
                             int taps, float[] out0, float[] out1, int offset, int count) {
-            if (USE_WIDE) {
+            if (Simd.WIDE) {
                 runWidePair(x0, x1, base, phase, step, remainder, up, table, taps, out0, out1, offset, count);
             } else {
                 runNarrow(x0, base, phase, step, remainder, up, table, taps, out0, offset, count);
@@ -262,8 +264,8 @@ final class VectorProcessKernels {
             var a1 = FloatVector.zero(WIDE);
             for (var k = 0; k < taps; k += CHAINS) {
                 var c = FloatVector.fromArray(WIDE, h, hOffset + k);
-                a0 = FloatVector.fromArray(WIDE, x0, xOffset + k).lanewise(VectorOperators.FMA, c, a0);
-                a1 = FloatVector.fromArray(WIDE, x1, xOffset + k).lanewise(VectorOperators.FMA, c, a1);
+                a0 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, x0, xOffset + k)).lanewise(VectorOperators.FMA, c, a0);
+                a1 = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, x1, xOffset + k)).lanewise(VectorOperators.FMA, c, a1);
             }
             // Even lanes carry the pair sums of a0 and odd lanes those of a1, so one reduction serves
             // both outputs with the same additions as two separate ones.
@@ -362,8 +364,8 @@ final class VectorProcessKernels {
             var wb = FloatVector.broadcast(PREFERRED, gb);
             var i = 0;
             for (; i < bound; i += PREFERRED.length()) {
-                FloatVector.fromArray(PREFERRED, a, i).lanewise(VectorOperators.MUL, wa)
-                        .lanewise(VectorOperators.ADD, FloatVector.fromArray(PREFERRED, b, i).lanewise(VectorOperators.MUL, wb))
+                PREFERRED_VECTOR.cast(FloatVector.fromArray(PREFERRED, a, i)).lanewise(VectorOperators.MUL, wa)
+                        .lanewise(VectorOperators.ADD, PREFERRED_VECTOR.cast(FloatVector.fromArray(PREFERRED, b, i)).lanewise(VectorOperators.MUL, wb))
                         .intoArray(out, i);
             }
             return i;
@@ -379,10 +381,10 @@ final class VectorProcessKernels {
          * @param i      the index of the first sample
          */
         private static void mixTerms(float[][] inputs, float[] gains, int count, float[] out, int i) {
-            FloatVector.fromArray(PREFERRED, inputs[0], i).lanewise(VectorOperators.MUL, FloatVector.broadcast(PREFERRED, gains[0]))
+            PREFERRED_VECTOR.cast(FloatVector.fromArray(PREFERRED, inputs[0], i)).lanewise(VectorOperators.MUL, FloatVector.broadcast(PREFERRED, gains[0]))
                     .intoArray(out, i);
             for (var j = 1; j < count; j++) {
-                FloatVector.fromArray(PREFERRED, out, i).lanewise(VectorOperators.ADD, FloatVector.fromArray(PREFERRED, inputs[j], i)
+                PREFERRED_VECTOR.cast(FloatVector.fromArray(PREFERRED, out, i)).lanewise(VectorOperators.ADD, PREFERRED_VECTOR.cast(FloatVector.fromArray(PREFERRED, inputs[j], i))
                         .lanewise(VectorOperators.MUL, FloatVector.broadcast(PREFERRED, gains[j]))).intoArray(out, i);
             }
         }

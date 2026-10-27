@@ -184,6 +184,33 @@ class AiffDemuxerTest {
             }
         }
 
+        @ParameterizedTest(name = "{0}")
+        @CsvSource({"NONE, false", "twos, false", "sowt, true"})
+        @DisplayName("reads 64-bit integer samples in eight bytes and rejects other sizes past 32 bits")
+        void sixtyFourBits(String type, boolean littleEndian) {
+            var values = new long[]{Long.MIN_VALUE, Long.MAX_VALUE, 0, -1, 0x0123_4567_89AB_CDEFL, 1L << 40};
+            var sound = ByteBuffer.allocate(values.length * 8)
+                    .order(littleEndian ? java.nio.ByteOrder.LITTLE_ENDIAN : java.nio.ByteOrder.BIG_ENDIAN);
+            for (var value : values) {
+                sound.putLong(value);
+            }
+            var bytes = aiff(true, type, 2, 3, 64, extended(48000), sound.array(), 56);
+            try (var demuxer = new AiffDemuxer(MediaSource.of(bytes))) {
+                var track = (AudioTrack) demuxer.tracks().getFirst();
+                assertEquals(littleEndian ? Codec.PCM_S64LE : Codec.PCM_S64BE, track.codec());
+                assertEquals(64, track.bitsPerSample());
+                assertEquals(3, track.duration());
+            }
+            var decoded = decode(bytes).interleaved();
+            for (var index = 0; index < values.length; index++) {
+                var expected = new java.math.BigDecimal(values[index])
+                        .divide(new java.math.BigDecimal(java.math.BigInteger.ONE.shiftLeft(63))).floatValue();
+                assertEquals(expected, decoded[index], "sample " + index);
+            }
+            var forty = aiff(true, "NONE", 1, 1, 40, extended(8000), new byte[5], 13);
+            assertThrows(MediaException.Unsupported.class, () -> new AiffDemuxer(MediaSource.of(forty)));
+        }
+
         @Test
         @DisplayName("rejects unsupported and malformed files with the right exception")
         void rejects() {

@@ -25,10 +25,10 @@ public abstract class Mpeg4Dsp {
     static final Mpeg4Dsp SCALAR = new ScalarMpeg4Dsp();
 
     /**
-     * The implementation every picture uses: the Vector API kernels
-     * when {@link Simd#ENABLED}, {@link #SCALAR} otherwise.
+     * The implementation every picture uses: the Vector API kernels, written for 256-bit vectors,
+     * when {@link Simd#WIDE}, {@link #SCALAR} otherwise.
      */
-    private static final Mpeg4Dsp FIXED = Simd.ENABLED ? VectorMpeg4Dsp.create() : SCALAR;
+    private static final Mpeg4Dsp FIXED = Simd.WIDE ? VectorMpeg4Dsp.create() : SCALAR;
 
     /**
      * The minimum size of the {@code int} scratch buffer of {@link #quarterPel}: the horizontally
@@ -81,6 +81,19 @@ public abstract class Mpeg4Dsp {
      * @param work a scratch array of at least 64 integers
      */
     public abstract void idctAdd(short[] coefficients, int offset, byte[] dst, int dstOffset, int stride, int[] work);
+
+    /**
+     * Transforms a coefficient block into the residual samples, without clipping, with the inverse DCT the kernels
+     * use.
+     *
+     * @param coefficients the coefficients in column-major order (coefficient {@code column} of row {@code row} at
+     * {@code offset + column * 8 + row}); cleared on return
+     * @param offset the index of the block's first coefficient
+     * @param out receives the 64 samples in raster order
+     */
+    public static void inverseTransform(short[] coefficients, int offset, int[] out) {
+        ScalarMpeg4Dsp.transform(coefficients, offset, out);
+    }
 
     /**
      * Predicts a block by half sample bilinear interpolation (ISO/IEC 14496-2 Figure 7-18).

@@ -66,6 +66,15 @@ class RawDetectionTest {
         assertEquals(Optional.of(ImageFormat.TIFF), Images.detect(MediaSource.of(plain)));
     }
 
+    @ParameterizedTest(name = "tag {0}")
+    @ValueSource(ints = {33424, 34310, 65024})
+    @DisplayName("a TIFF whose first directory carries Kodak's or Leaf's raw tags is a camera raw file")
+    void vendorTags(int tag) {
+        assertEquals(Optional.of(ImageFormat.RAW), Images.detect(MediaSource.of(tiff(8, false, 256, 160, tag, 8))));
+        assertEquals(Optional.of(ImageFormat.TIFF), Images.detect(MediaSource.of(tiff(8, false, 256, 160, tag + 1,
+                8))));
+    }
+
     @Test
     @DisplayName("Canon CR2 is recognized from its CR marker")
     void cr2() {
