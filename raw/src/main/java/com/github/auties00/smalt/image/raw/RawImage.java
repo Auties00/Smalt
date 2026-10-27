@@ -6,7 +6,11 @@ import java.util.Optional;
 /**
  * Holds the sensor image of a camera raw file before demosaicing and color rendering: one sample
  * per photosite of a color filter array, or three per pixel of linear raw data, as linear 16-bit
- * values in which 0 is the black level and 65535 the white level.
+ * values in which 0 is the black level and 65535 the white level. Sensors that read each photosite
+ * twice (the two photodiodes of different sensitivity of Fujifilm SuperCCD SR sensors, the two
+ * photosites of a pair of Fujifilm EXR sensors in their DR and SN modes) give two samples per
+ * photosite, each scaled by its own black and white levels, in the order the file stores them;
+ * the rendering merges them.
  *
  * <p>The values are the DNG "linear reference values" of the default crop (or of the whole active
  * area): stored samples after the linearization table, black level subtraction and white level
@@ -45,7 +49,7 @@ public final class RawImage {
      *
      * @param width the width in pixels
      * @param height the height in pixels
-     * @param channels the samples of each pixel, 1 or 3
+     * @param channels the samples of each pixel, 1, 2 or 3
      * @param samples the 16-bit samples, row by row with the channels of a pixel interleaved; not copied
      * @param cfa the color filter array, or {@code null}
      * @param neutral the camera neutral
@@ -79,8 +83,8 @@ public final class RawImage {
     }
 
     /**
-     * {@return the number of samples of each pixel: 1 for color filter array and monochrome images, 3
-     * for linear raw images}
+     * {@return the number of samples of each pixel: 1 for color filter array and monochrome images, 2
+     * for color filter arrays that read each photosite twice, 3 for linear raw images}
      */
     public int channels() {
         return channels;

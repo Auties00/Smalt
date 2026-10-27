@@ -2,6 +2,7 @@ package com.github.auties00.smalt.image.raw.fuzz;
 
 import com.github.auties00.smalt.image.raw.Cr3Writer;
 import com.github.auties00.smalt.image.raw.DngSpecSamples;
+import com.github.auties00.smalt.image.raw.RafWriter;
 import com.github.auties00.smalt.image.raw.TinyDng;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -24,7 +25,7 @@ import static com.github.auties00.smalt.testkit.fuzz.FuzzSeeds.write;
  * Writes the committed seeds of the raw fuzz targets (tools/fuzz/README.md): DNG files built with
  * {@link TinyDng} and {@link DngSpecSamples}, CC0 samples from raw.pixls.us (listed in {@code tools/testdata/vectors.tsv}) reduced by
  * {@link RawSeedReducer} to their first {@value #ROWS} sensor rows and tiny previews, and the first {@value #HEAD}
- * bytes of a compressed RAF sample, whose sensor data is not decoded, and CR3 files written by {@link Cr3Writer}. The
+ * bytes of a compressed RAF sample, RAF files written by {@link RafWriter} and CR3 files written by {@link Cr3Writer}. The
  * CRW, MRW and X3F seeds are written by the synthetic-file builders of their parser tests. Runs only with {@code -Dsmalt.fuzz.writeSeeds=true}.
  */
 @EnabledIfSystemProperty(named = "smalt.fuzz.writeSeeds", matches = "true",
@@ -83,7 +84,7 @@ class FuzzSeedWriter {
     @Test
     @DisplayName("writes the head of the compressed RAF sample and the TIFF/EP seed")
     void heads() throws IOException {
-        // compressed RAF sensor data is not decoded, so its seed only needs the header, records and sensor block start
+        // the start of a compressed RAF sample: header, records and the first part of the coded blocks
         head("raf", "rawpixls-fujifilm-x-t2-14bit-14bit-compressed-3-2.raf");
         write(RawFuzzTest.class, "srw", "valid-tiff-ep.srw", tiffEp("SAMSUNG", 16, 8));
     }
@@ -111,6 +112,80 @@ class FuzzSeedWriter {
         // the reduced CR3 file keeps only the start of its CRX samples, so it is a seed but not a valid one
         write(RawFuzzTest.class, "cr3", "reduced-canon-eos-250d-raw-3-2.cr3", RawSeedReducer.reduce(
                 Files.readAllBytes(vector("rawpixls-canon-eos-250d-raw-3-2.cr3")), RawSeedReducer.Layout.CR3, ROWS, jpeg));
+    }
+
+    @Test
+    @DisplayName("writes the RAF seeds")
+    void raf() {
+        var bayer = new RafWriter();
+        bayer.width = 60;
+        bayer.height = 14;
+        bayer.blockWidth = 36;
+        write(RawFuzzTest.class, "raf", "valid-compressed-bayer.raf", bayer.scene(1).compressed());
+        var xtrans = new RafWriter();
+        xtrans.xtrans = true;
+        xtrans.width = 48;
+        xtrans.height = 12;
+        xtrans.bits = 12;
+        write(RawFuzzTest.class, "raf", "valid-compressed-xtrans-12bit.raf", xtrans.scene(2).compressed());
+        var lossy = new RafWriter();
+        lossy.width = 60;
+        lossy.height = 18;
+        lossy.blockWidth = 36;
+        lossy.levels = new int[]{1, 3, 0};
+        write(RawFuzzTest.class, "raf", "valid-compressed-lossy.raf", lossy.scene(3).compressed());
+        var words = new short[24 * 32];
+        for (var index = 0; index < words.length; index++) {
+            words[index] = (short) (200 + index * 13 % 4000);
+        }
+        write(RawFuzzTest.class, "raf", "valid-legacy-superccd.raf",
+                new RafWriter().legacy(words, 24, 32, false, 0x01, new int[]{0, 0, 24, 32}, null));
+        write(RawFuzzTest.class, "raf", "valid-legacy-transposed.raf",
+                new RafWriter().legacy(words, 32, 24, false, 0x83, new int[]{0, 0, 16, 48}, null));
+        var packed = new RafWriter();
+        packed.width = 30;
+        packed.height = 8;
+        packed.bits = 12;
+        write(RawFuzzTest.class, "raf", "valid-packed12-msb-bggr.raf",
+                packed.scene(4).packed12(true, new byte[]{8, 9, 11, 10}));
+        for (var diagonal : new boolean[]{false, true}) {
+            var pairs = new RafWriter();
+            pairs.width = 30;
+            pairs.height = 8;
+            pairs.bits = 12;
+            pairs.scene(5);
+            pairs.second = new short[pairs.samples.length];
+            for (var index = 0; index < pairs.second.length; index++) {
+                pairs.second[index] = (short) (pairs.samples[index] / 4);
+            }
+            pairs.output = diagonal ? new int[]{60, 8} : null;
+            write(RawFuzzTest.class, "raf", diagonal ? "valid-two-images-diagonal.raf" : "valid-two-images.raf",
+                    pairs.packed12(false, new byte[]{10, 11, 9, 8}));
+        }
+        var hr = new RafWriter();
+        hr.second = new short[words.length];
+        for (var index = 0; index < words.length; index++) {
+            hr.second[index] = (short) (words[index] / 2 + 40);
+        }
+        hr.output = new int[]{2 * 32, 24};
+        write(RawFuzzTest.class, "raf", "valid-legacy-diagonal-pairs.raf",
+                hr.legacy(words, 24, 32, false, 0x0A, null, new int[]{2, 2, 20, 28}));
+        var sr = new RafWriter();
+        sr.second = new short[words.length];
+        for (var index = 0; index < words.length; index++) {
+            sr.second[index] = (short) (words[index] / 16);
+        }
+        write(RawFuzzTest.class, "raf", "valid-legacy-superccd-sr.raf",
+                sr.legacy(words, 24, 32, false, 0x01, new int[]{0, 0, 24, 32}, null));
+        var interleaved = new RafWriter();
+        interleaved.second = sr.second;
+        interleaved.interleaved = true;
+        write(RawFuzzTest.class, "raf", "valid-legacy-row-interleaved.raf",
+                interleaved.legacy(words, 32, 24, false, 0x80, new int[]{0, 0, 12, 48}, null));
+        var outputs = new RafWriter();
+        outputs.stripes = 8;
+        write(RawFuzzTest.class, "raf", "valid-legacy-output-stripes.raf",
+                outputs.legacy(words, 24, 32, false, 0x01, new int[]{0, 0, 24, 32}, null));
     }
 
     @Test

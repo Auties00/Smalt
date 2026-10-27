@@ -138,6 +138,49 @@ final class Opcodes {
     }
 
     /**
+     * Applies an opcode list to a linear image of one sample per photosite that interleaves the two samples of each
+     * pixel of the list's image in adjacent columns, sample 1 first: the staggered image of the diagonal pairs of a
+     * two-sample DNG image.
+     *
+     * @param image the linear image, of an even width, modified in place
+     * @param list the opcode list
+     */
+    static void applyToPairs(LinearImage image, byte[] list) {
+        var width = image.width;
+        apply(new Surface() {
+            @Override
+            public int width() {
+                return width / 2;
+            }
+
+            @Override
+            public int height() {
+                return image.height;
+            }
+
+            @Override
+            public int planes() {
+                return 2;
+            }
+
+            @Override
+            public float get(int row, int column, int plane) {
+                return image.data[row * width + 2 * column + 1 - plane];
+            }
+
+            @Override
+            public void set(int row, int column, int plane, float value) {
+                image.data[row * width + 2 * column + 1 - plane] = Math.clamp(value, 0f, 1f);
+            }
+
+            @Override
+            public float maximum() {
+                return 1;
+            }
+        }, list);
+    }
+
+    /**
      * Applies an opcode list to a linear image.
      *
      * @param image the linear image, modified in place

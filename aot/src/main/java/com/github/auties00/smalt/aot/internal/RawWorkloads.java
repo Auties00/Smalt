@@ -14,7 +14,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 /**
  * Creates the workloads of {@link TrainingFamily#RAW}, the camera raw decoder of
  * {@code smalt-raw}, on synthetic DNG (Bayer, linear raw, and a staggered mosaic with profile
- * tables), Minolta MRW, Canon CRW, Canon CR3 and Sigma X3F files.
+ * tables), Minolta MRW, Canon CRW, Canon CR3, Sigma X3F and Fujifilm RAF files.
  */
 final class RawWorkloads {
     /**
@@ -37,7 +37,8 @@ final class RawWorkloads {
                 file("raw-decode-mrw", RawWorkloads::mrw),
                 file("raw-decode-crw", RawWorkloads::crw),
                 file("raw-decode-cr3", RawWorkloads::cr3),
-                file("raw-decode-x3f", RawWorkloads::x3f));
+                file("raw-decode-x3f", RawWorkloads::x3f),
+                file("raw-decode-raf", RawWorkloads::raf));
     }
 
     /**
@@ -138,6 +139,22 @@ final class RawWorkloads {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false);
         return vendor("raw-decode-x3f", List.of(SyntheticVendorRaw.x3f(picture, false),
                 SyntheticVendorRaw.x3f(picture, true)));
+    }
+
+    /**
+     * Returns a workload that describes, extracts the sensor values of and decodes with Menon
+     * demosaicing five RAF files: lossless and lossy compressed Bayer and X-Trans files of 1024x768,
+     * and a 640x480 transposed SuperCCD SR file of bare sensor words with the second image of its
+     * low-sensitivity photodiodes, which the rendering merges into the first.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload raf() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
+        var small = SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false);
+        return vendor("raw-decode-raf", List.of(SyntheticRaf.compressed(picture, false, false),
+                SyntheticRaf.compressed(picture, true, false), SyntheticRaf.compressed(picture, false, true),
+                SyntheticRaf.compressed(picture, true, true), SyntheticRaf.superCcd(small)));
     }
 
     /**

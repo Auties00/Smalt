@@ -48,7 +48,7 @@ final class PreviewBalance {
      */
     static void apply(RawFile file, LinearImage image, int[] window) {
         if (file.sensor == null || !file.sensor.estimateBalance || file.color.asShotNeutral != null || image.cfa == null
-                || image.colors != 3) {
+                || image.colors != 3 || image.samplesPerPixel != 1) {
             return;
         }
         var neutral = estimate(file, image, window);

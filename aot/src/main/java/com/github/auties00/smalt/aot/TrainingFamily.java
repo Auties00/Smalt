@@ -61,8 +61,8 @@ public enum TrainingFamily {
     CAPTURE,
 
     /**
-     * The camera raw decoder of {@code smalt-raw}, on synthetic DNG, Minolta MRW, Canon CRW and
-     * Sigma X3F files: Menon and bilinear demosaicing, the color rendering to 8-bit sRGB and to
+     * The camera raw decoder of {@code smalt-raw}, on synthetic DNG, Minolta MRW, Canon CRW, Canon CR3,
+     * Sigma X3F and Fujifilm RAF files: Menon and bilinear demosaicing, the color rendering to 8-bit sRGB and to
      * 16-bit linear Rec. 2020, linear raw data, the vendor codings, the extraction of the sensor
      * values and the file description.
      */

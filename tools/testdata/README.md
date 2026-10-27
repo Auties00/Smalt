@@ -177,7 +177,18 @@ area, the linear relation of their layers to the converter's values and their re
 converter fails to open its input) downloads Adobe
 DNG Converter 18.0 and innoextract 1.9 (both pinned by SHA-256), extracts the converter without installing
 it, and writes one uncompressed DNG per sample into `<conformance cache>/raw-oracle`
-(`-Dsmalt.test.rawOracle` overrides the directory the tests read). Without them the oracle tests are
+(`-Dsmalt.test.rawOracle` overrides the directory the tests read); for the largest files (the GFX 50S, GFX100S and
+GFX100 II samples, 100 to 200 MB each) it keeps instead a `<stem>.photosites` summary, the size, filter array and,
+per sample of a pixel, the SHA-256 and first row of the stored image, which `RafOracleTest` checks the decoded
+photosites against. For the Fujifilm samples of two images per photosite (S3Pro, S5Pro, F700, S200EXR in DR and in HR
+mode, F600EXR, F550EXR, X10, F900EXR, HS20EXR) it also converts each into a demosaiced linear DNG (`-u -l`) and keeps a
+`<stem>.linear` crop of it (the brightest 1536x1024 window, or the centered one for the EXR HR files), against which
+`RafOracleTest` checks the merged
+readings of each photosite and the places of the interleaved EXR HR images. Of the FinePix F710 and F810, of which
+no file is published, it converts copies of the F700 and E550 samples named after them (`renamed-fujifilm-finepix-f710.dng`,
+`renamed-fujifilm-finepix-f810.dng`), which `RafOracleTest` checks photosite for photosite, and records with a
+`<stem>.refused` file that the converter refuses the swapped copies (the E550's file named F710, the F700's named
+F810). Without them the oracle tests are
 skipped. With `--coverage` the script converts every ORF sample and every RW2 or RWL sample of version 4
 in `vectors.tsv` (about 6 GB of DNG files) into `<conformance cache>/raw-oracle-coverage` for
 `RawOracleCoverageTest` (`-Dsmalt.test.rawCoverage`).

@@ -3,6 +3,7 @@
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.image.raw.CfaColor;
 import com.github.auties00.smalt.image.raw.CfaLayout;
 import com.github.auties00.smalt.image.raw.CfaPattern;
@@ -21,6 +22,13 @@ import java.util.ArrayList;
  * (32803) or linear raw (34892). The primary camera profile and the shot's color tags are read
  * from the first directory, the extra camera profiles from the directories
  * {@code ExtraCameraProfiles} points to; the raw-image tags from the main image's directory.
+ *
+ * <p>A color filter array image of two samples per pixel holds two readings of each photosite, as
+ * Adobe DNG Converter writes the Fujifilm sensors of two images (the specification leaves the
+ * meaning of the samples open): with a rectangular layout scaled up by at least
+ * {@value #DIAGONAL_SCALE} in both directions, the two samples are the photosites of a diagonal pair
+ * and become one staggered image; otherwise they read the same light and {@link DualSamples} merges
+ * them before rendering.
  */
 final class DngParser {
     /**
@@ -52,6 +60,12 @@ final class DngParser {
      * The most extra camera profiles read.
      */
     private static final int MAX_PROFILES = 64;
+
+    /**
+     * The default scale, in both directions, from which the two samples of a rectangular CFA image are the two
+     * photosites of a diagonal pair: the converter scales such images by about the square root of 2.
+     */
+    static final double DIAGONAL_SCALE = 1.3;
 
     /**
      * Prevents instantiation.
@@ -114,7 +128,7 @@ final class DngParser {
             return;
         }
         if (raw.intValue(TiffSamples.PHOTOMETRIC, 0) == PHOTOMETRIC_CFA) {
-            if (sensor.samplesPerPixel != 1) {
+            if (sensor.samplesPerPixel != 1 && sensor.samplesPerPixel != 2) {
                 throw new MediaException.Malformed("CFA image with " + sensor.samplesPerPixel + " samples per pixel");
             }
             var layout = raw.intValue(50711, 1);
@@ -136,6 +150,14 @@ final class DngParser {
             }
         }
         levels(raw, sensor);
+        if (sensor.samplesPerPixel == 2 && sensor.cfa != null && sensor.layout == CfaLayout.RECTANGULAR
+                && sensor.scaleH >= DIAGONAL_SCALE && sensor.scaleV >= DIAGONAL_SCALE) {
+            var problem = diagonalPairs(sensor);
+            if (problem != null) {
+                file.unsupported = problem;
+                return;
+            }
+        }
         var userCrop = raw.doubles(51125);
         sensor.userCrop = userCrop(userCrop != null ? userCrop : first.doubles(51125));
         file.sensor = sensor;
@@ -145,6 +167,100 @@ final class DngParser {
         for (var proxy : proxies) {
             proxy(proxy, sensor, file);
         }
+    }
+
+    /**
+     * Turns a CFA image of two samples per pixel whose samples are the two photosites of a diagonal pair (the EXR HR
+     * files of Adobe DNG Converter: a rectangular layout scaled up by about the square root of 2 in both directions)
+     * into one staggered image of twice the width: sample 1 of each pixel in the even columns and sample 0, half a
+     * row down, in the odd ones ({@link CfaLayout#STAGGERED_A}). The reader, the filter array, the active area, the
+     * crop, the scale and the black levels are converted; opcode list 1 applies to the pairs before they are
+     * interleaved, and opcode list 2 to the linear values of the pairs, two adjacent columns of the staggered image.
+     *
+     * @param sensor the sensor description, filled from the directory; changed in place
+     * @return why the image cannot be converted, or {@code null} when it was
+     */
+    private static String diagonalPairs(Sensor sensor) {
+        if (sensor.white != null && sensor.white[0] != sensor.white[1]) {
+            return "two-sample CFA images of diagonal pairs with different white levels are not supported";
+        }
+        var pairs = new Sensor();
+        pairs.width = sensor.width;
+        pairs.height = sensor.height;
+        pairs.samplesPerPixel = 2;
+        pairs.bitsPerSample = sensor.bitsPerSample;
+        pairs.wide = sensor.wide;
+        pairs.floating = sensor.floating;
+        pairs.cfa = sensor.cfa;
+        pairs.activeArea = sensor.activeArea;
+        var opcodes = sensor.opcodes1;
+        var inner = sensor.reader;
+        sensor.reader = new Sensor.Reader() {
+            @Override
+            public void read(SensorPlane plane, MediaLimits limits) {
+                read(plane, limits, false);
+            }
+
+            @Override
+            public void read(SensorPlane plane, MediaLimits limits, boolean corrections) {
+                var source = SensorPlane.of(pairs, limits);
+                inner.read(source, limits, corrections);
+                if (corrections && opcodes != null) {
+                    Opcodes.applyToSensor(pairs, source, opcodes);
+                }
+                var count = pairs.width * pairs.height;
+                for (var index = 0; index < count; index++) {
+                    for (var sample = 0; sample < 2; sample++) {
+                        var from = index * 2 + sample;
+                        var to = index * 2 + 1 - sample;
+                        if (source.integers != null) {
+                            plane.integers[to] = source.integers[from];
+                        } else if (source.wide != null) {
+                            plane.wide[to] = source.wide[from];
+                        } else {
+                            plane.floats[to] = source.floats[from];
+                        }
+                    }
+                }
+            }
+        };
+        sensor.opcodes1 = null;
+        sensor.pairedOpcodes2 = sensor.opcodes2 != null;
+        sensor.width = 2 * pairs.width;
+        sensor.samplesPerPixel = 1;
+        sensor.cfa = DualSamples.interleaved(pairs.cfa);
+        sensor.layout = CfaLayout.STAGGERED_A;
+        if (sensor.activeArea != null) {
+            var area = sensor.activeArea;
+            sensor.activeArea = new int[]{area[0], 2 * area[1], area[2], 2 * area[3]};
+        }
+        if (sensor.defaultCrop != null) {
+            var crop = sensor.defaultCrop;
+            sensor.defaultCrop = new double[]{2 * crop[0], crop[1], 2 * crop[2], crop[3]};
+        }
+        sensor.scaleH /= 2;
+        if (sensor.black != null) {
+            var columns = sensor.blackColumns;
+            var black = new double[sensor.blackRows * columns * 2];
+            for (var row = 0; row < sensor.blackRows; row++) {
+                for (var column = 0; column < 2 * columns; column++) {
+                    black[row * 2 * columns + column] = sensor.black[(row * columns + column / 2) * 2 + 1 - column % 2];
+                }
+            }
+            sensor.blackColumns = 2 * columns;
+            sensor.black = black;
+        }
+        if (sensor.blackDeltaH != null) {
+            var delta = new double[2 * sensor.blackDeltaH.length];
+            for (var index = 0; index < delta.length; index++) {
+                delta[index] = sensor.blackDeltaH[index / 2];
+            }
+            sensor.blackDeltaH = delta;
+        }
+        if (sensor.white != null) {
+            sensor.white = new double[]{sensor.white[0]};
+        }
+        return null;
     }
 
     /**

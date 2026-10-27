@@ -21,8 +21,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Decodes the CC0 sample files of every supported format and checks each description, the size of
  * the rendering, and the rendering against the camera's own embedded preview (its image area, when it
- * letterboxes a wider image): their luminance on a coarse grid must correlate, which catches wrong
- * CFA layouts, bit packings, crops and levels.
+ * letterboxes a wider image), as stored or both turned upright by their orientations: their luminance on a
+ * coarse grid must correlate, which catches wrong CFA layouts, bit packings, crops, levels and orientations.
  */
 class RawSamplesTest {
     private static final int GRID_WIDTH = 48;
@@ -82,7 +82,40 @@ class RawSamplesTest {
             "CR2_40D_SRAW, CR2, 1944, 1296, -, 16, true, Canon EOS 40D, 100",
             "RAF_XA1, RAF, 4896, 3264, RGGB, 12, true, X-A1, 1000",
             "RAF_XE2, RAF, 4896, 3264, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E2, 200",
-            "RAF_XT2_COMPRESSED, RAF, 0, 0, -, 0, false, X-T2, 400",
+            "RAF_XT2_COMPRESSED, RAF, 6000, 4000, GRGGBG/GBGGRG/RGRBGB/GBGGRG/GRGGBG/BGBRGR, 14, true, X-T2, 400",
+            "RAF_XT4_LOSSLESS, RAF, 6240, 4160, GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG/GGRGGB, 14, true, X-T4, 160",
+            "RAF_GFX50SII_LOSSLESS, RAF, 8256, 6192, RGGB, 14, true, GFX50S II, 100",
+            "RAF_XE5_LOSSY, RAF, 7728, 5152, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E5, 250",
+            "RAF_GFX50SII_LOSSY, RAF, 8256, 6192, RGGB, 14, true, GFX50S II, 100",
+            "RAF_S3PRO, RAF, 4256, 2848, RGBG/BGRG, 14, true, FinePix S3Pro, 100",
+            "RAF_S5500, RAF, 2272, 1704, RGGB, 14, true, FinePix S5500, 100",
+            "RAF_S6000FD, RAF, 4048, 3036, BGRG/RGBG, 14, true, FinePix S6000fd, 3200",
+            "RAF_S100FS, RAF, 5440, 4080, RGBG/BGRG, 14, true, FinePix S100FS, 100",
+            "RAF_S200EXR, RAF, 2808, 2108, RGGB, 14, true, FinePix S200EXR, 100",
+            "RAF_S200EXR_HR, RAF, 5616, 4216, RRGG/GGBB, 14, true, FinePix S200EXR, 100",
+            "RAF_S2PRO, RAF, 2848, 4256, RGBG/BGRG, 12, true, FinePixS2Pro, 100",
+            "RAF_S5PRO, RAF, 4256, 2848, RGBG/BGRG, 14, true, FinePix S5Pro, 100",
+            "RAF_S5000, RAF, 2120, 2816, RGBG/BGRG, 14, true, FinePix S5000, 200",
+            "RAF_S5200, RAF, 2736, 3648, RGBG/BGRG, 14, true, FinePix S5200, 64",
+            "RAF_S6500FD, RAF, 4048, 3036, BGRG/RGBG, 14, true, FinePix S6500fd, 100",
+            "RAF_S7000, RAF, 3040, 4048, RGBG/BGRG, 14, true, FinePix S7000, 200",
+            "RAF_S9500, RAF, 3648, 4864, RGBG/BGRG, 14, true, FinePix S9500, 80",
+            "RAF_S9600, RAF, 3648, 4864, RGBG/BGRG, 14, true, FinePix S9600, 200",
+            "RAF_F770EXR, RAF, 3248, 2436, RGGB, 12, true, FinePix F770EXR, 100",
+            "RAF_X10, RAF, 5632, 4232, BBGG/GGRR, 12, true, X10, 200",
+            "RAF_X10_SN, RAF, 2816, 2116, BGGR, 12, true, X10, 100",
+            "RAF_S1, RAF, 4624, 3470, RGGB, 12, true, FinePix S1, 200",
+            "RAF_SL1000, RAF, 4624, 3470, RGGB, 12, true, FinePix SL1000, 100",
+            "RAF_DBP_GX680, RAF, 5408, 7648, RGBG/BGRG, 12, true, DBP for GX680, 100",
+            "RAF_F700, RAF, 2128, 2832, RGBG/BGRG, 14, true, FinePix F700, 200",
+            "RAF_E550, RAF, 3040, 4048, RGBG/BGRG, 14, true, FinePix E550, 200",
+            "RAF_E900, RAF, 3648, 4864, RGBG/BGRG, 14, true, FinePix E900, 80",
+            "RAF_S5600, RAF, 2736, 3648, RGBG/BGRG, 14, true, FinePix S5600, 64",
+            "RAF_HS10, RAF, 3664, 2742, BGGR, 12, true, FinePix HS10 HS11, 200",
+            "RAF_F600EXR, RAF, 3248, 2436, RGGB, 12, true, FinePix F600EXR, 100",
+            "RAF_XT4_LOSSY, RAF, 6240, 4160, GGBGGR/BRGRBG/GGBGGR/GGRGGB/RBGBRG/GGRGGB, 14, true, X-T4, 160",
+            "RAF_XE5_LOSSLESS, RAF, 7728, 5152, GGBGGR/GGRGGB/RBGBRG/GGRGGB/GGBGGR/BRGRBG, 14, true, X-E5, 250",
+            "RAF_GFX50S_COMPRESSED, RAF, 8256, 6192, RGGB, 14, true, GFX 50S, 100",
             "CR3_250D, CR3, 6000, 4000, RGGB, 14, true, Canon EOS 250D, 100",
             "CR3_EOS_250D_C_RAW, CR3, 6000, 4000, RGGB, 14, true, Canon EOS 250D, 100",
             "CR3_EOS_90D, CR3, 6960, 4640, RGGB, 14, true, Canon EOS 90D, 100",
@@ -153,9 +186,16 @@ class RawSamplesTest {
                 assertArrayEquals(preview.get(), RawDecoder.extractPreview(source, MediaLimits.DEFAULT).orElseThrow());
                 var tight = MediaLimits.builder().maxBytes(preview.get().length - 1).build();
                 assertThrows(MediaException.LimitExceeded.class, () -> RawDecoder.extractPreview(source, tight));
-                var camera = letterboxed(Images.decode(MediaSource.of(preview.get())).picture(), width, height);
-                var correlation = correlation(grid(image.picture()), grid(camera));
-                assertTrue(correlation > 0.9, "luminance correlation with the preview " + correlation);
+                // a preview without an orientation of its own may be stored as the sensor is, while a file stored
+                // transposed or turned renders in its stored orientation: one of the two pairings must match
+                var decoded = Images.decode(MediaSource.of(preview.get()));
+                var stored = correlation(grid(image.picture()), grid(letterboxed(decoded.picture(), width, height)));
+                var rendered = ImageOps.orient(image.picture(), image.orientation());
+                var camera = letterboxed(ImageOps.orient(decoded.picture(), decoded.orientation()), rendered.width(),
+                        rendered.height());
+                var upright = correlation(grid(rendered), grid(camera));
+                assertTrue(Math.max(stored, upright) > 0.9,
+                        "luminance correlation with the preview " + stored + " as stored, " + upright + " upright");
             }
         }
     }

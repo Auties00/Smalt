@@ -52,8 +52,10 @@ final class Sensor {
     int height;
 
     /**
-     * The samples of each pixel: 1 for a color filter array or monochrome sensor, 3 for linear
-     * raw data.
+     * The samples of each pixel: 1 for a color filter array or monochrome sensor, 2 for a color
+     * filter array whose photosites each hold two readings of the same light (two photodiodes of
+     * different sensitivity, or two exposures), which {@link DualSamples} merges before
+     * rendering, 3 for linear raw data.
      */
     int samplesPerPixel = 1;
 
@@ -182,6 +184,12 @@ final class Sensor {
      * The opcodes applied to the demosaiced data, or {@code null}.
      */
     byte[] opcodes3;
+
+    /**
+     * Whether {@link #opcodes2} applies to the image of two samples per pixel this staggered image interleaves (the
+     * diagonal pairs of a two-sample DNG image), two adjacent columns holding the samples of one of its pixels.
+     */
+    boolean pairedOpcodes2;
 
     /**
      * Whether the as-shot white balance, which the file does not record readably, is estimated

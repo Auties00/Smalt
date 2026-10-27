@@ -148,7 +148,7 @@ final class ColorPipeline {
      * @param monochrome whether the image has a single channel
      */
     ColorPipeline(CameraColor color, ColorCalibration calibration, RawDecoderOptions options, boolean monochrome) {
-        this(color, calibration, options, monochrome, false, List.of());
+        this(color, calibration, options, monochrome, false, List.of(), 0);
     }
 
     /**
@@ -161,16 +161,18 @@ final class ColorPipeline {
      * @param prebalanced whether the values arrive white balanced, as a four-color projection
      * leaves them
      * @param masks the semantic masks of the file, which the masked color tables refer to
+     * @param scaleStops the exposure, in stops, that undoes a scaling of the linear values (the one
+     * {@link DualSamples} applies), added whatever the tone curve
      */
     ColorPipeline(CameraColor color, ColorCalibration calibration, RawDecoderOptions options, boolean monochrome,
-                  boolean prebalanced, List<SemanticMask> masks) {
+                  boolean prebalanced, List<SemanticMask> masks, double scaleStops) {
         this.monochrome = monochrome;
         this.prebalanced = prebalanced;
         var limits = options.limits();
         this.space = options.colorSpace();
         this.highlights = options.highlights();
         var standard = options.toneCurve() == RawToneCurve.STANDARD;
-        var stops = options.exposure() + (standard ? calibration.baselineExposure : 0);
+        var stops = options.exposure() + scaleStops + (standard ? calibration.baselineExposure : 0);
         this.gain = (float) StrictMath.pow(2, Math.clamp(stops, -16, 16));
         var minimum = Double.MAX_VALUE;
         var maximum = 0.0;

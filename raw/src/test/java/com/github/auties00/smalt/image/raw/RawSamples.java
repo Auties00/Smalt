@@ -5,8 +5,9 @@ import com.github.auties00.smalt.testkit.Conformance;
 import java.nio.file.Path;
 
 /**
- * The camera raw sample files of the tests: CC0 files of the raw.pixls.us archive, fetched and
- * verified through {@link Conformance} (the test using one is skipped when it is unavailable).
+ * The camera raw sample files of the tests: files of the raw.pixls.us archive (CC0, and a few CC BY-NC-SA ones used
+ * for testing only) and one of rawsamples.ch (CC BY-NC-SA), fetched and verified through {@link Conformance} (the
+ * test using one is skipped when it is unavailable).
  */
 public enum RawSamples {
     /**
@@ -638,6 +639,224 @@ public enum RawSamples {
      */
     RAF_XT2_COMPRESSED("rawpixls-fujifilm-x-t2-14bit-14bit-compressed-3-2.raf", "https://raw.pixls.us/getfile.php/865/nice/Fujifilm%20-%20X-T2%20-%2014bit%2014bit%20compressed%20%283%3A2%29.RAF",
             "f756ad5be551a8b3e1b503a8a6f7e8e637fba519c0b0f8c79dd58e94b0287602"),
+
+    /**
+     * rawpixls-fujifilm-x-t4-14bit-14bit-lossless-compressed-3-2.raf (27949104 bytes).
+     */
+    RAF_XT4_LOSSLESS("rawpixls-fujifilm-x-t4-14bit-14bit-lossless-compressed-3-2.raf", "https://raw.pixls.us/getfile.php/3914/nice/Fujifilm%20-%20X-T4%20-%2014bit%2014bit%20lossless%20compressed%20%283%3A2%29.RAF",
+            "07ea642656074834ffe5c661870a612ffa2e80fc1218a05166ee966bbe5f6fae"),
+
+    /**
+     * rawpixls-fujifilm-x-e5-14bit-lossless-compressed-3-2.raf (40819024 bytes).
+     */
+    RAF_XE5_LOSSLESS("rawpixls-fujifilm-x-e5-14bit-lossless-compressed-3-2.raf", "https://raw.pixls.us/getfile.php/8508/nice/Fujifilm%20-%20X-E5%20-%2014bit%20lossless%20compressed%20%283%3A2%29.RAF",
+            "ff94e2e0d90ba29cacfacceab150a666e329945bd9e281cfced9564d06fc4070"),
+
+    /**
+     * rawpixls-fujifilm-gfx50s-ii-14bit-14bit-compressed-lossless-4-3.raf (56710368 bytes).
+     */
+    RAF_GFX50SII_LOSSLESS("rawpixls-fujifilm-gfx50s-ii-14bit-14bit-compressed-lossless-4-3.raf", "https://raw.pixls.us/getfile.php/5003/nice/Fujifilm%20-%20GFX50S%20II%20-%2014bit%2014bit%20compressed%20lossless%20%284%3A3%29.RAF",
+            "4aada4653d7f876ee5e7b1cff36671d7820600adb98af39e8fb7c41ae0ace96d"),
+
+    /**
+     * rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf (50106976 bytes).
+     */
+    RAF_GFX50S_COMPRESSED("rawpixls-fujifilm-gfx-50s-14bit-14bit-compressed-3-2.raf", "https://raw.pixls.us/getfile.php/1435/nice/Fujifilm%20-%20GFX%2050S%20-%2014bit%2014bit%20compressed%20%283%3A2%29.RAF",
+            "a7124d13910e0241a6b035154bc1fcdb7be4439371d043b1e1950a0251feb51e"),
+
+    /**
+     * rawpixls-fujifilm-gfx100s-16bit-16bit-lossless-compressed-4-3.raf (135619152 bytes).
+     */
+    RAF_GFX100S_16BIT_LOSSLESS("rawpixls-fujifilm-gfx100s-16bit-16bit-lossless-compressed-4-3.raf", "https://raw.pixls.us/getfile.php/4495/nice/Fujifilm%20-%20GFX100S%20-%2016bit%2016bit%20lossless%20compressed%20%284%3A3%29.RAF",
+            "a7bf8f061b603f7ef5fd29276eb6b2ac57355ca2f589a340117bfff0d03c065c"),
+
+    /**
+     * rawpixls-fujifilm-x-e5-14bit-lossy-compressed-3-2.raf (29752800 bytes).
+     */
+    RAF_XE5_LOSSY("rawpixls-fujifilm-x-e5-14bit-lossy-compressed-3-2.raf", "https://raw.pixls.us/getfile.php/8509/nice/Fujifilm%20-%20X-E5%20-%2014bit%20lossy%20compressed%20%283%3A2%29.RAF",
+            "28f56cc9784164209e92fae209bdcc78267bd692aa2fb964595485f7e93692ab"),
+
+    /**
+     * rawpixls-fujifilm-gfx50s-ii-14bit-14bit-compressed-4-3.raf (34522544 bytes).
+     */
+    RAF_GFX50SII_LOSSY("rawpixls-fujifilm-gfx50s-ii-14bit-14bit-compressed-4-3.raf", "https://raw.pixls.us/getfile.php/5004/nice/Fujifilm%20-%20GFX50S%20II%20-%2014bit%2014bit%20compressed%20%284%3A3%29.RAF",
+            "59699d3063a9900eb5f226da664473c6081ed2cfe4d4529b7cd45afa2f1cac62"),
+
+    /**
+     * rawpixls-fujifilm-x-t4-14bit-14bit-compressed-3-2.raf (26971008 bytes).
+     */
+    RAF_XT4_LOSSY("rawpixls-fujifilm-x-t4-14bit-14bit-compressed-3-2.raf", "https://raw.pixls.us/getfile.php/3918/nice/Fujifilm%20-%20X-T4%20-%2014bit%2014bit%20compressed%20%283%3A2%29.RAF",
+            "871836938ffa695f4c41765ddb107c2703ce755f7f3ced7e10f9e04746f1734e"),
+
+    /**
+     * rawpixls-fujifilm-gfx100-ii-16bit-16bit-compressed-4-3.raf (70874736 bytes).
+     */
+    RAF_GFX100II_16BIT_LOSSY("rawpixls-fujifilm-gfx100-ii-16bit-16bit-compressed-4-3.raf", "https://raw.pixls.us/getfile.php/7175/nice/Fujifilm%20-%20GFX100%20II%20-%2016bit%2016bit%20compressed%20%284%3A3%29.RAF",
+            "fed86662d870e53b547db4f29af5e2d149acdcb500f8b4213854a0f85ef0b45b"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s9500-4-3.raf (19163072 bytes).
+     */
+    RAF_S9500("rawpixls-fujifilm-finepix-s9500-4-3.raf", "https://raw.pixls.us/getfile.php/1373/nice/Fujifilm%20-%20FinePix%20S9500%20-%204%3A3.RAF",
+            "b7a7bb3b8a69232866c75774ca6ba9296f3d4435d1e1bac327b4cdc6bea39144"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s9600-4-3.raf (19118528 bytes).
+     */
+    RAF_S9600("rawpixls-fujifilm-finepix-s9600-4-3.raf", "https://raw.pixls.us/getfile.php/1642/nice/Fujifilm%20-%20FinePix%20S9600%20-%204%3A3.raf",
+            "d4888ec28d89ce7f9cc6d1b852d2ea03da965bf5e8ce5874d1e3fa439f92dbc0"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s5500-4-3.raf (8498640 bytes).
+     */
+    RAF_S5500("rawpixls-fujifilm-finepix-s5500-4-3.raf", "https://raw.pixls.us/getfile.php/1769/nice/Fujifilm%20-%20FinePix%20S5500%20-%204%3A3.RAF",
+            "92a947758829686f0a0c662d160a7b8319099cc405a0e4bf90e1fd61c47b2b69"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s3pro-3-2.raf (25760952 bytes).
+     */
+    RAF_S3PRO("rawpixls-fujifilm-finepix-s3pro-3-2.raf", "https://raw.pixls.us/getfile.php/1964/nice/Fujifilm%20-%20FinePix%20S3Pro%20-%203%3A2.RAF",
+            "038e5a13a22513f53d143e328a66e2de8071809565db696ecac84b4364fcb75b"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s5200-4-3.raf (11230736 bytes).
+     */
+    RAF_S5200("rawpixls-fujifilm-finepix-s5200-4-3.raf", "https://raw.pixls.us/getfile.php/1970/nice/Fujifilm%20-%20FinePix%20S5200%20-%204%3A3.RAF",
+            "93eada72efdf8261d9bfde5022a28a656e4c1c6d0ddac7b0c82686fdcb8ded99"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s5pro-3-2.raf (25616736 bytes).
+     */
+    RAF_S5PRO("rawpixls-fujifilm-finepix-s5pro-3-2.raf", "https://raw.pixls.us/getfile.php/2634/nice/Fujifilm%20-%20FinePix%20S5Pro%20-%203%3A2.RAF",
+            "aca2b2ebcf90d248b4f822ed78bfeb73e79f1b64164a87dc2051a96726cdfa0c"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s5000-4-3.raf (6851240 bytes).
+     */
+    RAF_S5000("rawpixls-fujifilm-finepix-s5000-4-3.raf", "https://raw.pixls.us/getfile.php/2726/nice/Fujifilm%20-%20FinePix%20S5000%20-%204%3A3.RAF",
+            "dabd5e74521a6980156be9fd4b88d0c37b0fe4d0e0e6f5c12db8cffff1b76297"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s200exr-4-3.raf (25326928 bytes).
+     */
+    RAF_S200EXR("rawpixls-fujifilm-finepix-s200exr-4-3.raf", "https://raw.pixls.us/getfile.php/3425/nice/Fujifilm%20-%20FinePix%20S200EXR%20-%204%3A3.RAF",
+            "2d4549067f92b33a222d7ded9460adb5ff6ce739ed92af9890c168e37170d4ff"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s7000-4-3.raf (13096536 bytes).
+     */
+    RAF_S7000("rawpixls-fujifilm-finepix-s7000-4-3.raf", "https://raw.pixls.us/getfile.php/3495/nice/Fujifilm%20-%20FinePix%20S7000%20-%204%3A3.raf",
+            "098aa2c64dc6a026f3f48f1494476a55751e08af2d37789b7f557fd11a14cf49"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s100fs-4-3.raf (23714912 bytes).
+     */
+    RAF_S100FS("rawpixls-fujifilm-finepix-s100fs-4-3.raf", "https://raw.pixls.us/getfile.php/4068/nice/Fujifilm%20-%20FinePix%20S100FS%20-%204%3A3.RAF",
+            "efa518d70b8122dcfe65f98c7c080f15a512d841a2a86bfe226032a327e1d25e"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s6000fd-4-3.raf (13660864 bytes).
+     */
+    RAF_S6000FD("rawpixls-fujifilm-finepix-s6000fd-4-3.raf", "https://raw.pixls.us/getfile.php/5549/nice/Fujifilm%20-%20FinePix%20S6000fd%20-%204%3A3.RAF",
+            "2c602e5a31b81683d8fb97f36c5cb3580836420e12b9ed5ae16241c68ff6201d"),
+
+    /**
+     * rawpixls-fujifilm-finepix-f550exr-12bit-12bit-uncompressed-4-3.raf (25320656 bytes).
+     */
+    RAF_F550EXR("rawpixls-fujifilm-finepix-f550exr-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/3869/nice/Fujifilm%20-%20FinePix%20F550EXR%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "95b6c8a9d5d885f60bbc965ddfd899d325f2225c99ab087d02739543a3ff7dd6"),
+
+    /**
+     * rawpixls-fujifilm-finepix-f770exr-12bit-12bit-uncompressed-4-3.raf (25447984 bytes).
+     */
+    RAF_F770EXR("rawpixls-fujifilm-finepix-f770exr-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/3039/nice/Fujifilm%20-%20FinePix%20F770EXR%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "ffc905e325a00c57a5335681654fdf226b724269cd5d26cd976983939f88043d"),
+
+    /**
+     * rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf (19768592 bytes).
+     */
+    RAF_X10("rawpixls-fujifilm-finepix-x10-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/1344/nice/Fujifilm%20-%20FinePix%20X10%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "206448688c49b0a9da74dd94f12aba143c2d8842cb5bbf64d4ecdc501874451b"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s1-12bit-12bit-uncompressed-4-3.raf (24789424 bytes).
+     */
+    RAF_S1("rawpixls-fujifilm-finepix-s1-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/1651/nice/Fujifilm%20-%20FinePix%20S1%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "d77f104a9fa4ce11c78b5078ac40acf8b150d67ea837d187e0903d208bf2dbae"),
+
+    /**
+     * rawpixls-fujifilm-finepix-sl1000-12bit-12bit-uncompressed-4-3.raf (24816408 bytes).
+     */
+    RAF_SL1000("rawpixls-fujifilm-finepix-sl1000-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/5760/nice/Fujifilm%20-%20FinePix%20SL1000%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "8bc9903cb1bff93376eb73b64f35861dcf3c66e2ca936cfac2d7c62435689dec"),
+
+    /**
+     * rawpixls-fujifilm-finepix-f700-double-width-16-bit-unpacked-little-endian-4-3.raf (13252480 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_F700("rawpixls-fujifilm-finepix-f700-double-width-16-bit-unpacked-little-endian-4-3.raf", "https://raw.pixls.us/getfile.php/607/nice/Fujifilm%20-%20FinePix%20F700%20-%20double%20width%2016-bit%20unpacked%20little-endian%20%284%3A3%29.RAF",
+            "c3686a66f9159043bd27afb0d749d566c2912a0374319e38f68fa6255ea565b4"),
+
+    /**
+     * rawpixls-fujifilm-finepix-e550-4-3.raf (13285512 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_E550("rawpixls-fujifilm-finepix-e550-4-3.raf", "https://raw.pixls.us/getfile.php/665/nice/Fujifilm%20-%20FinePix%20E550%20-%204%3A3.RAF",
+            "82d1010a1eb8cdf4b2de7ca30a3a4db4e96f290536f06ed2798a67c1fe81e6ae"),
+
+    /**
+     * rawpixls-fujifilm-finepix-e900-4-3.raf (19161008 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_E900("rawpixls-fujifilm-finepix-e900-4-3.raf", "https://raw.pixls.us/getfile.php/699/nice/Fujifilm%20-%20FinePix%20E900%20-%204%3A3.RAF",
+            "07adee4a49ae922c89786c96c2f86ce3c130fa128e18b25d0e498fa881d51b94"),
+
+    /**
+     * rawpixls-fujifilm-finepix-f600exr-12bit-12bit-uncompressed-4-3.raf (25439728 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_F600EXR("rawpixls-fujifilm-finepix-f600exr-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/687/nice/Fujifilm%20-%20FinePix%20F600EXR%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "229295351ad9777b2c6a25c7ab46368626b4f7a63b8ec8a3657a624446f2d08a"),
+
+    /**
+     * rawpixls-fujifilm-finepix-f900exr-12bit-12bit-uncompressed-4-3.raf (25753088 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_F900EXR("rawpixls-fujifilm-finepix-f900exr-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/618/nice/Fujifilm%20-%20FinePix%20F900EXR%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "48e13e0d4b0ced917c0655d430efd8191d7f8bd6856ca55ee7b30bc766ed601d"),
+
+    /**
+     * rawpixls-fujifilm-finepix-hs20exr-12bit-12bit-uncompressed-4-3.raf (25397168 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_HS20EXR("rawpixls-fujifilm-finepix-hs20exr-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/592/nice/Fujifilm%20-%20FinePix%20HS20EXR%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "860ca30714a7dd71cc936fefa034d036de33f4a9b69f53a782ffbad06a5fe442"),
+
+    /**
+     * rawpixls-fujifilm-finepix-hs10-hs11-12bit-12bit-uncompressed-4-3.raf (15915200 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_HS10("rawpixls-fujifilm-finepix-hs10-hs11-12bit-12bit-uncompressed-4-3.raf", "https://raw.pixls.us/getfile.php/1652/nice/Fujifilm%20-%20FinePix%20HS10%20HS11%20-%2012bit%2012bit%20uncompressed%20%284%3A3%29.RAF",
+            "dbdd459e33beadd68d26d298424056402c907bf11d37a904572d3df76c35fbcb"),
+
+    /**
+     * rawpixls-fujifilm-finepix-s5600-4-3.raf (11214560 bytes; CC BY-NC-SA 4.0, used for testing only).
+     */
+    RAF_S5600("rawpixls-fujifilm-finepix-s5600-4-3.raf", "https://raw.pixls.us/getfile.php/629/nice/Fujifilm%20-%20FinePix%20S5600%20-%204%3A3.RAF",
+            "8d24ac05af61c8af0a2e7e97166e0db142b5cfb126655462704bf3de03d30d23"),
+
+    /**
+     * rawsamples-fujifilm-finepix-s200exr-hr.raf (25344384 bytes; CC BY-NC-SA 4.0, used for testing only): an
+     * S200EXR file in EXR HR mode, from rawsamples.ch.
+     */
+    RAF_S200EXR_HR("rawsamples-fujifilm-finepix-s200exr-hr.raf", "https://www.rawsamples.ch/raws/fuji/RAW_FUJI_FINEPIX_S200EXR.RAF",
+            "3730062a3658cbce112a22da2b4595cba818c89e1cfbcbe203a45cccda15e119"),
+
+    /**
+     * rawsamples-fujifilm-x10-sn.raf (19830388 bytes; CC BY-NC-SA 4.0, used for testing only): an X10 file in EXR
+     * SN mode, from rawsamples.ch.
+     */
+    RAF_X10_SN("rawsamples-fujifilm-x10-sn.raf", "https://www.rawsamples.ch/raws/fuji/RAW_FUJI_X10.RAF",
+            "3296bdcaeb3fb20a2409e7bd0ece3e0493704a2fc22d1f12db8555b69974a1b9"),
+
+    /**
+     * rawpixls-fujifilm-dbp-for-gx680-4-3.raf (42714152 bytes).
+     */
+    RAF_DBP_GX680("rawpixls-fujifilm-dbp-for-gx680-4-3.raf", "https://raw.pixls.us/getfile.php/2574/nice/Fujifilm%20-%20DBP%20for%20GX680%20-%204%3A3.RAF",
+            "36e5e144e8d69a98455851578408f6682c881475e39bded4ec72b772b4cff696"),
 
     /**
      * rawpixls-panasonic-dc-g9-4-3-2348.rw2 (24256000 bytes).

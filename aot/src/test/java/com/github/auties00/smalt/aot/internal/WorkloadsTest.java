@@ -183,4 +183,29 @@ class WorkloadsTest {
         assertArrayEquals(RawDecoder.decodeRaw(MediaSource.of(files.get(0))).samples(),
                 RawDecoder.decodeRaw(MediaSource.of(files.get(1))).samples());
     }
+
+    @Test
+    @DisplayName("synthetic RAF files, compressed and of bare SuperCCD words, are decodable files of their format")
+    void syntheticRaf() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(800, 48, 1).getFirst(), false);
+        for (var variant = 0; variant < 4; variant++) {
+            var file = SyntheticRaf.compressed(picture, (variant & 1) != 0, variant >= 2);
+            var info = RawDecoder.info(MediaSource.of(file));
+            assertEquals(RawFormat.RAF, info.format());
+            assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+            assertEquals(800, info.width());
+            assertEquals(48, info.height());
+            assertEquals(800 * 48, RawDecoder.decodeRaw(MediaSource.of(file)).samples().length);
+        }
+        var superCcd = SyntheticRaf.superCcd(SyntheticImages.rgba(SyntheticVideo.natural(64, 48, 1).getFirst(), false));
+        var info = RawDecoder.info(MediaSource.of(superCcd));
+        assertTrue(info.isDecodable(), info.unsupportedFeature().orElse(""));
+        assertTrue(info.cfaLayout().isStaggered());
+        assertEquals(com.github.auties00.smalt.image.Orientation.TRANSPOSE, info.orientation());
+        // the low-sensitivity photodiodes of the SuperCCD SR file are the second sample of each photosite
+        var sensor = RawDecoder.decodeRaw(MediaSource.of(superCcd));
+        assertEquals(2, sensor.channels());
+        assertEquals(sensor.width() * sensor.height() * 2, sensor.samples().length);
+        assertTrue(RawDecoder.decode(MediaSource.of(superCcd)).picture().width() > 0);
+    }
 }

@@ -85,7 +85,11 @@ public final class Renderer {
         }
         var image = LinearImage.of(sensor, plane, limits);
         if (opcodes && sensor.opcodes2 != null) {
-            Opcodes.applyToLinear(image, sensor.opcodes2, Opcodes.bounds(sensor, image.width, image.height, 1));
+            if (sensor.pairedOpcodes2) {
+                Opcodes.applyToPairs(image, sensor.opcodes2);
+            } else {
+                Opcodes.applyToLinear(image, sensor.opcodes2, Opcodes.bounds(sensor, image.width, image.height, 1));
+            }
         }
         return image;
     }
@@ -217,6 +221,12 @@ public final class Renderer {
      */
     static Picture render(RawFile file, Sensor sensor, RawDecoderOptions options, boolean halfSize) {
         var linear = linearize(file, sensor, options.opcodes());
+        var mergeStops = 0.0;
+        if (linear.samplesPerPixel == 2 && linear.cfa != null) {
+            var merged = DualSamples.merge(linear, file.limits);
+            linear = merged.image();
+            mergeStops = merged.stops();
+        }
         var window = window(sensor, linear.width, linear.height, options.defaultCrop(), options.opcodes(),
                 options.userCrop());
         if (sensor == file.sensor) {
@@ -244,7 +254,7 @@ public final class Renderer {
                 ? Staggered.demosaic(linear, sensor.layout, sensor.scaleH, sensor.scaleV, options.demosaic(), four, blend,
                 file.limits) : linear;
         var pipeline = new ColorPipeline(four != null ? color.projected() : color, calibration, options, monochrome,
-                four != null, file.masks);
+                four != null, file.masks, mergeStops);
         if (pipeline.autoBlack) {
             pipeline.black(BlackPoint.measure(image, window, four, blend, pipeline));
         }

@@ -37,7 +37,8 @@ final class LinearImage {
     final float[] data;
 
     /**
-     * The color filter array of this image, or {@code null}.
+     * The color filter array of this image, or {@code null}; an image of two samples per pixel with
+     * one holds two readings of each photosite.
      */
     final CfaPattern cfa;
 
@@ -186,7 +187,7 @@ final class LinearImage {
         });
         CfaPattern cfa = null;
         int[] planes = null;
-        if (sensor.cfa != null && spp == 1) {
+        if (sensor.cfa != null && spp <= 2) {
             cfa = sensor.cfa.shifted(top, left);
             planes = new int[cfa.width() * cfa.height()];
             var colors = 0;

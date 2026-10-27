@@ -175,6 +175,103 @@ class RawDecoderBehaviorTest {
         harness("cr3/" + name, cr3File(name).write()).run();
     }
 
+    static byte[] rafFile(String name) {
+        var writer = new RafWriter();
+        writer.width = 100;
+        writer.height = 26;
+        switch (name) {
+            case "compressed-bayer" -> {
+                writer.blockWidth = 48;
+                return writer.scene(1).compressed();
+            }
+            case "compressed-xtrans-16bit" -> {
+                writer.xtrans = true;
+                writer.bits = 16;
+                return writer.scene(2).compressed();
+            }
+            case "compressed-lossy" -> {
+                writer.xtrans = true;
+                writer.levels = new int[]{1, 2, 5, 0};
+                return writer.scene(3).compressed();
+            }
+            case "packed12-msb-bggr" -> {
+                writer.bits = 12;
+                return writer.scene(4).packed12(true, new byte[]{8, 9, 11, 10});
+            }
+            case "packed12-two-images", "packed12-diagonal-pairs" -> {
+                writer.bits = 12;
+                writer.scene(5);
+                writer.second = new short[writer.samples.length];
+                for (var index = 0; index < writer.second.length; index++) {
+                    writer.second[index] = (short) ((writer.samples[index] / 4 + index % 7) & 0xFFF);
+                }
+                if (name.equals("packed12-diagonal-pairs")) {
+                    writer.output = new int[]{2 * writer.width, writer.height};
+                }
+                return writer.packed12(false, new byte[]{10, 11, 9, 8});
+            }
+            case "legacy-output-stripes" -> {
+                var words = new short[40 * 64];
+                for (var index = 0; index < words.length; index++) {
+                    words[index] = (short) (300 + (index * 37) % 3000);
+                }
+                writer.stripes = 8;
+                return writer.legacy(words, 40, 64, true, 0x00, new int[]{2, 8, 36, 48}, new int[]{4, 12, 30, 40});
+            }
+            case "legacy-row-interleaved" -> {
+                // the two images' rows in turn, as the FinePix F700 stores them
+                var words = new short[64 * 40];
+                writer.second = new short[words.length];
+                for (var index = 0; index < words.length; index++) {
+                    words[index] = (short) Math.min(16383, 300 + (index * 37) % 20000);
+                    writer.second[index] = (short) (300 + (index * 37) % 20000 / 16);
+                }
+                writer.interleaved = true;
+                return writer.legacy(words, 64, 40, false, 0x80, new int[]{0, 8, 32, 64}, new int[]{2, 12, 28, 56});
+            }
+            case "legacy-diagonal-pairs" -> {
+                // the two images of a SuperCCD EXR file in HR mode, interleaved into one staggered grid
+                var words = new short[30 * 40];
+                writer.second = new short[words.length];
+                for (var index = 0; index < words.length; index++) {
+                    words[index] = (short) (300 + (index * 37) % 3000);
+                    writer.second[index] = (short) (320 + (index * 53) % 2900);
+                }
+                writer.output = new int[]{2 * 40, 30};
+                return writer.legacy(words, 30, 40, false, 0x0A, null, new int[]{2, 4, 26, 32});
+            }
+            case "legacy-superccd-sr" -> {
+                var words = new short[40 * 64];
+                writer.second = new short[words.length];
+                for (var index = 0; index < words.length; index++) {
+                    words[index] = (short) Math.min(16383, 300 + (index * 37) % 20000);
+                    writer.second[index] = (short) (300 + (index * 37) % 20000 / 16);
+                }
+                return writer.legacy(words, 40, 64, false, 0x01, new int[]{2, 8, 36, 48}, new int[]{4, 12, 30, 40});
+            }
+            default -> {
+                var words = new short[40 * 64];
+                for (var index = 0; index < words.length; index++) {
+                    words[index] = (short) (300 + (index * 37) % 3000);
+                }
+                return name.equals("legacy-superccd")
+                        ? writer.legacy(words, 40, 64, false, 0x01, new int[]{2, 8, 36, 48}, new int[]{4, 12, 30, 40})
+                        : writer.legacy(words, 64, 40, false, 0x83, new int[]{2, 8, 28, 64}, new int[]{4, 12, 24, 56});
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"compressed-bayer", "compressed-xtrans-16bit", "compressed-lossy", "packed12-msb-bggr",
+            "packed12-two-images", "packed12-diagonal-pairs", "legacy-superccd", "legacy-superccd-sr",
+            "legacy-diagonal-pairs", "legacy-output-stripes", "legacy-row-interleaved", "legacy-transposed"})
+    @DisplayName("synthetic Fujifilm RAF files, compressed, packed, of two images per photosite and of older models, "
+            + "one of several outputs among them: identical pictures and sensor data under every source behavior and "
+            + "clean faults")
+    void raf(String name) {
+        harness("raf/" + name, rafFile(name)).run();
+    }
+
     @ParameterizedTest(name = "{0}")
     @ValueSource(strings = {"rawpixls-sony-nex-6-12bit-12bit-compressed-3-2.arw",
             "rawpixls-canon-eos-40d-sraw2-sraw-3-2.cr2", "rawpixls-canon-eos-5d-mark-iii.cr2",
@@ -182,7 +279,9 @@ class RawDecoderBehaviorTest {
             "rawpixls-canon-eos-r6-mark-iii-raw-3-2.cr3", "rawpixls-canon-eos-90d-3-2.cr3",
             "rawpixls-minolta-dimage-5-4-3.mrw", "rawpixls-nikon-d70s-12bit-12bit-compressed-lossy-type-1-3-2.nef",
             "rawpixls-olympus-e-10-16bit-4-3.orf", "rawpixls-pentax-ist-dl-12bit-3-2.pef",
-            "rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf", "rawpixls-panasonic-dmc-lx3-1-1.rw2",
+            "rawpixls-fujifilm-x-a1-12bit-12bit-uncompressed-3-2.raf", "rawpixls-fujifilm-x-t2-14bit-14bit-compressed-3-2.raf",
+            "rawpixls-fujifilm-finepix-s5000-4-3.raf", "rawpixls-fujifilm-finepix-s1-12bit-12bit-uncompressed-4-3.raf",
+            "rawpixls-panasonic-dmc-lx3-1-1.rw2",
             "rawpixls-sigma-dp1-3-2-1116.x3f"})
     @DisplayName("camera raw files of the full tier, at least one per format: identical pictures and sensor data under every "
             + "source behavior and clean faults")
