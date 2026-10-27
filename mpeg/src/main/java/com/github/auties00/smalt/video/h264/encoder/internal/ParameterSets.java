@@ -14,7 +14,9 @@ import java.io.ByteArrayOutputStream;
  * <p>The sequence parameter set declares the stream's chroma format and bit depth, picture order
  * count type 2 (output order equals decoding order) or 0, frame or field coding, frame cropping for
  * sizes that are not whole macroblocks, and video usability information with the sample aspect
- * ratio, the color description, the chroma sample location when known, the nominal timing and a
+ * ratio, the color description, the chroma sample location when known, the nominal timing, the
+ * parameters of the hypothetical reference decoder when the stream signals one (with
+ * {@code pic_struct_present_flag}, as its picture timing SEI messages carry {@code pic_struct}) and a
  * bitstream restriction that announces the reordering depth, so players display each picture as soon
  * as its turn comes.
  */
@@ -198,9 +200,16 @@ final class ParameterSets {
         writer.write((int) settings.numUnitsInTick(), 32);
         writer.write((int) settings.timeScale(), 32);
         writer.writeBit(settings.fixedFrameRate() ? 1 : 0);
+        var hrd = settings.config().hrd();
+        writer.writeBit(hrd ? 1 : 0);
+        if (hrd) {
+            HrdModel.writeParameters(writer, settings);
+        }
         writer.writeBit(0);
-        writer.writeBit(0);
-        writer.writeBit(0);
+        if (hrd) {
+            writer.writeBit(0);
+        }
+        writer.writeBit(hrd ? 1 : 0);
         writer.writeBit(1);
         writer.writeBit(1);
         writer.writeUe(0);

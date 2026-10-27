@@ -134,7 +134,8 @@ final class WideSettings implements StreamParameters {
         this.timeScale = 2 * rate.numerator();
     }
 
-    EncoderConfig config() {
+    @Override
+    public EncoderConfig config() {
         return config;
     }
 

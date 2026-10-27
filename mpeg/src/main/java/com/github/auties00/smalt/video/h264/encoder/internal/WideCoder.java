@@ -274,13 +274,14 @@ final class WideCoder {
         this.transform8x8Mode = settings.transform8x8();
         this.table = new WideMbTable(settings.mbWidth(), settings.mbHeight());
         intra.setBitDepths(settings.bitDepth(), settings.bitDepth());
-        this.searchRange = switch (settings.config().speed()) {
+        var speed = settings.config().passRecorder() != null ? H264EncoderSpeed.FASTEST : settings.config().speed();
+        this.searchRange = switch (speed) {
             case FASTEST -> 8;
             case FAST -> 12;
             case BALANCED -> 16;
             case SLOW -> 24;
         };
-        this.intraNxNInter = settings.config().speed() != H264EncoderSpeed.FASTEST;
+        this.intraNxNInter = speed != H264EncoderSpeed.FASTEST;
         this.maxLevel = !settings.cabac() && settings.profileIdc() < 100 ? CavlcWriter.MAX_LEVEL : Integer.MAX_VALUE;
     }
 

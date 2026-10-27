@@ -1,10 +1,12 @@
 package com.github.auties00.smalt.video.h264.encoder.internal;
 
+import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
+import com.github.auties00.smalt.video.h264.encoder.H264AdaptiveQuantization;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
 import com.github.auties00.smalt.video.h264.internal.H264DecoderEngine;
@@ -31,8 +33,9 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * @implNote This implementation codes every macroblock on the calling thread. Its tools are the
  * Intra_4x4, Intra_8x8 and Intra_16x16 modes and one motion vector per macroblock with
- * quarter-sample precision, chosen by Hadamard-transformed prediction error; B pictures, smaller
- * partitions, adaptive quantization and look-ahead are the domain of {@link EncoderCore}.
+ * quarter-sample precision, chosen by Hadamard-transformed prediction error, with the macroblock
+ * quantizers of adaptive quantization; B pictures, smaller partitions, look-ahead with its macroblock
+ * tree and texture retention in mode decision are the domain of {@link EncoderCore}.
  */
 public final class WideCore implements EncoderEngine {
     /**
@@ -45,9 +48,9 @@ public final class WideCore implements EncoderEngine {
      */
     private static final double SCENE_CUT_JUMP = 1.5;
 
-    // TODO: B pictures, partitions below 16x16, look-ahead with adaptive quantization,
-    //  wavefront analysis on helper threads and separate color plane coding (separate_colour_plane_flag) in the
-    //  extended engine
+    // TODO: B pictures, partitions below 16x16, look-ahead with the macroblock tree, rate-distortion mode
+    //  decision with texture retention, wavefront analysis on helper threads and separate color plane coding
+    //  (separate_colour_plane_flag) in the extended engine
     private final EncoderConfig config;
 
     private final WideSettings settings;
@@ -61,6 +64,11 @@ public final class WideCore implements EncoderEngine {
     private final NalWriter nal;
 
     private final RateController rateControl;
+
+    /**
+     * The SEI NAL unit of the closed captions of the frame being coded, or {@code null} for none.
+     */
+    private byte[] captions;
 
     /**
      * The decoder that reconstructs every coded picture as a decoder does.
@@ -82,6 +90,58 @@ public final class WideCore implements EncoderEngine {
      * The SEI payload of the recovery point of every intra refresh cycle, or {@code null}.
      */
     private final byte[] recoverySei;
+
+    /**
+     * The coded picture buffer of the hypothetical reference decoder the stream signals, or {@code null}
+     * when it signals none.
+     */
+    private final HrdModel hrd;
+
+    /**
+     * The adaptive quantization mode.
+     */
+    private final H264AdaptiveQuantization aqMode;
+
+    /**
+     * The adaptive quantization strength, {@code 0} when every macroblock takes the picture's quantizer.
+     */
+    private final double aqStrength;
+
+    /**
+     * The activity of each macroblock of the picture being coded, see {@link AdaptiveQuantizer}.
+     */
+    private final int[] aqActivity;
+
+    /**
+     * The brightness of each macroblock of the picture being coded, see {@link AdaptiveQuantizer}.
+     */
+    private final int[] aqBrightness;
+
+    /**
+     * The adaptive quantization offset of each macroblock of the picture being coded.
+     */
+    private final double[] aqOffsets;
+
+    /**
+     * The rounded adaptive quantization offset of each macroblock address of the picture being coded.
+     */
+    private final int[] aqSteps;
+
+    /**
+     * The number of macroblocks of the picture {@link #aqSteps} holds the offsets of.
+     */
+    private int aqCount;
+
+    /**
+     * The most bits the first access unit of the frame being coded may take in the decoder's buffer.
+     */
+    private long firstFieldBits;
+
+    /**
+     * The mean quantizer, rounded up, of the two fields of the last field pair coded, which differs from the
+     * frame's when a field is coded again to fit the decoder's buffer.
+     */
+    private int pairQp;
 
     /**
      * The source frame of the frame being coded.
@@ -291,6 +351,15 @@ public final class WideCore implements EncoderEngine {
         this.pps = NalWriter.unit(3, H264Nal.PPS, ParameterSets.pps(settings));
         this.configurationRecord = ParameterSets.avcDecoderConfigurationRecord(settings, sps, pps);
         this.staticSei = ParameterSets.staticSei(config.color());
+        this.hrd = config.hrd() ? new HrdModel(settings) : null;
+        this.aqMode = config.adaptiveQuantization();
+        this.aqStrength = config.realtime() || settings.lossless() || aqMode == H264AdaptiveQuantization.NONE ? 0
+                : config.adaptiveQuantizationStrength();
+        var macroblocks = aqStrength > 0 ? settings.mbCount() : 0;
+        this.aqActivity = new int[macroblocks];
+        this.aqBrightness = new int[macroblocks];
+        this.aqOffsets = new double[macroblocks];
+        this.aqSteps = new int[macroblocks];
         this.temporalLayers = config.temporalLayers();
         if (config.intraRefresh() > 0) {
             this.refreshBand = Math.ceilDiv(settings.mbWidth(), config.intraRefresh());
@@ -421,6 +490,16 @@ public final class WideCore implements EncoderEngine {
         return byteCount;
     }
 
+    /**
+     * Returns the rounded adaptive quantization offsets of the macroblocks of the last picture coded, the
+     * second field of a field pair; a test hook.
+     *
+     * @return a copy, by macroblock address, empty without adaptive quantization
+     */
+    public int[] adaptiveOffsets() {
+        return Arrays.copyOf(aqSteps, aqCount);
+    }
+
     @Override
     public int lastQp() {
         return lastQp;
@@ -429,11 +508,6 @@ public final class WideCore implements EncoderEngine {
     @Override
     public int lastTemporalLayer() {
         return lastTemporalLayer;
-    }
-
-    @Override
-    public long lastSubmittedPts() {
-        return lastPts;
     }
 
     @Override
@@ -453,7 +527,7 @@ public final class WideCore implements EncoderEngine {
     }
 
     @Override
-    public Packet encode(Picture picture, long pts, long duration) {
+    public Packet encode(Picture picture, long pts, long duration, byte[] captions) {
         if (closed) {
             throw new IllegalStateException("encoder is closed");
         }
@@ -473,6 +547,7 @@ public final class WideCore implements EncoderEngine {
             nominal = true;
         }
         lastPts = pts;
+        this.captions = CaptionSei.unit(captions);
         applyPendingBitrate();
         var seconds = nominal && duration <= 0 ? 1 / config.frameRate().toDouble()
                 : frameSeconds(pts, duration, previous);
@@ -500,7 +575,11 @@ public final class WideCore implements EncoderEngine {
         if (settings.lossless()) {
             qp = -settings.qpBdOffset();
         } else {
-            qp = rateControl.frameQp(idr, complexity, seconds);
+            if (hrd != null) {
+                firstFieldBits = hrd.begin(settings.fieldPictures() ? 1 : 2, idr);
+                rateControl.setFill(firstFieldBits);
+            }
+            qp = rateControl.frameQp(idr, complexity, seconds, submitted - 1);
             if (temporalLayer > 0) {
                 qp = Math.clamp(qp + 2 * temporalLayer, config.minQuantizer(), config.maxQuantizer());
             }
@@ -514,7 +593,9 @@ public final class WideCore implements EncoderEngine {
         long bits;
         if (settings.fieldPictures()) {
             bits = codeFieldPair(idr, unreferenced, qp, refreshStart, refreshEnd, pts, duration);
+            qp = pairQp;
         } else {
+            prepareAdaptiveQuantization(0, settings.mbaff());
             bits = codeFrame(idr, unreferenced, qp, refreshStart, refreshEnd);
             if (!settings.lossless()) {
                 var attempts = config.realtime() ? 1 : 2;
@@ -533,9 +614,18 @@ public final class WideCore implements EncoderEngine {
                 }
             }
             decodePicture(0, pts, duration, 0, true, true, unreferenced, idr);
+            if (hrd != null) {
+                hrd.end(hrd.appendFiller(nal, 0, 2));
+            }
         }
         if (!settings.lossless()) {
             rateControl.update(idr, qp, bits, complexity, seconds);
+            var baseQp = qp - 2 * temporalLayer;
+            rateControl.coded(submitted - 1, baseQp, bits);
+            if (config.passRecorder() != null) {
+                config.passRecorder().record(submitted - 1, idr ? PassRecords.INTRA : PassRecords.PREDICTED, baseQp,
+                        bits, seconds);
+            }
         }
         lastQp = Math.max(qp, 0);
         if (refreshBand > 0) {
@@ -679,7 +769,8 @@ public final class WideCore implements EncoderEngine {
 
     /**
      * Codes a progressive frame or a frame of macroblock pairs into the access unit assembler,
-     * replacing what it held.
+     * replacing what it held, with the adaptive quantization offsets {@link #prepareAdaptiveQuantization}
+     * computed for the frame.
      *
      * @param idr whether the frame is an IDR frame
      * @param unreferenced whether the frame is no reference picture
@@ -690,7 +781,8 @@ public final class WideCore implements EncoderEngine {
      */
     private long codeFrame(boolean idr, boolean unreferenced, int qp, int refreshStart, int refreshEnd) {
         nal.clear();
-        appendHeaderUnits(idr, refreshStart, refreshEnd);
+        appendHeaderUnits(idr, refreshStart, refreshEnd,
+                !settings.interlaced() ? 0 : settings.bottomFirst() ? 4 : 3);
         var mbaff = settings.mbaff();
         var n = idr ? 0 : (int) framesSinceIdr;
         var topPoc = settings.interlaced() && settings.bottomFirst() ? 2 * n + 1 : 2 * n;
@@ -768,23 +860,34 @@ public final class WideCore implements EncoderEngine {
     }
 
     /**
-     * Appends the parameter sets of an Annex B IDR access unit and the SEI messages of the access
-     * unit.
+     * Appends the units an access unit starts with: the delimiter of a stream that signals a
+     * hypothetical reference decoder, the parameter sets of an IDR access unit in the Annex B format or
+     * with that decoder, and the SEI messages of the access unit.
      *
      * @param idr whether the access unit holds an IDR picture
      * @param refreshStart the first column of the intra refresh band
      * @param refreshEnd the column after the band
+     * @param structure the {@code pic_struct} of the access unit's picture timing
      */
-    private void appendHeaderUnits(boolean idr, int refreshStart, int refreshEnd) {
-        if (idr && config.packetFormat() == H264PacketFormat.ANNEX_B) {
+    private void appendHeaderUnits(boolean idr, int refreshStart, int refreshEnd, int structure) {
+        if (hrd != null) {
+            hrd.appendDelimiter(nal);
+        }
+        if (idr && (config.packetFormat() == H264PacketFormat.ANNEX_B || hrd != null)) {
             nal.appendEscapedUnit(sps);
             nal.appendEscapedUnit(pps);
+        }
+        if (hrd != null) {
+            hrd.appendTiming(nal, 0, structure);
         }
         if (idr && staticSei != null) {
             nal.appendUnit(0, H264Nal.SEI, staticSei, staticSei.length);
         }
         if (!idr && refreshBand > 0 && refreshStart == 0 && refreshEnd > 0) {
             nal.appendUnit(0, H264Nal.SEI, recoverySei, recoverySei.length);
+        }
+        if (captions != null) {
+            nal.appendEscapedUnit(captions);
         }
     }
 
@@ -852,17 +955,90 @@ public final class WideCore implements EncoderEngine {
      */
     private void codeUnit(int address, boolean pairs, int qp, int sliceStart) {
         if (!pairs) {
-            var mb = coder.code(address, false, qp, sliceStart, true);
+            var mb = coder.code(address, false, macroblockQp(address, qp), sliceStart, true);
             writer.writeData(mb, false, false);
             return;
         }
         var field = coder.decideField(address >> 1);
         var inferred = coder.inferredField(address, sliceStart);
-        var top = coder.code(address, field, qp, sliceStart, field == inferred);
+        var top = coder.code(address, field, macroblockQp(address, qp), sliceStart, field == inferred);
         writer.writeData(top, field, inferred);
         writer.endMacroblock(false, address);
-        var bottom = coder.code(address + 1, field, qp, sliceStart, true);
+        var bottom = coder.code(address + 1, field, macroblockQp(address + 1, qp), sliceStart, true);
         writer.writeData(bottom, field, inferred);
+    }
+
+    /**
+     * Returns the quantizer of a macroblock: the picture's, moved by the macroblock's adaptive quantization
+     * offset, at least 1 unless the picture's is already at or below {@link RateController#QP_MIN}, and inside
+     * the configured quantizer window.
+     *
+     * @param address the macroblock address
+     * @param qp the picture's quantizer
+     * @return the quantizer
+     */
+    private int macroblockQp(int address, int qp) {
+        if (aqStrength <= 0) {
+            return qp;
+        }
+        var min = Math.max(qp <= RateController.QP_MIN ? 0 : 1, config.minQuantizer());
+        var max = Math.min(RateController.QP_MAX, config.maxQuantizer());
+        return Math.clamp(qp + aqSteps[address], min, max);
+    }
+
+    /**
+     * Computes the adaptive quantization offsets of the macroblocks of the picture about to be coded from the
+     * source luma, on the 8-bit scale.
+     *
+     * @param structure 0 for a frame, 1 for the top field, 2 for the bottom field
+     * @param pairs whether the frame is coded as macroblock pairs, whose addresses run down each pair
+     */
+    private void prepareAdaptiveQuantization(int structure, boolean pairs) {
+        if (aqStrength <= 0) {
+            return;
+        }
+        var plane = structure == 0 ? source.planes[0] : structure == 1 ? source.topView[0] : source.bottomView[0];
+        var width = settings.mbWidth();
+        var rows = structure == 0 ? settings.mbHeight() : settings.mbHeight() / 2;
+        var count = width * rows;
+        aqCount = count;
+        var shift = settings.bitDepth() - 8;
+        for (var address = 0; address < count; address++) {
+            int mbX;
+            int mbY;
+            if (pairs) {
+                mbX = (address >> 1) % width;
+                mbY = 2 * ((address >> 1) / width) + (address & 1);
+            } else {
+                mbX = address % width;
+                mbY = address / width;
+            }
+            long energy = 0;
+            long total = 0;
+            for (var block = 0; block < 4; block++) {
+                var offset = plane.origin + (mbY * 16 + (block >> 1) * 8) * plane.stride + mbX * 16 + (block & 1) * 8;
+                long sum = 0;
+                long squares = 0;
+                for (var y = 0; y < 8; y++) {
+                    var row = offset + y * plane.stride;
+                    for (var x = 0; x < 8; x++) {
+                        var sample = plane.data[row + x];
+                        sum += sample;
+                        squares += (long) sample * sample;
+                    }
+                }
+                energy += squares * 64 - sum * sum;
+                total += sum;
+            }
+            aqActivity[address] = (int) Math.min(Integer.MAX_VALUE, (energy >> (6 + 2 * shift)) + 64);
+            aqBrightness[address] = (int) (total >> shift);
+        }
+        var full = config.color().range() == ColorRange.FULL;
+        AdaptiveQuantizer.compute(aqMode, aqStrength, aqActivity, aqBrightness, count, full ? 0 : 16, full ? 255 : 235,
+                aqOffsets);
+        for (var address = 0; address < count; address++) {
+            aqSteps[address] = (int) Math.round(aqOffsets[address]);
+        }
     }
 
     /**
@@ -920,17 +1096,20 @@ public final class WideCore implements EncoderEngine {
      * @param refreshEnd the column after the band
      * @param pts the presentation timestamp
      * @param duration the frame duration in time-base units
-     * @return the access unit size in bits
+     * @return the size of both access units in bits, without the filler data of the hypothetical reference
+     * decoder; {@link #pairQp} receives the fields' mean quantizer
      */
     private long codeFieldPair(boolean idr, boolean unreferenced, int qp, int refreshStart, int refreshEnd, long pts,
                                long duration) {
         nal.clear();
-        appendHeaderUnits(idr, refreshStart, refreshEnd);
-        var n = idr ? 0 : (int) framesSinceIdr;
+        var fillerBytes = 0;
         var bottomFirst = settings.bottomFirst();
+        appendHeaderUnits(idr, refreshStart, refreshEnd, bottomFirst ? 2 : 1);
+        var n = idr ? 0 : (int) framesSinceIdr;
         var currentFrameNum = idr ? 0 : frameNum;
         var nalRefIdc = idr ? 3 : unreferenced ? 0 : 2;
         var target = idr || references.isEmpty() ? null : layerTarget();
+        var qpSum = 0;
         for (var k = 0; k < 2; k++) {
             var parity = bottomFirst == (k == 0) ? 1 : 0;
             var structure = parity + 1;
@@ -953,23 +1132,72 @@ public final class WideCore implements EncoderEngine {
                 refs[i] = list.get(i);
             }
             var fieldIdr = idr && k == 0;
-            coder.startPicture(source, recon, structure, false, !list.isEmpty(), refs, null, null, refreshStart,
-                    refreshEnd);
-            h.idr = fieldIdr;
-            h.predicted = !list.isEmpty();
-            h.frameNum = currentFrameNum;
-            h.idrPicId = idrPicId;
-            h.structure = structure;
-            h.pocLsb = (2 * n + k) & ((1 << settings.log2MaxPocLsb()) - 1);
-            h.deltaPocBottom = 0;
-            h.nalRefIdc = fieldIdr ? 3 : nalRefIdc;
-            h.refCount = refs.length;
-            h.sliceQp = qp;
+            var byteStart = k == 0 ? 0 : nal.size();
+            var available = Long.MAX_VALUE;
+            if (hrd != null) {
+                if (k == 1) {
+                    available = hrd.begin(1, false);
+                    hrd.appendDelimiter(nal);
+                    hrd.appendTiming(nal, 0, structure);
+                } else {
+                    available = firstFieldBits;
+                }
+            }
+            var sliceStart = nal.size();
+            var fieldQp = qp;
             var first = nal.unitCount();
-            codeSlices(h, false);
+            prepareAdaptiveQuantization(structure, false);
+            for (var attempt = 0; ; attempt++) {
+                coder.startPicture(source, recon, structure, false, !list.isEmpty(), refs, null, null, refreshStart,
+                        refreshEnd);
+                codeField(h, fieldIdr, !list.isEmpty(), currentFrameNum, structure, (2 * n + k)
+                        & ((1 << settings.log2MaxPocLsb()) - 1), fieldIdr ? 3 : nalRefIdc, refs.length, fieldQp);
+                if (hrd == null || attempt == 4 || fieldQp >= config.maxQuantizer()
+                        || hrd.countedBits(nal, byteStart) <= available) {
+                    break;
+                }
+                rateControl.setFill(available);
+                fieldQp = rateControl.retryQp(fieldQp, hrd.countedBits(nal, byteStart));
+                nal.truncate(sliceStart);
+            }
+            qpSum += fieldQp;
             decodePicture(first, pts, duration, structure, k == 0, k == 1, unreferenced, idr);
+            if (hrd != null) {
+                var coded = nal.size();
+                hrd.end(hrd.appendFiller(nal, byteStart, 1));
+                fillerBytes += nal.size() - coded;
+            }
         }
-        return nal.size() * 8L;
+        pairQp = (qpSum + 1) >> 1;
+        return (nal.size() - fillerBytes) * 8L;
+    }
+
+    /**
+     * Codes the slices of one field picture.
+     *
+     * @param h the picture header to fill
+     * @param fieldIdr whether the field is an IDR picture
+     * @param predicted whether the field predicts from references
+     * @param currentFrameNum the {@code frame_num}
+     * @param structure 1 for a top field, 2 for a bottom field
+     * @param pocLsb the {@code pic_order_cnt_lsb}
+     * @param nalRefIdc the {@code nal_ref_idc}
+     * @param refCount the number of references in the list
+     * @param qp the quantizer
+     */
+    private void codeField(WideSliceWriter.Picture h, boolean fieldIdr, boolean predicted, int currentFrameNum,
+                           int structure, int pocLsb, int nalRefIdc, int refCount, int qp) {
+        h.idr = fieldIdr;
+        h.predicted = predicted;
+        h.frameNum = currentFrameNum;
+        h.idrPicId = idrPicId;
+        h.structure = structure;
+        h.pocLsb = pocLsb;
+        h.deltaPocBottom = 0;
+        h.nalRefIdc = nalRefIdc;
+        h.refCount = refCount;
+        h.sliceQp = qp;
+        codeSlices(h, false);
     }
 
     /**

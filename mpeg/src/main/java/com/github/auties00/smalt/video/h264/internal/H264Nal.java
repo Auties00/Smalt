@@ -60,6 +60,11 @@ public final class H264Nal {
     public static final int END_OF_STREAM = 11;
 
     /**
+     * Filler data, {@code 0xFF} bytes that pad an access unit.
+     */
+    public static final int FILLER = 12;
+
+    /**
      * A sequence parameter set extension, which describes the auxiliary coded pictures.
      */
     public static final int SPS_EXTENSION = 13;

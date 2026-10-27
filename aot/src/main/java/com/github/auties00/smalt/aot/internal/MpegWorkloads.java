@@ -27,13 +27,19 @@ import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.FieldOrder;
+import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
+import com.github.auties00.smalt.video.h264.encoder.H264AdaptiveQuantization;
 import com.github.auties00.smalt.video.h264.encoder.H264Encoder;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderSpeed;
 import com.github.auties00.smalt.video.h264.encoder.H264FieldCoding;
+import com.github.auties00.smalt.video.h264.encoder.H264FirstPass;
+import com.github.auties00.smalt.video.h264.encoder.H264FirstPassStats;
+import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
+import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
@@ -43,6 +49,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 import static com.github.auties00.smalt.aot.internal.VideoStreams.HEIGHT;
 import static com.github.auties00.smalt.aot.internal.VideoStreams.TIME_BASE;
@@ -97,6 +104,7 @@ final class MpegWorkloads {
                 file("h264-encode-fastest-baseline-t1",
                         () -> h264Encode(1, H264EncoderSpeed.FASTEST, H264Profile.CONSTRAINED_BASELINE)),
                 file("h264-encode-extended", MpegWorkloads::h264ExtendedEncode),
+                file("h264-encode-tuning", MpegWorkloads::h264TuningEncode),
                 file("h264-decode-extended", MpegWorkloads::h264ExtendedDecode),
                 file("h264-decode-t1", () -> h264Decode(1, false)),
                 file("h264-decode-t2", () -> h264Decode(2, false)),
@@ -167,6 +175,42 @@ final class MpegWorkloads {
             rounds.add(VideoStreams.encodeRound(encoder));
         }
         return TrainingWorkload.of("h264-encode-rt-tools", () -> rounds.forEach(Runnable::run));
+    }
+
+    /**
+     * Returns a workload that encodes with the tuning options of the H.264 encoder: a two-pass encode, its first
+     * pass included, constant bitrate streams that signal a hypothetical reference decoder in both engines, and
+     * the adaptive quantization modes with texture retention in mode decision.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload h264TuningEncode() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, VideoStreams.ENCODED_FRAMES);
+        var file = fileOptions(H264Profile.MAIN, H264EncoderSpeed.FAST, 1);
+        Supplier<H264FirstPassStats> firstPass = () -> {
+            var pass = new H264FirstPass(WIDTH, HEIGHT, file);
+            for (var i = 0; i < pictures.size(); i++) {
+                pass.add(new VideoFrame(pictures.get(i), i, 1, false));
+            }
+            return pass.finish();
+        };
+        var hrd = file.toBuilder().rateControl(H264RateControl.CONSTANT_BITRATE).packetFormat(H264PacketFormat.ANNEX_B)
+                .hrd(true);
+        var encoders = List.of(
+                new H264Encoder(WIDTH, HEIGHT, file.toBuilder().firstPassStats(firstPass.get()).build()),
+                new H264Encoder(WIDTH, HEIGHT, hrd.build()),
+                new H264Encoder(WIDTH, HEIGHT, hrd.profile(H264Profile.HIGH_10).bitDepth(10)
+                        .adaptiveQuantization(H264AdaptiveQuantization.AUTO_VARIANCE_DARK).build()),
+                new H264Encoder(WIDTH, HEIGHT, file.toBuilder().speed(H264EncoderSpeed.BALANCED)
+                        .adaptiveQuantization(H264AdaptiveQuantization.AUTO_VARIANCE).psychovisualStrength(1).build()));
+        var rounds = new ArrayList<Runnable>();
+        for (var encoder : encoders) {
+            rounds.add(VideoStreams.encodeRound(encoder));
+        }
+        return TrainingWorkload.of("h264-encode-tuning", () -> {
+            Blackhole.consume(firstPass.get().frameCount());
+            rounds.forEach(Runnable::run);
+        });
     }
 
     /**

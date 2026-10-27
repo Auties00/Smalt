@@ -9,6 +9,11 @@ import com.github.auties00.smalt.track.Rational;
  */
 interface StreamParameters {
     /**
+     * {@return the resolved settings of the encoder}
+     */
+    EncoderConfig config();
+
+    /**
      * {@return the {@code profile_idc}}
      */
     int profileIdc();

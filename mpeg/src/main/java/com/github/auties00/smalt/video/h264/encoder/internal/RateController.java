@@ -425,6 +425,18 @@ final class RateController {
     private double frameBudget;
 
     /**
+     * The plan of the second pass of a two-pass encode, or {@code null} for a single pass. The frames the
+     * first pass measured get their quantizers from it, the later ones from the single-pass model, which
+     * learns from every frame.
+     */
+    private final TwoPassPlan plan;
+
+    /**
+     * Whether the quantizer of the frame being coded came from {@link #plan}.
+     */
+    private boolean planned;
+
+    /**
      * Constructs a rate controller.
      *
      * @param config the encoder configuration
@@ -445,6 +457,8 @@ final class RateController {
         if (realtime) {
             offset[0] = REALTIME_INTRA_OFFSET;
         }
+        this.plan = config.passRecords() == null || mode != H264RateControl.AVERAGE_BITRATE ? null
+                : new TwoPassPlan(config.passRecords(), bitrate, idrOffset);
     }
 
     /**
@@ -497,6 +511,9 @@ final class RateController {
         var relative = bufferSize > 0 ? fill / bufferSize : 1;
         var ratio = newBitrate / bitrate;
         bitrate = newBitrate;
+        if (plan != null) {
+            plan.retarget(newBitrate);
+        }
         maxBitrate *= ratio;
         bufferSize *= ratio;
         fill = relative * bufferSize;
@@ -622,16 +639,37 @@ final class RateController {
     /**
      * Chooses the quantizer of the next frame.
      *
+     * <p>In the second pass of a two-pass encode, a frame the first pass measured gets the quantizer of the
+     * plan, raised while both the plan and the single-pass model predict a size above 90% of the buffer's
+     * fullness.
+     *
      * @param intra whether the frame is an IDR frame
      * @param complexity the frame's complexity estimate
      * @param duration the frame's duration in seconds
+     * @param frame the frame's display index
      * @return the quantizer
      */
-    int frameQp(boolean intra, long complexity, double duration) {
+    int frameQp(boolean intra, long complexity, double duration, long frame) {
+        planned = false;
         if (mode == H264RateControl.CONSTANT_QUALITY) {
             return Math.clamp(intra ? quality - idrOffset : quality, minQp, maxQp);
         }
         var budget = bitrate * duration;
+        if (plan != null && plan.covers(frame)) {
+            planned = true;
+            var qp = Math.clamp(plan.quantizer(frame, intra), floorQp(), maxQp);
+            if (hasBuffer()) {
+                var limit = 0.9 * fill;
+                while (qp < maxQp && Math.min(plan.predict(frame, qp), predict(intra, complexity, qp)) > limit) {
+                    qp += 1;
+                }
+            }
+            var chosen = (int) Math.round(Math.clamp(qp, floorQp(), maxQp));
+            plannedBits = plan.predict(frame, chosen);
+            frameBudget = budget;
+            firstTarget = -1;
+            return chosen;
+        }
         double qp;
         if (mode == H264RateControl.CONSTANT_BITRATE) {
             var target = Math.max(budget + 0.25 * (fill - 0.8 * bufferSize), budget * 0.25);
@@ -811,7 +849,7 @@ final class RateController {
      * when it exceeds both its predicted size and the frame budget by {@link #OVERSHOOT_FACTOR};
      * it is then aimed at its predicted size, or three frame budgets when that is larger. Later P
      * frames are left to the buffer verifier, and constant
-     * quality and real-time mode never correct.
+     * quality, real-time mode and frames planned by a two-pass encode never correct.
      *
      * @param intra whether the frame is an IDR picture
      * @param qp the quantizer the frame was coded with
@@ -820,7 +858,7 @@ final class RateController {
      * @return the quantizer to code the frame with
      */
     int correctSize(boolean intra, int qp, long bits, long complexity) {
-        if (mode == H264RateControl.CONSTANT_QUALITY) {
+        if (mode == H264RateControl.CONSTANT_QUALITY || planned) {
             return qp;
         }
         if (realtime) {
@@ -870,6 +908,16 @@ final class RateController {
                 + gamma(intra) * StrictMath.log(qscale(qp));
         var corrected = Math.max(solve(intra, complexity, target), qp - FIRST_FRAME_MAX_DECREASE);
         return (int) Math.round(Math.clamp(corrected, floorQp(), maxQp));
+    }
+
+    /**
+     * Sets the bits the buffer holds for the next frame, those of the hypothetical reference decoder the
+     * stream signals, which supersede the leaky bucket's estimate.
+     *
+     * @param bits the most bits the next frame may take
+     */
+    void setFill(double bits) {
+        fill = bits;
     }
 
     /**
@@ -946,6 +994,36 @@ final class RateController {
         if (hasBuffer()) {
             fill = Math.max(0, fill - bits);
             fill = Math.min(bufferSize, fill + maxBitrate * duration);
+        }
+    }
+
+    /**
+     * Returns the quantizer of a B picture, which the encoder derives from its anchor's: in the second pass of
+     * a two-pass encode the plan's quantizer for a frame the first pass measured, inside the quantizer window,
+     * and the derived quantizer otherwise.
+     *
+     * @param frame the frame's display index
+     * @param derived the quantizer derived from the anchor's
+     * @return the quantizer
+     */
+    int bQp(long frame, int derived) {
+        if (plan == null || !plan.covers(frame)) {
+            return derived;
+        }
+        return (int) Math.round(Math.clamp(plan.quantizer(frame, false), floorQp(), maxQp));
+    }
+
+    /**
+     * Records the final size of a coded frame for the plan of a two-pass encode; without a plan the call does
+     * nothing.
+     *
+     * @param frame the frame's display index
+     * @param qp the frame's quantizer, without the offset of its temporal layer
+     * @param bits the frame size in bits
+     */
+    void coded(long frame, int qp, long bits) {
+        if (plan != null) {
+            plan.coded(frame, qp, bits);
         }
     }
 

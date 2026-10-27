@@ -175,6 +175,21 @@ public final class H264EncoderOptions {
 
     private final boolean cavlc;
 
+    /**
+     * The first pass statistics of a second pass, or {@code null} for a single pass.
+     */
+    private final H264FirstPassStats firstPassStats;
+
+    private final boolean hrd;
+
+    private final H264AdaptiveQuantization adaptiveQuantization;
+
+    private final double adaptiveQuantizationStrength;
+
+    private final double macroblockTreeStrength;
+
+    private final double psychovisualStrength;
+
     private H264EncoderOptions(Builder builder) {
         this.frameRate = builder.frameRate;
         this.timeBase = builder.timeBase;
@@ -208,6 +223,12 @@ public final class H264EncoderOptions {
         this.sampleAspectRatio = builder.sampleAspectRatio;
         this.fixedFrameRate = builder.fixedFrameRate;
         this.cavlc = builder.cavlc;
+        this.firstPassStats = builder.firstPassStats;
+        this.hrd = builder.hrd;
+        this.adaptiveQuantization = builder.adaptiveQuantization;
+        this.adaptiveQuantizationStrength = builder.adaptiveQuantizationStrength;
+        this.macroblockTreeStrength = builder.macroblockTreeStrength;
+        this.psychovisualStrength = builder.psychovisualStrength;
     }
 
     /**
@@ -485,8 +506,9 @@ public final class H264EncoderOptions {
      *
      * <p>With a look-ahead, a half-resolution analysis of the coming pictures estimates how much of
      * each macroblock later pictures reuse, and macroblocks that are reused longer get a finer
-     * quantizer. This costs as many pictures of delay: the encoder emits nothing for the first
-     * {@code lookahead} frames, and {@link H264Encoder#flush} emits the rest. It is ignored, and
+     * quantizer ({@link #macroblockTreeStrength()}). This costs as many pictures of delay: the encoder
+     * emits nothing for the first {@code lookahead} frames, and {@link H264Encoder#flush} emits the
+     * rest. It is ignored, and
      * treated as 0, in {@link #realtime()} mode, with more than one {@linkplain #temporalLayers() temporal
      * layer}, and in streams that are not 8-bit, 4:2:0, progressive and lossy.
      */
@@ -687,6 +709,117 @@ public final class H264EncoderOptions {
         return cavlc;
     }
 
+    /**
+     * {@return the first pass statistics of the video, which make the encode the second pass of a two-pass
+     * encode, or empty for a single pass; empty by default}
+     *
+     * <p>An {@link H264FirstPass} measures them. With them, an {@link H264RateControl#AVERAGE_BITRATE} encode
+     * spends its bits over the whole video instead of over the next few seconds: complex passages get the bits
+     * simple ones save, and the total size of the packets of the measured frames comes close to the
+     * {@linkplain #bitrate() bitrate} times their duration ({@link H264FirstPassStats#duration()}). The
+     * buffering verifier still bounds every frame, and a measured frame is coded again only when it would
+     * overflow it, never to correct its size towards the plan. The second pass expects the frames of the
+     * first pass, in the same order and with the same timestamps, and the same options apart from the speed,
+     * the thread count, the bitrate and these statistics; frames beyond the measured ones are coded as in a
+     * single pass, and a {@linkplain H264Encoder#setTargetBitrate(long) new target bitrate} applies to the
+     * measured frames not yet coded. The statistics need lossy {@link H264RateControl#AVERAGE_BITRATE} coding
+     * outside {@link #realtime()} mode, and the picture size they were measured at.
+     *
+     * @apiNote For a stream of a target size, set the bitrate to the size in bits divided by
+     * {@link H264FirstPassStats#duration()} in seconds.
+     */
+    public Optional<H264FirstPassStats> firstPassStats() {
+        return Optional.ofNullable(firstPassStats);
+    }
+
+    /**
+     * {@return whether the stream signals a hypothetical reference decoder (ITU-T H.264 Annex C) that it
+     * conforms to, as broadcast transport streams require; {@code false} by default}
+     *
+     * <p>The video usability information then carries NAL HRD parameters with one schedule: the
+     * {@linkplain #maxBitrate() maximum bitrate} rounded down to a multiple of 64 bits per second as the
+     * delivery rate, and the {@linkplain #bufferSize() buffer} in bits rounded down to a multiple of 16 as the
+     * coded picture buffer. Every IDR access unit carries a buffering period SEI message and every access
+     * unit a picture timing SEI message, and rate control keeps every access unit inside that buffer, so that
+     * each arrives before its removal time, as far as the {@linkplain #maxQuantizer() quantizer window}
+     * allows. The first access unit is removed when nine tenths of the buffer has arrived, and access unit
+     * {@code n} in decoding order {@code n} frame periods later, or {@code n} field periods for field
+     * pictures, whatever the frame timestamps, which suits input at the nominal
+     * {@linkplain #frameRate() frame rate}. Every access unit starts with an access unit delimiter and every
+     * IDR access unit carries the parameter sets, also in the {@link H264PacketFormat#LENGTH_PREFIXED} format,
+     * and the decoder counts every byte of a packet, a length prefix as the four-byte start code it becomes:
+     * the stream it checks is the byte stream a transport stream multiplexer makes of the packets.
+     * <ul>
+     *   <li>With {@link H264RateControl#CONSTANT_BITRATE} the decoder receives the stream at exactly the
+     *       bitrate ({@code cbr_flag} 1): whenever the buffer would overflow, the access unit is padded with
+     *       filler data NAL units, so the stream's rate is constant, as a transport stream multiplex
+     *       needs.</li>
+     *   <li>With {@link H264RateControl#AVERAGE_BITRATE} the delivery is variable ({@code cbr_flag} 0) and no
+     *       filler is added.</li>
+     * </ul>
+     * The signaling needs a bitrate mode and a lossy stream; with {@code CONSTANT_BITRATE} the maximum
+     * bitrate must be the bitrate. At the maximum bitrate the buffer must last at least two frame periods and
+     * less than 2^24 periods of the 90 kHz clock (about 186 seconds), which the {@link H264Encoder} constructor
+     * checks. The decoder's parameters are fixed for the whole stream, so
+     * {@link H264Encoder#setTargetBitrate(long)} is refused.
+     */
+    public boolean hrd() {
+        return hrd;
+    }
+
+    /**
+     * {@return how the quantizer varies between the macroblocks of a picture;
+     * {@link H264AdaptiveQuantization#VARIANCE} by default}
+     *
+     * <p>{@link #realtime()} mode and lossless streams code every macroblock with the picture's quantizer,
+     * whatever this says.
+     */
+    public H264AdaptiveQuantization adaptiveQuantization() {
+        return adaptiveQuantization;
+    }
+
+    /**
+     * {@return the strength of {@linkplain #adaptiveQuantization() adaptive quantization}, from 0, which
+     * varies nothing, to 2; 1 by default}
+     *
+     * <p>The offsets of every mode grow in proportion to it. They stay within six quantizer steps either way
+     * of the picture's quantizer, and within the {@linkplain #minQuantizer() quantizer window}.
+     */
+    public double adaptiveQuantizationStrength() {
+        return adaptiveQuantizationStrength;
+    }
+
+    /**
+     * {@return how strongly the macroblock tree lowers the quantizer of the macroblocks that later pictures
+     * predict from, from 0, which turns it off, to 2; 1 by default}
+     *
+     * <p>The macroblock tree estimates, over the {@linkplain #lookahead() look-ahead}, how much of each
+     * macroblock the following pictures reuse, and quantizes the macroblocks that are reused longer finer, as
+     * their quality propagates. It needs a look-ahead, and so applies neither in {@link #realtime()} mode nor
+     * to streams that are not 8-bit, 4:2:0, progressive and lossy.
+     */
+    public double macroblockTreeStrength() {
+        return macroblockTreeStrength;
+    }
+
+    /**
+     * {@return the weight of texture retention in mode decision, from 0, which decides by squared error and
+     * bits alone, to 2; 0 by default}
+     *
+     * <p>Above 0, the rate-distortion cost of each candidate coding of a macroblock adds the difference between
+     * the texture energy (the sum of the magnitudes of the 4x4 Hadamard coefficients apart from the DC
+     * coefficient) of the source luma and of the candidate's reconstruction, times the strength and the
+     * quantizer step. Candidates that keep the detail, grain and noise of the source then win over smoother
+     * ones that would blur it, which looks sharper at the same bitrate though it measures a lower PSNR. From
+     * {@link H264EncoderSpeed#FAST} on every rate-distortion choice between candidates weighs it;
+     * {@link H264EncoderSpeed#FASTEST}, which decides by prediction error, weighs it only in the choice between
+     * skipping a macroblock and coding it. Streams that are not 8-bit, 4:2:0, progressive and lossy ignore the
+     * setting.
+     */
+    public double psychovisualStrength() {
+        return psychovisualStrength;
+    }
+
     @Override
     public boolean equals(Object o) {
         return o instanceof H264EncoderOptions that && frameRate.equals(that.frameRate)
@@ -701,7 +834,11 @@ public final class H264EncoderOptions {
                 && fieldCoding == that.fieldCoding && slices == that.slices && maxSliceBytes == that.maxSliceBytes
                 && intraRefresh == that.intraRefresh && temporalLayers == that.temporalLayers
                 && sampleAspectRatio.equals(that.sampleAspectRatio) && fixedFrameRate == that.fixedFrameRate
-                && cavlc == that.cavlc;
+                && cavlc == that.cavlc && Objects.equals(firstPassStats, that.firstPassStats) && hrd == that.hrd
+                && adaptiveQuantization == that.adaptiveQuantization
+                && Double.compare(adaptiveQuantizationStrength, that.adaptiveQuantizationStrength) == 0
+                && Double.compare(macroblockTreeStrength, that.macroblockTreeStrength) == 0
+                && Double.compare(psychovisualStrength, that.psychovisualStrength) == 0;
     }
 
     @Override
@@ -709,7 +846,8 @@ public final class H264EncoderOptions {
         return Objects.hash(frameRate, timeBase, profile, level, rateControl, bitrate, maxBitrate, bufferSize, quality,
                 keyframeInterval, speed, color, threads, packetFormat, minQuantizer, maxQuantizer, realtime, lookahead,
                 bFrames, limits, chromaFormat, bitDepth, lossless, fieldOrder, fieldCoding, slices, maxSliceBytes,
-                intraRefresh, temporalLayers, sampleAspectRatio, fixedFrameRate, cavlc);
+                intraRefresh, temporalLayers, sampleAspectRatio, fixedFrameRate, cavlc, firstPassStats, hrd,
+                adaptiveQuantization, adaptiveQuantizationStrength, macroblockTreeStrength, psychovisualStrength);
     }
 
     @Override
@@ -726,7 +864,10 @@ public final class H264EncoderOptions {
                 + ", maxSliceBytes=" + (maxSliceBytes == 0 ? "none" : maxSliceBytes) + ", intraRefresh="
                 + (intraRefresh == 0 ? "none" : intraRefresh) + ", temporalLayers=" + temporalLayers
                 + ", sampleAspectRatio=" + sampleAspectRatio + ", fixedFrameRate=" + fixedFrameRate + ", cavlc=" + cavlc
-                + "]";
+                + ", firstPassStats=" + (firstPassStats == null ? "none" : firstPassStats) + ", hrd=" + hrd
+                + ", adaptiveQuantization=" + adaptiveQuantization + ", adaptiveQuantizationStrength="
+                + adaptiveQuantizationStrength + ", macroblockTreeStrength=" + macroblockTreeStrength
+                + ", psychovisualStrength=" + psychovisualStrength + "]";
     }
 
     /**
@@ -802,6 +943,18 @@ public final class H264EncoderOptions {
 
         private boolean cavlc;
 
+        private H264FirstPassStats firstPassStats;
+
+        private boolean hrd;
+
+        private H264AdaptiveQuantization adaptiveQuantization;
+
+        private double adaptiveQuantizationStrength;
+
+        private double macroblockTreeStrength;
+
+        private double psychovisualStrength;
+
         private Builder() {
             frameRate = new Rational(30, 1);
             timeBase = new Rational(1, 90_000);
@@ -827,6 +980,9 @@ public final class H264EncoderOptions {
             slices = 1;
             temporalLayers = 1;
             sampleAspectRatio = new Rational(1, 1);
+            adaptiveQuantization = H264AdaptiveQuantization.VARIANCE;
+            adaptiveQuantizationStrength = 1;
+            macroblockTreeStrength = 1;
         }
 
         private Builder(H264EncoderOptions from) {
@@ -863,6 +1019,12 @@ public final class H264EncoderOptions {
             sampleAspectRatio = from.sampleAspectRatio;
             fixedFrameRate = from.fixedFrameRate;
             cavlc = from.cavlc;
+            firstPassStats = from.firstPassStats;
+            hrd = from.hrd;
+            adaptiveQuantization = from.adaptiveQuantization;
+            adaptiveQuantizationStrength = from.adaptiveQuantizationStrength;
+            macroblockTreeStrength = from.macroblockTreeStrength;
+            psychovisualStrength = from.psychovisualStrength;
         }
 
         /**
@@ -1282,6 +1444,86 @@ public final class H264EncoderOptions {
         }
 
         /**
+         * Makes the encode the second pass of a two-pass encode; see
+         * {@link H264EncoderOptions#firstPassStats()}.
+         *
+         * @param stats the first pass statistics of the video
+         * @return this builder
+         */
+        public Builder firstPassStats(H264FirstPassStats stats) {
+            this.firstPassStats = Objects.requireNonNull(stats, "stats");
+            return this;
+        }
+
+        /**
+         * Makes the encode a single pass, the default; see {@link H264EncoderOptions#firstPassStats()}.
+         *
+         * @return this builder
+         */
+        public Builder noFirstPassStats() {
+            this.firstPassStats = null;
+            return this;
+        }
+
+        /**
+         * Sets whether the stream signals a hypothetical reference decoder; see {@link H264EncoderOptions#hrd()}.
+         *
+         * @param hrd the value
+         * @return this builder
+         */
+        public Builder hrd(boolean hrd) {
+            this.hrd = hrd;
+            return this;
+        }
+
+        /**
+         * Sets how the quantizer varies between macroblocks; see
+         * {@link H264EncoderOptions#adaptiveQuantization()}.
+         *
+         * @param mode the value
+         * @return this builder
+         */
+        public Builder adaptiveQuantization(H264AdaptiveQuantization mode) {
+            this.adaptiveQuantization = Objects.requireNonNull(mode, "mode");
+            return this;
+        }
+
+        /**
+         * Sets the strength of adaptive quantization; see
+         * {@link H264EncoderOptions#adaptiveQuantizationStrength()}.
+         *
+         * @param strength the value
+         * @return this builder
+         */
+        public Builder adaptiveQuantizationStrength(double strength) {
+            this.adaptiveQuantizationStrength = strength;
+            return this;
+        }
+
+        /**
+         * Sets the strength of the macroblock tree; see {@link H264EncoderOptions#macroblockTreeStrength()}.
+         *
+         * @param strength the value
+         * @return this builder
+         */
+        public Builder macroblockTreeStrength(double strength) {
+            this.macroblockTreeStrength = strength;
+            return this;
+        }
+
+        /**
+         * Sets the weight of texture retention in mode decision; see
+         * {@link H264EncoderOptions#psychovisualStrength()}.
+         *
+         * @param strength the value
+         * @return this builder
+         */
+        public Builder psychovisualStrength(double strength) {
+            this.psychovisualStrength = strength;
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -1297,8 +1539,13 @@ public final class H264EncoderOptions {
          * layers are not in [1, 4], the sample aspect ratio is not positive or a term exceeds 65535,
          * the chroma format is {@link ChromaFormat#YUV440}, the profile does not code the chroma
          * format, bit depth, lossless coding or interlaced coding (see {@link H264Profile}), the color
-         * matrix is {@link MatrixCoefficients#IDENTITY} without {@link ChromaFormat#YUV444}, or intra
-         * refresh is combined with more than one temporal layer
+         * matrix is {@link MatrixCoefficients#IDENTITY} without {@link ChromaFormat#YUV444}, intra
+         * refresh is combined with more than one temporal layer, a strength of adaptive quantization, of the
+         * macroblock tree or of texture retention is not in [0, 2], first pass statistics are set without
+         * {@link H264RateControl#AVERAGE_BITRATE}, in real-time mode or for a lossless stream, or the
+         * hypothetical reference decoder is signaled with {@link H264RateControl#CONSTANT_QUALITY}, for a
+         * lossless stream, or with {@link H264RateControl#CONSTANT_BITRATE} and a maximum bitrate other than
+         * the bitrate
          */
         public H264EncoderOptions build() {
             var rate = frameRate.toDouble();
@@ -1375,7 +1622,36 @@ public final class H264EncoderOptions {
             if (intraRefresh != 0 && temporalLayers > 1) {
                 throw new IllegalArgumentException("intra refresh cannot be combined with temporal layers");
             }
+            strength("adaptive quantization strength", adaptiveQuantizationStrength);
+            strength("macroblock tree strength", macroblockTreeStrength);
+            strength("psychovisual strength", psychovisualStrength);
+            if (firstPassStats != null && (rateControl != H264RateControl.AVERAGE_BITRATE || realtime || lossless)) {
+                throw new IllegalArgumentException("first pass statistics need lossy AVERAGE_BITRATE rate control "
+                        + "outside real-time mode");
+            }
+            if (hrd) {
+                if (rateControl == H264RateControl.CONSTANT_QUALITY || lossless) {
+                    throw new IllegalArgumentException("the hypothetical reference decoder needs a lossy bitrate mode");
+                }
+                if (rateControl == H264RateControl.CONSTANT_BITRATE && explicitMaxBitrate && maxBitrate != bitrate) {
+                    throw new IllegalArgumentException("a constant bitrate hypothetical reference decoder needs the "
+                            + "maximum bitrate " + maxBitrate + " to be the bitrate " + bitrate);
+                }
+            }
             return new H264EncoderOptions(this);
+        }
+
+        /**
+         * Checks that a strength is in [0, 2].
+         *
+         * @param name the name of the setting
+         * @param value the strength
+         * @throws IllegalArgumentException if the strength is not in [0, 2]
+         */
+        private static void strength(String name, double value) {
+            if (!(value >= 0 && value <= 2)) {
+                throw new IllegalArgumentException(name + " " + value + " is not in [0, 2]");
+            }
         }
     }
 }

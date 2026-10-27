@@ -28,20 +28,14 @@ public interface EncoderEngine {
      * @param picture the picture, exactly the configured size
      * @param pts the presentation timestamp in time-base units, or {@link Packet#NO_TIMESTAMP}
      * @param duration the frame duration in time-base units, or {@code 0} when unknown
+     * @param captions the frame's closed captions as {@code cc_data} constructs of three bytes, which its
+     * access unit carries in an SEI NAL unit before its first slice, or {@code null} for none
      * @return the packet of the oldest frame that is ready, or {@code null} while frames are held
      * @throws IllegalArgumentException if the picture size differs from the configured size or the
      * timestamp does not increase outside real-time mode
      * @throws IllegalStateException if the encoder is closed
      */
-    Packet encode(Picture picture, long pts, long duration);
-
-    /**
-     * Returns the timestamp the last frame given to {@link #encode(Picture, long, long)} was stamped with: its own,
-     * or the one the engine chose for a missing or non-increasing timestamp.
-     *
-     * @return the timestamp in time-base units, or {@link Packet#NO_TIMESTAMP} before the first frame
-     */
-    long lastSubmittedPts();
+    Packet encode(Picture picture, long pts, long duration, byte[] captions);
 
     /**
      * Encodes the frames still held, one per call.

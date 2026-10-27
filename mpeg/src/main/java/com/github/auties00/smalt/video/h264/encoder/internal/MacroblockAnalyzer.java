@@ -101,10 +101,24 @@ final class MacroblockAnalyzer {
      */
     private static final int[] SUB_PARTITION_THRESHOLD = new int[52];
 
+    /**
+     * The cost of one unit of texture energy difference at a texture retention strength of one, per
+     * quantizer: the H.264 quantizer step {@code 0.625 * 2^(qp / 6)}, times 64 to bring the unnormalized
+     * Hadamard magnitudes (four times the orthonormal ones) to the squared error scale of the costs, which
+     * count 256 per unit of squared error.
+     */
+    private static final double[] TEXTURE_STEP = new double[52];
+
+    /**
+     * Four zero samples, the flat block texture energy is measured against.
+     */
+    private static final byte[] ZERO = new byte[4];
+
     static {
         for (var q = 0; q < 52; q++) {
             SPLIT_THRESHOLD[q] = (int) (128 * RateController.qscale(q));
             SUB_PARTITION_THRESHOLD[q] = (int) (SUB_PARTITION_FACTOR * RateController.qscale(q));
+            TEXTURE_STEP[q] = 64 * 0.625 * StrictMath.pow(2, q / 6.0);
         }
     }
 
@@ -359,6 +373,21 @@ final class MacroblockAnalyzer {
     private int previousQp;
 
     /**
+     * The weight of texture retention in the rate-distortion costs, {@code 0} for none.
+     */
+    private final double textureStrength;
+
+    /**
+     * The cost of one unit of texture energy difference in the current macroblock.
+     */
+    private double textureScale;
+
+    /**
+     * The texture energy of the current macroblock's source luma.
+     */
+    private long sourceTexture;
+
+    /**
      * Whether the previous macroblock of the row coded a non-zero {@code mb_qp_delta}.
      */
     private boolean previousQpDeltaNonZero;
@@ -514,6 +543,7 @@ final class MacroblockAnalyzer {
                        InterpolationKernels interpolation) {
         this.settings = settings;
         this.analysis = settings.analysis();
+        this.textureStrength = settings.config().psychovisualStrength();
         this.cabacMode = settings.cabac();
         this.transform8x8Mode = settings.transform8x8();
         this.pixels = pixels;
@@ -623,6 +653,10 @@ final class MacroblockAnalyzer {
         lambdaSad = Lambda.SAD[qp];
         lambdaSsd = Lambda.SSD[qp];
         residual.setTrellis(analysis.trellis() ? lambdaSsd / 256.0 : 0);
+        if (textureStrength > 0) {
+            textureScale = textureStrength * TEXTURE_STEP[qp];
+            sourceTexture = texture(source.y, srcLuma, source.lumaStride);
+        }
         chromaMode = -1;
         search.startMacroblock();
         analyzed8x8 = false;
@@ -1424,18 +1458,20 @@ final class MacroblockAnalyzer {
         predictSkip(true);
         var skipCost = (pixels.ssd(source.y, srcLuma, source.lumaStride, skipLuma, 0, 16, 16, 16)
                 + pixels.ssd(source.u, srcChroma, source.chromaStride, skipCb, 0, 8, 8, 8)
-                + pixels.ssd(source.v, srcChroma, source.chromaStride, skipCr, 0, 8, 8, 8)) * 256 + lambdaSsd;
+                + pixels.ssd(source.v, srcChroma, source.chromaStride, skipCr, 0, 8, 8, 8)) * 256 + lambdaSsd
+                + texturePenalty(skipLuma, 0, 16);
         var interSsd = pixels.ssd(source.y, srcLuma, source.lumaStride, rec.y, recLuma, rec.lumaStride, 16, 16)
                 + pixels.ssd(source.u, srcChroma, source.chromaStride, rec.u, recChroma, rec.chromaStride, 8, 8)
                 + pixels.ssd(source.v, srcChroma, source.chromaStride, rec.v, recChroma, rec.chromaStride, 8, 8);
-        if (skipCost < interSsd * 256 + lambdaSsd * (cabacMode ? 0 : CAVLC_MIN_INTER_BITS)) {
+        var interTexture = texturePenalty(rec.y, recLuma, rec.lumaStride);
+        if (skipCost < interSsd * 256 + interTexture + lambdaSsd * (cabacMode ? 0 : CAVLC_MIN_INTER_BITS)) {
             finishSkip(skip);
             return skip;
         }
         var bits = countBits(bestInter);
         bestInter.distortion = interSsd;
         bestInter.bits = bits;
-        bestInter.cost = interSsd * 256 + lambdaSsd * bits;
+        bestInter.cost = interSsd * 256 + interTexture + lambdaSsd * bits;
         if (skipCost < bestInter.cost) {
             finishSkip(skip);
             return skip;
@@ -1584,14 +1620,58 @@ final class MacroblockAnalyzer {
                 + pixels.ssd(source.u, srcChroma, source.chromaStride, rec.u, recChroma, rec.chromaStride, 8, 8)
                 + pixels.ssd(source.v, srcChroma, source.chromaStride, rec.v, recChroma, rec.chromaStride, 8, 8);
         mb.distortion = ssd;
-        if (ssd * 256 >= bound) {
+        var distortion = ssd * 256 + texturePenalty(rec.y, recLuma, rec.lumaStride);
+        if (distortion >= bound) {
             mb.bits = 0;
-            mb.cost = ssd * 256;
+            mb.cost = distortion;
             return;
         }
         var bits = countBits(mb);
         mb.bits = bits;
-        mb.cost = ssd * 256 + lambdaSsd * bits;
+        mb.cost = distortion + lambdaSsd * bits;
+    }
+
+    /**
+     * Returns the cost of the texture a candidate's luma loses or adds: the texture strength times the
+     * quantizer step times the difference between its texture energy and the energy of the source.
+     *
+     * @param samples the candidate's luma
+     * @param offset the index of the macroblock's top-left sample
+     * @param stride the row stride
+     * @return the cost on the scale of {@link Macroblock#cost}, 0 without texture retention
+     */
+    private long texturePenalty(byte[] samples, int offset, int stride) {
+        if (textureStrength <= 0) {
+            return 0;
+        }
+        return (long) (textureScale * Math.abs(sourceTexture - texture(samples, offset, stride)));
+    }
+
+    /**
+     * Returns the texture energy of a 16x16 luma block: over its sixteen 4x4 blocks, the sum of the magnitudes
+     * of the unnormalized Hadamard coefficients apart from the DC coefficient.
+     *
+     * @param samples the luma samples
+     * @param offset the index of the block's top-left sample
+     * @param stride the row stride
+     * @return the energy
+     */
+    private static long texture(byte[] samples, int offset, int stride) {
+        long energy = 0;
+        for (var y = 0; y < 16; y += 4) {
+            for (var x = 0; x < 16; x += 4) {
+                var block = offset + y * stride + x;
+                var sum = 0;
+                for (var row = 0; row < 4; row++) {
+                    var i = block + row * stride;
+                    sum += (samples[i] & 0xFF) + (samples[i + 1] & 0xFF) + (samples[i + 2] & 0xFF)
+                            + (samples[i + 3] & 0xFF);
+                }
+                // the DC coefficient is the sum of the samples
+                energy += PixelKernels.satd4x4(samples, block, stride, ZERO, 0, 0) - sum;
+            }
+        }
+        return energy;
     }
 
     /**

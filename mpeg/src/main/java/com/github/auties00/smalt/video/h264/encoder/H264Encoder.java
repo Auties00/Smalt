@@ -6,15 +6,11 @@ import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.VideoEncoder;
 import com.github.auties00.smalt.video.VideoFrame;
-import com.github.auties00.smalt.video.h264.encoder.internal.CaptionSei;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderConfig;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderCore;
 import com.github.auties00.smalt.video.h264.encoder.internal.EncoderEngine;
 import com.github.auties00.smalt.video.h264.encoder.internal.WideCore;
 
-import java.util.Arrays;
-import java.util.HashMap;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -46,7 +42,9 @@ import java.util.function.Consumer;
  * P packet:   00 00 00 01 41 <slice>
  * B packet:   00 00 00 01 01 <slice>
  * }
- * The first packet, every packet after {@link #requestKeyframe()}, every
+ * A stream that signals a {@linkplain H264EncoderOptions#hrd() hypothetical reference decoder} starts every
+ * access unit with an access unit delimiter and carries the parameter sets in every IDR access unit in both
+ * formats. The first packet, every packet after {@link #requestKeyframe()}, every
  * {@code keyframeInterval}-th packet and the first packet of a detected scene change are IDR
  * access units flagged as key frames.
  *
@@ -65,7 +63,8 @@ import java.util.function.Consumer;
  *
  * <p>A frame carrying closed captions ({@link com.github.auties00.smalt.video.FrameSideData#closedCaptions()})
  * gets them back in its access unit, as ATSC A/72 caption data in {@code user_data_registered_itu_t_t35} SEI
- * messages placed before its first slice, at most 31 constructs per message.
+ * messages placed before its first slice, at most 31 constructs per message; a frame coded as two field
+ * pictures carries them in the access unit of its first field.
  *
  * <p>The target bitrate can follow a congestion controller while frames are being encoded (see
  * {@link #setTargetBitrate(long)}), and {@link #stats()} reports the counters a sender needs.
@@ -102,11 +101,6 @@ public final class H264Encoder implements VideoEncoder {
     private final EncoderEngine engine;
 
     /**
-     * The caption data of the frames not yet coded, by the presentation timestamp the engine stamped them with.
-     */
-    private final Map<Long, byte[]> captions = new HashMap<>();
-
-    /**
      * Constructs an encoder for a picture size with {@link H264EncoderOptions#defaults()}.
      *
      * <p>Odd sizes are handled as {@link #H264Encoder(int, int, H264EncoderOptions)} describes.
@@ -133,13 +127,26 @@ public final class H264Encoder implements VideoEncoder {
      * @param width the picture width in pixels, from 1 to 16384
      * @param height the picture height in pixels, from 1 to 16384
      * @param options the encoder settings
-     * @throws IllegalArgumentException if the size is out of range or exceeds every H.264 level, or
-     * the level of the options is too small for the stream
+     * @throws IllegalArgumentException if the size is out of range or exceeds every H.264 level, the
+     * level of the options is too small for the stream, the
+     * {@linkplain H264EncoderOptions#firstPassStats() first pass statistics} measured pictures of another
+     * size, or the {@linkplain H264EncoderOptions#hrd() hypothetical reference decoder} gets a maximum bitrate
+     * below 64 bits per second, a buffer below 16 bits, or a buffer that lasts less than two frame periods or
+     * 2^24 periods of the 90 kHz clock or more at the maximum bitrate
      * @throws MediaException.LimitExceeded if the picture exceeds the options' limits
      */
     public H264Encoder(int width, int height, H264EncoderOptions options) {
         this.options = Objects.requireNonNull(options, "options");
-        this.config = EncoderConfig.of(width, height, options);
+        var config = EncoderConfig.of(width, height, options);
+        var stats = options.firstPassStats().orElse(null);
+        if (stats != null) {
+            if (stats.width() != width || stats.height() != height) {
+                throw new IllegalArgumentException("first pass statistics of " + stats.width() + "x" + stats.height()
+                        + " pictures for an encoder of " + width + "x" + height);
+            }
+            config = config.withPass(stats.records(), null);
+        }
+        this.config = config;
         this.engine = EncoderEngine.of(config);
     }
 
@@ -227,40 +234,11 @@ public final class H264Encoder implements VideoEncoder {
     public void encode(VideoFrame frame, Consumer<Packet> output) {
         Objects.requireNonNull(frame, "frame");
         Objects.requireNonNull(output, "output");
-        var packet = engine.encode(frame.picture(), frame.pts(), Math.max(0, frame.duration()));
-        var pts = engine.lastSubmittedPts();
-        frame.sideData().closedCaptions().ifPresent(data -> captions.merge(pts, data, H264Encoder::join));
+        var packet = engine.encode(frame.picture(), frame.pts(), Math.max(0, frame.duration()),
+                frame.sideData().closedCaptions().orElse(null));
         if (packet != null) {
-            output.accept(withCaptions(packet));
+            output.accept(packet);
         }
-    }
-
-    /**
-     * Adds the caption data of a packet's frame to the packet.
-     *
-     * @param packet a packet the engine produced
-     * @return the packet, with a caption SEI NAL unit when its frame carried captions
-     */
-    private Packet withCaptions(Packet packet) {
-        if (captions.isEmpty()) {
-            return packet;
-        }
-        var data = captions.remove(packet.pts());
-        return data == null ? packet : packet.withData(CaptionSei.insert(packet.data(),
-                options.packetFormat() == H264PacketFormat.ANNEX_B, data));
-    }
-
-    /**
-     * Joins the caption data of frames that share a timestamp.
-     *
-     * @param first the earlier frame's constructs
-     * @param second the later frame's constructs
-     * @return a new array
-     */
-    private static byte[] join(byte[] first, byte[] second) {
-        var joined = Arrays.copyOf(first, first.length + second.length);
-        System.arraycopy(second, 0, joined, first.length, second.length);
-        return joined;
     }
 
     /**
@@ -275,9 +253,8 @@ public final class H264Encoder implements VideoEncoder {
     public void flush(Consumer<Packet> output) {
         Objects.requireNonNull(output, "output");
         for (var packet = engine.flush(); packet != null; packet = engine.flush()) {
-            output.accept(withCaptions(packet));
+            output.accept(packet);
         }
-        captions.clear();
     }
 
     /**
@@ -305,14 +282,16 @@ public final class H264Encoder implements VideoEncoder {
      * after the next frame is given to the encoder, which includes pictures of earlier frames
      * still held back. The buffering verifier keeps its duration and relative fullness, and the
      * maximum bitrate keeps its ratio to the bitrate, so the produced rate follows the new target
-     * within a few frames, without dropping frames. A target above the maximum bitrate of the
-     * stream's level is capped to it.
+     * within a few frames, without dropping frames. In the second pass of a two-pass encode the frames
+     * the first pass measured and the encoder has not coded yet share the new target times their duration.
+     * A target above the maximum bitrate of the stream's level is capped to it.
      *
      * @param bitsPerSecond the new target bitrate in bits per second, from 1 to
      * {@link Integer#MAX_VALUE}
      * @throws IllegalArgumentException if {@code bitsPerSecond} is not positive or exceeds
      * {@link Integer#MAX_VALUE}
-     * @throws IllegalStateException if the encoder uses {@link H264RateControl#CONSTANT_QUALITY}
+     * @throws IllegalStateException if the encoder uses {@link H264RateControl#CONSTANT_QUALITY} or signals a
+     * {@linkplain H264EncoderOptions#hrd() hypothetical reference decoder}
      */
     @Override
     public void setTargetBitrate(long bitsPerSecond) {
@@ -322,6 +301,9 @@ public final class H264Encoder implements VideoEncoder {
         }
         if (options.rateControl() == H264RateControl.CONSTANT_QUALITY) {
             throw new IllegalStateException("a constant quality encoder has no target bitrate");
+        }
+        if (options.hrd()) {
+            throw new IllegalStateException("the hypothetical reference decoder of the stream fixes its bitrate");
         }
         engine.setTargetBitrate((int) bitsPerSecond);
     }

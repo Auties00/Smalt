@@ -7,9 +7,12 @@ import com.github.auties00.smalt.audio.aac.AacDecoder;
 import com.github.auties00.smalt.audio.aac.AacDecoderOptions;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.image.AuxiliaryImage;
+import com.github.auties00.smalt.image.ChromaFormat;
+import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.DecodedImage;
 import com.github.auties00.smalt.image.ImageDecoderOptions;
 import com.github.auties00.smalt.image.ImageFormat;
+import com.github.auties00.smalt.image.YuvPicture;
 import com.github.auties00.smalt.image.gainmap.GainMap;
 import com.github.auties00.smalt.image.heic.HeicDecoder;
 import com.github.auties00.smalt.io.MediaSource;
@@ -28,6 +31,9 @@ import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.h264.H264Decoder;
 import com.github.auties00.smalt.video.h264.H264DecoderOptions;
 import com.github.auties00.smalt.video.h264.H264StreamInfo;
+import com.github.auties00.smalt.video.h264.encoder.H264Encoder;
+import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
+import com.github.auties00.smalt.video.h264.encoder.H264FirstPassStats;
 import com.github.auties00.smalt.video.hevc.HevcDecoder;
 import com.github.auties00.smalt.video.hevc.HevcDecoderOptions;
 import com.github.auties00.smalt.video.mpeg4.Mpeg4Decoder;
@@ -48,7 +54,8 @@ import java.util.function.Consumer;
  * MPEG-4 Part 2 decoder decoding the two layers of a scalable object (see {@link #mpeg4Layers}), of the H.264
  * parameter set parser, of the H.264 decoder decoding every layer of a stream (see {@link #h264Layers}) and of the
  * AAC decoder decoding the layers of a scalable object from several elementary streams (see {@link #aacScalable})
- * or a downmix with a separate MPEG Surround elementary stream (see {@link #aacSurround}).
+ * or a downmix with a separate MPEG Surround elementary stream (see {@link #aacSurround}), and of the H.264 first
+ * pass statistics (see {@link #h264FirstPassStats}).
  */
 class MpegFuzzTest {
     /** The packets of an elementary stream that are decoded after it is split. */
@@ -441,6 +448,45 @@ class MpegFuzzTest {
             @Override
             public DecodedImage auxiliaryImage(MediaSource source, int index, ImageDecoderOptions options) {
                 return HeicDecoder.decodeAuxiliaryImage(source, index, options);
+            }
+        });
+    }
+
+    /**
+     * Restores H.264 first pass statistics, checks that they serialize back to the input, and for statistics of
+     * pictures of at most 64x64 pixels codes the second pass of a few more frames than they measured with them.
+     */
+    @FuzzTest
+    void h264FirstPassStats(byte[] data) {
+        var run = Fuzz.start("h264FirstPassStats");
+        var parsed = run.value("parse", () -> H264FirstPassStats.fromByteArray(data));
+        if (parsed.isEmpty()) {
+            return;
+        }
+        var stats = parsed.get();
+        if (!Arrays.equals(stats.toByteArray(), data)) {
+            throw new AssertionError("first pass statistics do not serialize back to their input");
+        }
+        run.output();
+        if (stats.width() > 64 || stats.height() > 64) {
+            run.skip("statistics of pictures larger than 64x64");
+            return;
+        }
+        run.step("second pass", () -> {
+            var options = H264EncoderOptions.builder().bitrate(100_000).lookahead(4).bFrames(2).limits(Fuzz.LIMITS)
+                    .firstPassStats(stats).build();
+            var picture = YuvPicture.allocate(stats.width(), stats.height(), ChromaFormat.YUV420, false,
+                    ColorInfo.BT709_LIMITED);
+            Arrays.fill(picture.y(), (byte) 100);
+            Arrays.fill(picture.u(), (byte) 128);
+            Arrays.fill(picture.v(), (byte) 128);
+            try (var encoder = new H264Encoder(stats.width(), stats.height(), options)) {
+                var frames = Math.min(DECODED_PACKETS, stats.frameCount() + 2);
+                for (var i = 0; i < frames; i++) {
+                    picture.y()[i % picture.y().length] = (byte) (40 * i);
+                    encoder.encode(new VideoFrame(picture, i, 0, false), packet -> run.output());
+                }
+                encoder.flush(packet -> run.output());
             }
         });
     }

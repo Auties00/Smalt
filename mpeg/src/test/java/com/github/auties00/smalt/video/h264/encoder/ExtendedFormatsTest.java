@@ -524,8 +524,10 @@ class ExtendedFormatsTest {
             var height = 64;
             var profile = format == ChromaFormat.YUV420 && depth == 8 ? H264Profile.HIGH
                     : format == ChromaFormat.YUV444 ? H264Profile.HIGH_444_PREDICTIVE : H264Profile.HIGH_422;
+            // adaptive quantization would code the faint noise of the flat thirds finer in the fields that
+            // predict from the other parity; the test measures skipping
             var options = options(profile, format, depth).fieldOrder(FieldOrder.TOP_FIRST).fieldCoding(coding)
-                    .cavlc(cavlc).keyframeInterval(12).build();
+                    .cavlc(cavlc).keyframeInterval(12).adaptiveQuantization(H264AdaptiveQuantization.NONE).build();
             for (var deblocking : new boolean[]{false, true}) {
                 var run = run(width, height, options, stillFrames(width, height, format, depth, 8), deblocking);
                 var smalt = decodeSmalt(run.packets());

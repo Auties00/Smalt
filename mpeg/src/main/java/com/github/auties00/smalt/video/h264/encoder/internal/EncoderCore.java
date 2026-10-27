@@ -1,11 +1,13 @@
 package com.github.auties00.smalt.video.h264.encoder.internal;
 
+import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.Picture;
 import com.github.auties00.smalt.internal.plane.Planes;
 import com.github.auties00.smalt.internal.task.ParallelBands;
 import com.github.auties00.smalt.track.Packet;
 import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
+import com.github.auties00.smalt.video.h264.encoder.H264AdaptiveQuantization;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
 import com.github.auties00.smalt.video.h264.internal.H264Nal;
@@ -80,11 +82,6 @@ public final class EncoderCore implements EncoderEngine {
      * The factor by which a picture's inter cost must exceed the recent average for a scene cut.
      */
     private static final double SCENE_CUT_JUMP = 1.5;
-
-    /**
-     * The largest adaptive quantization offset, in quantizer steps.
-     */
-    private static final int AQ_MAX_OFFSET = 6;
 
     /**
      * The stream settings.
@@ -458,20 +455,15 @@ public final class EncoderCore implements EncoderEngine {
     private final byte[] configurationRecord;
 
     /**
-     * The quantizer offset per doubling of a macroblock's AC energy relative to the picture's
-     * geometric mean, at the default strength.
-     */
-    private static final double AQ_SCALE = 0.75;
-
-    /**
-     * The reciprocal of the natural logarithm of 2.
-     */
-    private static final double INVERSE_LOG2 = 1 / StrictMath.log(2);
-
-    /**
      * The scratch per-macroblock adaptive quantization offsets.
      */
     private final double[] aqOffsets;
+
+    /**
+     * The adaptive quantization mode; {@link H264AdaptiveQuantization#VARIANCE} stands in for
+     * {@link H264AdaptiveQuantization#NONE} when a test sets a strength.
+     */
+    private final H264AdaptiveQuantization aqMode;
 
     /**
      * The adaptive quantization strength, {@code 0} to disable.
@@ -576,6 +568,12 @@ public final class EncoderCore implements EncoderEngine {
     private final byte[] recoverySei;
 
     /**
+     * The coded picture buffer of the hypothetical reference decoder the stream signals, or {@code null}
+     * when it signals none.
+     */
+    private final HrdModel hrd;
+
+    /**
      * The number of macroblock columns each picture of an intra refresh cycle refreshes, or 0
      * without intra refresh.
      */
@@ -665,7 +663,7 @@ public final class EncoderCore implements EncoderEngine {
         this.tree = lookahead > 0 ? new MacroblockTree(settings.mbWidth(), settings.mbHeight()) : null;
         this.treeOffsets = new float[settings.mbCount()];
         this.treeCuts = new boolean[lookahead + 1];
-        this.treeStrength = TREE_STRENGTH;
+        this.treeStrength = TREE_STRENGTH * config.macroblockTreeStrength();
         for (var i = 0; i <= settings.numRefFrames(); i++) {
             pool.add(new Frame(codedWidth, codedHeight));
         }
@@ -711,8 +709,12 @@ public final class EncoderCore implements EncoderEngine {
         this.sps = NalWriter.unit(3, H264Nal.SPS, ParameterSets.sps(settings));
         this.pps = NalWriter.unit(3, H264Nal.PPS, ParameterSets.pps(settings));
         this.configurationRecord = ParameterSets.avcDecoderConfigurationRecord(settings, sps, pps);
-        this.aqStrength = config.realtime() ? 0 : 1.0;
+        this.aqMode = config.adaptiveQuantization() == H264AdaptiveQuantization.NONE ? H264AdaptiveQuantization.VARIANCE
+                : config.adaptiveQuantization();
+        this.aqStrength = config.realtime() || config.adaptiveQuantization() == H264AdaptiveQuantization.NONE ? 0
+                : config.adaptiveQuantizationStrength();
         this.staticSei = ParameterSets.staticSei(config.color());
+        this.hrd = config.hrd() ? new HrdModel(settings) : null;
         this.temporalLayers = settings.temporalLayers();
         if (settings.intraRefresh() > 0) {
             this.refreshBand = Math.ceilDiv(settings.mbWidth(), settings.intraRefresh());
@@ -969,15 +971,16 @@ public final class EncoderCore implements EncoderEngine {
      * @param pts the presentation timestamp in time-base units, or
      * {@link Packet#NO_TIMESTAMP}
      * @param duration the frame duration in time-base units, or {@code 0} when unknown
+     * @param captions the frame's closed captions as {@code cc_data} constructs, or {@code null} for none
      * @return the packet of the oldest frame that is ready, or {@code null} while the look-ahead
      * queue fills
      * @throws IllegalArgumentException if the picture size differs from the configured size or
      * the timestamp does not increase
      * @throws IllegalStateException if the encoder is closed
      */
-    public Packet encode(Picture picture, long pts, long duration) {
+    public Packet encode(Picture picture, long pts, long duration, byte[] captions) {
         try (var _ = ParallelBands.operation(operation)) {
-            return encodeFrame(picture, pts, duration);
+            return encodeFrame(picture, pts, duration, captions);
         }
     }
 
@@ -988,12 +991,13 @@ public final class EncoderCore implements EncoderEngine {
      * @param pts the presentation timestamp in time-base units, or
      * {@link Packet#NO_TIMESTAMP}
      * @param duration the frame duration in time-base units, or {@code 0} when unknown
+     * @param captions the frame's closed captions as {@code cc_data} constructs, or {@code null} for none
      * @return the packet of the frame
      * @throws IllegalArgumentException if the picture size differs from the configured size or,
      * outside real-time mode, the timestamp does not increase
      * @throws IllegalStateException if the encoder is closed
      */
-    private Packet encodeFrame(Picture picture, long pts, long duration) {
+    private Packet encodeFrame(Picture picture, long pts, long duration, byte[] captions) {
         if (closed) {
             throw new IllegalStateException("encoder is closed");
         }
@@ -1019,6 +1023,7 @@ public final class EncoderCore implements EncoderEngine {
         entry.pts = pts;
         entry.duration = duration;
         entry.nominal = nominal;
+        entry.captions = CaptionSei.unit(captions);
         entry.seconds = nominal && duration <= 0 ? 1 / config.frameRate().toDouble()
                 : frameSeconds(pts, duration, previous);
         entry.displayIndex = submitted;
@@ -1057,11 +1062,6 @@ public final class EncoderCore implements EncoderEngine {
             return null;
         }
         return encodeNext();
-    }
-
-    @Override
-    public long lastSubmittedPts() {
-        return lastSubmittedPts;
     }
 
     /**
@@ -1154,6 +1154,9 @@ public final class EncoderCore implements EncoderEngine {
         pictureType = type;
         temporalLayer = 0;
         unreferencedP = false;
+        if (hrd != null) {
+            rateControl.setFill(hrd.begin(2, idr));
+        }
         int qp;
         long complexity;
         Frame reconstruction;
@@ -1163,7 +1166,8 @@ public final class EncoderCore implements EncoderEngine {
             complexity = head.interSum;
             var offset = type == LookaheadFrame.B_REFERENCED ? B_REFERENCED_OFFSET
                     : settings.pyramid() ? PYRAMID_B_OFFSET : B_QUANTIZER_OFFSET;
-            qp = Math.clamp(anchorQp + offset, config.minQuantizer(), config.maxQuantizer());
+            qp = rateControl.bQp(head.displayIndex,
+                    Math.clamp(anchorQp + offset, config.minQuantizer(), config.maxQuantizer()));
             reconstruction = pool.removeLast();
             treeActive = false;
             bits = encodePicture(reconstruction, false, qp);
@@ -1189,7 +1193,7 @@ public final class EncoderCore implements EncoderEngine {
             var grouped = !idr && head.bCount > 0;
             complexity = idr ? head.intraSum : head.groupInter;
             rateControl.setAnchorSpacing(head.bCount + 1);
-            qp = rateControl.frameQp(idr, complexity, grouped ? head.groupSeconds : seconds);
+            qp = rateControl.frameQp(idr, complexity, grouped ? head.groupSeconds : seconds, head.displayIndex);
             temporalLayer = idr ? 0 : layerOf(codedSinceIdr + 1);
             unreferencedP = temporalLayers > 1 && temporalLayer == temporalLayers - 1;
             if (temporalLayer > 0) {
@@ -1234,6 +1238,7 @@ public final class EncoderCore implements EncoderEngine {
             }
             anchorQp = qp;
         }
+        recordPass(type, qp - 2 * temporalLayer, bits, seconds);
         lastQp = qp;
         lastComplexity = complexity;
         stageNanos[2] += System.nanoTime() - stageStart;
@@ -1253,6 +1258,9 @@ public final class EncoderCore implements EncoderEngine {
                 finishReference(reconstruction, idr);
             }
         }
+        if (hrd != null) {
+            hrd.end(hrd.appendFiller(nal, 0, 2));
+        }
         var data = nal.take();
         var packetDuration = duration > 0 ? duration : nominalDuration;
         var dts = pts;
@@ -1270,6 +1278,28 @@ public final class EncoderCore implements EncoderEngine {
         var flags = idr ? EnumSet.of(PacketFlag.KEY)
                 : unreferencedP ? EnumSet.of(PacketFlag.DISCARDABLE) : EnumSet.noneOf(PacketFlag.class);
         return new Packet(0, data, pts, dts, packetDuration, flags, PacketSideData.NONE);
+    }
+
+    /**
+     * Reports the final size of the picture just coded to the plan of a two-pass encode, and records it in the
+     * first pass of one.
+     *
+     * @param type the picture type of the look-ahead frame
+     * @param qp the picture's quantizer, without the offset of its temporal layer
+     * @param bits the access unit size in bits
+     * @param seconds the picture's duration in seconds
+     */
+    private void recordPass(int type, int qp, long bits, double seconds) {
+        rateControl.coded(head.displayIndex, qp, bits);
+        var recorder = config.passRecorder();
+        if (recorder != null) {
+            var passType = switch (type) {
+                case LookaheadFrame.INTRA -> PassRecords.INTRA;
+                case LookaheadFrame.PREDICTED -> PassRecords.PREDICTED;
+                default -> PassRecords.BIDIRECTIONAL;
+            };
+            recorder.record(head.displayIndex, passType, qp, bits, seconds);
+        }
     }
 
     /**
@@ -1504,9 +1534,17 @@ public final class EncoderCore implements EncoderEngine {
      */
     private long encodePicture(Frame reconstruction, boolean idr, int qp) {
         nal.clear();
-        if (idr && config.packetFormat() == H264PacketFormat.ANNEX_B) {
+        if (hrd != null) {
+            hrd.appendDelimiter(nal);
+        }
+        if (idr && (config.packetFormat() == H264PacketFormat.ANNEX_B || hrd != null)) {
             nal.appendEscapedUnit(sps);
             nal.appendEscapedUnit(pps);
+        }
+        if (hrd != null) {
+            // a picture is output when the reordering depth allows, frames of two clock ticks apart
+            hrd.appendTiming(nal, (int) Math.max(0, 2 * (head.displayIndex - frameCount + settings.reorderFrames())),
+                    0);
         }
         if (idr && staticSei != null) {
             nal.appendUnit(0, H264Nal.SEI, staticSei, staticSei.length);
@@ -1521,6 +1559,9 @@ public final class EncoderCore implements EncoderEngine {
             if (refreshColumn == 0) {
                 nal.appendUnit(0, H264Nal.SEI, recoverySei, recoverySei.length);
             }
+        }
+        if (head.captions != null) {
+            nal.appendEscapedUnit(head.captions);
         }
         context.source = head.source;
         context.reconstruction = reconstruction;
@@ -2194,13 +2235,13 @@ public final class EncoderCore implements EncoderEngine {
     /**
      * Fills the per-macroblock quantizers from the frame quantizer and the adaptive offsets.
      *
-     * <p>A macroblock's offset is {@link #AQ_SCALE} times the strength times the binary logarithm
-     * of its AC energy (from {@link FrameAnalyzer#activity}) relative to the geometric mean energy
-     * of the picture, rounded and clamped to {@link #AQ_MAX_OFFSET} steps either way. Flat areas,
-     * where coding noise is most visible, get finer quantizers and textured areas coarser ones,
-     * while the average quantizer stays close to the frame quantizer that rate control chose.
-     * The result never goes below 1 unless the frame quantizer is already at or below
-     * {@link RateController#QP_MIN}, and always stays inside the configured quantizer window.
+     * <p>A macroblock's offset is its {@link AdaptiveQuantizer} offset, from its AC energy
+     * ({@link FrameAnalyzer#activity}) and brightness, plus its macroblock tree offset relative to
+     * the tree's average, rounded. Flat areas, where coding noise is most visible, get finer
+     * quantizers and textured areas coarser ones, while the average quantizer stays close to the
+     * frame quantizer that rate control chose. The result never goes below 1 unless the frame
+     * quantizer is already at or below {@link RateController#QP_MIN}, and always stays inside the
+     * configured quantizer window.
      *
      * @param qp the frame quantizer
      */
@@ -2219,19 +2260,14 @@ public final class EncoderCore implements EncoderEngine {
             }
             return;
         }
-        var activity = head.activity;
         var offsets = aqOffsets;
-        double logSum = 0;
-        for (var i = 0; i < count; i++) {
-            offsets[i] = StrictMath.log(activity[i]) * INVERSE_LOG2;
-            logSum += offsets[i];
-        }
-        var mean = logSum / count;
-        var scale = aqStrength * AQ_SCALE;
+        var full = config.color().range() == ColorRange.FULL;
+        AdaptiveQuantizer.compute(aqMode, aqStrength, head.activity, head.brightness, count, full ? 0 : 16,
+                full ? 255 : 235, offsets);
         var min = Math.max(qp <= RateController.QP_MIN ? 0 : 1, config.minQuantizer());
         var max = Math.min(RateController.QP_MAX, config.maxQuantizer());
         for (var i = 0; i < count; i++) {
-            var aq = Math.clamp(scale * (offsets[i] - mean), -AQ_MAX_OFFSET, AQ_MAX_OFFSET);
+            var aq = offsets[i];
             var offset = (int) Math.round(treeActive ? aq + treeOffsets[i] - treeMean : aq);
             mbQp[i] = (byte) Math.clamp(qp + offset, min, max);
         }

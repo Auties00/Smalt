@@ -6,6 +6,7 @@ import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.video.FieldOrder;
+import com.github.auties00.smalt.video.h264.encoder.H264AdaptiveQuantization;
 import com.github.auties00.smalt.video.h264.encoder.H264FieldCoding;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderSpeed;
@@ -60,6 +61,15 @@ import java.time.Duration;
  * @param fixedFrameRate whether the stream declares a fixed frame rate
  * @param limits the allocation limits
  * @param cavlc whether a profile above Constrained Baseline codes with CAVLC
+ * @param hrd whether the stream signals a hypothetical reference decoder; the maximum bitrate and the buffer
+ * size, and for {@link H264RateControl#CONSTANT_BITRATE} the bitrate, are then the explicit values that decoder
+ * signals
+ * @param adaptiveQuantization how the quantizer varies between macroblocks
+ * @param adaptiveQuantizationStrength the strength of adaptive quantization, from 0 to 2
+ * @param macroblockTreeStrength the strength of the macroblock tree, from 0 to 2
+ * @param psychovisualStrength the weight of texture retention in mode decision, from 0 to 2
+ * @param passRecords the first pass records of a second pass, or {@code null} for a single pass
+ * @param passRecorder the recorder of a first pass, which codes with the fastest analysis, or {@code null}
  */
 public record EncoderConfig(int width, int height, Rational frameRate, Rational timeBase, H264Profile profile,
                             int level, H264RateControl rateControl, int bitrate, int maxBitrate, int bufferSize,
@@ -68,7 +78,10 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
                             int lookahead, int bFrames, ChromaFormat chromaFormat, int bitDepth, boolean lossless,
                             FieldOrder fieldOrder, H264FieldCoding fieldCoding, int slices, int maxSliceBytes,
                             int intraRefresh, int temporalLayers, Rational sampleAspectRatio,
-                            boolean fixedFrameRate, MediaLimits limits, boolean cavlc) {
+                            boolean fixedFrameRate, MediaLimits limits, boolean cavlc, boolean hrd,
+                            H264AdaptiveQuantization adaptiveQuantization, double adaptiveQuantizationStrength,
+                            double macroblockTreeStrength, double psychovisualStrength, PassRecords passRecords,
+                            PassRecords.Recorder passRecorder) {
     /**
      * The largest accepted picture side in pixels.
      */
@@ -80,14 +93,18 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
      * Resolves the settings of an encoder of a picture size.
      *
      * <p>The buffering verifier size is the playback time of {@link H264EncoderOptions#bufferSize()}
-     * at the effective maximum bitrate, rounded down to whole bits and at least one bit.
+     * at the effective maximum bitrate, rounded down to whole bits and at least one bit. With
+     * {@link H264EncoderOptions#hrd()} the effective maximum bitrate is rounded down to a multiple of 64 and
+     * the effective buffer size to a multiple of 16, the values the decoder signals, and a constant bitrate is
+     * that maximum bitrate.
      *
      * @param width the picture width in pixels
      * @param height the picture height in pixels
      * @param options the encoder settings, validated by their builder
      * @return the settings
      * @throws IllegalArgumentException if the picture size is outside 1 to 16384 or exceeds every
-     * H.264 level
+     * H.264 level, or a hypothetical reference decoder is signaled with a maximum bitrate below 64 bits per
+     * second or a buffer below 16 bits
      * @throws com.github.auties00.smalt.MediaException.LimitExceeded if the picture exceeds the
      * options' limits
      */
@@ -106,14 +123,60 @@ public record EncoderConfig(int width, int height, Rational frameRate, Rational 
         var bufferSize = options.bufferSize()
                 .map(size -> bufferBits(size, effectiveMaxBitrate(rateControl, bitrate, maxBitrate)))
                 .orElse(0);
-        return new EncoderConfig(width, height, options.frameRate(), options.timeBase(), options.profile(),
+        var config = new EncoderConfig(width, height, options.frameRate(), options.timeBase(), options.profile(),
                 options.level().map(H264Level::levelIdc).orElse(0), rateControl, bitrate, maxBitrate, bufferSize,
                 options.quality(), options.keyframeInterval().orElse(0), options.speed(), options.color(),
                 options.threads(), options.packetFormat(), options.minQuantizer(), options.maxQuantizer(),
                 options.realtime(), options.lookahead(), options.bFrames(), options.chromaFormat(),
                 options.bitDepth(), options.lossless(), options.fieldOrder(), options.fieldCoding(), options.slices(),
                 options.maxSliceBytes().orElse(0), options.intraRefresh().orElse(0), options.temporalLayers(),
-                options.sampleAspectRatio(), options.fixedFrameRate(), options.limits(), options.cavlc());
+                options.sampleAspectRatio(), options.fixedFrameRate(), options.limits(), options.cavlc(),
+                options.hrd(), options.adaptiveQuantization(), options.adaptiveQuantizationStrength(),
+                options.macroblockTreeStrength(), options.psychovisualStrength(), null, null);
+        if (!options.hrd()) {
+            return config;
+        }
+        var rate = config.effectiveMaxBitrate() / 64 * 64;
+        var buffer = config.effectiveBufferSize() / 16 * 16;
+        if (rate < 64 || buffer < 16) {
+            throw new IllegalArgumentException("the hypothetical reference decoder needs at least 64 bits per second "
+                    + "and a buffer of at least 16 bits, got " + config.effectiveMaxBitrate() + " and "
+                    + config.effectiveBufferSize());
+        }
+        return config.withRates(rateControl == H264RateControl.CONSTANT_BITRATE ? rate : bitrate, rate, buffer);
+    }
+
+    /**
+     * Returns these settings with other rates.
+     *
+     * @param newBitrate the target bitrate
+     * @param newMaxBitrate the explicit maximum bitrate
+     * @param newBufferSize the explicit buffer size in bits
+     * @return the settings
+     */
+    private EncoderConfig withRates(int newBitrate, int newMaxBitrate, int newBufferSize) {
+        return new EncoderConfig(width, height, frameRate, timeBase, profile, level, rateControl, newBitrate,
+                newMaxBitrate, newBufferSize, quality, keyframeInterval, speed, color, threads, packetFormat,
+                minQuantizer, maxQuantizer, realtime, lookahead, bFrames, chromaFormat, bitDepth, lossless,
+                fieldOrder, fieldCoding, slices, maxSliceBytes, intraRefresh, temporalLayers, sampleAspectRatio,
+                fixedFrameRate, limits, cavlc, hrd, adaptiveQuantization, adaptiveQuantizationStrength,
+                macroblockTreeStrength, psychovisualStrength, passRecords, passRecorder);
+    }
+
+    /**
+     * Returns these settings for one pass of a two-pass encode.
+     *
+     * @param records the first pass records the second pass plans with, or {@code null}
+     * @param recorder the recorder of the first pass, or {@code null}
+     * @return the settings
+     */
+    public EncoderConfig withPass(PassRecords records, PassRecords.Recorder recorder) {
+        return new EncoderConfig(width, height, frameRate, timeBase, profile, level, rateControl, bitrate,
+                maxBitrate, bufferSize, quality, keyframeInterval, speed, color, threads, packetFormat,
+                minQuantizer, maxQuantizer, realtime, lookahead, bFrames, chromaFormat, bitDepth, lossless,
+                fieldOrder, fieldCoding, slices, maxSliceBytes, intraRefresh, temporalLayers, sampleAspectRatio,
+                fixedFrameRate, limits, cavlc, hrd, adaptiveQuantization, adaptiveQuantizationStrength,
+                macroblockTreeStrength, psychovisualStrength, records, recorder);
     }
 
     /**

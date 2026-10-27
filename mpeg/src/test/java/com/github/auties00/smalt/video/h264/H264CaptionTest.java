@@ -25,12 +25,16 @@ import com.github.auties00.smalt.transcode.SubtitleTranscodeOptions;
 import com.github.auties00.smalt.transcode.TranscodeOptions;
 import com.github.auties00.smalt.transcode.Transcoder;
 import com.github.auties00.smalt.transcode.VideoTranscodeOptions;
+import com.github.auties00.smalt.video.FieldOrder;
 import com.github.auties00.smalt.video.FrameSideData;
 import com.github.auties00.smalt.video.VideoDecoder;
 import com.github.auties00.smalt.video.VideoFrame;
 import com.github.auties00.smalt.video.h264.encoder.H264Encoder;
 import com.github.auties00.smalt.video.h264.encoder.H264EncoderOptions;
+import com.github.auties00.smalt.video.h264.encoder.H264FieldCoding;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
+import com.github.auties00.smalt.video.h264.encoder.H264Profile;
+import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
 import com.github.auties00.smalt.video.hevc.HevcDecoder;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -167,6 +171,39 @@ class H264CaptionTest {
                 var picture = YuvPicture.allocate(64, 48, ChromaFormat.YUV420, false, ColorInfo.BT601_LIMITED);
                 var side = FrameSideData.builder().closedCaptions(frame).build();
                 encoder.encode(new VideoFrame(picture, Packet.NO_TIMESTAMP, 1, false, side), packets::add);
+            }
+            encoder.flush(packets::add);
+            assertEquals(frames.length, packets.size());
+            for (var packet : packets) {
+                assertArrayEquals(frames[(int) packet.pts()], ClosedCaptions.ccData(track, packet),
+                        "packet " + packet.pts());
+            }
+        }
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = {"10-bit", "field pictures", "field pictures with a reference decoder"})
+    @DisplayName("write the captions of frames the extended engine codes into the packets of those frames, once")
+    void extendedEngine(String format) {
+        var frames = script().build(24, 2);
+        var builder = H264EncoderOptions.builder().packetFormat(H264PacketFormat.ANNEX_B).frameRate(FRAME.invert())
+                .timeBase(FRAME).bitrate(400_000);
+        var options = switch (format) {
+            case "10-bit" -> builder.profile(H264Profile.HIGH_10).bitDepth(10);
+            case "field pictures" -> builder.profile(H264Profile.HIGH).fieldOrder(FieldOrder.TOP_FIRST)
+                    .fieldCoding(H264FieldCoding.FIELD_PICTURES);
+            default -> builder.profile(H264Profile.HIGH).fieldOrder(FieldOrder.BOTTOM_FIRST)
+                    .fieldCoding(H264FieldCoding.FIELD_PICTURES).rateControl(H264RateControl.CONSTANT_BITRATE)
+                    .hrd(true);
+        };
+        var packets = new ArrayList<Packet>();
+        try (var encoder = new H264Encoder(64, 48, options.build())) {
+            var track = VideoTrack.builder().id(1).codec(Codec.H264).timeBase(encoder.timeBase()).width(64).height(48)
+                    .build();
+            for (var index = 0; index < frames.length; index++) {
+                var picture = YuvPicture.allocate(64, 48, ChromaFormat.YUV420, false, ColorInfo.BT601_LIMITED);
+                var side = FrameSideData.builder().closedCaptions(frames[index]).build();
+                encoder.encode(new VideoFrame(picture, index, 1, false, side), packets::add);
             }
             encoder.flush(packets::add);
             assertEquals(frames.length, packets.size());

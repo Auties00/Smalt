@@ -110,7 +110,8 @@ public final class EncoderSettings implements StreamParameters {
     private final int maxMvY;
 
     /**
-     * The analysis parameters of the configured speed.
+     * The analysis parameters of the configured speed, or of {@link H264EncoderSpeed#FASTEST} in the first
+     * pass of a two-pass encode, which keeps the stream structure of the configured speed.
      */
     private final Analysis analysis;
 
@@ -255,7 +256,8 @@ public final class EncoderSettings implements StreamParameters {
         this.pyramid = shaped;
         this.bframes = shaped ? fitted : bCount;
         this.numRefFrames = refs + (shaped ? new BStructure(fitted, true).referenced : 0);
-        this.analysis = activeRefs == baseAnalysis.refs() ? baseAnalysis : new Analysis(activeRefs, baseAnalysis.partitions(),
+        this.analysis = config.passRecorder() != null ? Analysis.of(H264EncoderSpeed.FASTEST)
+                : activeRefs == baseAnalysis.refs() ? baseAnalysis : new Analysis(activeRefs, baseAnalysis.partitions(),
                 baseAnalysis.searchRange(), baseAnalysis.searchMethod(), baseAnalysis.subpel16(),
                 baseAnalysis.subpelOther(), baseAnalysis.intra4x4(), baseAnalysis.intraModeSearch(),
                 baseAnalysis.rdMode(), baseAnalysis.trellis(), baseAnalysis.refSearchMethod(), baseAnalysis.lightB());
@@ -596,7 +598,7 @@ public final class EncoderSettings implements StreamParameters {
     /**
      * Returns the analysis parameters.
      *
-     * @return the parameters of the configured speed
+     * @return the parameters of the configured speed, or of the fastest in a first pass
      */
     public Analysis analysis() {
         return analysis;

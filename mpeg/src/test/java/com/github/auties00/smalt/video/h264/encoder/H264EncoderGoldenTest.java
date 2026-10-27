@@ -91,16 +91,16 @@ class H264EncoderGoldenTest {
                 Arguments.of("real time, three temporal layers",
                         new H264Setup(320, 240, realtime.noIntraRefresh().temporalLayers(3).build()), 12, "6d6e15b6560aa9a3798e8674daf30d29883323b02a7cb74a6492d931a6bfcafc"),
                 Arguments.of("high 10, 4:2:0, 10-bit", new H264Setup(176, 144, quality.profile(H264Profile.HIGH_10)
-                        .bitDepth(10).build()), 8, "0052740584fb531c05c87473a4e8e569199dc67d6facf769dc0ed906411cfe65"),
+                        .bitDepth(10).build()), 8, "6fdabaa41c5b24e15c217e4d2d7baa1c226bf1d0d8d56dfc663434e76f812742"),
                 Arguments.of("high 4:2:2, MBAFF, CAVLC", new H264Setup(176, 144, quality.profile(H264Profile.HIGH_422)
                         .chromaFormat(ChromaFormat.YUV422).fieldOrder(FieldOrder.TOP_FIRST).cavlc(true).build()), 8,
-                        "b122399dba633231e32ffa21b91fcd7d8dc5628ee8e332832cb9c756c7780f6d"),
+                        "647c14e5ac58151570f554d764d294643dd568e5060dfb82b9a75d8898c1ee94"),
                 Arguments.of("high 4:4:4, lossless, field pictures", new H264Setup(176, 144, quality
                         .profile(H264Profile.HIGH_444_PREDICTIVE).chromaFormat(ChromaFormat.YUV444).cavlc(false)
                         .fieldCoding(H264FieldCoding.FIELD_PICTURES).lossless(true).build()), 6, "eb08657f03a65d66288b76a03b33ab696359b87177f11081add7ac5e4a842379"),
                 Arguments.of("high, 4:0:0", new H264Setup(176, 144, quality.profile(H264Profile.HIGH).bitDepth(8)
                         .chromaFormat(ChromaFormat.MONOCHROME).fieldOrder(FieldOrder.PROGRESSIVE).lossless(false).build()),
-                        8, "7e2048dbd6377922c9740ee709f1d3dc39711ea8bf64307120a410dee8aaae1d"));
+                        8, "fcd2154de9ec11d8f57ee71c6e2eec989b85b4f702eb6c719accc2ba09991b38"));
     }
 
     static Stream<Arguments> natural() {
