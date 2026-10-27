@@ -184,6 +184,12 @@ public final class MotionPredictor {
     private SliceDecoder slice;
 
     /**
+     * {@code TwoVersionsOfCurrDecPicFlag} of the slice, which restricts the bi-prediction of 8x8
+     * prediction blocks with fractional motion vectors.
+     */
+    private boolean twoVersions;
+
+    /**
      * Constructs a predictor.
      */
     public MotionPredictor() {
@@ -206,6 +212,7 @@ public final class MotionPredictor {
         this.header = header;
         this.refList = refList;
         this.colPic = null;
+        this.twoVersions = header.pps.twoVersions(header.sps);
         if (refList == null) {
             return;
         }
@@ -224,6 +231,10 @@ public final class MotionPredictor {
             var list = header.collocatedFromL0 ? 0 : 1;
             if (header.collocatedRefIdx < header.numRefIdx[list]) {
                 colPic = refList[list][header.collocatedRefIdx];
+                if (colPic == frame) {
+                    throw new com.github.auties00.smalt.MediaException.Malformed(
+                            "the collocated picture is the current picture");
+                }
                 if (colPic.generated || colPic.width != frame.width || colPic.height != frame.height) {
                     colPic = null;
                 }
@@ -250,19 +261,50 @@ public final class MotionPredictor {
         this.slice = slice;
         if (m.merge) {
             merge(xCb, yCb, nCbS, xPb, yPb, nPbW, nPbH, partIdx, m);
-            return;
-        }
-        for (var x = 0; x < 2; x++) {
-            if (!m.predFlag[x]) {
-                continue;
+        } else {
+            for (var x = 0; x < 2; x++) {
+                if (!m.predFlag[x]) {
+                    continue;
+                }
+                if (m.refIdx[x] >= header.numRefIdx[x]) {
+                    throw new com.github.auties00.smalt.MediaException.Malformed("reference index out of range");
+                }
+                var mvp = predictor(xCb, yCb, nCbS, xPb, yPb, nPbW, nPbH, partIdx, x, m.refIdx[x], m.mvpFlag[x],
+                        m.partMode);
+                if (integerMv(x, m.refIdx[x])) {
+                    // equations 8-98 to 8-101: the difference counts whole samples
+                    m.mvX[x] = (short) ((((short) mvp >> 2) + m.mvdX[x]) << 2);
+                    m.mvY[x] = (short) ((((mvp >> 16) >> 2) + m.mvdY[x]) << 2);
+                } else {
+                    m.mvX[x] = (short) ((short) mvp + m.mvdX[x]);
+                    m.mvY[x] = (short) ((mvp >> 16) + m.mvdY[x]);
+                }
             }
-            if (m.refIdx[x] >= header.numRefIdx[x]) {
-                throw new com.github.auties00.smalt.MediaException.Malformed("reference index out of range");
-            }
-            var mvp = predictor(xCb, yCb, nCbS, xPb, yPb, nPbW, nPbH, partIdx, x, m.refIdx[x], m.mvpFlag[x], m.partMode);
-            m.mvX[x] = (short) ((short) mvp + m.mvdX[x]);
-            m.mvY[x] = (short) ((mvp >> 16) + m.mvdY[x]);
         }
+        if (twoVersions && m.predFlag[0] && m.predFlag[1] && nPbW <= 8 && nPbH <= 8) {
+            var integer0 = ((m.mvX[0] | m.mvY[0]) & 3) == 0;
+            var integer1 = ((m.mvX[1] | m.mvY[1]) & 3) == 0;
+            var identical = m.mvX[0] == m.mvX[1] && m.mvY[0] == m.mvY[1]
+                    && refPoc[0][m.refIdx[0]] == refPoc[1][m.refIdx[1]];
+            if (!integer0 && !integer1 && !identical) {
+                m.predFlag[1] = false;
+                m.refIdx[1] = -1;
+                m.mvX[1] = 0;
+                m.mvY[1] = 0;
+            }
+        }
+    }
+
+    /**
+     * Returns whether the motion vector of a list of the prediction unit has integer resolution:
+     * with {@code use_integer_mv_flag}, or when it refers to the current picture.
+     *
+     * @param list the reference picture list
+     * @param refIdx the reference index
+     * @return {@code true} for whole-sample motion
+     */
+    private boolean integerMv(int list, int refIdx) {
+        return header.useIntegerMv || header.currentPictureEntry[list][refIdx];
     }
 
     /**
@@ -404,9 +446,10 @@ public final class MotionPredictor {
             for (var combIdx = 0; combIdx < original * (original - 1) && count < max; combIdx++) {
                 var l0 = L0_CAND[combIdx];
                 var l1 = L1_CAND[combIdx];
+                // 8.5.3.2.4 compares the references by picture order count alone, so two inter-layer
+                // references of one access unit count as the same picture
                 if (candRef0[l0] >= 0 && candRef1[l1] >= 0
                         && (refPoc[0][candRef0[l0]] != refPoc[1][candRef1[l1]]
-                        || refList[0][candRef0[l0]] != refList[1][candRef1[l1]]
                         || candMv0[l0] != candMv1[l1])) {
                     candMv0[count] = candMv0[l0];
                     candRef0[count] = candRef0[l0];
@@ -444,6 +487,13 @@ public final class MotionPredictor {
         m.mvY[0] = m.predFlag[0] ? mv0 >> 16 : 0;
         m.mvX[1] = m.predFlag[1] ? (short) mv1 : 0;
         m.mvY[1] = m.predFlag[1] ? mv1 >> 16 : 0;
+        for (var x = 0; x < 2; x++) {
+            if (m.predFlag[x] && integerMv(x, m.refIdx[x])) {
+                // equations 8-124 and 8-125
+                m.mvX[x] = (m.mvX[x] >> 2) << 2;
+                m.mvY[x] = (m.mvY[x] >> 2) << 2;
+            }
+        }
     }
 
     /**
@@ -744,7 +794,9 @@ public final class MotionPredictor {
             mvCol = listCol == 0 ? col.mv0[block] : col.mv1[block];
             refIdxCol = listCol == 0 ? r0 : r1;
         }
-        var ctb = (yCol >> header.sps.log2CtbSize) * header.sps.widthInCtbs + (xCol >> header.sps.log2CtbSize);
+        // the collocated picture may be an inter-layer reference picture of another coding tree block size
+        var colSps = col.sps;
+        var ctb = (yCol >> colSps.log2CtbSize) * colSps.widthInCtbs + (xCol >> colSps.log2CtbSize);
         if (col.ctbSlice == null || ctb >= col.ctbSlice.length) {
             return false;
         }

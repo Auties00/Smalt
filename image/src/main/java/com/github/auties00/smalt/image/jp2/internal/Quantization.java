@@ -79,6 +79,8 @@ public final class Quantization {
      * @param end    the end of the segment
      * @return the quantization
      * @throws MediaException.Malformed if the style is unknown or the segment is too short
+     * @throws MediaException.Unsupported if the style is a variable deadzone or trellis coded style of ISO/IEC
+     * 15444-2
      */
     static Quantization parse(byte[] data, int offset, int end) {
         if (end - offset < 1) {
@@ -87,30 +89,25 @@ public final class Quantization {
         var sqcx = data[offset] & 0xFF;
         var style = sqcx & 0x1F;
         var guardBits = sqcx >> 5;
-        var exponents = new int[MAX_BANDS];
-        var mantissas = new int[MAX_BANDS];
         var position = offset + 1;
+        var signalled = style == NONE ? end - position : style == SCALAR_EXPOUNDED ? (end - position) / 2 : 1;
+        var exponents = new int[Math.max(MAX_BANDS, signalled)];
+        var mantissas = new int[exponents.length];
         switch (style) {
             case NONE -> {
-                var bands = end - position;
-                for (var band = 0; band < bands; band++) {
-                    if (band < MAX_BANDS) {
-                        exponents[band] = (data[position] & 0xFF) >> 3;
-                    }
+                for (var band = 0; band < signalled; band++) {
+                    exponents[band] = (data[position] & 0xFF) >> 3;
                     position++;
                 }
             }
             case SCALAR_DERIVED, SCALAR_EXPOUNDED -> {
-                var bands = style == SCALAR_DERIVED ? 1 : (end - position) / 2;
-                if (end - position < 2 * bands || bands == 0) {
+                if (end - position < 2 * signalled || signalled == 0) {
                     throw new MediaException.Malformed("truncated JPEG 2000 quantization step sizes");
                 }
-                for (var band = 0; band < bands; band++) {
+                for (var band = 0; band < signalled; band++) {
                     var value = ((data[position] & 0xFF) << 8) | (data[position + 1] & 0xFF);
-                    if (band < MAX_BANDS) {
-                        exponents[band] = value >> 11;
-                        mantissas[band] = value & 0x7FF;
-                    }
+                    exponents[band] = value >> 11;
+                    mantissas[band] = value & 0x7FF;
                     position += 2;
                 }
                 if (style == SCALAR_DERIVED) {
@@ -120,6 +117,12 @@ public final class Quantization {
                     }
                 }
             }
+            case 3, 4, 5 ->
+                // TODO: dequantize with the variable deadzones of ISO/IEC 15444-2 annex C
+                    throw new MediaException.Unsupported("JPEG 2000", "variable deadzone quantization");
+            case 9, 10 ->
+                // TODO: dequantize trellis coded quantization (ISO/IEC 15444-2 annex D)
+                    throw new MediaException.Unsupported("JPEG 2000", "trellis coded quantization");
             default -> throw new MediaException.Malformed("invalid JPEG 2000 quantization style " + style);
         }
         return new Quantization(style, guardBits, exponents, mantissas);
@@ -150,7 +153,25 @@ public final class Quantization {
      * @return the exponent
      */
     public int exponent(int band) {
-        return exponents[band];
+        return band < exponents.length ? exponents[band] : 0;
+    }
+
+    /**
+     * Returns the step size exponent of a sub-band of an arbitrary decomposition under scalar derived quantization
+     * (ISO/IEC 15444-1 equation E-5 with the {@code n_b} of ISO/IEC 15444-2 F.2.4).
+     *
+     * @param levels the number of decomposition levels {@code N_L}
+     * @param doubledDepth twice the sub-band's number of decomposition levels {@code n_b}
+     * @return the exponent, at least 0
+     * @throws MediaException.Unsupported if {@code n_b} is not an integer
+     */
+    int derivedExponent(int levels, int doubledDepth) {
+        if ((doubledDepth & 1) != 0) {
+            // TODO: derive the step sizes of sub-bands split in one direction only, once the rounding of a half-integer
+            //  n_b in equation E-5 is settled
+            throw new MediaException.Unsupported("JPEG 2000", "derived quantization of sub-bands split in one direction");
+        }
+        return Math.max(exponents[0] - levels + doubledDepth / 2, 0);
     }
 
     /**
@@ -160,6 +181,6 @@ public final class Quantization {
      * @return the 11-bit mantissa
      */
     public int mantissa(int band) {
-        return mantissas[band];
+        return band < mantissas.length ? mantissas[band] : style == SCALAR_DERIVED ? mantissas[0] : 0;
     }
 }
