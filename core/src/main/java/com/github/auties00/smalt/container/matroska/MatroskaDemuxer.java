@@ -2,22 +2,31 @@ package com.github.auties00.smalt.container.matroska;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
+import com.github.auties00.smalt.container.DecryptionKeys;
 import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.container.AttachedPicture;
+import com.github.auties00.smalt.container.Attachment;
 import com.github.auties00.smalt.container.Chapter;
+import com.github.auties00.smalt.container.ChapterEdition;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.Timecode;
 import com.github.auties00.smalt.container.internal.AacExtensions;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.internal.SeekFilter;
+import com.github.auties00.smalt.container.internal.TimecodeTags;
 import com.github.auties00.smalt.container.internal.SeekIndex;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.internal.io.ForwardOnlySource;
+import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.io.SourceReader;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.subtitle.WebVttSamples;
+import com.github.auties00.smalt.internal.tags.Ebml;
 import com.github.auties00.smalt.internal.tags.EbmlIds;
 import com.github.auties00.smalt.internal.tags.MatroskaTags;
+import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.track.AudioTrack;
 import com.github.auties00.smalt.track.Codec;
@@ -26,8 +35,10 @@ import com.github.auties00.smalt.track.PacketFlag;
 import com.github.auties00.smalt.track.PacketSideData;
 import com.github.auties00.smalt.track.Rational;
 import com.github.auties00.smalt.track.Track;
+import com.github.auties00.smalt.track.TrackDisposition;
 import com.github.auties00.smalt.track.VideoTrack;
 
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -40,6 +51,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 
 /**
  * Demuxes Matroska and WebM files, per RFC 8794 (EBML) and RFC 9559 (Matroska).
@@ -52,32 +65,95 @@ import java.util.Objects;
  * non-key frame and whose {@code BlockDuration} gives the duration) become one packet per frame,
  * Xiph, EBML and fixed-size lacing are split, and frames after the first of a lace get the block
  * timestamp plus the frame duration ({@code DefaultDuration}, or the {@code BlockDuration} divided
- * among the frames), or no timestamp when neither is known. Opus frames without a declared
+ * among the frames), or no timestamp when neither is known. A frame of an IMA or Microsoft ADPCM
+ * {@code A_MS/ACM} track that holds several blocks of its format's block alignment becomes one packet per
+ * block, timed in samples from the frame's timestamp. Opus frames without a declared
  * duration get the duration of their TOC, and a positive {@code DiscardPadding} shortens the
  * duration of the frame it trims and is reported as its {@link PacketSideData#discardEnd()}, a
  * negative one as its {@link PacketSideData#discardStart()}. The {@code SimpleBlock} discardable
  * flag and the invisible flag become {@link PacketFlag#DISCARDABLE} and {@link PacketFlag#DISCARD};
  * {@code BlockAdditions} become side data of the block's frames: an ITU-T T.35 HDR10+ message
- * under {@code BlockAddID} 4 as {@link PacketSideData#hdr10Plus()}, anything else under the
+ * under {@code BlockAddID} 4 as {@link PacketSideData#hdr10Plus()}, the alpha frame under
+ * {@code BlockAddID} 1 of a video track whose {@code AlphaMode} is 1 (reported as
+ * {@link VideoTrack#hasAlpha()}) as {@link PacketSideData#alphaFrame()}, anything else under the
  * {@link PacketSideData#extra()} key {@code "matroska:BlockAdditional:<id>"}. Text subtitle
  * tracks are {@link Codec#SUBRIP} ({@code S_TEXT/UTF8}), {@link Codec#ASS}
  * ({@code S_TEXT/ASS}, {@code S_TEXT/SSA}) and {@link Codec#WEBVTT} ({@code S_TEXT/WEBVTT} and
  * the WebM {@code D_WEBVTT} codecs); WebVTT blocks are returned in the {@link Codec#WEBVTT} packet
  * form, the identifier and settings moved from the block addition or the block's leading lines to
- * the side data. Clusters of unknown
+ * the side data. Bitmap subtitle tracks are {@link Codec#PGS} ({@code S_HDMV/PGS}),
+ * {@link Codec#DVB_SUBTITLE} ({@code S_DVBSUB}, its five-byte {@code CodecPrivate} turned into a subtitling
+ * descriptor entry) and {@link Codec#DVD_SUBTITLE} ({@code S_VOBSUB}, the VobSub index header as configuration);
+ * {@code V_MPEG1} and {@code V_MPEG2} tracks are {@link Codec#MPEG1_VIDEO} and {@link Codec#MPEG2_VIDEO}. Clusters
+ * of unknown
  * size (live WebM)
- * end at the next top-level element. The default edition of {@code Chapters} becomes
- * {@link #chapters()}, and attachments whose media type is an image become
- * {@link #attachedPictures()} (a file named like {@code cover.jpg} as the front cover). Track
- * names and the tags that target one track become {@link #trackMetadata(int)}.
+ * end at the next top-level element. The editions of {@code Chapters} that are not hidden become
+ * {@link #chapterEditions()} (with their nested chapters and the title of each {@code ChapterDisplay} in each
+ * of its languages, hidden chapters left out), and the default one {@link #chapters()}; the edition
+ * {@link DemuxerOptions#edition()} names is reported as the default one instead. Attachments whose
+ * media type is an image become {@link #attachedPictures()} (a file named like {@code cover.jpg} as the front
+ * cover), and the other attachments {@link #attachments()}. A {@code TIMECODE} tag of the segment, or of the
+ * first video track, becomes {@link #timecode()}, counted at that track's frame rate rounded up (at 30 frames
+ * per second for a drop-frame address when the track declares no rate). Track
+ * names and the tags that target one track become {@link #trackMetadata(int)}. A video track's
+ * {@code DisplayWidth} and {@code DisplayHeight}, against its pixel size after the
+ * {@code PixelCrop} elements and in any known {@code DisplayUnit}, give its sample aspect ratio,
+ * {@code FlagInterlaced} with {@code FieldOrder} its scan, {@code StereoMode} its stereo mode, and a
+ * {@code Projection} of a spherical type, with its {@code ProjectionPrivate} and pose, its spherical
+ * projection; the roll of a rectangular {@code Projection} is its orientation
+ * ({@link VideoTrack#sampleAspectRatio()}, {@link VideoTrack#interlacing()},
+ * {@link VideoTrack#stereoMode()}, {@link VideoTrack#spherical()}). The {@code BlockAddIDExtraData} of an H.264,
+ * HEVC or AV1 track's {@code BlockAdditionMapping} of type {@code dvcC}, {@code dvvC} or {@code dvwC} is its
+ * {@link VideoTrack#dolbyVision() Dolby Vision configuration}.
  *
- * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the
- * first video track (of any track when there is no video) name the cluster holding the last key
- * frame at or before the target. Without usable cues, the clusters are scanned once, reading only
- * element headers, block headers and cluster timestamps, into an index of the clusters and the
- * first key frame of that track in each. From the chosen cluster every track then restarts at its
- * last key frame at or before the target, as {@link SeekFilter} describes. Timestamps keep the
- * precision of {@code TimestampScale} (a millisecond by default).
+ * <p>An edition of ordered chapters ({@code EditionFlagOrdered}) and a chain of hard-linked segments ({@code PrevUUID},
+ * {@code NextUUID}) define a virtual timeline (RFC 9559 sections 17 and 20.1.3), which the demuxer presents when
+ * {@link DemuxerOptions#virtualTimeline()} is set, as it is by default. The played edition is the one
+ * {@link DemuxerOptions#edition()} names, or the default edition. When it is ordered, its chapters play in their stored
+ * order, each from its {@code ChapterTimeStart} to its {@code ChapterTimeEnd}: a chapter with nested chapters plays
+ * them instead of its own span, a chapter whose {@code ChapterFlagEnabled} is 0 plays nothing, hidden chapters play,
+ * and a chapter without end plays to the end of its segment. A chapter with a {@code ChapterSegmentUUID} plays that
+ * span of the named segment, and with a {@code ChapterSegmentEditionUID} that edition of the named segment instead (all
+ * of the segment when the edition is not ordered); nested chapters without a {@code ChapterSegmentUUID} play the
+ * segment of their parent. The other segments are files the {@link DemuxerOptions#dataReferences()} resolver supplies
+ * for a {@link com.github.auties00.smalt.io.DataReference.Kind#MATROSKA_SEGMENT} reference (every one is opened when
+ * the demuxer is created, and closed when it is closed); chapters whose segment it does not supply, or that link
+ * editions in a cycle, play nothing, and when no chapter of the edition plays, the segment is presented as stored.
+ * Without an ordered edition, a segment with a {@code PrevUUID} or {@code NextUUID} plays with the segments of its
+ * chain the resolver supplies, from the first, each whole and with its timestamps as stored, which continue those of
+ * the segment before it (a {@code NextUUID} taking precedence over the {@code PrevUUID} of the segment it names, and a
+ * segment without {@code NextUUID} followed by the one whose {@code PrevUUID} names it, which the resolver supplies for
+ * a {@link com.github.auties00.smalt.io.DataReference.Kind#MATROSKA_NEXT_SEGMENT} reference). The tracks are those of
+ * the file's own segment: a track of another segment feeds the track of the same number, kind and codec, or else the
+ * next unmatched track of its kind and codec, and its packets carry its codec configuration as
+ * {@link PacketSideData#newCodecConfig()} where it changes.
+ *
+ * <p>On a virtual timeline every part plays its segment from the key frame at or before its start: video frames that
+ * end at or before the start are returned flagged {@link PacketFlag#DISCARD}, and so are the audio frames before it
+ * that rebuild the decoder state (counted per codec as for the edits of an MP4 track: none for PCM, FLAC and ALAC,
+ * 80 ms for Opus, two packets for AAC, one for most other codecs), while the other frames that end at or before it
+ * are not returned; video and data frames that straddle it are cut to it, and audio frames that straddle it keep
+ * their timestamp and carry the samples before it as their {@link PacketSideData#discardStart()}. A frame presented
+ * at or after the end of the part is not returned, except a frame of a track whose frames are stored out of
+ * presentation order (H.264, HEVC, MPEG-4 Part 2) that a later frame before the end follows, which is returned
+ * flagged {@link PacketFlag#DISCARD}; an audio frame straddling the end carries the samples after it as its
+ * {@link PacketSideData#discardEnd()} and a video or data frame straddling it is cut. Timestamps are those of the
+ * timeline, decoding timestamps never decrease, and a discarded video or data frame has a negative presentation
+ * timestamp, which no presented frame has. A seek within a hard-linked segment before its first key frame reads from
+ * the last key frames of the segment before. The parts read at most four times the size of their segments, or 4 MiB
+ * when that is more, between seeks. The duration, the track durations and the chapters are those of the timeline:
+ * {@link #chapterEditions()} holds the played edition alone, flagged as the default and not ordered, its chapters
+ * (the visible ones, nested as stored, the visible chapters nested in a hidden one in its place) spanning the parts
+ * they play; a hard-linked chain reports the chapters of the default edition of each of its segments.
+ *
+ * <p>Seeking uses the {@code Cues}, read on the first {@link #seek(long)}: the cue points of the first video track (of
+ * any track when there is no video) name the cluster holding the last key frame at or before the target. Without usable
+ * cues, the clusters are scanned once, reading only element headers, block headers and cluster timestamps, into an
+ * index of the clusters and the first key frame of that track in each. A key frame within a second before the target
+ * makes the seek start at the cluster a second before the target, since a muxer that starts clusters at key frames
+ * stores the audio that straddles a key frame in an earlier cluster. From the chosen cluster every track then restarts
+ * at its last key frame at or before the target, as {@link SeekFilter} describes. Timestamps keep the precision of
+ * {@code TimestampScale} (a millisecond by default).
  *
  * <p>Video and data timestamps are in the segment time base ({@code TimestampScale} nanoseconds, a
  * millisecond by default). Audio tracks use the sample period instead (1/48000 for Opus,
@@ -96,7 +172,7 @@ import java.util.Objects;
  * and {@link #read()} returns the frames read on the way first. The track keeps its time base,
  * and its {@code CodecDelay} skip is rescaled to the decoded rate.
  * Frames of tracks with {@code ContentEncodings} are decoded: header stripping prepends the
- * stripped bytes and zlib inflates, bounded by the allocation limit; encrypted tracks raise
+ * stripped bytes, and zlib, bzlib and LZO1X decompress, bounded by the allocation limit; encrypted tracks raise
  * {@link MediaException.Unsupported}.
  *
  * <p>Damage inside a cluster (an invalid element header, or an element that overruns its cluster)
@@ -106,9 +182,9 @@ import java.util.Objects;
  * master elements are parsed to a bounded depth.
  *
  * <p>A source that reads its input once, front to back (a stream), is told before every element
- * which bytes are no longer needed. The header elements stored after the clusters (tags, chapters,
- * attachments) are read only when they lie within the source's memory budget; {@code Tracks} is
- * always read.
+ * which bytes are no longer needed, except on a virtual timeline, whose parts may go back in it. The header
+ * elements stored after the clusters (tags, chapters, attachments) are read only when they lie within the
+ * source's memory budget; {@code Tracks} is always read.
  */
 public final class MatroskaDemuxer implements Demuxer {
     /**
@@ -120,6 +196,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * The block flag marking a frame that is decoded but not shown.
      */
     private static final int INVISIBLE = 0x08;
+
+    /**
+     * The extra side data key of the {@code BlockAdditional} of {@code BlockAddID} 1.
+     */
+    private static final String ALPHA_ADDITION = "matroska:BlockAdditional:1";
 
     /**
      * The size of the buffer of the underlying reader.
@@ -136,6 +217,12 @@ public final class MatroskaDemuxer implements Demuxer {
      * read into memory.
      */
     private static final int MAX_HEADER_ELEMENT = 64 << 20;
+
+    /**
+     * The distance before a seek target within which a key frame makes the seek start that far before the target,
+     * in microseconds: longer than any audio block.
+     */
+    private static final long LOOKBACK_MICROS = 1_000_000;
 
     /**
      * The largest number of frames read ahead to find the first frame of an AAC track whose
@@ -157,6 +244,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * The deepest nesting of {@code SimpleTag} elements followed.
      */
     private static final int MAX_TAG_DEPTH = 8;
+
+    /**
+     * The largest number of attachments kept.
+     */
+    private static final int MAX_ATTACHMENTS = 4096;
 
     /**
      * The number of seconds between 1970-01-01 and 2001-01-01, the Matroska date epoch.
@@ -195,9 +287,14 @@ public final class MatroskaDemuxer implements Demuxer {
     private final MatroskaDocType docType;
 
     /**
-     * The public track descriptions, in file order.
+     * The public track descriptions, in file order, with the durations of the virtual timeline.
      */
     private final List<Track> tracks;
+
+    /**
+     * The track descriptions of the segment as stored.
+     */
+    private final List<Track> rawTracks;
 
     /**
      * The parsed track entries keyed by track number.
@@ -213,6 +310,71 @@ public final class MatroskaDemuxer implements Demuxer {
      * The presentation duration in microseconds, or {@code -1}.
      */
     private final long durationMicros;
+
+    /**
+     * The duration of the segment as stored in nanoseconds, or {@code -1}.
+     */
+    private final long rawDurationNanos;
+
+    /**
+     * The {@code SegmentUUID} as hexadecimal digits, or {@code null}.
+     */
+    private final String segmentUuid;
+
+    /**
+     * The {@code PrevUUID} as hexadecimal digits, or {@code null}.
+     */
+    private final String prevUuid;
+
+    /**
+     * The {@code NextUUID} as hexadecimal digits, or {@code null}.
+     */
+    private final String nextUuid;
+
+    /**
+     * The {@code PrevFilename}, or empty.
+     */
+    private final String prevFilename;
+
+    /**
+     * The {@code NextFilename}, or empty.
+     */
+    private final String nextFilename;
+
+    /**
+     * Every edition of the {@code Chapters}, hidden ones included, as playback reads them.
+     */
+    private final List<MatroskaTags.EditionEntry> editionEntries;
+
+    /**
+     * The visible editions as stored.
+     */
+    private final List<ChapterEdition> rawEditions;
+
+    /**
+     * The virtual timeline presented, or {@code null} when the segment is presented as stored.
+     */
+    private final MatroskaTimeline timeline;
+
+    /**
+     * The source this demuxer opened and closes, or {@code null}.
+     */
+    private final MediaSource ownedSource;
+
+    /**
+     * Whether a source read once keeps every byte, since a virtual timeline may go back in it.
+     */
+    private boolean retained;
+
+    /**
+     * The number of frame payload bytes read from the segment, whether returned or dropped.
+     */
+    private long frameBytes;
+
+    /**
+     * The offset below which a source read once no longer holds its bytes.
+     */
+    private long releasedTo;
 
     /**
      * The segment time base, {@code TimestampScale} nanoseconds, in which block timestamps and
@@ -280,6 +442,11 @@ public final class MatroskaDemuxer implements Demuxer {
     private final long referenceTrack;
 
     /**
+     * The visible chapter editions.
+     */
+    private final List<ChapterEdition> editions;
+
+    /**
      * The chapters of the default edition.
      */
     private final List<Chapter> chapters;
@@ -288,6 +455,16 @@ public final class MatroskaDemuxer implements Demuxer {
      * The attached pictures.
      */
     private final List<AttachedPicture> pictures;
+
+    /**
+     * The attachments that are not pictures.
+     */
+    private final List<Attachment> attachments;
+
+    /**
+     * The timecode of the {@code TIMECODE} tag, or {@code null}.
+     */
+    private final Timecode timecode;
 
     /**
      * The tags of each track, by track identifier.
@@ -358,12 +535,60 @@ public final class MatroskaDemuxer implements Demuxer {
      * @throws MediaException.Io if reading the source fails
      */
     public MatroskaDemuxer(MediaSource source, DemuxerOptions options) {
-        this(source, options.limits());
+        this(source, options, null);
     }
 
-    private MatroskaDemuxer(MediaSource source, MediaLimits limits) {
+    /**
+     * Opens a Matroska file on disk under the default options, with the linked segments in its directory.
+     *
+     * @param file the Matroska file, whose directory holds the linked segments
+     * @return the demuxer, which the caller closes
+     * @throws MediaException.Malformed if the file is not a Matroska file or its headers are corrupt
+     * @throws MediaException.Unsupported if the {@code DocType} is neither {@code matroska} nor {@code webm}, or a
+     * track is encrypted or compressed with an unsupported algorithm
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if opening or reading a file fails
+     * @see #open(Path, DemuxerOptions)
+     */
+    public static MatroskaDemuxer open(Path file) {
+        return open(file, DemuxerOptions.defaults());
+    }
+
+    /**
+     * Opens a Matroska file on disk, with the linked segments in its directory, whatever resolver the options hold.
+     *
+     * <p>The other segments a virtual timeline plays are the files of the file's directory that
+     * {@link DataReferenceResolver#directory(Path)} supplies. The demuxer closes the file when it is closed.
+     *
+     * @param file the Matroska file, whose directory holds the linked segments
+     * @param options the demuxing options
+     * @return the demuxer, which the caller closes
+     * @throws MediaException.Malformed if the file is not a Matroska file or its headers are corrupt
+     * @throws MediaException.Unsupported if the {@code DocType} is neither {@code matroska} nor {@code webm}, or a
+     * track is encrypted or compressed with an unsupported algorithm
+     * @throws MediaException.LimitExceeded if a declared size exceeds the limits
+     * @throws MediaException.Io if opening or reading a file fails
+     */
+    public static MatroskaDemuxer open(Path file, DemuxerOptions options) {
+        Objects.requireNonNull(file, "file");
+        Objects.requireNonNull(options, "options");
+        var directory = file.toAbsolutePath().getParent();
+        var resolved = directory == null ? options : options.toBuilder()
+                .dataReferences(DataReferenceResolver.directory(directory)).build();
+        var source = MediaSource.of(file);
+        try {
+            return new MatroskaDemuxer(source, resolved, source);
+        } catch (RuntimeException | Error exception) {
+            source.close();
+            throw exception;
+        }
+    }
+
+    private MatroskaDemuxer(MediaSource source, DemuxerOptions options, MediaSource ownedSource) {
         this.source = Objects.requireNonNull(source, "source");
-        this.limits = Objects.requireNonNull(limits, "limits");
+        this.limits = Objects.requireNonNull(options.limits(), "limits");
+        var keys = options.decryptionKeys();
+        this.ownedSource = ownedSource;
         this.reader = new SourceReader(source, READ_BUFFER);
         this.queue = new ArrayList<>();
         try {
@@ -404,6 +629,13 @@ public final class MatroskaDemuxer implements Demuxer {
             var entries = new ArrayList<>(header.trackEntries);
             entries.sort(Comparator.comparing(entry -> !entry.enabled));
             for (var entry : entries) {
+                if (entry.encrypted()) {
+                    if (keys.equals(DecryptionKeys.none())) {
+                        throw new MediaException.Unsupported("matroska encryption", "track " + entry.number
+                                + " is encrypted and no decryption key was given");
+                    }
+                    entry.keys = keys;
+                }
                 var tagged = header.trackDurations.get(entry.uid);
                 if (tagged != null) {
                     entry.taggedDuration = tagged;
@@ -423,9 +655,18 @@ public final class MatroskaDemuxer implements Demuxer {
                 }
             }
             this.metadata = Collections.unmodifiableMap(header.tags);
-            this.durationMicros = header.duration > 0 ? Math.round(header.duration * timestampScale / 1000.0) : -1;
-            this.chapters = header.annotations.chapters(durationMicros);
+            var storedDuration = header.duration > 0 ? Math.round(header.duration * timestampScale / 1000.0) : -1;
+            this.rawDurationNanos = header.duration > 0 ? Math.round(header.duration * timestampScale) : -1;
+            this.rawEditions = editions(header, storedDuration);
+            this.editionEntries = editionEntries(header);
+            this.segmentUuid = header.segmentUuid;
+            this.prevUuid = header.prevUuid;
+            this.nextUuid = header.nextUuid;
+            this.prevFilename = header.prevFilename;
+            this.nextFilename = header.nextFilename;
             this.pictures = header.annotations.pictures();
+            this.attachments = List.copyOf(header.attachments);
+            this.timecode = timecode(header.tags, trackTags, publicTracks);
             var reference = -1L;
             for (var index = 0; index < publicTracks.size(); index++) {
                 if (publicTracks.get(index) instanceof VideoTrack) {
@@ -441,11 +682,86 @@ public final class MatroskaDemuxer implements Demuxer {
                     publicTracks.set(index, AacExtensions.refine(audio, peekFirstFrame(audio.id())));
                 }
             }
-            this.tracks = Collections.unmodifiableList(publicTracks);
+            this.rawTracks = Collections.unmodifiableList(publicTracks);
+            var built = options.virtualTimeline() ? MatroskaTimeline.build(this, options) : null;
+            this.timeline = built;
+            if (built != null) {
+                var nanos = built.durationNanos();
+                this.durationMicros = nanos < 0 ? -1 : Math.round(nanos / 1000.0);
+                this.editions = built.editions();
+                this.tracks = withDuration(rawTracks, nanos);
+            } else {
+                this.durationMicros = storedDuration;
+                this.editions = selectEdition(rawEditions, options);
+                this.tracks = rawTracks;
+            }
+            var defaultEdition = ChapterEdition.defaultIndex(editions);
+            this.chapters = defaultEdition < 0 ? List.of() : sortedChapters(editions.get(defaultEdition).chapters());
         } catch (MediaException exception) {
             throw exception;
         } catch (RuntimeException exception) {
             throw new MediaException.Malformed("corrupt Matroska file: " + exception, exception);
+        }
+    }
+
+    /**
+     * Flags the edition the options name as the default one.
+     *
+     * @param editions the visible editions
+     * @param options the options naming the edition, if any
+     * @return the editions, the one the options name flagged as the only default; {@code editions} when the options
+     * name none of them
+     */
+    private static List<ChapterEdition> selectEdition(List<ChapterEdition> editions, DemuxerOptions options) {
+        var requested = options.edition();
+        if (requested.isEmpty() || requested.getAsInt() >= editions.size()) {
+            return editions;
+        }
+        var selected = new ArrayList<ChapterEdition>(editions.size());
+        for (var index = 0; index < editions.size(); index++) {
+            var edition = editions.get(index);
+            selected.add(new ChapterEdition(edition.chapters(), index == requested.getAsInt(), edition.ordered(),
+                    edition.names()));
+        }
+        return List.copyOf(selected);
+    }
+
+    /**
+     * Gives tracks the duration of the timeline.
+     *
+     * @param tracks the tracks of the segment
+     * @param nanos the duration in nanoseconds, or {@code -1} when unknown
+     * @return the tracks with that duration, unmodifiable
+     */
+    private static List<Track> withDuration(List<Track> tracks, long nanos) {
+        var result = new ArrayList<Track>(tracks.size());
+        for (var track : tracks) {
+            var duration = nanos < 0 ? Packet.UNKNOWN_DURATION
+                    : MatroskaTrackEntry.NANOSECONDS.rescale(nanos, track.timeBase());
+            result.add(switch (track) {
+                case VideoTrack video -> video.toBuilder().duration(duration).build();
+                case AudioTrack audio -> audio.toBuilder().duration(duration).build();
+                case com.github.auties00.smalt.track.DataTrack data -> data.toBuilder().duration(duration).build();
+            });
+        }
+        return Collections.unmodifiableList(result);
+    }
+
+    /**
+     * Decodes every edition of the {@code Chapters} element for playback; damaged chapters leave none.
+     *
+     * @param header the parsed header
+     * @return the editions
+     */
+    private static List<MatroskaTags.EditionEntry> editionEntries(SegmentHeader header) {
+        if (header.chaptersData == null) {
+            return List.of();
+        }
+        try {
+            return List.copyOf(MatroskaTags.decodeEditionEntries(header.chaptersData, header.chaptersElement));
+        } catch (MediaException.Malformed ignored) {
+            // chapters are descriptive; damaged Chapters leave the file playable as stored
+            return List.of();
         }
     }
 
@@ -539,9 +855,49 @@ public final class MatroskaDemuxer implements Demuxer {
         private long cuesPosition = -1;
 
         /**
-         * The chapters and pictures collected.
+         * The pictures collected.
          */
         private final Annotations annotations = new Annotations();
+
+        /**
+         * The attachments that are not pictures.
+         */
+        private final List<Attachment> attachments = new ArrayList<>();
+
+        /**
+         * The bytes holding the {@code Chapters} element, or {@code null}.
+         */
+        private byte[] chaptersData;
+
+        /**
+         * The {@code Chapters} element within {@link #chaptersData}.
+         */
+        private Ebml.Element chaptersElement;
+
+        /**
+         * The {@code SegmentUUID} as hexadecimal digits, or {@code null}.
+         */
+        private String segmentUuid;
+
+        /**
+         * The {@code PrevUUID} as hexadecimal digits, or {@code null}.
+         */
+        private String prevUuid;
+
+        /**
+         * The {@code NextUUID} as hexadecimal digits, or {@code null}.
+         */
+        private String nextUuid;
+
+        /**
+         * The {@code PrevFilename}, or empty.
+         */
+        private String prevFilename = "";
+
+        /**
+         * The {@code NextFilename}, or empty.
+         */
+        private String nextFilename = "";
     }
 
     /**
@@ -794,6 +1150,11 @@ public final class MatroskaDemuxer implements Demuxer {
                     header.duration = Double.isFinite(duration) && duration > 0 ? duration : 0;
                 }
                 case EbmlIds.TITLE -> header.tags.put("title", value.string());
+                case EbmlIds.SEGMENT_UUID -> header.segmentUuid = uuid(value);
+                case EbmlIds.PREV_UUID -> header.prevUuid = uuid(value);
+                case EbmlIds.NEXT_UUID -> header.nextUuid = uuid(value);
+                case EbmlIds.PREV_FILENAME -> header.prevFilename = value.string();
+                case EbmlIds.NEXT_FILENAME -> header.nextFilename = value.string();
                 case EbmlIds.DATE_UTC -> {
                     var nanos = value.signed();
                     var seconds = Math.floorDiv(nanos, 1_000_000_000L) + EPOCH_2001_SECONDS;
@@ -803,6 +1164,25 @@ public final class MatroskaDemuxer implements Demuxer {
                 }
             }
         }
+    }
+
+    /**
+     * Reads a segment identifier.
+     *
+     * @param value the element data
+     * @return the identifier as hexadecimal digits, or {@code null} when it is not 16 bytes long or all zeros
+     */
+    private static String uuid(EbmlCursor value) {
+        var bytes = value.bytes();
+        if (bytes.length != 16) {
+            return null;
+        }
+        for (var b : bytes) {
+            if (b != 0) {
+                return MatroskaTimeline.hex(bytes);
+            }
+        }
+        return null;
     }
 
     /**
@@ -849,6 +1229,7 @@ public final class MatroskaDemuxer implements Demuxer {
             var content = tag.payload();
             var trackUid = -1L;
             var global = true;
+            var typeValue = MatroskaTags.Targets.DEFAULT_TYPE_VALUE;
             var simpleTags = new ArrayList<EbmlCursor>();
             while (content.hasMore()) {
                 var element = content.next();
@@ -857,12 +1238,13 @@ public final class MatroskaDemuxer implements Demuxer {
                     var targets = MatroskaTags.targets(payload.array(), payload.asElement(EbmlIds.TARGETS));
                     trackUid = targets.trackUid() != 0 ? targets.trackUid() : -1;
                     global = targets.global();
+                    typeValue = targets.typeValue();
                 } else if (element.id() == EbmlIds.SIMPLE_TAG) {
                     simpleTags.add(element.payload());
                 }
             }
             for (var simpleTag : simpleTags) {
-                parseSimpleTag(header, simpleTag, "", global, trackUid, 0);
+                parseSimpleTag(header, simpleTag, "", global, trackUid, typeValue, 0);
             }
         }
     }
@@ -875,9 +1257,11 @@ public final class MatroskaDemuxer implements Demuxer {
      * @param prefix the names of the enclosing tags joined with {@code '/'}, or empty
      * @param global whether the tag targets the whole segment
      * @param trackUid the targeted track UID, or {@code -1}
+     * @param typeValue the target type value of the tag, which names the level a ReplayGain value applies to
      * @param depth the current nesting
      */
-    private static void parseSimpleTag(SegmentHeader header, EbmlCursor body, String prefix, boolean global, long trackUid, int depth) {
+    private static void parseSimpleTag(SegmentHeader header, EbmlCursor body, String prefix, boolean global, long trackUid,
+                                       long typeValue, int depth) {
         if (depth > MAX_TAG_DEPTH) {
             return;
         }
@@ -897,7 +1281,8 @@ public final class MatroskaDemuxer implements Demuxer {
         if (name == null) {
             return;
         }
-        var key = prefix.isEmpty() ? name : prefix + "/" + name;
+        var level = prefix.isEmpty() ? MatroskaTags.levelTag(name, typeValue) : null;
+        var key = level != null ? level.vorbisField() : prefix.isEmpty() ? name : prefix + "/" + name;
         if (value != null) {
             if (global && header.tags.size() < 1024) {
                 header.tags.putIfAbsent(key, value);
@@ -915,7 +1300,7 @@ public final class MatroskaDemuxer implements Demuxer {
             }
         }
         for (var child : nested) {
-            parseSimpleTag(header, child, key, global, trackUid, depth + 1);
+            parseSimpleTag(header, child, key, global, trackUid, typeValue, depth + 1);
         }
     }
 
@@ -1012,6 +1397,121 @@ public final class MatroskaDemuxer implements Demuxer {
         return docType;
     }
 
+    /**
+     * {@return whether the demuxer presents a virtual timeline, that of an ordered edition or of a chain of
+     * hard-linked segments, rather than its segment as stored}
+     */
+    public boolean isVirtualTimeline() {
+        return timeline != null;
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The sources of the linked segments the demuxer opened are closed, and so is the file
+     * {@link #open(Path, DemuxerOptions)} opened.
+     */
+    @Override
+    public void close() {
+        try {
+            if (timeline != null) {
+                timeline.close();
+            }
+        } finally {
+            if (ownedSource != null) {
+                ownedSource.close();
+            }
+        }
+    }
+
+    /**
+     * {@return the number of frame payload bytes read from the segment so far, those a seek drops included}
+     */
+    long frameBytesRead() {
+        return frameBytes;
+    }
+
+    /**
+     * {@return the size of the source sampled when the demuxer was created, or {@code -1} when unknown}
+     */
+    long rawSourceSize() {
+        return sourceSize;
+    }
+
+    /**
+     * {@return the tracks of the segment as stored}
+     */
+    List<Track> rawTracks() {
+        return rawTracks;
+    }
+
+    /**
+     * {@return the visible editions of the segment as stored}
+     */
+    List<ChapterEdition> rawEditions() {
+        return rawEditions;
+    }
+
+    /**
+     * {@return every edition of the segment, hidden ones included, as playback reads them}
+     */
+    List<MatroskaTags.EditionEntry> editionEntries() {
+        return editionEntries;
+    }
+
+    /**
+     * {@return the duration of the segment as stored in nanoseconds, or {@code -1} when unknown}
+     */
+    long rawDurationNanos() {
+        return rawDurationNanos;
+    }
+
+    /**
+     * {@return the {@code SegmentUUID} as hexadecimal digits, or {@code null}}
+     */
+    String segmentUuid() {
+        return segmentUuid;
+    }
+
+    /**
+     * {@return the {@code PrevUUID} as hexadecimal digits, or {@code null}}
+     */
+    String prevUuid() {
+        return prevUuid;
+    }
+
+    /**
+     * {@return the {@code NextUUID} as hexadecimal digits, or {@code null}}
+     */
+    String nextUuid() {
+        return nextUuid;
+    }
+
+    /**
+     * {@return the {@code PrevFilename}, or empty}
+     */
+    String prevFilename() {
+        return prevFilename;
+    }
+
+    /**
+     * {@return the {@code NextFilename}, or empty}
+     */
+    String nextFilename() {
+        return nextFilename;
+    }
+
+    /**
+     * Returns whether the frames of a track may be stored out of presentation order.
+     *
+     * @param trackId the track
+     * @return {@code true} for H.264, HEVC, MPEG-4 Part 2 and unidentified video
+     */
+    boolean reorders(int trackId) {
+        var entry = byNumber.get((long) trackId);
+        return entry != null && entry.reorders();
+    }
+
     @Override
     public ContainerFormat format() {
         return ContainerFormat.MATROSKA;
@@ -1037,9 +1537,27 @@ public final class MatroskaDemuxer implements Demuxer {
         return trackTags.getOrDefault(trackId, Map.of());
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>The dispositions are those of the flag elements of the {@code TrackEntry}: {@code FlagDefault} (set unless
+     * declared otherwise), {@code FlagForced}, {@code FlagHearingImpaired}, {@code FlagVisualImpaired},
+     * {@code FlagTextDescriptions}, {@code FlagOriginal} and {@code FlagCommentary}.
+     */
+    @Override
+    public Set<TrackDisposition> trackDisposition(int trackId) {
+        var entry = byNumber.get((long) trackId);
+        return entry == null ? Set.of() : Collections.unmodifiableSet(EnumSet.copyOf(entry.disposition));
+    }
+
     @Override
     public List<Chapter> chapters() {
         return chapters;
+    }
+
+    @Override
+    public List<ChapterEdition> chapterEditions() {
+        return editions;
     }
 
     @Override
@@ -1048,7 +1566,98 @@ public final class MatroskaDemuxer implements Demuxer {
     }
 
     @Override
+    public List<Attachment> attachments() {
+        return attachments;
+    }
+
+    @Override
+    public Optional<Timecode> timecode() {
+        return Optional.ofNullable(timecode);
+    }
+
+    /**
+     * Decodes the editions of the {@code Chapters} element; damaged chapters leave none.
+     *
+     * @param header the parsed header
+     * @param durationMicros the segment duration, or {@code -1}
+     * @return the visible editions
+     */
+    private static List<ChapterEdition> editions(SegmentHeader header, long durationMicros) {
+        if (header.chaptersData == null) {
+            return List.of();
+        }
+        try {
+            return List.copyOf(MatroskaTags.decodeEditions(header.chaptersData, header.chaptersElement,
+                    durationMicros));
+        } catch (MediaException.Malformed ignored) {
+            // chapters are descriptive; damaged Chapters leave the file playable
+            return List.of();
+        }
+    }
+
+    /**
+     * Sorts chapters by start, keeping the order of those that start together.
+     *
+     * @param chapters the chapters to sort
+     * @return the sorted chapters; unmodifiable
+     */
+    private static List<Chapter> sortedChapters(List<Chapter> chapters) {
+        var sorted = new ArrayList<>(chapters);
+        sorted.sort(Comparator.comparingLong(Chapter::startMicros));
+        return List.copyOf(sorted);
+    }
+
+    /**
+     * Reads the {@code TIMECODE} tag of the segment or, without one, of the first video track, counted at the
+     * nominal rate of that track's frame rate, or at 30 frames per second for a drop-frame address of a track
+     * without frame rate.
+     *
+     * @param tags the segment tags
+     * @param trackTags the tags of each track
+     * @param tracks the tracks, whose first video track gives the rate
+     * @return the timecode, or {@code null} when there is no valid one
+     */
+    private static Timecode timecode(Map<String, String> tags, Map<Integer, Map<String, String>> trackTags,
+                                     List<Track> tracks) {
+        var video = TimecodeTags.firstVideo(tracks);
+        var text = TimecodeTags.lookup(tags, "TIMECODE");
+        if (text == null && video != null) {
+            text = TimecodeTags.lookup(trackTags.getOrDefault(video.id(), Map.of()), "TIMECODE");
+        }
+        return TimecodeTags.parse(text, video);
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * <p>On a virtual timeline the packets are those of its parts, in their order.
+     *
+     * @throws MediaException.Malformed {@inheritDoc}
+     * @throws MediaException.LimitExceeded if the parts of a virtual timeline read more than four times the size of
+     * its segments (and more than 4 MiB) since the demuxer was created or last sought, as an edition of many short
+     * chapters can make them
+     * @throws MediaException.Io {@inheritDoc}
+     */
+    @Override
     public Packet read() {
+        if (timeline == null) {
+            return rawRead();
+        }
+        try {
+            return timeline.read();
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("corrupt Matroska file: " + exception, exception);
+        }
+    }
+
+    /**
+     * Reads the next packet of the segment as stored.
+     *
+     * @return the packet, or {@code null} at the end of the segment
+     */
+    Packet rawRead() {
         try {
             if (filter != null) {
                 while (true) {
@@ -1096,7 +1705,10 @@ public final class MatroskaDemuxer implements Demuxer {
             if (finished) {
                 return null;
             }
-            ForwardOnlySource.release(source, reader.position());
+            if (timeline == null && !retained) {
+                releasedTo = Math.max(releasedTo, reader.position());
+                ForwardOnlySource.release(source, releasedTo);
+            }
             if (!step()) {
                 finished = true;
             }
@@ -1119,14 +1731,74 @@ public final class MatroskaDemuxer implements Demuxer {
      * <p>The demuxer moves to the cluster that holds the last key frame of the first video track
      * (of any track when there is no video) at or before {@code micros}, found through the
      * {@code Cues} or a scan of the clusters, and every track restarts at its own last key frame
-     * at or before {@code micros}.
+     * at or before {@code micros}. On a virtual timeline the demuxer moves so within the part that plays
+     * {@code micros}; the frames of the part's segment before the part are returned flagged
+     * {@link PacketFlag#DISCARD}, as when the part is reached by reading, and a time before the timeline restarts
+     * it, the packets then being those a read from the start returns.
      */
     @Override
     public void seek(long micros) {
+        if (timeline == null) {
+            rawSeek(micros);
+            return;
+        }
+        try {
+            timeline.seek(micros);
+        } catch (MediaException exception) {
+            throw exception;
+        } catch (RuntimeException exception) {
+            throw new MediaException.Malformed("corrupt Matroska file: " + exception, exception);
+        }
+    }
+
+    /**
+     * Makes a source read once keep every byte, for a virtual timeline that reads this segment.
+     */
+    void retainSource() {
+        retained = true;
+    }
+
+    /**
+     * Positions the segment as stored at its first cluster, every frame from there returned as a read from the start
+     * returns it, without the trimming of a seek.
+     */
+    void rewind() {
+        queue.clear();
+        queueIndex = 0;
+        filter = null;
+        inCluster = false;
+        clusterEnd = -1;
+        clusterTimestamp = 0;
+        finished = firstCluster < 0;
+        if (!finished) {
+            reader.seek(firstCluster);
+        }
+    }
+
+    /**
+     * Positions the segment as stored on the key frames at or before a time.
+     *
+     * @param micros the time in microseconds
+     */
+    void rawSeek(long micros) {
+        rawSeek(micros, track -> 0);
+    }
+
+    /**
+     * Positions the segment as stored on the key frames at or before a time, some tracks restarting earlier.
+     *
+     * <p>The cluster read from is the one a seek to {@code micros} reads from, usually a second or more before it;
+     * a track with a lead restarts at its last key frame from that cluster on at or before {@code micros} less the
+     * lead.
+     *
+     * @param micros the time in microseconds
+     * @param leadMicros the lead of each track in microseconds, as {@link SeekFilter} takes it
+     */
+    void rawSeek(long micros, java.util.function.ToLongFunction<Track> leadMicros) {
         try {
             var target = SeekTimes.floor(micros, segmentBase);
             var position = firstCluster < 0 ? -1 : locateCluster(target);
-            var replacement = new SeekFilter(tracks, micros);
+            var replacement = new SeekFilter(tracks, micros, leadMicros);
             queue.clear();
             queueIndex = 0;
             inCluster = false;
@@ -1172,11 +1844,46 @@ public final class MatroskaDemuxer implements Demuxer {
                 return firstCluster;
             }
             if (isClusterAt(cuePositions[found])) {
-                return cuePositions[found];
+                var early = target - lookback();
+                if (cueTimes[found] <= early) {
+                    return cuePositions[found];
+                }
+                var earlier = found - 1;
+                while (earlier >= 0 && cueTimes[earlier] > early) {
+                    earlier--;
+                }
+                var position = earlier < 0 ? firstCluster : cuePositions[earlier];
+                // a source read once may have dropped the start of that range: read from the first cluster it holds
+                for (var next = earlier + 1; !isReachable(position) && next < found; next++) {
+                    position = cuePositions[next];
+                }
+                return isReachable(position) && isClusterAt(position) ? position : cuePositions[found];
             }
             cueTimes = null;
         }
         return scanClusters(target);
+    }
+
+    /**
+     * {@return whether the bytes at an offset can still be read: always, except below what a source read once was
+     * told it may drop}
+     *
+     * @param position the absolute offset
+     */
+    private boolean isReachable(long position) {
+        return !ForwardOnlySource.isForwardOnly(source) || position >= releasedTo;
+    }
+
+    /**
+     * {@return the distance before a seek target, in segment ticks, within which a key frame makes the seek start
+     * that far before the target}
+     *
+     * <p>A muxer that starts a cluster at every key frame stores the audio block that straddles a key frame in an
+     * earlier cluster, so a seek to a target just after a key frame reads from that far back to restart the audio at
+     * its last block at or before the target.
+     */
+    private long lookback() {
+        return Rational.MICROSECONDS.rescale(LOOKBACK_MICROS, segmentBase);
     }
 
     /**
@@ -1190,7 +1897,7 @@ public final class MatroskaDemuxer implements Demuxer {
             return false;
         }
         var bytes = new byte[4];
-        if (source.read(position, bytes, 0, 4) < 4) {
+        if (SourceBytes.readAvailable(source, position, bytes, 0, 4) < 4) {
             return false;
         }
         return ((bytes[0] & 0xFF) << 24 | (bytes[1] & 0xFF) << 16 | (bytes[2] & 0xFF) << 8 | (bytes[3] & 0xFF))
@@ -1325,12 +2032,36 @@ public final class MatroskaDemuxer implements Demuxer {
             for (var candidate = index; candidate >= 0; candidate--) {
                 if (clusterIndex.state(candidate) == 1
                         && clusterIndex.timestamp(candidate) + clusterIndex.extra(candidate) <= target) {
-                    return clusterIndex.offset(candidate);
+                    var key = clusterIndex.timestamp(candidate) + clusterIndex.extra(candidate);
+                    return key > target - lookback() ? earlierCluster(candidate, target)
+                            : clusterIndex.offset(candidate);
                 }
             }
             return firstCluster;
         }
-        return index < 0 ? firstCluster : clusterIndex.offset(index);
+        if (index < 0) {
+            return firstCluster;
+        }
+        return clusterIndex.timestamp(index) > target - lookback() ? earlierCluster(index, target)
+                : clusterIndex.offset(index);
+    }
+
+    /**
+     * Returns the cluster a seek reads from when the cluster it lands on starts within {@link #lookback()} of the
+     * target: the last indexed cluster that starts that far before the target, or the first cluster.
+     *
+     * @param index the index of the cluster the seek lands on
+     * @param target the target in segment ticks
+     * @return the absolute offset of the cluster, or of the first later one a source read once still holds
+     */
+    private long earlierCluster(int index, long target) {
+        var earlier = Math.min(clusterIndex.floor(target - lookback()), index);
+        var position = earlier < 0 ? firstCluster : clusterIndex.offset(earlier);
+        // a source read once may have dropped the start of that range: read from the first cluster it holds
+        for (var next = earlier + 1; !isReachable(position) && next < index; next++) {
+            position = clusterIndex.offset(next);
+        }
+        return isReachable(position) ? position : clusterIndex.offset(index);
     }
 
     /**
@@ -1483,28 +2214,29 @@ public final class MatroskaDemuxer implements Demuxer {
     }
 
     /**
-     * Parses the {@code Chapters} element, keeping the visible chapters of the default edition
-     * (of the first edition when none is the default).
+     * Keeps the {@code Chapters} element, decoded once the segment duration is known.
      *
-     * @param header receives the chapters
+     * @param header receives the element
      * @param body the element data
      */
     private static void parseChapters(SegmentHeader header, EbmlCursor body) {
-        for (var chapter : MatroskaTags.chapterSpans(body.array(), body.asElement(EbmlIds.CHAPTERS))) {
-            header.annotations.addChapter(chapter.startMicros(), chapter.endMicros(), chapter.title());
-        }
+        header.chaptersData = body.array();
+        header.chaptersElement = body.asElement(EbmlIds.CHAPTERS);
     }
 
     /**
-     * Parses the {@code Attachments} element, keeping the attached images as pictures.
+     * Parses the {@code Attachments} element: the attached images become pictures, the other files with a name,
+     * a media type and data attachments.
      *
-     * @param header receives the pictures
+     * @param header receives the pictures and attachments
      * @param body the element data
      */
     private static void parseAttachments(SegmentHeader header, EbmlCursor body) {
         var pictures = new ArrayList<AttachedPicture>();
-        MatroskaTags.decodeAttachments(body.array(), body.asElement(EbmlIds.ATTACHMENTS), pictures, null);
+        var files = new ArrayList<Attachment>();
+        MatroskaTags.decodeAttachments(body.array(), body.asElement(EbmlIds.ATTACHMENTS), pictures, files, null);
         pictures.forEach(header.annotations::addPicture);
+        header.attachments.addAll(files.subList(0, Math.min(files.size(), MAX_ATTACHMENTS)));
     }
 
     /**
@@ -1610,8 +2342,10 @@ public final class MatroskaDemuxer implements Demuxer {
             readBlock(block, false, referenced, duration);
             if (queue.size() > queued) {
                 if (!additions.isEmpty()) {
+                    var entry = byNumber.get((long) queue.get(queued).trackId());
+                    var sideData = entry != null && entry.alphaMode == 1 ? alphaAdditions(additions) : additions;
                     for (var index = queued; index < queue.size(); index++) {
-                        queue.set(index, queue.get(index).withSideData(additions));
+                        queue.set(index, queue.get(index).withSideData(sideData));
                     }
                 }
                 if (padding > 0) {
@@ -1663,6 +2397,21 @@ public final class MatroskaDemuxer implements Demuxer {
             }
         }
         return builder.build();
+    }
+
+    /**
+     * Moves the {@code BlockAdditional} of {@code BlockAddID} 1, the alpha frame of a track whose
+     * {@code AlphaMode} is 1, from the extra payloads to {@link PacketSideData#alphaFrame()}.
+     *
+     * @param additions the side data of the block's {@code BlockAdditions}
+     * @return the side data with the alpha frame typed, or {@code additions} when it has none
+     */
+    private static PacketSideData alphaAdditions(PacketSideData additions) {
+        var alpha = additions.extra(ALPHA_ADDITION).orElse(null);
+        if (alpha == null) {
+            return additions;
+        }
+        return additions.toBuilder().extra(ALPHA_ADDITION, null).alphaFrame(alpha).build();
     }
 
     /**
@@ -1830,8 +2579,50 @@ public final class MatroskaDemuxer implements Demuxer {
         } else {
             duration = Packet.UNKNOWN_DURATION;
         }
-        var packet = new Packet((int) entry.number, data, pts, entry.reorders() ? Packet.NO_TIMESTAMP : pts,
-                duration, keyframe);
+        frameBytes += data.length;
+        if (entry.adpcmBlockBytes > 0 && data.length > entry.adpcmBlockBytes) {
+            queueBlocks(entry, data, pts, keyframe, blockFlags);
+            return;
+        }
+        queue.add(withBlockFlags(new Packet((int) entry.number, data, pts,
+                entry.reorders() ? Packet.NO_TIMESTAMP : pts, duration, keyframe), blockFlags));
+    }
+
+    /**
+     * Queues the IMA or Microsoft ADPCM blocks of a frame that holds several, one packet each, timed in samples from
+     * the frame's timestamp; trailing bytes too short for a block's headers and one sample group are dropped.
+     *
+     * @param entry the frame's track, whose {@link MatroskaTrackEntry#adpcmBlockBytes} is the block size
+     * @param data the frame bytes
+     * @param pts the frame's timestamp in the track's sample time base, or {@link Packet#NO_TIMESTAMP}
+     * @param keyframe whether the block is a key frame
+     * @param blockFlags the flags byte of a {@code SimpleBlock}, or the invisible bit of a {@code Block}
+     */
+    private void queueBlocks(MatroskaTrackEntry entry, byte[] data, long pts, boolean keyframe, int blockFlags) {
+        var codec = entry.codec;
+        var channels = (int) Math.max(1, Math.min(entry.channels, Integer.MAX_VALUE));
+        var time = pts;
+        for (var offset = 0; offset < data.length; offset += entry.adpcmBlockBytes) {
+            var length = AdpcmBlocks.tail(codec, Math.min(entry.adpcmBlockBytes, data.length - offset), channels, 0);
+            var samples = AdpcmBlocks.samples(codec, length, channels, 0);
+            if (samples == 0) {
+                break;
+            }
+            var block = java.util.Arrays.copyOfRange(data, offset, offset + length);
+            queue.add(withBlockFlags(new Packet((int) entry.number, block, time, time, samples, keyframe),
+                    blockFlags));
+            time = time == Packet.NO_TIMESTAMP ? Packet.NO_TIMESTAMP : time + samples;
+        }
+    }
+
+    /**
+     * Returns a packet with the discardable and invisible flags of its block.
+     *
+     * @param packet a packet of the block
+     * @param blockFlags the flags byte of a {@code SimpleBlock}, or the invisible bit of a {@code Block}
+     * @return the packet, flagged
+     */
+    private static Packet withBlockFlags(Packet packet, int blockFlags) {
         if ((blockFlags & (DISCARDABLE | INVISIBLE)) != 0) {
             var flags = EnumSet.noneOf(PacketFlag.class);
             flags.addAll(packet.flags());
@@ -1841,9 +2632,9 @@ public final class MatroskaDemuxer implements Demuxer {
             if ((blockFlags & INVISIBLE) != 0) {
                 flags.add(PacketFlag.DISCARD);
             }
-            packet = packet.withFlags(flags);
+            return packet.withFlags(flags);
         }
-        queue.add(packet);
+        return packet;
     }
 
     /**
@@ -1907,7 +2698,7 @@ public final class MatroskaDemuxer implements Demuxer {
         var limit = sourceSize >= 0 ? Math.min(sourceSize, segmentEnd) : segmentEnd;
         while (position + 4 <= limit) {
             var length = (int) Math.min(buffer.length, limit - position);
-            var read = source.read(position, buffer, 0, length);
+            var read = SourceBytes.readAvailable(source, position, buffer, 0, length);
             if (read < 4) {
                 return -1;
             }
