@@ -8,7 +8,9 @@ import com.github.auties00.smalt.image.ColorPrimaries;
 import com.github.auties00.smalt.image.ColorRange;
 import com.github.auties00.smalt.image.MatrixCoefficients;
 import com.github.auties00.smalt.image.TransferCharacteristics;
+import com.github.auties00.smalt.internal.check.Checks;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
@@ -29,9 +31,13 @@ import java.util.concurrent.ConcurrentHashMap;
  *       {@link #grayGamma22()};</li>
  *   <li>{@link #of(ColorInfo)} maps the color primaries and transfer characteristics of a video
  *       frame or an AVIF/HEIF {@code nclx} box (ITU-T H.273);</li>
- *   <li>{@link #rgb} and {@link #gray} build a profile from primaries and a gamma, as PNG
- *       {@code cHRM} and {@code gAMA} chunks describe them.</li>
+ *   <li>{@link #rgb} and {@link #gray} build a display profile from primaries and a gamma, as PNG
+ *       {@code cHRM} and {@code gAMA} chunks describe them, or from {@link ProfileCurve} tone curves;</li>
+ *   <li>{@link #lab()} and {@link #xyz()} are the identities of the connection spaces, and
+ *       {@link #linearization}, {@link #inkLimiting(double)}, {@link #labAdjustment(LabAdjustments)} and
+ *       {@link #deviceLink(ColorTransform)} build device links and abstract profiles.</li>
  * </ul>
+ * {@link #withDescription(String)} and {@link #withCopyright(String)} change the text tags of any profile.
  * Every profile is an ICC profile whose bytes {@link #toByteArray()} returns, ready to embed in a
  * file.
  *
@@ -127,6 +133,18 @@ public final class ColorProfile {
         this.icc = new IccReader(bytes);
         this.bytes = bytes;
         this.hdr = cicp(icc);
+    }
+
+    /**
+     * Creates a high-dynamic-range profile from its ICC bytes and its description.
+     *
+     * @param bytes the profile bytes, owned by the new instance
+     * @param hdr the description
+     */
+    private ColorProfile(byte[] bytes, HdrSpec hdr) {
+        this.icc = new IccReader(bytes);
+        this.bytes = bytes;
+        this.hdr = hdr;
     }
 
     /**
@@ -349,6 +367,239 @@ public final class ColorProfile {
         checkGamma(gamma);
         return new ColorProfile(IccWriter.gray("Gray, gamma " + gamma, new double[]{0.3127, 0.3290},
                 IccWriter.Curve.gamma(gamma)));
+    }
+
+    /**
+     * Builds an RGB display profile from primaries, a white point and one tone curve shared by the three channels.
+     *
+     * <p>The profile is a version 4.3 matrix/TRC profile whose colorants are the primaries adapted to D50 with the
+     * Bradford transform.
+     *
+     * @param red the red primary
+     * @param green the green primary
+     * @param blue the blue primary
+     * @param white the white point
+     * @param curve the curve that decodes the three channels to linear light
+     * @return the profile
+     * @throws IllegalArgumentException if the white point has {@code y = 0}, or the primaries do not span a color
+     * space
+     */
+    public static ColorProfile rgb(Chromaticity red, Chromaticity green, Chromaticity blue, Chromaticity white,
+                                   ProfileCurve curve) {
+        Objects.requireNonNull(curve, "curve");
+        return rgb(red, green, blue, white, curve, curve, curve);
+    }
+
+    /**
+     * Builds an RGB display profile from primaries, a white point and a tone curve per channel.
+     *
+     * <p>The profile is the one {@link #rgb(Chromaticity, Chromaticity, Chromaticity, Chromaticity, ProfileCurve)}
+     * describes; equal curves are stored once.
+     *
+     * @param red the red primary
+     * @param green the green primary
+     * @param blue the blue primary
+     * @param white the white point
+     * @param redCurve the curve that decodes red values to linear light
+     * @param greenCurve the curve that decodes green values to linear light
+     * @param blueCurve the curve that decodes blue values to linear light
+     * @return the profile
+     * @throws IllegalArgumentException if the white point has {@code y = 0}, or the primaries do not span a color
+     * space
+     */
+    public static ColorProfile rgb(Chromaticity red, Chromaticity green, Chromaticity blue, Chromaticity white,
+                                   ProfileCurve redCurve, ProfileCurve greenCurve, ProfileCurve blueCurve) {
+        Objects.requireNonNull(red, "red");
+        Objects.requireNonNull(green, "green");
+        Objects.requireNonNull(blue, "blue");
+        Objects.requireNonNull(white, "white");
+        Objects.requireNonNull(redCurve, "redCurve");
+        Objects.requireNonNull(greenCurve, "greenCurve");
+        Objects.requireNonNull(blueCurve, "blueCurve");
+        if (white.y() == 0) {
+            throw new IllegalArgumentException("white point with y = 0");
+        }
+        return new ColorProfile(IccWriter.rgb("RGB", xy(red), xy(green), xy(blue), xy(white), redCurve.curve(),
+                greenCurve.curve(), blueCurve.curve()));
+    }
+
+    /**
+     * Builds a gray display profile from a white point and a tone curve.
+     *
+     * @param white the white point
+     * @param curve the curve that decodes values to linear light
+     * @return the profile
+     * @throws IllegalArgumentException if the white point has {@code y = 0}
+     */
+    public static ColorProfile gray(Chromaticity white, ProfileCurve curve) {
+        Objects.requireNonNull(white, "white");
+        Objects.requireNonNull(curve, "curve");
+        if (white.y() == 0) {
+            throw new IllegalArgumentException("white point with y = 0");
+        }
+        return new ColorProfile(IccWriter.gray("Gray", xy(white), curve.curve()));
+    }
+
+    /**
+     * Returns the L*a*b* identity: an abstract profile from L*a*b* to L*a*b* that leaves colors unchanged.
+     *
+     * @apiNote A chain that starts with it reads L*a*b* values, for example
+     * {@code ColorTransform.create(List.of(ColorProfile.lab(), ColorProfile.srgb()))} converts L*a*b* to sRGB.
+     * @return the profile
+     */
+    public static ColorProfile lab() {
+        return BuiltIn.LAB;
+    }
+
+    /**
+     * Returns the XYZ identity: an abstract profile from D50 XYZ to D50 XYZ that leaves colors unchanged.
+     *
+     * @return the profile
+     */
+    public static ColorProfile xyz() {
+        return BuiltIn.XYZ;
+    }
+
+    /**
+     * Builds a device link that applies one curve to each channel of a color space, as linearization and
+     * calibration curves do.
+     *
+     * @param space the color space the link reads and writes
+     * @param curves the curves, one per channel of the space, in channel order
+     * @return the profile
+     * @throws IllegalArgumentException if the space is {@link ProfileColorSpace#OTHER} or the number of curves is not
+     * its channel count
+     * @throws NullPointerException if {@code curves} holds a {@code null} element
+     */
+    public static ColorProfile linearization(ProfileColorSpace space, List<ProfileCurve> curves) {
+        Objects.requireNonNull(space, "space");
+        var list = List.copyOf(curves);
+        if (space == ProfileColorSpace.OTHER || list.size() != space.channels()) {
+            throw new IllegalArgumentException("a " + space + " linearization needs " + space.channels()
+                    + " curves, got " + list.size());
+        }
+        var encoded = new IccWriter.Curve[list.size()];
+        for (var i = 0; i < encoded.length; i++) {
+            encoded[i] = list.get(i).curve();
+        }
+        return new ColorProfile(IccWriter.linearization("Linearization", signature(space), encoded));
+    }
+
+    /**
+     * Builds a CMYK device link that limits the total amount of ink.
+     *
+     * <p>A color whose four inks sum to more than the limit has its cyan, magenta and yellow scaled down, black
+     * unchanged, so that the sum meets the limit; cyan, magenta and yellow become zero when black alone exceeds it.
+     * The link samples this on 17 points per channel.
+     *
+     * @param limit the largest sum of the four inks, in percent, from 1 to 400
+     * @return the profile
+     * @throws IllegalArgumentException if the limit is NaN or outside 1 to 400
+     */
+    public static ColorProfile inkLimiting(double limit) {
+        Checks.inRange("ink limit", limit, 1.0, 400.0);
+        return new ColorProfile(VirtualProfiles.inkLimiting(limit));
+    }
+
+    /**
+     * Builds an abstract profile that adjusts colors in L*a*b*: lightness and contrast, hue rotation, chroma and a
+     * white balance between two color temperatures.
+     *
+     * <p>Each color is converted to L*, C* and h, has {@code L* = L* * contrast + brightness},
+     * {@code C* = C* + saturation} and {@code h = h + hue} applied, and, with a white balance, is read relative to
+     * the source white and written relative to the target white; results are clamped to the L*a*b* encoding. The
+     * profile samples this on {@link LabAdjustments#gridPoints()} points per channel.
+     *
+     * @apiNote Put the profile between the source and the target of a chain:
+     * {@code ColorTransform.create(List.of(source, ColorProfile.labAdjustment(adjustments), target))}.
+     * @param adjustments the lightness, hue, chroma and white balance changes
+     * @return the profile
+     */
+    public static ColorProfile labAdjustment(LabAdjustments adjustments) {
+        Objects.requireNonNull(adjustments, "adjustments");
+        return new ColorProfile(VirtualProfiles.labAdjustment(adjustments));
+    }
+
+    /**
+     * Builds a device link that holds a transform.
+     *
+     * <p>The link converts from the transform's source color space to its target color space with a lookup table
+     * sampled from the transform's 16-bit conversion, 33 points per channel for up to three source channels, 17
+     * for four and 7 for more (fewer for eight or more channels, so that the table holds at most 4194304 samples);
+     * on the grid points it gives the transform's 16-bit values. Its rendering intent is the one of the transform's
+     * last link, and its media white the target's. The link of a proofing transform holds the simulation of the
+     * proofing device without the {@linkplain ProofingOptions#gamutCheck() gamut check}: the alarm values are not
+     * part of it. A transform from a named color profile becomes a named color profile instead, whose colors keep
+     * their names and connection space values and get the transform's outputs as device coordinates.
+     *
+     * @param transform the transform the link holds
+     * @return the profile
+     */
+    public static ColorProfile deviceLink(ColorTransform transform) {
+        Objects.requireNonNull(transform, "transform");
+        return new ColorProfile(VirtualProfiles.deviceLink(transform));
+    }
+
+    /**
+     * Returns this profile with another description.
+     *
+     * <p>The description tag ({@code desc}) is replaced, or added when the profile has none; every other tag and
+     * header field is kept, and the MD5 profile identifier is computed again when the profile has one. A
+     * high-dynamic-range profile keeps its {@link #colorInfo()}.
+     *
+     * @param description the description, ASCII for a version 2 profile
+     * @return the profile
+     * @throws IllegalArgumentException if the profile is version 2 and the description is not ASCII
+     */
+    public ColorProfile withDescription(String description) {
+        return withText("desc", Objects.requireNonNull(description, "description"));
+    }
+
+    /**
+     * Returns this profile with another copyright notice, as {@link #withDescription(String)} replaces the
+     * description.
+     *
+     * @param copyright the copyright notice ({@code cprt}), ASCII for a version 2 profile
+     * @return the profile
+     * @throws IllegalArgumentException if the profile is version 2 and the notice is not ASCII
+     */
+    public ColorProfile withCopyright(String copyright) {
+        return withText("cprt", Objects.requireNonNull(copyright, "copyright"));
+    }
+
+    /**
+     * Returns this profile with a text tag replaced.
+     *
+     * @param signature the tag signature
+     * @param text the new text of the tag
+     * @return the profile
+     * @throws IllegalArgumentException if the profile is version 2 and the text is not ASCII
+     */
+    private ColorProfile withText(String signature, String text) {
+        if (!icc.isVersion4() && !StandardCharsets.US_ASCII.newEncoder().canEncode(text)) {
+            throw new IllegalArgumentException("a version 2 profile holds ASCII text only");
+        }
+        var written = IccWriter.retag(bytes, signature, text);
+        return hdr == null ? new ColorProfile(written) : new ColorProfile(written, hdr);
+    }
+
+    /**
+     * Returns the ICC signature of a color space.
+     *
+     * @param space the color space, not {@link ProfileColorSpace#OTHER}
+     * @return the four characters
+     */
+    private static String signature(ProfileColorSpace space) {
+        return switch (space) {
+            case GRAY -> "GRAY";
+            case RGB -> "RGB ";
+            case CMYK -> "CMYK";
+            case CMY -> "CMY ";
+            case LAB -> "Lab ";
+            case XYZ -> "XYZ ";
+            case YCBCR -> "YCbr";
+            case OTHER -> throw new IllegalArgumentException("no signature for " + space);
+        };
     }
 
     /**
@@ -750,6 +1001,16 @@ public final class ColorProfile {
          * The D65 white chromaticity.
          */
         private static final double[] D65 = {0.3127, 0.3290};
+
+        /**
+         * The L*a*b* identity profile.
+         */
+        static final ColorProfile LAB = new ColorProfile(IccWriter.identity("L*a*b* identity", "Lab "));
+
+        /**
+         * The XYZ identity profile.
+         */
+        static final ColorProfile XYZ = new ColorProfile(IccWriter.identity("XYZ identity", "XYZ "));
 
         /**
          * The sRGB profile.

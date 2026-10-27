@@ -49,6 +49,22 @@ final class Linker {
     static final int ABSOLUTE = 3;
 
     /**
+     * The black preservation code of an ICC intent.
+     */
+    static final int NO_PRESERVATION = 0;
+
+    /**
+     * The black preservation code of the intents that keep black-only colors black only
+     * ({@code INTENT_PRESERVE_K_ONLY_*}).
+     */
+    static final int K_ONLY = 1;
+
+    /**
+     * The black preservation code of the intents that keep the black plane ({@code INTENT_PRESERVE_K_PLANE_*}).
+     */
+    static final int K_PLANE = 2;
+
+    /**
      * The version 4 perceptual reference medium black.
      */
     private static final double[] PERCEPTUAL_BLACK = {0.00336, 0.0034731, 0.00287};
@@ -61,8 +77,10 @@ final class Linker {
      * @param labVersion the version of the L*a*b* identity, {@code 2} or {@code 4}
      * @param intent the intent code, {@code 0..3}
      * @param bpc whether black point compensation applies
+     * @param preservation how black is preserved: {@link #NO_PRESERVATION}, {@link #K_ONLY} or {@link #K_PLANE}, the
+     * intent then being the ICC intent the black-preserving intent is based on
      */
-    record Node(IccReader profile, int labVersion, int intent, boolean bpc) {
+    record Node(IccReader profile, int labVersion, int intent, boolean bpc, int preservation) {
         /**
          * Creates a node for a profile.
          *
@@ -72,7 +90,20 @@ final class Linker {
          * @return the node
          */
         static Node of(IccReader profile, int intent, boolean bpc) {
-            return new Node(profile, 0, intent, bpc);
+            return new Node(profile, 0, intent, bpc, NO_PRESERVATION);
+        }
+
+        /**
+         * Creates a node for a profile with a black-preserving intent.
+         *
+         * @param profile the parsed ICC profile the node applies
+         * @param intent the ICC intent code the black-preserving intent is based on, {@code 0..2}
+         * @param bpc whether black point compensation applies
+         * @param preservation {@link #NO_PRESERVATION}, {@link #K_ONLY} or {@link #K_PLANE}
+         * @return the node
+         */
+        static Node of(IccReader profile, int intent, boolean bpc, int preservation) {
+            return new Node(profile, 0, intent, bpc, preservation);
         }
 
         /**
@@ -83,7 +114,18 @@ final class Linker {
          * @return the node
          */
         static Node lab(int version, int intent) {
-            return new Node(null, version, intent, false);
+            return new Node(null, version, intent, false, NO_PRESERVATION);
+        }
+
+        /**
+         * Returns this node with an ICC intent and a black point compensation flag in place of its own, black
+         * preservation dropped.
+         *
+         * @param bpc whether black point compensation applies
+         * @return the node
+         */
+        Node plain(boolean bpc) {
+            return new Node(profile, labVersion, intent, bpc, NO_PRESERVATION);
         }
 
         /**
@@ -131,7 +173,12 @@ final class Linker {
     }
 
     /**
-     * Links a chain of profiles.
+     * Links a chain of profiles ({@code _cmsLinkProfiles}).
+     *
+     * <p>Black point compensation never applies to the absolute colorimetric intent and always applies to the
+     * perceptual and saturation intents of version 4 profiles, except at nodes with a black-preserving intent. The
+     * black preservation of the first node decides how the chain links: with the ICC intents, or with
+     * {@link BlackPreservingIntents}.
      *
      * @param chain the nodes, at least one
      * @return the pipeline from the first node's device values (a named color index for a named color profile) to
@@ -145,12 +192,41 @@ final class Linker {
         var bpc = new boolean[nodes.length];
         for (var i = 0; i < nodes.length; i++) {
             bpc[i] = nodes[i].bpc();
+            if (nodes[i].preservation() != NO_PRESERVATION) {
+                continue;
+            }
             if (nodes[i].intent() == ABSOLUTE) {
                 bpc[i] = false;
             }
             if ((nodes[i].intent() == PERCEPTUAL || nodes[i].intent() == SATURATION) && nodes[i].isVersion4()) {
                 bpc[i] = true;
             }
+        }
+        var plain = new Node[nodes.length];
+        for (var i = 0; i < nodes.length; i++) {
+            plain[i] = nodes[i].plain(bpc[i]);
+        }
+        return switch (nodes[0].preservation()) {
+            case K_ONLY -> BlackPreservingIntents.kOnly(plain);
+            case K_PLANE -> BlackPreservingIntents.kPlane(plain);
+            default -> link(plain);
+        };
+    }
+
+    /**
+     * Links a chain of profiles with the ICC intents, without adjusting black point compensation
+     * ({@code DefaultICCintents}).
+     *
+     * @param nodes the nodes, at least one, each with the black point compensation that applies to it
+     * @return the pipeline, as {@link #link(List)} describes it
+     * @throws MediaException.Unsupported if consecutive color spaces do not match, or a named color profile does not
+     * start the chain
+     * @throws MediaException.Malformed if a profile lacks the tags its role needs
+     */
+    static Pipeline link(Node[] nodes) {
+        var bpc = new boolean[nodes.length];
+        for (var i = 0; i < nodes.length; i++) {
+            bpc[i] = nodes[i].bpc();
         }
         var lab = IccReader.signature("Lab ");
         var xyz = IccReader.signature("XYZ ");

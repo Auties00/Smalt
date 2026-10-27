@@ -890,7 +890,7 @@ them in each stream's `tags()` and `disposition()`.
 |---|---|---|---|
 | Resize, crop, orient, alpha weighting | `smalt-core` | `image.ops` | Pillow (resampling structure and filters); Mitchell and Netravali (1988) |
 | Color conversion and chroma upsampling | `smalt-core` | `image.ops` | libjpeg-turbo; ITU-T H.273 |
-| Color management: ICC v2/v4 profiles (matrix/TRC, `lut8`, `lut16`, `lutAtoB`/`lutBtoA`, floating-point `multiProcessElement` `D2Bn`/`B2Dn` tables with segmented curves, matrices and float lookup tables, gray, RGB, CMYK, n-color, L*a*b* and XYZ connection spaces), device link, abstract and named color (`ncl2`) profiles, chains of profiles, transforms with the four intents and black point compensation, built-in sRGB, Display P3, Adobe RGB, ProPhoto, BT.709, BT.2020 and gray profiles, CICP mapping of every H.273 primaries set (CIE XYZ included) and transfer (the logarithmic, BT.1361 and SMPTE ST 428-1 ones included), PQ and HLG profiles read from and written as ICC v4.4 `cicp`-tagged profiles, PQ/HLG to SDR tone mapping (BT.2390 EETF), SDR to PQ/HLG with the BT.2408 reference white, PQ to and from HLG through display light (BT.2390), HDR gamut conversion and tone mapping to a target's peak | `smalt-core` | `image.color` | Little CMS 2.17 (MIT); ITU-R BT.2100, BT.2390, BT.2408, SMPTE ST 2084, ARIB STD-B67, ICC.1:2022 |
+| Color management: ICC v2/v4 profiles (matrix/TRC, `lut8`, `lut16`, `lutAtoB`/`lutBtoA`, floating-point `multiProcessElement` `D2Bn`/`B2Dn` tables with segmented curves, matrices and float lookup tables, gray, RGB, CMYK, n-color, L*a*b* and XYZ connection spaces), device link, abstract and named color (`ncl2`) profiles, chains of profiles, transforms of 8-bit, 16-bit and 32-bit floating-point samples (unclamped through matrix/TRC profiles) with the four intents and black point compensation, the black-only and black-plane preserving CMYK intents, soft-proofing transforms with a gamut check alarm, profiles built from primaries and parametric or sampled curves, L*a*b* and XYZ identities, linearization, ink limiting and transform device links, L*a*b* adjustment (brightness, contrast, hue, saturation, white balance) abstract profiles, and description and copyright edits, built-in sRGB, Display P3, Adobe RGB, ProPhoto, BT.709, BT.2020 and gray profiles, CICP mapping of every H.273 primaries set (CIE XYZ included) and transfer (the logarithmic, BT.1361 and SMPTE ST 428-1 ones included), PQ and HLG profiles read from and written as ICC v4.4 `cicp`-tagged profiles, PQ/HLG to SDR tone mapping (BT.2390 EETF), SDR to PQ/HLG with the BT.2408 reference white, PQ to and from HLG through display light (BT.2390), HDR gamut conversion and tone mapping to a target's peak | `smalt-core` | `image.color` | Little CMS 2.17 (MIT); ITU-R BT.2100, BT.2390, BT.2408, SMPTE ST 2084, ARIB STD-B67, ICC.1:2022 |
 | HDR gain maps: ISO 21496-1 metadata (binary and Adobe `hdrgm` XMP), rendering of an image for a display headroom to 16-bit PQ or HLG with its content light level, computation of a gain map from two renditions (`GainMaps`) | `smalt-core` | `image.gainmap` | ISO 21496-1 as libavif and libultrahdr implement it, the Adobe gain map specification; libultrahdr (fraction search), libavif (gain range without outliers) |
 | Audio resampling (also with a variable ratio for clock drift, `Resampler.setRatio`), channel mixing (ITU-R BS.775 rules, AC-3 center, surround and LFE mix levels, ATSC A/52 Lo/Ro and Lt/Rt downmixes, a caller's matrix, `ChannelMixerOptions`; ambisonics up to order 14 in ACN order with SN3D, N3D or Furse-Malham scaling: exact conversion between orders, normalizations and channel orders, speakers encoded as plane waves, and rendering to loudspeakers by first-order cardioids, to stereo and mono as RFC 8486 section 4 does), FIFO | `smalt-core` | `audio.process` | textbook Kaiser-windowed sinc design; ATSC A/52 section 7.8; RFC 8486; Google Spatial Audio RFC (ambisonic conventions) |
 | Voice processing at 8, 16, 32 and 48 kHz with up to 8 capture and render channels (band splitting and three-band filter bank, multichannel AEC3): echo cancellation (AEC3 and the mobile echo canceller), noise suppression, high-pass filter, the legacy gain controller in its digital and analog modes, the analog gain controller with clipping prediction, and the AGC2 level controller (adaptive digital gain with the RNN voice activity detector, saturation protector, limiter, input volume controller) | `smalt-audio` | `audio.voice` | WebRTC audio processing module, bit-exact with its scalar build; PFFFT; RNNoise weights; Ooura FFT; musl and fdlibm math (royalty-free WebRTC grant in `PATENTS`) |
@@ -1534,12 +1534,11 @@ checks a FLAC source's MD5 signature on the way.
   uncompressed thumbnails are written as one strip, and a lossless JPEG transform moves uncompressed thumbnails
   of 8 or 16-bit gray, RGB or 4:4:4 YCbCr samples and removes the others.
 - Channel pictures: named-ink separations convert to RGB only through an ICC profile with one channel per ink
-  (`nCLR`), so a TIFF separation of named inks without one does not decode to RGB; floating-point samples have
-  no color transform (convert them with `ImageOps.toChannel16` first); only resampling, cropping, orientation and color
-  transforms keep them. JPEG 2000 keeps only CMYK images (and their alpha) as channel pictures, and its default
-  CMYK output is 8-bit and truncates as `opj_decompress` does. TIFF extra samples carry no meaning beyond
-  alpha, so depth or spot channels are written and read back as unspecified extras, and 64-bit floating-point
-  TIFF samples are narrowed to 32 bits.
+  (`nCLR`), so a TIFF separation of named inks without one does not decode to RGB; only resampling, cropping,
+  orientation and color transforms keep floating-point samples. JPEG 2000 keeps only CMYK images (and their alpha)
+  as channel pictures, and its default CMYK output is 8-bit and truncates as `opj_decompress` does. TIFF extra
+  samples carry no meaning beyond alpha, so depth or spot channels are written and read back as unspecified extras,
+  and 64-bit floating-point TIFF samples are narrowed to 32 bits.
 - The AAC encoder places height loudspeakers only through channel configurations 13 and 14: its program config
   elements carry no height extension. ADTS headers have no field for 960-sample frames, channel configuration 0
   (program config element) or configurations 11 to 14, so the ADTS and MPEG-TS muxers refuse such streams; MP4 and
@@ -1688,10 +1687,17 @@ checks a FLAC source's MD5 signature on the way.
   16 bytes rather than the 12 of ICC.1:2022: Smalt reads both and writes the standard one, which Little CMS
   2.17 does not see.
 - ICC chains: a named color profile can only start a chain, and its 8-bit transform reaches only the first 256
-  colors; a high-dynamic-range profile can only be converted to or from one other profile. Two cases differ from
-  Little CMS 2.17 on purpose: a device link read through its `D2B0` fallback (no `D2Bn` of the intent) has its XYZ
-  or L*a*b* ends scaled like any floating-point table, and the colors of a named color profile with an XYZ
-  connection space are read as XYZ, where Little CMS reads them as L*a*b*.
+  colors; a high-dynamic-range profile can only be converted to or from one other profile, and cannot take part in a
+  proofing transform. Cases that differ from Little CMS 2.17 on purpose: a device link read through its `D2B0`
+  fallback (no `D2Bn` of the intent) has its XYZ or L*a*b* ends scaled like any floating-point table; the colors of
+  a named color profile with an XYZ connection space are read as XYZ, where Little CMS reads them as L*a*b*; the
+  gamut check of a source with more channels than the proofing profile (CMYK proofed on RGB) spans every source
+  channel, where Little CMS reads only the leading ones; a black-preserving chain whose black curve, total area
+  coverage or colorimetric table cannot be computed converts with the ICC intent, where Little CMS fails or applies
+  an identity. Floating-point device samples are nominal `0..1` for ink spaces too (Little CMS reads them as
+  percents). Profiles Smalt writes are version 4.3 matrix/TRC, `lutAtoBType` or `ncl2` profiles; it writes no
+  `lutBtoAType`, `multiProcessElement` or version 2 tables, and a device link from a transform is always sampled
+  into a lookup table, never kept as curves and matrices.
 - Camera raw: Nikon HE and HE* files and PEF files
   without a Huffman table, the green-first MRW files of the DiMAGE A200, CRW streams that use a Huffman
   code no CC0 sample has shown (set 1, used by the EOS D30 and the PowerShot G1 and G5, lacks the most) and the
@@ -2007,6 +2013,23 @@ var link = ColorTransform.create(List.of(ColorProfile.parse(deviceLinkIcc)));   
 var spots = ColorProfile.parse(namedColorIcc);
 var index = spots.namedColor("185 C").orElseThrow().index();         // named colors convert by index
 ColorTransform.create(List.of(spots, ColorProfile.srgb())).transform(new short[]{(short) index}, 0, 1, rgb, 0, 3, 1);
+```
+
+Soft proofing shows on screen what a printer would make of an image, with out-of-gamut colors flagged; CMYK to CMYK
+conversions can keep black text on the black ink; floating-point samples convert without clipping; and profiles
+can be built and saved:
+
+```java
+var printer = ColorProfile.parse(fogra39Icc);
+var preview = ColorTransform.createProofing(ColorProfile.srgb(), printer, ColorProfile.displayP3(),
+        ColorTransformOptions.relativeColorimetric(), ProofingOptions.forGamutCheck());   // gray where out of gamut
+var reprint = ColorTransform.create(List.of(ColorProfile.parse(swopIcc), printer), ColorTransformOptions.builder()
+        .intent(RenderingIntent.RELATIVE_COLORIMETRIC).blackPreservation(BlackPreservation.K_PLANE).build());
+ColorTransform.create(ColorProfile.srgb(), ColorProfile.rec2020()).transform(hdrFloats, 0, 3, out, 0, 3, n);
+var custom = ColorProfile.rgb(red, green, blue, d65, ProfileCurve.parametric(3, 2.4, 1 / 1.055, 0.055 / 1.055,
+        1 / 12.92, 0.04045)).withDescription("My display");
+var warmer = ColorProfile.labAdjustment(LabAdjustments.builder().whiteBalance(6500, 5000).saturation(5).build());
+var bytes = ColorProfile.deviceLink(preview).toByteArray();                           // a device link to share
 ```
 
 `Images.encode` records the profile with the pixels, so a picture decoded without conversion keeps its colors

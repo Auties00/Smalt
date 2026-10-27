@@ -79,8 +79,38 @@ final class FloatInterpolator {
             case 1 -> linear(input[0], output);
             case 2 -> bilinear(input, output);
             case 3 -> tetrahedral(input, 0, 0, 0, output);
-            default -> evaluateN(input, 0, 0, domain.length, output);
+            default -> evaluateN(input, 0, 0, domain.length, output, null);
         }
+    }
+
+    /**
+     * Evaluates the table without allocating, with scratch space from {@link #scratch()}.
+     *
+     * @param input the coordinates, nominally {@code 0..1}, one per input
+     * @param output receives the samples, one per output
+     * @param scratch the scratch space of this interpolator, or {@code null} to allocate it
+     */
+    void evaluate(float[] input, float[] output, float[][] scratch) {
+        if (domain.length < 4) {
+            evaluate(input, output);
+        } else {
+            evaluateN(input, 0, 0, domain.length, output, scratch);
+        }
+    }
+
+    /**
+     * {@return scratch space for {@link #evaluate(float[], float[], float[][])}, two arrays of outputs per
+     * interpolation level, or {@code null} for fewer than four inputs}
+     */
+    float[][] scratch() {
+        if (domain.length < 4) {
+            return null;
+        }
+        var levels = new float[2 * (domain.length - 3)][];
+        for (var i = 0; i < levels.length; i++) {
+            levels[i] = new float[outputs];
+        }
+        return levels;
     }
 
     /**
@@ -217,8 +247,9 @@ final class FloatInterpolator {
      * @param base the table offset of the sub-table the coordinates address
      * @param count the number of coordinates, at least four
      * @param output receives the samples
+     * @param scratch the scratch space of {@link #scratch()}, or {@code null} to allocate per level
      */
-    private void evaluateN(float[] input, int first, int base, int count, float[] output) {
+    private void evaluateN(float[] input, int first, int base, int count, float[] output, float[][] scratch) {
         var dimension = domain.length - count;
         var clamped = ToneCurve.clamp(input[first]);
         var pk = clamped * domain[dimension];
@@ -226,14 +257,15 @@ final class FloatInterpolator {
         var rest = pk - (float) k0;
         var low = base + opta[count - 1] * k0;
         var high = low + (clamped >= 1.0f ? 0 : opta[count - 1]);
-        var tmp1 = new float[outputs];
-        var tmp2 = new float[outputs];
+        var level = domain.length - count;
+        var tmp1 = scratch == null ? new float[outputs] : scratch[2 * level];
+        var tmp2 = scratch == null ? new float[outputs] : scratch[2 * level + 1];
         if (count == 4) {
             tetrahedral(input, first + 1, dimension + 1, low, tmp1);
             tetrahedral(input, first + 1, dimension + 1, high, tmp2);
         } else {
-            evaluateN(input, first + 1, low, count - 1, tmp1);
-            evaluateN(input, first + 1, high, count - 1, tmp2);
+            evaluateN(input, first + 1, low, count - 1, tmp1, scratch);
+            evaluateN(input, first + 1, high, count - 1, tmp2, scratch);
         }
         for (var o = 0; o < outputs; o++) {
             var y0 = tmp1[o];

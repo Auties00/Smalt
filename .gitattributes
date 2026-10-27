@@ -17,3 +17,10 @@ image/src/test/resources/samples/** -text
 **/src/test/resources/fuzz-regressions/** -text -diff
 # Reference outputs stored as raw float32 samples are byte-exact.
 **/src/test/resources/**/*.f32 -text -diff
+# Little CMS reference outputs of the color tests are raw samples, byte-exact.
+core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.8 -text -diff
+core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.16 -text -diff
+core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.x16 -text -diff
+core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.g8 -text -diff
+core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.g16 -text -diff
+core/src/test/resources/com/github/auties00/smalt/image/color/proofing/*.kt -text -diff

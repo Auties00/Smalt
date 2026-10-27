@@ -920,7 +920,11 @@ tabulated tone curves and their inversion (cmsgamma.c), the 16-bit
 interpolation routines (cmsintrp.c), pipeline stages (cmslut.c), L*a*b*, XYZ
 and chromatic adaptation arithmetic (cmspcs.c, cmswtpnt.c, cmsmtrx.c), and the
 curve-joining, matrix-shaper, prelinearization and resampling optimizations
-with their white fix-up (cmsopt.c).
+with their white fix-up (cmsopt.c), the black-preserving intents (cmscnvrt.c),
+the proofing gamut check, the black tone curve and the total area coverage
+estimation (cmsgmt.c), the floating-point transform and its formatters
+(cmsxform.c, cmspack.c), reverse pipeline evaluation (cmslut.c), and the
+ink-limiting, BCHSW abstract and transform device link profiles (cmsvirt.c).
 
 Copyright:
   Copyright (c) 1998-2024 Marti Maria Saguer

@@ -15,17 +15,19 @@ public final class ColorTransformOptions {
     private static final double BT2408_WHITE = Hdr.REFERENCE_WHITE;
 
     private static final ColorTransformOptions DEFAULTS = new ColorTransformOptions(RenderingIntent.PERCEPTUAL, false,
-            ToneMapping.BT2390, BT2408_WHITE);
+            BlackPreservation.NONE, ToneMapping.BT2390, BT2408_WHITE);
 
     private final RenderingIntent intent;
     private final boolean blackPointCompensation;
+    private final BlackPreservation blackPreservation;
     private final ToneMapping toneMapping;
     private final double referenceWhite;
 
-    private ColorTransformOptions(RenderingIntent intent, boolean blackPointCompensation, ToneMapping toneMapping,
-                                  double referenceWhite) {
+    private ColorTransformOptions(RenderingIntent intent, boolean blackPointCompensation,
+                                  BlackPreservation blackPreservation, ToneMapping toneMapping, double referenceWhite) {
         this.intent = intent;
         this.blackPointCompensation = blackPointCompensation;
+        this.blackPreservation = blackPreservation;
         this.toneMapping = toneMapping;
         this.referenceWhite = referenceWhite;
     }
@@ -49,7 +51,8 @@ public final class ColorTransformOptions {
      * @return the options
      */
     public static ColorTransformOptions relativeColorimetric() {
-        return new ColorTransformOptions(RenderingIntent.RELATIVE_COLORIMETRIC, true, ToneMapping.BT2390, BT2408_WHITE);
+        return new ColorTransformOptions(RenderingIntent.RELATIVE_COLORIMETRIC, true, BlackPreservation.NONE,
+                ToneMapping.BT2390, BT2408_WHITE);
     }
 
     /**
@@ -58,7 +61,8 @@ public final class ColorTransformOptions {
      * @return the options
      */
     public static ColorTransformOptions absoluteColorimetric() {
-        return new ColorTransformOptions(RenderingIntent.ABSOLUTE_COLORIMETRIC, false, ToneMapping.BT2390, BT2408_WHITE);
+        return new ColorTransformOptions(RenderingIntent.ABSOLUTE_COLORIMETRIC, false, BlackPreservation.NONE,
+                ToneMapping.BT2390, BT2408_WHITE);
     }
 
     /**
@@ -93,10 +97,21 @@ public final class ColorTransformOptions {
      * the darkest color of the target, keeping shadow detail when the two differ. It never
      * applies with {@link RenderingIntent#ABSOLUTE_COLORIMETRIC}, and always applies with the
      * perceptual and saturation intents when the target is a version 4 profile, as the ICC
-     * specification requires.
+     * specification requires, unless {@link #blackPreservation()} preserves black.
      */
     public boolean blackPointCompensation() {
         return blackPointCompensation;
+    }
+
+    /**
+     * {@return how the black ink of a CMYK source is kept in a CMYK target; {@link BlackPreservation#NONE} by
+     * default}
+     *
+     * <p>A preserving mode needs the perceptual, relative colorimetric or saturation intent. With it, black point
+     * compensation applies only when {@link #blackPointCompensation()} requests it, also for version 4 profiles.
+     */
+    public BlackPreservation blackPreservation() {
+        return blackPreservation;
     }
 
     /**
@@ -124,19 +139,21 @@ public final class ColorTransformOptions {
         return other instanceof ColorTransformOptions that
                 && intent == that.intent
                 && blackPointCompensation == that.blackPointCompensation
+                && blackPreservation == that.blackPreservation
                 && toneMapping == that.toneMapping
                 && Double.compare(referenceWhite, that.referenceWhite) == 0;
     }
 
     @Override
     public int hashCode() {
-        return Objects.hash(intent, blackPointCompensation, toneMapping, referenceWhite);
+        return Objects.hash(intent, blackPointCompensation, blackPreservation, toneMapping, referenceWhite);
     }
 
     @Override
     public String toString() {
         return "ColorTransformOptions[intent=" + intent + ", blackPointCompensation=" + blackPointCompensation
-                + ", toneMapping=" + toneMapping + ", referenceWhite=" + referenceWhite + "]";
+                + ", blackPreservation=" + blackPreservation + ", toneMapping=" + toneMapping + ", referenceWhite="
+                + referenceWhite + "]";
     }
 
     /**
@@ -148,12 +165,14 @@ public final class ColorTransformOptions {
     public static final class Builder {
         private RenderingIntent intent;
         private boolean blackPointCompensation;
+        private BlackPreservation blackPreservation;
         private ToneMapping toneMapping;
         private double referenceWhite;
 
         private Builder(ColorTransformOptions options) {
             this.intent = options.intent;
             this.blackPointCompensation = options.blackPointCompensation;
+            this.blackPreservation = options.blackPreservation;
             this.toneMapping = options.toneMapping;
             this.referenceWhite = options.referenceWhite;
         }
@@ -178,6 +197,17 @@ public final class ColorTransformOptions {
          */
         public Builder blackPointCompensation(boolean blackPointCompensation) {
             this.blackPointCompensation = blackPointCompensation;
+            return this;
+        }
+
+        /**
+         * Sets how the black ink of a CMYK source is kept; see {@link ColorTransformOptions#blackPreservation()}.
+         *
+         * @param blackPreservation the value
+         * @return this builder
+         */
+        public Builder blackPreservation(BlackPreservation blackPreservation) {
+            this.blackPreservation = Objects.requireNonNull(blackPreservation, "blackPreservation");
             return this;
         }
 
@@ -208,11 +238,17 @@ public final class ColorTransformOptions {
          * Returns options holding the settings of this builder.
          *
          * @return the options
-         * @throws IllegalArgumentException if the reference white is NaN or outside 1..10000
+         * @throws IllegalArgumentException if the reference white is NaN or outside 1..10000, or black preservation
+         * is requested with the absolute colorimetric intent
          */
         public ColorTransformOptions build() {
             Checks.inRange("reference white", referenceWhite, 1.0, 10000.0);
-            return new ColorTransformOptions(intent, blackPointCompensation, toneMapping, referenceWhite);
+            if (blackPreservation != BlackPreservation.NONE && intent == RenderingIntent.ABSOLUTE_COLORIMETRIC) {
+                throw new IllegalArgumentException("black preservation needs the perceptual, relative colorimetric or"
+                        + " saturation intent");
+            }
+            return new ColorTransformOptions(intent, blackPointCompensation, blackPreservation, toneMapping,
+                    referenceWhite);
         }
     }
 }

@@ -60,7 +60,6 @@ final class ManagedColor {
      * @return an {@link RgbaPicture} for an 8-bit picture, an {@link Rgba16Picture} for a 16-bit one, or a
      * {@link ChannelPicture} of the transform's target color model for a channel picture or a CMYK target
      * @throws IllegalArgumentException if a profile of the transform does not fit the picture
-     * @throws MediaException.Unsupported if the picture has floating-point samples
      */
     static Picture convert(Picture picture, ColorTransform transform) {
         var in = transform.inputChannels();
@@ -168,9 +167,7 @@ final class ManagedColor {
         if (profile != null && !profile.isSrgb() && profile.channels() == layout.colorChannels()) {
             try {
                 var transform = ColorTransform.create(profile, ColorProfile.srgb(), options);
-                ChannelPicture integer = channels instanceof ChannelFloatPicture ? ChannelOps.toChannel16(channels)
-                        : channels;
-                var converted = convertChannels(integer, transform, ColorModel.RGB, true);
+                var converted = convertChannels(channels, transform, ColorModel.RGB, true);
                 return new DecodedImage(ChannelOps.toPacked(converted, sixteen), image.format(), image.orientation(),
                         image.sourceWidth(), image.sourceHeight(), Optional.empty(), image.exif(), image.xmp(),
                         Optional.of(ColorProfile.srgb()), image.density());
@@ -197,7 +194,6 @@ final class ManagedColor {
      * @return the picture of the target model, the extra channels copied
      * @throws IllegalArgumentException if the channel counts do not match or the target is not gray, RGB or
      * CMYK
-     * @throws MediaException.Unsupported if the picture has floating-point samples
      */
     private static ChannelPicture convertChannels(ChannelPicture picture, ColorTransform transform,
                                                   ColorModel model, boolean straight) {
@@ -210,12 +206,6 @@ final class ManagedColor {
         if (model == null) {
             throw new IllegalArgumentException("a picture converts only to RGB, gray and CMYK profiles, not "
                     + transform.target().colorSpace());
-        }
-        if (picture instanceof ChannelFloatPicture) {
-            // TODO: floating-point color transforms, which keep values outside 0..1
-            throw new MediaException.Unsupported("floating-point color transform",
-                    "color transforms of floating-point samples are not supported; convert with"
-                            + " ImageOps.toChannel16 first");
         }
         var base = switch (model) {
             case GRAY -> PixelLayout.GRAY;
@@ -246,6 +236,8 @@ final class ManagedColor {
             var straight8 = premultiplied && picture instanceof Channel8Picture ? new byte[width * inChannels] : null;
             var straight16 = premultiplied && picture instanceof Channel16Picture ? new short[width * inChannels]
                     : null;
+            var straightFloat = premultiplied && picture instanceof ChannelFloatPicture
+                    ? new float[width * inChannels] : null;
             for (var y = top; y < bottom; y++) {
                 var s = y * picture.stride();
                 var d = y * out.stride();
@@ -300,7 +292,31 @@ final class ManagedColor {
                             }
                         }
                     }
-                    case ChannelFloatPicture _ -> throw new AssertionError();
+                    case ChannelFloatPicture floating -> {
+                        var src = floating.pixels();
+                        var dst = ((ChannelFloatPicture) out).pixels();
+                        var input = src;
+                        var inputOffset = s;
+                        if (premultiplied) {
+                            input = straightRowFloat(src, s, width, inChannels, colors, alpha, straightFloat);
+                            inputOffset = 0;
+                        }
+                        transform.transform(input, inputOffset, inChannels, dst, d, outChannels, width);
+                        for (var x = 0; extras > 0 && x < width; x++) {
+                            System.arraycopy(src, s + x * inChannels + colors, dst, d + x * outChannels + outColors,
+                                    extras);
+                        }
+                        if (multiply) {
+                            var outAlpha = outColors + alpha - colors;
+                            for (var x = 0; x < width; x++) {
+                                var at = d + x * outChannels;
+                                var a = dst[at + outAlpha];
+                                for (var c = 0; c < outColors; c++) {
+                                    dst[at + c] *= a;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         });
@@ -350,6 +366,31 @@ final class ManagedColor {
             var a = row[at + alpha] & 0xFFFF;
             for (var c = 0; c < colors; c++) {
                 row[at + c] = (short) ChannelOps.unpremultiply(row[at + c] & 0xFFFF, a, 65535);
+            }
+        }
+        return row;
+    }
+
+    /**
+     * Copies one row of floating-point pixels with their color channels divided by their alpha; colors of a pixel
+     * whose alpha is not positive become zero.
+     *
+     * @param src the samples
+     * @param offset the index of the row
+     * @param width the pixels in the row
+     * @param channels the samples per pixel
+     * @param colors the leading color channels
+     * @param alpha the index of the alpha channel
+     * @param row the destination, {@code width * channels} samples
+     * @return {@code row}
+     */
+    private static float[] straightRowFloat(float[] src, int offset, int width, int channels, int colors, int alpha,
+                                            float[] row) {
+        System.arraycopy(src, offset, row, 0, width * channels);
+        for (var at = 0; at < width * channels; at += channels) {
+            var a = row[at + alpha];
+            for (var c = 0; c < colors; c++) {
+                row[at + c] = a > 0 ? row[at + c] / a : 0;
             }
         }
         return row;

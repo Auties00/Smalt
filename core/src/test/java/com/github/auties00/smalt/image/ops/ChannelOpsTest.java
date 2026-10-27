@@ -572,7 +572,7 @@ class ChannelOpsTest {
         }
 
         @Test
-        @DisplayName("produce gray channels from a gray target and reject mismatched or floating-point inputs")
+        @DisplayName("produce gray channels from a gray target, reject mismatched inputs and keep floating point")
         void targets() {
             var random = new SplittableRandom(41);
             var picture = random8(random, 4, 4, PixelLayout.RGBA);
@@ -580,8 +580,20 @@ class ChannelOpsTest {
             assertEquals(PixelLayout.GRAY_ALPHA, gray.layout());
             assertThrows(IllegalArgumentException.class, () -> ImageOps.convertColor(random8(random, 2, 2,
                     PixelLayout.CMYK), ColorProfile.srgb(), ColorProfile.displayP3()));
-            assertThrows(MediaException.Unsupported.class, () -> ImageOps.convertColor(randomFloat(random, 2, 2,
-                    PixelLayout.RGB), ColorProfile.displayP3(), ColorProfile.srgb()));
+            var floating = randomFloat(random, 3, 2, PixelLayout.RGB);
+            var converted = assertInstanceOf(ChannelFloatPicture.class, ImageOps.convertColor(floating,
+                    ColorProfile.displayP3(), ColorProfile.srgb()));
+            assertEquals(PixelLayout.RGB, converted.layout());
+            var transform = ColorTransform.create(ColorProfile.displayP3(), ColorProfile.srgb());
+            var expected = new float[3];
+            for (var y = 0; y < 2; y++) {
+                for (var x = 0; x < 3; x++) {
+                    transform.transform(floating.pixels(), y * floating.stride() + x * 3, 3, expected, 0, 3, 1);
+                    for (var c = 0; c < 3; c++) {
+                        assertEquals(expected[c], converted.pixels()[y * converted.stride() + x * 3 + c]);
+                    }
+                }
+            }
         }
 
         @Test
@@ -620,6 +632,29 @@ class ChannelOpsTest {
                     assertEquals((value * i + 127) / 255, converted.pixels()[i * 4 + c] & 0xFF, "pixel " + i);
                     // the sRGB conversion of a decoded image keeps the straight colors, without multiplying again
                     assertEquals(value, srgb.pixels()[i * 4 + c] & 0xFF, "pixel " + i);
+                }
+            }
+        }
+
+        @Test
+        @DisplayName("convert a decoded floating-point picture to 16-bit sRGB through its profile in floating point")
+        void decodedFloatToSrgb() {
+            var random = new SplittableRandom(43);
+            var picture = randomFloat(random, 5, 3, PixelLayout.RGB);
+            var decoded = new DecodedImage(picture, ImageFormat.TIFF, Orientation.NORMAL, 5, 3,
+                    Optional.of(ColorProfile.displayP3().toByteArray()), Optional.empty());
+            var converted = ImageOps.toSrgb(decoded);
+            assertEquals(ColorProfile.srgb(), converted.colorProfile().orElseThrow());
+            var srgb = assertInstanceOf(Rgba16Picture.class, converted.picture());
+            var transform = ColorTransform.create(ColorProfile.displayP3(), ColorProfile.srgb());
+            var expected = new float[3];
+            for (var y = 0; y < 3; y++) {
+                for (var x = 0; x < 5; x++) {
+                    transform.transform(picture.pixels(), y * picture.stride() + x * 3, 3, expected, 0, 3, 1);
+                    for (var c = 0; c < 3; c++) {
+                        assertEquals(ChannelOps.quantize16(expected[c]),
+                                srgb.pixels()[y * srgb.stride() + x * 4 + c] & 0xFFFF, "pixel " + x + "," + y);
+                    }
                 }
             }
         }

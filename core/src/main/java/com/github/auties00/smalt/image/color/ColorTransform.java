@@ -7,17 +7,22 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.StringJoiner;
+import java.util.function.Supplier;
 
 /**
  * Converts pixel values from one {@link ColorProfile} to another, or through a chain of profiles.
  *
  * <p>A transform links the source profile, used in the input direction, to the target profile,
  * used in the output direction, through the profile connection space, with the rendering intent,
- * black point compensation and tone mapping of its {@link ColorTransformOptions}. It converts
- * interleaved samples of 8 or 16 bits ({@link #transform(byte[], int, int, byte[], int, int, int)},
- * {@link #transform(short[], int, int, short[], int, int, int)}); {@code ImageOps.convertColor}
- * applies it to pictures.
+ * black point compensation, black preservation and tone mapping of its {@link ColorTransformOptions}. It
+ * converts interleaved samples of 8 or 16 bits ({@link #transform(byte[], int, int, byte[], int, int, int)},
+ * {@link #transform(short[], int, int, short[], int, int, int)}) and 32-bit floating-point samples
+ * ({@link #transform(float[], int, int, float[], int, int, int)}); {@code ImageOps.convertColor} applies it to
+ * pictures. A soft-proofing transform ({@link #createProofing(ColorProfile, ColorProfile, ColorProfile,
+ * ColorTransformOptions, ProofingOptions)}) shows on the target how a proofing device reproduces the source, and
+ * can mark the colors that device cannot reproduce.
  *
  * <p>A chain ({@link #create(List, ColorTransformOptions)}) applies its profiles in order, with the
  * options' intent and black point compensation at every link. The first profile is used in the input
@@ -37,7 +42,9 @@ import java.util.StringJoiner;
  * RGB conversions use the same 1.14 fixed-point tables and give the same values, and the other
  * conversions are sampled into the same lookup tables. 16-bit matrix/TRC conversions are computed
  * directly in floating point, which is more accurate than Little CMS's 16-bit lookup tables, and 16-bit RGB to RGB
- * lookup-table conversions use prelinearization curves when they make the table more accurate.
+ * lookup-table conversions use prelinearization curves when they make the table more accurate. Floating-point
+ * conversions evaluate the linked profiles on every pixel, as Little CMS's floating-point transforms do, without
+ * lookup tables of their own.
  * Floating-point {@code D2Bn} and {@code B2Dn} tables take precedence over the {@code A2Bn} and
  * {@code B2An} tables of the same intent.
  *
@@ -74,10 +81,11 @@ import java.util.StringJoiner;
  * thread-safe.
  *
  * @implNote This implementation ports the transform logic of Little CMS 2.17: profile reading ({@code cmsio1.c}),
- * intent linking, device links, abstract profiles and black point compensation ({@code cmscnvrt.c},
- * {@code cmssamp.c}), tone curves and segmented curves ({@code cmsgamma.c}), interpolation ({@code cmsintrp.c}),
- * named colors ({@code cmsnamed.c}) and the matrix-shaper, curve-joining and resampling optimizations, including the
- * prelinearization of 8-bit RGB lookup-table transforms ({@code cmsopt.c}).
+ * intent linking, device links, abstract profiles, black point compensation and the black-preserving intents
+ * ({@code cmscnvrt.c}, {@code cmssamp.c}), proofing transforms and the floating-point transform ({@code cmsxform.c}),
+ * the gamut check ({@code cmsgmt.c}), tone curves and segmented curves ({@code cmsgamma.c}), interpolation
+ * ({@code cmsintrp.c}), named colors ({@code cmsnamed.c}) and the matrix-shaper, curve-joining and resampling
+ * optimizations, including the prelinearization of 8-bit RGB lookup-table transforms ({@code cmsopt.c}).
  */
 public final class ColorTransform {
     /**
@@ -116,9 +124,29 @@ public final class ColorTransform {
     private final ColorProfile target;
 
     /**
+     * The proofing profile, or {@code null} for a transform that is not a proofing one.
+     */
+    private final ColorProfile proof;
+
+    /**
      * The options.
      */
     private final ColorTransformOptions options;
+
+    /**
+     * The proofing options, or {@code null} for a transform that is not a proofing one.
+     */
+    private final ProofingOptions proofing;
+
+    /**
+     * The intent of the last link, which decides whether lookup tables keep the device white.
+     */
+    private final RenderingIntent lastIntent;
+
+    /**
+     * The source node of a proofing chain whose colors are checked against the proofing gamut, or {@code null}.
+     */
+    private final Linker.Node gamutSource;
 
     /**
      * The linked and simplified pipeline, or {@code null} when a profile is high-dynamic-range.
@@ -169,25 +197,44 @@ public final class ColorTransform {
     private volatile ColorEngine engine16;
 
     /**
+     * The floating-point engine, built on first use.
+     */
+    private volatile FloatEngine engineFloat;
+
+    /**
+     * The gamut check of a proofing transform that asks for one, built on first use.
+     */
+    private volatile GamutCheck gamut;
+
+    /**
      * Guards the construction of the engines.
      */
     private final Object lock = new Object();
 
     /**
-     * Links a chain of profiles.
+     * Links a chain of profiles, or the proofing chain of a source and a target.
      *
-     * @param profiles the profiles, from one to {@value #MAX_PROFILES}
+     * @param profiles the profiles, from one to {@value #MAX_PROFILES}; the source and the target of a proofing
+     * transform
+     * @param proof the proofing profile, or {@code null}
      * @param options the rendering intent, black point compensation and tone mapping
-     * @throws IllegalArgumentException if a high-dynamic-range profile is in a chain that is not a pair
+     * @param proofing the proofing options, or {@code null} when {@code proof} is
+     * @throws IllegalArgumentException if a high-dynamic-range profile is in a chain that is not a pair, or in a
+     * proofing transform
      */
-    private ColorTransform(List<ColorProfile> profiles, ColorTransformOptions options) {
+    private ColorTransform(List<ColorProfile> profiles, ColorProfile proof, ColorTransformOptions options,
+                           ProofingOptions proofing) {
         this.profiles = profiles;
         this.source = profiles.getFirst();
         this.target = profiles.getLast();
+        this.proof = proof;
         this.options = options;
+        this.proofing = proofing;
+        this.lastIntent = proofing != null ? proofing.intent() : options.intent();
         var hdr = source.hdr();
         var into = target.hdr();
-        if (profiles.size() == 2 && (hdr != null || into != null)) {
+        if (proof == null && profiles.size() == 2 && (hdr != null || into != null)) {
+            this.gamutSource = null;
             this.named = false;
             this.pipeline = null;
             if (hdr != null && into != null) {
@@ -218,16 +265,33 @@ public final class ColorTransform {
         this.inner = null;
         var intent = options.intent().code();
         var bpc = options.blackPointCompensation();
-        var nodes = new ArrayList<Linker.Node>(profiles.size());
-        var parsed = new ArrayList<IccReader>(profiles.size());
-        for (var profile : profiles) {
+        var preservation = switch (options.blackPreservation()) {
+            case NONE -> Linker.NO_PRESERVATION;
+            case K_ONLY -> Linker.K_ONLY;
+            case K_PLANE -> Linker.K_PLANE;
+        };
+        var chain = proof == null ? profiles : List.of(source, proof, proof, target);
+        var nodes = new ArrayList<Linker.Node>(chain.size());
+        var parsed = new ArrayList<IccReader>(chain.size());
+        for (var profile : chain) {
             if (profile.hdr() != null) {
-                throw new IllegalArgumentException("a high-dynamic-range profile can only be converted to or from one "
-                        + "other profile");
+                throw new IllegalArgumentException(proof == null ? "a high-dynamic-range profile can only be converted"
+                        + " to or from one other profile" : "a proofing transform cannot hold a high-dynamic-range"
+                        + " profile");
             }
-            nodes.add(Linker.Node.of(profile.icc(), intent, bpc));
             parsed.add(profile.icc());
         }
+        if (proof == null) {
+            for (var profile : chain) {
+                nodes.add(Linker.Node.of(profile.icc(), intent, bpc, preservation));
+            }
+        } else {
+            nodes.add(Linker.Node.of(source.icc(), intent, bpc, preservation));
+            nodes.add(Linker.Node.of(proof.icc(), intent, bpc, preservation));
+            nodes.add(Linker.Node.of(proof.icc(), Linker.RELATIVE, false));
+            nodes.add(Linker.Node.of(target.icc(), proofing.intent().code(), false));
+        }
+        this.gamutSource = proofing != null && proofing.gamutCheck() ? nodes.getFirst() : null;
         var linked = Linker.link(nodes);
         this.named = source.icc().deviceClass == IccReader.signature("nmcl");
         if (!named) {
@@ -343,14 +407,83 @@ public final class ColorTransform {
         if (chain.isEmpty() || chain.size() > MAX_PROFILES) {
             throw new IllegalArgumentException("a chain needs 1 to " + MAX_PROFILES + " profiles, got " + chain.size());
         }
-        var key = List.<Object>of(chain, options);
+        return cached(List.of(chain, options), () -> new ColorTransform(chain, null, options, null));
+    }
+
+    /**
+     * Creates a soft-proofing transform with the {@linkplain ColorTransformOptions#defaults() default options} and the
+     * {@linkplain ProofingOptions#defaults() default proofing options}.
+     *
+     * @param source the profile the input values are in
+     * @param proof the profile of the device to simulate
+     * @param target the profile to show the simulation in
+     * @return the transform
+     * @throws IllegalArgumentException if a profile is high-dynamic-range
+     * @throws MediaException.Malformed if a profile lacks a tag its role needs or a tag is damaged
+     * @throws MediaException.Unsupported if a profile is a device link, abstract or named color profile
+     * @see #createProofing(ColorProfile, ColorProfile, ColorProfile, ColorTransformOptions, ProofingOptions)
+     */
+    public static ColorTransform createProofing(ColorProfile source, ColorProfile proof, ColorProfile target) {
+        return createProofing(source, proof, target, ColorTransformOptions.defaults(), ProofingOptions.defaults());
+    }
+
+    /**
+     * Creates a soft-proofing transform: one that shows on the target how the proofing device would reproduce the
+     * source.
+     *
+     * <p>The transform is the chain of the source, the proofing profile in the output direction, the proofing
+     * profile in the input direction and the target. The source converts to the proofing device with the intent,
+     * black point compensation and black preservation of {@code options}, the proofing device's values are read back
+     * with the relative colorimetric intent, and they convert to the target with {@link ProofingOptions#intent()},
+     * without black point compensation. With {@link ProofingOptions#gamutCheck()}, source colors the proofing device
+     * cannot reproduce get {@link ProofingOptions#alarm()} instead. The profiles are input, display, output or color
+     * space profiles; none may be high-dynamic-range.
+     *
+     * @apiNote For a screen preview of print, use a printer profile as {@code proof} and the display profile as
+     * {@code target}; {@link RenderingIntent#ABSOLUTE_COLORIMETRIC} as the proofing intent also simulates the color of
+     * the paper.
+     * @param source the profile the input values are in
+     * @param proof the profile of the device to simulate
+     * @param target the profile to show the simulation in
+     * @param options the rendering intent, black point compensation and black preservation from the source to the
+     * proofing device
+     * @param proofing the proofing intent and the gamut check
+     * @return the transform
+     * @throws IllegalArgumentException if a profile is high-dynamic-range
+     * @throws MediaException.Malformed if a profile lacks a tag its role needs or a tag is damaged
+     * @throws MediaException.Unsupported if a profile is a device link, abstract or named color profile, or the
+     * profiles do not connect
+     */
+    public static ColorTransform createProofing(ColorProfile source, ColorProfile proof, ColorProfile target,
+                                                ColorTransformOptions options, ProofingOptions proofing) {
+        Objects.requireNonNull(source, "source");
+        Objects.requireNonNull(proof, "proof");
+        Objects.requireNonNull(target, "target");
+        Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(proofing, "proofing");
+        requireDeviceProfile(source);
+        requireDeviceProfile(proof);
+        requireDeviceProfile(target);
+        var pair = List.of(source, target);
+        return cached(List.of(pair, proof, options, proofing), () -> new ColorTransform(pair, proof, options,
+                proofing));
+    }
+
+    /**
+     * Returns the cached transform of a key, creating and caching it when there is none.
+     *
+     * @param key the arguments the transform was created from
+     * @param factory creates the transform
+     * @return the transform
+     */
+    private static ColorTransform cached(List<Object> key, Supplier<ColorTransform> factory) {
         synchronized (CACHE) {
             var cached = CACHE.get(key);
             if (cached != null) {
                 return cached;
             }
         }
-        var transform = new ColorTransform(chain, options);
+        var transform = factory.get();
         synchronized (CACHE) {
             var cached = CACHE.putIfAbsent(key, transform);
             return cached != null ? cached : transform;
@@ -376,8 +509,8 @@ public final class ColorTransform {
     }
 
     /**
-     * {@return the profiles of the chain in the order they apply, the source first and the target last; an
-     * unmodifiable list}
+     * {@return the profiles of the chain in the order they apply, the source first and the target last; for a
+     * proofing transform, the source and the target; an unmodifiable list}
      */
     public List<ColorProfile> profiles() {
         return profiles;
@@ -388,6 +521,21 @@ public final class ColorTransform {
      */
     public ColorTransformOptions options() {
         return options;
+    }
+
+    /**
+     * {@return the profile of the simulated device of a proofing transform, or an empty optional for another
+     * transform}
+     */
+    public Optional<ColorProfile> proof() {
+        return Optional.ofNullable(proof);
+    }
+
+    /**
+     * {@return the proofing options of a proofing transform, or an empty optional for another transform}
+     */
+    public Optional<ProofingOptions> proofingOptions() {
+        return Optional.ofNullable(proofing);
     }
 
     /**
@@ -469,6 +617,42 @@ public final class ColorTransform {
     }
 
     /**
+     * Converts interleaved floating-point pixels.
+     *
+     * <p>The layout is that of {@link #transform(byte[], int, int, byte[], int, int, int)}. Device values are
+     * nominally {@code 0.0} to {@code 1.0} for every color space, CMYK and other ink spaces included ({@code 1.0} is
+     * full ink); L*a*b* values are L* {@code 0} to {@code 100} and a* and b* around {@code -128} to {@code 127}; XYZ
+     * values are D50-relative with the white at Y {@code 1.0}. The transform is evaluated without lookup tables, so
+     * values outside the nominal ranges are kept by matrix/TRC profiles with parametric curves (brighter than white,
+     * out of gamut) and clamped to {@code 0..1} by lookup tables and tabulated curves; NaN gives unspecified
+     * values. When the source is a named color profile, the one source sample is the color index, rounded to the
+     * nearest integer; a negative or NaN index, or one past the last color, converts as if the color had all-zero
+     * connection space values or device coordinates. A high-dynamic-range source reads PQ or HLG signals, clamped to
+     * {@code 0..1}, and a standard-dynamic-range target then receives the tone-mapped color without clipping; a
+     * high-dynamic-range target receives signals in {@code 0..1}.
+     *
+     * @param src the source samples
+     * @param srcOffset the index of the first source pixel
+     * @param srcPixelStride the samples between consecutive source pixels, at least {@link #inputChannels()}
+     * @param dst the destination samples
+     * @param dstOffset the index of the first destination pixel
+     * @param dstPixelStride the samples between consecutive destination pixels, at least {@link #outputChannels()}
+     * @param pixels the number of pixels
+     * @throws IllegalArgumentException if a stride is too small or {@code pixels} is negative
+     * @throws IndexOutOfBoundsException if the pixels do not fit in the arrays
+     */
+    public void transform(float[] src, int srcOffset, int srcPixelStride, float[] dst, int dstOffset,
+                          int dstPixelStride, int pixels) {
+        Objects.requireNonNull(src, "src");
+        Objects.requireNonNull(dst, "dst");
+        checkBounds(src.length, srcOffset, srcPixelStride, inputs, dst.length, dstOffset, dstPixelStride, outputs,
+                pixels);
+        if (pixels > 0) {
+            engineFloat().apply(src, srcOffset, srcPixelStride, dst, dstOffset, dstPixelStride, pixels);
+        }
+    }
+
+    /**
      * Checks the layout of a conversion.
      *
      * @param srcLength the source array length
@@ -500,6 +684,34 @@ public final class ColorTransform {
     }
 
     /**
+     * {@return the color space signature of the source samples}
+     */
+    int entrySpace() {
+        return entrySpace;
+    }
+
+    /**
+     * {@return the color space signature of the target samples}
+     */
+    int exitSpace() {
+        return exitSpace;
+    }
+
+    /**
+     * {@return the intent of the last link: the proofing intent of a proofing transform, else the options' intent}
+     */
+    RenderingIntent lastIntent() {
+        return lastIntent;
+    }
+
+    /**
+     * {@return whether the source is a named color profile, whose samples are color indexes}
+     */
+    boolean isNamed() {
+        return named;
+    }
+
+    /**
      * {@return the linked and simplified pipeline, unsimplified when the source is a named color profile, or
      * {@code null} for a transform with a high-dynamic-range profile}
      */
@@ -518,7 +730,7 @@ public final class ColorTransform {
             synchronized (lock) {
                 engine = engine8;
                 if (engine == null) {
-                    engine = pipeline == null ? hdrEngine() : build8(pipeline);
+                    engine = pipeline == null ? hdrEngine() : withGamutCheck(build8(pipeline));
                     engine8 = engine;
                 }
             }
@@ -537,12 +749,77 @@ public final class ColorTransform {
             synchronized (lock) {
                 engine = engine16;
                 if (engine == null) {
-                    engine = pipeline == null ? hdrEngine() : build16(pipeline);
+                    engine = pipeline == null ? hdrEngine() : withGamutCheck(build16(pipeline));
                     engine16 = engine;
                 }
             }
         }
         return engine;
+    }
+
+    /**
+     * Returns the floating-point engine, building it on first use.
+     *
+     * @return the engine
+     */
+    FloatEngine engineFloat() {
+        var engine = engineFloat;
+        if (engine == null) {
+            synchronized (lock) {
+                engine = engineFloat;
+                if (engine == null) {
+                    if (pipeline == null) {
+                        engine = hdrFloatEngine();
+                    } else {
+                        var check = gamutCheck();
+                        engine = new PipelineFloatEngine(pipeline, named ? PipelineFloatEngine.INDEX
+                                : PipelineFloatEngine.encoding(entrySpace), PipelineFloatEngine.encoding(exitSpace),
+                                check, check == null ? null : proofing.alarm(outputs));
+                    }
+                    engineFloat = engine;
+                }
+            }
+        }
+        return engine;
+    }
+
+    /**
+     * Returns the gamut check of a proofing transform that asks for one, building it on first use; called with
+     * {@link #lock} held.
+     *
+     * @return the gamut check, or {@code null}
+     */
+    private GamutCheck gamutCheck() {
+        if (gamutSource == null) {
+            return null;
+        }
+        var check = gamut;
+        if (check == null) {
+            check = GamutCheck.of(gamutSource, proof.icc());
+            gamut = check;
+        }
+        return check;
+    }
+
+    /**
+     * {@return the gamut check of a proofing transform that asks for one, building it on first use, or {@code null}}
+     */
+    GamutCheck proofingGamutCheck() {
+        synchronized (lock) {
+            return gamutCheck();
+        }
+    }
+
+    /**
+     * Wraps an engine with the gamut check of a proofing transform that asks for one; called with {@link #lock}
+     * held.
+     *
+     * @param engine the engine of the transform
+     * @return the engine with the check, or {@code engine} itself without one
+     */
+    private ColorEngine withGamutCheck(ColorEngine engine) {
+        var check = gamutCheck();
+        return check == null ? engine : new GamutAlarmEngine(engine, check, inputs, outputs, proofing.alarm(outputs));
     }
 
     /**
@@ -565,6 +842,24 @@ public final class ColorTransform {
             return HdrTargetEngine.fromStandard(inner.engine16(), inputs, inner.named, into, options);
         }
         return new HdrEngine(hdr, inner.engine16(), outputs, options);
+    }
+
+    /**
+     * Builds the floating-point engine of a transform with a high-dynamic-range profile.
+     *
+     * @return the engine
+     */
+    private FloatEngine hdrFloatEngine() {
+        var hdr = source.hdr();
+        var into = target.hdr();
+        if (into != null) {
+            if (hdr != null) {
+                return HdrTargetEngine.isIdentity(hdr, into) ? new IdentityEngine(3)
+                        : HdrTargetEngine.fromHigh(hdr, into, options);
+            }
+            return HdrTargetEngine.fromStandard(inner.engineFloat(), inputs, into, options);
+        }
+        return new HdrEngine(hdr, inner.engineFloat(), outputs, options);
     }
 
     /**
@@ -593,7 +888,7 @@ public final class ColorTransform {
         }
         var rgb = IccReader.signature("RGB ");
         if (entrySpace == rgb && exitSpace == rgb) {
-            var prelinearized = PrelinEngine.of(pipeline, options.intent() != RenderingIntent.ABSOLUTE_COLORIMETRIC);
+            var prelinearized = PrelinEngine.of(pipeline, lastIntent != RenderingIntent.ABSOLUTE_COLORIMETRIC);
             if (prelinearized != null) {
                 return prelinearized;
             }
@@ -625,7 +920,7 @@ public final class ColorTransform {
         }
         var rgb = IccReader.signature("RGB ");
         if (entrySpace == rgb && exitSpace == rgb) {
-            var prelinearized = PrelinEngine.of(pipeline, options.intent() != RenderingIntent.ABSOLUTE_COLORIMETRIC);
+            var prelinearized = PrelinEngine.of(pipeline, lastIntent != RenderingIntent.ABSOLUTE_COLORIMETRIC);
             if (prelinearized != null) {
                 var plain = clut(pipeline);
                 var probes = probes();
@@ -698,7 +993,7 @@ public final class ColorTransform {
      * @return the engine
      */
     private ColorEngine clut(Pipeline pipeline) {
-        var fixWhite = options.intent() != RenderingIntent.ABSOLUTE_COLORIMETRIC;
+        var fixWhite = lastIntent != RenderingIntent.ABSOLUTE_COLORIMETRIC;
         return new ClutEngine(pipeline, entrySpace, exitSpace, fixWhite);
     }
 
@@ -776,6 +1071,9 @@ public final class ColorTransform {
         var chain = new StringJoiner(" -> ");
         for (var profile : profiles) {
             chain.add(profile.toString());
+        }
+        if (proof != null) {
+            return "ColorTransform[" + chain + ", proof " + proof + ", " + options + ", " + proofing + "]";
         }
         return "ColorTransform[" + chain + ", " + options + "]";
     }

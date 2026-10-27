@@ -270,6 +270,82 @@ final class ToneCurve {
      * segment has no samples
      */
     static ToneCurve segmented(Segment[] segments) {
+        return segmented(segments, true);
+    }
+
+    /**
+     * Creates the curve that interpolates evenly spaced samples over {@code 0..1} in single precision and holds the
+     * first and last sample outside that domain ({@code cmsBuildTabulatedToneCurveFloat}).
+     *
+     * @param values the samples, at least one; copied
+     * @return the curve, segmented
+     */
+    static ToneCurve tabulatedFloat(float[] values) {
+        var first = new Segment(MINUS_INFINITY, 0, 6, new double[]{1, 0, 0, values[0], 0}, null);
+        var middle = new Segment(0, 1, 0, null, values.clone());
+        var last = new Segment(1, PLUS_INFINITY, 6, new double[]{1, 0, 0, values[values.length - 1], 0}, null);
+        return segmented(new Segment[]{first, middle, last}, false);
+    }
+
+    /**
+     * Returns the curve that applies this curve and then the inverse of another, sampled at evenly spaced points
+     * ({@code cmsJoinToneCurve}).
+     *
+     * @param second the curve whose inverse applies second
+     * @param points the number of samples of the result and of the inverse, at least two
+     * @return the joined curve, segmented
+     */
+    ToneCurve join(ToneCurve second, int points) {
+        var reversed = second.reverse(points);
+        var samples = new float[points];
+        for (var i = 0; i < points; i++) {
+            var t = (float) i / (float) (points - 1);
+            samples[i] = reversed.evaluate(evaluate(t));
+        }
+        return tabulatedFloat(samples);
+    }
+
+    /**
+     * Returns whether the 16-bit samples of the curve are monotonic, allowing ripples of up to 2
+     * ({@code cmsIsToneCurveMonotonic}).
+     *
+     * @return {@code true} for a monotonic curve
+     */
+    boolean isMonotonic() {
+        var n = table.length;
+        if (n < 2) {
+            return true;
+        }
+        if (isDescending()) {
+            var last = table[0];
+            for (var i = 1; i < n; i++) {
+                if (table[i] - last > 2) {
+                    return false;
+                }
+                last = table[i];
+            }
+        } else {
+            var last = table[n - 1];
+            for (var i = n - 2; i >= 0; --i) {
+                if (table[i] - last > 2) {
+                    return false;
+                }
+                last = table[i];
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Creates a segmented curve.
+     *
+     * @param segments the segments, as {@link #segmented(Segment[])} takes them
+     * @param implicitFirst whether the first sample of every sampled segment is the value of the curve at the start
+     * of that segment, read as zero while the 16-bit table is sampled ({@code ReadSegmentedCurve}), rather than the
+     * sample given
+     * @return the curve
+     */
+    private static ToneCurve segmented(Segment[] segments, boolean implicitFirst) {
         if (segments.length == 0) {
             throw new IllegalArgumentException("a segmented curve needs a segment");
         }
@@ -281,7 +357,9 @@ final class ToneCurve {
                     throw new IllegalArgumentException("sampled segment without samples");
                 }
                 var samples = segment.samples().clone();
-                samples[0] = 0;
+                if (implicitFirst) {
+                    samples[0] = 0;
+                }
                 copy[i] = new Segment(segment.x0(), segment.x1(), 0, null, samples);
             } else {
                 if (segment.type() < 6 || segment.type() > 8 || segment.parameters() == null
@@ -298,7 +376,7 @@ final class ToneCurve {
             table[i] = ColorMath.saturateWord(value * 65535.0);
         }
         for (var segment : copy) {
-            if (segment.type() == 0) {
+            if (implicitFirst && segment.type() == 0) {
                 segment.samples()[0] = (float) evaluateSegments(copy, index, segment.x0());
             }
         }
@@ -494,15 +572,26 @@ final class ToneCurve {
      * @return the inverse curve
      */
     ToneCurve reverse() {
+        return reverse(REVERSED_SAMPLES);
+    }
+
+    /**
+     * Returns the inverse of this curve, as {@link #reverse()} describes, sampled into a given number of samples when
+     * it is not parametric ({@code cmsReverseToneCurveEx}).
+     *
+     * @param size the number of samples of a tabulated inverse, at least two
+     * @return the inverse curve
+     */
+    ToneCurve reverse(int size) {
         if (type > 0) {
             return parametric(-type, parameters);
         }
-        var samples = new int[REVERSED_SAMPLES];
+        var samples = new int[size];
         var ascending = !isDescending();
         var count = table.length;
         double a = 0, b = 0;
-        for (var i = 0; i < REVERSED_SAMPLES; i++) {
-            var y = (double) i * 65535.0 / (REVERSED_SAMPLES - 1);
+        for (var i = 0; i < size; i++) {
+            var y = (double) i * 65535.0 / (size - 1);
             var j = interval(y);
             if (j >= 0) {
                 double x1 = table[j];

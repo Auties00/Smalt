@@ -147,6 +147,26 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
     abstract void evaluate(float[] in, float[] out);
 
     /**
+     * {@return the scratch space that {@link #evaluate(float[], float[], Object)} needs, or {@code null} for a stage
+     * that evaluates without any}
+     */
+    Object scratch() {
+        return null;
+    }
+
+    /**
+     * Evaluates the stage without allocating, with scratch space from {@link #scratch()} owned by the calling
+     * thread; the result equals {@link #evaluate(float[], float[])}.
+     *
+     * @param in the inputs
+     * @param out receives the outputs
+     * @param scratch the stage's scratch space
+     */
+    void evaluate(float[] in, float[] out, Object scratch) {
+        evaluate(in, out);
+    }
+
+    /**
      * Applies one curve per channel.
      */
     static final class Curves extends Stage {
@@ -372,15 +392,36 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
 
         @Override
         void evaluate(float[] in, float[] out) {
-            var in16 = new int[inputs];
-            var out16 = new int[outputs];
+            evaluate(in, out, scratch());
+        }
+
+        @Override
+        Object scratch() {
+            return new Words(new int[inputs], new int[outputs], interpolator.scratch());
+        }
+
+        @Override
+        void evaluate(float[] in, float[] out, Object scratch) {
+            var words = (Words) scratch;
+            var in16 = words.in();
+            var out16 = words.out();
             for (var i = 0; i < inputs; i++) {
                 in16[i] = ColorMath.saturateWord(in[i] * 65535.0);
             }
-            interpolator.evaluate(in16, out16);
+            interpolator.evaluate(in16, out16, words.levels());
             for (var i = 0; i < outputs; i++) {
                 out[i] = out16[i] / 65535.0f;
             }
+        }
+
+        /**
+         * Holds the scratch space of a table evaluation.
+         *
+         * @param in the quantized inputs
+         * @param out the interpolated outputs
+         * @param levels the interpolator's scratch space, or {@code null}
+         */
+        private record Words(int[] in, int[] out, int[][] levels) {
         }
     }
 
@@ -413,6 +454,16 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
         @Override
         void evaluate(float[] in, float[] out) {
             interpolator.evaluate(in, out);
+        }
+
+        @Override
+        Object scratch() {
+            return interpolator.scratch();
+        }
+
+        @Override
+        void evaluate(float[] in, float[] out, Object scratch) {
+            interpolator.evaluate(in, out, (float[][]) scratch);
         }
     }
 
@@ -484,10 +535,12 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
 
         @Override
         void evaluate(float[] in, float[] out) {
-            var xyz = ColorMath.labToXyz(new double[]{in[0] * 100.0, in[1] * 255.0 - 128.0, in[2] * 255.0 - 128.0});
-            out[0] = (float) (xyz[0] / ColorMath.MAX_ENCODEABLE_XYZ);
-            out[1] = (float) (xyz[1] / ColorMath.MAX_ENCODEABLE_XYZ);
-            out[2] = (float) (xyz[2] / ColorMath.MAX_ENCODEABLE_XYZ);
+            var y = (in[0] * 100.0 + 16.0) / 116.0;
+            var x = y + 0.002 * (in[1] * 255.0 - 128.0);
+            var z = y - 0.005 * (in[2] * 255.0 - 128.0);
+            out[0] = (float) (ColorMath.labInverse(x) * ColorMath.D50_X / ColorMath.MAX_ENCODEABLE_XYZ);
+            out[1] = (float) (ColorMath.labInverse(y) * ColorMath.D50_Y / ColorMath.MAX_ENCODEABLE_XYZ);
+            out[2] = (float) (ColorMath.labInverse(z) * ColorMath.D50_Z / ColorMath.MAX_ENCODEABLE_XYZ);
         }
     }
 
@@ -509,14 +562,12 @@ abstract sealed class Stage permits Stage.Curves, Stage.Matrix, Stage.Clut, Stag
 
         @Override
         void evaluate(float[] in, float[] out) {
-            var lab = ColorMath.xyzToLab(new double[]{
-                    in[0] * ColorMath.MAX_ENCODEABLE_XYZ,
-                    in[1] * ColorMath.MAX_ENCODEABLE_XYZ,
-                    in[2] * ColorMath.MAX_ENCODEABLE_XYZ
-            });
-            out[0] = (float) (lab[0] / 100.0);
-            out[1] = (float) ((lab[1] + 128.0) / 255.0);
-            out[2] = (float) ((lab[2] + 128.0) / 255.0);
+            var fx = ColorMath.labForward(in[0] * ColorMath.MAX_ENCODEABLE_XYZ / ColorMath.D50_X);
+            var fy = ColorMath.labForward(in[1] * ColorMath.MAX_ENCODEABLE_XYZ / ColorMath.D50_Y);
+            var fz = ColorMath.labForward(in[2] * ColorMath.MAX_ENCODEABLE_XYZ / ColorMath.D50_Z);
+            out[0] = (float) ((116.0 * fy - 16.0) / 100.0);
+            out[1] = (float) ((500.0 * (fx - fy) + 128.0) / 255.0);
+            out[2] = (float) ((200.0 * (fy - fz) + 128.0) / 255.0);
         }
     }
 }

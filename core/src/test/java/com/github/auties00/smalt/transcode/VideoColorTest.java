@@ -358,12 +358,14 @@ class VideoColorTest {
         var merged = color.sourceColor(hdrPicture());
         assertEquals(Optional.of(mastering), merged.masteringDisplay());
         assertEquals(Optional.of(level), merged.contentLightLevel());
-        // a 4000 nit master compresses its highlights more than the 1000 nit default assumption
+        // a 4000 nit master compresses its highlights more than the 1000 nit default assumption; measured on the
+        // neutral row 16, where every channel follows the tone curve (colors beyond a peak keep their hue)
         var withMaster = ImageOps.toRgba(color.apply(hdrPicture()));
         var withoutMaster = ImageOps.toRgba(conversion(ColorInfo.BT709_LIMITED, null, 0).apply(hdrPicture()));
         var brighter = 0;
         for (var x = 40; x < 60; x++) {
-            if ((withoutMaster.pixels()[4 * x + 1] & 0xFF) > (withMaster.pixels()[4 * x + 1] & 0xFF)) {
+            var at = 4 * (16 * 64 + x) + 1;
+            if ((withoutMaster.pixels()[at] & 0xFF) > (withMaster.pixels()[at] & 0xFF)) {
                 brighter++;
             }
         }

@@ -290,6 +290,21 @@ final class Hdr {
     }
 
     /**
+     * Returns the tone mapping gain of a light level from a table of {@link #eetf} gains.
+     *
+     * <p>Up to the source peak the gain interpolates the table; beyond it the mapped light stays at the target peak,
+     * so the gain falls as the inverse of the level and a color brighter than the peak keeps its hue.
+     *
+     * @param gain the gains at the light levels {@code (k / STEPS)^2} of the source peak, {@link #STEPS}
+     * {@code + 2} samples, the last one repeated
+     * @param x the light level relative to the source peak
+     * @return the gain
+     */
+    static float lookupGain(float[] gain, float x) {
+        return x > 1f ? gain[STEPS] / x : lookupSqrt(gain, x);
+    }
+
+    /**
      * Interpolates a table indexed by the square root of its argument.
      *
      * @param table {@link #STEPS} {@code + 2} samples, the last one repeated

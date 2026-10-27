@@ -351,6 +351,29 @@ class HdrColorTest {
     @DisplayName("high-dynamic-range sources")
     class HighSources {
         @Test
+        @DisplayName("keep the hue of a color brighter than the content peak when tone mapping at 16 bits")
+        void beyondPeak() {
+            // PQ 0.75 and 0.875 are about 1000 and 3000 cd/m2, so green is beyond the 1000 cd/m2 default peak; the
+            // maxRGB mapping scales both channels alike, which leaves red below zero after the BT.2020 to sRGB matrix
+            var toSrgb = ColorTransform.create(pq2020(), ColorProfile.srgb());
+            var srgb = convert16(toSrgb, 49151, 57343, 0);
+            assertTrue(srgb[0] < 300, "red of a bright green " + srgb[0]);
+            assertNear(65535, srgb[1], 1, "green at the reference white");
+            var toHlg = ColorTransform.create(pqMastered(4000), hlg2020());
+            for (var transform : List.of(toSrgb, toHlg)) {
+                short[] in = {(short) 49151, (short) 65535, (short) 20000};
+                var out16 = new short[3];
+                transform.transform(in, 0, 3, out16, 0, 3, 1);
+                var outFloat = new float[3];
+                transform.transform(new float[]{49151 / 65535f, 1f, 20000 / 65535f}, 0, 3, outFloat, 0, 3, 1);
+                for (var c = 0; c < 3; c++) {
+                    assertEquals(Math.clamp(outFloat[c], 0f, 1f), (out16[c] & 0xFFFF) / 65535.0, 5e-3,
+                            transform + " channel " + c);
+                }
+            }
+        }
+
+        @Test
         @DisplayName("leave values unchanged between equal descriptions")
         void identity() {
             var random = new Random(3);

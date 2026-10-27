@@ -23,11 +23,12 @@ import java.util.Arrays;
  * candelas per square meter for HLG and, for PQ, the peak of a target that describes its mastering
  * display or content light level, else 10000. PQ is encoded with the SMPTE ST 2084 inverse EOTF;
  * HLG with the BT.2100 inverse OOTF of the reference display (luminance taken from the target
- * primaries) and the OETF.
+ * primaries) and the OETF. The floating-point engine computes the same steps with the exact transfer
+ * functions and EETF, from the floating-point transform of a standard-dynamic-range source.
  *
  * <p>Instances are immutable and thread-safe.
  */
-final class HdrTargetEngine implements ColorEngine {
+final class HdrTargetEngine implements ColorEngine, FloatEngine {
     /**
      * The number of pixels converted per block.
      */
@@ -38,6 +39,12 @@ final class HdrTargetEngine implements ColorEngine {
      * primaries, at 16 bits, or {@code null} for a high-dynamic-range source.
      */
     private final ColorEngine inner;
+
+    /**
+     * The floating-point transform from the standard-dynamic-range source to gamma-2 light in the target primaries,
+     * or {@code null} for a high-dynamic-range source or an engine of 8 and 16-bit samples.
+     */
+    private final FloatEngine innerFloat;
 
     /**
      * The number of source channels.
@@ -117,15 +124,17 @@ final class HdrTargetEngine implements ColorEngine {
      * Constructs an engine.
      *
      * @param inner the 16-bit transform of a standard-dynamic-range source, or {@code null}
+     * @param innerFloat the floating-point transform of a standard-dynamic-range source, or {@code null}
      * @param inputs the number of source channels
      * @param indexed whether the source samples are named color indexes, which keep their value at both depths
      * @param source the high-dynamic-range source, or {@code null}
      * @param target the high-dynamic-range target
      * @param options the transform options
      */
-    private HdrTargetEngine(ColorEngine inner, int inputs, boolean indexed, ColorProfile.HdrSpec source,
-                            ColorProfile.HdrSpec target, ColorTransformOptions options) {
+    private HdrTargetEngine(ColorEngine inner, FloatEngine innerFloat, int inputs, boolean indexed,
+                            ColorProfile.HdrSpec source, ColorProfile.HdrSpec target, ColorTransformOptions options) {
         this.inner = inner;
+        this.innerFloat = innerFloat;
         this.inputs = inputs;
         this.widen = indexed ? 1 : 257;
         this.white = (float) options.referenceWhite();
@@ -175,7 +184,22 @@ final class HdrTargetEngine implements ColorEngine {
      */
     static HdrTargetEngine fromStandard(ColorEngine inner, int inputs, boolean indexed, ColorProfile.HdrSpec target,
                                         ColorTransformOptions options) {
-        return new HdrTargetEngine(inner, inputs, indexed, null, target, options);
+        return new HdrTargetEngine(inner, null, inputs, indexed, null, target, options);
+    }
+
+    /**
+     * Returns the floating-point engine from a standard-dynamic-range source.
+     *
+     * @param inner the floating-point transform from the source to a profile with the target primaries and a pure
+     * power curve of exponent 2
+     * @param inputs the number of source channels
+     * @param target the high-dynamic-range target
+     * @param options the transform options, whose reference white places the source white
+     * @return the engine
+     */
+    static HdrTargetEngine fromStandard(FloatEngine inner, int inputs, ColorProfile.HdrSpec target,
+                                        ColorTransformOptions options) {
+        return new HdrTargetEngine(null, inner, inputs, false, null, target, options);
     }
 
     /**
@@ -188,7 +212,7 @@ final class HdrTargetEngine implements ColorEngine {
      */
     static HdrTargetEngine fromHigh(ColorProfile.HdrSpec source, ColorProfile.HdrSpec target,
                                     ColorTransformOptions options) {
-        return new HdrTargetEngine(null, 3, false, source, target, options);
+        return new HdrTargetEngine(null, null, 3, false, source, target, options);
     }
 
     /**
@@ -286,7 +310,7 @@ final class HdrTargetEngine implements ColorEngine {
         var g = Math.max(light[1], 0f);
         var b = Math.max(light[2], 0f);
         if (gain != null) {
-            var scale = Hdr.lookupSqrt(gain, Math.max(r, Math.max(g, b)) / peak);
+            var scale = Hdr.lookupGain(gain, Math.max(r, Math.max(g, b)) / peak);
             r *= scale;
             g *= scale;
             b *= scale;
@@ -395,6 +419,109 @@ final class HdrTargetEngine implements ColorEngine {
                 dst[d + 1] = (short) (int) (light[1] * 65535f + 0.5f);
                 dst[d + 2] = (short) (int) (light[2] * 65535f + 0.5f);
             }
+        }
+    }
+
+    @Override
+    public void apply(float[] src, int srcOffset, int srcStride, float[] dst, int dstOffset, int dstStride, int count) {
+        var light = new double[3];
+        if (innerFloat == null) {
+            for (var i = 0; i < count; i++) {
+                var s = srcOffset + i * srcStride;
+                sourceLight(decode(src[s]), decode(src[s + 1]), decode(src[s + 2]), light);
+                encodeExact(light, dst, dstOffset + i * dstStride);
+            }
+            return;
+        }
+        var samples = new float[BLOCK * 3];
+        for (var start = 0; start < count; start += BLOCK) {
+            var n = Math.min(BLOCK, count - start);
+            innerFloat.apply(src, srcOffset + start * srcStride, srcStride, samples, 0, 3, n);
+            for (var i = 0; i < n; i++) {
+                for (var c = 0; c < 3; c++) {
+                    var x = (double) samples[i * 3 + c];
+                    light[c] = x * Math.abs(x) * white;
+                }
+                encodeExact(light, dst, dstOffset + (start + i) * dstStride);
+            }
+        }
+    }
+
+    /**
+     * Decodes a source signal exactly.
+     *
+     * @param signal the signal, clamped to {@code 0..1}
+     * @return the luminance in candelas per square meter for PQ, the normalized scene light for HLG
+     */
+    private double decode(float signal) {
+        return sourceHlg ? Hdr.hlgToScene(signal) : Hdr.pqToNits(signal);
+    }
+
+    /**
+     * Converts the exactly decoded values of a high-dynamic-range source pixel to display light in the target
+     * primaries.
+     *
+     * @param r the red decoded value
+     * @param g the green decoded value
+     * @param b the blue decoded value
+     * @param light receives the red, green and blue luminance
+     */
+    private void sourceLight(double r, double g, double b, double[] light) {
+        if (sourceHlg) {
+            var ys = sourceLuminance[0] * r + sourceLuminance[1] * g + sourceLuminance[2] * b;
+            var factor = ys > 0 ? Hdr.HLG_PEAK * StrictMath.pow(ys, Hdr.hlgGamma(Hdr.HLG_PEAK) - 1) : 0;
+            r *= factor;
+            g *= factor;
+            b *= factor;
+        }
+        var m = gamut;
+        if (m != null) {
+            light[0] = m[0] * r + m[1] * g + m[2] * b;
+            light[1] = m[3] * r + m[4] * g + m[5] * b;
+            light[2] = m[6] * r + m[7] * g + m[8] * b;
+        } else {
+            light[0] = r;
+            light[1] = g;
+            light[2] = b;
+        }
+    }
+
+    /**
+     * Tone maps, clips and encodes the display light of a pixel with the exact transfer functions.
+     *
+     * @param light the red, green and blue luminance
+     * @param dst the destination samples
+     * @param index the index of the pixel's first destination sample
+     */
+    private void encodeExact(double[] light, float[] dst, int index) {
+        var r = Math.max(light[0], 0);
+        var g = Math.max(light[1], 0);
+        var b = Math.max(light[2], 0);
+        if (gain != null) {
+            var max = Math.max(r, Math.max(g, b));
+            if (max > 0) {
+                var scale = Hdr.eetf(max, peak, limit) / max;
+                r *= scale;
+                g *= scale;
+                b *= scale;
+            }
+        }
+        r = Math.min(r, limit);
+        g = Math.min(g, limit);
+        b = Math.min(b, limit);
+        if (targetHlg) {
+            r /= Hdr.HLG_PEAK;
+            g /= Hdr.HLG_PEAK;
+            b /= Hdr.HLG_PEAK;
+            var yd = targetLuminance[0] * r + targetLuminance[1] * g + targetLuminance[2] * b;
+            var factor = yd > 0 ? 1.0 / Math.sqrt(StrictMath.cbrt(yd)) : 0;
+            dst[index] = (float) Hdr.hlgOetf(r * factor);
+            dst[index + 1] = (float) Hdr.hlgOetf(g * factor);
+            dst[index + 2] = (float) Hdr.hlgOetf(b * factor);
+        } else {
+            dst[index] = (float) Hdr.nitsToPq(r);
+            dst[index + 1] = (float) Hdr.nitsToPq(g);
+            dst[index + 2] = (float) Hdr.nitsToPq(b);
         }
     }
 }

@@ -1517,10 +1517,12 @@ public final class ImageOps {
      * {@link Channel8Picture} or {@link Channel16Picture} of the {@link PixelLayout#CMYK} layout, followed by
      * alpha when the picture reports it.
      *
-     * <p>A {@link ChannelPicture} of 8 or 16-bit samples needs a source profile with as many channels as its
-     * color channels; its color channels are replaced by those of the target profile (gray, RGB or CMYK), its
-     * extra channels are copied, and premultiplied colors are divided by their alpha before the transform and
-     * multiplied by it after.
+     * <p>A {@link ChannelPicture} needs a source profile with as many channels as its color channels; its color
+     * channels are replaced by those of the target profile (gray, RGB or CMYK), its extra channels are copied, and
+     * premultiplied colors are divided by their alpha before the transform and multiplied by it after. A
+     * {@link ChannelFloatPicture} is converted in floating point, as
+     * {@link ColorTransform#transform(float[], int, int, float[], int, int, int)} describes, and stays one: values
+     * outside 0.0 to 1.0 are kept where the profiles allow.
      *
      * @apiNote Create the transform once with {@link ColorTransform#create} and reuse it for every picture with the
      * same pair of profiles: creating one reads and links the profiles.
@@ -1530,7 +1532,6 @@ public final class ImageOps {
      * @return the converted picture
      * @throws IllegalArgumentException if a profile of the transform does not fit the picture or is not RGB, gray
      * or CMYK
-     * @throws MediaException.Unsupported if the picture has floating-point samples
      * @throws MediaException.LimitExceeded if the RGBA form of the picture does not fit one Java array
      */
     public static Picture convertColor(Picture picture, ColorTransform transform) {
@@ -1601,9 +1602,10 @@ public final class ImageOps {
      *
      * <p>A {@link ChannelPicture} is always converted to packed RGBA, an {@link RgbaPicture} for 8-bit samples
      * and an {@link Rgba16Picture} otherwise. When its color profile has as many channels as its color channels
-     * and can be applied, the picture is converted through it, floating-point samples first quantized to 16
-     * bits, and the result is labeled as above. Otherwise it is converted as {@link #toRgba16(Picture)}
-     * describes, keeping the ICC bytes and keeping the color profile only for gray and RGB pictures.
+     * and can be applied, the picture is converted through it, floating-point samples in floating point before
+     * they are quantized to 16 bits, and the result is labeled as above. Otherwise it is converted as
+     * {@link #toRgba16(Picture)} describes, keeping the ICC bytes and keeping the color profile only for gray and
+     * RGB pictures.
      *
      * @param image the decoded image
      * @return the sRGB image, or {@code image} itself

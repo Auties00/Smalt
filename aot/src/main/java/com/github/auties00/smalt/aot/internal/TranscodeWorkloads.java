@@ -40,6 +40,8 @@ import com.github.auties00.smalt.image.Rgba16Picture;
 import com.github.auties00.smalt.image.TransferCharacteristics;
 import com.github.auties00.smalt.image.color.ColorProfile;
 import com.github.auties00.smalt.image.color.ColorTransform;
+import com.github.auties00.smalt.image.color.ColorTransformOptions;
+import com.github.auties00.smalt.image.color.ProofingOptions;
 import com.github.auties00.smalt.image.ops.BlendMode;
 import com.github.auties00.smalt.image.ops.BlurMethod;
 import com.github.auties00.smalt.image.ops.CompositeOptions;
@@ -467,7 +469,9 @@ final class TranscodeWorkloads {
     /**
      * Returns a workload that converts 8-bit Display P3 pixels to sRGB, 16-bit Adobe RGB pixels to
      * Display P3, a picture with BT.2020 PQ color to SDR sRGB, 16-bit sRGB pixels to BT.2020 PQ, 8-bit
-     * sRGB pixels to BT.2020 HLG, and 16-bit PQ pixels to HLG with BT.709 primaries.
+     * sRGB pixels to BT.2020 HLG, 16-bit PQ pixels to HLG with BT.709 primaries, floating-point sRGB pixels beyond
+     * white to BT.2020 and PQ ones to sRGB, and ProPhoto pixels at 8 bits and in floating point through a sRGB
+     * soft proof with a gamut check.
      *
      * @return the workload
      */
@@ -488,7 +492,21 @@ final class TranscodeWorkloads {
         var pqToHlg = ColorTransform.create(pq, ColorProfile.of(new ColorInfo(MatrixCoefficients.BT709,
                 ColorRange.LIMITED, ColorPrimaries.BT709, TransferCharacteristics.HLG)));
         var hdrOutput = new short[deep.pixels().length];
+        var floats = new float[pixels * 3];
+        for (var i = 0; i < floats.length; i++) {
+            floats[i] = (deep.pixels()[i / 3 * 4 + i % 3] & 0xFFFF) / 65535.0f * 1.25f;
+        }
+        var floatOutput = new float[floats.length];
+        var toWide = ColorTransform.create(ColorProfile.srgb(), ColorProfile.rec2020());
+        var pqToSrgb = ColorTransform.create(pq, ColorProfile.srgb());
+        var proofing = ColorTransform.createProofing(ColorProfile.proPhotoRgb(), ColorProfile.srgb(),
+                ColorProfile.displayP3(), ColorTransformOptions.relativeColorimetric(), ProofingOptions.forGamutCheck());
         return TrainingWorkload.of("color-management", () -> {
+            toWide.transform(floats, 0, 3, floatOutput, 0, 3, pixels);
+            pqToSrgb.transform(floats, 0, 3, floatOutput, 0, 3, pixels);
+            proofing.transform(floats, 0, 3, floatOutput, 0, 3, pixels);
+            proofing.transform(picture.pixels(), 0, 4, output, 0, 4, pixels);
+            Blackhole.consume(Float.floatToRawIntBits(floatOutput[4097]) + output[4097]);
             toSrgb.transform(picture.pixels(), 0, 4, output, 0, 4, pixels);
             toP3.transform(deep.pixels(), 0, 4, deepOutput, 0, 4, pixels);
             Blackhole.consume(output[4097] + deepOutput[4097]);

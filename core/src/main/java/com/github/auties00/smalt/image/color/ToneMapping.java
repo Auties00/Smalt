@@ -21,7 +21,9 @@ public enum ToneMapping {
      * the reference white included: for a 1000 candelas per square meter source the knee is near
      * 95 candelas per square meter and the reference white lands at about 0.8 of the target white
      * in linear light (8-bit sRGB 229), which keeps highlight detail. A source whose peak does not
-     * exceed the reference white, or the limit of a high-dynamic-range target, is not compressed.
+     * exceed the reference white, or the limit of a high-dynamic-range target, is not compressed;
+     * otherwise a color whose largest component exceeds the source peak has that component mapped to
+     * the target white, or limit, and keeps its hue.
      */
     BT2390,
 
