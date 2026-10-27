@@ -12,7 +12,7 @@ public final class ColorTransformOptions {
     /**
      * The reference white of ITU-R BT.2408, in candelas per square meter.
      */
-    private static final double BT2408_WHITE = 203.0;
+    private static final double BT2408_WHITE = Hdr.REFERENCE_WHITE;
 
     private static final ColorTransformOptions DEFAULTS = new ColorTransformOptions(RenderingIntent.PERCEPTUAL, false,
             ToneMapping.BT2390, BT2408_WHITE);
@@ -100,15 +100,20 @@ public final class ColorTransformOptions {
     }
 
     /**
-     * {@return the tone mapping of high-dynamic-range sources; {@link ToneMapping#BT2390} by default}
+     * {@return the tone mapping of high-dynamic-range sources, and of sources whose peak exceeds the
+     * limit of a high-dynamic-range target; {@link ToneMapping#BT2390} by default}
      */
     public ToneMapping toneMapping() {
         return toneMapping;
     }
 
     /**
-     * {@return the luminance of a high-dynamic-range source that maps to the target white, in
-     * candelas per square meter, from 1 to 10000; 203 (ITU-R BT.2408) by default}
+     * {@return the luminance that corresponds to a standard-dynamic-range white, in candelas per
+     * square meter, from 1 to 10000; 203 (ITU-R BT.2408) by default}
+     *
+     * <p>A high-dynamic-range source luminance equal to it maps to the white of a
+     * standard-dynamic-range target, and the white of a standard-dynamic-range source is placed at
+     * it in a high-dynamic-range target. It does not apply between two high-dynamic-range profiles.
      */
     public double referenceWhite() {
         return referenceWhite;
