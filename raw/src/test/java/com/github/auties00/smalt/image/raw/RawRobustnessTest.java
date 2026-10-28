@@ -97,7 +97,7 @@ class RawRobustnessTest {
 
     @ParameterizedTest(name = "{0}")
     @EnumSource(value = RawSamples.class, names = {"DNG_5D3_14BIT_SMALL", "DNG_5D3_16BIT_SMALL", "CR2_5D3",
-            "NEF_D70S_LOSSY_12", "ARW_NEX6_CRAW_12", "PEF_PENTAX_KX", "RAF_XA1", "ORF_XZ2", "RW2_GF6", "CR3_250D",
+            "NEF_D70S_LOSSY_12", "ARW_NEX6_CRAW_12", "PEF_PENTAX_KX", "RAF_XA1", "ORF_XZ2", "RW2_GF6", "CR3_250D", "CR3_EOS_R5",
             "MRW_DYNAX_7D", "MRW_DIMAGE_5", "CRW_D30", "CRW_G1", "X3F_DP1", "X3F_SD14"})
     @DisplayName("damaged sample files only raise MediaException")
     void samples(RawSamples sample) throws IOException {
