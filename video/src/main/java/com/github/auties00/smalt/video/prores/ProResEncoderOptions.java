@@ -159,9 +159,10 @@ public final class ProResEncoderOptions {
      *
      * <p>Y'CbCr input keeps its own description, which the frame header carries instead. RGB input is
      * converted with the BT.709 matrix when this matrix is
-     * {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#UNSPECIFIED unspecified}, and
-     * cannot be encoded with a matrix that two luma weights do not define (see
-     * {@link com.github.auties00.smalt.image.MatrixCoefficients#kr() MatrixCoefficients.kr()}).
+     * {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#UNSPECIFIED unspecified}, and with every
+     * other matrix as {@link com.github.auties00.smalt.image.ops.ImageOps#toYuv16 ImageOps.toYuv16} converts it,
+     * except the {@linkplain com.github.auties00.smalt.image.MatrixCoefficients#IDENTITY identity} matrix, which the
+     * frame header cannot signal and which RGB input cannot be encoded with.
      */
     public ColorInfo color() {
         return color;

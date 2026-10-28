@@ -1,0 +1,120 @@
+# demux dump of amr/wb.awb; regenerate with -Dsmalt.test.updateDumps=true
+format AMR
+duration 2000000
+seekable true
+track 0 AUDIO AMR_WB timebase=1/16000 duration=32000 config=none
+  audio rate=16000 bits=0 skip=0 layout=[FRONT_CENTER]
+packets 100
+0 t0 pts=0 dts=0 dur=320 flags=KEY size=61 crc=e8b817f4
+1 t0 pts=320 dts=320 dur=320 flags=KEY size=61 crc=9dfe92b7
+2 t0 pts=640 dts=640 dur=320 flags=KEY size=61 crc=baf66975
+3 t0 pts=960 dts=960 dur=320 flags=KEY size=61 crc=687f31f8
+4 t0 pts=1280 dts=1280 dur=320 flags=KEY size=61 crc=c4492418
+5 t0 pts=1600 dts=1600 dur=320 flags=KEY size=61 crc=6b9b4a43
+6 t0 pts=1920 dts=1920 dur=320 flags=KEY size=61 crc=57c7f49f
+7 t0 pts=2240 dts=2240 dur=320 flags=KEY size=61 crc=cc678409
+8 t0 pts=2560 dts=2560 dur=320 flags=KEY size=61 crc=c129dc1e
+9 t0 pts=2880 dts=2880 dur=320 flags=KEY size=61 crc=ddd5fdce
+10 t0 pts=3200 dts=3200 dur=320 flags=KEY size=61 crc=b24b5f89
+11 t0 pts=3520 dts=3520 dur=320 flags=KEY size=61 crc=dc85af93
+12 t0 pts=3840 dts=3840 dur=320 flags=KEY size=61 crc=e222c99b
+13 t0 pts=4160 dts=4160 dur=320 flags=KEY size=61 crc=0e289087
+14 t0 pts=4480 dts=4480 dur=320 flags=KEY size=61 crc=4f423957
+15 t0 pts=4800 dts=4800 dur=320 flags=KEY size=61 crc=85447b6d
+16 t0 pts=5120 dts=5120 dur=320 flags=KEY size=61 crc=91f4c934
+17 t0 pts=5440 dts=5440 dur=320 flags=KEY size=61 crc=a44dbabd
+18 t0 pts=5760 dts=5760 dur=320 flags=KEY size=61 crc=a6f317f0
+19 t0 pts=6080 dts=6080 dur=320 flags=KEY size=61 crc=e7cdd790
+20 t0 pts=6400 dts=6400 dur=320 flags=KEY size=61 crc=a59a8601
+21 t0 pts=6720 dts=6720 dur=320 flags=KEY size=61 crc=a96b4e84
+22 t0 pts=7040 dts=7040 dur=320 flags=KEY size=61 crc=569753b4
+23 t0 pts=7360 dts=7360 dur=320 flags=KEY size=61 crc=1b148f1e
+24 t0 pts=7680 dts=7680 dur=320 flags=KEY size=61 crc=0c8198c8
+25 t0 pts=8000 dts=8000 dur=320 flags=KEY size=61 crc=728d7483
+26 t0 pts=8320 dts=8320 dur=320 flags=KEY size=61 crc=4da28de2
+27 t0 pts=8640 dts=8640 dur=320 flags=KEY size=61 crc=5b094d60
+28 t0 pts=8960 dts=8960 dur=320 flags=KEY size=61 crc=6fcde4cc
+29 t0 pts=9280 dts=9280 dur=320 flags=KEY size=61 crc=a590046c
+30 t0 pts=9600 dts=9600 dur=320 flags=KEY size=61 crc=06efe7c5
+31 t0 pts=9920 dts=9920 dur=320 flags=KEY size=61 crc=10d715dc
+32 t0 pts=10240 dts=10240 dur=320 flags=KEY size=61 crc=b9a0cb57
+33 t0 pts=10560 dts=10560 dur=320 flags=KEY size=61 crc=c5785e5d
+34 t0 pts=10880 dts=10880 dur=320 flags=KEY size=61 crc=5991b07b
+35 t0 pts=11200 dts=11200 dur=320 flags=KEY size=61 crc=00220a9e
+36 t0 pts=11520 dts=11520 dur=320 flags=KEY size=61 crc=9a6da500
+37 t0 pts=11840 dts=11840 dur=320 flags=KEY size=61 crc=4edee033
+38 t0 pts=12160 dts=12160 dur=320 flags=KEY size=61 crc=1be0078e
+39 t0 pts=12480 dts=12480 dur=320 flags=KEY size=61 crc=d8f21089
+40 t0 pts=12800 dts=12800 dur=320 flags=KEY size=61 crc=eba0c1b1
+41 t0 pts=13120 dts=13120 dur=320 flags=KEY size=61 crc=4c62361b
+42 t0 pts=13440 dts=13440 dur=320 flags=KEY size=61 crc=86fdd7ef
+43 t0 pts=13760 dts=13760 dur=320 flags=KEY size=61 crc=497830cb
+44 t0 pts=14080 dts=14080 dur=320 flags=KEY size=61 crc=2e5a3820
+45 t0 pts=14400 dts=14400 dur=320 flags=KEY size=61 crc=331b000a
+46 t0 pts=14720 dts=14720 dur=320 flags=KEY size=61 crc=e9018ac3
+47 t0 pts=15040 dts=15040 dur=320 flags=KEY size=61 crc=74299bf9
+48 t0 pts=15360 dts=15360 dur=320 flags=KEY size=61 crc=58dfb0b6
+49 t0 pts=15680 dts=15680 dur=320 flags=KEY size=61 crc=33cd928b
+50 t0 pts=16000 dts=16000 dur=320 flags=KEY size=61 crc=15ddf19d
+51 t0 pts=16320 dts=16320 dur=320 flags=KEY size=61 crc=e1d0dcfa
+52 t0 pts=16640 dts=16640 dur=320 flags=KEY size=61 crc=2cdf5041
+53 t0 pts=16960 dts=16960 dur=320 flags=KEY size=61 crc=64f9a626
+54 t0 pts=17280 dts=17280 dur=320 flags=KEY size=61 crc=586c2319
+55 t0 pts=17600 dts=17600 dur=320 flags=KEY size=61 crc=dd4bcebf
+56 t0 pts=17920 dts=17920 dur=320 flags=KEY size=61 crc=507d5f4f
+57 t0 pts=18240 dts=18240 dur=320 flags=KEY size=61 crc=8c07a510
+58 t0 pts=18560 dts=18560 dur=320 flags=KEY size=61 crc=a32721b4
+59 t0 pts=18880 dts=18880 dur=320 flags=KEY size=61 crc=2ef24237
+60 t0 pts=19200 dts=19200 dur=320 flags=KEY size=61 crc=ecd9f4c3
+61 t0 pts=19520 dts=19520 dur=320 flags=KEY size=61 crc=960dca94
+62 t0 pts=19840 dts=19840 dur=320 flags=KEY size=61 crc=194a99c0
+63 t0 pts=20160 dts=20160 dur=320 flags=KEY size=61 crc=f7fd48b1
+64 t0 pts=20480 dts=20480 dur=320 flags=KEY size=61 crc=e0e9f2c6
+65 t0 pts=20800 dts=20800 dur=320 flags=KEY size=61 crc=373243b1
+66 t0 pts=21120 dts=21120 dur=320 flags=KEY size=61 crc=ce6bcba5
+67 t0 pts=21440 dts=21440 dur=320 flags=KEY size=61 crc=30afa4f8
+68 t0 pts=21760 dts=21760 dur=320 flags=KEY size=61 crc=e972fc41
+69 t0 pts=22080 dts=22080 dur=320 flags=KEY size=61 crc=0f0ba67e
+70 t0 pts=22400 dts=22400 dur=320 flags=KEY size=61 crc=dfb1346c
+71 t0 pts=22720 dts=22720 dur=320 flags=KEY size=61 crc=71e31a0b
+72 t0 pts=23040 dts=23040 dur=320 flags=KEY size=61 crc=54ab4a1b
+73 t0 pts=23360 dts=23360 dur=320 flags=KEY size=61 crc=a773300d
+74 t0 pts=23680 dts=23680 dur=320 flags=KEY size=61 crc=fb435a0f
+75 t0 pts=24000 dts=24000 dur=320 flags=KEY size=61 crc=89fd1932
+76 t0 pts=24320 dts=24320 dur=320 flags=KEY size=61 crc=b2aacd24
+77 t0 pts=24640 dts=24640 dur=320 flags=KEY size=61 crc=a1f19838
+78 t0 pts=24960 dts=24960 dur=320 flags=KEY size=61 crc=58669e40
+79 t0 pts=25280 dts=25280 dur=320 flags=KEY size=61 crc=2f773a1d
+80 t0 pts=25600 dts=25600 dur=320 flags=KEY size=61 crc=4e1d8953
+81 t0 pts=25920 dts=25920 dur=320 flags=KEY size=61 crc=46c2edf5
+82 t0 pts=26240 dts=26240 dur=320 flags=KEY size=61 crc=10daa4bd
+83 t0 pts=26560 dts=26560 dur=320 flags=KEY size=61 crc=dc5b9d88
+84 t0 pts=26880 dts=26880 dur=320 flags=KEY size=61 crc=815bec75
+85 t0 pts=27200 dts=27200 dur=320 flags=KEY size=61 crc=05173086
+86 t0 pts=27520 dts=27520 dur=320 flags=KEY size=61 crc=0f1f2e2e
+87 t0 pts=27840 dts=27840 dur=320 flags=KEY size=61 crc=30858ecb
+88 t0 pts=28160 dts=28160 dur=320 flags=KEY size=61 crc=9b4d4ce9
+89 t0 pts=28480 dts=28480 dur=320 flags=KEY size=61 crc=988fc0ea
+90 t0 pts=28800 dts=28800 dur=320 flags=KEY size=61 crc=1e57b509
+91 t0 pts=29120 dts=29120 dur=320 flags=KEY size=61 crc=a96b4925
+92 t0 pts=29440 dts=29440 dur=320 flags=KEY size=61 crc=60fb77e9
+93 t0 pts=29760 dts=29760 dur=320 flags=KEY size=61 crc=a566f870
+94 t0 pts=30080 dts=30080 dur=320 flags=KEY size=61 crc=ed271a1a
+95 t0 pts=30400 dts=30400 dur=320 flags=KEY size=61 crc=9d74c920
+96 t0 pts=30720 dts=30720 dur=320 flags=KEY size=61 crc=71168331
+97 t0 pts=31040 dts=31040 dur=320 flags=KEY size=61 crc=5804ce86
+98 t0 pts=31360 dts=31360 dur=320 flags=KEY size=61 crc=91e91d0b
+99 t0 pts=31680 dts=31680 dur=320 flags=KEY size=61 crc=0a043269
+seek 0: t0@0
+seek 666666: t0@33
+seek 1333333: t0@66
+seek 2000000: end
+seek -1000000: t0@0
+header over UNKNOWN_LENGTH, UNKNOWN_LENGTH_ONE_BYTE, READ_ONCE_UNKNOWN_LENGTH:
+  format AMR
+  duration -1
+  seekable false
+  track 0 AUDIO AMR_WB timebase=1/16000 duration=? config=none
+    audio rate=16000 bits=0 skip=0 layout=[FRONT_CENTER]
+not seekable over UNKNOWN_LENGTH
+not seekable over READ_ONCE_UNKNOWN_LENGTH

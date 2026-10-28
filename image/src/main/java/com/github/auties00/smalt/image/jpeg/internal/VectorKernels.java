@@ -1,6 +1,6 @@
 package com.github.auties00.smalt.image.jpeg.internal;
 
-import jdk.incubator.vector.IntVector;
+import com.github.auties00.smalt.internal.simd.Simd;
 
 /**
  * Creates the Vector API kernels of the JPEG codec.
@@ -8,16 +8,11 @@ import jdk.incubator.vector.IntVector;
  * <p>Every factory returns its kernel through the scalar interface type, so the classes that
  * select a kernel never link against {@code jdk.incubator.vector} types themselves; this class is
  * only loaded when {@link com.github.auties00.smalt.internal.simd.Simd#ENABLED} is
- * {@code true}. A factory falls back to the scalar kernel when the platform's preferred vector is
- * narrower than the eight 32-bit lanes the kernels are written for, because wider vectors would
- * then run in the Vector API's slow emulation.
+ * {@code true}. A factory falls back to the scalar kernel unless {@link Simd#WIDE} is {@code true},
+ * since the kernels are written for eight 32-bit lanes, which narrower vectors would run in the
+ * Vector API's slow emulation.
  */
 final class VectorKernels {
-    /**
-     * Whether the platform executes eight 32-bit lanes natively.
-     */
-    private static final boolean WIDE = IntVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
-
     /**
      * Prevents instantiation.
      */
@@ -31,7 +26,7 @@ final class VectorKernels {
      * @return the vector kernel, or the scalar one on platforms without 256-bit vectors
      */
     static BatchIdctKernel batchIdct() {
-        return WIDE ? new VectorBatchIdctKernel() : new ScalarBatchIdctKernel();
+        return Simd.WIDE ? new VectorBatchIdctKernel() : new ScalarBatchIdctKernel();
     }
 
     /**
@@ -50,7 +45,7 @@ final class VectorKernels {
      * @return the vector kernel, or the scalar one on platforms without 256-bit vectors
      */
     static BatchFdctKernel batchFdct() {
-        return WIDE ? new VectorBatchFdctKernel() : new ScalarBatchFdctKernel();
+        return Simd.WIDE ? new VectorBatchFdctKernel() : new ScalarBatchFdctKernel();
     }
 
     /**
@@ -69,7 +64,7 @@ final class VectorKernels {
      * @return the vector kernel, or the scalar one on platforms without 256-bit vectors
      */
     static ColorKernel color() {
-        return WIDE ? new VectorColorKernel() : new ScalarColorKernel();
+        return Simd.WIDE ? new VectorColorKernel() : new ScalarColorKernel();
     }
 
     /**
