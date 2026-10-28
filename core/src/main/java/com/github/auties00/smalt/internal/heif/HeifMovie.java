@@ -99,9 +99,7 @@ public record HeifMovie(List<Track> tracks) {
         if (!file.hasMovie()) {
             throw new MediaException.Malformed("heif: the file has no moov box");
         }
-        LimitChecks.checkAllocation(limits, file.movieSize());
-        var data = new byte[(int) file.movieSize()];
-        source.readFully(file.movieOffset(), data, 0, data.length);
+        var data = HeifFile.readPayload(source, source.size(), "moov", file.movieOffset(), file.movieSize(), limits);
         var moov = BoxCursor.strict(data, FourCc.of("moov"));
         var tracks = new ArrayList<Track>();
         while (moov.hasBox()) {

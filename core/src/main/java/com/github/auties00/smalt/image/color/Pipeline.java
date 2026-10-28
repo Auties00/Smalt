@@ -166,6 +166,8 @@ final class Pipeline {
             changed |= removePairs(Stage.Kind.LAB_TO_XYZ, null, Stage.Kind.XYZ_TO_LAB, null);
             changed |= removePairs(null, Stage.Role.LAB_V4_TO_V2, null, Stage.Role.LAB_V2_TO_V4);
             changed |= removePairs(null, Stage.Role.LAB_V2_TO_V4, null, Stage.Role.LAB_V4_TO_V2);
+            changed |= removePairs(null, Stage.Role.LAB_FLOAT_TO_PCS, null, Stage.Role.PCS_TO_LAB_FLOAT);
+            changed |= removePairs(null, Stage.Role.XYZ_FLOAT_TO_PCS, null, Stage.Role.PCS_TO_XYZ_FLOAT);
             changed |= multiplyMatrices();
         } while (changed);
     }

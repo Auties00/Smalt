@@ -54,15 +54,19 @@ class ImageIoProvidersTest {
     void readerFormats() {
         var provider = new SmaltImageReaderSpi();
         assertEquals(List.of(ImageFormat.PNG, ImageFormat.WEBP, ImageFormat.HEIC, ImageFormat.AVIF, ImageFormat.ICO,
-                ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW), provider.formats());
+                ImageFormat.ANI, ImageFormat.JP2, ImageFormat.JXL, ImageFormat.DNG, ImageFormat.RAW), provider.formats());
         var names = Arrays.asList(provider.getFormatNames());
         assertTrue(names.contains("webp"));
         assertTrue(names.contains("avif"));
         assertTrue(names.contains("heic"));
         assertTrue(names.contains("apng"));
         assertTrue(names.contains("ico"));
+        assertTrue(names.contains("ani"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("ani"));
         assertTrue(names.contains("jpeg2000"));
         assertTrue(names.contains("jp2"));
+        assertTrue(Arrays.asList(provider.getFileSuffixes()).containsAll(List.of("jph", "jhc")));
+        assertTrue(Arrays.asList(provider.getMIMETypes()).containsAll(List.of("image/jph", "image/jphc")));
         assertTrue(names.contains("dng"));
         assertTrue(names.contains("raw"));
         assertTrue(Arrays.asList(provider.getFileSuffixes()).contains("nef"));
@@ -73,7 +77,7 @@ class ImageIoProvidersTest {
     }
 
     @Test
-    @DisplayName("the WebP and AVIF writers are registered and the HEIC writer deregisters itself")
+    @DisplayName("the WebP, AVIF and JPEG XL writers are registered and the HEIC writer deregisters itself")
     void writers() {
         var webp = list(ImageIO.getImageWritersByFormatName("webp"));
         assertEquals(1, webp.size());
@@ -83,9 +87,13 @@ class ImageIoProvidersTest {
         assertEquals(1, avif.size());
         assertInstanceOf(SmaltImageWriter.class, avif.getFirst());
         assertTrue(list(ImageIO.getImageWritersByFormatName("heic")).isEmpty());
+        var jxl = list(ImageIO.getImageWritersByFormatName("jxl"));
+        assertEquals(1, jxl.size());
+        assertInstanceOf(SmaltImageWriter.class, jxl.getFirst());
         var registered = list(IIORegistry.getDefaultInstance().getServiceProviders(ImageWriterSpi.class, false));
         assertTrue(registered.stream().anyMatch(WebpImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().anyMatch(AvifImageWriterSpi.class::isInstance));
+        assertTrue(registered.stream().anyMatch(JxlImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().noneMatch(HeicImageWriterSpi.class::isInstance));
     }
 
