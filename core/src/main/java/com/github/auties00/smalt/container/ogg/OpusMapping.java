@@ -92,11 +92,16 @@ final class OpusMapping extends OggMapping {
      *
      * @param channels the channel count
      * @param family the channel mapping family
-     * @return Vorbis channel order for families 0 and 1 up to eight channels, unknown positions otherwise
+     * @return Vorbis channel order for families 0 and 1 up to eight channels, the ambisonic layout for the
+     * ambisonic channel counts of families 2 and 3, unknown positions otherwise
      */
     static ChannelLayout layout(int channels, int family) {
         if (family <= 1 && channels <= 8) {
             return VorbisMapping.layout(channels);
+        }
+        var ambisonic = OpusHeader.ambisonicLayout(channels, family);
+        if (ambisonic != null) {
+            return ambisonic;
         }
         return new ChannelLayout(Collections.nCopies(channels, Speaker.UNKNOWN));
     }
