@@ -36,8 +36,8 @@ class VideoSeekTest {
 
     static Stream<Arguments> cases() {
         var arguments = new ArrayList<Arguments>();
-        for (var codec : List.of(Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG, Codec.JPEG2000,
-                Codec.PRORES, Codec.DNXHD)) {
+        for (var codec : List.of(Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.MJPEG,
+                Codec.JPEG2000, Codec.PRORES, Codec.DNXHD)) {
             for (var container : OutputContainer.values()) {
                 if (container.supports(codec) && container != OutputContainer.H264 && container != OutputContainer.AV1
                         && container != OutputContainer.HEVC) {
@@ -52,8 +52,9 @@ class VideoSeekTest {
     @MethodSource("cases")
     @DisplayName("returns after a seek the frame and the frames a linear read returns from the target on")
     void seek(Codec codec, OutputContainer container) {
-        var stream = Streams.video(codec, 96, 64, FRAMES, builder -> builder.realtime(codec != Codec.H264)
-                .keyframeInterval(6));
+        // H.264 and HEVC in file mode: length-prefixed packets with their configuration record, which MP4 needs
+        var stream = Streams.video(codec, 96, 64, FRAMES, builder -> builder
+                .realtime(codec != Codec.H264 && codec != Codec.HEVC).keyframeInterval(6));
         var sink = MediaSink.memory();
         try (var muxer = Containers.openMuxer(container, sink)) {
             muxer.addTrack(stream.track());

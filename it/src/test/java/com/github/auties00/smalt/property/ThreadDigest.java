@@ -130,8 +130,8 @@ public final class ThreadDigest {
                     sha256(ImageOps.toRgba(ImageOps.resize(picture, 517, 333, filter)).pixels()));
         }
         gainMaps(picture, digests);
-        for (var codec : new Codec[]{Codec.H264, Codec.VP8, Codec.VP9, Codec.AV1, Codec.PRORES, Codec.DNXHD,
-                Codec.MJPEG, Codec.JPEG2000}) {
+        for (var codec : new Codec[]{Codec.H264, Codec.HEVC, Codec.VP8, Codec.VP9, Codec.AV1, Codec.PRORES,
+                Codec.DNXHD, Codec.MJPEG, Codec.JPEG2000}) {
             var stream = Streams.video(codec, 640, 360, 8, builder -> builder.realtime(codec != Codec.H264));
             digests.put(codec.name().toLowerCase() + "-encode", sha256Packets(stream));
             digests.put(codec.name().toLowerCase() + "-decode", decodeDigest(stream));

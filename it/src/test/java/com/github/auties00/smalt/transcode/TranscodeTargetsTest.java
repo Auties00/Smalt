@@ -260,13 +260,14 @@ class TranscodeTargetsTest {
             assertThrows(IllegalArgumentException.class, () -> Transcoder.transcode(
                     MediaSource.of(tone), MediaSink.memory(),
                     TranscodeOptions.of(OutputContainer.H264)));
-            // no HEVC encoder exists, so only an HEVC stream can be written to an .h265 file
+            // another codec is encoded to HEVC for an .h265 file
             var vp9 = Fixtures.ffmpeg("webm", List.of("-f", "lavfi", "-i", "testsrc2=size=64x48:rate=10:duration=0.3"),
                     List.of("-c:v", "libvpx-vp9", "-deadline", "realtime", "-cpu-used", "8"));
             var sink = MediaSink.memory();
-            assertThrows(com.github.auties00.smalt.MediaException.Unsupported.class, () -> Transcoder.transcode(
-                    MediaSource.of(Fixtures.read(vp9)), sink, TranscodeOptions.of(OutputContainer.HEVC)));
-            assertEquals(0, sink.size(), "nothing is written");
+            var result = Transcoder.transcode(MediaSource.of(Fixtures.read(vp9)), sink,
+                    TranscodeOptions.of(OutputContainer.HEVC));
+            assertEquals(Codec.HEVC, result.streams().getFirst().track().codec());
+            assertTrue(sink.size() > 0, "the HEVC stream is written");
         }
     }
 

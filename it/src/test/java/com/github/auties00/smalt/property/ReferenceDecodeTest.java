@@ -83,6 +83,7 @@ class ReferenceDecodeTest {
     /** The declared reference of each codec Smalt encodes. */
     static final Map<Codec, Reference> REFERENCES = Map.ofEntries(
             entry(Codec.H264, of(OutputContainer.MP4, "h264", NORMATIVE)),
+            entry(Codec.HEVC, of(OutputContainer.MP4, "hevc", NORMATIVE)),
             entry(Codec.VP8, of(OutputContainer.WEBM, "libvpx", NORMATIVE)),
             entry(Codec.VP9, of(OutputContainer.WEBM, "libvpx-vp9", NORMATIVE)),
             entry(Codec.AV1, of(OutputContainer.IVF, "libdav1d", NORMATIVE)),

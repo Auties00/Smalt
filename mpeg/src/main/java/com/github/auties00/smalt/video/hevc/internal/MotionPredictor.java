@@ -179,9 +179,9 @@ public final class MotionPredictor {
     private boolean noBackwardPred;
 
     /**
-     * The slice decoder, for availability.
+     * The availability of the neighbors of the coding tree being decoded or encoded.
      */
-    private SliceDecoder slice;
+    private NeighborAvailability slice;
 
     /**
      * {@code TwoVersionsOfCurrDecPicFlag} of the slice, which restricts the bi-prediction of 8x8
@@ -254,10 +254,10 @@ public final class MotionPredictor {
      * @param nPbH the prediction block height
      * @param partIdx the partition index
      * @param m the parsed syntax, receiving the motion
-     * @param slice the slice decoder, for the availability of neighbors
+     * @param slice the availability of neighbors
      */
     public void derive(int xCb, int yCb, int nCbS, int xPb, int yPb, int nPbW, int nPbH, int partIdx, PuMotion m,
-                       SliceDecoder slice) {
+                       NeighborAvailability slice) {
         this.slice = slice;
         if (m.merge) {
             merge(xCb, yCb, nCbS, xPb, yPb, nPbW, nPbH, partIdx, m);

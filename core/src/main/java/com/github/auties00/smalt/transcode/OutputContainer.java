@@ -37,7 +37,8 @@ public enum OutputContainer {
      * A fast-start MP4 file: the {@code moov} precedes the media data, so the file plays while it
      * downloads. The media data is spooled (in memory, then in a temporary file) until the end.
      */
-    MP4(ContainerFormat.MP4, "mp4", "video/mp4", List.of(Codec.H264, Codec.VP9, Codec.AV1), List.of(Codec.AAC, Codec.OPUS)),
+    MP4(ContainerFormat.MP4, "mp4", "video/mp4", List.of(Codec.H264, Codec.VP9, Codec.AV1, Codec.HEVC),
+            List.of(Codec.AAC, Codec.OPUS)),
 
     /**
      * A fast-start QuickTime movie with the {@code qt  } brand, the file of the professional intra
@@ -45,7 +46,8 @@ public enum OutputContainer {
      * codecs of {@link #MP4}, and a transcode picks ProRes 422 HQ when the caller names no video
      * codec.
      */
-    MOV(ContainerFormat.MP4, "mov", "video/quicktime", List.of(Codec.PRORES, Codec.H264), List.of(Codec.AAC)),
+    MOV(ContainerFormat.MP4, "mov", "video/quicktime", List.of(Codec.PRORES, Codec.H264, Codec.HEVC),
+            List.of(Codec.AAC)),
 
     /**
      * An audio-only fast-start MP4 file with the {@code M4A} brand.
@@ -56,14 +58,14 @@ public enum OutputContainer {
      * A fragmented MP4 file, written as it is produced, so a streaming sink works and a truncated
      * file stays playable up to its last complete fragment.
      */
-    FRAGMENTED_MP4(ContainerFormat.MP4, "mp4", "video/mp4", List.of(Codec.H264, Codec.VP9, Codec.AV1),
+    FRAGMENTED_MP4(ContainerFormat.MP4, "mp4", "video/mp4", List.of(Codec.H264, Codec.VP9, Codec.AV1, Codec.HEVC),
             List.of(Codec.AAC, Codec.OPUS)),
 
     /**
      * A Matroska file.
      */
-    MATROSKA(ContainerFormat.MATROSKA, "mkv", "video/x-matroska", List.of(Codec.VP9, Codec.H264, Codec.VP8, Codec.AV1),
-            List.of(Codec.OPUS, Codec.AAC, Codec.FLAC, Codec.PCM_S16LE)),
+    MATROSKA(ContainerFormat.MATROSKA, "mkv", "video/x-matroska", List.of(Codec.VP9, Codec.H264, Codec.VP8, Codec.AV1,
+            Codec.HEVC), List.of(Codec.OPUS, Codec.AAC, Codec.FLAC, Codec.PCM_S16LE)),
 
     /**
      * A WebM file: Matroska restricted to VP8, VP9, AV1, Opus and Vorbis.
@@ -118,8 +120,7 @@ public enum OutputContainer {
 
     /**
      * An HEVC elementary stream in the Annex B byte stream format, holding one video stream and no
-     * timing, like {@link #H264}. No HEVC encoder exists, so a transcode only copies an HEVC stream
-     * into it.
+     * timing, like {@link #H264}.
      */
     HEVC(ContainerFormat.HEVC, "h265", "video/h265", List.of(Codec.HEVC), List.of()),
 

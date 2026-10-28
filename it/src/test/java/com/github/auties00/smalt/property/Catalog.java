@@ -24,7 +24,6 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class Catalog {
     /** The video codecs Smalt does not encode, with the ffmpeg encoder and container that make them. */
     private static final Map<Codec, String[]> FFMPEG_VIDEO = Map.of(
-            Codec.HEVC, new String[]{"libx265", "mp4", "-x265-params", "log-level=error:keyint=4"},
             Codec.MPEG4_PART2, new String[]{"mpeg4", "mp4", "-g", "4"},
             Codec.H263, new String[]{"h263", "3gp", "-g", "4"},
             Codec.MPEG2_VIDEO, new String[]{"mpeg2video", "ts", "-g", "4", "-bf", "2"},
@@ -86,8 +85,8 @@ public final class Catalog {
 
     private static Streams.Encoded make(Codec codec) {
         if (VideoEncoders.isSupported(codec)) {
-            // H.264 in file mode: length-prefixed packets with an avcC record, and B-frames.
-            var realtime = codec != Codec.H264;
+            // H.264 and HEVC in file mode: length-prefixed packets with an avcC or hvcC record, and B-frames.
+            var realtime = codec != Codec.H264 && codec != Codec.HEVC;
             return Streams.video(codec, 64, 64, 12, builder -> builder.realtime(realtime).threads(1).keyframeInterval(4));
         }
         if (AudioEncoders.isSupported(codec)) {

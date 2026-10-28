@@ -35,6 +35,7 @@ Contents
   48. ISO/IEC 13818-5 MPEG-2 audio reference software (dist10)
   49. PFFFT
   50. RNNoise
+  59. libgsm
 
 
 ===============================================================================
@@ -1110,7 +1111,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 
 ===============================================================================
-58. libgsm
+59. libgsm
 ===============================================================================
 
 Project:      libgsm 1.0.22, the GSM 06.10 full-rate speech codec of the

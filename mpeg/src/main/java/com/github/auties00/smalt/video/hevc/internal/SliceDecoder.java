@@ -17,7 +17,7 @@ import java.util.function.IntConsumer;
  *
  * <p>Instances are reused across slice segments and are not thread-safe.
  */
-public final class SliceDecoder {
+public final class SliceDecoder implements NeighborAvailability {
     /**
      * {@code ctxIdxMap} of Table 9-50, the significance context of each position of a 4x4 block.
      */
@@ -773,7 +773,8 @@ public final class SliceDecoder {
      * @param yNb the neighboring luma y
      * @return {@code true} when the neighbor is decoded, in the same slice and in the same tile
      */
-    boolean available(int xCurr, int yCurr, int xNb, int yNb) {
+    @Override
+    public boolean available(int xCurr, int yCurr, int xNb, int yNb) {
         if (xNb < 0 || yNb < 0 || xNb >= sps.width || yNb >= sps.height) {
             return false;
         }

@@ -1821,6 +1821,13 @@ Derived Smalt packages:
   palette mode parsing and reconstruction of the HM-16.21+SCM-8.8 screen
   content coding branch, source/Lib/TLibDecoder/TDecSbac.cpp and
   TDecCu.cpp)
+  video.hevc.encoder.internal (CabacWriter: the binary arithmetic encoder
+  engine of source/Lib/TLibEncoder/TEncBinCoderCABAC.cpp; CabacCounter: the
+  fractional bit estimate table of source/Lib/TLibCommon/ContextModel.cpp;
+  SaoEncoder: the sample adaptive offset decision of
+  source/Lib/TLibEncoder/TEncSampleAdaptiveOffset.cpp; ForwardTransform:
+  the forward transform shifts, quantizer scales, quantization and sign
+  bit hiding of source/Lib/TLibCommon/TComTrQuant.cpp)
 
 Derivation: algorithm structure followed; H.264 and HEVC share the CABAC
 engine. The rest of the HEVC decoder is written from the ITU-T H.265

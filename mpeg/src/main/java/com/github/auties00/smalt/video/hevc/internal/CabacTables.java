@@ -13,7 +13,7 @@ public final class CabacTables {
     /**
      * {@code rangeTabLps}, indexed {@code pStateIdx * 4 + qRangeIdx} (Table 9-52).
      */
-    static final int[] LPS_RANGE = {
+    public static final int[] LPS_RANGE = {
             128, 176, 208, 240, 128, 167, 197, 227, 128, 158, 187, 216, 123, 150, 178, 205,
             116, 142, 169, 195, 111, 135, 160, 185, 105, 128, 152, 175, 100, 122, 144, 166,
             95, 116, 137, 158, 90, 110, 130, 150, 85, 104, 123, 142, 81, 99, 117, 135,
@@ -35,7 +35,7 @@ public final class CabacTables {
     /**
      * {@code transIdxLps} (Table 9-53).
      */
-    static final int[] TRANS_LPS = {
+    public static final int[] TRANS_LPS = {
             0, 0, 1, 2, 2, 4, 4, 5, 6, 7, 8, 9, 9, 11, 11, 12,
             13, 13, 15, 15, 16, 16, 18, 18, 19, 19, 21, 21, 22, 22, 23, 24,
             24, 25, 26, 26, 27, 27, 28, 29, 29, 30, 30, 30, 31, 32, 32, 33,

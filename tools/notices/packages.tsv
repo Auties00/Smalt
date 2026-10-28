@@ -178,6 +178,8 @@ video.h264.encoder	mpeg
 video.h264.encoder.internal	mpeg
 video.h264.internal	mpeg
 video.hevc	mpeg
+video.hevc.encoder	mpeg
+video.hevc.encoder.internal	mpeg
 video.hevc.internal	mpeg
 video.intra.internal	video
 video.mpeg2	mpeg

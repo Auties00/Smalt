@@ -41,6 +41,13 @@ import com.github.auties00.smalt.video.h264.encoder.H264FirstPassStats;
 import com.github.auties00.smalt.video.h264.encoder.H264PacketFormat;
 import com.github.auties00.smalt.video.h264.encoder.H264Profile;
 import com.github.auties00.smalt.video.h264.encoder.H264RateControl;
+import com.github.auties00.smalt.video.hevc.HevcDecoder;
+import com.github.auties00.smalt.video.hevc.HevcDecoderOptions;
+import com.github.auties00.smalt.video.hevc.encoder.HevcEncoder;
+import com.github.auties00.smalt.video.hevc.encoder.HevcEncoderOptions;
+import com.github.auties00.smalt.video.hevc.encoder.HevcEncoderSpeed;
+import com.github.auties00.smalt.video.hevc.encoder.HevcPictureHash;
+import com.github.auties00.smalt.video.hevc.encoder.HevcProfile;
 import com.github.auties00.smalt.video.mpeg2.Mpeg2Decoder;
 
 import java.io.ByteArrayOutputStream;
@@ -60,7 +67,7 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
- * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264,
+ * Creates the workloads of {@link TrainingFamily#MPEG}, the codecs of {@code smalt-mpeg}: H.264, HEVC,
  * MPEG-1 and MPEG-2 video, AAC, AC-3 and E-AC-3, and AMR, each keeping its codecs across rounds as a
  * long-running application does.
  */
@@ -83,8 +90,8 @@ final class MpegWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the HEVC, HEIC, MPEG-4 Part 2, H.263 and USAC decoders and the separate color plane path of
-        //  the H.264 decoder, which need streams that no Smalt encoder produces
+        // TODO: train the HEIC, MPEG-4 Part 2, H.263 and USAC decoders and the separate color plane path of the
+        //  H.264 decoder, which need streams that no Smalt encoder produces
         return List.of(
                 realtime("h264-encode-rt-t1", () -> h264Encode(1, null, null)),
                 realtime("h264-encode-rt-tools", MpegWorkloads::h264RealtimeTools),
@@ -94,6 +101,12 @@ final class MpegWorkloads {
                         () -> new H264Encoder(WIDTH, HEIGHT, H264EncoderOptions.forRealtime().toBuilder()
                                 .timeBase(TIME_BASE).bitrate(BITRATE).threads(2).build()),
                         track -> new H264Decoder(track, H264DecoderOptions.forRealtime()))),
+                realtime("hevc-encode-rt-t1", () -> hevcEncode("hevc-encode-rt-t1",
+                        HevcEncoderOptions.forRealtime().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE).build())),
+                realtime("hevc-encode-rt-t2", () -> hevcEncode("hevc-encode-rt-t2",
+                        HevcEncoderOptions.forRealtime().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE).threads(2)
+                                .build())),
+                realtime("hevc-decode-rt-t1", () -> hevcDecode(1, true)),
                 realtime("ac3-encode-rt", () -> ac3Realtime(6)),
                 realtime("eac3-rt", () -> eac3("eac3-rt", Eac3EncoderOptions.forRealtime(), 6)),
                 realtime("aac-encode-retarget", () -> aacRetarget(6)),
@@ -114,6 +127,16 @@ final class MpegWorkloads {
                 file("h264-svc-decode", MpegWorkloads::h264ScalableDecode),
                 file("mpeg2-decode-t1", () -> mpegVideoDecode(1)),
                 file("mpeg2-decode-t2", () -> mpegVideoDecode(2)),
+                file("hevc-encode-fast-b-t2", () -> hevcEncode("hevc-encode-fast-b-t2",
+                        hevcFileOptions(HevcEncoderSpeed.FAST, 2).toBuilder().bFrames(3).build())),
+                file("hevc-encode-balanced-t1", () -> hevcEncode("hevc-encode-balanced-t1",
+                        hevcFileOptions(HevcEncoderSpeed.BALANCED, 1))),
+                file("hevc-encode-slow-main10-t2", () -> hevcEncode("hevc-encode-slow-main10-t2",
+                        hevcFileOptions(HevcEncoderSpeed.SLOW, 2).toBuilder().profile(HevcProfile.MAIN_10)
+                                .bitDepth(10).pictureHash(HevcPictureHash.MD5).build())),
+                file("hevc-encode-still", MpegWorkloads::hevcStillEncode),
+                file("hevc-decode-t1", () -> hevcDecode(1, false)),
+                file("hevc-decode-t2", () -> hevcDecode(2, false)),
                 file("aac-encode", () -> aacEncode(6)),
                 file("aac-960-surround-encode", () -> aacShortFrameSurroundEncode(3)),
                 file("aac-decode", () -> aacDecode("aac-decode", false, false, 6)),
@@ -161,6 +184,69 @@ final class MpegWorkloads {
                 + (profile == H264Profile.CONSTRAINED_BASELINE ? "baseline" : profile.name().toLowerCase(Locale.ROOT))
                 + "-t" + threads;
         return VideoStreams.encode(name, new H264Encoder(WIDTH, HEIGHT, options));
+    }
+
+    /**
+     * Returns the options of the HEVC file workloads: the file preset at a speed and thread count, with the
+     * training time base and bitrate.
+     *
+     * @param speed the encoder speed
+     * @param threads the encoder threads
+     * @return the options
+     */
+    private static HevcEncoderOptions hevcFileOptions(HevcEncoderSpeed speed, int threads) {
+        return HevcEncoderOptions.forFile().toBuilder().timeBase(TIME_BASE).bitrate(BITRATE).speed(speed)
+                .threads(threads).build();
+    }
+
+    /**
+     * Returns a workload that encodes with the HEVC encoder.
+     *
+     * @param name the workload name
+     * @param options the encoder options
+     * @return the workload
+     */
+    private static TrainingWorkload hevcEncode(String name, HevcEncoderOptions options) {
+        return VideoStreams.encode(name, new HevcEncoder(WIDTH, HEIGHT, options));
+    }
+
+    /**
+     * Returns a workload that codes single pictures with the Main Still Picture profile, as HEIC images are coded.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload hevcStillEncode() {
+        var pictures = SyntheticVideo.natural(WIDTH, HEIGHT, 2);
+        return TrainingWorkload.of("hevc-encode-still", () -> {
+            for (var picture : pictures) {
+                try (var encoder = new HevcEncoder(WIDTH, HEIGHT, HevcEncoderOptions.forStillPicture())) {
+                    encoder.encode(new VideoFrame(picture, 0, 1, true),
+                            packet -> {
+                            });
+                    encoder.flush(packet -> {
+                    });
+                }
+            }
+        });
+    }
+
+    /**
+     * Returns a workload that decodes an HEVC stream of the HEVC encoder, with B pictures, wavefront substreams,
+     * the sample adaptive offset and decoded picture hashes, which the decoder verifies.
+     *
+     * @param threads the decoder threads
+     * @param realtime whether the stream is coded without B pictures, as real-time streams are
+     * @return the workload
+     */
+    private static TrainingWorkload hevcDecode(int threads, boolean realtime) {
+        var encoder = new HevcEncoder(WIDTH, HEIGHT, hevcFileOptions(HevcEncoderSpeed.FASTEST, 2).toBuilder()
+                .bFrames(realtime ? 0 : 3).pictureHash(HevcPictureHash.MD5).build());
+        var codecConfig = encoder.codecConfig();
+        var packets = VideoStreams.encodeAll(encoder, SyntheticVideo.natural(WIDTH, HEIGHT,
+                VideoStreams.DECODED_FRAMES / 2));
+        var decoder = new HevcDecoder(VideoStreams.track(Codec.HEVC, codecConfig.orElse(null)),
+                HevcDecoderOptions.builder().threads(threads).hashVerification(true).build());
+        return VideoStreams.decode((realtime ? "hevc-decode-rt-t" : "hevc-decode-t") + threads, packets, decoder);
     }
 
     /**

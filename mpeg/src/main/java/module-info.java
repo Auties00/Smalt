@@ -31,6 +31,7 @@ module com.github.auties00.smalt.mpeg {
     exports com.github.auties00.smalt.video.h264;
     exports com.github.auties00.smalt.video.h264.encoder;
     exports com.github.auties00.smalt.video.hevc;
+    exports com.github.auties00.smalt.video.hevc.encoder;
     exports com.github.auties00.smalt.video.mpeg4;
     exports com.github.auties00.smalt.video.mpeg2;
     exports com.github.auties00.smalt.video.h263;
