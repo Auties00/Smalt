@@ -1,5 +1,6 @@
 /**
- * The H.264 (AVC) encoder ({@link H264Encoder}).
+ * The H.264 (AVC) encoder ({@link H264Encoder}) and the first pass of its two-pass encodes
+ * ({@link H264FirstPass}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}

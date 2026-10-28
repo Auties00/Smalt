@@ -220,8 +220,13 @@ final class Mp3Vectors {
 
     /** Decodes a whole stream through the demuxer and decoder, untrimmed. */
     static AudioPipeline.Decoded decode(byte[] data) {
+        return decode(data, Mp3DecoderOptions.defaults());
+    }
+
+    /** Decodes a whole stream through the demuxer and a decoder with options, untrimmed. */
+    static AudioPipeline.Decoded decode(byte[] data, Mp3DecoderOptions options) {
         try (var demuxer = new MpegAudioDemuxer(MediaSource.of(data))) {
-            return AudioPipeline.decode(demuxer, Mp3Decoder::new);
+            return AudioPipeline.decode(demuxer, track -> new Mp3Decoder(track, options));
         }
     }
 
