@@ -1,0 +1,142 @@
+# file;jpegtran switches;md5 of the jpegtran (libjpeg-turbo 3.1.3) output; made by tools/testdata/jpeg12/make-vectors.sh
+227x149-yuv420-baseline.jpg;-copy none;b439414e58f872502bc4a2641f74205f
+227x149-yuv420-baseline.jpg;-rotate 90;9fc5fcdde995a47c3848cd61135ef9d9
+227x149-yuv420-baseline.jpg;-rotate 270 -trim;a3cff76c8de73ce0131e578173088ae4
+227x149-yuv420-baseline.jpg;-flip horizontal -trim;772aa6acc8cebd626388b2cbfc204192
+227x149-yuv420-baseline.jpg;-transpose -optimize;d96f0533472f049aeacc6ccb75225b6b
+227x149-yuv420-baseline.jpg;-progressive;2c0b6fab61614ce0454f27c142e99980
+227x149-yuv420-baseline.jpg;-crop 20x18+9+5;5a2dae8edb50f75023d50cd22a49af49
+227x149-yuv420-baseline.jpg;-grayscale;627a355189d9c247cb44688372c77fa3
+227x149-yuv420-baseline.jpg;-transverse -progressive -restart 2B;e387644208fc62dcadf7b1c6a056c9f2
+227x149-yuv422-progressive.jpg;-copy none;8d2671d7cbdc710e849a15327ad73cf0
+227x149-yuv422-progressive.jpg;-rotate 90;e4ebd4838972a5de5a2f1112744418a1
+227x149-yuv422-progressive.jpg;-rotate 270 -trim;dd556cc0dae9a35fc256743e9e542ef8
+227x149-yuv422-progressive.jpg;-flip horizontal -trim;8eab3f5d77adc19e9736bd573ebd0d50
+227x149-yuv422-progressive.jpg;-transpose -optimize;6c9dd0a9701478fd3261fd8d277f451c
+227x149-yuv422-progressive.jpg;-progressive;05d11826b364fae789835cebcd7009fb
+227x149-yuv422-progressive.jpg;-crop 20x18+9+5;a7bdf29ab2ed6606aa7bde342b6e7497
+227x149-yuv422-progressive.jpg;-grayscale;627a355189d9c247cb44688372c77fa3
+227x149-yuv422-progressive.jpg;-transverse -progressive -restart 2B;c3bd37b1818620ea8e532bffe1c312e8
+33x65-yuv411-progressive-arithmetic.jpg;-copy none;d7f32d7b3f75a5bc0e5c32a31b1eef72
+33x65-yuv411-progressive-arithmetic.jpg;-rotate 90;7aa7027908254640bb35e64794bfc007
+33x65-yuv411-progressive-arithmetic.jpg;-rotate 270 -trim;5417567c5df85b96b09a872923532627
+33x65-yuv411-progressive-arithmetic.jpg;-flip horizontal -trim;efe3f49ba46b9d8acfbcf97343863617
+33x65-yuv411-progressive-arithmetic.jpg;-transpose -optimize;62b051e78f4f04eafd2afa7db61ea707
+33x65-yuv411-progressive-arithmetic.jpg;-progressive;a99e8903091206df5708b4cae2202222
+33x65-yuv411-progressive-arithmetic.jpg;-crop 20x18+9+5;f52ea0417218008adfac5d95c138219b
+33x65-yuv411-progressive-arithmetic.jpg;-grayscale;08a787d250acfa10641b2425ff9c3813
+33x65-yuv411-progressive-arithmetic.jpg;-transverse -progressive -restart 2B;aa1f525be9cb93d2a44967c0e5585a0b
+227x149-monochrome-arithmetic.jpg;-copy none;627a355189d9c247cb44688372c77fa3
+227x149-monochrome-arithmetic.jpg;-rotate 90;2b4b838ba83c47e65415550e48b93a41
+227x149-monochrome-arithmetic.jpg;-rotate 270 -trim;6e3a601830a54da75f2c191f5c46c1a2
+227x149-monochrome-arithmetic.jpg;-flip horizontal -trim;b74c785bd60fa986a8c29a13e19d3acb
+227x149-monochrome-arithmetic.jpg;-transpose -optimize;802df51ddd72af06d50fa2602d8b9da5
+227x149-monochrome-arithmetic.jpg;-progressive;6b4205e4b471c5a1389e41e66dd0eb34
+227x149-monochrome-arithmetic.jpg;-crop 20x18+9+5;9da4092befb9fa7bab11535bd1e37441
+227x149-monochrome-arithmetic.jpg;-grayscale;627a355189d9c247cb44688372c77fa3
+227x149-monochrome-arithmetic.jpg;-transverse -progressive -restart 2B;9f8f5105ec393a32d821409a5daa66f0
+64x48-rgb-baseline-q100.jpg;-copy none;09a939c32e3608148136571c001a4363
+64x48-rgb-baseline-q100.jpg;-rotate 90;d40081f6eb7835a555c3430d2972ee40
+64x48-rgb-baseline-q100.jpg;-rotate 270 -trim;39c7b080fc48bd2c4144b56a811873dd
+64x48-rgb-baseline-q100.jpg;-flip horizontal -trim;a2c275506a506b5c314ca0aaf1061325
+64x48-rgb-baseline-q100.jpg;-transpose -optimize;46ea2b7b902afd823c5d1b09165bf38f
+64x48-rgb-baseline-q100.jpg;-progressive;9866163ed79fc806a3101956c9d55cdc
+64x48-rgb-baseline-q100.jpg;-crop 20x18+9+5;54c9b4bcdff74372c2c17b8fb024283a
+64x48-rgb-baseline-q100.jpg;-grayscale;fails
+64x48-rgb-baseline-q100.jpg;-transverse -progressive -restart 2B;9efb530054011d13430f2ee063330aab
+227x149-yuv420-baseline.jpg;-arithmetic;e4f0813186121611c4b9589de8b41c14
+227x149-yuv420-baseline.jpg;-arithmetic -progressive -rotate 90;c1c64650c4c55a4ca290d6636cb22bee
+227x149-yuv420-baseline.jpg;-arithmetic -grayscale -restart 3B;d458e5748e2b1a6987b014abcca2cca3
+227x149-yuv420-baseline.jpg;-restart 1;6c8764df72967eb8a11a25f068482b19
+227x149-yuv420-baseline.jpg;-progressive -restart 2;357f69d8bce28241dbfda8ab7662bad4
+227x149-yuv420-baseline.jpg;-crop 260x170+16+8;1a4804ea5a638a900c260fc20a6f4e63
+227x149-yuv420-baseline.jpg;-crop 260fx170+16+8;9ac613002a277b90923ab7a0c2b278a7
+227x149-yuv420-baseline.jpg;-crop 260rx40+24+0;4cb4d661f895df081f90ae204778f165
+227x149-yuv420-baseline.jpg;-crop 20fx18f+9+5;8d14ee3338c2d02199cd9e807e972834
+227x149-yuv420-baseline.jpg;-wipe 20x18+9+5;e61370f1627df7018cd683d2a9609226
+227x149-yuv420-baseline.jpg;-wipe 20fx18+9+5;aa21972c64aaa71bf6343fae80d30c68
+227x149-yuv420-baseline.jpg;-wipe 16rx48+0+0;eeed17551438b490fbfaf2f61f5054f7
+227x149-yuv420-baseline.jpg;-wipe 40rx65+24+0;3f440a91d867fa6911711c0c5eeb8fbf
+227x149-yuv420-baseline.jpg;-drop +16+8 64x48-yuv420-progressive-q100.jpg;e7fd28d79debbd0173235271ea2ddc7d
+227x149-yuv420-baseline.jpg;-drop +32+16 64x48-yuv420-progressive-q100.jpg -trim;014023d821da3a0c312ae06bbf56f73d
+227x149-yuv420-baseline.jpg;-drop +8+8 33x65-monochrome-baseline.jpg -arithmetic;fails
+227x149-yuv422-progressive.jpg;-arithmetic;57010a286a877a259546f75dde858c8d
+227x149-yuv422-progressive.jpg;-arithmetic -progressive -rotate 90;9b35fc7ca42121b523097cdda5633473
+227x149-yuv422-progressive.jpg;-arithmetic -grayscale -restart 3B;d458e5748e2b1a6987b014abcca2cca3
+227x149-yuv422-progressive.jpg;-restart 1;c7968db08ffbed1d4a17fb93dd91960d
+227x149-yuv422-progressive.jpg;-progressive -restart 2;2ef624fadbdc935ec2b5f7e3f01cfbbf
+227x149-yuv422-progressive.jpg;-crop 260x170+16+8;eef70d47909c519e5cc16ec889046453
+227x149-yuv422-progressive.jpg;-crop 260fx170+16+8;06a4f49e5a1bfca34d8d524054468014
+227x149-yuv422-progressive.jpg;-crop 260rx40+24+0;105504c7c6bc83719ea037f2229bda27
+227x149-yuv422-progressive.jpg;-crop 20fx18f+9+5;656616c485cfaaa0c08d6b9fa055f3eb
+227x149-yuv422-progressive.jpg;-wipe 20x18+9+5;38d65db9658484f8d6525fdce9963446
+227x149-yuv422-progressive.jpg;-wipe 20fx18+9+5;8a58446f11064346b97cb6132829e631
+227x149-yuv422-progressive.jpg;-wipe 16rx48+0+0;08f1a26abda0904827c16ee18ac360e0
+227x149-yuv422-progressive.jpg;-wipe 40rx65+24+0;f891754957a19d0d1d44305dbb26b1f9
+227x149-yuv422-progressive.jpg;-drop +16+8 64x48-yuv420-progressive-q100.jpg;fails
+227x149-yuv422-progressive.jpg;-drop +32+16 64x48-yuv420-progressive-q100.jpg -trim;fails
+227x149-yuv422-progressive.jpg;-drop +8+8 33x65-monochrome-baseline.jpg -arithmetic;3e796f34540bf3df60bf1169488a0c08
+33x65-yuv411-progressive-arithmetic.jpg;-arithmetic;c4128097b1ffcc71901f67b5081672e5
+33x65-yuv411-progressive-arithmetic.jpg;-arithmetic -progressive -rotate 90;6f1385c40a6697fbe559fb69f3b1ec2e
+33x65-yuv411-progressive-arithmetic.jpg;-arithmetic -grayscale -restart 3B;b66d71d0b79c626d567c42561d30c420
+33x65-yuv411-progressive-arithmetic.jpg;-restart 1;2111572f0a23eec594cba659e4f251f8
+33x65-yuv411-progressive-arithmetic.jpg;-progressive -restart 2;c20c5d634653364c28658db0f60b60b4
+33x65-yuv411-progressive-arithmetic.jpg;-crop 260x170+16+8;3be7293fb24873e4a2741fbd28db1406
+33x65-yuv411-progressive-arithmetic.jpg;-crop 260fx170+16+8;d973ef55740be3b3076d2226cbc12db2
+33x65-yuv411-progressive-arithmetic.jpg;-crop 260rx40+24+0;7ef5fc94099a686132f58fd46fbec6fc
+33x65-yuv411-progressive-arithmetic.jpg;-crop 20fx18f+9+5;f006d8270b777e9963cd64f8dbd0b185
+33x65-yuv411-progressive-arithmetic.jpg;-wipe 20x18+9+5;cb70b425a591e3745a154d39e7534326
+33x65-yuv411-progressive-arithmetic.jpg;-wipe 20fx18+9+5;a1580edc22a1cfe40e344727e1d715f7
+33x65-yuv411-progressive-arithmetic.jpg;-wipe 16rx48+0+0;6b5dedfbbc59cc7dee1b8193d5b16a25
+33x65-yuv411-progressive-arithmetic.jpg;-wipe 40rx65+24+0;fails
+33x65-yuv411-progressive-arithmetic.jpg;-drop +16+8 64x48-yuv420-progressive-q100.jpg;fails
+33x65-yuv411-progressive-arithmetic.jpg;-drop +32+16 64x48-yuv420-progressive-q100.jpg -trim;fails
+33x65-yuv411-progressive-arithmetic.jpg;-drop +8+8 33x65-monochrome-baseline.jpg -arithmetic;fails
+227x149-monochrome-arithmetic.jpg;-arithmetic;b2644fa701902fabd26925cc9ed42adc
+227x149-monochrome-arithmetic.jpg;-arithmetic -progressive -rotate 90;e0af379a340ee13f9faad7750c72e345
+227x149-monochrome-arithmetic.jpg;-arithmetic -grayscale -restart 3B;d458e5748e2b1a6987b014abcca2cca3
+227x149-monochrome-arithmetic.jpg;-restart 1;12f755c9fe3c62c4a5b8a89ed4719ca7
+227x149-monochrome-arithmetic.jpg;-progressive -restart 2;50d199a6f8a92490c99dce74bf5a491d
+227x149-monochrome-arithmetic.jpg;-crop 260x170+16+8;1a8fc60beaef222300a0799dbda7a636
+227x149-monochrome-arithmetic.jpg;-crop 260fx170+16+8;a3138f145e3bb2ac21d09d75917f11a5
+227x149-monochrome-arithmetic.jpg;-crop 260rx40+24+0;e7483f0bf6b08f95288699d9cbb57ba9
+227x149-monochrome-arithmetic.jpg;-crop 20fx18f+9+5;4b77b8ec94cce1fc37d0fa6c8556794e
+227x149-monochrome-arithmetic.jpg;-wipe 20x18+9+5;9970c060a5f49aba34fc5866b7b20317
+227x149-monochrome-arithmetic.jpg;-wipe 20fx18+9+5;f2942e4dc755922fcc3746258f7a1850
+227x149-monochrome-arithmetic.jpg;-wipe 16rx48+0+0;edc0a593fc5dc32bdb42a158fdc23be0
+227x149-monochrome-arithmetic.jpg;-wipe 40rx65+24+0;441bb72c8b88d8bdd6a8d3977f01b590
+227x149-monochrome-arithmetic.jpg;-drop +16+8 64x48-yuv420-progressive-q100.jpg;804965ffc2d5794e2143ec93be6f5bc9
+227x149-monochrome-arithmetic.jpg;-drop +32+16 64x48-yuv420-progressive-q100.jpg -trim;40d73f64fbef41eba8c77e6486745809
+227x149-monochrome-arithmetic.jpg;-drop +8+8 33x65-monochrome-baseline.jpg -arithmetic;ae55dd67f90a516f03cc9f65785fae4c
+64x48-rgb-baseline-q100.jpg;-arithmetic;14f9e1de45e003f0f17bd0dc962714e3
+64x48-rgb-baseline-q100.jpg;-arithmetic -progressive -rotate 90;af6d339435b10f896d63bd9b2b123b32
+64x48-rgb-baseline-q100.jpg;-arithmetic -grayscale -restart 3B;fails
+64x48-rgb-baseline-q100.jpg;-restart 1;f10a853bfd3e47ec5cd6206b5d1d468b
+64x48-rgb-baseline-q100.jpg;-progressive -restart 2;5a82c88287acf73d558dcf7012887015
+64x48-rgb-baseline-q100.jpg;-crop 260x170+16+8;d13963d52a87de057564c2186b8f570e
+64x48-rgb-baseline-q100.jpg;-crop 260fx170+16+8;d88e5414e7f70abd0637e6f15893ab64
+64x48-rgb-baseline-q100.jpg;-crop 260rx40+24+0;71e618a3723c809ce8d3cac4d709ced1
+64x48-rgb-baseline-q100.jpg;-crop 20fx18f+9+5;271f2b98462227406700eee3b5f5facc
+64x48-rgb-baseline-q100.jpg;-wipe 20x18+9+5;eccabfe908c2afe8cb22226c805d7249
+64x48-rgb-baseline-q100.jpg;-wipe 20fx18+9+5;02599fd2a57b136f2711b13d936df994
+64x48-rgb-baseline-q100.jpg;-wipe 16rx48+0+0;c672f9d86b2316f107e938e9843fe9bf
+64x48-rgb-baseline-q100.jpg;-wipe 40rx65+24+0;fails
+64x48-rgb-baseline-q100.jpg;-drop +16+8 64x48-yuv420-progressive-q100.jpg;fails
+64x48-rgb-baseline-q100.jpg;-drop +32+16 64x48-yuv420-progressive-q100.jpg -trim;fails
+64x48-rgb-baseline-q100.jpg;-drop +8+8 33x65-monochrome-baseline.jpg -arithmetic;fails
+64x48-yuv444-arithmetic-q100.jpg;-arithmetic;96961a68eede37e1d6b6388e14d95129
+64x48-yuv444-arithmetic-q100.jpg;-arithmetic -progressive -rotate 90;f91814bbdd102d8bc56cc99fa620629d
+64x48-yuv444-arithmetic-q100.jpg;-arithmetic -grayscale -restart 3B;8de653b75e0803b6af546574dafad857
+64x48-yuv444-arithmetic-q100.jpg;-restart 1;b0e0d10af87b452b89718e89497b61bd
+64x48-yuv444-arithmetic-q100.jpg;-progressive -restart 2;127d387c786b7e7b007806040b78ab9c
+64x48-yuv444-arithmetic-q100.jpg;-crop 260x170+16+8;0177825bdd92ccced6ba040714b655a6
+64x48-yuv444-arithmetic-q100.jpg;-crop 260fx170+16+8;01b9c191064c4059feed0c858acd58d2
+64x48-yuv444-arithmetic-q100.jpg;-crop 260rx40+24+0;46b0b062e3886897e784f2de5cc9e3c1
+64x48-yuv444-arithmetic-q100.jpg;-crop 20fx18f+9+5;d7b397d690b2b878d65cf54ecb2b6392
+64x48-yuv444-arithmetic-q100.jpg;-wipe 20x18+9+5;be3b456ef9aac678d9c303e67c87519b
+64x48-yuv444-arithmetic-q100.jpg;-wipe 20fx18+9+5;791d16e1a6c1c05660a2f26313891534
+64x48-yuv444-arithmetic-q100.jpg;-wipe 16rx48+0+0;7d63202e03379165ce94749b706613db
+64x48-yuv444-arithmetic-q100.jpg;-wipe 40rx65+24+0;fails
+64x48-yuv444-arithmetic-q100.jpg;-drop +16+8 64x48-yuv420-progressive-q100.jpg;fails
+64x48-yuv444-arithmetic-q100.jpg;-drop +32+16 64x48-yuv420-progressive-q100.jpg -trim;fails
+64x48-yuv444-arithmetic-q100.jpg;-drop +8+8 33x65-monochrome-baseline.jpg -arithmetic;fails

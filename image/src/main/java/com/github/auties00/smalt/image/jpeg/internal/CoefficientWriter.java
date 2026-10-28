@@ -1,3 +1,6 @@
+/* Ports libjpeg-turbo (jctrans.c, jcmarker.c, jchuff.c, jcphuff.c, jcmaster.c, jcparam.c). Copyright (C)
+   1991-2019, Thomas G. Lane, Guido Vollbeding; Copyright (C) 2009-2024, D. R. Commander; IJG License. Modified
+   for Smalt. */
 package com.github.auties00.smalt.image.jpeg.internal;
 
 import com.github.auties00.smalt.MediaException;
@@ -8,8 +11,10 @@ import java.util.List;
 
 /**
  * Writes a JPEG file from quantized DCT coefficients: the file header and copied marker segments,
- * the frame header, and one sequential scan or a progressive scan script, Huffman coded with the
- * tables of T.81 Annex K or with tables optimized for the coefficients.
+ * the frame header, and the scans of a sequential or progressive scan script, Huffman coded with the
+ * tables of T.81 Annex K or with tables optimized for the coefficients, or arithmetic coded with the
+ * default conditioning of T.81. A 12-bit Huffman file always gets optimized tables, since the tables of
+ * Annex K cover only the magnitudes of 8-bit coefficients.
  *
  * @implNote This implementation is a port of the parts of libjpeg-turbo that
  * {@code jpeg_write_coefficients} drives: the marker writer (jcmarker.c), the coefficient
@@ -25,11 +30,6 @@ final class CoefficientWriter {
      * The size of the buffer of correction bits held back by an AC refinement scan.
      */
     private static final int MAX_CORRECTION_BITS = 1000;
-
-    /**
-     * The largest magnitude category of an AC coefficient at 8-bit precision.
-     */
-    private static final int MAX_COEFFICIENT_BITS = 10;
 
     /**
      * The largest number of blocks in one MCU.
@@ -78,13 +78,28 @@ final class CoefficientWriter {
      * @param ah the previous successive-approximation bit position
      * @param al the successive-approximation bit position
      */
-    private record Scan(int[] components, int ss, int se, int ah, int al) {
+    record Scan(int[] components, int ss, int se, int ah, int al) {
     }
+
+    /**
+     * The default AC conditioning bound {@code Kx} of arithmetic coding (T.81 F.1.4.4.2).
+     */
+    private static final int ARITH_AC_K = 5;
 
     /**
      * The image width.
      */
     private final int width;
+
+    /**
+     * The sample precision in bits, 8 or 12.
+     */
+    private final int precision;
+
+    /**
+     * The largest magnitude category of an AC coefficient, {@code precision + 2}.
+     */
+    private final int maxCoefficientBits;
 
     /**
      * The image height.
@@ -192,9 +207,14 @@ final class CoefficientWriter {
     private final byte[] correctionBits = new byte[MAX_CORRECTION_BITS];
 
     /**
-     * The restart interval in MCUs, or {@code 0}.
+     * The restart interval in MCUs of the current scan, or {@code 0}.
      */
-    private final int restartInterval;
+    private int restartInterval;
+
+    /**
+     * The restart interval in MCU rows of every scan, or {@code 0} to keep {@link #restartInterval}.
+     */
+    private final int restartRows;
 
     /**
      * The number of MCUs left before the next restart marker.
@@ -205,6 +225,31 @@ final class CoefficientWriter {
      * The number of the next restart marker, from 0 to 7.
      */
     private int nextRestart;
+
+    /**
+     * Whether the scans are arithmetic coded.
+     */
+    private boolean arithmetic;
+
+    /**
+     * The arithmetic coder of the current scan, or {@code null} for Huffman coding.
+     */
+    private ArithmeticEncoder coder;
+
+    /**
+     * The arithmetic DC statistics of each table slot.
+     */
+    private byte[][] dcStats;
+
+    /**
+     * The arithmetic AC statistics of each table slot.
+     */
+    private byte[][] acStats;
+
+    /**
+     * The arithmetic DC conditioning context of each component of the scan.
+     */
+    private final int[] dcContext = new int[4];
 
     /**
      * The dummy blocks that pad interleaved MCUs at the right and bottom edges.
@@ -234,13 +279,36 @@ final class CoefficientWriter {
      * @param components the components, at most four
      * @param quantTables the natural-order quantization table of each slot the components use
      * @param restartInterval the number of MCUs between restart markers, or {@code 0}
+     * @param precision the sample precision in bits, 8 or 12
      */
-    CoefficientWriter(int width, int height, Component[] components, int[][] quantTables, int restartInterval) {
+    CoefficientWriter(int width, int height, Component[] components, int[][] quantTables, int restartInterval,
+                      int precision) {
+        this(width, height, components, quantTables, restartInterval, 0, precision);
+    }
+
+    /**
+     * Creates a writer whose restart interval may be given in MCU rows.
+     *
+     * @param width the image width
+     * @param height the image height
+     * @param components the components, at most four
+     * @param quantTables the natural-order quantization table of each slot the components use
+     * @param restartInterval the number of MCUs between restart markers, or {@code 0}; ignored when
+     * {@code restartRows} is not {@code 0}
+     * @param restartRows the number of MCU rows between restart markers, from 0 to 65535, which sets
+     * each scan's interval to that many rows of its MCUs, at most 65535; or {@code 0}
+     * @param precision the sample precision in bits, 8 or 12
+     */
+    CoefficientWriter(int width, int height, Component[] components, int[][] quantTables, int restartInterval,
+                      int restartRows, int precision) {
         this.width = width;
         this.height = height;
+        this.precision = precision;
+        this.maxCoefficientBits = precision + 2;
         this.components = components;
         this.quantTables = quantTables;
         this.restartInterval = restartInterval;
+        this.restartRows = restartRows;
         var maxX = 1;
         var maxY = 1;
         for (var component : components) {
@@ -259,15 +327,88 @@ final class CoefficientWriter {
      * @param markers the marker segments to copy after the file header
      * @param progressive whether to write the progressive scan script instead of one sequential
      * scan
-     * @param optimize whether to optimize the Huffman tables; always the case for a progressive
-     * file
+     * @param arithmetic whether the scans are arithmetic coded
+     * @param optimize whether to optimize the Huffman tables; always the case for a progressive or
+     * 12-bit Huffman file, and meaningless for arithmetic coding
      * @param ycbcr whether the components are YCbCr, which selects the progressive script
      * @return the file
-     * @throws MediaException.Malformed if a coefficient is too large for 8-bit JPEG
+     * @throws MediaException.Malformed if a coefficient is too large for the precision
      */
-    byte[] write(Header header, List<MarkerSegment> markers, boolean progressive, boolean optimize, boolean ycbcr) {
-        var optimized = optimize || progressive;
+    byte[] write(Header header, List<MarkerSegment> markers, boolean progressive, boolean arithmetic,
+                 boolean optimize, boolean ycbcr) {
+        var scans = progressive ? progressiveScript(components.length, ycbcr) : List.of(sequentialScan());
+        return write(header, markers, scans, progressive, arithmetic, optimize);
+    }
+
+    /**
+     * Writes the file with a scan script.
+     *
+     * @param header the file header
+     * @param markers the marker segments to copy after the file header
+     * @param scans the scans, a valid script for the process
+     * @param progressive whether the file is progressive
+     * @param arithmetic whether the scans are arithmetic coded
+     * @param optimize whether to optimize the Huffman tables; always the case for a progressive or
+     * 12-bit Huffman file, and meaningless for arithmetic coding
+     * @return the file
+     * @throws MediaException.Malformed if a coefficient is too large for the precision
+     */
+    byte[] write(Header header, List<MarkerSegment> markers, List<Scan> scans, boolean progressive,
+                 boolean arithmetic, boolean optimize) {
+        this.arithmetic = arithmetic;
+        if (arithmetic) {
+            coder = new ArithmeticEncoder(out);
+            dcStats = new byte[16][ArithmeticEncoder.DC_BINS];
+            acStats = new byte[16][ArithmeticEncoder.AC_BINS];
+        }
+        var optimized = !arithmetic && (optimize || progressive || precision != 8);
         out.writeMarker(0xD8);
+        writeFileHeader(out, header, markers);
+        if (!optimized && !arithmetic) {
+            dcSpecs[0] = HuffmanSpec.STD_DC_LUMINANCE;
+            dcSpecs[1] = HuffmanSpec.STD_DC_CHROMINANCE;
+            acSpecs[0] = HuffmanSpec.STD_AC_LUMINANCE;
+            acSpecs[1] = HuffmanSpec.STD_AC_CHROMINANCE;
+        }
+        for (var index = 0; index < scans.size(); index++) {
+            var scan = scans.get(index);
+            if (restartRows != 0) {
+                restartInterval = (int) Math.min((long) restartRows * mcusPerRow(scan), 0xFFFF);
+            }
+            if (optimized && (scan.ss != 0 || scan.ah == 0)) {
+                gatherPass(scan, progressive);
+            }
+            if (index == 0) {
+                writeFrameHeader(progressive);
+            }
+            writeScanHeader(scan);
+            outputPass(scan, progressive);
+        }
+        out.writeMarker(0xD9);
+        return out.toByteArray();
+    }
+
+    /**
+     * Returns the number of MCUs in one MCU row of a scan: the blocks per row of its component, or the
+     * MCU columns of the frame for an interleaved scan.
+     *
+     * @param scan the scan, of one component or interleaved
+     * @return the number of MCUs per row
+     */
+    private int mcusPerRow(Scan scan) {
+        return scan.components.length == 1 ? components[scan.components[0]].blocksWide
+                : JpegFrame.ceilDiv(width, maxSamplingX * 8);
+    }
+
+    /**
+     * Writes the segments that follow SOI: the JFIF and Adobe headers when asked, then the marker segments,
+     * leaving out a copied JFIF or Adobe segment that a written header replaces.
+     *
+     * @param out the output
+     * @param header the file header
+     * @param markers the marker segments
+     */
+    static void writeFileHeader(JpegBitWriter out, Header header, List<MarkerSegment> markers) {
         if (header.jfif()) {
             out.writeMarker(0xE0);
             out.writeShort(16);
@@ -306,26 +447,6 @@ final class CoefficientWriter {
             out.writeShort(marker.data().length + 2);
             out.writeBytes(marker.data());
         }
-        if (!optimized) {
-            dcSpecs[0] = HuffmanSpec.STD_DC_LUMINANCE;
-            dcSpecs[1] = HuffmanSpec.STD_DC_CHROMINANCE;
-            acSpecs[0] = HuffmanSpec.STD_AC_LUMINANCE;
-            acSpecs[1] = HuffmanSpec.STD_AC_CHROMINANCE;
-        }
-        var scans = progressive ? progressiveScript(ycbcr) : List.of(sequentialScan());
-        for (var index = 0; index < scans.size(); index++) {
-            var scan = scans.get(index);
-            if (optimized && (scan.ss != 0 || scan.ah == 0)) {
-                gatherPass(scan, progressive);
-            }
-            if (index == 0) {
-                writeFrameHeader(progressive);
-            }
-            writeScanHeader(scan);
-            outputPass(scan, progressive);
-        }
-        out.writeMarker(0xD9);
-        return out.toByteArray();
     }
 
     /**
@@ -349,30 +470,30 @@ final class CoefficientWriter {
     /**
      * Returns the progressive scan script of {@code jpeg_simple_progression}.
      *
+     * @param count the number of components
      * @param ycbcr whether the components are YCbCr
      * @return the scans
      */
-    private List<Scan> progressiveScript(boolean ycbcr) {
-        var count = components.length;
+    static List<Scan> progressiveScript(int count, boolean ycbcr) {
         var scans = new ArrayList<Scan>();
         if (count == 3 && ycbcr) {
-            dcScans(scans, 0, 1);
+            dcScans(scans, count, 0, 1);
             scans.add(new Scan(new int[]{0}, 1, 5, 0, 2));
             scans.add(new Scan(new int[]{2}, 1, 63, 0, 1));
             scans.add(new Scan(new int[]{1}, 1, 63, 0, 1));
             scans.add(new Scan(new int[]{0}, 6, 63, 0, 2));
             scans.add(new Scan(new int[]{0}, 1, 63, 2, 1));
-            dcScans(scans, 1, 0);
+            dcScans(scans, count, 1, 0);
             scans.add(new Scan(new int[]{2}, 1, 63, 1, 0));
             scans.add(new Scan(new int[]{1}, 1, 63, 1, 0));
             scans.add(new Scan(new int[]{0}, 1, 63, 1, 0));
         } else {
-            dcScans(scans, 0, 1);
-            componentScans(scans, 1, 5, 0, 2);
-            componentScans(scans, 6, 63, 0, 2);
-            componentScans(scans, 1, 63, 2, 1);
-            dcScans(scans, 1, 0);
-            componentScans(scans, 1, 63, 1, 0);
+            dcScans(scans, count, 0, 1);
+            componentScans(scans, count, 1, 5, 0, 2);
+            componentScans(scans, count, 6, 63, 0, 2);
+            componentScans(scans, count, 1, 63, 2, 1);
+            dcScans(scans, count, 1, 0);
+            componentScans(scans, count, 1, 63, 1, 0);
         }
         return scans;
     }
@@ -381,18 +502,19 @@ final class CoefficientWriter {
      * Adds one interleaved DC scan, or one per component when there are more than four.
      *
      * @param scans the script
+     * @param count the number of components
      * @param ah the previous bit position
      * @param al the bit position
      */
-    private void dcScans(List<Scan> scans, int ah, int al) {
-        if (components.length <= 4) {
-            var all = new int[components.length];
+    private static void dcScans(List<Scan> scans, int count, int ah, int al) {
+        if (count <= 4) {
+            var all = new int[count];
             for (var i = 0; i < all.length; i++) {
                 all[i] = i;
             }
             scans.add(new Scan(all, 0, 0, ah, al));
         } else {
-            componentScans(scans, 0, 0, ah, al);
+            componentScans(scans, count, 0, 0, ah, al);
         }
     }
 
@@ -400,13 +522,14 @@ final class CoefficientWriter {
      * Adds one scan per component.
      *
      * @param scans the script
+     * @param count the number of components
      * @param ss the first coefficient
      * @param se the last coefficient
      * @param ah the previous bit position
      * @param al the bit position
      */
-    private void componentScans(List<Scan> scans, int ss, int se, int ah, int al) {
-        for (var i = 0; i < components.length; i++) {
+    private static void componentScans(List<Scan> scans, int count, int ss, int se, int ah, int al) {
+        for (var i = 0; i < count; i++) {
             scans.add(new Scan(new int[]{i}, ss, se, ah, al));
         }
     }
@@ -433,15 +556,19 @@ final class CoefficientWriter {
             }
             wide |= precision != 0;
         }
-        var baseline = !progressive && !wide;
+        var baseline = !progressive && !wide && precision == 8 && !arithmetic;
         for (var component : components) {
             if (component.dcTable > 1 || component.acTable > 1) {
                 baseline = false;
             }
         }
-        out.writeMarker(progressive ? 0xC2 : baseline ? 0xC0 : 0xC1);
+        if (arithmetic) {
+            out.writeMarker(progressive ? 0xCA : 0xC9);
+        } else {
+            out.writeMarker(progressive ? 0xC2 : baseline ? 0xC0 : 0xC1);
+        }
         out.writeShort(3 * components.length + 2 + 5 + 1);
-        out.writeByte(8);
+        out.writeByte(precision);
         out.writeShort(height);
         out.writeShort(width);
         out.writeByte(components.length);
@@ -459,13 +586,17 @@ final class CoefficientWriter {
      * @param scan the scan being written
      */
     private void writeScanHeader(Scan scan) {
-        for (var index : scan.components) {
-            var component = components[index];
-            if (scan.ss == 0 && scan.ah == 0) {
-                writeHuffmanTable(component.dcTable, false);
-            }
-            if (scan.se != 0) {
-                writeHuffmanTable(component.acTable, true);
+        if (arithmetic) {
+            writeConditioning(scan);
+        } else {
+            for (var index : scan.components) {
+                var component = components[index];
+                if (scan.ss == 0 && scan.ah == 0) {
+                    writeHuffmanTable(component.dcTable, false);
+                }
+                if (scan.se != 0) {
+                    writeHuffmanTable(component.acTable, true);
+                }
             }
         }
         if (restartInterval != lastRestartInterval) {
@@ -485,6 +616,45 @@ final class CoefficientWriter {
         out.writeByte(scan.ss);
         out.writeByte(scan.se);
         out.writeByte((scan.ah << 4) + scan.al);
+    }
+
+    /**
+     * Writes the DAC segment of a scan's tables with the default conditioning of T.81: {@code L = 0},
+     * {@code U = 1} and {@code Kx = 5}.
+     *
+     * @param scan the scan being written
+     */
+    private void writeConditioning(Scan scan) {
+        var dc = new boolean[16];
+        var ac = new boolean[16];
+        for (var index : scan.components) {
+            var component = components[index];
+            if (scan.ss == 0 && scan.ah == 0) {
+                dc[component.dcTable] = true;
+            }
+            if (scan.se != 0) {
+                ac[component.acTable] = true;
+            }
+        }
+        var entries = 0;
+        for (var i = 0; i < 16; i++) {
+            entries += (dc[i] ? 1 : 0) + (ac[i] ? 1 : 0);
+        }
+        if (entries == 0) {
+            return;
+        }
+        out.writeMarker(0xCC);
+        out.writeShort(entries * 2 + 2);
+        for (var i = 0; i < 16; i++) {
+            if (dc[i]) {
+                out.writeByte(i);
+                out.writeByte(1 << 4);
+            }
+            if (ac[i]) {
+                out.writeByte(i + 0x10);
+                out.writeByte(ARITH_AC_K);
+            }
+        }
     }
 
     /**
@@ -571,6 +741,11 @@ final class CoefficientWriter {
      * @param progressive whether the file is progressive
      */
     private void outputPass(Scan scan, boolean progressive) {
+        if (arithmetic) {
+            startArithmetic(scan, progressive);
+            encodeScan(scan, progressive);
+            return;
+        }
         Arrays.fill(dcTables, null);
         Arrays.fill(acTables, null);
         for (var index : scan.components) {
@@ -583,6 +758,28 @@ final class CoefficientWriter {
             }
         }
         encodeScan(scan, progressive);
+    }
+
+    /**
+     * Resets the arithmetic coder and the statistics of a scan's tables, as at the start of the scan
+     * or of a restart interval.
+     *
+     * @param scan the scan being written
+     * @param progressive whether the file is progressive
+     */
+    private void startArithmetic(Scan scan, boolean progressive) {
+        for (var index : scan.components) {
+            var component = components[index];
+            if (!progressive || (scan.ss == 0 && scan.ah == 0)) {
+                ArithmeticEncoder.clear(dcStats[component.dcTable]);
+            }
+            if (!progressive || scan.se != 0) {
+                ArithmeticEncoder.clear(acStats[component.acTable]);
+            }
+        }
+        Arrays.fill(lastDc, 0);
+        Arrays.fill(dcContext, 0);
+        coder.reset();
     }
 
     /**
@@ -660,6 +857,10 @@ final class CoefficientWriter {
                 }
             }
         }
+        if (arithmetic) {
+            coder.finish();
+            return;
+        }
         if (progressive) {
             emitEobRun(scan);
         }
@@ -676,6 +877,10 @@ final class CoefficientWriter {
      * @param blocks the number of blocks in the MCU
      */
     private void encodeMcu(Scan scan, boolean progressive, int blocks) {
+        if (arithmetic) {
+            encodeArithmeticMcu(scan, progressive, blocks);
+            return;
+        }
         if (restartInterval != 0) {
             if (restartsToGo == 0) {
                 if (progressive) {
@@ -723,6 +928,172 @@ final class CoefficientWriter {
     }
 
     /**
+     * Arithmetic codes one MCU, emitting a restart marker first when one is due.
+     *
+     * @param scan the scan being written
+     * @param progressive whether the file is progressive
+     * @param blocks the number of blocks in the MCU
+     */
+    private void encodeArithmeticMcu(Scan scan, boolean progressive, int blocks) {
+        if (restartInterval != 0) {
+            if (restartsToGo == 0) {
+                coder.finish();
+                out.writeMarker(0xD0 + nextRestart);
+                startArithmetic(scan, progressive);
+                restartsToGo = restartInterval;
+                nextRestart = (nextRestart + 1) & 7;
+            }
+            restartsToGo--;
+        }
+        if (!progressive) {
+            for (var b = 0; b < blocks; b++) {
+                var component = components[scan.components[mcuMembers[b]]];
+                arithmeticDc(mcuData[b][mcuOffsets[b]], component.dcTable, mcuMembers[b]);
+                arithmeticAc(mcuData[b], mcuOffsets[b], component.acTable, 1, 63, 0);
+            }
+        } else if (scan.ss == 0) {
+            for (var b = 0; b < blocks; b++) {
+                if (scan.ah == 0) {
+                    var component = components[scan.components[mcuMembers[b]]];
+                    arithmeticDc(mcuData[b][mcuOffsets[b]] >> scan.al, component.dcTable, mcuMembers[b]);
+                } else {
+                    coder.encodeFixed((mcuData[b][mcuOffsets[b]] >> scan.al) & 1);
+                }
+            }
+        } else if (scan.ah == 0) {
+            arithmeticAc(mcuData[0], mcuOffsets[0], components[scan.components[0]].acTable, scan.ss, scan.se, scan.al);
+        } else {
+            arithmeticAcRefine(mcuData[0], mcuOffsets[0], components[scan.components[0]].acTable, scan);
+        }
+    }
+
+    /**
+     * Arithmetic codes one DC value as a difference from the previous one of its component (T.81
+     * Figure F.4 with the conditioning of F.1.4.4.1).
+     *
+     * @param value the DC value, after the point transform
+     * @param slot the table slot
+     * @param member the component's position in the scan
+     */
+    private void arithmeticDc(int value, int slot, int member) {
+        var stats = dcStats[slot];
+        var s0 = dcContext[member];
+        var difference = value - lastDc[member];
+        if (difference == 0) {
+            coder.encode(stats, s0, 0);
+            dcContext[member] = 0;
+            return;
+        }
+        lastDc[member] = value;
+        coder.encode(stats, s0, 1);
+        var m = coder.encodeDcMagnitude(stats, s0, 20, difference);
+        var context = difference > 0 ? 4 : 8;
+        if (m < 0) {
+            context = 0;
+        } else if (m > 1) {
+            context += 8;
+        }
+        dcContext[member] = context;
+    }
+
+    /**
+     * Arithmetic codes the AC band of one block in a sequential scan or a first AC scan (T.81 Figure F.5).
+     *
+     * @param data the coefficient array
+     * @param base the index of the block's first coefficient
+     * @param slot the AC table slot
+     * @param ss the first coefficient of the band
+     * @param se the last coefficient of the band
+     * @param al the point transform
+     */
+    private void arithmeticAc(short[] data, int base, int slot, int ss, int se, int al) {
+        var stats = acStats[slot];
+        var end = se;
+        for (; end > 0; end--) {
+            if ((Math.abs((int) data[base + JpegTables.ZIGZAG[end]]) >> al) != 0) {
+                break;
+            }
+        }
+        var k = ss;
+        for (; k <= end; k++) {
+            var st = 3 * (k - 1);
+            coder.encode(stats, st, 0);
+            int value;
+            while (true) {
+                value = data[base + JpegTables.ZIGZAG[k]];
+                var magnitude = Math.abs(value) >> al;
+                if (magnitude != 0) {
+                    coder.encode(stats, st + 1, 1);
+                    coder.encodeFixed(value < 0 ? 1 : 0);
+                    break;
+                }
+                coder.encode(stats, st + 1, 0);
+                st += 3;
+                k++;
+            }
+            var magnitude = Math.abs(value) >> al;
+            if (bitLength(magnitude) > maxCoefficientBits) {
+                throw new MediaException.Malformed("AC coefficient " + value + " is too large for " + precision
+                        + "-bit JPEG");
+            }
+            coder.encodeAcMagnitude(stats, st + 2, k, ARITH_AC_K, magnitude);
+        }
+        if (k <= se) {
+            coder.encode(stats, 3 * (k - 1), 1);
+        }
+    }
+
+    /**
+     * Arithmetic codes the AC band of one block in an AC refinement scan (T.81 Figure G.10).
+     *
+     * @param data the coefficient array
+     * @param base the index of the block's first coefficient
+     * @param slot the AC table slot
+     * @param scan the scan being written
+     */
+    private void arithmeticAcRefine(short[] data, int base, int slot, Scan scan) {
+        var stats = acStats[slot];
+        var end = scan.se;
+        for (; end > 0; end--) {
+            if ((Math.abs((int) data[base + JpegTables.ZIGZAG[end]]) >> scan.al) != 0) {
+                break;
+            }
+        }
+        var previousEnd = end;
+        for (; previousEnd > 0; previousEnd--) {
+            if ((Math.abs((int) data[base + JpegTables.ZIGZAG[previousEnd]]) >> scan.ah) != 0) {
+                break;
+            }
+        }
+        var k = scan.ss;
+        for (; k <= end; k++) {
+            var st = 3 * (k - 1);
+            if (k > previousEnd) {
+                coder.encode(stats, st, 0);
+            }
+            while (true) {
+                int value = data[base + JpegTables.ZIGZAG[k]];
+                var magnitude = Math.abs(value) >> scan.al;
+                if (magnitude != 0) {
+                    if ((magnitude >> 1) != 0) {
+                        coder.encode(stats, st + 2, magnitude & 1);
+                    } else {
+                        coder.encode(stats, st + 1, 1);
+                        coder.encodeFixed(value < 0 ? 1 : 0);
+                    }
+                    break;
+                }
+                coder.encode(stats, st + 1, 0);
+                st += 3;
+                k++;
+            }
+        }
+        if (k <= scan.se) {
+            coder.encode(stats, 3 * (k - 1), 1);
+        }
+    }
+
+    /**
      * Returns the number of bits of a magnitude.
      *
      * @param magnitude the non-negative value
@@ -745,8 +1116,8 @@ final class CoefficientWriter {
         lastDc[member] = data[base];
         var magnitude = Math.abs(difference);
         var bits = bitLength(magnitude);
-        if (bits > MAX_COEFFICIENT_BITS + 1) {
-            throw new MediaException.Malformed("DC difference " + difference + " is too large for 8-bit JPEG");
+        if (bits > maxCoefficientBits + 1) {
+            throw new MediaException.Malformed("DC difference " + difference + " is too large for " + precision + "-bit JPEG");
         }
         emitDc(component.dcTable, bits);
         if (bits != 0) {
@@ -765,8 +1136,8 @@ final class CoefficientWriter {
             }
             magnitude = Math.abs(value);
             bits = bitLength(magnitude);
-            if (bits > MAX_COEFFICIENT_BITS) {
-                throw new MediaException.Malformed("AC coefficient " + value + " is too large for 8-bit JPEG");
+            if (bits > maxCoefficientBits) {
+                throw new MediaException.Malformed("AC coefficient " + value + " is too large for " + precision + "-bit JPEG");
             }
             emitAc(component.acTable, (run << 4) + bits);
             emitBits((value < 0 ? value - 1 : value) & ((1 << bits) - 1), bits);
@@ -791,8 +1162,8 @@ final class CoefficientWriter {
         var difference = shifted - lastDc[member];
         lastDc[member] = shifted;
         var bits = bitLength(Math.abs(difference));
-        if (bits > MAX_COEFFICIENT_BITS + 1) {
-            throw new MediaException.Malformed("DC difference " + difference + " is too large for 8-bit JPEG");
+        if (bits > maxCoefficientBits + 1) {
+            throw new MediaException.Malformed("DC difference " + difference + " is too large for " + precision + "-bit JPEG");
         }
         emitDc(component.dcTable, bits);
         if (bits != 0) {
@@ -830,8 +1201,8 @@ final class CoefficientWriter {
                 run -= 16;
             }
             var bits = bitLength(magnitude);
-            if (bits > MAX_COEFFICIENT_BITS) {
-                throw new MediaException.Malformed("AC coefficient " + value + " is too large for 8-bit JPEG");
+            if (bits > maxCoefficientBits) {
+                throw new MediaException.Malformed("AC coefficient " + value + " is too large for " + precision + "-bit JPEG");
             }
             emitAc(table, (run << 4) + bits);
             emitBits((value < 0 ? ~magnitude : magnitude) & ((1 << bits) - 1), bits);

@@ -3,6 +3,7 @@ package com.github.auties00.smalt.audio.ac3.internal;
 import com.github.auties00.smalt.internal.bits.MsbBitWriter;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 
+import java.util.ArrayDeque;
 import java.util.Arrays;
 
 /**
@@ -323,6 +324,69 @@ public final class FrameEncoder {
     private final PreNoiseAnalysis preNoise;
 
     /**
+     * The most coupling bands: the 22 sub-bands of enhanced coupling.
+     */
+    private static final int MAX_BANDS = 22;
+
+    /**
+     * Whether coupling is coded as enhanced coupling (ETSI TS 102 366 clause E.2.5).
+     */
+    private final boolean ecpl;
+
+    /**
+     * The enhanced coupling begin code {@code ecplbegf}.
+     */
+    private final int ecplBeginCode;
+
+    /**
+     * The enhanced coupling end code {@code ecplendf}, written without spectral extension.
+     */
+    private final int ecplEndCode;
+
+    /**
+     * The value of {@link #dynamicRange} and {@link #compression} when the frame carries no word.
+     */
+    public static final int NO_WORD = Integer.MIN_VALUE;
+
+    /**
+     * The metadata codes the frames carry.
+     */
+    private final StreamMetadata metadata;
+
+    /**
+     * The dynamic range word {@code dynrng} of each block of the next frame, or {@link #NO_WORD}.
+     */
+    private final int[] dynamicRange;
+
+    /**
+     * The heavy compression word {@code compr} of the next frame, or {@code -1} without one.
+     */
+    private int compression = -1;
+
+    /**
+     * The bits a frame reserves per full-bandwidth channel for the transient pre-noise processing
+     * data spliced in later: {@code chintransproc}, {@code transprocloc} and {@code transproclen}.
+     */
+    private static final int PRE_NOISE_BITS = 1 + 10 + 8;
+
+    /**
+     * The frames coded but not yet returned, waiting for the transient pre-noise processing data
+     * the frames after them decide, oldest first; empty without transient pre-noise processing.
+     */
+    private final ArrayDeque<HeldFrame> heldFrames = new ArrayDeque<>();
+
+    /**
+     * The bit position of {@code transproce} in the frame written last.
+     */
+    private int preNoiseFlagBit;
+
+    /**
+     * The bit position, in the frame written last, where the per-channel transient pre-noise
+     * processing data goes: after the frame SNR offsets.
+     */
+    private int preNoiseDataBit;
+
+    /**
      * The coefficients of the left (or only) and right channel of a block as the decoder
      * reconstructs them, scratch of {@link #measurePreNoise()}.
      */
@@ -339,6 +403,11 @@ public final class FrameEncoder {
      * independent substream.
      */
     private final int channelMap;
+
+    /**
+     * The substream identification {@code substreamid} of the frames.
+     */
+    private final int substreamId;
 
     /**
      * The coefficients of a channel below the extension region as the decoder reconstructs them,
@@ -407,7 +476,7 @@ public final class FrameEncoder {
      * The first mantissa of each coupling band, and one past the last band at index
      * {@link #couplingBands}.
      */
-    private final int[] couplingBandStart = new int[19];
+    private final int[] couplingBandStart = new int[MAX_BANDS + 1];
 
     /**
      * The exact number of 16-bit words a frame averages.
@@ -625,17 +694,17 @@ public final class FrameEncoder {
     /**
      * The phase flags in effect in each block, by band.
      */
-    private final boolean[][] phaseFlags = new boolean[6][18];
+    private final boolean[][] phaseFlags = new boolean[6][MAX_BANDS];
 
     /**
      * The phase flags in effect, carried from block to block.
      */
-    private final boolean[] currentPhase = new boolean[18];
+    private final boolean[] currentPhase = new boolean[MAX_BANDS];
 
     /**
      * The phase flags the current block's correlations call for, scratch.
      */
-    private final boolean[] candidatePhase = new boolean[18];
+    private final boolean[] candidatePhase = new boolean[MAX_BANDS];
 
     /**
      * The coordinates in effect of each channel and band, as the decoder holds them.
@@ -1066,6 +1135,36 @@ public final class FrameEncoder {
     public FrameEncoder(int acmod, boolean lfe, int sampleRate, int bitrate, int dialogueLevel, boolean blockSwitching,
                         boolean coupling, boolean enhanced, int blocks, EncoderTools tools, boolean fastSearch,
                         Ac3Kernel kernel) {
+        this(acmod, lfe, sampleRate, bitrate, dialogueLevel, blockSwitching, coupling, enhanced, blocks, tools,
+                fastSearch, StreamMetadata.DEFAULTS, kernel);
+    }
+
+    /**
+     * Creates a frame encoder writing metadata.
+     *
+     * @param acmod the audio coding mode, from 1 to 7
+     * @param lfe whether an LFE channel is coded
+     * @param sampleRate the sampling rate: 32000, 44100 or 48000, or for E-AC-3 also 16000,
+     * 22050 or 24000 with six blocks per frame
+     * @param bitrate the bit rate of this substream in bits per second: one of A/52 table
+     * 5.18 for AC-3, any rate whose frames fit 2048 words for E-AC-3
+     * @param dialogueLevel the dialogue level in dBFS, from -31 to -1
+     * @param blockSwitching whether short transforms are used on transients
+     * @param coupling whether channel coupling may be used
+     * @param enhanced whether to write E-AC-3 frames
+     * @param blocks the blocks per frame: 6 for AC-3; 1, 2, 3 or 6 for E-AC-3
+     * @param tools the E-AC-3 tools; ignored for AC-3
+     * @param fastSearch whether frames of more than one block take the faster search too;
+     * one-block E-AC-3 frames always take it
+     * @param metadata the metadata codes the frames carry
+     * @param kernel the DSP kernels
+     */
+    public FrameEncoder(int acmod, boolean lfe, int sampleRate, int bitrate, int dialogueLevel, boolean blockSwitching,
+                        boolean coupling, boolean enhanced, int blocks, EncoderTools tools, boolean fastSearch,
+                        StreamMetadata metadata, Ac3Kernel kernel) {
+        this.metadata = metadata;
+        this.dynamicRange = new int[blocks];
+        Arrays.fill(dynamicRange, NO_WORD);
         this.enhanced = enhanced;
         this.blocks = blocks;
         this.acmod = acmod;
@@ -1097,6 +1196,7 @@ public final class FrameEncoder {
         var useCoupling = coupling && acmod >= 2 && perChannel < 80_000;
         var bandwidthBin = (int) Math.round(cutoff * 512.0 / sampleRate);
         this.channelMap = enhanced ? tools.channelMap() : -1;
+        this.substreamId = enhanced ? tools.substreamId() : 0;
         this.hybrid = enhanced && blocks == 6 && tools.hybridTransform();
         this.preNoise = enhanced && blocks >= 3 && tools.preNoise()
                 ? new PreNoiseAnalysis(channels, 256 * blocks) : null;
@@ -1138,12 +1238,32 @@ public final class FrameEncoder {
         this.couplingEnd = 37 + 12 * (couplingBegin + couplingSubbands);
         var isDefault = true;
         var bands = 0;
-        for (var subband = couplingBegin; subband < couplingBegin + couplingSubbands; subband++) {
-            var join = subband > couplingBegin && Ac3Tables.DEFAULT_COUPLING_BANDS[subband];
-            couplingStructure[subband] = join;
-            isDefault &= subband == couplingBegin || join == Ac3Tables.DEFAULT_COUPLING_BANDS[subband];
-            if (!join) {
-                couplingBandStart[bands++] = 37 + 12 * subband;
+        var ecplBegin = couplingBegin + 4;
+        var ecplEnd = couplingBegin + couplingSubbands + 4;
+        var beginCode = ecplBegin == 4 ? 2 : ecplBegin <= 14 ? ecplBegin - 2 : ecplBegin % 2 == 0 ? (ecplBegin + 10) / 2 : -1;
+        var endCode = spx != null ? (spx.beginCode < 6 ? spx.beginCode + 5 : spx.beginCode * 2) == ecplEnd ? 0 : -1
+                : ecplEnd - 7;
+        this.ecpl = useCoupling && enhanced && tools.enhancedCoupling() && beginCode >= 0 && beginCode < 16
+                && endCode >= 0 && endCode < 16;
+        this.ecplBeginCode = ecpl ? beginCode : 0;
+        this.ecplEndCode = ecpl ? endCode : 0;
+        if (ecpl) {
+            // the default enhanced coupling band structure: a band per sub-band up to sub-band 8 or
+            // the first, then the bands of Ac3Tables.DEFAULT_ECPL_BANDS
+            var limit = Math.max(8, ecplBegin);
+            for (var subband = ecplBegin; subband < ecplEnd; subband++) {
+                if (subband <= limit || !Ac3Tables.DEFAULT_ECPL_BANDS[subband]) {
+                    couplingBandStart[bands++] = Ac3Tables.ECPL_SUBBAND_START[subband];
+                }
+            }
+        } else {
+            for (var subband = couplingBegin; subband < couplingBegin + couplingSubbands; subband++) {
+                var join = subband > couplingBegin && Ac3Tables.DEFAULT_COUPLING_BANDS[subband];
+                couplingStructure[subband] = join;
+                isDefault &= subband == couplingBegin || join == Ac3Tables.DEFAULT_COUPLING_BANDS[subband];
+                if (!join) {
+                    couplingBandStart[bands++] = 37 + 12 * subband;
+                }
             }
         }
         couplingBandStart[bands] = couplingEnd;
@@ -1167,10 +1287,10 @@ public final class FrameEncoder {
         this.coupled = new boolean[6][channels];
         this.coordinatesSent = new boolean[6][channels];
         this.coordinateMaster = new int[6][channels];
-        this.coordinateExponents = new int[6][channels][18];
-        this.coordinateMantissas = new int[6][channels][18];
-        this.currentCoordinates = new float[channels][18];
-        this.blockCoordinates = new float[6][channels][18];
+        this.coordinateExponents = new int[6][channels][MAX_BANDS];
+        this.coordinateMantissas = new int[6][channels][MAX_BANDS];
+        this.currentCoordinates = new float[channels][MAX_BANDS];
+        this.blockCoordinates = new float[6][channels][MAX_BANDS];
         this.eligible = new boolean[channels];
         this.memberEnergy = new double[channels];
         this.memberError = new double[channels];
@@ -1178,8 +1298,8 @@ public final class FrameEncoder {
         this.previousNoise = new double[channels];
         Arrays.fill(previousNoise, Double.MAX_VALUE);
 
-        this.bandEnergy = new double[channels + 1][18];
-        this.candidates = new float[channels][18];
+        this.bandEnergy = new double[channels + 1][MAX_BANDS];
+        this.candidates = new float[channels][MAX_BANDS];
         this.endMantissa = new int[6][slots];
         this.rawExponents = new int[6][slots][256];
         this.exponents = new int[6][slots][256];
@@ -1354,8 +1474,8 @@ public final class FrameEncoder {
      */
     private static float[] highPass(int sampleRate) {
         var omega = 2 * Math.PI * Math.min(8000, sampleRate * 0.4) / sampleRate;
-        var alpha = Math.sin(omega) / (2 * Math.sqrt(0.5));
-        var cos = Math.cos(omega);
+        var alpha = StrictMath.sin(omega) / (2 * Math.sqrt(0.5));
+        var cos = StrictMath.cos(omega);
         var a0 = 1 + alpha;
         return new float[]{(float) ((1 + cos) / 2 / a0), (float) (-(1 + cos) / a0), (float) ((1 + cos) / 2 / a0),
                 (float) (-2 * cos / a0), (float) ((1 - alpha) / a0)};
@@ -1380,11 +1500,29 @@ public final class FrameEncoder {
     }
 
     /**
+     * Sets the dynamic range control words of the next frame.
+     *
+     * @param words the dynamic range word {@code dynrng} of each block, a signed 8-bit value, or
+     * {@link #NO_WORD} for every block to leave them out
+     * @param compression the heavy compression word {@code compr}, an unsigned 8-bit value, or
+     * {@link #NO_WORD} to leave it out
+     */
+    public void setDynamicRange(int[] words, int compression) {
+        System.arraycopy(words, 0, dynamicRange, 0, blocks);
+        this.compression = compression == NO_WORD ? -1 : compression;
+    }
+
+    /**
      * Encodes one frame.
+     *
+     * <p>With transient pre-noise processing, the frame is held until the {@link #lookahead()}
+     * frames after it are coded, since its processing data concerns their decoded samples: the call
+     * returns the frame coded that many calls earlier, or {@code null} while fewer frames are coded,
+     * and {@link #finish()} returns the held frames at the end.
      *
      * @param input the {@code 256 * blocks} samples of each coded channel, in coded order
      * @param offset the index of the first sample in each plane
-     * @return the frame
+     * @return the frame, or {@code null} while frames are held for transient pre-noise processing
      */
     public byte[] encode(float[][] input, int offset) {
         var frameWords = frameWords();
@@ -1450,19 +1588,17 @@ public final class FrameEncoder {
             codeSpectralExtension();
         }
         if (preNoise != null) {
-            preNoise.saveTails();
-            measurePreNoise();
-            // the processing data must fit the bits the offset search left over
-            while (low > 0 && writeFrame(null, low, frameWords, frmsizecod, true) + 18 > frameBits) {
+            // the processing data spliced in later must fit the bits the offset search left over
+            var reserve = PRE_NOISE_BITS * channels;
+            while (low > 0 && writeFrame(null, low, frameWords, frmsizecod, true) + 18 + reserve > frameBits) {
                 low--;
                 computePointers(low);
                 reuseCode = low > 0 && quantizedOffset[bestCode] == low ? bestCode : -1;
                 if (spx != null) {
                     codeSpectralExtension();
                 }
-                preNoise.restoreTails();
-                measurePreNoise();
             }
+            measurePreNoise();
         }
         var writer = frameWriter;
         writer.reset();
@@ -1504,7 +1640,135 @@ public final class FrameEncoder {
             frame[frame.length - 1] = (byte) crc2;
         }
         blockCount += blocks;
+        if (preNoise == null) {
+            return frame;
+        }
+        heldFrames.add(new HeldFrame(frame, preNoiseFlagBit, preNoiseDataBit, used));
+        return preNoise.held() > preNoise.lookahead() ? release() : null;
+    }
+
+    /**
+     * Returns the next frame held for its transient pre-noise processing data, after the last call
+     * of {@link #encode(float[][], int)}, choosing the data from the frames coded after it.
+     *
+     * <p>Without transient pre-noise processing no frame is held.
+     *
+     * @return the frame, or {@code null} when no frame is held
+     */
+    public byte[] finish() {
+        return heldFrames.isEmpty() ? null : release();
+    }
+
+    /**
+     * Returns the number of frames {@link #encode(float[][], int)} holds before it returns the
+     * first: the frames after a frame whose decoded samples its transient pre-noise processing data
+     * may correct, or 0 without the tool.
+     *
+     * @return the frames held
+     */
+    public int lookahead() {
+        return preNoise == null ? 0 : preNoise.lookahead();
+    }
+
+    /**
+     * Chooses the transient pre-noise processing data of the oldest held frame from the frames
+     * coded after it, splices it into the frame and returns the frame.
+     *
+     * @return the frame
+     */
+    private byte[] release() {
+        var held = heldFrames.poll();
+        var any = false;
+        for (var ch = 0; ch < channels; ch++) {
+            preNoise.choose(ch, highPass);
+            any |= preNoise.location[ch] >= 0;
+        }
+        preNoise.drop();
+        return any ? splice(held, preNoise.location, preNoise.length) : held.frame();
+    }
+
+    /**
+     * Returns a frame with transient pre-noise processing data: {@code transproce} set and the
+     * per-channel fields inserted after the frame SNR offsets, taking the bits from the frame's
+     * padding, and the CRC recomputed.
+     *
+     * @param held the frame as written, without the data
+     * @param locations the location {@code 4 * transprocloc} of each channel, or {@code -1}
+     * @param lengths the time scaling length of each channel
+     * @return the frame, of the same size; the frame as written when its padding is too short
+     */
+    private byte[] splice(HeldFrame held, int[] locations, int[] lengths) {
+        var source = held.frame();
+        var frameBits = source.length * 8;
+        var writer = frameWriter;
+        writer.reset();
+        copyBits(source, 0, held.flagBit(), writer);
+        writer.write(1, 1);
+        copyBits(source, held.flagBit() + 1, held.dataBit(), writer);
+        for (var ch = 0; ch < channels; ch++) {
+            var location = locations[ch];
+            writer.write(location >= 0 ? 1 : 0, 1);
+            if (location >= 0) {
+                writer.write(location >> 2, 10);
+                writer.write(lengths[ch], 8);
+            }
+        }
+        copyBits(source, held.dataBit(), held.contentBits(), writer);
+        var padding = frameBits - 18 - (int) writer.bitCount();
+        if (padding < 0) {
+            return source;
+        }
+        while (padding > 0) {
+            var chunk = Math.min(31, padding);
+            writer.write(0, chunk);
+            padding -= chunk;
+        }
+        writer.write(0, 2);
+        writer.write(0, 16);
+        var frame = writer.toByteArray();
+        var crc = Ac3Crc.compute(frame, 2, frame.length - 4);
+        if (crc == 0x0B77) {
+            frame[frame.length - 3] ^= 1;
+            crc = Ac3Crc.compute(frame, 2, frame.length - 4);
+        }
+        frame[frame.length - 2] = (byte) (crc >> 8);
+        frame[frame.length - 1] = (byte) crc;
         return frame;
+    }
+
+    /**
+     * Appends a range of the bits of a frame to a writer.
+     *
+     * @param source the frame
+     * @param from the first bit
+     * @param to the end of the bits, exclusive
+     * @param writer receives the bits
+     */
+    private static void copyBits(byte[] source, int from, int to, MsbBitWriter writer) {
+        var bit = from;
+        while (bit < to && (bit & 7) != 0) {
+            writer.write((source[bit >> 3] >> (7 - (bit & 7))) & 1, 1);
+            bit++;
+        }
+        while (bit + 8 <= to) {
+            writer.write(source[bit >> 3] & 0xFF, 8);
+            bit += 8;
+        }
+        while (bit < to) {
+            writer.write((source[bit >> 3] >> (7 - (bit & 7))) & 1, 1);
+            bit++;
+        }
+    }
+
+    /**
+     * A frame held for its transient pre-noise processing data.
+     *
+     * @param frame the frame as written, without the data
+     * @param flagBit the bit position of {@code transproce}
+     * @param dataBit the bit position where the per-channel data goes
+     * @param contentBits the bits of the frame before its padding
+     */
+    private record HeldFrame(byte[] frame, int flagBit, int dataBit, int contentBits) {
     }
 
     /**
@@ -1554,8 +1818,9 @@ public final class FrameEncoder {
         }
         dequantizeSet(b, cpl, end, spx.begin, ditherFlags[b][ch], values, variance);
         var coordinates = blockCoordinates[b][ch];
+        var factor = ecpl ? 1 : 8;
         for (var band = 0; band < couplingBands; band++) {
-            var coordinate = coordinates[band] * 8;
+            var coordinate = coordinates[band] * factor;
             var power = coordinate * coordinate;
             for (var bin = couplingBandStart[band]; bin < couplingBandStart[band + 1]; bin++) {
                 values[bin] *= coordinate;
@@ -1667,9 +1932,6 @@ public final class FrameEncoder {
                 }
             }
         }
-        for (var ch = 0; ch < channels; ch++) {
-            preNoise.choose(ch, highPass);
-        }
     }
 
     /**
@@ -1691,8 +1953,9 @@ public final class FrameEncoder {
         if (couplingInUse[b] && coupled[b][ch]) {
             dequantizeInto(b, cpl, couplingStart, couplingEnd, decoded);
             var coordinates = blockCoordinates[b][ch];
+            var factor = ecpl ? 1 : 8;
             for (var band = 0; band < couplingBands; band++) {
-                var coordinate = coordinates[band] * 8;
+                var coordinate = coordinates[band] * factor;
                 if (acmod == 2 && ch == 1 && phaseFlags[b][band]) {
                     coordinate = -coordinate;
                 }
@@ -1866,7 +2129,7 @@ public final class FrameEncoder {
             BitAllocation.pointers(exponents[0][slot], start, endMantissa[0][slot], masks[0][slot], snr, floor,
                     Ac3Tables.HEBAP, pointers[0][slot]);
             var noise = hybridNoise(slot);
-            var exchange = Math.pow(10, -0.602 * saved / Math.max(1, codedCount));
+            var exchange = StrictMath.pow(10, -0.602 * saved / Math.max(1, codedCount));
             var after = (total - hybridPlainNoise[slot] + noise) * exchange;
             if (after < total) {
                 hybridFrame = true;
@@ -2571,7 +2834,7 @@ public final class FrameEncoder {
                 continue;
             }
             var phaseChanged = false;
-            if (acmod == 2) {
+            if (acmod == 2 && !ecpl) {
                 var left = coefficients[b][0];
                 var right = coefficients[b][1];
                 for (var band = 0; band < couplingBands; band++) {
@@ -2583,10 +2846,10 @@ public final class FrameEncoder {
                     phaseChanged |= !changed && candidatePhase[band] != currentPhase[band];
                 }
                 if (changed || phaseChanged) {
-                    System.arraycopy(candidatePhase, 0, currentPhase, 0, 18);
+                    System.arraycopy(candidatePhase, 0, currentPhase, 0, MAX_BANDS);
                 }
             }
-            System.arraycopy(currentPhase, 0, phaseFlags[b], 0, 18);
+            System.arraycopy(currentPhase, 0, phaseFlags[b], 0, MAX_BANDS);
             formCouplingChannel(b, count);
             measureBands(b);
             for (var ch = 0; ch < channels; ch++) {
@@ -2637,7 +2900,7 @@ public final class FrameEncoder {
             if (count < 2) {
                 continue;
             }
-            if (acmod == 2) {
+            if (acmod == 2 && !ecpl) {
                 var left = coefficients[b][0];
                 var right = coefficients[b][1];
                 for (var band = 0; band < couplingBands; band++) {
@@ -2705,6 +2968,43 @@ public final class FrameEncoder {
                 }
             }
         }
+        if (ecpl) {
+            fitAmplitudes(b);
+        }
+    }
+
+    /**
+     * Scales each band of the enhanced coupling channel of a block so that no coupled channel
+     * needs an amplitude above one, the largest an enhanced coupling amplitude code carries.
+     *
+     * @param b the block
+     */
+    private void fitAmplitudes(int b) {
+        var target = coefficients[b][cpl];
+        for (var band = 0; band < couplingBands; band++) {
+            var couplingPower = 0.0;
+            for (var bin = couplingBandStart[band]; bin < couplingBandStart[band + 1]; bin++) {
+                couplingPower += (double) target[bin] * target[bin];
+            }
+            var largest = 0.0;
+            for (var ch = 0; ch < channels; ch++) {
+                if (!coupled[b][ch]) {
+                    continue;
+                }
+                var source = coefficients[b][ch];
+                var power = 0.0;
+                for (var bin = couplingBandStart[band]; bin < couplingBandStart[band + 1]; bin++) {
+                    power += (double) source[bin] * source[bin];
+                }
+                largest = Math.max(largest, power);
+            }
+            if (couplingPower > 0 && largest > couplingPower) {
+                var gain = (float) Math.sqrt(largest / couplingPower);
+                for (var bin = couplingBandStart[band]; bin < couplingBandStart[band + 1]; bin++) {
+                    target[bin] *= gain;
+                }
+            }
+        }
     }
 
     /**
@@ -2736,8 +3036,13 @@ public final class FrameEncoder {
                     sum += (double) source[bin] * source[bin];
                 }
                 power[band] = sum;
-                var value = couplingPower[band] > 0 ? (float) (Math.sqrt(sum / couplingPower[band]) / 8) : 0;
-                candidate[band] = Math.min(value, 0.96875f);
+                if (ecpl) {
+                    var value = couplingPower[band] > 0 ? (float) Math.sqrt(sum / couplingPower[band]) : 0;
+                    candidate[band] = Math.min(value, 1);
+                } else {
+                    var value = couplingPower[band] > 0 ? (float) (Math.sqrt(sum / couplingPower[band]) / 8) : 0;
+                    candidate[band] = Math.min(value, 0.96875f);
+                }
             }
         }
     }
@@ -2750,6 +3055,10 @@ public final class FrameEncoder {
      * @param ch the channel
      */
     private void quantizeCoordinates(int b, int ch) {
+        if (ecpl) {
+            quantizeAmplitudes(b, ch);
+            return;
+        }
         var candidate = candidates[ch];
         var smallest = 24;
         for (var band = 0; band < couplingBands; band++) {
@@ -2785,6 +3094,61 @@ public final class FrameEncoder {
             var fraction = exponent == 15 ? mantissa / 16.0f : (mantissa + 16) / 32.0f;
             current[band] = fraction * pow[exponent + 3 * master];
         }
+    }
+
+    /**
+     * Quantizes the candidate amplitudes of a channel into the enhanced coupling amplitude codes of
+     * a block (ETSI TS 102 366 table E.3.10), each to the code nearest on a logarithmic scale, and
+     * makes them the amplitudes in effect.
+     *
+     * @param b the block
+     * @param ch the channel
+     */
+    private void quantizeAmplitudes(int b, int ch) {
+        var candidate = candidates[ch];
+        var codes = coordinateMantissas[b][ch];
+        var current = currentCoordinates[ch];
+        for (var band = 0; band < couplingBands; band++) {
+            var value = candidate[band];
+            var best = 31;
+            if (value > 0) {
+                best = 0;
+                var bestDistance = Double.MAX_VALUE;
+                for (var code = 0; code < 31; code++) {
+                    var distance = Math.abs(StrictMath.log(value / AMPLITUDES[code]));
+                    if (distance < bestDistance) {
+                        bestDistance = distance;
+                        best = code;
+                    }
+                }
+                // silence is nearer than the smallest amplitude below half of it
+                if (value < AMPLITUDES[30] / 2) {
+                    best = 31;
+                }
+            }
+            codes[band] = best;
+            current[band] = AMPLITUDES[best];
+        }
+    }
+
+    /**
+     * The amplitude of each enhanced coupling amplitude code, the mantissa of
+     * {@code ecplampmanttab[]} over 32 times 2 to the minus exponent of {@code ecplampexptab[]}, and
+     * zero for code 31.
+     */
+    private static final float[] AMPLITUDES = amplitudes();
+
+    /**
+     * Builds {@link #AMPLITUDES}.
+     *
+     * @return the amplitudes
+     */
+    private static float[] amplitudes() {
+        var values = new float[32];
+        for (var code = 0; code < 31; code++) {
+            values[code] = Ac3Tables.ECPL_AMP_MANTISSA[code] / 32.0f * Ac3Tables.POW2_NEG[Ac3Tables.ECPL_AMP_EXPONENT[code]];
+        }
+        return values;
     }
 
     /**
@@ -3710,28 +4074,7 @@ public final class FrameEncoder {
             out.put(0, 16);
             out.put(fscod, 2);
             out.put(frmsizecod, 6);
-            out.put(8, 5);
-            out.put(0, 3);
-            out.put(acmod, 3);
-            if ((acmod & 1) != 0 && acmod != 1) {
-                out.put(1, 2);
-            }
-            if ((acmod & 4) != 0) {
-                out.put(1, 2);
-            }
-            if (acmod == 2) {
-                out.put(0, 2);
-            }
-            out.put(lfe ? 1 : 0, 1);
-            out.put(dialnorm, 5);
-            out.put(0, 1);
-            out.put(0, 1);
-            out.put(0, 1);
-            out.put(0, 1);
-            out.put(1, 1);
-            out.put(0, 1);
-            out.put(0, 1);
-            out.put(0, 1);
+            writeBitStreamInformation(out);
         }
         var state = syntax;
         state.reset();
@@ -3739,6 +4082,190 @@ public final class FrameEncoder {
             writeBlock(out, state, b, offset, mantissas);
         }
         return out.bits;
+    }
+
+    /**
+     * Writes the AC-3 bit stream information from {@code bsid} on (A/52 section 5.3.2), in the
+     * alternate syntax of Annex D when the metadata needs it.
+     *
+     * @param out the sink
+     */
+    private void writeBitStreamInformation(BitSink out) {
+        var alternate = metadata.alternateSyntax();
+        out.put(alternate ? 6 : 8, 5);
+        out.put(metadata.bsmod(), 3);
+        out.put(acmod, 3);
+        if ((acmod & 1) != 0 && acmod != 1) {
+            out.put(metadata.cmixlev(), 2);
+        }
+        if ((acmod & 4) != 0) {
+            out.put(metadata.surmixlev(), 2);
+        }
+        if (acmod == 2) {
+            out.put(metadata.dsurmod(), 2);
+        }
+        out.put(lfe ? 1 : 0, 1);
+        out.put(dialnorm, 5);
+        writeCompression(out);
+        out.put(0, 1);
+        out.put(metadata.mixlevel() >= 0 ? 1 : 0, 1);
+        if (metadata.mixlevel() >= 0) {
+            out.put(metadata.mixlevel(), 5);
+            out.put(metadata.roomtyp(), 2);
+        }
+        out.put(metadata.copyrightb(), 1);
+        out.put(metadata.origbs(), 1);
+        if (alternate) {
+            out.put(metadata.extraMixing() ? 1 : 0, 1);
+            if (metadata.extraMixing()) {
+                out.put(metadata.dmixmod(), 2);
+                out.put(metadata.ltrtcmixlev(), 3);
+                out.put(metadata.ltrtsurmixlev(), 3);
+                out.put(metadata.lorocmixlev(), 3);
+                out.put(metadata.lorosurmixlev(), 3);
+            }
+            out.put(metadata.extraModes() ? 1 : 0, 1);
+            if (metadata.extraModes()) {
+                out.put(metadata.dsurexmod(), 2);
+                out.put(metadata.dheadphonmod(), 2);
+                out.put(metadata.adconvtyp(), 1);
+                out.put(0, 8);
+                out.put(0, 1);
+            }
+        } else {
+            out.put(0, 1);
+            out.put(0, 1);
+        }
+        out.put(0, 1);
+    }
+
+    /**
+     * Writes {@code compre} and the heavy compression word of the frame.
+     *
+     * @param out the sink
+     */
+    private void writeCompression(BitSink out) {
+        out.put(compression >= 0 ? 1 : 0, 1);
+        if (compression >= 0) {
+            out.put(compression, 8);
+        }
+    }
+
+    /**
+     * Writes the mixing and informational metadata of an E-AC-3 frame, {@code mixmdate} and
+     * {@code infomdate} with their fields (A/52 Annex E section 2.2.2); a dependent substream
+     * carries neither.
+     *
+     * @param out the sink
+     * @param independent whether the frame belongs to an independent substream
+     */
+    private void writeEnhancedMetadata(BitSink out, boolean independent) {
+        var mixing = independent && metadata.mixing();
+        out.put(mixing ? 1 : 0, 1);
+        if (mixing) {
+            if (acmod > 2) {
+                out.put(metadata.dmixmod(), 2);
+            }
+            if ((acmod & 1) != 0 && acmod > 2) {
+                out.put(metadata.ltrtcmixlev(), 3);
+                out.put(metadata.lorocmixlev(), 3);
+            }
+            if ((acmod & 4) != 0) {
+                out.put(metadata.ltrtsurmixlev(), 3);
+                out.put(metadata.lorosurmixlev(), 3);
+            }
+            if (lfe) {
+                out.put(metadata.lfemixlevcod() >= 0 ? 1 : 0, 1);
+                if (metadata.lfemixlevcod() >= 0) {
+                    out.put(metadata.lfemixlevcod(), 5);
+                }
+            }
+            out.put(metadata.pgmscl() >= 0 ? 1 : 0, 1);
+            if (metadata.pgmscl() >= 0) {
+                out.put(metadata.pgmscl(), 6);
+            }
+            out.put(metadata.extpgmscl() >= 0 ? 1 : 0, 1);
+            if (metadata.extpgmscl() >= 0) {
+                out.put(metadata.extpgmscl(), 6);
+            }
+            out.put(0, 2);
+            if (acmod < 2) {
+                out.put(0, 1);
+            }
+            out.put(0, 1);
+        }
+        var informational = independent && metadata.informational();
+        out.put(informational ? 1 : 0, 1);
+        if (informational) {
+            out.put(metadata.bsmod(), 3);
+            out.put(metadata.copyrightb(), 1);
+            out.put(metadata.origbs(), 1);
+            if (acmod == 2) {
+                out.put(metadata.dsurmod(), 2);
+                out.put(metadata.dheadphonmod(), 2);
+            }
+            if (acmod >= 6) {
+                out.put(metadata.dsurexmod(), 2);
+            }
+            out.put(metadata.mixlevel() >= 0 ? 1 : 0, 1);
+            if (metadata.mixlevel() >= 0) {
+                out.put(metadata.mixlevel(), 5);
+                out.put(metadata.roomtyp(), 2);
+                out.put(metadata.adconvtyp(), 1);
+            }
+            if (fscod < 3) {
+                out.put(metadata.sourcefscod(), 1);
+            }
+        }
+    }
+
+    /**
+     * Writes the enhanced coupling parameters of a block (ETSI TS 102 366 clause E.1.2.4): the
+     * amplitudes of every coupled channel whose amplitudes are new, and for the first parameters of
+     * every coupled channel after the first the angle and chaos fields, which are written as zero
+     * since decoders ignore them, without angle interpolation or transient flags.
+     *
+     * @param out the sink
+     * @param state the syntax state of the frame
+     * @param b the block
+     */
+    private void writeAmplitudes(BitSink out, SyntaxState state, int b) {
+        out.put(0, 1);
+        var first = -1;
+        for (var ch = 0; ch < channels; ch++) {
+            if (!coupled[b][ch]) {
+                state.firstCoordinates[ch] = true;
+                continue;
+            }
+            if (first < 0) {
+                first = ch;
+            }
+            var sent = coordinatesSent[b][ch];
+            boolean reserved;
+            if (state.firstCoordinates[ch]) {
+                state.firstCoordinates[ch] = false;
+                reserved = ch > first;
+            } else {
+                out.put(sent ? 1 : 0, 1);
+                if (ch > first) {
+                    out.put(0, 1);
+                }
+                reserved = false;
+            }
+            if (sent) {
+                for (var band = 0; band < couplingBands; band++) {
+                    out.put(coordinateMantissas[b][ch][band], 5);
+                }
+            }
+            if (reserved) {
+                for (var band = 0; band < couplingBands; band++) {
+                    out.put(0, 9);
+                }
+            }
+            if (ch > first) {
+                out.put(0, 1);
+            }
+        }
     }
 
     /**
@@ -3798,7 +4325,7 @@ public final class FrameEncoder {
         var numblkscod = blocks == 1 ? 0 : blocks == 2 ? 1 : blocks == 3 ? 2 : 3;
         var independent = channelMap < 0;
         out.put(independent ? 0 : 1, 2);
-        out.put(0, 3);
+        out.put(substreamId, 3);
         out.put(frameWords - 1, 11);
         out.put(fscod, 2);
         out.put(fscod == 3 ? fscod2 : numblkscod, 2);
@@ -3806,13 +4333,12 @@ public final class FrameEncoder {
         out.put(lfe ? 1 : 0, 1);
         out.put(16, 5);
         out.put(dialnorm, 5);
-        out.put(0, 1);
+        writeCompression(out);
         if (!independent) {
             out.put(1, 1);
             out.put(channelMap, 16);
         }
-        out.put(0, 1);
-        out.put(0, 1);
+        writeEnhancedMetadata(out, independent);
         var syncPoint = blockCount % 6 == 0;
         if (independent && numblkscod != 3) {
             out.put(syncPoint ? 1 : 0, 1);
@@ -3823,7 +4349,8 @@ public final class FrameEncoder {
             out.put(hybridFrame ? 1 : 0, 1);
         }
         out.put(0, 2);
-        out.put(anyPreNoise() ? 1 : 0, 1);
+        preNoiseFlagBit = out.bits;
+        out.put(0, 1);
         out.put(anyShortBlock() ? 1 : 0, 1);
         out.put(ditherEverywhere() ? 0 : 1, 1);
         out.put(customAllocation() ? 1 : 0, 1);
@@ -3894,36 +4421,10 @@ public final class FrameEncoder {
         }
         out.put(offset >> 4, 6);
         out.put(offset & 15, 4);
-        if (anyPreNoise()) {
-            for (var ch = 0; ch < channels; ch++) {
-                var location = preNoise.location[ch];
-                out.put(location >= 0 ? 1 : 0, 1);
-                if (location >= 0) {
-                    out.put(location >> 2, 10);
-                    out.put(preNoise.length[ch], 8);
-                }
-            }
-        }
+        preNoiseDataBit = out.bits;
         if (numblkscod != 0) {
             out.put(0, 1);
         }
-    }
-
-    /**
-     * Returns whether the frame carries transient pre-noise processing data for any channel.
-     *
-     * @return {@code true} when a channel has a transient location
-     */
-    private boolean anyPreNoise() {
-        if (preNoise == null) {
-            return false;
-        }
-        for (var ch = 0; ch < channels; ch++) {
-            if (preNoise.location[ch] >= 0) {
-                return true;
-            }
-        }
-        return false;
     }
 
     /**
@@ -3971,7 +4472,12 @@ public final class FrameEncoder {
                 out.put(ditherFlags[b][ch] ? 1 : 0, 1);
             }
         }
-        out.put(0, 1);
+        var word = dynamicRange[b];
+        var sendRange = word != NO_WORD && (b == 0 || word != dynamicRange[b - 1]);
+        out.put(sendRange ? 1 : 0, 1);
+        if (sendRange) {
+            out.put(word & 0xFF, 8);
+        }
         if (enhanced) {
             writeSpectralExtension(out, b);
         }
@@ -3983,7 +4489,19 @@ public final class FrameEncoder {
             }
         }
         if (couplingStrategy[b]) {
-            if (inUse) {
+            if (inUse && ecpl) {
+                out.put(1, 1);
+                if (acmod != 2) {
+                    for (var ch = 0; ch < channels; ch++) {
+                        out.put(coupled[b][ch] ? 1 : 0, 1);
+                    }
+                }
+                out.put(ecplBeginCode, 4);
+                if (spx == null) {
+                    out.put(ecplEndCode, 4);
+                }
+                out.put(0, 1);
+            } else if (inUse) {
                 if (enhanced) {
                     out.put(0, 1);
                 }
@@ -4012,7 +4530,9 @@ public final class FrameEncoder {
                 state.firstLeak = true;
             }
         }
-        if (inUse) {
+        if (inUse && ecpl) {
+            writeAmplitudes(out, state, b);
+        } else if (inUse) {
             var anySent = false;
             for (var ch = 0; ch < channels; ch++) {
                 if (!coupled[b][ch]) {

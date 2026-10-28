@@ -1,0 +1,15 @@
+# video decode dump of elementary/h263/annex/tmn-snr.263.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 166667
+seekable true
+track 1 H263 176x144 timebase=1/30
+0 pts=0 dur=1 key=true 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=7a8ed3e1 u=c597d6ef v=27b15491
+1 pts=1 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=5085a999 u=043c0a0c v=3de90219
+2 pts=2 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=396ef85a u=e743adf0 v=01918efb
+3 pts=3 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=f0806cff u=22d56091 v=3c5973e6
+4 pts=4 dur=1 key=false 176x144 yuv8 YUV420 color=BT601/LIMITED/SMPTE170M/SMPTE170M y=bb5eb0d1 u=e5046468 v=a1eca4da
+seek 0: @0
+seek 55555: @1
+seek 111111: @3
+seek 166667: end
+seek -1000000: @0

@@ -103,11 +103,14 @@ class Vp9OptionsTest {
             assertThrows(IllegalArgumentException.class, () -> options.toBuilder().bufferSize(Duration.ofMillis(1000))
                     .initialBufferLevel(Duration.ofMillis(500)).optimalBufferLevel(Duration.ofMillis(1001)).build());
             assertThrows(NullPointerException.class, () -> options.toBuilder().frameRate(null).build());
-            for (var level = 5; level <= 9; level++) {
+            for (var level = 0; level <= 9; level++) {
                 assertEquals(level, Vp9EncoderSpeed.of(level).level());
+                assertEquals(level >= 5, Vp9EncoderSpeed.of(level).realtime());
             }
-            assertThrows(IllegalArgumentException.class, () -> Vp9EncoderSpeed.of(4));
+            assertThrows(IllegalArgumentException.class, () -> Vp9EncoderSpeed.of(-1));
             assertThrows(IllegalArgumentException.class, () -> Vp9EncoderSpeed.of(10));
+            assertThrows(IllegalArgumentException.class,
+                    () -> options.toBuilder().speed(Vp9EncoderSpeed.SPEED_4).build());
         }
 
         @Test
