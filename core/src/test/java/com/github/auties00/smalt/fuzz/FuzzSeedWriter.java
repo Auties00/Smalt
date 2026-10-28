@@ -179,6 +179,12 @@ class FuzzSeedWriter {
         copy(DemuxerFuzzTest.class, "wav", "valid-g726.wav", ffmpeg("wav", tone(8000, 0.1), "-c:a", "g726",
                 "-b:a", "40k"));
         copy(DemuxerFuzzTest.class, "wav", "valid-g722.wav", ffmpeg("wav", tone(16000, 0.1), "-c:a", "g722"));
+        // the ADPCM and telephony behavior samples outside WAVE (tools/testdata/behavior/make-adpcm-samples.py)
+        for (var sample : new String[][]{{"aiff", "ima4.aifc"}, {"mp4", "gsm.mov"}, {"mp4", "ms-adpcm.mov"},
+                {"avi", "ms-adpcm.avi"}, {"matroska", "ima-adpcm.mka"}}) {
+            copy(DemuxerFuzzTest.class, sample[0], "valid-" + sample[1], Path.of("src", "test", "resources",
+                    "samples", sample[0], sample[1]));
+        }
 
         var flac = ffmpeg("flac", tone(8000, 0.1), "-c:a", "flac", "-metadata", "title=seed");
         copy(DemuxerFuzzTest.class, "flac", "valid-flac.flac", flac);

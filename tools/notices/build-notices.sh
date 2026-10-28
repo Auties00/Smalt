@@ -113,6 +113,7 @@ Contents
   56. ISO/IEC 23003-3 MPEG-D USAC reference software
   57. ISO/IEC 23003-4 MPEG-D DRC reference software
   58. ISO/IEC 13818-5 MPEG-2 video reference software (MPEG Software Simulation Group)
+  59. libgsm
 
 The H.264 decoder and encoder implement a standard covered by patents. The
 licenses below cover the code only; they grant no patent rights, which are
@@ -2034,6 +2035,28 @@ Copyright:
 EOF
 license_start "Notice of the source files"
 cat "$LIC/iso13818-5-mssg-video-notice.txt"
+
+section "59. libgsm"
+cat <<'EOF'
+Project:      libgsm 1.0.22, the GSM 06.10 full-rate speech codec of the
+              Technische Universitaet Berlin
+Source:       https://www.quut.com/gsm/gsm-1.0.22.tar.gz
+License text: COPYRIGHT at the root of the distribution
+License:      libgsm license (permissive; the notice must not be removed)
+
+Derived Smalt packages:
+  audio.gsm (Gsm0610: the RPE-LTP encoder and decoder of add.c, code.c,
+  decode.c, long_term.c, lpc.c, preprocess.c, rpe.c, short_term.c and the
+  tables of table.c)
+
+Derivation: C code translated to Java and tables transcribed.
+
+Copyright:
+  Copyright 1992, 1993, 1994 by Jutta Degener and Carsten Bormann,
+  Technische Universitaet Berlin
+EOF
+license_start "libgsm license (COPYRIGHT)"
+cat "$LIC/libgsm-COPYRIGHT"
 } > "$OUT"
 
 echo "wrote $OUT"

@@ -526,8 +526,33 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             case 0x0038, AMR_NB, 0x00FE -> Codec.AMR_NB;
             case AMR_WB -> Codec.AMR_WB;
             case DTS_SPDIF, DTS -> Codec.DTS;
+            case IMA_ADPCM -> Codec.ADPCM_IMA_WAV;
+            case MS_ADPCM -> Codec.ADPCM_MS;
+            case GSM610 -> Codec.GSM_MS;
+            case G722 -> Codec.ADPCM_G722;
+            case G726 -> Codec.ADPCM_G726;
             default -> Codec.UNKNOWN_AUDIO;
         };
+    }
+
+    /**
+     * Returns the Microsoft ADPCM configuration of a format's extra bytes: {@code wSamplesPerBlock},
+     * {@code wNumCoef} and the coefficient pairs, without what follows the table.
+     *
+     * @param extra the bytes after {@code cbSize}
+     * @return the configuration, or {@code null} when the extra bytes hold no complete table (the decoder then uses
+     * the seven standard pairs)
+     */
+    public static byte[] msAdpcmConfig(byte[] extra) {
+        if (extra.length < 4) {
+            return null;
+        }
+        var count = (extra[2] & 0xFF) | (extra[3] & 0xFF) << 8;
+        var length = 4 + 4 * count;
+        if (count == 0 || extra.length < length) {
+            return null;
+        }
+        return extra.length == length ? extra : java.util.Arrays.copyOf(extra, length);
     }
 
     /**
@@ -546,6 +571,11 @@ public record WaveFormat(int tag, int channels, long sampleRate, long byteRate, 
             case MP3 -> MPEG_LAYER3;
             case AAC -> RAW_AAC;
             case AC3 -> DOLBY_AC3;
+            case ADPCM_IMA_WAV -> IMA_ADPCM;
+            case ADPCM_MS -> MS_ADPCM;
+            case GSM_MS -> GSM610;
+            case ADPCM_G722 -> G722;
+            case ADPCM_G726 -> G726;
             default -> -1;
         };
     }

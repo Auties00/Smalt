@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.property;
 
+import com.github.auties00.smalt.audio.AudioEncoderOptions;
 import com.github.auties00.smalt.audio.AudioEncoders;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.subtitle.SubtitleCue;
@@ -31,11 +32,7 @@ public final class Catalog {
 
     /** The audio codecs Smalt does not encode, with the ffmpeg encoder, container and sample rate. */
     private static final Map<Codec, String[]> FFMPEG_AUDIO = Map.of(
-            Codec.SPEEX, new String[]{"libspeex", "ogg", "16000"},
-            Codec.ADPCM_IMA_WAV, new String[]{"adpcm_ima_wav", "wav", "8000"},
-            Codec.ADPCM_MS, new String[]{"adpcm_ms", "wav", "8000"},
-            Codec.ADPCM_G722, new String[]{"g722", "wav", "16000"},
-            Codec.ADPCM_G726, new String[]{"g726", "wav", "8000"});
+            Codec.SPEEX, new String[]{"libspeex", "ogg", "16000"});
 
     private static final Map<Codec, Streams.Encoded> CACHE = new ConcurrentHashMap<>();
 
@@ -95,14 +92,27 @@ public final class Catalog {
         }
         if (AudioEncoders.isSupported(codec)) {
             var rate = switch (codec) {
-                case AMR_NB -> 8000;
-                case AMR_WB -> 16_000;
+                case AMR_NB, ADPCM_G726, GSM, GSM_MS, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS -> 8000;
+                case AMR_WB, ADPCM_G722 -> 16_000;
                 // 48 kHz is also the rate SMPTE ST 302 carries 16 and 24-bit PCM at in a transport stream
                 case OPUS, AC3, EAC3, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE -> 48_000;
                 default -> 44_100;
             };
-            var layout = codec == Codec.AMR_NB || codec == Codec.AMR_WB ? ChannelLayout.MONO : ChannelLayout.STEREO;
-            return Streams.audio(codec, layout, rate, rate / 2, builder -> builder);
+            var mono = switch (codec) {
+                case AMR_NB, AMR_WB, ADPCM_G722, ADPCM_G726, GSM, GSM_MS -> true;
+                default -> false;
+            };
+            var layout = mono ? ChannelLayout.MONO : ChannelLayout.STEREO;
+            // the block codecs get whole blocks, so that every decoder outputs the same number of samples
+            var frames = switch (codec) {
+                case ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, GSM, GSM_MS -> {
+                    try (var encoder = AudioEncoders.create(codec, AudioEncoderOptions.of(rate, layout))) {
+                        yield rate / 2 / encoder.frameSize() * encoder.frameSize();
+                    }
+                }
+                default -> rate / 2;
+            };
+            return Streams.audio(codec, layout, rate, frames, builder -> builder);
         }
         if (codec == Codec.SUBRIP || codec == Codec.WEBVTT || codec == Codec.ASS) {
             var encoder = new SubtitleEncoder(SubtitleEncoder.track(codec, 2));

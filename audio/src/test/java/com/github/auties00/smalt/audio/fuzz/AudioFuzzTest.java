@@ -20,7 +20,7 @@ import java.util.Arrays;
 import java.util.Collections;
 
 /**
- * Fuzz targets of the audio decoders of this module, fed streams in the
+ * Fuzz targets of the audio decoders of this module (the ADPCM and telephony ones included), fed streams in the
  * {@link com.github.auties00.smalt.testkit.fuzz.FuzzPackets} format (see {@link FuzzMedia#audio}), of the
  * Opus packet parser ({@link OpusPackets}), whose input is one packet, and of the ALAC encoder, whose input is a
  * format and samples that must decode back unchanged.
@@ -44,6 +44,41 @@ class AudioFuzzTest {
     @FuzzTest
     void alac(byte[] data) {
         FuzzMedia.audio(Codec.ALAC, data);
+    }
+
+    @FuzzTest
+    void adpcmImaWav(byte[] data) {
+        FuzzMedia.audio(Codec.ADPCM_IMA_WAV, data);
+    }
+
+    @FuzzTest
+    void adpcmImaQt(byte[] data) {
+        FuzzMedia.audio(Codec.ADPCM_IMA_QT, data);
+    }
+
+    @FuzzTest
+    void adpcmMs(byte[] data) {
+        FuzzMedia.audio(Codec.ADPCM_MS, data);
+    }
+
+    @FuzzTest
+    void g722(byte[] data) {
+        FuzzMedia.audio(Codec.ADPCM_G722, data);
+    }
+
+    @FuzzTest
+    void g726(byte[] data) {
+        FuzzMedia.audio(Codec.ADPCM_G726, data);
+    }
+
+    @FuzzTest
+    void gsm(byte[] data) {
+        FuzzMedia.audio(Codec.GSM, data);
+    }
+
+    @FuzzTest
+    void gsmMs(byte[] data) {
+        FuzzMedia.audio(Codec.GSM_MS, data);
     }
 
     /** The frame lengths the ALAC encoder target picks from. */

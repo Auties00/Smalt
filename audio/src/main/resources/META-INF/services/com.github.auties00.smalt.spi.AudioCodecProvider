@@ -1,3 +1,4 @@
+com.github.auties00.smalt.internal.provider.audio.AdpcmCodecProvider
 com.github.auties00.smalt.internal.provider.audio.AlacCodecProvider
 com.github.auties00.smalt.internal.provider.audio.FlacCodecProvider
 com.github.auties00.smalt.internal.provider.audio.Mp3CodecProvider

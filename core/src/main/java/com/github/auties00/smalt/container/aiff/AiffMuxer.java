@@ -18,7 +18,7 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Writes AIFF and AIFF-C files from the packets of one PCM track.
+ * Writes AIFF and AIFF-C files from the packets of one PCM, IMA ADPCM, GSM 06.10 or MACE track.
  *
  * <p>The track must be an {@link AudioTrack} that declares its sample rate and channel layout,
  * with one of the codecs {@link #supports(Codec)} accepts. Signed big-endian integers (8, 16, 24
@@ -26,8 +26,11 @@ import java.util.Objects;
  * chunk and the compression type that names it: {@code sowt} for little-endian integers,
  * {@code raw } for unsigned 8-bit, {@code fl32} and {@code fl64} for big-endian floats,
  * {@code alaw} and {@code ulaw} for G.711 (declared with a 16-bit sample size, as QuickTime
- * does). AIFF has no channel mask, so only the channel count of the layout is stored. Packets are
- * appended to the {@code SSND} chunk in the order they arrive; their timestamps are ignored.
+ * does), {@code ima4} for {@link Codec#ADPCM_IMA_QT}, {@code GSM } for mono {@link Codec#GSM} and
+ * {@code MAC3} and {@code MAC6} for MACE; a packet of a compressed type holds whole frames of the type,
+ * which the {@code COMM} frame count then counts. AIFF has no channel mask, so only the channel count
+ * of the layout is stored. Packets are appended to the {@code SSND} chunk in the order they arrive; their
+ * timestamps are ignored.
  *
  * <p>The {@code COMM} chunk precedes the sound data and states the frame count, so on a seekable
  * sink the header is written with the first packet and its counts and sizes are patched by
@@ -139,6 +142,10 @@ public final class AiffMuxer implements Muxer {
             case PCM_F64BE -> "fl64";
             case PCM_ALAW -> "alaw";
             case PCM_MULAW -> "ulaw";
+            case ADPCM_IMA_QT -> "ima4";
+            case GSM -> "GSM ";
+            case MACE3 -> "MAC3";
+            case MACE6 -> "MAC6";
             default -> null;
         };
     }
@@ -156,6 +163,10 @@ public final class AiffMuxer implements Muxer {
             case "fl64" -> "64-bit floating point";
             case "alaw" -> "ALaw 2:1";
             case "ulaw" -> "uLaw 2:1";
+            case "ima4" -> "IMA 4:1";
+            case "GSM " -> "GSM";
+            case "MAC3" -> "MACE 3-to-1";
+            case "MAC6" -> "MACE 6-to-1";
             default -> "";
         };
     }
@@ -186,8 +197,17 @@ public final class AiffMuxer implements Muxer {
         if (channels > Short.MAX_VALUE) {
             throw new IllegalArgumentException(channels + " channels do not fit an AIFF header");
         }
+        if (audio.codec() == Codec.GSM && channels != 1) {
+            throw new IllegalArgumentException("an AIFF-C GSM 06.10 track is mono, not " + channels + " channels");
+        }
         this.track = audio;
-        this.blockAlign = audio.codec().pcmBitsPerSample().orElseThrow() / 8 * channels;
+        this.blockAlign = switch (audio.codec()) {
+            case ADPCM_IMA_QT -> 34 * channels;
+            case GSM -> 33;
+            case MACE3 -> 2 * channels;
+            case MACE6 -> channels;
+            default -> audio.codec().pcmBitsPerSample().orElseThrow() / 8 * channels;
+        };
     }
 
     /**
@@ -368,7 +388,8 @@ public final class AiffMuxer implements Muxer {
      */
     private static int sampleSizeBits(Codec codec) {
         return switch (codec) {
-            case PCM_ALAW, PCM_MULAW -> 16;
+            case PCM_ALAW, PCM_MULAW, ADPCM_IMA_QT, GSM -> 16;
+            case MACE3, MACE6 -> 8;
             default -> codec.pcmBitsPerSample().orElseThrow();
         };
     }

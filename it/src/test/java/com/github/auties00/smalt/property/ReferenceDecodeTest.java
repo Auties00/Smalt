@@ -118,6 +118,17 @@ class ReferenceDecodeTest {
             // lossless, and the 3GPP fixed-point decoders are bit-exact by specification
             entry(Codec.FLAC, of(OutputContainer.FLAC, "flac", NORMATIVE)),
             entry(Codec.ALAC, of(OutputContainer.M4A, "alac", NORMATIVE)),
+            // ffmpeg's WAVE IMA ADPCM decoder multiplies where the recommendation shifts and adds, its Microsoft ADPCM
+            // decoder truncates the prediction where Microsoft's codec shifts it down, its G.722 receive
+            // filter keeps one bit more than the Recommendation's 15-bit output, and its G.726 coder is not the
+            // Recommendation's (TelephonyDifferentialTest)
+            entry(Codec.ADPCM_IMA_WAV, of(OutputContainer.WAV, "adpcm_ima_wav", Tolerance.snr(40))),
+            entry(Codec.ADPCM_IMA_QT, of(OutputContainer.MOV, "adpcm_ima_qt", NORMATIVE)),
+            entry(Codec.ADPCM_MS, of(OutputContainer.WAV, "adpcm_ms", Tolerance.snr(35))),
+            entry(Codec.ADPCM_G722, of(OutputContainer.WAV, "g722", Tolerance.snr(70))),
+            entry(Codec.ADPCM_G726, of(OutputContainer.WAV, "g726", Tolerance.snr(18))),
+            entry(Codec.GSM, of(OutputContainer.AIFF, "gsm", NORMATIVE)),
+            entry(Codec.GSM_MS, of(OutputContainer.WAV, "gsm_ms", NORMATIVE)),
             entry(Codec.AMR_NB, of(OutputContainer.AMR, "libopencore_amrnb", NORMATIVE)),
             entry(Codec.AMR_WB, of(OutputContainer.AMR, "libopencore_amrwb", NORMATIVE)),
             // uncompressed frames, which every reader copies

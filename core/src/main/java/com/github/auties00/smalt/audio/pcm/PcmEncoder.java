@@ -255,6 +255,7 @@ public final class PcmEncoder implements AudioEncoder {
      * {@return the size of one coded sample in bits: 8 for the 8-bit and G.711 formats, otherwise
      * 16, 24, 32 or 64}
      */
+    @Override
     public int bitsPerSample() {
         return bytesPerSample * 8;
     }

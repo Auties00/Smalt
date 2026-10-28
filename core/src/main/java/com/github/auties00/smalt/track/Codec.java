@@ -351,6 +351,49 @@ public enum Codec {
     ADPCM_G726(TrackKind.AUDIO, "adpcm_g726"),
 
     /**
+     * IMA ADPCM in Apple's QuickTime layout ({@code ima4}), 4 bits per sample, the AIFF-C and QuickTime
+     * {@code ima4} compression type.
+     *
+     * <p>A packet holds one or more frames of 34 bytes per channel, the channels of a frame one after the other:
+     * a two-byte big-endian header (the predictor's top nine bits and the 7-bit step index), then the codes of 64
+     * samples, the low nibble of each byte first. A frame continues the predictor of the channel's previous frame
+     * when its header matches that predictor's top nine bits and step index, and restarts from the header
+     * otherwise. The track has no configuration.
+     */
+    ADPCM_IMA_QT(TrackKind.AUDIO, "adpcm_ima_qt"),
+
+    /**
+     * ETSI GSM 06.10 full-rate speech in its 33-byte frames: one channel, usually at 8 kHz, the AIFF-C
+     * {@code GSM } and QuickTime {@code agsm} compression types and the RTP payload of RFC 3551.
+     *
+     * <p>A packet holds one or more frames of 160 samples, each the four-bit signature {@code 0xD} followed by the
+     * 260 bits of the frame's parameters from the most significant bit of each byte. The track has no
+     * configuration.
+     */
+    GSM(TrackKind.AUDIO, "gsm"),
+
+    // TODO: MACE decoding: US patent 5,083,310 gives MACE's structure (the 3-2-3 bit packing and the predictor and
+    // adaptation constants) but not its 128-entry step tables, adaptation table, quantizer levels or filters, and no
+    // other public or permissively licensed description of them exists, so a decoder cannot be written bit-exact
+    /**
+     * Apple's Macintosh Audio Compression/Expansion at 3:1, the AIFF-C and QuickTime {@code MAC3} compression
+     * type: two bytes for every six 8-bit samples of a channel.
+     *
+     * <p>A packet holds whole frames of two bytes per channel, six samples of every channel. The
+     * containers read and write the stream, but no Smalt artifact decodes it.
+     */
+    MACE3(TrackKind.AUDIO, "mace3"),
+
+    /**
+     * Apple's Macintosh Audio Compression/Expansion at 6:1, the AIFF-C and QuickTime {@code MAC6} compression
+     * type: one byte for every six 8-bit samples of a channel.
+     *
+     * <p>A packet holds whole frames of one byte per channel, six samples of every channel. The
+     * containers read and write the stream, but no Smalt artifact decodes it.
+     */
+    MACE6(TrackKind.AUDIO, "mace6"),
+
+    /**
      * An audio codec the demuxer could not identify.
      */
     UNKNOWN_AUDIO(TrackKind.AUDIO, "unknown audio"),

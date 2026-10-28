@@ -220,6 +220,12 @@ class MuxDemuxIdentityTest {
             assertArrayEquals(pcm(original.track(), original.packets()), pcm(demuxed, packets), what + " samples");
             return;
         }
+        if (isCodeStream(original.track().codec())) {
+            // a stream of fixed frames or of bare codes is cut into packets by the container (AIFF, and WAV for the
+            // telephony codecs, group frames by size or duration), so its bytes are compared
+            assertArrayEquals(concat(original.packets()), concat(packets), what + " codes");
+            return;
+        }
         var expected = original.packets();
         assertEquals(expected.size(), packets.size(), what + " packet count");
         var tick = Math.max(original.track().timeBase().toMicros(1), demuxed.timeBase().toMicros(1)) + 1;
@@ -302,6 +308,23 @@ class MuxDemuxIdentityTest {
             return Arrays.copyOfRange(data, 8, data.length);
         }
         return data;
+    }
+
+    /** Returns whether a codec's packets are runs of fixed frames or bare codes, which containers regroup. */
+    private static boolean isCodeStream(Codec codec) {
+        return switch (codec) {
+            case ADPCM_IMA_QT, ADPCM_G722, ADPCM_G726, GSM, GSM_MS -> true;
+            default -> false;
+        };
+    }
+
+    /** Concatenates the bytes of packets. */
+    private static byte[] concat(List<Packet> packets) {
+        var out = new java.io.ByteArrayOutputStream();
+        for (var packet : packets) {
+            out.writeBytes(packet.data());
+        }
+        return out.toByteArray();
     }
 
     private static boolean isPcm(Codec codec) {

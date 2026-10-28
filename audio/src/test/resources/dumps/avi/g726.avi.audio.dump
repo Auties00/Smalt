@@ -1,0 +1,12 @@
+# audio decode dump of avi/g726.avi; regenerate with -Dsmalt.test.updateDumps=true
+format AVI
+duration 684000
+seekable true
+track 1 ADPCM_G726 rate=8000 layout=[FRONT_CENTER]
+0 frames=4096 crc16=00804df2
+1 frames=704 crc16=584e83a5
+seek 0: @sample 0
+seek 228000: @sample 1824
+seek 456000: @sample 3648
+seek 684000: end
+seek -1000000: @sample 0

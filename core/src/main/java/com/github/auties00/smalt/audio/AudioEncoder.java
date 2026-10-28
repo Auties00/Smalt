@@ -65,6 +65,18 @@ public interface AudioEncoder extends AutoCloseable {
     int delay();
 
     /**
+     * Returns the sample or code size the stream's track declares as its
+     * {@link com.github.auties00.smalt.track.AudioTrack#bitsPerSample() bitsPerSample}: the code size of an ADPCM
+     * codec, which a container must store for a decoder to read the stream.
+     *
+     * @implSpec The default implementation returns 0.
+     * @return the size in bits, or 0 when the track declares none
+     */
+    default int bitsPerSample() {
+        return 0;
+    }
+
+    /**
      * Returns the out-of-band decoder configuration a container must store for this stream.
      *
      * @return the configuration in the form described by

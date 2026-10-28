@@ -549,6 +549,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
             for (var count = 0; count < CALIBRATION_PACKETS; ) {
                 var packet = demuxer.read();
                 if (packet == null) {
+                    // the track ended: its last packet, which the decoder still holds, is checked against the
+                    // origin too, so that a short track's last rounded timestamp is not missed
+                    probe.finish();
                     break;
                 }
                 if (packet.trackId() != track.id()) {
@@ -1583,7 +1586,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
         }
 
         /**
-         * Returns whether a track's codec keeps a prediction state that a restart never reproduces:
+         * Returns whether a track's codec keeps a prediction state that a restart never reproduces: IMA ADPCM in
+         * Apple's {@code ima4} layout, whose frames carry only the top bits of the predictor they continue,
          * AAC Main (backward-adaptive prediction), AAC LTP, ER AAC LTP and AAC-LD (long term prediction), and
          * AAC-ELD with low delay spectral band replication, whose SBR state no pre-roll of a few frames
          * reproduces, and USAC, whose arithmetic coder context, linear prediction state and enhanced SBR state
@@ -1593,6 +1597,10 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * @return {@code true} when every restart must begin at the track's first packet
          */
         private static boolean predictsFromStart(AudioTrack track) {
+            if (track.codec() == Codec.ADPCM_IMA_QT) {
+                // an ima4 frame continues the full predictor of the frame before it, which no restart recovers
+                return true;
+            }
             var config = track.codecConfig();
             if (track.codec() != Codec.AAC || config.isEmpty()) {
                 return false;
@@ -1644,8 +1652,9 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * memories keep decaying for a few hundred more milliseconds before the floats agree
          * exactly), two of the longest Vorbis blocks (8192 samples each), four AAC frames, sixteen
          * MPEG audio frames (the Layer III bit reservoir reaches back up to 511 bytes, several
-         * frames at low bitrates), nothing for codecs without state between packets (PCM, FLAC,
-         * ALAC) and 100 ms for any other codec, plus {@value #RESAMPLING_MARGIN_MICROS}
+         * frames at low bitrates), one second of G.722 and G.726, whose adaptive predictors forget the
+         * past only gradually, nothing for codecs without state between packets (PCM, FLAC, ALAC, and IMA
+         * and Microsoft ADPCM in WAVE blocks) and 100 ms for any other codec, plus {@value #RESAMPLING_MARGIN_MICROS}
          * microseconds for the resampler: its filter reaches back a few milliseconds and its phase
          * repeats every {@code inputRate / gcd(inputRate, outputRate)} samples, at most 441 (10 ms)
          * between the common rates.
@@ -1669,8 +1678,10 @@ public final class AudioStreamDecoder implements AutoCloseable {
                 case VORBIS -> 2L * 8192 * 1_000_000 / rate;
                 case AAC -> 4L * 2048 * 1_000_000 / rate;
                 case MP3, MP2 -> 16L * 1152 * 1_000_000 / rate;
-                case FLAC, ALAC, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_S64LE, PCM_S64BE,
-                     PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> 0;
+                case ADPCM_G722, ADPCM_G726 -> 1_000_000;
+                case FLAC, ALAC, ADPCM_IMA_WAV, ADPCM_MS, PCM_S16LE, PCM_S16BE, PCM_S24LE, PCM_S24BE, PCM_S32LE,
+                     PCM_S32BE, PCM_S64LE, PCM_S64BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE, PCM_U8, PCM_S8,
+                     PCM_ALAW, PCM_MULAW -> 0;
                 default -> 100_000;
             };
         }
@@ -1685,8 +1696,8 @@ public final class AudioStreamDecoder implements AutoCloseable {
          * time before every packet, so that the decoder restarts at the track's first packet and
          * counts the samples up to {@code micros} instead of placing them by rounded timestamps.
          * It is that time too for codecs whose prediction state reaches back to the start of the
-         * stream, so that no pre-roll reproduces it: AAC Main and AAC LTP (and ER AAC LTP and AAC-LD), and AAC-ELD
-         * with low delay spectral band replication.
+         * stream, so that no pre-roll reproduces it: IMA ADPCM in Apple's {@code ima4} layout, AAC Main and AAC LTP
+         * (and ER AAC LTP and AAC-LD), and AAC-ELD with low delay spectral band replication.
          * Every track of a demuxer restarts at its own key frame at or before the target, so a
          * caller decoding several tracks seeks to the earliest target any of them needs.
          *

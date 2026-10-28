@@ -59,7 +59,8 @@ public final class Artifacts {
             case H264, HEVC, AAC, AMR_NB, AMR_WB, MPEG4_PART2, H263, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
             case VP8, MJPEG, JPEG2000 -> IMAGE;
-            case OPUS, VORBIS, FLAC, MP3, MP2, ALAC -> AUDIO;
+            case OPUS, VORBIS, FLAC, MP3, MP2, ALAC, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
+                 GSM_MS -> AUDIO;
             default -> null;
         };
     }
@@ -75,7 +76,8 @@ public final class Artifacts {
             case H264, AAC, AMR_NB, AMR_WB, AC3, EAC3 -> MPEG;
             case VP9, AV1, PRORES, DNXHD -> VIDEO;
             case VP8, MJPEG, JPEG2000 -> IMAGE;
-            case OPUS, FLAC, MP3, VORBIS -> AUDIO;
+            case OPUS, FLAC, MP3, VORBIS, ADPCM_IMA_WAV, ADPCM_IMA_QT, ADPCM_MS, ADPCM_G722, ADPCM_G726, GSM,
+                 GSM_MS -> AUDIO;
             default -> null;
         };
     }

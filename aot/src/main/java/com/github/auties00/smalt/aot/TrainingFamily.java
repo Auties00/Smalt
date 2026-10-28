@@ -31,7 +31,8 @@ public enum TrainingFamily {
      * 10 and 20 ms frames, wideband and fullband, with forward error correction, discontinuous
      * transmission and loss concealment), Vorbis at several qualities, FLAC at 16 and 24 bits, ALAC
      * stereo (searched and fast) and 24-bit 5.1, MP3 at constant and variable bitrate and in real time,
-     * the decoders of all five, and the voice
+     * the decoders of all five, IMA ADPCM (WAVE and {@code ima4} layouts) and Microsoft ADPCM files, G.722, G.726
+     * and GSM 06.10 in real time (encoders and decoders), and the voice
      * processor (echo cancellation, noise suppression) in 10 ms frames over several echo paths and
      * talk patterns.
      */

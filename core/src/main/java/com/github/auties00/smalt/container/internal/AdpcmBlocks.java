@@ -1,25 +1,26 @@
-package com.github.auties00.smalt.container.wav;
+package com.github.auties00.smalt.container.internal;
 
 import com.github.auties00.smalt.track.Codec;
 
 /**
  * The packet layout rules of the ADPCM and telephony codecs a WAVE file carries: IMA and Microsoft ADPCM blocks,
- * Microsoft's GSM 06.10 blocks, and the G.722 and G.726 code streams, as {@link Codec} defines their packets.
+ * Microsoft's GSM 06.10 blocks, and the G.722 and G.726 code streams, as {@link Codec} defines their packets and
+ * WAVE, AVI and Matroska {@code A_MS/ACM} streams carry them.
  *
  * <p>A unit is the smallest run of bytes that holds whole codes and starts on a byte boundary: a block of IMA or
  * Microsoft ADPCM, a 65-byte GSM block, one G.722 byte, and for G.726 one byte of 2 or 4-bit codes or the 3 or 5 bytes
  * of eight 3 or 5-bit codes.
  */
-final class AdpcmBlocks {
+public final class AdpcmBlocks {
     /**
      * The size of a Microsoft GSM 06.10 block, two frames.
      */
-    static final int GSM_BLOCK = 65;
+    public static final int GSM_BLOCK = 65;
 
     /**
      * The samples of a Microsoft GSM 06.10 block.
      */
-    static final int GSM_SAMPLES = 320;
+    public static final int GSM_SAMPLES = 320;
 
     private AdpcmBlocks() {
         throw new AssertionError();
@@ -30,7 +31,7 @@ final class AdpcmBlocks {
      *
      * @param codec any codec
      */
-    static boolean supports(Codec codec) {
+    public static boolean supports(Codec codec) {
         return switch (codec) {
             case ADPCM_IMA_WAV, ADPCM_MS, GSM_MS, ADPCM_G722, ADPCM_G726 -> true;
             default -> false;
@@ -42,7 +43,7 @@ final class AdpcmBlocks {
      *
      * @param codec an ADPCM codec
      */
-    static boolean hasBlocks(Codec codec) {
+    public static boolean hasBlocks(Codec codec) {
         return codec == Codec.ADPCM_IMA_WAV || codec == Codec.ADPCM_MS;
     }
 
@@ -53,7 +54,7 @@ final class AdpcmBlocks {
      * @param channels the channel count
      * @return the bytes before the codes
      */
-    static long headerBytes(Codec codec, int channels) {
+    public static long headerBytes(Codec codec, int channels) {
         return (codec == Codec.ADPCM_IMA_WAV ? 4L : 7L) * channels;
     }
 
@@ -66,7 +67,7 @@ final class AdpcmBlocks {
      * @param channels the channel count
      * @return whether the size is one of a block
      */
-    static boolean isBlock(Codec codec, long bytes, int channels) {
+    public static boolean isBlock(Codec codec, long bytes, int channels) {
         var codes = bytes - headerBytes(codec, channels);
         if (codes < 0) {
             return false;
@@ -83,7 +84,7 @@ final class AdpcmBlocks {
      * @param codeSize the G.726 code size in bits, ignored for the other codecs
      * @return the samples per channel of the whole codes of the packet, 0 when it holds none
      */
-    static long samples(Codec codec, long bytes, int channels, int codeSize) {
+    public static long samples(Codec codec, long bytes, int channels, int codeSize) {
         return switch (codec) {
             case ADPCM_IMA_WAV -> {
                 var codes = bytes - headerBytes(codec, channels);
@@ -107,7 +108,7 @@ final class AdpcmBlocks {
      * @param codeSize the G.726 code size in bits, ignored for the other codecs
      * @return the bytes every packet but the last is a multiple of
      */
-    static int unitBytes(Codec codec, int codeSize) {
+    public static int unitBytes(Codec codec, int codeSize) {
         return switch (codec) {
             case GSM_MS -> GSM_BLOCK;
             case ADPCM_G726 -> codeSize == 3 || codeSize == 5 ? codeSize : 1;
@@ -122,7 +123,7 @@ final class AdpcmBlocks {
      * @param codeSize the G.726 code size in bits, ignored for the other codecs
      * @return the samples
      */
-    static int unitSamples(Codec codec, int codeSize) {
+    public static int unitSamples(Codec codec, int codeSize) {
         return (int) samples(codec, unitBytes(codec, codeSize), 1, codeSize);
     }
 
@@ -136,7 +137,7 @@ final class AdpcmBlocks {
      * @return the size of the last packet: the header and whole sample groups of a block, whole GSM blocks, every
      * byte of G.722 and G.726; 0 when they code no sample
      */
-    static int tail(Codec codec, int bytes, int channels, int codeSize) {
+    public static int tail(Codec codec, int bytes, int channels, int codeSize) {
         return switch (codec) {
             case ADPCM_IMA_WAV, ADPCM_MS -> {
                 var header = headerBytes(codec, channels);
@@ -150,6 +151,36 @@ final class AdpcmBlocks {
             }
             case GSM_MS -> bytes / GSM_BLOCK * GSM_BLOCK;
             default -> samples(codec, bytes, channels, codeSize) == 0 ? 0 : bytes;
+        };
+    }
+
+    /**
+     * Returns the code size of an ADPCM or telephony stream in an AVI or Matroska {@code A_MS/ACM} track, checking
+     * that its format describes a stream of the codec.
+     *
+     * @param codec the codec of the format tag
+     * @param wave the format
+     * @return 4 for IMA and Microsoft ADPCM, the code size of G.726, 0 for GSM 06.10 and G.722, or -1 when the
+     * format is not one of a stream of the codec (blocks of another size or code, several channels of a mono codec)
+     */
+    public static int codeSize(Codec codec, WaveFormat wave) {
+        var channels = wave.channels();
+        if (channels <= 0) {
+            return -1;
+        }
+        return switch (codec) {
+            case ADPCM_IMA_WAV, ADPCM_MS -> wave.bitsPerSample() == 4
+                    && isBlock(codec, wave.blockAlign(), channels)
+                    && samples(codec, wave.blockAlign(), channels, 0) > 1 ? 4 : -1;
+            case GSM_MS -> channels == 1 && wave.blockAlign() == GSM_BLOCK ? 0 : -1;
+            case ADPCM_G722 -> channels == 1 ? 0 : -1;
+            default -> {
+                var bits = wave.bitsPerSample();
+                if ((bits < 2 || bits > 5) && wave.sampleRate() > 0 && wave.byteRate() * 8 % wave.sampleRate() == 0) {
+                    bits = (int) Math.min(wave.byteRate() * 8 / wave.sampleRate(), 6);
+                }
+                yield channels == 1 && bits >= 2 && bits <= 5 ? bits : -1;
+            }
         };
     }
 }

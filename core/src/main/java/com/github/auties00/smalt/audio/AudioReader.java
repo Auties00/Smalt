@@ -401,7 +401,7 @@ public final class AudioReader implements AutoCloseable {
      * {@link #readDoubles()} starts at the sample presented at {@code micros}.
      *
      * <p>From {@code micros} on, the output equals a decode from the start of the track, except that
-     * Opus and AMR output is not sample-exact until the codec state has converged, and AAC
+     * Opus, AMR, G.722 and G.726 output is not sample-exact until the codec state has converged, and AAC
      * noise-substituted bands and AC-3 and E-AC-3 dithered mantissas may differ. A time before zero
      * seeks to the start; a time at or past the end makes the next {@code read()} return {@code null}.
      *
@@ -413,9 +413,9 @@ public final class AudioReader implements AutoCloseable {
      * @implNote This implementation pre-rolls by {@link AudioStreamDecoder.Timing#prerollMicros()}
      * after measuring, on the first seek, how the container's timestamps map to the decoder's output.
      * When container timestamps are coarser than a sample ({@link AudioStreamDecoder.Timing#isExact()}
-     * is {@code false}), for AAC Main, LTP and LD, whose prediction state reaches back to the start
-     * of the stream, and for AAC-ELD with low delay spectral band replication, it decodes from the
-     * start of the track and drops the samples before {@code micros}.
+     * is {@code false}), for AAC Main, LTP and LD and for IMA ADPCM in Apple's {@code ima4} layout,
+     * whose prediction state reaches back to the start of the stream, and for AAC-ELD with low delay
+     * spectral band replication, it decodes from the start of the track and drops the samples before {@code micros}.
      * @param micros the presentation time, in microseconds
      * @throws MediaException.Malformed if the index needed to seek is corrupt
      * @throws MediaException.Unsupported if the container cannot seek ({@link #isSeekable()} is

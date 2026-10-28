@@ -228,7 +228,7 @@ class ContainerProviderTest {
                 assertInstanceOf(MatroskaMuxer.class, muxer);
             }
             assertTrue(Containers.isMuxable("wav", Codec.PCM_S16LE));
-            assertFalse(Containers.isMuxable("wav", Codec.OPUS));
+            assertFalse(Containers.isMuxable("wav", Codec.VP9));
             assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer("hls", MediaSink.memory()));
             assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer("other", MediaSink.memory()));
             assertThrows(IllegalArgumentException.class, () -> Containers.openMuxer(ContainerFormat.OTHER,

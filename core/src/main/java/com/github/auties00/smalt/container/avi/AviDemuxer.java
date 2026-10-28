@@ -6,6 +6,7 @@ import com.github.auties00.smalt.container.DemuxerOptions;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
 import com.github.auties00.smalt.container.internal.SeekTimes;
 import com.github.auties00.smalt.container.internal.WaveFormat;
@@ -611,11 +612,19 @@ public final class AviDemuxer implements Demuxer {
         LimitChecks.checkChannels(limits, Math.max(1, channels));
         var extra = wave.extra();
         var config = codec == Codec.AAC && extra.length > 0 ? extra : null;
+        var codeSize = AdpcmBlocks.supports(codec) ? AdpcmBlocks.codeSize(codec, wave) : 0;
+        if (AdpcmBlocks.supports(codec) && (codeSize < 0 || sampleRate <= 0)) {
+            codec = Codec.UNKNOWN_AUDIO;
+        }
+        var adpcm = AdpcmBlocks.supports(codec);
+        if (codec == Codec.ADPCM_MS) {
+            config = WaveFormat.msAdpcmConfig(extra);
+        }
         var mpegAudio = codec == Codec.MP3 || codec == Codec.MP2;
-        var trackBase = mpegAudio && sampleRate > 0 ? Rational.timeBaseOf(sampleRate) : timeBase;
+        var trackBase = (mpegAudio || adpcm) && sampleRate > 0 ? Rational.timeBaseOf(sampleRate) : timeBase;
         long duration = -1;
         if (length > 0) {
-            duration = mpegAudio ? timeBase.rescale(first + length, trackBase) : first + length;
+            duration = mpegAudio || adpcm ? timeBase.rescale(first + length, trackBase) : first + length;
             if (mpegAudio && sampleSize > 0) {
                 duration = -1;
             }
@@ -625,13 +634,18 @@ public final class AviDemuxer implements Demuxer {
                 .codecConfig(config)
                 .sampleRate(sampleRate)
                 .layout(channels > 0 ? wave.layout() : ChannelLayout.defaultFor(1))
-                .bitsPerSample(codec.isPcm() ? bits : 0)
+                .bitsPerSample(codec.isPcm() ? bits : adpcm && codec != Codec.ADPCM_G722 ? codeSize : 0)
                 .build();
         var stream = new Stream(number, track, false);
         stream.first = first;
         stream.sampleSize = sampleSize > 0 ? sampleSize : 0;
         stream.blockAlign = Math.max(1, blockAlign);
         stream.mpegAudio = mpegAudio;
+        if (adpcm) {
+            stream.adpcmUnitBytes = AdpcmBlocks.hasBlocks(codec) ? blockAlign : AdpcmBlocks.unitBytes(codec, codeSize);
+            stream.adpcmCodeSize = codeSize;
+            stream.adpcmChannels = channels;
+        }
         stream.headerTimeBase = timeBase;
         stream.sampleRate = sampleRate;
         if (mpegAudio && sampleSize > 0 && sampleRate > 0) {
@@ -1079,6 +1093,10 @@ public final class AviDemuxer implements Demuxer {
                     stream.frame(data, entry, pending);
                     continue;
                 }
+                if (stream.adpcmUnitBytes > 0) {
+                    stream.split(data, entry, pending);
+                    continue;
+                }
                 if (stream.lengthPrefixed && NalUnits.looksLikeAnnexB(data)) {
                     data = NalUnits.toLengthPrefixed(data);
                 }
@@ -1270,6 +1288,22 @@ public final class AviDemuxer implements Demuxer {
         boolean mpegAudio;
 
         /**
+         * The bytes of a unit of an ADPCM or telephony stream (an IMA or Microsoft ADPCM block, which becomes one
+         * packet, a GSM 06.10 block, the bytes of whole G.726 codes, a G.722 byte), or 0 for another stream.
+         */
+        int adpcmUnitBytes;
+
+        /**
+         * The G.726 code size of an ADPCM stream.
+         */
+        int adpcmCodeSize;
+
+        /**
+         * The channel count of an ADPCM stream.
+         */
+        int adpcmChannels;
+
+        /**
          * Whether the stream is H.264 or HEVC without a configuration record in its extra data.
          */
         boolean annexB;
@@ -1421,6 +1455,10 @@ public final class AviDemuxer implements Demuxer {
             if (video) {
                 return first + index;
             }
+            if (adpcmUnitBytes > 0) {
+                return headerTimeBase.rescale(first, track.timeBase()) + bytes / adpcmUnitBytes
+                        * AdpcmBlocks.samples(track.codec(), adpcmUnitBytes, adpcmChannels, adpcmCodeSize);
+            }
             var units = sampleSize > 0 ? first + bytes / sampleSize : first + index;
             if (!mpegAudio) {
                 return units;
@@ -1483,6 +1521,32 @@ public final class AviDemuxer implements Demuxer {
             carry = offset >= buffer.length ? new byte[0] : Arrays.copyOfRange(buffer, offset, buffer.length);
             if (carry.length > 1 << 16) {
                 carry = new byte[0];
+            }
+        }
+
+        /**
+         * Splits the chunk data of an ADPCM or telephony stream into packets: one per IMA or Microsoft ADPCM block,
+         * the leading bytes that hold whole codes for the other codecs, timed in samples.
+         *
+         * @param data the chunk data
+         * @param entry the chunk index
+         * @param output receives the packets
+         */
+        void split(byte[] data, int entry, ArrayDeque<Packet> output) {
+            var codec = track.codec();
+            var time = times[entry];
+            var step = AdpcmBlocks.hasBlocks(codec) ? adpcmUnitBytes : data.length;
+            for (var offset = 0; offset < data.length; offset += step) {
+                var length = AdpcmBlocks.tail(codec, Math.min(step, data.length - offset), adpcmChannels,
+                        adpcmCodeSize);
+                var samples = AdpcmBlocks.samples(codec, length, adpcmChannels, adpcmCodeSize);
+                if (samples == 0) {
+                    break;
+                }
+                var packet = offset == 0 && length == data.length ? data
+                        : Arrays.copyOfRange(data, offset, offset + length);
+                output.add(new Packet(track.id(), packet, time, time, samples, true));
+                time += samples;
             }
         }
 

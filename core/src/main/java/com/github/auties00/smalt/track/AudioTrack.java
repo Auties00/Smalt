@@ -170,7 +170,9 @@ public final class AudioTrack implements Track {
 
     /**
      * Returns the declared sample size of a PCM codec, or the code size of an ADPCM codec: 2 to 5 for
-     * {@link Codec#ADPCM_G726}, 4 for {@link Codec#ADPCM_IMA_WAV} and {@link Codec#ADPCM_MS}.
+     * {@link Codec#ADPCM_G726}, 4 for {@link Codec#ADPCM_IMA_WAV}, {@link Codec#ADPCM_IMA_QT} and
+     * {@link Codec#ADPCM_MS}, and for {@link Codec#ADPCM_G722} the bits of each byte that carry audio, 8, 7 or 6
+     * (the 64, 56 and 48 kbit/s modes; 0 also means 64 kbit/s).
      *
      * @return the size in bits, or {@code 0} when not applicable
      */

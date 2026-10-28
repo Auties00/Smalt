@@ -2,6 +2,8 @@ package com.github.auties00.smalt.container.avi;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.AdpcmFormat;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.io.ByteWriter;
@@ -35,9 +37,10 @@ import java.util.Objects;
  *
  * <p>Video tracks of Motion-JPEG, Motion JPEG 2000, MPEG-1 and MPEG-2 video ({@code mpg1}, {@code mpg2}), MPEG-4
  * Part 2, H.264, HEVC, H.263, VP8 and VP9, and audio tracks of PCM (8-bit unsigned, 16, 24, 32 and 64-bit signed
- * and 32 and 64-bit float little-endian, A-law, mu-law), MP3, MP2, AAC and AC-3 are accepted, at most 99 tracks
- * in all. Video is stored at a constant frame rate, the track's frame rate (or the inverse of its time base when
- * that is a plausible frame period, 25 frames per second otherwise); a gap in the timestamps is filled with
+ * and 32 and 64-bit float little-endian, A-law, mu-law), MP3, MP2, AAC, AC-3, IMA ADPCM, Microsoft ADPCM, GSM 06.10
+ * in Microsoft's packing, G.722 and G.726 are accepted, at most 99 tracks in all. Video is stored at a constant
+ * frame rate, the track's frame rate (or the inverse of its time base when that is a plausible frame period, 25
+ * frames per second otherwise); a gap in the timestamps is filled with
  * empty chunks, which players treat as dropped frames, so presentation times survive. H.264 and
  * HEVC packets, length-prefixed in Smalt, are written as Annex B byte streams with the parameter
  * sets of the track's configuration record in front of every key frame that carries none of its own.
@@ -47,7 +50,12 @@ import java.util.Objects;
  * codestream or a single {@code jp2c} box is written as a JP2 file, the two {@code jp2c} boxes of an
  * interlaced frame after a copy of the header box. PCM audio is a
  * constant bitrate stream of sample blocks; compressed audio is a variable bitrate stream of one
- * frame per chunk. A video track that declares its
+ * frame per chunk. The ADPCM and telephony codecs are constant bitrate streams of their blocks or code units (as
+ * {@link Codec#ADPCM_IMA_WAV} and the other constants define their packets), one packet per chunk, under the
+ * {@code WAVEFORMATEX} a WAVE file stores for them: {@code dwScale} is the samples of a block or unit, {@code dwRate}
+ * the sampling rate and {@code dwSampleSize} the block alignment. The block size of IMA and Microsoft ADPCM is the size
+ * of the track's first packet, which every later packet but the last must have, and is written into the stream format
+ * when the muxer finishes. A video track that declares its
  * {@link VideoTrack#sampleAspectRatio() sample aspect ratio} or its
  * {@link VideoTrack#interlacing() scan} gets an OpenDML video properties header ({@code vprp})
  * with the frame aspect ratio (in 16-bit terms, the closest such ratio when the exact one does
@@ -310,6 +318,9 @@ public final class AviMuxer implements Muxer {
             }
             stream.acceptedConfig = newConfig;
         }
+        if (stream.adpcm != null) {
+            stream.adpcm.accept(packet.size());
+        }
         if (!started) {
             if (streams.isEmpty()) {
                 throw new IllegalStateException("no track was added");
@@ -424,6 +435,7 @@ public final class AviMuxer implements Muxer {
             var format = stream.format();
             header.fourCc("strf");
             header.u32le(format.length);
+            stream.strfOffset = header.size();
             header.bytes(format);
             if ((format.length & 1) != 0) {
                 header.u8(0);
@@ -471,6 +483,7 @@ public final class AviMuxer implements Muxer {
         dmlhPosition = base + dmlh;
         for (var stream : streams) {
             stream.strhPosition = base + stream.strhOffset;
+            stream.strfPosition = base + stream.strfOffset;
             stream.indxPosition = base + stream.indxOffset;
         }
         riffStart = base;
@@ -607,6 +620,13 @@ public final class AviMuxer implements Muxer {
         avih.zeros(16);
         write(avihPosition, avih);
         for (var stream : streams) {
+            if (stream.adpcm != null) {
+                stream.updateAdpcm();
+                var format = stream.format();
+                var out = new ByteWriter(format.length);
+                out.bytes(format);
+                write(stream.strfPosition, out);
+            }
             write(stream.strhPosition, stream.header());
             write(stream.indxPosition, stream.superIndex());
         }
@@ -824,9 +844,14 @@ public final class AviMuxer implements Muxer {
         int sampleSize;
 
         /**
-         * The block alignment of PCM audio.
+         * The block alignment of PCM, ADPCM and telephony audio.
          */
         int blockAlign;
+
+        /**
+         * The format of an ADPCM or telephony stream, or {@code null}.
+         */
+        final AdpcmFormat adpcm;
 
         /**
          * The stream's length in frames, chunks or sample blocks.
@@ -857,6 +882,16 @@ public final class AviMuxer implements Muxer {
          * The position of the stream header body.
          */
         long strhPosition;
+
+        /**
+         * The offset of the stream format body in the header block.
+         */
+        int strfOffset;
+
+        /**
+         * The position of the stream format body.
+         */
+        long strfPosition;
 
         /**
          * The position of the super index body.
@@ -930,7 +965,11 @@ public final class AviMuxer implements Muxer {
             this.number = number;
             this.track = track;
             this.video = track instanceof VideoTrack;
-            if (video) {
+            this.adpcm = !video && AdpcmBlocks.supports(track.codec()) ? new AdpcmFormat((AudioTrack) track, "AVI")
+                    : null;
+            if (adpcm != null) {
+                updateAdpcm();
+            } else if (video) {
                 var frameRate = ((VideoTrack) track).frameRate().orElse(null);
                 if (frameRate == null || frameRate.numerator() <= 0 || frameRate.denominator() <= 0) {
                     var inverse = track.timeBase().invert();
@@ -972,6 +1011,31 @@ public final class AviMuxer implements Muxer {
                     sampleSize = 0;
                 }
             }
+        }
+
+        /**
+         * Sets the block alignment, {@code dwScale}, {@code dwRate} and {@code dwSampleSize} of an ADPCM or telephony
+         * stream from the block size of its format.
+         */
+        void updateAdpcm() {
+            blockAlign = adpcm.blockAlign();
+            sampleSize = blockAlign;
+            scale = adpcm.blockSamples();
+            rate = ((AudioTrack) track).sampleRate();
+        }
+
+        /**
+         * Returns the stream units a chunk occupies.
+         *
+         * @param size the chunk size
+         * @return the sample blocks of PCM, the blocks or code units of ADPCM (a partial one counted whole), one
+         * frame or packet otherwise
+         */
+        long units(int size) {
+            if (adpcm != null) {
+                return adpcm.units(size);
+            }
+            return sampleSize > 0 ? size / sampleSize : 1;
         }
 
         /**
@@ -1030,7 +1094,7 @@ public final class AviMuxer implements Muxer {
                 length++;
             } else {
                 writeChunk(this, data, 0, data.length, true);
-                length += sampleSize > 0 ? data.length / sampleSize : 1;
+                length += units(data.length);
             }
             largest = Math.max(largest, data.length);
         }
@@ -1060,9 +1124,9 @@ public final class AviMuxer implements Muxer {
             formIndex.u32le((size & 0x7FFFFFFFL) | (key ? 0 : 0x80000000L));
             formEntries++;
             formChunks++;
-            formDuration += sampleSize > 0 ? size / sampleSize : 1;
+            formDuration += units(size);
             if (forms == 1) {
-                firstFormLength += sampleSize > 0 ? size / sampleSize : 1;
+                firstFormLength += units(size);
             }
         }
 
@@ -1128,6 +1192,9 @@ public final class AviMuxer implements Muxer {
                 out.zeros(16);
                 out.bytes(extra);
                 return out.toByteArray();
+            }
+            if (adpcm != null) {
+                return adpcm.waveFormatBytes();
             }
             var audio = (AudioTrack) track;
             var channels = audio.layout().map(layout -> layout.channels()).orElse(2);

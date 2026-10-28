@@ -12,6 +12,7 @@ import com.github.auties00.smalt.container.ContainerFormat;
 import com.github.auties00.smalt.container.Demuxer;
 import com.github.auties00.smalt.container.Timecode;
 import com.github.auties00.smalt.container.internal.AacExtensions;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.Annotations;
 import com.github.auties00.smalt.container.internal.SeekFilter;
 import com.github.auties00.smalt.container.internal.TimecodeTags;
@@ -64,7 +65,9 @@ import java.util.Set;
  * non-key frame and whose {@code BlockDuration} gives the duration) become one packet per frame,
  * Xiph, EBML and fixed-size lacing are split, and frames after the first of a lace get the block
  * timestamp plus the frame duration ({@code DefaultDuration}, or the {@code BlockDuration} divided
- * among the frames), or no timestamp when neither is known. Opus frames without a declared
+ * among the frames), or no timestamp when neither is known. A frame of an IMA or Microsoft ADPCM
+ * {@code A_MS/ACM} track that holds several blocks of its format's block alignment becomes one packet per
+ * block, timed in samples from the frame's timestamp. Opus frames without a declared
  * duration get the duration of their TOC, and a positive {@code DiscardPadding} shortens the
  * duration of the frame it trims and is reported as its {@link PacketSideData#discardEnd()}, a
  * negative one as its {@link PacketSideData#discardStart()}. The {@code SimpleBlock} discardable
@@ -2577,8 +2580,49 @@ public final class MatroskaDemuxer implements Demuxer {
             duration = Packet.UNKNOWN_DURATION;
         }
         frameBytes += data.length;
-        var packet = new Packet((int) entry.number, data, pts, entry.reorders() ? Packet.NO_TIMESTAMP : pts,
-                duration, keyframe);
+        if (entry.adpcmBlockBytes > 0 && data.length > entry.adpcmBlockBytes) {
+            queueBlocks(entry, data, pts, keyframe, blockFlags);
+            return;
+        }
+        queue.add(withBlockFlags(new Packet((int) entry.number, data, pts,
+                entry.reorders() ? Packet.NO_TIMESTAMP : pts, duration, keyframe), blockFlags));
+    }
+
+    /**
+     * Queues the IMA or Microsoft ADPCM blocks of a frame that holds several, one packet each, timed in samples from
+     * the frame's timestamp; trailing bytes too short for a block's headers and one sample group are dropped.
+     *
+     * @param entry the frame's track, whose {@link MatroskaTrackEntry#adpcmBlockBytes} is the block size
+     * @param data the frame bytes
+     * @param pts the frame's timestamp in the track's sample time base, or {@link Packet#NO_TIMESTAMP}
+     * @param keyframe whether the block is a key frame
+     * @param blockFlags the flags byte of a {@code SimpleBlock}, or the invisible bit of a {@code Block}
+     */
+    private void queueBlocks(MatroskaTrackEntry entry, byte[] data, long pts, boolean keyframe, int blockFlags) {
+        var codec = entry.codec;
+        var channels = (int) Math.max(1, Math.min(entry.channels, Integer.MAX_VALUE));
+        var time = pts;
+        for (var offset = 0; offset < data.length; offset += entry.adpcmBlockBytes) {
+            var length = AdpcmBlocks.tail(codec, Math.min(entry.adpcmBlockBytes, data.length - offset), channels, 0);
+            var samples = AdpcmBlocks.samples(codec, length, channels, 0);
+            if (samples == 0) {
+                break;
+            }
+            var block = java.util.Arrays.copyOfRange(data, offset, offset + length);
+            queue.add(withBlockFlags(new Packet((int) entry.number, block, time, time, samples, keyframe),
+                    blockFlags));
+            time = time == Packet.NO_TIMESTAMP ? Packet.NO_TIMESTAMP : time + samples;
+        }
+    }
+
+    /**
+     * Returns a packet with the discardable and invisible flags of its block.
+     *
+     * @param packet a packet of the block
+     * @param blockFlags the flags byte of a {@code SimpleBlock}, or the invisible bit of a {@code Block}
+     * @return the packet, flagged
+     */
+    private static Packet withBlockFlags(Packet packet, int blockFlags) {
         if ((blockFlags & (DISCARDABLE | INVISIBLE)) != 0) {
             var flags = EnumSet.noneOf(PacketFlag.class);
             flags.addAll(packet.flags());
@@ -2588,9 +2632,9 @@ public final class MatroskaDemuxer implements Demuxer {
             if ((blockFlags & INVISIBLE) != 0) {
                 flags.add(PacketFlag.DISCARD);
             }
-            packet = packet.withFlags(flags);
+            return packet.withFlags(flags);
         }
-        queue.add(packet);
+        return packet;
     }
 
     /**

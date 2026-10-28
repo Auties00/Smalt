@@ -4,6 +4,7 @@ import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.container.DecryptionKeys;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.Languages;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
@@ -279,6 +280,12 @@ final class MatroskaTrackEntry {
      * The mapped codec, set by {@link #toTrack(Rational, double, MediaLimits)}.
      */
     Codec codec = Codec.DATA;
+
+    /**
+     * The block size of an IMA or Microsoft ADPCM track, whose frames the demuxer splits into blocks, or 0; set by
+     * {@link #toTrack(Rational, double, MediaLimits)}.
+     */
+    int adpcmBlockBytes;
 
     /**
      * The time base of the track's packets, set by {@link #toTrack(Rational, double, MediaLimits)}:
@@ -904,6 +911,16 @@ final class MatroskaTrackEntry {
                 case "A_MS/ACM" -> audioFromWaveFormat();
                 default -> codecId.startsWith("A_AAC/") ? Codec.AAC : Codec.UNKNOWN_AUDIO;
             };
+            var codeSize = 0;
+            if (AdpcmBlocks.supports(codec)) {
+                var wave = WaveFormat.parse(codecPrivate, codecPrivate.length, false);
+                codeSize = AdpcmBlocks.codeSize(codec, wave);
+                if (codeSize < 0) {
+                    codec = Codec.UNKNOWN_AUDIO;
+                } else if (AdpcmBlocks.hasBlocks(codec)) {
+                    adpcmBlockBytes = wave.blockAlign();
+                }
+            }
             if (codec == Codec.AAC && (config == null || config.length < 2 || codecId.startsWith("A_AAC/"))) {
                 config = synthesizeAudioSpecificConfig();
             } else if (codec == Codec.ALAC && config != null) {
@@ -913,6 +930,10 @@ final class MatroskaTrackEntry {
                 config = extra != null && extra.length > 0 ? extra : null;
                 if (codec == Codec.AAC && config == null) {
                     config = synthesizeAudioSpecificConfig();
+                }
+                if (codec == Codec.ADPCM_MS) {
+                    config = WaveFormat.msAdpcmConfig(WaveFormat.parse(codecPrivate, codecPrivate.length, false)
+                            .extra());
                 }
             }
             if (bits == 0) {
@@ -934,7 +955,7 @@ final class MatroskaTrackEntry {
                     .language(lang.orElse(null))
                     .sampleRate(sampleRate)
                     .layout(audioLayout(codec, config, channelCount))
-                    .bitsPerSample(codec.isPcm() ? bits : 0)
+                    .bitsPerSample(codec.isPcm() ? bits : AdpcmBlocks.supports(codec) ? codeSize : 0)
                     .skipSamples(Math.max(skip, 0))
                     .build();
         }

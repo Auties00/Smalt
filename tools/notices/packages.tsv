@@ -11,6 +11,7 @@ audio.aac.internal.sbr	mpeg
 audio.aac.internal.usac	mpeg
 audio.ac3	mpeg
 audio.ac3.internal	mpeg
+audio.adpcm	audio
 audio.alac	audio
 audio.amr	mpeg
 audio.amr.internal	mpeg
@@ -19,6 +20,9 @@ audio.amr.internal.wb	mpeg
 audio.amr.internal.wbcommon	mpeg
 audio.amr.internal.wbenc	mpeg
 audio.flac	audio
+audio.g722	audio
+audio.g726	audio
+audio.gsm	audio
 audio.loudness	core
 audio.mp3	audio
 audio.opus	audio
@@ -133,6 +137,7 @@ internal.heif	core
 internal.io	core
 internal.limits	core
 internal.nal	core
+internal.pcm16	audio
 internal.plane	core
 internal.probe	core
 internal.provider	core

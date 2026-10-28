@@ -13,6 +13,7 @@ import com.github.auties00.smalt.container.ac3.Ac3Demuxer;
 import com.github.auties00.smalt.container.adts.AdtsDemuxer;
 import com.github.auties00.smalt.container.amr.AmrDemuxer;
 import com.github.auties00.smalt.container.flac.FlacDemuxer;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.container.mpeg.MpegAudioDemuxer;
 import com.github.auties00.smalt.container.mpeg.internal.Id3v2;
@@ -850,15 +851,7 @@ public final class WavDemuxer implements Demuxer {
      * coefficients apply
      */
     private static byte[] msConfig(byte[] extra) {
-        if (extra.length < 4) {
-            return null;
-        }
-        var count = (extra[2] & 0xFF) | (extra[3] & 0xFF) << 8;
-        var length = 4 + 4 * count;
-        if (count == 0 || extra.length < length) {
-            return null;
-        }
-        return extra.length == length ? extra : Arrays.copyOf(extra, length);
+        return WaveFormat.msAdpcmConfig(extra);
     }
 
     /**

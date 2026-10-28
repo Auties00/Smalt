@@ -42,8 +42,11 @@ import java.util.Objects;
  * adds a compression type; {@code NONE}/{@code twos} (big-endian integers), {@code sowt}
  * (little-endian integers), {@code in24}, {@code in32}, {@code raw } (unsigned 8-bit),
  * {@code fl32}/{@code FL32}, {@code fl64}/{@code FL64}, {@code alaw}/{@code ALAW} and
- * {@code ulaw}/{@code ULAW} are decodable; any other type raises
- * {@link MediaException.Unsupported} naming it.
+ * {@code ulaw}/{@code ULAW} are PCM, {@code ima4} is {@link Codec#ADPCM_IMA_QT} (frames of 34 bytes per channel and
+ * 64 samples), {@code GSM } (one channel) is {@link Codec#GSM} (frames of 33 bytes and 160 samples), and
+ * {@code MAC3} and {@code MAC6} are {@link Codec#MACE3} and {@link Codec#MACE6} (2 and 1 bytes per channel for 6
+ * samples); any other type raises {@link MediaException.Unsupported} naming it. The {@code COMM} frame count of a
+ * compressed type counts its frames, not its samples.
  *
  * <p>Samples start at the {@code SSND} chunk's data offset; the frame count is the smaller of the
  * {@code COMM} count and what the {@code SSND} chunk holds. Files written by a writer that could
@@ -56,9 +59,9 @@ import java.util.Objects;
  * {@link #metadata()}. The markers of the {@code MARK} chunk that no {@code INST} loop uses become
  * {@link #chapters()}, titled by their names, each ending where the next starts.
  *
- * <p>Packets hold as many whole frames as fit in 4096 bytes (at least one), with timestamps in
- * samples. A source that is not in memory is read in blocks of {@value #READ_BLOCK} bytes that
- * never extend past the sound data, rather than once per packet.
+ * <p>Packets hold as many whole frames (sample frames, or the frames of a compressed type) as fit in 4096 bytes (at
+ * least one), with timestamps in samples. A source that is not in memory is read in blocks of
+ * {@value #READ_BLOCK} bytes that never extend past the sound data, rather than once per packet.
  *
  * <p>A source that reads its input once, front to back (a stream), is told after every packet which
  * bytes are no longer needed, and the chunks after {@code SSND} are read only when they lie within
@@ -109,9 +112,14 @@ public final class AiffDemuxer implements Demuxer {
     private final List<Chapter> chapters;
 
     /**
-     * The size of one interleaved frame in bytes.
+     * The size of one frame in bytes: an interleaved sample frame, or a frame of a compressed type.
      */
     private final int frameSize;
+
+    /**
+     * The samples per channel of one frame: 1 for PCM.
+     */
+    private final int frameSamples;
 
     /**
      * The number of frames per packet.
@@ -263,11 +271,41 @@ public final class AiffDemuxer implements Demuxer {
                 throw new MediaException.Malformed("AIFF file without an SSND chunk");
             }
             LimitChecks.checkChannels(limits, channels);
-            if (bits < 1 || bits > 64) {
+            var coded = compression == 0x696D6134 || compression == 0x47534D20 || compression == 0x4D414333
+                    || compression == 0x4D414336;
+            if (!coded && (bits < 1 || bits > 64)) {
                 throw new MediaException.Malformed("invalid AIFF sample size " + bits);
             }
             var codec = codec(compression, bits);
-            this.frameSize = codec.pcmBitsPerSample().orElseThrow() / 8 * channels;
+            if (channels == 0) {
+                throw new MediaException.Malformed("AIFF file of no channels");
+            }
+            if (codec == Codec.GSM && channels != 1) {
+                throw new MediaException.Unsupported("aifc GSM " + channels + " channels",
+                        "AIFF-C GSM 06.10 of " + channels + " channels is not supported, only mono");
+            }
+            switch (codec) {
+                case ADPCM_IMA_QT -> {
+                    this.frameSize = 34 * channels;
+                    this.frameSamples = 64;
+                }
+                case GSM -> {
+                    this.frameSize = 33;
+                    this.frameSamples = 160;
+                }
+                case MACE3 -> {
+                    this.frameSize = 2 * channels;
+                    this.frameSamples = 6;
+                }
+                case MACE6 -> {
+                    this.frameSize = channels;
+                    this.frameSamples = 6;
+                }
+                default -> {
+                    this.frameSize = codec.pcmBitsPerSample().orElseThrow() / 8 * channels;
+                    this.frameSamples = 1;
+                }
+            }
             this.packetFrames = Math.max(1, PACKET_BYTES / frameSize);
             LimitChecks.checkAllocation(limits, (long) packetFrames * frameSize);
             this.dataStart = soundStart;
@@ -289,10 +327,13 @@ public final class AiffDemuxer implements Demuxer {
                 case PCM_ALAW, PCM_MULAW -> 8;
                 case PCM_F32BE -> 32;
                 case PCM_F64BE -> 64;
+                case ADPCM_IMA_QT -> 4;
+                case GSM, MACE3, MACE6 -> 0;
                 default -> bits;
             };
             this.track = AudioTrack.builder().codec(codec).timeBase(Rational.timeBaseOf(sampleRate))
-                    .duration(totalFrames == Long.MAX_VALUE ? -1 : totalFrames)
+                    .duration(totalFrames == Long.MAX_VALUE || totalFrames > Long.MAX_VALUE / frameSamples ? -1
+                            : totalFrames * frameSamples)
                     .sampleRate(sampleRate)
                     .layout(ChannelLayout.defaultFor(channels))
                     .bitsPerSample(validBits)
@@ -362,6 +403,10 @@ public final class AiffDemuxer implements Demuxer {
             case 0x666C3634, 0x464C3634 -> Codec.PCM_F64BE;
             case 0x616C6177, 0x414C4157 -> Codec.PCM_ALAW;
             case 0x756C6177, 0x554C4157 -> Codec.PCM_MULAW;
+            case 0x696D6134 -> Codec.ADPCM_IMA_QT;
+            case 0x47534D20 -> Codec.GSM;
+            case 0x4D414333 -> Codec.MACE3;
+            case 0x4D414336 -> Codec.MACE6;
             default -> {
                 var name = new String(new byte[]{(byte) (compression >>> 24), (byte) (compression >>> 16),
                         (byte) (compression >>> 8), (byte) compression}, StandardCharsets.ISO_8859_1);
@@ -448,12 +493,13 @@ public final class AiffDemuxer implements Demuxer {
     /**
      * {@inheritDoc}
      *
-     * <p>Every packet of uncompressed audio is a key frame, so the next packet starts at the
-     * sample frame displayed at {@code micros}.
+     * <p>Every packet is a key frame, so the next packet starts at the sample frame displayed at {@code micros};
+     * for a compressed type it is the packet of a sequential read that holds that frame.
      */
     @Override
     public void seek(long micros) {
-        frameIndex = Math.min(totalFrames, frameAt(micros, track.sampleRate()));
+        var frame = frameAt(micros, track.sampleRate()) / frameSamples;
+        frameIndex = frame >= totalFrames ? totalFrames : frameSamples > 1 ? frame / packetFrames * packetFrames : frame;
     }
 
     /**
@@ -492,7 +538,8 @@ public final class AiffDemuxer implements Demuxer {
                 }
                 data = Arrays.copyOf(data, frames * frameSize);
             }
-            var packet = new Packet(track.id(), data, frameIndex, frameIndex, frames, true);
+            var time = frameIndex * frameSamples;
+            var packet = new Packet(track.id(), data, time, time, (long) frames * frameSamples, true);
             frameIndex += frames;
             ForwardOnlySource.release(source, dataStart + frameIndex * frameSize);
             return packet;

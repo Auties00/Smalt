@@ -262,7 +262,7 @@ public final class ReaderAsserts {
          * The codecs whose output after a seek {@link AudioReader#seek(long)} does not make sample-exact.
          */
         private static final Set<Codec> APPROXIMATE_SEEKS = EnumSet.of(Codec.OPUS, Codec.AAC, Codec.AMR_NB,
-                Codec.AMR_WB, Codec.AC3, Codec.EAC3);
+                Codec.AMR_WB, Codec.AC3, Codec.EAC3, Codec.ADPCM_G722, Codec.ADPCM_G726);
 
         private static String frameLine(VideoFrame frame) {
             return "pts=" + frame.pts() + " dur=" + frame.duration() + " key=" + frame.keyframe() + " "
@@ -402,8 +402,8 @@ public final class ReaderAsserts {
          * Checks {@link AudioReader#seek(long)}: after a seek to each target, the output must start at the
          * sample presented at the target (one sample of rounding slack either way), at the first sample for
          * a target before zero, and end at once for a target at or past the end. It must then equal the
-         * reference samples from there bit for bit, except for Opus, AMR, AAC, AC-3 and E-AC-3, whose output
-         * after a seek the contract does not make sample-exact: from 100 ms on, their difference from the
+         * reference samples from there bit for bit, except for Opus, AMR, AAC, AC-3, E-AC-3, G.722 and G.726, whose
+         * output after a seek the contract does not make sample-exact: from 100 ms on, their difference from the
          * reference must stay below a quarter of the reference's energy, which a misplaced restart exceeds.
          */
         private final class AudioSeeks {

@@ -1,5 +1,6 @@
 package com.github.auties00.smalt.audio.fuzz;
 
+import com.github.auties00.smalt.audio.g722.G722Sequences;
 import com.github.auties00.smalt.audio.opus.OpusPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzPackets;
 import com.github.auties00.smalt.testkit.fuzz.FuzzSeeds;
@@ -53,6 +54,91 @@ class FuzzSeedWriter {
                 "libmp3lame", "-b:a", "64k"));
         seed("mp2", "valid-stereo.bin", Codec.MP2, ffmpeg("mp2", tone(32000, 0.1), "-ac", "2", "-c:a", "mp2",
                 "-b:a", "64k"));
+    }
+
+    @Test
+    @DisplayName("writes the seeds of the ADPCM and telephony decoder targets")
+    void telephony() throws java.io.IOException {
+        var resources = Path.of("src/test/resources/com/github/auties00/smalt/audio");
+        var ima = chunks(java.nio.file.Files.readAllBytes(resources.resolve("adpcm/ima-ffmpeg.wav")));
+        write(AudioFuzzTest.class, "adpcmImaWav", "valid-stereo.bin", telephonySeed(8000, 2, 4, null,
+                split(ima.get("data"), 1024, 4)));
+        var ms = chunks(java.nio.file.Files.readAllBytes(resources.resolve("adpcm/ms-acm.wav")));
+        var format = ms.get("fmt ");
+        write(AudioFuzzTest.class, "adpcmMs", "valid-stereo.bin", telephonySeed(8000, 2, 4,
+                java.util.Arrays.copyOfRange(format, 18, format.length), split(ms.get("data"), 512, 6)));
+        var random = chunks(java.nio.file.Files.readAllBytes(resources.resolve("adpcm/ms-random.wav")));
+        write(AudioFuzzTest.class, "adpcmMs", "valid-random.bin", telephonySeed(8000, 2, 4, null,
+                split(random.get("data"), 256, 6)));
+        var ima4 = com.github.auties00.smalt.audio.telephony.TelephonyStreams.demux(
+                java.nio.file.Files.readAllBytes(resources.resolve("adpcm/ima4-ffmpeg.aif")));
+        var frames = new java.io.ByteArrayOutputStream();
+        ima4.packets().forEach(packet -> frames.writeBytes(packet.data()));
+        write(AudioFuzzTest.class, "adpcmImaQt", "valid-mono.bin", telephonySeed(8000, 1, 4, null,
+                split(frames.toByteArray(), 34 * 8, 4)));
+        // the codes of the G.722 Appendix II sequence T2R1.COD, its reset words left out
+        var g722 = new java.io.ByteArrayOutputStream();
+        for (var word : G722Sequences.words("T2R1.COD")) {
+            if ((word & 1) == 0) {
+                g722.write(word >> 8);
+            }
+        }
+        write(AudioFuzzTest.class, "g722", "valid-mono.bin", telephonySeed(16000, 1, 0, null,
+                split(g722.toByteArray(), 160, 6)));
+        // the codes of the ITU-T STL G.726 sequences, packed from the most significant bit
+        var rates = new int[]{16, 24, 32, 40};
+        for (var bits = 2; bits <= 5; bits++) {
+            var raw = java.nio.file.Files.readAllBytes(com.github.auties00.smalt.testkit.Conformance.fetchListed(
+                    "g726-stl-rn" + rates[bits - 2] + "fa.i"));
+            var packed = new java.io.ByteArrayOutputStream();
+            var accumulator = 0;
+            var pending = 0;
+            for (var index = 0; index < 8 * 120 / bits; index++) {
+                var value = (raw[2 * index] & 0xFF) & ((1 << bits) - 1);
+                accumulator = accumulator << bits | value;
+                pending += bits;
+                while (pending >= 8) {
+                    pending -= 8;
+                    packed.write(accumulator >>> pending & 0xFF);
+                }
+            }
+            write(AudioFuzzTest.class, "g726", "valid-" + bits + "bit.bin", telephonySeed(8000, 1, bits, null,
+                    split(packed.toByteArray(), 15, 8)));
+        }
+        write(AudioFuzzTest.class, "gsm", "valid-mono.bin", telephonySeed(8000, 1, 0, null,
+                split(java.nio.file.Files.readAllBytes(resources.resolve("gsm/libgsm.gsm")), 66, 6)));
+        var blocks = chunks(java.nio.file.Files.readAllBytes(resources.resolve("gsm/libgsm-ms.wav")));
+        write(AudioFuzzTest.class, "gsmMs", "valid-mono.bin", telephonySeed(8000, 1, 0, null,
+                split(blocks.get("data"), 130, 4)));
+    }
+
+    /** Returns the chunks of a RIFF file by identifier, the first of each. */
+    private static java.util.Map<String, byte[]> chunks(byte[] file) {
+        var out = new java.util.HashMap<String, byte[]>();
+        for (var position = 12; position + 8 <= file.length; ) {
+            var id = new String(file, position, 4, java.nio.charset.StandardCharsets.US_ASCII);
+            var size = (file[position + 4] & 0xFF) | (file[position + 5] & 0xFF) << 8
+                    | (file[position + 6] & 0xFF) << 16 | (file[position + 7] & 0xFF) << 24;
+            out.putIfAbsent(id, java.util.Arrays.copyOfRange(file, position + 8,
+                    Math.min(file.length, position + 8 + size)));
+            position += 8 + size + (size & 1);
+        }
+        return out;
+    }
+
+    /** Cuts the leading bytes of data into at most count parts of size bytes. */
+    private static List<FuzzPackets.Part> split(byte[] data, int size, int count) {
+        var parts = new java.util.ArrayList<FuzzPackets.Part>();
+        for (var offset = 0; offset < Math.min(data.length, size * count); offset += size) {
+            parts.add(new FuzzPackets.Part(java.util.Arrays.copyOfRange(data, offset,
+                    Math.min(data.length, offset + size)), true));
+        }
+        return parts;
+    }
+
+    private static byte[] telephonySeed(int rate, int channels, int bits, byte[] config,
+                                        List<FuzzPackets.Part> parts) {
+        return FuzzPackets.audio(0, rate, channels, bits, config, parts);
     }
 
     @Test

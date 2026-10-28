@@ -189,6 +189,18 @@ final class AudioRetimer {
                 }
                 yield frames * (wideband ? 320 : 160) * rate / (wideband ? 16000 : 8000);
             }
+            case ADPCM_IMA_QT, GSM, MACE3, MACE6 -> {
+                var channels = track.layout().map(layout -> layout.channels()).orElse(1);
+                var unit = switch (track.codec()) {
+                    case ADPCM_IMA_QT -> 34 * channels;
+                    case GSM -> 33;
+                    case MACE3 -> 2 * channels;
+                    default -> channels;
+                };
+                var unitSamples = track.codec() == Codec.ADPCM_IMA_QT ? 64 : track.codec() == Codec.GSM ? 160 : 6;
+                yield track.sampleRate() > 0 ? (long) (data.length / unit) * unitSamples * rate / track.sampleRate()
+                        : 0;
+            }
             default -> pcmFrameBytes > 0 && track.sampleRate() > 0
                     ? (long) (data.length / pcmFrameBytes) * rate / track.sampleRate() : 0;
         };

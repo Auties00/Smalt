@@ -174,7 +174,8 @@ public final class Streams {
                     .codec(codec)
                     .timeBase(new Rational(1, encoder.sampleRate()))
                     .sampleRate(encoder.sampleRate())
-                    .layout(encoder.layout());
+                    .layout(encoder.layout())
+                    .bitsPerSample(encoder.bitsPerSample());
             encoder.codecConfig().ifPresent(track::codecConfig);
             return new Encoded(track.build(), packets.stream().map(packet -> packet.withTrackId(2)).toList());
         }

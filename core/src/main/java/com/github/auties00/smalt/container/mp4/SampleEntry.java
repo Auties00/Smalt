@@ -5,6 +5,7 @@ import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.container.internal.RawVideoTags;
+import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.image.Chromaticity;
 import com.github.auties00.smalt.image.ColorInfo;
 import com.github.auties00.smalt.image.ColorPrimaries;
@@ -796,6 +797,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         Codec codec = Codec.UNKNOWN_AUDIO;
         byte[] config = null;
         var bits = 0;
+        var blockBytes = 0;
         switch (format) {
             case BoxTypes.MP4A -> {
                 if (audio.esds == null) {
@@ -907,6 +909,24 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
             case BoxTypes.FL64 -> codec = pcm(64, audio.littleEndian, true, true);
             case BoxTypes.ULAW -> codec = Codec.PCM_MULAW;
             case BoxTypes.ALAW -> codec = Codec.PCM_ALAW;
+            case BoxTypes.IMA4 -> {
+                codec = Codec.ADPCM_IMA_QT;
+                bits = 4;
+            }
+            case BoxTypes.AGSM -> codec = Codec.GSM;
+            case BoxTypes.MAC3 -> codec = Codec.MACE3;
+            case BoxTypes.MAC6 -> codec = Codec.MACE6;
+            case BoxTypes.MS_IMA_ADPCM, BoxTypes.MS_ADPCM -> {
+                codec = format == BoxTypes.MS_ADPCM ? Codec.ADPCM_MS : Codec.ADPCM_IMA_WAV;
+                bits = 4;
+                if (audio.waveFormat != null && audio.waveFormat.length >= 14) {
+                    var wave = WaveFormat.parse(audio.waveFormat, audio.waveFormat.length, false);
+                    blockBytes = wave.blockAlign();
+                    if (codec == Codec.ADPCM_MS) {
+                        config = WaveFormat.msAdpcmConfig(wave.extra());
+                    }
+                }
+            }
             case BoxTypes.LPCM -> {
                 if (lpcmFlags >= 0) {
                     var isFloat = (lpcmFlags & 1) != 0;
@@ -941,7 +961,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         if (layout == null && channels > 0) {
             layout = ChannelLayout.defaultFor(channels);
         }
-        var frameBytes = codec.isPcm() && channels > 0 ? channels * Math.max(1, bits / 8) : 0;
+        var frameBytes = codec.isPcm() && channels > 0 ? channels * Math.max(1, bits / 8) : blockBytes;
         if (frameBytes == 0 && bytesPerFrame > 0 && codec.isPcm()) {
             frameBytes = bytesPerFrame;
         }
@@ -1157,6 +1177,12 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
         private final List<BoxCursor> sinfs = new ArrayList<>();
 
         /**
+         * The {@code WAVEFORMATEX} of an IMA or Microsoft ADPCM entry, from its {@code wave} atom, or
+         * {@code null}.
+         */
+        private byte[] waveFormat;
+
+        /**
          * Reads the children at the cursor position.
          *
          * @param payload the cursor
@@ -1198,6 +1224,7 @@ record SampleEntry(int format, Codec codec, byte[] config, int width, int height
                         case BoxTypes.CHNL -> layout = parseChnl(body);
                         case BoxTypes.SA3D -> spatial = SpatialAudioBox.parse(body);
                         case BoxTypes.SINF -> sinfs.add(body);
+                        case BoxTypes.MS_IMA_ADPCM, BoxTypes.MS_ADPCM -> waveFormat = body.rest();
                         default -> {
                             if (box.type() == FourCc.of("srat")) {
                                 body.fullBoxHeader();

@@ -380,7 +380,8 @@ public final class Mp4Muxer implements Muxer {
      * video, H.263, Motion-JPEG, the 16-, 24- and 32-bit integer and 32- and 64-bit float PCM formats,
      * {@link Codec#MOV_TEXT}, {@link Codec#WEBVTT}, {@link Codec#TTML}, {@link Codec#DVD_SUBTITLE},
      * {@link Codec#CEA_608} and {@link Codec#CEA_708}; only
-     * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law and mu-law.
+     * {@link Mp4MuxerOptions.Brand#QUICKTIME} carries ProRes, DNxHD, 8-bit PCM, A-law, mu-law, {@code ima4} IMA ADPCM,
+     * GSM 06.10 ({@code agsm}) and MACE ({@code MAC3}, {@code MAC6}), whose packets hold whole frames.
      *
      * @param brand the brand of the file
      * @param codec the codec of the track
@@ -395,7 +396,8 @@ public final class Mp4Muxer implements Muxer {
                  TTML, DVD_SUBTITLE, CEA_608, CEA_708, PCM_S16LE, PCM_S16BE,
                  PCM_S24LE, PCM_S24BE, PCM_S32LE, PCM_S32BE, PCM_F32LE, PCM_F32BE, PCM_F64LE, PCM_F64BE ->
                     brand == Mp4MuxerOptions.Brand.MP4 || brand == Mp4MuxerOptions.Brand.QUICKTIME;
-            case PRORES, DNXHD, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW -> brand == Mp4MuxerOptions.Brand.QUICKTIME;
+            case PRORES, DNXHD, PCM_U8, PCM_S8, PCM_ALAW, PCM_MULAW, ADPCM_IMA_QT, GSM, MACE3, MACE6 ->
+                    brand == Mp4MuxerOptions.Brand.QUICKTIME;
             default -> false;
         };
     }

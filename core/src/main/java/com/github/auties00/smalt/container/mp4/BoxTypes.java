@@ -705,6 +705,36 @@ final class BoxTypes {
     static final int MS_MP3 = 0x6D730055;
 
     /**
+     * The QuickTime sample entry of IMA ADPCM in Microsoft's WAVE block layout ({@code ms\0\x11}).
+     */
+    static final int MS_IMA_ADPCM = 0x6D730011;
+
+    /**
+     * The QuickTime sample entry of Microsoft ADPCM ({@code ms\0\x02}).
+     */
+    static final int MS_ADPCM = 0x6D730002;
+
+    /**
+     * The QuickTime IMA ADPCM sample entry ({@code ima4}).
+     */
+    static final int IMA4 = 0x696D6134;
+
+    /**
+     * The QuickTime GSM 06.10 sample entry ({@code agsm}).
+     */
+    static final int AGSM = 0x6167736D;
+
+    /**
+     * The QuickTime MACE 3:1 sample entry ({@code MAC3}).
+     */
+    static final int MAC3 = 0x4D414333;
+
+    /**
+     * The QuickTime MACE 6:1 sample entry ({@code MAC6}).
+     */
+    static final int MAC6 = 0x4D414336;
+
+    /**
      * The ISO integer PCM sample entry ({@code ipcm}).
      */
     static final int IPCM = 0x6970636D;

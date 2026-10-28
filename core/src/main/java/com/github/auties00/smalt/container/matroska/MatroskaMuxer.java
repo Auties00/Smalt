@@ -2,6 +2,8 @@ package com.github.auties00.smalt.container.matroska;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.Muxer;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.AdpcmFormat;
 import com.github.auties00.smalt.container.internal.BitmapTrackConfigs;
 import com.github.auties00.smalt.container.internal.ConfigChanges;
 import com.github.auties00.smalt.container.internal.SphericalBoxes;
@@ -84,7 +86,11 @@ import java.util.Set;
  *       ({@code A_MPEG/L3}, {@code A_MPEG/L2}), AC-3 and E-AC-3, AMR-NB and AMR-WB
  *       ({@code A_MS/ACM}, a {@code WAVEFORMATEX} of format tag {@code 0x0038} or {@code 0x0058};
  *       storage-format frames), G.711 A-law and mu-law ({@code A_MS/ACM}, a {@code WAVEFORMATEX}
- *       of format tag 6 or 7), and PCM
+ *       of format tag 6 or 7), IMA ADPCM, Microsoft ADPCM, GSM 06.10 in Microsoft's packing, G.722 and G.726
+ *       ({@code A_MS/ACM}, the {@code WAVEFORMATEX} a WAVE file stores for them, of format tag {@code 0x0011},
+ *       {@code 0x0002}, {@code 0x0031}, {@code 0x028F} or {@code 0x0045}; one packet per block, the block size of
+ *       IMA and Microsoft ADPCM the size of the track's first packet, or 256 bytes per channel when the header is
+ *       written before it, which every later packet but the last must have), and PCM
  *       ({@code A_PCM/INT/LIT} for 8-bit and little-endian integers up to 32 bits, {@code A_PCM/INT/BIG}
  *       for big-endian integers up to 32 bits, {@code A_MS/ACM} with a {@code WAVEFORMATEXTENSIBLE} for
  *       64-bit integers, of the Ambisonic B-format sub-format for the Furse-Malham layouts of
@@ -581,7 +587,8 @@ public final class MatroskaMuxer implements Muxer {
             case MP2 -> "A_MPEG/L2";
             case AC3 -> "A_AC3";
             case EAC3 -> "A_EAC3";
-            case AMR_NB, AMR_WB, PCM_ALAW, PCM_MULAW, PCM_S64LE, PCM_S64BE -> "A_MS/ACM";
+            case AMR_NB, AMR_WB, PCM_ALAW, PCM_MULAW, PCM_S64LE, PCM_S64BE, ADPCM_IMA_WAV, ADPCM_MS, GSM_MS, ADPCM_G722,
+                 ADPCM_G726 -> "A_MS/ACM";
             case PCM_U8, PCM_S8, PCM_S16LE, PCM_S24LE, PCM_S32LE -> "A_PCM/INT/LIT";
             case PCM_S16BE, PCM_S24BE, PCM_S32BE -> "A_PCM/INT/BIG";
             case PCM_F32LE, PCM_F64LE, PCM_F32BE, PCM_F64BE -> "A_PCM/FLOAT/IEEE";
@@ -845,6 +852,9 @@ public final class MatroskaMuxer implements Muxer {
         if (tracks.isEmpty() || state == null) {
             throw new IllegalArgumentException("packet for undeclared track " + packet.trackId());
         }
+        if (state.adpcm != null) {
+            state.adpcm.accept(packet.size());
+        }
         packet = inBand(state, packet);
         accepting = true;
         var data = packet.data();
@@ -1053,6 +1063,10 @@ public final class MatroskaMuxer implements Muxer {
         var minimum = Long.MAX_VALUE;
         for (var state : tracks) {
             state.hdr10PlusMapping = state.video && carriesHdr10Plus(state);
+            if (state.adpcm != null) {
+                state.adpcm.declare();
+                state.codecPrivate = state.adpcm.waveFormatBytes();
+            }
             var head = state.queue.peekFirst();
             if (head != null) {
                 state.resolveConfig(head.packet);
@@ -1566,6 +1580,11 @@ public final class MatroskaMuxer implements Muxer {
         byte[] codecPrivate;
 
         /**
+         * The format of an ADPCM or telephony track, or {@code null}.
+         */
+        AdpcmFormat adpcm;
+
+        /**
          * The codec configuration the track's packets last established, initially the track's.
          */
         byte[] latestConfig;
@@ -1761,6 +1780,14 @@ public final class MatroskaMuxer implements Muxer {
             var audio = (AudioTrack) track;
             sampleRate = audio.sampleRate();
             channels = audio.layout().map(layout -> layout.channels()).orElse(0);
+            if (AdpcmBlocks.supports(codec)) {
+                if (sampleRate <= 0 || channels <= 0) {
+                    throw new IllegalArgumentException("audio track " + track.id()
+                            + " needs its sample rate and channel layout");
+                }
+                adpcm = new AdpcmFormat(audio, "Matroska");
+                codecPrivate = adpcm.waveFormatBytes();
+            }
             switch (codec) {
                 case OPUS -> {
                     codecPrivate = config != null ? config : opusHead(audio);

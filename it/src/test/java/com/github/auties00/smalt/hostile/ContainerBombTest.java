@@ -77,6 +77,11 @@ class ContainerBombTest {
                     be16(data, indexOf(data, "COMM", 12) + 8, 100);
                     return data;
                 }),
+                new Input("AIFF-C ima4", () -> {
+                    var data = encoded(ContainerFormat.AIFF, Codec.ADPCM_IMA_QT, ChannelLayout.STEREO, SAMPLE_RATE);
+                    be16(data, indexOf(data, "COMM", 12) + 8, 100);
+                    return data;
+                }),
                 new Input("Matroska", () -> {
                     var data = pcm(ContainerFormat.MATROSKA, Codec.PCM_S16LE);
                     var channels = indexOf(data, new byte[]{(byte) 0x9F, (byte) 0x81, 0x02}, 0);

@@ -2,6 +2,8 @@ package com.github.auties00.smalt.container.wav;
 
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.container.internal.AacRawBlocks;
+import com.github.auties00.smalt.container.internal.AdpcmBlocks;
+import com.github.auties00.smalt.container.internal.AdpcmFormat;
 import com.github.auties00.smalt.container.internal.WaveFormat;
 import com.github.auties00.smalt.internal.codec.Ac3Configs;
 import com.github.auties00.smalt.internal.codec.AmrConfigs;
@@ -58,11 +60,6 @@ final class WavCodedWriter {
      * The largest Opus frame, in bytes (RFC 6716 rule R2).
      */
     private static final int MAX_OPUS_FRAME = 1275;
-
-    /**
-     * The seven standard predictor coefficient pairs of Microsoft ADPCM, as an {@code ADPCMWAVEFORMAT} stores them.
-     */
-    private static final int[] MS_ADPCM_COEFFICIENTS = {256, 0, 512, -256, 0, 0, 192, 64, 240, 0, 460, -208, 392, -232};
 
     /**
      * The codec written.
@@ -273,7 +270,7 @@ final class WavCodedWriter {
                 }
                 bits = 4;
                 if (codec == Codec.ADPCM_MS) {
-                    coefficients = msCoefficients(config);
+                    coefficients = AdpcmFormat.coefficients(config);
                 }
             }
             case ADPCM_G722 -> bits = 4;
@@ -292,30 +289,6 @@ final class WavCodedWriter {
         this.codecDelay = codecDelay;
         this.codeSize = codeSize;
         this.coefficients = coefficients;
-    }
-
-    /**
-     * Returns the predictor coefficients of a Microsoft ADPCM configuration.
-     *
-     * @param config the configuration, the {@code ADPCMWAVEFORMAT} fields after {@code cbSize}, or {@code null}
-     * @return {@code wNumCoef} and the coefficient pairs, the seven standard pairs without a configuration
-     * @throws IllegalArgumentException if the configuration is shorter than its coefficient table, or declares none
-     */
-    private static byte[] msCoefficients(byte[] config) {
-        if (config == null) {
-            var out = new ByteWriter(2 + 2 * MS_ADPCM_COEFFICIENTS.length);
-            out.u16le(MS_ADPCM_COEFFICIENTS.length / 2);
-            for (var coefficient : MS_ADPCM_COEFFICIENTS) {
-                out.u16le(coefficient & 0xFFFF);
-            }
-            return out.toByteArray();
-        }
-        var count = config.length >= 4 ? (config[2] & 0xFF) | (config[3] & 0xFF) << 8 : 0;
-        if (count == 0 || config.length < 4 + 4 * count) {
-            throw new IllegalArgumentException("a Microsoft ADPCM configuration of " + config.length + " bytes and "
-                    + count + " coefficient pairs");
-        }
-        return Arrays.copyOfRange(config, 2, 4 + 4 * count);
     }
 
     /**
@@ -566,38 +539,16 @@ final class WavCodedWriter {
             case AMR_NB -> tag = WaveFormat.AMR_NB;
             case AMR_WB -> tag = WaveFormat.AMR_WB;
             case DTS -> tag = WaveFormat.DTS;
-            case ADPCM_IMA_WAV, ADPCM_MS -> {
-                tag = codec == Codec.ADPCM_MS ? WaveFormat.MS_ADPCM : WaveFormat.IMA_ADPCM;
+            case ADPCM_IMA_WAV, ADPCM_MS, GSM_MS, ADPCM_G722, ADPCM_G726 -> {
                 // a stream without packets declares blocks of 256 bytes per channel, a size both formats allow, or
                 // blocks of only the headers when those do not fit the 16-bit field
-                blockAlign = stats.units > 0 ? stats.first : 256 * channels <= 0xFFFF ? 256 * channels
+                var block = stats.units > 0 ? stats.first : 256 * channels <= 0xFFFF ? 256 * channels
                         : (int) AdpcmBlocks.headerBytes(codec, channels);
-                var samplesPerBlock = blockAlign > 0 ? AdpcmBlocks.samples(codec, blockAlign, channels, 0) : 0;
-                byteRate = samplesPerBlock > 0 ? (long) sampleRate * blockAlign / samplesPerBlock : 0;
-                var out = new ByteWriter(2 + (coefficients == null ? 0 : coefficients.length));
-                out.u16le((int) samplesPerBlock);
-                if (coefficients != null) {
-                    out.bytes(coefficients);
-                }
-                formatExtra = out.toByteArray();
-            }
-            case GSM_MS -> {
-                tag = WaveFormat.GSM610;
-                blockAlign = AdpcmBlocks.GSM_BLOCK;
-                byteRate = (long) sampleRate * AdpcmBlocks.GSM_BLOCK / AdpcmBlocks.GSM_SAMPLES;
-                var out = new ByteWriter(2);
-                out.u16le(AdpcmBlocks.GSM_SAMPLES);
-                formatExtra = out.toByteArray();
-            }
-            case ADPCM_G722 -> {
-                tag = WaveFormat.G722;
-                blockAlign = 1;
-                byteRate = sampleRate / 2;
-            }
-            case ADPCM_G726 -> {
-                tag = WaveFormat.G726;
-                blockAlign = AdpcmBlocks.unitBytes(codec, codeSize);
-                byteRate = (long) sampleRate * codeSize / 8;
+                var format = AdpcmFormat.waveFormat(codec, channels, sampleRate, codeSize, coefficients, block,
+                        channelMask);
+                var out = new ByteWriter(format.size(true));
+                format.write(out, true);
+                return out.toByteArray();
             }
             default -> throw new IllegalStateException("not a coded payload: " + codec);
         }

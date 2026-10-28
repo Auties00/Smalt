@@ -3,16 +3,28 @@ package com.github.auties00.smalt.aot.internal;
 import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.audio.AudioBuffer;
+import com.github.auties00.smalt.audio.AudioDecoder;
 import com.github.auties00.smalt.audio.AudioDecoderOptions;
+import com.github.auties00.smalt.audio.AudioEncoder;
 import com.github.auties00.smalt.audio.AudioReader;
 import com.github.auties00.smalt.audio.ChannelLayout;
 import com.github.auties00.smalt.audio.IntegerAudioBuffer;
+import com.github.auties00.smalt.audio.adpcm.AdpcmDecoder;
+import com.github.auties00.smalt.audio.adpcm.AdpcmEncoder;
+import com.github.auties00.smalt.audio.adpcm.AdpcmEncoderOptions;
 import com.github.auties00.smalt.audio.alac.AlacDecoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoder;
 import com.github.auties00.smalt.audio.alac.AlacEncoderOptions;
 import com.github.auties00.smalt.audio.flac.FlacDecoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoder;
 import com.github.auties00.smalt.audio.flac.FlacEncoderOptions;
+import com.github.auties00.smalt.audio.g722.G722Decoder;
+import com.github.auties00.smalt.audio.g722.G722Encoder;
+import com.github.auties00.smalt.audio.g726.G726Decoder;
+import com.github.auties00.smalt.audio.g726.G726Encoder;
+import com.github.auties00.smalt.audio.g726.G726EncoderOptions;
+import com.github.auties00.smalt.audio.gsm.GsmDecoder;
+import com.github.auties00.smalt.audio.gsm.GsmEncoder;
 import com.github.auties00.smalt.audio.mp3.Mp2Encoder;
 import com.github.auties00.smalt.audio.mp3.Mp2EncoderOptions;
 import com.github.auties00.smalt.audio.mp3.Mp3Decoder;
@@ -55,7 +67,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.realtime;
 
 /**
  * Creates the workloads of {@link TrainingFamily#AUDIO}, the codecs of {@code smalt-audio}: Opus,
- * Vorbis, FLAC, ALAC, MP3 and MP2 encoding and decoding, and the voice processor, each on synthetic speech or
+ * Vorbis, FLAC, ALAC, MP3, MP2, IMA and Microsoft ADPCM, G.722, G.726 and GSM 06.10 encoding and decoding, and the
+ * voice processor, each on synthetic speech or
  * music and keeping its codecs across rounds as a long-running application does.
  */
 final class AudioWorkloads {
@@ -85,6 +98,16 @@ final class AudioWorkloads {
                 realtime("mp3-decode-loss", () -> lossyDecode("mp3-decode-loss", Codec.MP3, 4)),
                 realtime("vorbis-decode-loss", () -> lossyDecode("vorbis-decode-loss", Codec.VORBIS, 4)),
                 realtime("flac-decode-loss", () -> lossyDecode("flac-decode-loss", Codec.FLAC, 4)),
+                realtime("g722-encode", () -> telephonyEncode("g722-encode", new G722Encoder(), 6)),
+                realtime("g722-decode", () -> telephonyDecode("g722-decode", new G722Encoder(), 6)),
+                realtime("g726-encode", () -> telephonyEncode("g726-encode", new G726Encoder(
+                        G726EncoderOptions.ofCodeSize(4)), 6)),
+                realtime("g726-decode-16k", () -> telephonyDecode("g726-decode-16k", new G726Encoder(
+                        G726EncoderOptions.ofCodeSize(2)), 6)),
+                realtime("g726-decode-40k", () -> telephonyDecode("g726-decode-40k", new G726Encoder(
+                        G726EncoderOptions.ofCodeSize(5)), 6)),
+                realtime("gsm-encode", () -> telephonyEncode("gsm-encode", new GsmEncoder(Codec.GSM), 6)),
+                realtime("gsm-decode", () -> telephonyDecode("gsm-decode", new GsmEncoder(Codec.GSM_MS), 6)),
                 file("opus-encode-speech", () -> opusSpeech(8)),
                 file("opus-encode-music", () -> opusMusic(6)),
                 file("opus-decode", () -> opusDecode(6)),
@@ -110,7 +133,84 @@ final class AudioWorkloads {
                 file("mp2-encode-joint", () -> mp2Encode("mp2-encode-joint", Mp2EncoderOptions.builder()
                         .bitrate(128_000).stereoMode(Mp3StereoMode.JOINT_STEREO).crc(true).build(), 4)),
                 file("mp1-encode", () -> mp2Encode("mp1-encode", Mp2EncoderOptions.builder().layer(1).build(), 3)),
-                file("mp2-decode", AudioWorkloads::mp2Decode));
+                file("mp2-decode", AudioWorkloads::mp2Decode),
+                file("adpcm-ima-encode", () -> adpcmEncode("adpcm-ima-encode", Codec.ADPCM_IMA_WAV, 4)),
+                file("adpcm-ima4-encode", () -> adpcmEncode("adpcm-ima4-encode", Codec.ADPCM_IMA_QT, 4)),
+                file("adpcm-ms-encode", () -> adpcmEncode("adpcm-ms-encode", Codec.ADPCM_MS, 2)),
+                file("adpcm-ima-decode", () -> adpcmDecode("adpcm-ima-decode", Codec.ADPCM_IMA_WAV, 6)),
+                file("adpcm-ima4-decode", () -> adpcmDecode("adpcm-ima4-decode", Codec.ADPCM_IMA_QT, 6)),
+                file("adpcm-ms-decode", () -> adpcmDecode("adpcm-ms-decode", Codec.ADPCM_MS, 6)));
+    }
+
+    /**
+     * Returns a workload that encodes speech with a telephony encoder (G.722, G.726 or GSM 06.10) at its own rate,
+     * one encoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param encoder the encoder, of mono input
+     * @param seconds the speech encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload telephonyEncode(String name, AudioEncoder encoder, double seconds) {
+        var rate = encoder.sampleRate();
+        return AudioStreams.encode(name, new float[][]{SyntheticAudio.speech(rate, seconds)}, ChannelLayout.MONO,
+                rate, encoder);
+    }
+
+    /**
+     * Returns a workload that decodes speech a telephony encoder produced, one decoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param encoder the encoder of the stream, of mono input, closed once the stream is coded
+     * @param seconds the speech decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload telephonyDecode(String name, AudioEncoder encoder, double seconds) {
+        var rate = encoder.sampleRate();
+        var packets = AudioStreams.encodeAll(encoder, new float[][]{SyntheticAudio.speech(rate, seconds)},
+                ChannelLayout.MONO, rate);
+        var track = AudioTrack.builder().id(1).codec(encoder.codec()).timeBase(Rational.timeBaseOf(rate))
+                .sampleRate(rate).layout(ChannelLayout.MONO).bitsPerSample(encoder.bitsPerSample()).build();
+        encoder.close();
+        AudioDecoder decoder = switch (encoder.codec()) {
+            case ADPCM_G722 -> new G722Decoder(track);
+            case ADPCM_G726 -> new G726Decoder(track);
+            default -> new GsmDecoder(track);
+        };
+        return AudioStreams.decode(name, packets, decoder);
+    }
+
+    /**
+     * Returns a workload that encodes 44.1 kHz stereo music as IMA or Microsoft ADPCM, one encoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param codec the layout: {@link Codec#ADPCM_IMA_WAV}, {@link Codec#ADPCM_IMA_QT} or {@link Codec#ADPCM_MS}
+     * @param seconds the music encoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload adpcmEncode(String name, Codec codec, double seconds) {
+        return AudioStreams.encode(name, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO, 44100,
+                new AdpcmEncoder(AdpcmEncoderOptions.of(codec, 44100, ChannelLayout.STEREO)));
+    }
+
+    /**
+     * Returns a workload that decodes 44.1 kHz stereo music that Smalt's own IMA or Microsoft ADPCM encoder
+     * produced, one decoder across rounds.
+     *
+     * @param name the name of the workload
+     * @param codec the layout: {@link Codec#ADPCM_IMA_WAV}, {@link Codec#ADPCM_IMA_QT} or {@link Codec#ADPCM_MS}
+     * @param seconds the music decoded per round, in seconds
+     * @return the workload
+     */
+    private static TrainingWorkload adpcmDecode(String name, Codec codec, double seconds) {
+        var encoder = new AdpcmEncoder(AdpcmEncoderOptions.of(codec, 44100, ChannelLayout.STEREO));
+        var packets = AudioStreams.encodeAll(encoder, SyntheticAudio.music(44100, seconds), ChannelLayout.STEREO,
+                44100);
+        var track = AudioTrack.builder().id(1).codec(codec).timeBase(Rational.timeBaseOf(44100)).sampleRate(44100)
+                .layout(ChannelLayout.STEREO).bitsPerSample(4).codecConfig(encoder.codecConfig().orElse(null))
+                .build();
+        encoder.close();
+        return AudioStreams.decode(name, packets, new AdpcmDecoder(track));
     }
 
     /**

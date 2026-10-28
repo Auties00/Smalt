@@ -172,6 +172,7 @@ final class SampleEntryWriter {
                 writer.u16(1);
                 writer.end();
             }
+            case ADPCM_IMA_QT, GSM, MACE3, MACE6 -> writeQuickTimeCompressed(writer, (AudioTrack) described);
             default -> {
                 if (track.pcmFrameBytes > 0) {
                     writePcm(writer, track, (AudioTrack) described);
@@ -689,6 +690,52 @@ final class SampleEntryWriter {
         }
         writeChan(writer, audio.layout().get());
         SpatialAudioBox.write(writer, audio.layout().get(), channels);
+        writer.end();
+    }
+
+    /**
+     * Writes the QuickTime version 1 sound description of a fixed-frame compressed codec ({@code ima4},
+     * {@code agsm}, {@code MAC3} or {@code MAC6}): its samples and bytes per frame, the frames being the packets'
+     * units, and a {@code chan} box.
+     *
+     * @param writer the destination
+     * @param audio the track
+     */
+    private static void writeQuickTimeCompressed(BoxWriter writer, AudioTrack audio) {
+        var codec = audio.codec();
+        var channels = audio.layout().orElseThrow().channels();
+        var format = switch (codec) {
+            case ADPCM_IMA_QT -> BoxTypes.IMA4;
+            case GSM -> BoxTypes.AGSM;
+            case MACE3 -> BoxTypes.MAC3;
+            default -> BoxTypes.MAC6;
+        };
+        var samplesPerPacket = switch (codec) {
+            case ADPCM_IMA_QT -> 64;
+            case GSM -> 160;
+            default -> 6;
+        };
+        var bytesPerPacket = switch (codec) {
+            case ADPCM_IMA_QT -> 34;
+            case GSM -> 33;
+            case MACE3 -> 2;
+            default -> 1;
+        };
+        writer.begin(format);
+        writer.zeros(6);
+        writer.u16(1);
+        writer.u16(1);
+        writer.zeros(6);
+        writer.u16(channels);
+        writer.u16(codec == Codec.MACE3 || codec == Codec.MACE6 ? 8 : 16);
+        writer.u16(0xFFFE);
+        writer.u16(0);
+        writer.u32((long) audio.sampleRate() << 16);
+        writer.u32(samplesPerPacket);
+        writer.u32(bytesPerPacket);
+        writer.u32((long) bytesPerPacket * channels);
+        writer.u32(2);
+        writeChan(writer, audio.layout().get());
         writer.end();
     }
 

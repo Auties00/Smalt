@@ -10,6 +10,7 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
 import com.github.auties00.smalt.internal.tags.QuickTimeCompressedMovie;
 import com.github.auties00.smalt.io.DataReferenceResolver;
 import com.github.auties00.smalt.io.MediaSource;
+import com.github.auties00.smalt.track.Codec;
 import com.github.auties00.smalt.internal.tags.Mp4TrackMetadata;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -632,7 +633,9 @@ final class MovieParser {
         if (protectedTrack && readsProtection) {
             track.cenc = new CencSamples(limits);
         }
-        var pcmGrouping = track.entry.codec().isPcm() && sizes.constant > 0 && allDeltasOne(timing) && !protectedTrack;
+        var pcmGrouping = (track.entry.codec().isPcm() && sizes.constant > 0
+                || frameSamples(track.entry) > 1 && sizes.constant == 1)
+                && allDeltasOne(timing) && !protectedTrack;
         if (pcmGrouping) {
             track.samples = expandPcm(track, sizes, chunkOffsets, stscEntries, sampleCount);
             track.selectBaseEntry();
@@ -1168,9 +1171,52 @@ final class MovieParser {
     }
 
     /**
+     * Returns the samples per frame of a compressed audio entry that the classic QuickTime layout stores one decoded
+     * sample per table sample (a constant sample size of one byte and a duration of one).
+     *
+     * @param entry the sample entry
+     * @return 64 for {@code ima4}, 160 for GSM 06.10, 6 for MACE, the samples of a block for IMA and Microsoft ADPCM
+     * with a known block size, and 0 for any other entry
+     */
+    static int frameSamples(SampleEntry entry) {
+        var channels = Math.max(1, entry.channels());
+        return switch (entry.codec()) {
+            case ADPCM_IMA_QT -> 64;
+            case GSM -> 160;
+            case MACE3, MACE6 -> 6;
+            case ADPCM_IMA_WAV -> entry.frameBytes() > 4 * channels
+                    ? (int) Math.min(Integer.MAX_VALUE, 1 + 8L * ((entry.frameBytes() - 4L * channels) / (4L * channels)))
+                    : 0;
+            case ADPCM_MS -> entry.frameBytes() > 7 * channels
+                    ? (int) Math.min(Integer.MAX_VALUE, 2 + 2L * (entry.frameBytes() - 7L * channels) / channels)
+                    : 0;
+            default -> 0;
+        };
+    }
+
+    /**
+     * Returns the bytes of one frame of a compressed audio entry of {@link #frameSamples(SampleEntry)}.
+     *
+     * @param entry the sample entry
+     * @return the bytes of a frame, all channels together
+     */
+    private static int frameBytes(SampleEntry entry) {
+        var channels = Math.max(1, entry.channels());
+        return switch (entry.codec()) {
+            case ADPCM_IMA_QT -> 34 * channels;
+            case GSM -> 33;
+            case MACE3 -> 2 * channels;
+            case MACE6 -> channels;
+            default -> entry.frameBytes();
+        };
+    }
+
+    /**
      * Builds the packet index of an uncompressed audio track stored one frame per sample,
      * grouping up to {@value #PCM_FRAMES_PER_PACKET} consecutive frames of a chunk into one
-     * packet.
+     * packet; or of a compressed track in the classic QuickTime layout, one decoded sample per table sample, whose
+     * chunks hold whole frames of {@link #frameSamples(SampleEntry)} samples, grouped likewise (one block per packet
+     * for the WAVE-layout ADPCM codecs).
      *
      * @param track the track being built
      * @param sizes the size reader, whose sizes are constant
@@ -1213,12 +1259,22 @@ final class MovieParser {
             if (frameBytes == 1 && described.frameBytes() > 1) {
                 frameBytes = described.frameBytes();
             }
+            var unit = Math.max(1, frameSamples(described));
+            // a WAVE-layout ADPCM packet is one block; the other layouts take several frames per packet
+            var unitsPerPacket = described.codec() == Codec.ADPCM_IMA_WAV || described.codec() == Codec.ADPCM_MS
+                    ? 1 : PCM_FRAMES_PER_PACKET;
+            if (unit > 1) {
+                frameBytes = frameBytes(described);
+            }
             for (var chunk = first; chunk < last && frame < sampleCount; chunk++) {
                 var offset = chunkOffsets[(int) chunk];
                 var inChunk = Math.min(perChunk, sampleCount - frame);
                 while (inChunk > 0) {
-                    var frames = (int) Math.min(inChunk, PCM_FRAMES_PER_PACKET);
-                    var bytes = frames * frameBytes;
+                    var frames = (int) Math.min(inChunk, (long) unitsPerPacket * unit);
+                    if (unit > 1 && frames < inChunk) {
+                        frames -= frames % unit;
+                    }
+                    var bytes = (long) (frames + unit - 1) / unit * frameBytes;
                     if (bytes > Integer.MAX_VALUE) {
                         throw new MediaException.Malformed("PCM packet of " + bytes + " bytes is too large");
                     }
