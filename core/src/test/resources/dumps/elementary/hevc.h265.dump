@@ -1,0 +1,28 @@
+# demux dump of elementary/hevc.h265; regenerate with -Dsmalt.test.updateDumps=true
+format HEVC
+duration -1
+seekable true
+track 1 VIDEO HEVC timebase=1/30 duration=? config=111:d1c5c38c
+  video 160x120 orientation=NORMAL rate=15/1 sar=1/1
+  color ColorInfo[matrix=UNSPECIFIED, range=LIMITED, primaries=UNSPECIFIED, transfer=UNSPECIFIED, chromaSiting=UNSPECIFIED, masteringDisplay=Optional.empty, contentLightLevel=Optional.empty]
+packets 15
+0 t1 pts=0 dts=-4 dur=2 flags=KEY size=4319 crc=171485fb
+1 t1 pts=6 dts=-2 dur=2 flags=- size=762 crc=062bb635
+2 t1 pts=4 dts=0 dur=2 flags=- size=381 crc=42a09888
+3 t1 pts=2 dts=2 dur=2 flags=- size=182 crc=e381d63a
+4 t1 pts=10 dts=4 dur=2 flags=KEY size=4686 crc=626137a0
+5 t1 pts=8 dts=6 dur=2 flags=- size=156 crc=bf863cb4
+6 t1 pts=16 dts=8 dur=2 flags=- size=877 crc=ccf8e749
+7 t1 pts=14 dts=10 dur=2 flags=- size=299 crc=5f877c70
+8 t1 pts=12 dts=12 dur=2 flags=- size=185 crc=68c35d27
+9 t1 pts=20 dts=14 dur=2 flags=KEY size=5051 crc=cc06cae5
+10 t1 pts=18 dts=16 dur=2 flags=- size=155 crc=232c50e6
+11 t1 pts=26 dts=18 dur=2 flags=- size=695 crc=e3b45e8d
+12 t1 pts=24 dts=20 dur=2 flags=- size=390 crc=2472e37e
+13 t1 pts=22 dts=22 dur=2 flags=- size=199 crc=c2d362df
+14 t1 pts=28 dts=24 dur=2 flags=- size=425 crc=b0ff039c
+seek 0: t1@0
+seek 333333: t1@0
+seek 666666: t1@4
+seek 1000000: end
+seek -1000000: t1@0

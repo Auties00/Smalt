@@ -3,6 +3,7 @@ package com.github.auties00.smalt.video.mpeg4.internal;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
+import com.github.auties00.smalt.video.h263.internal.H263PlusStream;
 
 /**
  * Parses the picture header of ITU-T H.263 (5.1), which the short video header of ISO/IEC
@@ -15,10 +16,9 @@ import com.github.auties00.smalt.internal.limits.LimitChecks;
  * Prediction (Annex F), Advanced INTRA Coding (Annex I), the Deblocking Filter (Annex J), Slice
  * Structured mode without rectangular slices (Annex K), Alternative INTER VLC (Annex S) and
  * Modified Quantization (Annex T). Headers using any other mode raise
- * {@link MediaException.Unsupported} naming it: syntax-based arithmetic coding, PB-frames and
- * Improved PB-frames, Continuous Presence Multipoint, reference picture selection, independent
- * segment decoding, scalability, reference picture resampling, reduced-resolution update and
- * rectangular slices.
+ * {@link MediaException.Unsupported} naming it; an H.263 track hands the pictures that use one to
+ * {@link com.github.auties00.smalt.video.h263.internal.H263PlusStream} before this parser sees
+ * them (see {@link #state()}), so only a short video header reaches these errors.
  *
  * <p>The mode states persist from picture to picture as the inference rules of 5.1.4.5 require.
  * An instance belongs to one decoder and is not thread-safe.
@@ -162,6 +162,21 @@ public final class H263Header {
     private int extendedFormat;
 
     /**
+     * The source format of the last header without PLUSPTYPE.
+     */
+    private int baselineFormat;
+
+    /**
+     * Whether the last UUI made the motion vectors unlimited.
+     */
+    private boolean unlimitedVectors;
+
+    /**
+     * Whether the last SSS set the Arbitrary Slice Ordering submode.
+     */
+    private boolean arbitrarySliceOrder;
+
+    /**
      * Creates a parser.
      */
     public H263Header() {
@@ -202,11 +217,11 @@ public final class H263Header {
             unrestrictedVectors = reader.readFlag();
             if (reader.readFlag()) {
                 throw new MediaException.Unsupported("h263 syntax-based arithmetic coding",
-                        "H.263 Annex E is not supported");
+                        "H.263 Annex E is decoded only by H263Decoder");
             }
             advancedPrediction = reader.readFlag();
             if (reader.readFlag()) {
-                throw new MediaException.Unsupported("h263 pb-frames", "H.263 Annex G is not supported");
+                throw new MediaException.Unsupported("h263 pb-frames", "H.263 Annex G is decoded only by H263Decoder");
             }
             advancedIntra = false;
             deblocking = false;
@@ -219,12 +234,13 @@ public final class H263Header {
             quant = reader.read(5);
             if (reader.readFlag()) {
                 throw new MediaException.Unsupported("h263 continuous presence multipoint",
-                        "H.263 Annex C sub-bitstreams are not supported");
+                        "H.263 Annex C sub-bitstreams are decoded only by H263Decoder");
             }
             width = WIDTHS[format];
             height = HEIGHTS[format];
             parWidth = 12;
             parHeight = 11;
+            baselineFormat = format;
         } else {
             extended = true;
             var ufep = reader.read(3);
@@ -244,16 +260,16 @@ public final class H263Header {
             var type = reader.read(3);
             if (type > 1) {
                 throw new MediaException.Unsupported("h263 picture type " + type,
-                        "H.263 improved PB-frames, B, EI and EP pictures are not supported");
+                        "H.263 improved PB-frames, B, EI and EP pictures are decoded only by H263Decoder");
             }
             codingType = type == 0 ? Vop.I : Vop.P;
             if (reader.readFlag()) {
                 throw new MediaException.Unsupported("h263 reference picture resampling",
-                        "H.263 Annex P is not supported");
+                        "H.263 Annex P is decoded only by H263Decoder");
             }
             if (reader.readFlag()) {
                 throw new MediaException.Unsupported("h263 reduced-resolution update",
-                        "H.263 Annex Q is not supported");
+                        "H.263 Annex Q is decoded only by H263Decoder");
             }
             rounding = reader.readBit();
             reader.skip(2);
@@ -264,7 +280,7 @@ public final class H263Header {
             unrestrictedVectors = (modes & 0x200) != 0;
             if ((modes & 0x100) != 0) {
                 throw new MediaException.Unsupported("h263 syntax-based arithmetic coding",
-                        "H.263 Annex E is not supported");
+                        "H.263 Annex E is decoded only by H263Decoder");
             }
             advancedPrediction = (modes & 0x80) != 0;
             advancedIntra = (modes & 0x40) != 0;
@@ -272,17 +288,17 @@ public final class H263Header {
             slices = (modes & 0x10) != 0;
             if ((modes & 0x8) != 0) {
                 throw new MediaException.Unsupported("h263 reference picture selection",
-                        "H.263 Annex N is not supported");
+                        "H.263 Annex N is decoded only by H263Decoder");
             }
             if ((modes & 0x4) != 0) {
                 throw new MediaException.Unsupported("h263 independent segment decoding",
-                        "H.263 Annex R is not supported");
+                        "H.263 Annex R is decoded only by H263Decoder");
             }
             alternativeInterVlc = (modes & 0x2) != 0;
             modifiedQuantization = (modes & 0x1) != 0;
             if (reader.readFlag()) {
                 throw new MediaException.Unsupported("h263 continuous presence multipoint",
-                        "H.263 Annex C sub-bitstreams are not supported");
+                        "H.263 Annex C sub-bitstreams are decoded only by H263Decoder");
             }
             if (ufep == 1 && extendedFormat == 6) {
                 var aspect = reader.read(4);
@@ -340,16 +356,18 @@ public final class H263Header {
             if (customClock) {
                 reference |= reader.read(2) << 8;
             }
-            if (ufep == 1 && unrestrictedVectors && reader.readBit() == 0) {
-                // UUI = 01: the motion vector range is unlimited, which decoding needs no state for.
-                reader.skip(1);
+            if (ufep == 1 && unrestrictedVectors) {
+                unlimitedVectors = reader.readBit() == 0;
+                if (unlimitedVectors) {
+                    reader.skip(1);
+                }
             }
             if (ufep == 1 && slices) {
                 if (reader.readBit() == 1) {
                     throw new MediaException.Unsupported("h263 rectangular slices",
-                            "H.263 Annex K rectangular slices are not supported");
+                            "H.263 Annex K rectangular slices are decoded only by H263Decoder");
                 }
-                reader.skip(1);
+                arbitrarySliceOrder = reader.readFlag();
             }
             if (extendedFormat == 6) {
                 width = customWidth;
@@ -398,6 +416,18 @@ public final class H263Header {
         layer.parWidth = parWidth;
         layer.parHeight = parHeight;
         return layer;
+    }
+
+    /**
+     * Returns the state the headers parsed so far leave for the next picture, which the H.263 annex decoder continues
+     * from.
+     *
+     * @return the state
+     */
+    public H263PlusStream.HeaderState state() {
+        return new H263PlusStream.HeaderState(extended, optionalModes, extended ? extendedFormat : baselineFormat,
+                customWidth, customHeight, parWidth, parHeight, customClock, periodTicks, unlimitedVectors,
+                arbitrarySliceOrder, lastReference, time());
     }
 
     /**

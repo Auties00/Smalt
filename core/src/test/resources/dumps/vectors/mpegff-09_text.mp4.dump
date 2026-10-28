@@ -1,0 +1,19 @@
+# demux dump of vectors/mpegff-09_text.mp4; regenerate with -Dsmalt.test.updateDumps=true
+format MP4
+duration 6000000
+seekable true
+metadata compatible_brands="isom3gp53gp4mp41mp42"
+metadata copyright="ENST IsoMedia Conformance Files - ENST (c) 2006 - Rights released for ISO Conformance use"
+metadata creation_time="2006-07-05T13:15:05.000000Z"
+metadata major_brand="3gp5"
+metadata minor_version="0"
+track 1 DATA MOV_TEXT timebase=1/1000 duration=6000 config=48:17f0053b
+packets 3
+0 t1 pts=0 dts=0 dur=2000 flags=KEY size=18 crc=dbc080ad
+1 t1 pts=2000 dts=2000 dur=2000 flags=KEY size=2 crc=41d912ff
+2 t1 pts=4000 dts=4000 dur=2000 flags=KEY size=23 crc=dcbcb71b side=[config=48:ff885592]
+seek 0: t1@0
+seek 2000000: t1@1
+seek 4000000: t1@2
+seek 6000000: end
+seek -1000000: t1@0
