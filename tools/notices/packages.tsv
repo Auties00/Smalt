@@ -100,6 +100,7 @@ image.jxl.internal	image
 image.jxl.internal.bitstream	image
 image.jxl.internal.brotli	image
 image.jxl.internal.color	image
+image.jxl.internal.encode	image
 image.jxl.internal.entropy	image
 image.jxl.internal.frame	image
 image.jxl.internal.header	image

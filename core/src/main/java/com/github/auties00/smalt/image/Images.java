@@ -477,7 +477,7 @@ public final class Images {
      * animation (APNG) is always lossless. Every format loops
      * {@link ImageEncoderOptions#loopCount()} times, except an animated cursor (ANI), which always
      * loops forever and rejects any other loop count. The frames are in the options' color profile,
-     * which an APNG, WebP, GIF or AVIF animation records and an ANI animation converts each frame to
+     * which an APNG, WebP, GIF, AVIF or JPEG XL animation records and an ANI animation converts each frame to
      * sRGB from; the EXIF block and XMP packet are recorded as
      * {@link #encode(Picture, ImageFormat, ImageEncoderOptions, MediaSink)} records them, and an
      * orientation other than {@link Orientation#NORMAL} is accepted only by the formats that record it.

@@ -63,7 +63,7 @@ class ReferenceImageDecodeTest {
     /** The image formats Smalt encodes whose reference decoding this class covers, and how. */
     private static final Set<ImageFormat> COVERED = Set.of(ImageFormat.PNG, ImageFormat.JPEG, ImageFormat.WEBP,
             ImageFormat.GIF, ImageFormat.BMP, ImageFormat.TIFF, ImageFormat.ICO, ImageFormat.JP2, ImageFormat.AVIF,
-            ImageFormat.ANI);
+            ImageFormat.ANI, ImageFormat.JXL);
 
     /** A picture with gradients, edges and noise, and with alpha when asked. */
     static RgbaPicture source(boolean alpha) {
@@ -297,6 +297,26 @@ class ReferenceImageDecodeTest {
                     Arrays.copyOf(Oracle.decodeVideo(file, List.of(), picture.chromaFormat() == ChromaFormat.YUV444
                             ? "yuvj444p" : picture.chromaFormat() == ChromaFormat.YUV422 ? "yuvj422p" : "yuvj420p", 1),
                             WIDTH * HEIGHT), luma);
+        }
+
+        @ParameterizedTest(name = "{0}")
+        @ValueSource(strings = {"lossless", "lossless-alpha", "lossy", "lossy-alpha"})
+        @DisplayName("JPEG XL decodes in djxl losslessly to the source, and lossily within a level of Smalt")
+        void jxl(String mode) {
+            var alpha = mode.endsWith("alpha");
+            var lossless = mode.startsWith("lossless");
+            var source = source(alpha);
+            var options = lossless ? ImageEncoderOptions.lossless() : ImageEncoderOptions.ofQuality(85);
+            var file = save("jxl-" + mode + ".jxl", Images.encode(source, ImageFormat.JXL, options));
+            var out = file.resolveSibling(file.getFileName() + ".png");
+            Oracle.run(Oracle.Tool.DJXL, Duration.ofMinutes(1), List.of(file.toString(), out.toString(), "--quiet"));
+            var reference = rgba((RgbaPicture) Images.decode(MediaSource.of(read(out))).picture());
+            var decoded = rgba((RgbaPicture) Images.decode(MediaSource.of(read(file))).picture());
+            if (lossless) {
+                EXACT.assertWithin("djxl decode", rgba(source), reference);
+            } else {
+                Tolerance.offByOne().assertWithin("djxl decode", decoded, reference);
+            }
         }
 
         @ParameterizedTest(name = "{0}")

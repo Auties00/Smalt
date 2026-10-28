@@ -1308,8 +1308,8 @@ section "33. libjxl"
 cat <<'EOF'
 Project:      libjxl, the JPEG XL reference implementation
               (commit 5f92f524f1407de323c409c360ab38cae1d97b27, and
-              release 0.11.2 for the spot color stage and the gain map
-              bundle)
+              release 0.11.2 for the spot color stage, the gain map
+              bundle and the encoder)
 Home:         https://jpeg.org/jpegxl/
 Source:       https://github.com/libjxl/libjxl
 License text: LICENSE and PATENTS at the root of the repository
@@ -1319,12 +1319,23 @@ License:      BSD 3-Clause, with the Additional IP Rights Grant (Patents)
 Derived Smalt packages:
   image.jxl.internal.bitstream
   image.jxl.internal.color
+  image.jxl.internal.encode
   image.jxl.internal.header
   image.jxl.internal.jpeg
   image.jxl.internal.modular
   image.jxl.internal.render
+  image.jxl.internal.vardct
 
-Derivation: where jxl-oxide (section 32) and libjxl differ, the decoder
+Derivation: the encoder follows libjxl 0.11.2: the ANS and prefix
+histogram coding, clustering and hybrid integer search (lib/jxl/enc_ans.cc,
+enc_cluster.cc, enc_context_map.cc, enc_huffman.cc), the header writers,
+the meta-adaptive tree learning, tokenization and lossless transforms
+(lib/jxl/modular/encoding, modular/transform, enc_modular.cc), the XYB
+conversion, VarDCT quantization and Gaborish inverse (enc_xyb.cc,
+enc_group.cc, enc_gaborish.cc, quantizer.cc), and the JPEG reader and
+reconstruction data of lossless JPEG recompression (lib/jxl/jpeg/
+enc_jpeg_data_reader.cc, enc_jpeg_data.cc, jpeg_data.cc, enc_frame.cc).
+Where jxl-oxide (section 32) and libjxl differ, the decoder
 follows libjxl, the reference: the palette transform semantics
 (GetPaletteValue in lib/jxl/modular/transform/palette), the treatment of
 negative values by the transfer functions, the rational approximation of
@@ -1356,12 +1367,15 @@ License:      MIT License
 
 Derived Smalt packages:
   image.jxl.internal.brotli
+  image.jxl.internal.encode
 
 Derivation: the Brotli decoder (RFC 7932) used for the jbrd and brob boxes
 of JPEG XL containers follows the reference Java decoder
 (java/org/brotli/dec): its Huffman table layout and builder, its command,
 context and transform tables. The static dictionary resource is a verbatim
-copy of c/common/dictionary.bin.
+copy of c/common/dictionary.bin. The JPEG XL encoder's length-limited
+Huffman codes and their code-length run coding follow
+c/enc/entropy_encode.c, as libjxl's enc_huffman_tree.cc carries them.
 
 Copyright:
   Copyright (c) 2009, 2010, 2013-2016 by the Brotli Authors.

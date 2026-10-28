@@ -127,6 +127,8 @@ class RegistryCoverageTest {
         assertTrue(Images.isEncodable(ImageFormat.JP2));
         assertTrue(Images.isEncodable(ImageFormat.BMP));
         assertTrue(Images.isAnimationEncodable(ImageFormat.WEBP));
+        assertTrue(Images.isEncodable(ImageFormat.JXL));
+        assertTrue(Images.isAnimationEncodable(ImageFormat.JXL));
         assertTrue(Images.isAnimationEncodable(ImageFormat.GIF));
         assertTrue(Images.isAnimationEncodable(ImageFormat.PNG));
         assertTrue(Images.isAnimationEncodable(ImageFormat.ANI));

@@ -43,6 +43,7 @@ module com.github.auties00.smalt.desktop {
             com.github.auties00.smalt.desktop.imageio.BmpImageReaderSpi;
     provides javax.imageio.spi.ImageWriterSpi with
             com.github.auties00.smalt.desktop.imageio.WebpImageWriterSpi,
+            com.github.auties00.smalt.desktop.imageio.JxlImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.AvifImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.HeicImageWriterSpi,
             com.github.auties00.smalt.desktop.imageio.ApngImageWriterSpi,

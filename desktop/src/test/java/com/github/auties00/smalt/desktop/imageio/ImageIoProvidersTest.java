@@ -77,7 +77,7 @@ class ImageIoProvidersTest {
     }
 
     @Test
-    @DisplayName("the WebP and AVIF writers are registered and the HEIC writer deregisters itself")
+    @DisplayName("the WebP, AVIF and JPEG XL writers are registered and the HEIC writer deregisters itself")
     void writers() {
         var webp = list(ImageIO.getImageWritersByFormatName("webp"));
         assertEquals(1, webp.size());
@@ -87,9 +87,13 @@ class ImageIoProvidersTest {
         assertEquals(1, avif.size());
         assertInstanceOf(SmaltImageWriter.class, avif.getFirst());
         assertTrue(list(ImageIO.getImageWritersByFormatName("heic")).isEmpty());
+        var jxl = list(ImageIO.getImageWritersByFormatName("jxl"));
+        assertEquals(1, jxl.size());
+        assertInstanceOf(SmaltImageWriter.class, jxl.getFirst());
         var registered = list(IIORegistry.getDefaultInstance().getServiceProviders(ImageWriterSpi.class, false));
         assertTrue(registered.stream().anyMatch(WebpImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().anyMatch(AvifImageWriterSpi.class::isInstance));
+        assertTrue(registered.stream().anyMatch(JxlImageWriterSpi.class::isInstance));
         assertTrue(registered.stream().noneMatch(HeicImageWriterSpi.class::isInstance));
     }
 

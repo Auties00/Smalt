@@ -97,7 +97,7 @@ class LosslessImageTest {
 
     static Stream<Arguments> deepFormats() {
         var arguments = new ArrayList<Arguments>();
-        for (var format : List.of(ImageFormat.PNG, ImageFormat.TIFF, ImageFormat.JP2)) {
+        for (var format : List.of(ImageFormat.PNG, ImageFormat.TIFF, ImageFormat.JP2, ImageFormat.JXL)) {
             allDepths().forEach(test -> arguments.add(Arguments.of(format, test)));
         }
         return arguments.stream();

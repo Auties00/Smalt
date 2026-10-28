@@ -18,6 +18,8 @@ import com.github.auties00.smalt.image.jp2.Jp2Decoder;
 import com.github.auties00.smalt.image.jp2.Jp2DecoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegDecoder;
 import com.github.auties00.smalt.image.jxl.JxlDecoder;
+import com.github.auties00.smalt.image.jxl.JxlEncoder;
+import com.github.auties00.smalt.image.jxl.JxlEncoderOptions;
 import com.github.auties00.smalt.io.MediaSource;
 import com.github.auties00.smalt.testkit.fuzz.Fuzz;
 import com.github.auties00.smalt.testkit.fuzz.FuzzGainMaps;
@@ -35,7 +37,8 @@ import java.util.zip.DataFormatException;
  * floating-point decoder ({@link JxlDecoder#decodeFloat}), the JPEG XL preview, gain map, box, reduced-size and
  * seek entry points ({@link JxlDecoder#decodePreview}, {@link JxlDecoder#decodeGainMap},
  * {@link JxlDecoder#readBoxes}), the JPEG XL to JPEG reconstruction ({@link JxlDecoder#reconstructJpeg}), and
- * the general-purpose decoders of the TIFF compressions: Zstandard (whose output is also encoded and decoded
+ * the JPEG parser of the lossless JPEG recompression ({@link JxlEncoder#recompressJpeg}), whose output must rebuild
+ * the input byte for byte, and the general-purpose decoders of the TIFF compressions: Zstandard (whose output is also encoded and decoded
  * back), XZ, LERC and JBIG.
  */
 class ImageFuzzTest {
@@ -172,6 +175,22 @@ class ImageFuzzTest {
                     run.step("decode the JPEG", () -> Images.decode(MediaSource.of(jpeg), options));
                 });
     }
+
+    @FuzzTest
+    void jxlRecompress(byte[] data) {
+        var run = Fuzz.start("jxlRecompress");
+        run.value("recompress", () -> JxlEncoder.recompressJpeg(MediaSource.of(data), JxlEncoderOptions.defaults(),
+                Fuzz.LIMITS)).ifPresent(jxl -> {
+            run.output();
+            var options = ImageDecoderOptions.builder().limits(Fuzz.LIMITS).build();
+            var rebuilt = run.value("reconstruct", () -> JxlDecoder.reconstructJpeg(MediaSource.of(jxl), options)
+                    .orElseThrow());
+            if (rebuilt.isEmpty() || !java.util.Arrays.equals(rebuilt.get(), data)) {
+                throw new AssertionError("a recompressed JPEG did not rebuild byte for byte");
+            }
+        });
+    }
+
     /** The largest output of the general-purpose decoder targets. */
     private static final int MAX_OUTPUT = 1 << 20;
 

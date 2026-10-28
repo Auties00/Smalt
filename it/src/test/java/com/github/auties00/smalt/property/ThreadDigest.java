@@ -24,6 +24,7 @@ import com.github.auties00.smalt.image.jp2.Jp2Encoder;
 import com.github.auties00.smalt.image.jp2.Jp2EncoderOptions;
 import com.github.auties00.smalt.image.jpeg.JpegEncoder;
 import com.github.auties00.smalt.image.jpeg.JpegEncoderOptions;
+import com.github.auties00.smalt.image.jxl.JxlEncoder;
 import com.github.auties00.smalt.image.ops.ImageOps;
 import com.github.auties00.smalt.image.ops.ResizeFilter;
 import com.github.auties00.smalt.image.webp.WebpEncoder;
@@ -71,7 +72,7 @@ public final class ThreadDigest {
         var digests = new LinkedHashMap<String, String>();
         var picture = picture(1024, 768);
         for (var format : new ImageFormat[]{ImageFormat.JPEG, ImageFormat.PNG, ImageFormat.WEBP, ImageFormat.JP2,
-                ImageFormat.AVIF, ImageFormat.TIFF, ImageFormat.GIF}) {
+                ImageFormat.AVIF, ImageFormat.TIFF, ImageFormat.GIF, ImageFormat.JXL}) {
             for (var lossless : new boolean[]{false, true}) {
                 var options = lossless ? ImageEncoderOptions.lossless() : ImageEncoderOptions.ofQuality(80);
                 byte[] encoded;
@@ -89,6 +90,8 @@ public final class ThreadDigest {
                 digests.put(name + "-reduced", sha256(ImageOps.toRgba(reduced).pixels()));
             }
         }
+        var jpeg = JpegEncoder.encode(picture, JpegEncoderOptions.ofProgressive(80));
+        digests.put("jxl-recompress-encode", sha256(JxlEncoder.recompressJpeg(MediaSource.of(jpeg))));
         for (var lossless : new boolean[]{false, true}) {
             var options = (lossless ? Jp2EncoderOptions.lossless() : Jp2EncoderOptions.lossy(12)).toBuilder()
                     .highThroughput(true).build();

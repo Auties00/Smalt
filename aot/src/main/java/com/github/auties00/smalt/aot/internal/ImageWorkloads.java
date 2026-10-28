@@ -64,6 +64,10 @@ import com.github.auties00.smalt.image.jpeg.JpegTransforms;
 import com.github.auties00.smalt.image.jpeg.MjpegDecoder;
 import com.github.auties00.smalt.image.jpeg.MjpegEncoder;
 import com.github.auties00.smalt.image.jpeg.MjpegEncoderOptions;
+import com.github.auties00.smalt.image.jxl.JxlAnimationEncoder;
+import com.github.auties00.smalt.image.jxl.JxlDecoder;
+import com.github.auties00.smalt.image.jxl.JxlEncoder;
+import com.github.auties00.smalt.image.jxl.JxlEncoderOptions;
 import com.github.auties00.smalt.image.metadata.ImageMetadata;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEdit;
 import com.github.auties00.smalt.image.metadata.ImageMetadataEditor;
@@ -147,7 +151,6 @@ final class ImageWorkloads {
      * @return the factories, in order
      */
     static List<WorkloadFactory> factories() {
-        // TODO: train the JPEG XL decoder, which needs a file that no Smalt encoder produces
         return List.of(
                 realtime("vp8-encode-rt-s6-t1", () -> vp8Encode(1, 6)),
                 realtime("vp8-encode-rt-s6-t2", () -> vp8Encode(2, 6)),
@@ -189,6 +192,8 @@ final class ImageWorkloads {
                 file("webp-encode", ImageWorkloads::webpEncode),
                 file("webp-decode", ImageWorkloads::webpDecode),
                 file("webp-animation-c2", () -> webpAnimation(2, 4)),
+                file("jxl-encode", ImageWorkloads::jxlEncode),
+                file("jxl-decode", ImageWorkloads::jxlDecode),
                 file("tiff", ImageWorkloads::tiff),
                 file("image-region-decode", ImageWorkloads::regionDecode),
                 file("jpeg2000", ImageWorkloads::jpeg2000),
@@ -850,6 +855,67 @@ final class ImageWorkloads {
                 }
             }
             Blackhole.consume(WebpEncoder.encode(photo, lossy).length);
+        });
+    }
+
+    /**
+     * Returns a workload that encodes 256x256 pictures with alpha as JPEG XL: lossless at the fast, the
+     * fixed-tree and the learned-tree efforts, lossy at two distances and efforts, and a JPEG file
+     * recompressed losslessly.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jxlEncode() {
+        var frames = SyntheticImages.alphaFrames(256, 2);
+        var modes = List.of(
+                JxlEncoderOptions.lossless().toBuilder().effort(1).build(),
+                JxlEncoderOptions.lossless().toBuilder().effort(3).build(),
+                JxlEncoderOptions.lossless(),
+                JxlEncoderOptions.ofDistance(1.0f).toBuilder().effort(4).build(),
+                JxlEncoderOptions.ofDistance(2.5f));
+        var jpeg = JpegEncoder.encode(SyntheticVideo.natural(512, 384, 1).getFirst(), JpegEncoderOptions.defaults());
+        return TrainingWorkload.of("jxl-encode", () -> {
+            for (var frame : frames) {
+                for (var mode : modes) {
+                    Blackhole.consume(JxlEncoder.encode(frame, mode).length);
+                }
+            }
+            Blackhole.consume(JxlEncoder.recompressJpeg(MediaSource.of(jpeg)).length);
+        });
+    }
+
+    /**
+     * Returns a workload that decodes the encoder's own JPEG XL output: lossless and lossy still images
+     * with alpha, every frame of an animation, and the JPEG file a recompressed JPEG rebuilds.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload jxlDecode() {
+        var images = new ArrayList<byte[]>();
+        var frames = SyntheticImages.alphaFrames(256, 2);
+        for (var frame : frames) {
+            images.add(JxlEncoder.encode(frame, JxlEncoderOptions.lossless()));
+            images.add(JxlEncoder.encode(frame, JxlEncoderOptions.defaults()));
+        }
+        var encoder = new JxlAnimationEncoder(256, 256, JxlEncoderOptions.ofDistance(2.0f));
+        for (var frame : frames) {
+            encoder.addFrame(frame, Duration.ofMillis(40));
+        }
+        var animation = encoder.finish();
+        var jpeg = JpegEncoder.encode(SyntheticVideo.natural(512, 384, 1).getFirst(), JpegEncoderOptions.defaults());
+        var recompressed = JxlEncoder.recompressJpeg(MediaSource.of(jpeg));
+        return TrainingWorkload.of("jxl-decode", () -> {
+            for (var image : images) {
+                Blackhole.consume(JxlDecoder.decode(MediaSource.of(image), ImageDecoderOptions.defaults()).hashCode());
+            }
+            try (var reader = JxlDecoder.openAnimation(MediaSource.of(animation), ImageDecoderOptions.defaults())) {
+                for (var frame = reader.read(); frame != null; frame = reader.read()) {
+                    Blackhole.consume(((RgbaPicture) frame.picture()).pixels()[4099]);
+                }
+            }
+            Blackhole.consume(JxlDecoder.reconstructJpeg(MediaSource.of(recompressed)).orElseThrow().length);
+            Blackhole.consume(JxlDecoder.decode(MediaSource.of(recompressed), ImageDecoderOptions.defaults())
+                    .hashCode());
         });
     }
 

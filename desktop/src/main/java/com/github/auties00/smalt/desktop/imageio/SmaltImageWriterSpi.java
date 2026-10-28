@@ -26,7 +26,7 @@ import java.util.Objects;
  */
 public abstract sealed class SmaltImageWriterSpi extends ImageWriterSpi
         permits WebpImageWriterSpi, AvifImageWriterSpi, HeicImageWriterSpi, ApngImageWriterSpi, GifImageWriterSpi,
-        IcoImageWriterSpi, Jp2ImageWriterSpi, TiffImageWriterSpi, BmpImageWriterSpi {
+        IcoImageWriterSpi, Jp2ImageWriterSpi, TiffImageWriterSpi, BmpImageWriterSpi, JxlImageWriterSpi {
     /**
      * The format written.
      */
