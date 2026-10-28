@@ -1,6 +1,7 @@
 /* Ports minimp3 (minimp3.h). By lieff; CC0 1.0. Modified for Smalt. */
 package com.github.auties00.smalt.audio.mp3;
 
+import com.github.auties00.smalt.internal.simd.Simd;
 import jdk.incubator.vector.FloatVector;
 import jdk.incubator.vector.VectorOperators;
 import jdk.incubator.vector.VectorSpecies;
@@ -40,11 +41,6 @@ final class VectorSynthesisKernel implements SynthesisKernel {
 
 
     /**
-     * Whether the platform's preferred vectors are wide enough for the eight-lane window path.
-     */
-    private static final boolean PREFER_WIDE = FloatVector.SPECIES_PREFERRED.vectorBitSize() >= 256;
-
-    /**
      * Holds, for each of the seven output-position pairs {@code (13 - 2p, 14 - 2p)} and each of
      * the eight window steps, the coefficient {@code w0} broadcast over the four lanes of each
      * position followed by {@code w1} likewise: 16 floats per step.
@@ -52,7 +48,8 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private static final float[] PAIR_WEIGHTS = pairWeights();
 
     /**
-     * Whether this instance runs the eight-lane window path.
+     * Whether this instance runs the eight-lane window path, which it does only where
+     * {@link Simd#WIDE} holds.
      */
     private final boolean wide;
 
@@ -93,7 +90,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
      * @return the kernel
      */
     static SynthesisKernel create() {
-        return new VectorSynthesisKernel(PREFER_WIDE);
+        return new VectorSynthesisKernel(true);
     }
 
     /**
@@ -228,7 +225,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     public void imdct36(float[] grbuf, int base, float[] overlap, int ovl, float[] window, int bands) {
         var tw = Mp3Tables.TWIDDLE_36;
         var done = 0;
-        if (wide) {
+        if (Simd.WIDE && wide) {
             var lanes = laneRows;
             for (; done + 8 <= bands; done += 8, base += 8 * 18, ovl += 8 * 9) {
                 for (var l = 0; l < 8; l++) {
@@ -594,7 +591,7 @@ final class VectorSynthesisKernel implements SynthesisKernel {
         ScalarSynthesisKernel.pair(outRight, outOffset + 32, lins, linsOffset + 4 * 15 + 64 + 1);
         ScalarSynthesisKernel.pair(outLeft, outOffset, lins, linsOffset + 4 * 15);
         ScalarSynthesisKernel.pair(outLeft, outOffset + 32, lins, linsOffset + 4 * 15 + 64);
-        if (wide) {
+        if (Simd.WIDE && wide) {
             windowWide(grbuf, left, right, outLeft, outRight, outOffset, lins, z);
             return;
         }
@@ -667,50 +664,50 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private static void accumulateNarrow(float[] lins, int zi, float[] w, int wi, float[] r) {
         var w0 = FloatVector.broadcast(SPECIES, w[wi]);
         var w1 = FloatVector.broadcast(SPECIES, w[wi + 1]);
-        var vz = FloatVector.fromArray(SPECIES, lins, zi);
-        var vy = FloatVector.fromArray(SPECIES, lins, zi - 15 * 64);
+        var vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi));
+        var vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 15 * 64));
         var b = vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0));
         var a = vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 2]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 3]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 64);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 896);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 64));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 896));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 4]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 5]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 128);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 832);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 128));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 832));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 6]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 7]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 192);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 768);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 192));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 768));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 8]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 9]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 256);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 704);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 256));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 704));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 10]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 11]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 320);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 640);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 320));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 640));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 12]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 13]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 384);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 576);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 384));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 576));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.broadcast(SPECIES, w[wi + 14]);
         w1 = FloatVector.broadcast(SPECIES, w[wi + 15]);
-        vz = FloatVector.fromArray(SPECIES, lins, zi - 448);
-        vy = FloatVector.fromArray(SPECIES, lins, zi - 512);
+        vz = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 448));
+        vy = FLOAT_VECTOR.cast(FloatVector.fromArray(SPECIES, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         var scale = FloatVector.broadcast(SPECIES, ScalarSynthesisKernel.OUTPUT_SCALE);
@@ -735,50 +732,50 @@ final class VectorSynthesisKernel implements SynthesisKernel {
     private static void accumulateWide(float[] lins, int zi, float[] pw, int wb, float[] r) {
         var w0 = FloatVector.fromArray(WIDE, pw, wb);
         var w1 = FloatVector.fromArray(WIDE, pw, wb + 8);
-        var vz = FloatVector.fromArray(WIDE, lins, zi);
-        var vy = FloatVector.fromArray(WIDE, lins, zi - 15 * 64);
+        var vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi));
+        var vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 15 * 64));
         var b = vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0));
         var a = vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 16);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 24);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 64);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 896);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 64));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 896));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 32);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 40);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 128);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 832);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 128));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 832));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 48);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 56);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 192);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 768);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 192));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 768));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 64);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 72);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 256);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 704);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 256));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 704));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 80);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 88);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 320);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 640);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 320));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 640));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 96);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 104);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 384);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 576);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 384));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 576));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w0).lanewise(VectorOperators.SUB, vy.lanewise(VectorOperators.MUL, w1)));
         w0 = FloatVector.fromArray(WIDE, pw, wb + 112);
         w1 = FloatVector.fromArray(WIDE, pw, wb + 120);
-        vz = FloatVector.fromArray(WIDE, lins, zi - 448);
-        vy = FloatVector.fromArray(WIDE, lins, zi - 512);
+        vz = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 448));
+        vy = WIDE_VECTOR.cast(FloatVector.fromArray(WIDE, lins, zi - 512));
         b = b.lanewise(VectorOperators.ADD, vz.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w0)));
         a = a.lanewise(VectorOperators.ADD, vy.lanewise(VectorOperators.MUL, w1).lanewise(VectorOperators.SUB, vz.lanewise(VectorOperators.MUL, w0)));
         var scale = FloatVector.broadcast(WIDE, ScalarSynthesisKernel.OUTPUT_SCALE);

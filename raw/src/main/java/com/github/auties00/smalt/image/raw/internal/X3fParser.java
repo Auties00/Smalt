@@ -1,9 +1,11 @@
-/* Ports X3F tools (x3f_process.c: get_black_level, x3f_get_gain, x3f_get_bmt_to_xyz, get_conv; x3f_image.c:
-   x3f_transform_rect_to_keep_image; x3f_meta.c: x3f_get_max_raw, x3f_get_wb, x3f_get_camf_matrix_for_wb) at
-   commit e8b48ca. Copyright 2015 Roland and Erik Karlsson; BSD 3-Clause License. Modified for Smalt. */
+/* Ports X3F tools (x3f_process.c: get_black_level, x3f_get_gain, x3f_get_bmt_to_xyz, get_conv, preprocess_data;
+   x3f_image.c: x3f_transform_rect_to_keep_image; x3f_meta.c: x3f_get_max_raw, x3f_get_wb, x3f_get_camf_matrix_for_wb;
+   x3f_io.c: x3f_load_true, x3f_load_huffman, x3f_get_raw) at commit e8b48ca. Copyright 2015 Roland and Erik
+   Karlsson; BSD 3-Clause License. Modified for Smalt. */
 package com.github.auties00.smalt.image.raw.internal;
 
 import com.github.auties00.smalt.MediaException;
+import com.github.auties00.smalt.MediaLimits;
 import com.github.auties00.smalt.internal.io.ByteArrays;
 import com.github.auties00.smalt.internal.io.SourceBytes;
 import com.github.auties00.smalt.internal.limits.LimitChecks;
@@ -26,26 +28,34 @@ import java.util.Map;
  * four bytes give the offset of the directory: {@code "SECd"}, a version, the entry count and, per
  * entry, the offset, length and type of a section. A section starts with its own identifier:
  * {@code "SECp"} a property list of UTF-16 name and value pairs, {@code "SECi"} an image (a 28-byte
- * header of type, format, columns, rows and row size; type 2 is a preview, format 18 a JPEG stream),
- * {@code "SECc"} the camera metadata block ({@link X3fCamf}).
+ * header of type, format, columns, rows and row size; type 2 is a preview: format 18, and on
+ * Quattro cameras format 25, a JPEG stream, format 3 rows of 8-bit RGB pixels, format 11 Huffman
+ * coded RGB pixels), {@code "SECc"} the camera metadata block ({@link X3fCamf}).
  *
- * <p>The sensor image is three full-resolution layers per photosite, bottom, middle and top, read
- * as linear raw data of three samples per pixel ({@link X3fDecoder} gives the codings). The
- * metadata block's {@code ActiveImageArea} (inside {@code KeepImageArea}, which the decoded image
- * covers) is the rendered area. The black level is the mean of the dark shield rows
- * ({@code DarkShieldTop} and {@code DarkShieldBottom}), or of the two column ranges of
- * {@code DarkShieldColRange} when the block has no shield row, measured when the image is read. The
- * white level is {@code 2^ImageDepth - 1}, or {@code RawSaturationLevel} for a TRUE engine camera
- * (one whose block has white balance gains and color corrections), or {@code SaturationLevel}.
+ * <p>The sensor image is three layers per photosite, bottom, middle and top, read as linear raw
+ * data of three samples per pixel ({@link X3fDecoder} gives the codings). A Quattro sensor's
+ * bottom and middle layers have half the top layer's columns and rows; they are brought to the top
+ * layer's resolution ({@link X3fQuattro}). The metadata block's {@code ActiveImageArea} (inside
+ * {@code KeepImageArea}, which the decoded image covers) is the rendered area. The black level is
+ * the mean of the dark shield rows ({@code DarkShieldTop} and {@code DarkShieldBottom}, the latter
+ * ignored on the DP2 and the sd Quattro H, whose firmware misplaces it), or of the two column ranges
+ * of {@code DarkShieldColRange} when the block has no shield row, measured when the image is read;
+ * a Quattro top layer is measured at its own resolution. The white level is
+ * {@code 2^ImageDepth - 1}, or {@code RawSaturationLevel} for a TRUE engine camera (one whose block
+ * has white balance gains and color corrections), or {@code SaturationLevel}.
  *
- * <p>The as-shot white balance names entries of the metadata block's lists: a TRUE engine camera's
- * {@code WhiteBalanceGains} and {@code WhiteBalanceColorCorrections} give the channel gains and the
- * matrix from balanced values to linear sRGB; an older camera's {@code WhiteBalanceIlluminants} and
+ * <p>The as-shot white balance names entries of the metadata block's lists; its name is the one the
+ * block's {@code WhiteBalance} code gives, else the header's, else the property list's
+ * {@code WB_DESC}. A TRUE engine camera's {@code WhiteBalanceGains} and
+ * {@code WhiteBalanceColorCorrections} give the channel gains and the matrix from balanced values
+ * to linear sRGB; an older camera's {@code WhiteBalanceIlluminants} and
  * {@code WhiteBalanceCorrections} give a camera to XYZ matrix whose response to D65 is the neutral.
  * The gains are multiplied by {@code SensorAdjustmentGainFact}, {@code TempGainFact} and
  * {@code FNumberGainFact} when present, and the exposure is raised by the ratio of
  * {@code CaptureISO} to {@code SensorISO}. The camera, the shot and the orientation come from the
- * EXIF segment of the largest JPEG preview, then from the property list.
+ * EXIF segment of the largest JPEG preview, then from the property list. The bad pixels and the
+ * lens shading of {@link X3fCorrections} are applied when the decoder applies the file's
+ * corrections.
  *
  * @implNote This implementation follows Sigma's published FOVb format specification 1.2 for the
  * container, the property list and the previews, and ports the X3F tools library (BSD 3-Clause,
@@ -57,10 +67,7 @@ import java.util.Map;
  * that library, this implementation leaves the column ranges out of the black level when shield
  * rows exist: on the Merrill samples the right column range reads about twice the level of the
  * other shields, and the black of the shield rows is the one that reproduces the balance of the
- * camera's own JPEG preview. Lens shading tables and bad pixel lists are not applied, and the
- * codings no CC0 sample shows (the uncompressed and Polaroid x530 variants of the older coding) and
- * the Quattro layouts (whose top layer has four times the photosites of the others) raise
- * {@link MediaException.Unsupported}.
+ * camera's own JPEG preview.
  */
 final class X3fParser {
     /**
@@ -89,6 +96,21 @@ final class X3fParser {
     private static final int JPEG = 0x00020012;
 
     /**
+     * The image type and format of a Quattro camera's JPEG thumbnail.
+     */
+    private static final int QUATTRO_JPEG = 0x00020019;
+
+    /**
+     * The image type and format of an uncompressed RGB thumbnail.
+     */
+    private static final int PIXMAP = 0x00020003;
+
+    /**
+     * The image type and format of a Huffman coded RGB thumbnail.
+     */
+    private static final int HUFFMAN_PIXMAP = 0x0002000B;
+
+    /**
      * The image type and format of the TRUE coding of DP and SD14 to SD15 era cameras.
      */
     private static final int TRUE = 0x0003001E;
@@ -99,19 +121,29 @@ final class X3fParser {
     private static final int MERRILL = 0x0001001E;
 
     /**
+     * The image type and format of the TRUE coding of the dp Quattro cameras.
+     */
+    private static final int QUATTRO = 0x00010023;
+
+    /**
+     * The image type and format of the TRUE coding of the sd Quattro.
+     */
+    private static final int SD_QUATTRO = 0x00010025;
+
+    /**
+     * The image type and format of the TRUE coding of the sd Quattro H.
+     */
+    private static final int SD_QUATTRO_H = 0x00010027;
+
+    /**
      * The image type and format of the older Huffman coding.
      */
     private static final int HUFFMAN = 0x00030006;
 
     /**
-     * The image type and format of the Polaroid x530's Huffman coding.
+     * The image type and format of the Polaroid x530's older Huffman coding.
      */
     private static final int X530 = 0x00030005;
-
-    /**
-     * The image type of the Quattro layouts.
-     */
-    private static final int QUATTRO_TYPE = 1;
 
     /**
      * The most directory entries read.
@@ -134,6 +166,17 @@ final class X3fParser {
     private static final int LAYOUT_BYTES = 4096;
 
     /**
+     * The focal length assumed for the lens shading when the file gives none, in millimeters.
+     */
+    private static final double DEFAULT_FOCAL_LENGTH = 30;
+
+    /**
+     * The white balance setting names of the metadata block's {@code WhiteBalance} codes, from 1.
+     */
+    private static final String[] BALANCES = {"Auto", "Sunlight", "Shadow", "Overcast", "Incandescent", "Florescent",
+            "Flash", "Custom", null, null, "ColorTemp", "AutoLSP"};
+
+    /**
      * The D65 white, in XYZ.
      */
     private static final double[] D65_XYZ = {0.95047, 1.0, 1.08883};
@@ -142,6 +185,31 @@ final class X3fParser {
      * The capture time format of EXIF.
      */
     private static final DateTimeFormatter EXIF_TIME = DateTimeFormatter.ofPattern("yyyy:MM:dd HH:mm:ss");
+
+    /**
+     * The codings of the raw image.
+     */
+    private enum Coding {
+        /**
+         * The TRUE coding, all layers at the image size.
+         */
+        TRUE,
+
+        /**
+         * The TRUE coding of a Quattro sensor, the lower layers at half the top layer's size.
+         */
+        QUATTRO,
+
+        /**
+         * The older Huffman coding.
+         */
+        HUFFMAN,
+
+        /**
+         * The older coding stored without Huffman codes.
+         */
+        UNCOMPRESSED
+    }
 
     /**
      * A section of the directory.
@@ -234,12 +302,15 @@ final class X3fParser {
                 camf = section;
             } else if (identifier == SECI && section.header.length == 28) {
                 var typeFormat = section.typeFormat();
-                if (typeFormat == JPEG) {
+                if (typeFormat == JPEG || typeFormat == QUATTRO_JPEG) {
+                    var previews = file.previews.size();
                     TiffTree.addPreview(file, reader, offset + 28, length - 28);
-                    if (largest == null || section.field(16) * section.field(20)
-                            > largest.field(16) * largest.field(20)) {
+                    if (file.previews.size() > previews && (largest == null
+                            || section.field(16) * section.field(20) > largest.field(16) * largest.field(20))) {
                         largest = section;
                     }
+                } else if (typeFormat == PIXMAP || typeFormat == HUFFMAN_PIXMAP) {
+                    pixmap(file, section);
                 } else if (typeFormat >>> 16 != 2 && raw == null) {
                     raw = section;
                 }
@@ -259,11 +330,83 @@ final class X3fParser {
         if (raw == null) {
             return;
         }
-        var balance = version >= 0x20001 && version < 0x40000 ? string(head, 40, 32) : null;
+        var balance = metadata != null ? balance(metadata) : null;
+        if (balance == null) {
+            balance = version >= 0x20001 && version < 0x40000 ? string(head, 40, 32) : null;
+        }
         if (balance == null || balance.isEmpty()) {
             balance = properties.getOrDefault("WB_DESC", "Auto");
         }
-        sensor(file, reader, raw, metadata, properties.get("CAMMODEL"), balance);
+        var focalLength = number(properties.get("FLENGTH"));
+        if (focalLength == 0) {
+            focalLength = file.focalLength > 0 ? file.focalLength : DEFAULT_FOCAL_LENGTH;
+        }
+        sensor(file, reader, raw, metadata, properties.get("CAMMODEL"), balance, focalLength);
+    }
+
+    /**
+     * Returns the name of the white balance setting the metadata block's {@code WhiteBalance} code
+     * gives, as Quattro cameras record it.
+     *
+     * @param camf the metadata block
+     * @return the name, {@code "Auto"} for an unknown code, or {@code null} when the block has no
+     * code
+     */
+    private static String balance(X3fCamf camf) {
+        var code = X3fCorrections.unsigned(camf, "WhiteBalance", 1);
+        if (code == null) {
+            return null;
+        }
+        var index = (long) code[0] - 1;
+        return index >= 0 && index < BALANCES.length && BALANCES[(int) index] != null ? BALANCES[(int) index] : "Auto";
+    }
+
+    /**
+     * Records an RGB thumbnail as a preview when its header describes rows that fit its section.
+     *
+     * @param file the description to fill
+     * @param section the thumbnail's section
+     */
+    private static void pixmap(RawFile file, Section section) {
+        var width = section.field(16);
+        var height = section.field(20);
+        var rowSize = section.field(24);
+        var length = section.length - 28;
+        if (width <= 0 || height <= 0 || width * height > Integer.MAX_VALUE / 4) {
+            return;
+        }
+        var columns = (int) width;
+        var rows = (int) height;
+        var source = file.source;
+        var offset = section.offset;
+        RawFile.Pixels pixels;
+        if (section.typeFormat() == PIXMAP) {
+            if (rowSize < 3 * width || (height - 1) * rowSize + 3 * width > length) {
+                return;
+            }
+            pixels = limits -> {
+                var size = (long) (rows - 1) * rowSize + 3L * columns;
+                LimitChecks.checkAllocation(limits, size + 3L * columns * rows);
+                var body = new byte[(int) size];
+                read(source, offset + 28, body);
+                var rgb = new byte[3 * columns * rows];
+                for (var row = 0; row < rows; row++) {
+                    System.arraycopy(body, (int) (row * rowSize), rgb, 3 * columns * row, 3 * columns);
+                }
+                return rgb;
+            };
+        } else {
+            if (rowSize != 0 || length < 1024 + 4 * height || section.length > Integer.MAX_VALUE - 16) {
+                return;
+            }
+            pixels = limits -> {
+                LimitChecks.checkAllocation(limits, section.length + 3L * columns * rows);
+                var body = new byte[(int) section.length];
+                read(source, offset, body);
+                return X3fDecoder.decodeThumbnail(body, columns, rows);
+            };
+        }
+        file.previews.add(new RawFile.Preview(offset + 28, length, columns, rows, pixels));
     }
 
     /**
@@ -408,29 +551,19 @@ final class X3fParser {
      * @param camf the metadata block, or {@code null}
      * @param model the camera model of the property list, or {@code null}
      * @param balance the name of the as-shot white balance setting
+     * @param focalLength the focal length of the shot in millimeters
+     * @throws MediaException.Malformed if the raw image header is corrupt
      */
     private static void sensor(RawFile file, TiffReader reader, Section raw, X3fCamf camf, String model,
-                               String balance) {
+                               String balance, double focalLength) {
         var typeFormat = raw.typeFormat();
-        boolean huffman;
+        Coding coding;
         switch (typeFormat) {
-            case TRUE, MERRILL -> huffman = false;
-            case HUFFMAN -> {
-                if (raw.field(24) != 0) {
-                    // TODO: decode the uncompressed variant of the older coding once a CC0 sample shows it
-                    file.unsupported = "uncompressed X3F raw data is not supported";
-                    return;
-                }
-                huffman = true;
-            }
-            case X530 -> {
-                file.unsupported = "Polaroid x530 X3F raw data is not supported";
-                return;
-            }
+            case TRUE, MERRILL -> coding = Coding.TRUE;
+            case QUATTRO, SD_QUATTRO, SD_QUATTRO_H -> coding = Coding.QUATTRO;
+            case HUFFMAN, X530 -> coding = raw.field(24) != 0 ? Coding.UNCOMPRESSED : Coding.HUFFMAN;
             default -> {
-                file.unsupported = typeFormat >>> 16 == QUATTRO_TYPE
-                        ? "Sigma Quattro X3F raw data, whose layers differ in resolution, is not supported"
-                        : "X3F raw image type " + (typeFormat >>> 16) + " format " + (typeFormat & 0xFFFF)
+                file.unsupported = "X3F raw image type " + (typeFormat >>> 16) + " format " + (typeFormat & 0xFFFF)
                         + " is not supported";
                 return;
             }
@@ -440,44 +573,166 @@ final class X3fParser {
         if (width <= 0 || height <= 0) {
             throw new MediaException.Malformed("X3F raw image of " + width + "x" + height);
         }
-        LimitChecks.checkPicture(file.limits, width, height);
         X3fDecoder.TrueLayout layout = null;
-        if (!huffman) {
-            layout = X3fDecoder.trueLayout(reader.bytes(raw.offset, Math.min(raw.length, LAYOUT_BYTES)), raw.length);
-        } else if (raw.length < 28 + 2 * 1024 + 4 * 1024 + 4L * height) {
-            throw new MediaException.Malformed("X3F raw section of " + raw.length + " bytes");
+        var layered = false;
+        var rowSize = raw.field(24);
+        switch (coding) {
+            case TRUE, QUATTRO -> {
+                layout = X3fDecoder.trueLayout(reader.bytes(raw.offset, Math.min(raw.length, LAYOUT_BYTES)),
+                        raw.length, coding == Coding.QUATTRO, width, height);
+                var columns = layout.columns();
+                var rows = layout.rows();
+                if (coding == Coding.QUATTRO && rows[0] == height / 2) {
+                    layered = true;
+                    if (rows[1] != rows[0] || columns[1] < columns[0] || rows[2] < 2 * rows[0]
+                            || columns[2] < 2 * columns[0] || columns[0] == 0 || rows[0] == 0) {
+                        throw new MediaException.Malformed("X3F Quattro layers of " + columns[0] + "x" + rows[0] + ", "
+                                + columns[1] + "x" + rows[1] + " and " + columns[2] + "x" + rows[2]);
+                    }
+                    width = 2 * columns[0];
+                    height = 2 * rows[0];
+                } else {
+                    for (var layer = 0; layer < 3; layer++) {
+                        if (rows[layer] != height || columns[layer] < width) {
+                            throw new MediaException.Malformed("X3F layer of " + columns[layer] + "x" + rows[layer]
+                                    + " in an image of " + width + "x" + height);
+                        }
+                    }
+                }
+            }
+            case HUFFMAN -> {
+                if (raw.length < 28 + 2 * 1024 + 4 * 1024 + 4L * height) {
+                    throw new MediaException.Malformed("X3F raw section of " + raw.length + " bytes");
+                }
+            }
+            case UNCOMPRESSED -> {
+                if (rowSize < 4L * width || 28 + 2 * 1024 + (height - 1) * rowSize + 4L * width > raw.length) {
+                    throw new MediaException.Malformed("X3F raw section of " + raw.length + " bytes for rows of "
+                            + rowSize + " bytes");
+                }
+            }
         }
+        LimitChecks.checkPicture(file.limits, width, height);
         var sensor = new Sensor();
         sensor.width = width;
         sensor.height = height;
         sensor.samplesPerPixel = 3;
-        sensor.compression = huffman ? "Sigma Huffman" : "Sigma TRUE";
+        sensor.compression = switch (coding) {
+            case TRUE, QUATTRO -> "Sigma TRUE";
+            case HUFFMAN -> "Sigma Huffman";
+            case UNCOMPRESSED -> "uncompressed";
+        };
         var depth = camf != null ? camf.numbers("ImageDepth", 1) : null;
         sensor.bitsPerSample = depth != null && depth[0] >= 8 && depth[0] <= 16 ? (int) depth[0] : 12;
-        var bias = huffman ? X3fDecoder.HUFFMAN_BIAS : 0;
+        var bias = coding == Coding.HUFFMAN ? X3fDecoder.HUFFMAN_BIAS : 0;
         sensor.white = white(camf, sensor.bitsPerSample, depth != null, bias);
         var keep = keep(camf, width, height);
-        var active = camf != null ? rectangle(camf.numbers("ActiveImageArea", 4), keep, width, height) : null;
+        var active = camf != null ? rectangle(camf.numbers("ActiveImageArea", 4), keep, width, height, !layered)
+                : null;
         if (active != null) {
             sensor.activeArea = new int[]{active[1], active[0], active[3] + 1, active[2] + 1};
         }
-        var shields = shields(camf, keep, width, height, "SIGMA DP2".equals(model));
-        // TODO: apply the metadata block's lens shading tables (SpatialGain) and bad pixel lists
-        color(file, sensor, camf, balance);
-        var source = reader.source();
-        var finalLayout = layout;
-        sensor.reader = (plane, limits) -> {
+        var skipBottom = "SIGMA DP2".equals(model) || X3fCorrections.cameraId(camf) == X3fCorrections.SD_QUATTRO_H;
+        int[][] shields;
+        int[][] topShields = null;
+        if (layered) {
+            shields = shields(camf, keep, layout.columns()[0], layout.rows()[0], skipBottom, true);
+            topShields = shields(camf, keep, layout.columns()[2], layout.rows()[2], skipBottom, false);
+        } else {
+            shields = shields(camf, keep, width, height, skipBottom, true);
+        }
+        var gain = color(file, sensor, camf, balance);
+        if (camf != null) {
+            sensor.opcodes2 = X3fCorrections.gainMap(X3fCorrections.spatialGain(camf, balance, focalLength), width,
+                    height, sensor.active());
+        }
+        sensor.reader = new LayerReader(reader.source(), raw, coding, layout, layered, width, height, rowSize, bias,
+                shields, topShields, gain != null ? gain : new double[]{1, 1, 1}, camf, sensor);
+        file.sensor = sensor;
+    }
+
+    /**
+     * Reads the layers of the raw image section, measures their black levels and, when asked,
+     * fixes the bad pixels.
+     *
+     * @param source the file
+     * @param raw the raw image section
+     * @param coding the coding of the section
+     * @param layout the layout of a TRUE section, or {@code null}
+     * @param layered whether the section holds Quattro layers of different sizes
+     * @param width the image width
+     * @param height the image height
+     * @param rowSize the row size of an uncompressed section
+     * @param bias the value added to every stored sample
+     * @param shields the dark shield areas of the image, or of the lower layers of a layered section
+     * @param topShields the dark shield areas of the top layer of a layered section, or {@code null}
+     * @param gain the white balance gain of each layer
+     * @param camf the metadata block, or {@code null}
+     * @param sensor the sensor whose black levels are set
+     */
+    private record LayerReader(MediaSource source, Section raw, Coding coding, X3fDecoder.TrueLayout layout,
+                               boolean layered, int width, int height, long rowSize, int bias, int[][] shields,
+                               int[][] topShields, double[] gain, X3fCamf camf,
+                               Sensor sensor) implements Sensor.Reader {
+        @Override
+        public void read(SensorPlane plane, MediaLimits limits) {
+            read(plane, limits, false);
+        }
+
+        @Override
+        public void read(SensorPlane plane, MediaLimits limits, boolean corrections) {
             LimitChecks.checkAllocation(limits, raw.length);
             var body = new byte[(int) Math.min(raw.length, Integer.MAX_VALUE - 16)];
-            read(source, raw.offset, body);
-            if (huffman) {
-                X3fDecoder.decodeHuffman(body, width, height, plane.integers);
-            } else {
-                X3fDecoder.decodeTrue(body, finalLayout, width, height, plane.integers);
+            X3fParser.read(source, raw.offset, body);
+            if (layered) {
+                quattro(body, plane, limits, corrections);
+                return;
             }
-            sensor.black = black(plane.integers, width, shields, bias);
-        };
-        file.sensor = sensor;
+            switch (coding) {
+                case HUFFMAN -> X3fDecoder.decodeHuffman(body, width, height, plane.integers);
+                case UNCOMPRESSED -> X3fDecoder.decodeUncompressed(body, width, height, rowSize, plane.integers);
+                default -> X3fDecoder.decodeTrue(body, layout, width, height, plane.integers);
+            }
+            sensor.black = black(plane.integers, width, 3, 3, shields, bias);
+            if (corrections && camf != null) {
+                X3fCorrections.fixBadPixels(camf, plane.integers, width, height, 3, 3);
+            }
+        }
+
+        /**
+         * Decodes Quattro layers of different sizes and expands them to the top layer's
+         * resolution.
+         *
+         * @param body the section
+         * @param plane the plane to fill
+         * @param limits the resource bounds
+         * @param corrections whether the bad pixels are fixed
+         */
+        private void quattro(byte[] body, SensorPlane plane, MediaLimits limits, boolean corrections) {
+            var lowWidth = layout.columns()[0];
+            var lowHeight = layout.rows()[0];
+            var topWidth = layout.columns()[2];
+            var topHeight = layout.rows()[2];
+            LimitChecks.checkAllocation(limits, ((long) lowWidth * lowHeight * 3 + (long) topWidth * topHeight) * 2);
+            var low = new short[lowWidth * lowHeight * 3];
+            var top = new short[topWidth * topHeight];
+            X3fDecoder.decodeQuattro(body, layout, low, top);
+            X3fQuattro.bin(low, lowWidth, lowHeight, top, topWidth);
+            var lower = black(low, lowWidth, 3, 2, shields, 0);
+            var upper = black(top, topWidth, 1, 1, topShields, 0);
+            var black = new double[]{lower[0], lower[1], upper[0]};
+            if (corrections && camf != null) {
+                X3fCorrections.fixBadPixels(camf, top, topWidth, topHeight, 1, 1);
+                X3fCorrections.fixBadPixels(camf, low, lowWidth, lowHeight, 3, 3);
+            }
+            var scale = new double[3];
+            for (var layer = 0; layer < 3; layer++) {
+                var range = sensor.white[layer] - black[layer];
+                scale[layer] = range > 0 && gain[layer] > 0 ? gain[layer] / range : 1;
+            }
+            X3fQuattro.expand(low, lowWidth, lowHeight, top, topWidth, black, scale, plane.integers);
+            sensor.black = black;
+        }
     }
 
     /**
@@ -539,17 +794,21 @@ final class X3fParser {
     }
 
     /**
-     * Maps a rectangle in sensor coordinates to the decoded image: clipped to the kept area,
-     * translated to its origin and scaled to the image size.
+     * Maps a rectangle in sensor coordinates to an image: clipped to the kept area, translated to
+     * its origin and, for an image that covers the kept area at another resolution, scaled to the
+     * image size.
      *
      * @param rectangle the left, top, right and bottom edges, inclusive, or {@code null}
      * @param keep the kept area
      * @param width the image width
      * @param height the image height
+     * @param scaled whether the image covers the kept area at its own resolution; otherwise the
+     * image has the kept area's resolution and its origin, and may be larger
      * @return the left, top, right and bottom edges in the image, inclusive, or {@code null} when
-     * the rectangle is missing, inverted or outside the kept area
+     * the rectangle is missing, inverted or outside the kept area, or the kept area does not fit
+     * an unscaled image
      */
-    private static int[] rectangle(double[] rectangle, long[] keep, int width, int height) {
+    private static int[] rectangle(double[] rectangle, long[] keep, int width, int height, boolean scaled) {
         if (rectangle == null) {
             return null;
         }
@@ -560,38 +819,43 @@ final class X3fParser {
         }
         var columns = keep[2] - keep[0] + 1;
         var rows = keep[3] - keep[1] + 1;
+        if (!scaled && (columns > width || rows > height)) {
+            return null;
+        }
         var result = new int[4];
         for (var index = 0; index < 4; index++) {
             var horizontal = index % 2 == 0;
             var low = horizontal ? keep[0] : keep[1];
             var high = horizontal ? keep[2] : keep[3];
             var value = Math.clamp(edges[index], low, high) - low;
-            result[index] = (int) (value * (horizontal ? width : height) / (horizontal ? columns : rows));
+            result[index] = (int) (scaled ? value * (horizontal ? width : height) / (horizontal ? columns : rows) : value);
         }
         return result[2] < width && result[3] < height ? result : null;
     }
 
     /**
-     * Returns the dark shield areas of the decoded image: the top and bottom shields, or the two
-     * column ranges when the block has neither.
+     * Returns the dark shield areas of an image: the top and bottom shields, or the two column
+     * ranges when the block has neither.
      *
      * @param camf the metadata block, or {@code null}
      * @param keep the kept area
      * @param width the image width
      * @param height the image height
-     * @param skipBottom whether the bottom shield is ignored, as the DP2's firmware misplaces it
+     * @param skipBottom whether the bottom shield is ignored, as the firmware misplaces it
+     * @param scaled whether the image covers the kept area at its own resolution
      * @return the areas, each left, top, right and bottom, inclusive
      */
-    private static int[][] shields(X3fCamf camf, long[] keep, int width, int height, boolean skipBottom) {
+    private static int[][] shields(X3fCamf camf, long[] keep, int width, int height, boolean skipBottom,
+                                   boolean scaled) {
         if (camf == null) {
             return new int[0][];
         }
         var areas = new ArrayList<int[]>();
-        var top = rectangle(camf.numbers("DarkShieldTop", 4), keep, width, height);
+        var top = rectangle(camf.numbers("DarkShieldTop", 4), keep, width, height, scaled);
         if (top != null) {
             areas.add(top);
         }
-        var bottom = skipBottom ? null : rectangle(camf.numbers("DarkShieldBottom", 4), keep, width, height);
+        var bottom = skipBottom ? null : rectangle(camf.numbers("DarkShieldBottom", 4), keep, width, height, scaled);
         if (bottom != null) {
             areas.add(bottom);
         }
@@ -599,7 +863,7 @@ final class X3fParser {
         if (columns != null && areas.isEmpty()) {
             for (var side = 0; side < 2; side++) {
                 var area = rectangle(new double[]{columns[2 * side], 0, columns[2 * side + 1], 0xFFFFFFFFL},
-                        keep, width, height);
+                        keep, width, height, scaled);
                 if (area != null) {
                     areas.add(area);
                 }
@@ -609,31 +873,34 @@ final class X3fParser {
     }
 
     /**
-     * Measures the black level of each layer as the mean over the dark shield areas.
+     * Measures the black level of the first layers of an image as the mean over the dark shield
+     * areas.
      *
-     * @param samples the decoded image
+     * @param samples the image
      * @param width the image width
+     * @param channels the samples of each pixel
+     * @param layers the layers measured
      * @param shields the dark shield areas
      * @param bias the value added to every stored sample, the black level without shields
-     * @return the black level of each layer
+     * @return the black level of each measured layer
      */
-    private static double[] black(short[] samples, int width, int[][] shields, int bias) {
-        var sums = new long[3];
+    private static double[] black(short[] samples, int width, int channels, int layers, int[][] shields, int bias) {
+        var sums = new long[layers];
         var count = 0L;
         for (var area : shields) {
             for (var row = area[1]; row <= area[3]; row++) {
-                var index = (row * width + area[0]) * 3;
+                var index = (row * width + area[0]) * channels;
                 for (var column = area[0]; column <= area[2]; column++) {
-                    sums[0] += samples[index] & 0xFFFF;
-                    sums[1] += samples[index + 1] & 0xFFFF;
-                    sums[2] += samples[index + 2] & 0xFFFF;
-                    index += 3;
+                    for (var layer = 0; layer < layers; layer++) {
+                        sums[layer] += samples[index + layer] & 0xFFFF;
+                    }
+                    index += channels;
                 }
             }
             count += (long) (area[2] - area[0] + 1) * (area[3] - area[1] + 1);
         }
-        var black = new double[3];
-        for (var layer = 0; layer < 3; layer++) {
+        var black = new double[layers];
+        for (var layer = 0; layer < layers; layer++) {
             black[layer] = count > 0 ? (double) sums[layer] / count : bias;
         }
         return black;
@@ -647,11 +914,12 @@ final class X3fParser {
      * @param sensor the sensor, whose balance is estimated when the block has no colors
      * @param camf the metadata block, or {@code null}
      * @param balance the name of the as-shot white balance setting
+     * @return the white balance gain of each layer, or {@code null} when the block gives none
      */
-    private static void color(RawFile file, Sensor sensor, X3fCamf camf, String balance) {
+    private static double[] color(RawFile file, Sensor sensor, X3fCamf camf, String balance) {
         if (camf == null) {
             sensor.estimateBalance = true;
-            return;
+            return null;
         }
         double[] gain;
         double[] balancedToSrgb;
@@ -673,14 +941,14 @@ final class X3fParser {
             var xyzToCamera = ColorMath.invert(cameraToXyz);
             if (xyzToCamera == null) {
                 sensor.estimateBalance = true;
-                return;
+                return null;
             }
             var neutral = ColorMath.transform(xyzToCamera, D65_XYZ);
             gain = new double[3];
             for (var layer = 0; layer < 3; layer++) {
                 if (!(neutral[layer] > 0)) {
                     sensor.estimateBalance = true;
-                    return;
+                    return null;
                 }
                 gain[layer] = 1 / neutral[layer];
             }
@@ -688,7 +956,7 @@ final class X3fParser {
                     ColorMath.multiply(cameraToXyz, ColorMath.diagonal(neutral)));
         } else {
             sensor.estimateBalance = true;
-            return;
+            return null;
         }
         gain = gain.clone();
         for (var factor : new String[]{"SensorAdjustmentGainFact", "TempGainFact", "FNumberGainFact"}) {
@@ -704,7 +972,7 @@ final class X3fParser {
         for (var layer = 0; layer < 3; layer++) {
             if (!(gain[layer] > 0) || !Double.isFinite(gain[layer])) {
                 sensor.estimateBalance = true;
-                return;
+                return null;
             }
             neutral[layer] = 1 / gain[layer];
             smallest = Math.min(smallest, gain[layer]);
@@ -715,7 +983,8 @@ final class X3fParser {
         var captureIso = camf.numbers("CaptureISO", 1);
         var scaling = sensorIso != null && captureIso != null && sensorIso[0] > 0 && captureIso[0] > 0
                 ? captureIso[0] / sensorIso[0] : 1;
-        file.color.baselineExposure = Math.log(scaling * smallest) / Math.log(2);
+        file.color.baselineExposure = StrictMath.log(scaling * smallest) / StrictMath.log(2);
+        return gain;
     }
 
     /**

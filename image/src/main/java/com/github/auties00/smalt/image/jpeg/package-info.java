@@ -1,7 +1,8 @@
 /**
- * The JPEG decoder and encoder, lossless JPEG transforms (rotation, flips, cropping, grayscale and
- * progressive transcoding without decoding pixels) and the Motion-JPEG decoder ({@link JpegDecoder},
- * {@link JpegEncoder}, {@link JpegTransforms}, {@link MjpegDecoder}).
+ * The JPEG decoder (also of hierarchical JPEG and JPEG-LS) and encoder, the JPEG-LS encoder, lossless JPEG
+ * transforms (rotation, flips, cropping, grayscale and progressive transcoding without decoding pixels) and the
+ * Motion-JPEG decoder and encoder ({@link JpegDecoder}, {@link JpegEncoder}, {@link JpegLsEncoder},
+ * {@link JpegTransforms}, {@link MjpegDecoder}, {@link MjpegEncoder}).
  *
  * <p>Unless otherwise noted, passing a {@code null} argument to a constructor or method in any class or
  * interface in this package will cause a {@link NullPointerException} to be thrown. The {@code @param}
