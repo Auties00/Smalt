@@ -30,6 +30,7 @@ module com.github.auties00.smalt.mpeg {
     exports com.github.auties00.smalt.video.h264;
     exports com.github.auties00.smalt.video.h264.encoder;
     exports com.github.auties00.smalt.video.hevc;
+    exports com.github.auties00.smalt.video.hevc.encoder;
     exports com.github.auties00.smalt.video.mpeg4;
     exports com.github.auties00.smalt.video.h263;
 
@@ -53,4 +54,7 @@ module com.github.auties00.smalt.mpeg {
             com.github.auties00.smalt.internal.provider.mpeg.H263CodecProvider;
     provides com.github.auties00.smalt.spi.ImageCodecProvider with
             com.github.auties00.smalt.internal.provider.mpeg.HeicCodecProvider;
+    // The HEIC decoder, for the HEIF decoders of the artifacts that do not depend on this one
+    provides com.github.auties00.smalt.internal.heif.HeifImageCodec with
+            com.github.auties00.smalt.internal.provider.mpeg.HeicImageCodec;
 }

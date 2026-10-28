@@ -1,9 +1,11 @@
 package com.github.auties00.smalt.capture.internal.windows;
 
+import com.github.auties00.smalt.testkit.Skip;
 import com.github.auties00.smalt.MediaException;
 import com.github.auties00.smalt.capture.VideoDevices;
 import com.github.auties00.smalt.capture.CaptureDevice;
 import com.github.auties00.smalt.capture.CaptureMode;
+import com.github.auties00.smalt.capture.ScreenCaptureOptions;
 import com.github.auties00.smalt.capture.VideoCaptureSession;
 import com.github.auties00.smalt.capture.internal.convert.YuvCoefficients;
 import com.github.auties00.smalt.image.ChromaFormat;
@@ -31,8 +33,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.junit.jupiter.api.Assumptions.assumeFalse;
-import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 /**
  * Captures the monitors and cameras of the machine running the tests. Screen tests assume at
@@ -40,7 +40,7 @@ import static org.junit.jupiter.api.Assumptions.assumeTrue;
  * delivers no frame within a few seconds (a virtual camera without its source). Measured costs
  * are printed to the test output.
  */
-@EnabledOnOs(OS.WINDOWS)
+@EnabledOnOs(value = OS.WINDOWS, disabledReason = "[platform:windows] the Windows backend runs only on Windows")
 @DisplayName("Windows capture on this machine")
 class WindowsCaptureTest {
     /** Reads one frame on another thread, giving up after a timeout; returns null on timeout. */
@@ -84,7 +84,7 @@ class WindowsCaptureTest {
     @DisplayName("leaves no capture thread running once every session is closed")
     void noLeakedThreads() throws InterruptedException {
         var screens = VideoDevices.screens();
-        assumeFalse(screens.isEmpty(), "no monitor");
+        Skip.unlessDevice(!screens.isEmpty(), "screen", "no monitor");
         try (var session = VideoDevices.openCapture(screens.getFirst(), 30)) {
             assertNotNull(readWithin(session, Duration.ofSeconds(5)));
         }
@@ -108,7 +108,7 @@ class WindowsCaptureTest {
     class Screens {
         private CaptureDevice.Screen primary() {
             var screens = VideoDevices.screens();
-            assumeFalse(screens.isEmpty(), "no monitor");
+            Skip.unlessDevice(!screens.isEmpty(), "screen", "no monitor");
             return screens.getFirst();
         }
 
@@ -116,7 +116,7 @@ class WindowsCaptureTest {
         @DisplayName("lists the monitors with unique ids, the primary one first at the origin")
         void enumerate() {
             var screens = VideoDevices.screens();
-            assumeFalse(screens.isEmpty(), "no monitor");
+            Skip.unlessDevice(!screens.isEmpty(), "screen", "no monitor");
             var ids = new HashSet<String>();
             for (var screen : screens) {
                 assertTrue(ids.add(screen.id()), "duplicate id " + screen.id());
@@ -136,7 +136,7 @@ class WindowsCaptureTest {
         @DisplayName("captures even-sized, non-black frames with monotonic timestamps starting near zero")
         void capture(boolean gdi) throws InterruptedException {
             var screen = primary();
-            try (var session = ScreenSession.open(screen, new Rational(30, 1), gdi)) {
+            try (var session = ScreenSession.open(screen, ScreenCaptureOptions.builder().frameRate(30).build(), gdi)) {
                 assertEquals(!gdi, ((ScreenSession) session).duplicating());
                 assertEquals(screen.width() & ~1, session.width());
                 assertEquals(screen.height() & ~1, session.height());
@@ -279,7 +279,7 @@ class WindowsCaptureTest {
         void cost() throws InterruptedException {
             var screen = primary();
             for (var gdi : new boolean[]{false, true}) {
-                try (var session = ScreenSession.open(screen, new Rational(30, 1), gdi)) {
+                try (var session = ScreenSession.open(screen, ScreenCaptureOptions.builder().frameRate(30).build(), gdi)) {
                     for (var i = 0; i < 30; i++) {
                         session.read();
                     }
@@ -333,11 +333,11 @@ class WindowsCaptureTest {
                 var out = YuvPicture.allocate(width, height, ChromaFormat.YUV420, false, YuvCoefficients.BT709_LIMITED.color());
                 var converter = new BgraConverter();
                 for (var i = 0; i < 50; i++) {
-                    converter.convert(memory, 0, 4L * width, width, height, 0, null, out);
+                    converter.convert(memory, 0, 4L * width, width, height, 0, null, null, out);
                 }
                 var wall = System.nanoTime();
                 for (var i = 0; i < 100; i++) {
-                    converter.convert(memory, 0, 4L * width, width, height, 0, null, out);
+                    converter.convert(memory, 0, 4L * width, width, height, 0, null, null, out);
                 }
                 System.out.printf(Locale.ROOT, "1920x1080 BGRX to I420 from native memory: %.2f ms per frame%n",
                         (System.nanoTime() - wall) / 1e6 / 100);
@@ -350,7 +350,7 @@ class WindowsCaptureTest {
     class Cameras {
         private CaptureDevice.Camera camera() {
             var cameras = VideoDevices.cameras();
-            assumeFalse(cameras.isEmpty(), "no camera");
+            Skip.unlessDevice(!cameras.isEmpty(), "camera", "no camera");
             return cameras.getFirst();
         }
 
@@ -358,7 +358,7 @@ class WindowsCaptureTest {
             try {
                 return mode == null ? VideoDevices.openCapture(camera) : VideoDevices.openCapture(camera, mode);
             } catch (MediaException.Io exception) {
-                assumeTrue(false, "the camera cannot be opened: " + exception.getMessage());
+                Skip.unlessDevice(false, "camera", "the camera cannot be opened: " + exception.getMessage());
                 throw exception;
             }
         }
@@ -368,7 +368,7 @@ class WindowsCaptureTest {
             if (frame == null) {
                 session.close();
             }
-            assumeTrue(frame != null, "the camera delivered no frame within five seconds");
+            Skip.unlessDevice(frame != null, "camera", "the camera delivered no frame within five seconds");
             return frame;
         }
 
@@ -445,7 +445,7 @@ class WindowsCaptureTest {
         @DisplayName("captures in the smallest listed mode at exactly that size")
         void mode() throws InterruptedException {
             var camera = camera();
-            assumeFalse(camera.modes().isEmpty(), "the camera lists no mode");
+            Skip.unlessDevice(!camera.modes().isEmpty(), "camera", "the camera lists no mode");
             var mode = camera.modes().getLast();
             try (var session = openOrSkip(camera, mode)) {
                 assertEquals(mode.width() & ~1, session.width());

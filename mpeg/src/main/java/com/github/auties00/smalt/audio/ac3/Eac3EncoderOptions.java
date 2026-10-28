@@ -1,9 +1,9 @@
 package com.github.auties00.smalt.audio.ac3;
 
 import com.github.auties00.smalt.audio.ChannelLayout;
-import com.github.auties00.smalt.audio.Speaker;
 import com.github.auties00.smalt.audio.ac3.internal.ChannelMap;
 import com.github.auties00.smalt.audio.ac3.internal.EncoderSession;
+import com.github.auties00.smalt.audio.ac3.internal.ProgramPlan;
 import com.github.auties00.smalt.internal.check.Checks;
 
 import java.util.Objects;
@@ -57,6 +57,10 @@ public final class Eac3EncoderOptions {
 
     private final boolean preNoiseProcessing;
 
+    private final boolean enhancedCoupling;
+
+    private final Ac3Metadata metadata;
+
     private Eac3EncoderOptions(Builder builder) {
         this.sampleRate = builder.sampleRate;
         this.layout = builder.layout;
@@ -68,6 +72,8 @@ public final class Eac3EncoderOptions {
         this.spectralExtension = builder.spectralExtension;
         this.hybridTransform = builder.hybridTransform;
         this.preNoiseProcessing = builder.preNoiseProcessing;
+        this.enhancedCoupling = builder.enhancedCoupling;
+        this.metadata = builder.metadata;
     }
 
     /**
@@ -104,12 +110,15 @@ public final class Eac3EncoderOptions {
      * Returns the default options for a sampling rate and a layout, at the bit rate of the layout.
      *
      * <p>32, 44.1, 48, 16, 22.05 and 24 kHz code as they are, any other rate codes at 48 kHz. A
-     * layout with the front pair, the center and both the side and the back pairs codes as 7.1
-     * (or as 7.0 without LFE), as does a bare count of eight or more channels. Any other layout
-     * codes the closest configuration of one independent substream: the front pair, the center,
-     * the surround pair (side or back) or the single back center, and the LFE are kept when
-     * present, everything else is dropped; a bare channel count of seven codes 5.1. Callers convert
-     * their input to the reported {@link #sampleRate()} and {@link #layout()}.
+     * layout keeps its core, the front pair, the center, the surround pair (side, else back) or the
+     * single back center, and the LFE, and beyond it every channel E-AC-3 has a custom channel map
+     * location for: the back pair beside a side pair, the back center beside a surround pair, the
+     * left and right of center pair, the top center, the surround direct pair, the wide pair, the
+     * top front pair, the top front center, the top back pair, and the second LFE beside the first;
+     * a pair is kept only with both its channels. Everything else is dropped; a layout without front
+     * pair or center codes the front pair, and a bare count of eight or more channels codes 7.1, of
+     * seven or fewer the default layout of at most six. Callers convert their input to the reported
+     * {@link #sampleRate()} and {@link #layout()}.
      *
      * @param sampleRate the requested sampling rate in hertz
      * @param layout the requested channel layout
@@ -148,9 +157,9 @@ public final class Eac3EncoderOptions {
     /**
      * {@return the channel layout the encoder accepts, in WAVE order; stereo by default}
      *
-     * <p>The channel configurations of AC-3, mono to 5.1, code in one independent substream; 7.1
-     * and 7.0 code as a 5.1 (or 5.0) downmix in the independent substream and a dependent substream
-     * that carries the side and back pairs (see {@link Eac3Encoder}).
+     * <p>The channel configurations of AC-3, mono to 5.1, code in one independent substream; a
+     * larger program codes its 5.1 core in the independent substream and its other channels in
+     * dependent substreams (see {@link Eac3Encoder} and {@link #of(int, ChannelLayout)}).
      */
     public ChannelLayout layout() {
         return layout;
@@ -202,24 +211,54 @@ public final class Eac3EncoderOptions {
     /**
      * Returns the lowest bit rate of this rate, layout and frame size: the rate whose frames still
      * hold the side information of a frame of long transforms with its exponents, coupling
-     * coordinates and block headers, and at least 32 kbit/s; for 7.1 and 7.0, the lowest rate whose
-     * share gives both substreams their lowest rate.
+     * coordinates and block headers, and at least 32 kbit/s; for a program beyond 5.1, the lowest
+     * rate whose share gives every substream its lowest rate.
      *
      * @return the bit rate in bits per second
      */
     public int minimumBitrate() {
-        var lfe = layout.indexOf(Speaker.LOW_FREQUENCY) >= 0;
-        if (ChannelMap.extended(layout)) {
-            var core = substreamMinimum(5, lfe);
-            var extension = substreamMinimum(4, false);
-            var total = Math.max((core * 9L + 4) / 5, (extension * 9L + 3) / 4);
-            while (EncoderSession.coreBitrate((int) total) < core
-                    || total - EncoderSession.coreBitrate((int) total) < extension) {
-                total++;
-            }
-            return (int) total;
+        var plan = EncoderSession.plan(layout, true);
+        var substreams = plan.substreams();
+        var total = 0L;
+        for (var substream : substreams) {
+            var least = substreamMinimum(substream.fullBandwidthChannels(), substream.lfe());
+            total = Math.max(total, (least * (long) plan.fullBandwidthChannels() + substream.fullBandwidthChannels() - 1)
+                    / substream.fullBandwidthChannels());
         }
-        return substreamMinimum(ChannelMap.fullBandwidthChannels(layout), lfe);
+        while (!fits(plan, (int) total, true)) {
+            total++;
+        }
+        return (int) total;
+    }
+
+    /**
+     * Returns whether every substream of a program receives at least its lowest bit rate, or at
+     * most the bit rate of frames of {@link #MAXIMUM_WORDS} words.
+     *
+     * @param plan the substreams
+     * @param total the bit rate of the program
+     * @param lowest whether to check the lowest bit rate rather than the highest
+     * @return whether the share of every substream fits
+     */
+    private boolean fits(ProgramPlan plan, int total, boolean lowest) {
+        var rates = plan.bitrates(total);
+        var substreams = plan.substreams();
+        for (var index = 0; index < rates.length; index++) {
+            var substream = substreams.get(index);
+            var fits = lowest ? rates[index] >= substreamMinimum(substream.fullBandwidthChannels(), substream.lfe())
+                    : rates[index] <= maximumSubstream();
+            if (!fits) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * {@return the bit rate of a substream whose frames hold {@link #MAXIMUM_WORDS} words}
+     */
+    private long maximumSubstream() {
+        return MAXIMUM_WORDS * 16L * sampleRate / (256L * blocksPerFrame);
     }
 
     /**
@@ -238,21 +277,26 @@ public final class Eac3EncoderOptions {
 
     /**
      * Returns the highest bit rate of this rate and frame size: frames of 2048 words, 1024 kbit/s at
-     * 48 kHz with six blocks per frame and 6144 kbit/s with one; for 7.1 and 7.0, the rate whose
-     * share fills the frames of the independent substream.
+     * 48 kHz with six blocks per frame and 6144 kbit/s with one; for a program beyond 5.1, the rate
+     * whose share fills the frames of the substream with the largest share.
      *
      * @return the bit rate in bits per second
      */
     public int maximumBitrate() {
-        var substream = MAXIMUM_WORDS * 16L * sampleRate / (256L * blocksPerFrame);
-        if (ChannelMap.extended(layout)) {
-            var total = substream * 9 / 5;
-            while (EncoderSession.coreBitrate((int) total) > substream) {
-                total--;
-            }
-            return (int) total;
+        var substream = maximumSubstream();
+        var plan = EncoderSession.plan(layout, true);
+        if (plan.substreams().size() == 1) {
+            return (int) substream;
         }
-        return (int) substream;
+        var total = Long.MAX_VALUE;
+        for (var part : plan.substreams()) {
+            total = Math.min(total, substream * plan.fullBandwidthChannels() / part.fullBandwidthChannels());
+        }
+        total = Math.min(total, Integer.MAX_VALUE);
+        while (!fits(plan, (int) total, false)) {
+            total--;
+        }
+        return (int) total;
     }
 
     /**
@@ -321,15 +365,47 @@ public final class Eac3EncoderOptions {
      *
      * <p>The data gives, for a channel with an onset, the location of the transient and a time
      * scaling length, with which the decoder overwrites the quantization noise spread ahead of the
-     * transient with earlier audio. The encoder estimates the decoded output from its own
-     * quantization error and sends the data when the processing removes at least half of the error
-     * energy ahead of the transient. Frames of one or two blocks never carry it.
+     * transient with earlier audio. Decoders apply data for transients from 1280 to 2815 decoded
+     * samples after the start of the frame carrying it, mostly in the frames after it, so the encoder
+     * codes those frames before it chooses a frame's data and emits each packet that many frames
+     * later (see {@link Eac3Encoder}). It estimates the decoded output from its own quantization error
+     * and sends the data when the processing removes at least half of the error energy ahead of the
+     * transient. Frames of one or two blocks never carry it.
      *
      * @apiNote It is off by default: it lowers the error ahead of sharp onsets, but only over a few
-     * hundred samples per onset, and some decoders ignore the data.
+     * hundred samples per onset, delays the packets, and some decoders ignore the data.
      */
     public boolean preNoiseProcessing() {
         return preNoiseProcessing;
+    }
+
+    /**
+     * {@return whether the encoder codes channel coupling as enhanced coupling (ETSI TS 102 366
+     * clause E.2.5) instead of standard coupling; {@code false} by default}
+     *
+     * <p>Enhanced coupling sends, for every coupled channel and band of the coupling region, an
+     * amplitude relative to the coupling channel, on a band structure finer than that of standard
+     * coupling. The encoder codes the coupling region standard coupling would cover, without phase
+     * angles, which decoders ignore, and only where it uses coupling (see {@link #channelCoupling()});
+     * a region whose first sub-band enhanced coupling cannot signal is coded with standard coupling.
+     *
+     * @apiNote It is off by default: widely deployed decoders, ffmpeg among them, reject every
+     * audio block that uses it; Dolby's decoders read it.
+     */
+    public boolean enhancedCoupling() {
+        return enhancedCoupling;
+    }
+
+    /**
+     * {@return the metadata the frames carry besides the dialogue level; {@link Ac3Metadata#defaults()}
+     * by default}
+     *
+     * <p>The independent substream carries the mixing and informational metadata; the dependent
+     * substreams of a program beyond 5.1 carry only the dialogue level and the dynamic range words,
+     * which equal those of the independent substream.
+     */
+    public Ac3Metadata metadata() {
+        return metadata;
     }
 
     @Override
@@ -344,13 +420,15 @@ public final class Eac3EncoderOptions {
                 && channelCoupling == that.channelCoupling
                 && spectralExtension == that.spectralExtension
                 && hybridTransform == that.hybridTransform
-                && preNoiseProcessing == that.preNoiseProcessing;
+                && preNoiseProcessing == that.preNoiseProcessing
+                && enhancedCoupling == that.enhancedCoupling
+                && metadata.equals(that.metadata);
     }
 
     @Override
     public int hashCode() {
         return Objects.hash(sampleRate, layout, bitrate, blocksPerFrame, dialogueLevel, blockSwitching,
-                channelCoupling, spectralExtension, hybridTransform, preNoiseProcessing);
+                channelCoupling, spectralExtension, hybridTransform, preNoiseProcessing, enhancedCoupling, metadata);
     }
 
     @Override
@@ -358,7 +436,8 @@ public final class Eac3EncoderOptions {
         return "Eac3EncoderOptions[sampleRate=" + sampleRate + ", layout=" + layout.speakers() + ", bitrate=" + effectiveBitrate()
                 + ", blocksPerFrame=" + blocksPerFrame + ", dialogueLevel=" + dialogueLevel + ", blockSwitching="
                 + blockSwitching + ", channelCoupling=" + channelCoupling + ", spectralExtension=" + spectralExtension
-                + ", hybridTransform=" + hybridTransform + ", preNoiseProcessing=" + preNoiseProcessing + "]";
+                + ", hybridTransform=" + hybridTransform + ", preNoiseProcessing=" + preNoiseProcessing
+                + ", enhancedCoupling=" + enhancedCoupling + ", metadata=" + metadata + "]";
     }
 
     /**
@@ -400,6 +479,10 @@ public final class Eac3EncoderOptions {
 
         private boolean preNoiseProcessing;
 
+        private boolean enhancedCoupling;
+
+        private Ac3Metadata metadata;
+
         private Builder() {
             this.sampleRate = 48_000;
             this.layout = ChannelLayout.STEREO;
@@ -411,6 +494,8 @@ public final class Eac3EncoderOptions {
             this.spectralExtension = true;
             this.hybridTransform = false;
             this.preNoiseProcessing = false;
+            this.enhancedCoupling = false;
+            this.metadata = Ac3Metadata.defaults();
         }
 
         private Builder(Eac3EncoderOptions options) {
@@ -425,6 +510,8 @@ public final class Eac3EncoderOptions {
             this.spectralExtension = options.spectralExtension;
             this.hybridTransform = options.hybridTransform;
             this.preNoiseProcessing = options.preNoiseProcessing;
+            this.enhancedCoupling = options.enhancedCoupling;
+            this.metadata = options.metadata;
         }
 
         /**
@@ -546,6 +633,29 @@ public final class Eac3EncoderOptions {
         }
 
         /**
+         * Sets whether coupling is coded as enhanced coupling; see
+         * {@link Eac3EncoderOptions#enhancedCoupling()}.
+         *
+         * @param enhancedCoupling the value
+         * @return this builder
+         */
+        public Builder enhancedCoupling(boolean enhancedCoupling) {
+            this.enhancedCoupling = enhancedCoupling;
+            return this;
+        }
+
+        /**
+         * Sets the metadata; see {@link Eac3EncoderOptions#metadata()}.
+         *
+         * @param metadata the value
+         * @return this builder
+         */
+        public Builder metadata(Ac3Metadata metadata) {
+            this.metadata = Objects.requireNonNull(metadata, "metadata");
+            return this;
+        }
+
+        /**
          * Returns the options holding the settings of this builder.
          *
          * @return the options
@@ -561,6 +671,7 @@ public final class Eac3EncoderOptions {
                 throw new IllegalArgumentException("sampling rate " + sampleRate + " needs six blocks per frame");
             }
             Checks.inRange("dialogue level", dialogueLevel, -31, -1);
+            Ac3EncoderOptions.checkServiceType(metadata, layout);
             var options = new Eac3EncoderOptions(this);
             if (explicitBitrate) {
                 Checks.inRange("bitrate", bitrate, options.minimumBitrate(), options.maximumBitrate());
