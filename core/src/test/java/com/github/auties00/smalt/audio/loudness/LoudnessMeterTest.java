@@ -347,6 +347,22 @@ class LoudnessMeterTest {
         }
 
         @Test
+        @DisplayName("leaves both LFE channels out and weights the surround direct pair as surrounds")
+        void extended() {
+            var layout = new ChannelLayout(List.of(Speaker.FRONT_LEFT, Speaker.FRONT_RIGHT, Speaker.FRONT_CENTER,
+                    Speaker.LOW_FREQUENCY, Speaker.TOP_FRONT_LEFT, Speaker.WIDE_LEFT, Speaker.WIDE_RIGHT,
+                    Speaker.SURROUND_DIRECT_LEFT, Speaker.SURROUND_DIRECT_RIGHT, Speaker.LOW_FREQUENCY_2,
+                    Speaker.TOP_SIDE_LEFT, Speaker.BOTTOM_FRONT_CENTER));
+            var meter = new LoudnessMeter(layout, RATE);
+            var levels = new double[layout.channels()];
+            java.util.Arrays.fill(levels, -40);
+            meter.accept(Signals.channels(RATE, 5, levels), 0, 5 * RATE);
+            // eight channels at weight 1, the surround direct pair at 1.41, the two LFE channels left out
+            var expected = 10 * Math.log10((8 + 1.41 * 2) * Math.pow(10, -40 / 10.0) / 2);
+            assertEquals(expected, meter.integrated(), 0.1);
+        }
+
+        @Test
         @DisplayName("measures dual mono 3 LU louder than mono")
         void dualMono() {
             var planes = Signals.tones(RATE, 1, 10, -23);

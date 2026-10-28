@@ -195,9 +195,9 @@ final class FixedCodebookHigh {
      */
     void code8i40_31bits(short[] x, short[] cn, short[] h, int hOffset, short[] cod, short[] y, short[] indx,
                          int indxOffset, Flag overflow) {
-        CodebookCorrelation.corHX2(h, hOffset, x, dn, 2, NB_TRACK_MR102, STEP_MR102, y32, overflow);
+        CodebookCorrelation.corHX2(h, hOffset, x, 0, dn, 2, NB_TRACK_MR102, STEP_MR102, y32, overflow);
         CodebookCorrelation.setSign12k2(dn, cn, sign, posMax, NB_TRACK_MR102, ipos, STEP_MR102, en, overflow);
-        CodebookCorrelation.corH(h, hOffset, sign, rr, h2);
+        CodebookCorrelation.corH(h, hOffset, sign, rr, h2, overflow);
         search10and8i40(8, STEP_MR102, NB_TRACK_MR102);
         build8i40(cod, h, hOffset, y, overflow);
         compressCode(indx, indxOffset);
@@ -218,9 +218,9 @@ final class FixedCodebookHigh {
      */
     void code10i40_35bits(short[] x, short[] cn, short[] h, int hOffset, short[] cod, short[] y, short[] indx,
                           int indxOffset, Flag overflow) {
-        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 2, y32);
+        CodebookCorrelation.corHX(h, hOffset, x, 0, dn, 2, y32, overflow);
         CodebookCorrelation.setSign12k2(dn, cn, sign, posMax, NB_TRACK, ipos, STEP, en, overflow);
-        CodebookCorrelation.corH(h, hOffset, sign, rr, h2);
+        CodebookCorrelation.corH(h, hOffset, sign, rr, h2, overflow);
         if (!search10Wide()) {
             search10and8i40(10, STEP, NB_TRACK);
         }

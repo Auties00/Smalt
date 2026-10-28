@@ -4,6 +4,7 @@ import com.github.auties00.smalt.aot.TrainingFamily;
 import com.github.auties00.smalt.aot.TrainingWorkload;
 import com.github.auties00.smalt.image.raw.RawDecoder;
 import com.github.auties00.smalt.image.raw.RawDecoderOptions;
+import com.github.auties00.smalt.image.raw.RawHighlights;
 import com.github.auties00.smalt.io.MediaSource;
 
 import java.util.List;
@@ -12,7 +13,8 @@ import static com.github.auties00.smalt.aot.internal.WorkloadFactory.file;
 
 /**
  * Creates the workloads of {@link TrainingFamily#RAW}, the camera raw decoder of
- * {@code smalt-raw}, on synthetic DNG, Minolta MRW, Canon CRW and Sigma X3F files.
+ * {@code smalt-raw}, on synthetic DNG (Bayer, linear raw, and a staggered mosaic with profile
+ * tables), Minolta MRW, Canon CRW, Canon CR3, Sigma X3F and Fujifilm RAF files.
  */
 final class RawWorkloads {
     /**
@@ -31,9 +33,12 @@ final class RawWorkloads {
         return List.of(
                 file("raw-decode-bayer", RawWorkloads::bayer),
                 file("raw-decode-linear", RawWorkloads::linear),
+                file("raw-decode-staggered", RawWorkloads::staggered),
                 file("raw-decode-mrw", RawWorkloads::mrw),
                 file("raw-decode-crw", RawWorkloads::crw),
-                file("raw-decode-x3f", RawWorkloads::x3f));
+                file("raw-decode-cr3", RawWorkloads::cr3),
+                file("raw-decode-x3f", RawWorkloads::x3f),
+                file("raw-decode-raf", RawWorkloads::raf));
     }
 
     /**
@@ -71,6 +76,25 @@ final class RawWorkloads {
     }
 
     /**
+     * Returns a workload that decodes a 640x480 staggered DNG with a gain table map and an RGB
+     * table: with color-difference and bilinear demosaicing to 8-bit sRGB, and with the automatic
+     * black subtraction and blended highlights.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload staggered() {
+        var file = SyntheticRaw.staggered(SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false));
+        var options = List.of(RawDecoderOptions.defaults(), RawDecoderOptions.fast(), RawDecoderOptions.builder()
+                .autoBlack(true).highlights(RawHighlights.BLEND).build());
+        return TrainingWorkload.of("raw-decode-staggered", () -> {
+            Blackhole.consume(RawDecoder.decodeRaw(MediaSource.of(file)).samples().length);
+            for (var option : options) {
+                Blackhole.consume(RawDecoder.decode(MediaSource.of(file), option).picture().width());
+            }
+        });
+    }
+
+    /**
      * Returns a workload that describes, extracts the sensor values of and decodes with Menon
      * demosaicing two 1024x768 MRW files, one of packed 12-bit samples and one of 16-bit words.
      *
@@ -94,6 +118,18 @@ final class RawWorkloads {
     }
 
     /**
+     * Returns a workload that describes, extracts the sensor values of and decodes with Menon
+     * demosaicing three 1024x768 CR3 files: lossless CRX, and C-RAW of codec versions 1 and 2.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload cr3() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
+        return vendor("raw-decode-cr3", List.of(SyntheticCr3.cr3(picture, 0, 0x100), SyntheticCr3.cr3(picture, 3, 0x100),
+                SyntheticCr3.cr3(picture, 3, 0x200)));
+    }
+
+    /**
      * Returns a workload that describes, extracts the sensor values of and decodes two 640x480 X3F
      * files, one in the TRUE coding and one in the older Huffman coding.
      *
@@ -103,6 +139,22 @@ final class RawWorkloads {
         var picture = SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false);
         return vendor("raw-decode-x3f", List.of(SyntheticVendorRaw.x3f(picture, false),
                 SyntheticVendorRaw.x3f(picture, true)));
+    }
+
+    /**
+     * Returns a workload that describes, extracts the sensor values of and decodes with Menon
+     * demosaicing five RAF files: lossless and lossy compressed Bayer and X-Trans files of 1024x768,
+     * and a 640x480 transposed SuperCCD SR file of bare sensor words with the second image of its
+     * low-sensitivity photodiodes, which the rendering merges into the first.
+     *
+     * @return the workload
+     */
+    private static TrainingWorkload raf() {
+        var picture = SyntheticImages.rgba(SyntheticVideo.natural(1024, 768, 1).getFirst(), false);
+        var small = SyntheticImages.rgba(SyntheticVideo.natural(640, 480, 1).getFirst(), false);
+        return vendor("raw-decode-raf", List.of(SyntheticRaf.compressed(picture, false, false),
+                SyntheticRaf.compressed(picture, true, false), SyntheticRaf.compressed(picture, false, true),
+                SyntheticRaf.compressed(picture, true, true), SyntheticRaf.superCcd(small)));
     }
 
     /**
